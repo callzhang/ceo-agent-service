@@ -319,7 +319,33 @@ def test_required_capabilities_must_all_be_proven(store, running_attempt):
     assert rejected.reason == "no_eligible_route"
 
 
-def test_session_route_incompatible_fails_closed_without_a_persisted_resume_marker(
+def test_resumed_codex_api_session_incompatibility_gets_one_fresh_retry(
+    store, running_attempt
+):
+    store.fail_agent_runtime_attempt(
+        running_attempt.id, "authentication", "codex_login_required", True
+    )
+    api = store.claim_agent_runtime_attempt(
+        running_attempt.agent_run_id,
+        "codex_api",
+        "codex_cli",
+        "service_api",
+        "gpt-5.5",
+        session_mode="resume",
+        source_session_id="oauth-session",
+    )
+    router = make_router(store)
+
+    decision = next_route(
+        router, store, api, failure=failover_failure("session_route_incompatible")
+    )
+
+    assert decision.route.name == "codex_api"
+    assert decision.fresh_session is True
+    assert decision.reason == "fresh_session_retry"
+
+
+def test_fresh_codex_api_session_incompatibility_does_not_repeat(
     store, running_attempt
 ):
     store.fail_agent_runtime_attempt(
@@ -336,10 +362,12 @@ def test_session_route_incompatible_fails_closed_without_a_persisted_resume_mark
 
     assert decision.route is None
     assert decision.fresh_session is False
-    assert decision.reason == "needs_context"
+    assert decision.reason == "no_eligible_route"
 
 
-def test_second_codex_api_attempt_cannot_unlock_a_fresh_retry(store, running_attempt):
+def test_prior_fresh_codex_api_attempt_blocks_another_fresh_retry(
+    store, running_attempt
+):
     store.fail_agent_runtime_attempt(
         running_attempt.id, "authentication", "codex_login_required", True
     )
@@ -350,7 +378,13 @@ def test_second_codex_api_attempt_cannot_unlock_a_fresh_retry(store, running_att
         first_api.id, "session", "session_route_incompatible", True
     )
     second_api = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
+        running_attempt.agent_run_id,
+        "codex_api",
+        "codex_cli",
+        "service_api",
+        "gpt-5.5",
+        session_mode="resume",
+        source_session_id="oauth-session",
     )
     router = make_router(store)
 
@@ -363,7 +397,7 @@ def test_second_codex_api_attempt_cannot_unlock_a_fresh_retry(store, running_att
 
     assert decision.route is None
     assert decision.fresh_session is False
-    assert decision.reason == "needs_context"
+    assert decision.reason == "no_eligible_route"
 
 
 def test_no_route_available_has_a_deterministic_safe_reason(store, running_attempt):

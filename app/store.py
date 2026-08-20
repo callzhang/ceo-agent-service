@@ -92,7 +92,12 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "reply_attempts": ("human_decision_options_json",),
+    "agent_runtime_attempts": ("session_mode", "source_session_id"),
 }
+STORE_SCHEMA_REQUIRED_TRIGGERS = (
+    "trg_runtime_attempt_session_evidence_insert",
+    "trg_runtime_attempt_session_evidence_update",
+)
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
 RECONCILIATION_EVENT_LIMIT_ERROR = "agent run reconciliation event limit exceeded"
@@ -377,6 +382,11 @@ class AgentRole(StrEnum):
     AUDIT = "audit"
 
 
+class RuntimeAttemptSessionMode(StrEnum):
+    FRESH = "fresh"
+    RESUME = "resume"
+
+
 class AgentRun(BaseModel):
     id: int
     reply_task_id: int
@@ -423,6 +433,8 @@ class AgentRuntimeAttempt(BaseModel):
     runtime_kind: str
     credential_mode: str
     model: str
+    session_mode: RuntimeAttemptSessionMode = RuntimeAttemptSessionMode.FRESH
+    source_session_id: str = ""
     session_id: str = ""
     status: str
     failure_class: str = ""
@@ -805,6 +817,12 @@ class AutoReplyStore:
                         "select name from sqlite_master where type='index'"
                     )
                 }
+                present_triggers = {
+                    str(item["name"])
+                    for item in db.execute(
+                        "select name from sqlite_master where type='trigger'"
+                    )
+                }
                 required_columns_present = all(
                     set(required_columns).issubset(
                         {
@@ -825,6 +843,7 @@ class AutoReplyStore:
         return (
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
             and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
+            and set(STORE_SCHEMA_REQUIRED_TRIGGERS).issubset(present_triggers)
             and required_columns_present
             and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
         )
@@ -1103,6 +1122,9 @@ class AutoReplyStore:
                     runtime_kind text not null,
                     credential_mode text not null,
                     model text not null,
+                    session_mode text not null default 'fresh'
+                        check(session_mode in ('fresh', 'resume')),
+                    source_session_id text not null default '',
                     session_id text not null default '',
                     status text not null check(status in (
                         'starting', 'running', 'completed', 'failed', 'superseded'
@@ -1123,6 +1145,10 @@ class AutoReplyStore:
                          and workload_key=cast(agent_run_id as text))
                         or
                         (workload_kind<>'agent_run' and agent_run_id is null)
+                    ),
+                    check(
+                        (session_mode='fresh' and source_session_id='')
+                        or (session_mode='resume' and source_session_id<>'')
                     ),
                     unique(workload_kind, workload_key, attempt_number),
                     foreign key(agent_run_id) references agent_runs(id)
@@ -1951,6 +1977,7 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table agent_runs add column {column} {definition}"
                     )
+            self._migrate_runtime_attempt_session_evidence(db)
             self._migrate_agent_run_turn_identity(db)
             agent_run_columns = {
                 row["name"]
@@ -2413,6 +2440,60 @@ class AutoReplyStore:
                 where codex_session_id is not null and codex_session_id <> ''
                 """
             )
+
+    @staticmethod
+    def _migrate_runtime_attempt_session_evidence(db: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in db.execute(
+                "pragma table_info(agent_runtime_attempts)"
+            ).fetchall()
+        }
+        if "session_mode" not in columns:
+            db.execute(
+                "alter table agent_runtime_attempts add column "
+                "session_mode text not null default 'fresh' "
+                "check(session_mode in ('fresh', 'resume'))"
+            )
+        if "source_session_id" not in columns:
+            db.execute(
+                "alter table agent_runtime_attempts add column "
+                "source_session_id text not null default ''"
+            )
+        db.execute(
+            "update agent_runtime_attempts set session_mode='fresh', "
+            "source_session_id='' where session_mode is null "
+            "or source_session_id is null "
+            "or session_mode not in ('fresh', 'resume') "
+            "or (session_mode='fresh' and source_session_id<>'') "
+            "or (session_mode='resume' and source_session_id='')"
+        )
+        db.execute(
+            """
+            create trigger if not exists trg_runtime_attempt_session_evidence_insert
+            before insert on agent_runtime_attempts
+            when new.session_mode is null or new.source_session_id is null or not (
+                (new.session_mode='fresh' and new.source_session_id='')
+                or (new.session_mode='resume' and new.source_session_id<>'')
+            )
+            begin
+                select raise(abort, 'invalid runtime attempt session evidence');
+            end
+            """
+        )
+        db.execute(
+            """
+            create trigger if not exists trg_runtime_attempt_session_evidence_update
+            before update of session_mode, source_session_id on agent_runtime_attempts
+            when new.session_mode is null or new.source_session_id is null or not (
+                (new.session_mode='fresh' and new.source_session_id='')
+                or (new.session_mode='resume' and new.source_session_id<>'')
+            )
+            begin
+                select raise(abort, 'invalid runtime attempt session evidence');
+            end
+            """
+        )
 
     @staticmethod
     def _reconcile_legacy_workbench_confirmations(db: sqlite3.Connection) -> None:
@@ -3969,7 +4050,9 @@ class AutoReplyStore:
         runtime_kind: str,
         credential_mode: str,
         model: str,
-    ) -> tuple[str, str, str, str]:
+        session_mode: str | RuntimeAttemptSessionMode,
+        source_session_id: str,
+    ) -> tuple[str, str, str, str, str, str]:
         route_name = AutoReplyStore._require_runtime_attempt_text(
             route_name, field="route_name"
         )
@@ -3982,7 +4065,28 @@ class AutoReplyStore:
         except ValueError as exc:
             raise ValueError("unsupported credential_mode") from exc
         model = AutoReplyStore._require_runtime_attempt_text(model, field="model")
-        return route_name, runtime_kind, credential_mode, model
+        try:
+            session_mode = RuntimeAttemptSessionMode(session_mode).value
+        except (TypeError, ValueError) as exc:
+            raise ValueError("unsupported runtime attempt session_mode") from exc
+        if not isinstance(source_session_id, str):
+            raise TypeError("source_session_id must be a string")
+        source_session_id = source_session_id.strip()
+        if session_mode == RuntimeAttemptSessionMode.FRESH.value and source_session_id:
+            raise ValueError("fresh session evidence requires empty source_session_id")
+        if (
+            session_mode == RuntimeAttemptSessionMode.RESUME.value
+            and not source_session_id
+        ):
+            raise ValueError("resume session evidence requires source_session_id")
+        return (
+            route_name,
+            runtime_kind,
+            credential_mode,
+            model,
+            session_mode,
+            source_session_id,
+        )
 
     @staticmethod
     def _validate_runtime_failure(
@@ -4013,10 +4117,24 @@ class AutoReplyStore:
         runtime_kind: str,
         credential_mode: str,
         model: str,
+        session_mode: str | RuntimeAttemptSessionMode,
+        source_session_id: str,
     ) -> AgentRuntimeAttempt:
-        route_name, runtime_kind, credential_mode, model = (
+        (
+            route_name,
+            runtime_kind,
+            credential_mode,
+            model,
+            session_mode,
+            source_session_id,
+        ) = (
             self._validate_runtime_attempt_details(
-                route_name, runtime_kind, credential_mode, model
+                route_name,
+                runtime_kind,
+                credential_mode,
+                model,
+                session_mode,
+                source_session_id,
             )
         )
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
@@ -4040,9 +4158,23 @@ class AutoReplyStore:
                 (workload_kind, workload_key, route_name),
             ).fetchone()
             if active is not None:
-                immutable = ("runtime_kind", "credential_mode", "model")
+                immutable = (
+                    "runtime_kind",
+                    "credential_mode",
+                    "model",
+                    "session_mode",
+                    "source_session_id",
+                )
                 if any(active[field] != value for field, value in zip(
-                    immutable, (runtime_kind, credential_mode, model), strict=True
+                    immutable,
+                    (
+                        runtime_kind,
+                        credential_mode,
+                        model,
+                        session_mode,
+                        source_session_id,
+                    ),
+                    strict=True,
                 )):
                     raise ValueError("conflicting active runtime attempt claim")
                 return self._agent_runtime_attempt_from_row(active)
@@ -4060,9 +4192,10 @@ class AutoReplyStore:
                 """
                 insert into agent_runtime_attempts (
                     agent_run_id, workload_kind, workload_key, attempt_number,
-                    route_name, runtime_kind, credential_mode, model, status,
+                    route_name, runtime_kind, credential_mode, model, session_mode,
+                    source_session_id, status,
                     started_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)
                 """,
                 (
                     agent_run_id,
@@ -4073,6 +4206,8 @@ class AutoReplyStore:
                     runtime_kind,
                     credential_mode,
                     model,
+                    session_mode,
+                    source_session_id,
                     now_text,
                     now_text,
                     now_text,
@@ -4091,6 +4226,9 @@ class AutoReplyStore:
         runtime_kind: str,
         credential_mode: str,
         model: str,
+        *,
+        session_mode: str | RuntimeAttemptSessionMode = RuntimeAttemptSessionMode.FRESH,
+        source_session_id: str = "",
     ) -> AgentRuntimeAttempt:
         if agent_run_id <= 0:
             raise ValueError("agent_run_id must be positive")
@@ -4102,6 +4240,8 @@ class AutoReplyStore:
             runtime_kind=runtime_kind,
             credential_mode=credential_mode,
             model=model,
+            session_mode=session_mode,
+            source_session_id=source_session_id,
         )
 
     def claim_runtime_operation_attempt(
@@ -4112,6 +4252,9 @@ class AutoReplyStore:
         runtime_kind: str,
         credential_mode: str,
         model: str,
+        *,
+        session_mode: str | RuntimeAttemptSessionMode = RuntimeAttemptSessionMode.FRESH,
+        source_session_id: str = "",
     ) -> AgentRuntimeAttempt:
         workload_kind, workload_key = self._validate_runtime_operation_workload(
             workload_kind, workload_key
@@ -4124,6 +4267,8 @@ class AutoReplyStore:
             runtime_kind=runtime_kind,
             credential_mode=credential_mode,
             model=model,
+            session_mode=session_mode,
+            source_session_id=source_session_id,
         )
 
     def _runtime_attempt_for_transition(

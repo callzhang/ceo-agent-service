@@ -170,7 +170,9 @@ The router tries eligible routes in configured order. A later route may start
 only when `FailoverSafety` returns `safe`. Route count is bounded by configured
 routes. One route is started at most once per Agent turn, except that an
 explicit `session_route_incompatible` result permits exactly one fresh-session
-attempt on the same Codex API route. Existing same-route process retry remains
+attempt on the same Codex API route only when the failed attempt persisted
+`session_mode=resume` and a nonempty `source_session_id`. A prior fresh Codex
+API attempt blocks another repeat. Existing same-route process retry remains
 limited to transient failures that are safe to repeat.
 
 ### Runtime adapters
@@ -355,6 +357,8 @@ route_name
 runtime_kind             codex_cli | claude_cli
 credential_mode          local_oauth | service_api
 model
+session_mode             fresh | resume
+source_session_id        required only when session_mode=resume
 session_id
 status                    starting | running | completed | failed | superseded
 failure_class
@@ -374,7 +378,11 @@ decimal Agent run ID. For every other kind, `agent_run_id` is null and
 `workload_key` must match an existing stable identifier already owned by that
 workload; free-form or random identifiers are rejected. Attempt numbers are
 claimed transactionally. A completed attempt cannot be superseded. A failed
-attempt is `superseded` only after the next attempt is durably claimed.
+attempt is `superseded` only after the next attempt is durably claimed. `fresh`
+attempts persist an empty `source_session_id`; `resume` attempts persist the
+nonempty session supplied to the provider. New tables enforce this pairing with
+checks; upgrades add the fields with `fresh` defaults and use database triggers
+to reject invalid direct writes.
 
 Do not store:
 

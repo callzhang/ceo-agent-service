@@ -393,6 +393,9 @@ create table if not exists agent_runtime_attempts (
     runtime_kind text not null,
     credential_mode text not null,
     model text not null,
+    session_mode text not null default 'fresh'
+        check(session_mode in ('fresh', 'resume')),
+    source_session_id text not null default '',
     session_id text not null default '',
     status text not null check(status in ('starting','running','completed','failed','superseded')),
     failure_class text not null default '',
@@ -411,6 +414,10 @@ create table if not exists agent_runtime_attempts (
          and workload_key=cast(agent_run_id as text))
         or
         (workload_kind<>'agent_run' and agent_run_id is null)
+    ),
+    check(
+        (session_mode='fresh' and source_session_id='')
+        or (session_mode='resume' and source_session_id<>'')
     ),
     unique(workload_kind, workload_key, attempt_number),
     foreign key(agent_run_id) references agent_runs(id)
@@ -449,6 +456,11 @@ the same route, and inserts `starting`. Transition methods use `where status in
 ('starting','running')` guards and raise on conflicting terminal state. Session upsert uses
 `on conflict(conversation_id, route_name) do update`; pause reads delete an
 expired row before returning `None`.
+
+Claims default to `session_mode='fresh'` with an empty `source_session_id`.
+Resume claims require a nonempty source session, and active-claim idempotency
+compares both fields. Upgrades add the defaulted fields and database triggers so
+invalid fresh/resume combinations cannot enter the attempt ledger directly.
 
 ```python
 claim_agent_runtime_attempt(agent_run_id, route_name, runtime_kind,
@@ -664,7 +676,7 @@ def failover_is_safe(*, run: AgentRun, attempt: AgentRuntimeAttempt,
 
 - [ ] **Step 4: Implement route eligibility and bounded selection**
 
-`AgentRuntimeRouter.next_route()` must exclude attempted routes, active pauses, unhealthy/expired snapshots, and missing capabilities. Permit exactly one repeated `codex_api` route only for `session_route_incompatible`, marked as a fresh-session attempt. Return a typed decision with the selected route, `fresh_session`, and safe display reason.
+`AgentRuntimeRouter.next_route()` must exclude attempted routes, active pauses, unhealthy/expired snapshots, and missing capabilities. Permit exactly one repeated `codex_api` route only for `session_route_incompatible`, marked as a fresh-session attempt. The failed `codex_api` attempt must persist `session_mode='resume'` and a nonempty `source_session_id`, and no earlier fresh `codex_api` attempt may exist for the same Agent run. Fresh and repeated attempts remain excluded, so the route cannot loop. Return a typed decision with the selected route, `fresh_session`, and safe display reason.
 
 - [ ] **Step 5: Run tests and commit**
 

@@ -9,7 +9,12 @@ from app.agent_runtime_contracts import (
     RuntimeFailure,
     RuntimeRoute,
 )
-from app.store import AgentRun, AgentRuntimeAttempt, AutoReplyStore
+from app.store import (
+    AgentRun,
+    AgentRuntimeAttempt,
+    AutoReplyStore,
+    RuntimeAttemptSessionMode,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,12 +89,13 @@ class AgentRuntimeRouter:
 
         for route in self._routes:
             if route.name in attempted_routes:
-                if self._requires_unrepresentable_fresh_retry(
+                if self._fresh_session_retry_is_permitted(
                     route=route,
                     failed_attempt=failed_attempt,
                     failure=failure,
+                    attempts=attempts,
                 ):
-                    return RuntimeRouteDecision(None, False, "needs_context")
+                    return RuntimeRouteDecision(route, True, "fresh_session_retry")
                 continue
             if self._store.active_runtime_route_pause(route.name, now=now) is not None:
                 continue
@@ -103,23 +109,22 @@ class AgentRuntimeRouter:
         return RuntimeRouteDecision(None, False, "no_eligible_route")
 
     @staticmethod
-    def _requires_unrepresentable_fresh_retry(
+    def _fresh_session_retry_is_permitted(
         *,
         route: RuntimeRoute,
         failed_attempt: AgentRuntimeAttempt,
         failure: RuntimeFailure,
+        attempts: Sequence[AgentRuntimeAttempt],
     ) -> bool:
-        """Fail closed: attempts do not persist whether they resumed a session.
-
-        A `session_id` is written only as an attempt result and is not evidence
-        that the failed invocation used `codex exec resume`.  Until the ledger
-        persists an explicit resumed-session marker, the one allowed Codex API
-        fresh retry cannot be safely distinguished from a normal repeat.
-        """
-
-        return (
+        return not any(
+            attempt.route_name == "codex_api"
+            and attempt.session_mode == RuntimeAttemptSessionMode.FRESH
+            for attempt in attempts
+        ) and (
             route.name == "codex_api"
             and failed_attempt.route_name == "codex_api"
+            and failed_attempt.session_mode == RuntimeAttemptSessionMode.RESUME
+            and bool(failed_attempt.source_session_id)
             and failure.code == "session_route_incompatible"
         )
 

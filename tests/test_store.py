@@ -174,6 +174,157 @@ def test_runtime_attempt_claim_numbers_follow_terminal_attempts(tmp_path: Path):
     assert store.mark_agent_runtime_attempt_superseded(first.id).status == "superseded"
 
 
+def test_runtime_attempt_session_evidence_is_persisted_and_validated(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    fresh = store.claim_agent_runtime_attempt(
+        run.id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
+    )
+
+    assert fresh.session_mode == "fresh"
+    assert fresh.source_session_id == ""
+
+    store.fail_agent_runtime_attempt(
+        fresh.id, "session", "session_route_incompatible", True
+    )
+    resumed = store.claim_agent_runtime_attempt(
+        run.id,
+        "codex_api",
+        "codex_cli",
+        "service_api",
+        "gpt-5.5",
+        session_mode="resume",
+        source_session_id="codex-session-1",
+    )
+
+    assert resumed.session_mode == "resume"
+    assert resumed.source_session_id == "codex-session-1"
+    assert store.get_agent_runtime_attempt(resumed.id) == resumed
+
+    with pytest.raises(ValueError, match="fresh session evidence"):
+        store.claim_agent_runtime_attempt(
+            run.id,
+            "other",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            session_mode="fresh",
+            source_session_id="must-be-empty",
+        )
+    with pytest.raises(ValueError, match="resume session evidence"):
+        store.claim_agent_runtime_attempt(
+            run.id,
+            "other",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            session_mode="resume",
+        )
+    with pytest.raises(TypeError, match="source_session_id must be a string"):
+        store.claim_agent_runtime_attempt(
+            run.id,
+            "other",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            source_session_id=1,
+        )
+
+
+def test_runtime_attempt_active_claim_compares_session_evidence(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    store.claim_agent_runtime_attempt(
+        run.id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
+    )
+
+    with pytest.raises(ValueError, match="conflicting active runtime attempt claim"):
+        store.claim_agent_runtime_attempt(
+            run.id,
+            "codex_api",
+            "codex_cli",
+            "service_api",
+            "gpt-5.5",
+            session_mode="resume",
+            source_session_id="codex-session-1",
+        )
+
+
+def test_runtime_attempt_upgrade_adds_session_evidence_constraints(tmp_path: Path):
+    db_path = tmp_path / "runtime-attempt-upgrade.sqlite3"
+    store = AutoReplyStore(db_path)
+    run = _claimed_runtime_agent_run(store)
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+    with store._connect() as db:
+        db.execute("drop trigger if exists trg_runtime_attempt_session_evidence_insert")
+        db.execute("drop trigger if exists trg_runtime_attempt_session_evidence_update")
+        db.execute(
+            "alter table agent_runtime_attempts rename to legacy_runtime_attempts"
+        )
+        db.execute(
+            """
+            create table agent_runtime_attempts (
+                id integer primary key autoincrement,
+                agent_run_id integer,
+                workload_kind text not null,
+                workload_key text not null,
+                attempt_number integer not null,
+                route_name text not null,
+                runtime_kind text not null,
+                credential_mode text not null,
+                model text not null,
+                session_id text not null default '',
+                status text not null,
+                failure_class text not null default '',
+                failure_code text not null default '',
+                failover_permitted integer not null default 0,
+                transcript_reference text not null default '',
+                transcript_start integer not null default 0,
+                transcript_end integer not null default 0,
+                first_effect_started_at text not null default '',
+                started_at text not null,
+                finished_at text not null default '',
+                created_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into agent_runtime_attempts (
+                id, agent_run_id, workload_kind, workload_key, attempt_number,
+                route_name, runtime_kind, credential_mode, model, session_id,
+                status, failure_class, failure_code, failover_permitted,
+                transcript_reference, transcript_start, transcript_end,
+                first_effect_started_at, started_at, finished_at, created_at, updated_at
+            )
+            select id, agent_run_id, workload_kind, workload_key, attempt_number,
+                route_name, runtime_kind, credential_mode, model, session_id,
+                status, failure_class, failure_code, failover_permitted,
+                transcript_reference, transcript_start, transcript_end,
+                first_effect_started_at, started_at, finished_at, created_at, updated_at
+            from legacy_runtime_attempts
+            """
+        )
+        db.execute("drop table legacy_runtime_attempts")
+    assert store._schema_is_current() is False
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+    restored = upgraded.get_agent_runtime_attempt(attempt.id)
+
+    assert restored.session_mode == "fresh"
+    assert restored.source_session_id == ""
+    with upgraded._connect() as db, pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "update agent_runtime_attempts set session_mode='fresh', "
+            "source_session_id='invalid' where id=?",
+            (attempt.id,),
+        )
+
+
 @pytest.mark.parametrize(
     ("workload_kind", "workload_key"),
     [
