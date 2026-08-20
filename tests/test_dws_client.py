@@ -4354,7 +4354,7 @@ def test_read_unread_messages_discards_read_overlap_rows(monkeypatch):
     assert [message.open_message_id for message in messages] == ["msg-5"]
 
 
-def test_read_unread_messages_does_not_promote_overlap_when_unread_row_is_invalid(
+def test_read_unread_messages_skips_invalid_unread_row_without_promoting_overlap(
     monkeypatch,
 ):
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
@@ -4386,8 +4386,51 @@ def test_read_unread_messages_does_not_promote_overlap_when_unread_row_is_invali
         last_message_create_at=1778666181403,
     )
 
-    with pytest.raises(DwsError, match="unread message row is invalid"):
-        client.read_unread_messages(conversation)
+    messages = client.read_unread_messages(conversation)
+
+    assert messages == []
+
+
+def test_read_unread_messages_keeps_valid_rows_beside_invalid_unread_row(monkeypatch):
+    monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
+    payload = {
+        "result": {
+            "messages": [
+                {
+                    "openConversationId": "cid-1",
+                    "openMessageId": "msg-newer",
+                    "sender": "Mina Zou",
+                    "createTime": "2026-05-13 20:26:00",
+                    "content": "valid unread message",
+                },
+                {
+                    "openConversationId": "cid-1",
+                    "sender": "Mina Zou",
+                    "createTime": "2026-05-13 20:25:30",
+                    "content": "unsupported unread row",
+                },
+                {
+                    "openConversationId": "cid-1",
+                    "openMessageId": "msg-read-overlap",
+                    "sender": "Mina Zou",
+                    "createTime": "2026-05-13 20:25:00",
+                    "content": "already read",
+                },
+            ]
+        }
+    }
+    client = RecordingDwsClient(payload)
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="Friday",
+        single_chat=False,
+        unread_point=2,
+        last_message_create_at=1778666181403,
+    )
+
+    messages = client.read_unread_messages(conversation)
+
+    assert [message.open_message_id for message in messages] == ["msg-newer"]
 
 
 def test_read_recent_messages_prefers_exact_single_chat_nick_match(monkeypatch):

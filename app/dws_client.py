@@ -1949,8 +1949,10 @@ class DwsClient:
             conversation_title=conversation.title,
             single_chat=conversation.single_chat,
         )
-        if len(parsed_unread_messages) != len(raw_unread_messages):
-            raise DwsError("unread message row is invalid")
+        # Keep the unread boundary authoritative. DWS can include unsupported
+        # or incomplete message rows in that slice; dropping only those rows
+        # avoids failing the whole conversation without promoting older,
+        # already-read overlap rows into the unread set.
         return list(reversed(parsed_unread_messages))
 
     def list_messages_by_ids(self, message_ids: list[str]) -> list[DingTalkMessage]:
