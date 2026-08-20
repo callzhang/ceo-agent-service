@@ -379,7 +379,7 @@ def _serve_remote_proxy(
                 response = connection.getresponse()
                 payload = response.read()
                 if notification:
-                    if response.status not in {202, 204} or payload:
+                    if response.status != 202 or payload:
                         self.send_error(502, "MCP notification response is invalid")
                         return
                     self.send_response(response.status)
@@ -762,6 +762,8 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     pass
+                if request_id is None:
+                    return 1
                 denied = {
                     "jsonrpc": "2.0",
                     "id": request_id,

@@ -381,7 +381,7 @@ def test_remote_proxy_forwards_jsonrpc_notifications_without_json_response(tmp_p
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             received.append(payload)
             if "id" not in payload:
-                self.send_response(204)
+                self.send_response(202)
                 self.end_headers()
                 return
             response = json.dumps(
@@ -415,7 +415,7 @@ def test_remote_proxy_forwards_jsonrpc_notifications_without_json_response(tmp_p
                 {"jsonrpc": "2.0", "method": method, "params": {}},
                 transport["headers"],
             ) as response:
-                assert response.status == 204
+                assert response.status == 202
                 assert response.read() == b""
         with _post(
             transport["url"],
@@ -685,3 +685,63 @@ def test_stdio_forwards_notification_without_consuming_request_response(monkeypa
     )
     assert process.stdin.snapshot == stdin_bytes.getvalue()
     assert output.getvalue().splitlines() == [b'{"jsonrpc":"2.0","id":7,"result":{}}']
+
+
+def test_stdio_unknown_notification_terminates_without_response_or_target(monkeypatch):
+    import io
+
+    class RetainedBytesIO(io.BytesIO):
+        def close(self):
+            self.snapshot = self.getvalue()
+            super().close()
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = RetainedBytesIO()
+            self.stdout = RetainedBytesIO()
+            self.returncode = 0
+
+        def terminate(self):
+            return None
+
+        def wait(self, timeout):
+            del timeout
+            return 0
+
+    process = FakeProcess()
+    output = io.BytesIO()
+
+    class BinaryFacade:
+        def __init__(self, buffer):
+            self.buffer = buffer
+
+    monkeypatch.setattr(
+        "app.claude_mcp_proxy.subprocess.Popen", lambda *_args, **_kwargs: process
+    )
+    monkeypatch.setattr(
+        "app.claude_mcp_proxy.sys.stdin",
+        BinaryFacade(
+            io.BytesIO(b'{"jsonrpc":"2.0","method":"notifications/foreign"}\n')
+        ),
+    )
+    monkeypatch.setattr("app.claude_mcp_proxy.sys.stdout", BinaryFacade(output))
+
+    assert (
+        main(
+            [
+                "--server",
+                "memory_connector",
+                "--allowed-tool",
+                "mcp__memory_connector__memory_recall",
+                "--grant-url",
+                "http://127.0.0.1:1/consume",
+                "--consume-token",
+                "client-token",
+                "--exec",
+                "/opt/service/memory-mcp",
+            ]
+        )
+        == 1
+    )
+    assert process.stdin.snapshot == b""
+    assert output.getvalue() == b""
