@@ -1,13 +1,12 @@
 import json
 import os
 import subprocess
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 
-from app.dws_client import dws_noninteractive_environment
 from app.dingtalk_models import CodexDecision
+from app.dws_client import dws_noninteractive_environment
 from app.prompt import ceo_agent_thread_prompt
-
 
 CODEX_DECISION_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "codex_decision.schema.json"
@@ -103,23 +102,42 @@ def selected_codex_model_provider() -> str:
     return provider or "openai"
 
 
-def codex_model_config_options() -> list[str]:
-    model = os.environ.get(CODEX_MODEL_ENV, DEFAULT_CODEX_MODEL).strip()
-    provider = os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
-    reasoning_effort = os.environ.get(
-        CODEX_MODEL_REASONING_EFFORT_ENV,
-        DEFAULT_CODEX_MODEL_REASONING_EFFORT,
-    ).strip()
+def codex_model_config_options(
+    *,
+    model: str | None = None,
+    provider: str | None = None,
+    reasoning_effort: str | None = None,
+) -> list[str]:
+    selected_model = (
+        os.environ.get(CODEX_MODEL_ENV, DEFAULT_CODEX_MODEL).strip()
+        if model is None
+        else model.strip()
+    )
+    selected_provider = (
+        os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
+        if provider is None
+        else provider.strip()
+    )
+    selected_reasoning_effort = (
+        os.environ.get(
+            CODEX_MODEL_REASONING_EFFORT_ENV,
+            DEFAULT_CODEX_MODEL_REASONING_EFFORT,
+        ).strip()
+        if reasoning_effort is None
+        else reasoning_effort.strip()
+    )
     options: list[str] = []
-    if model:
-        options.extend(["-m", model])
-        if provider:
-            options.extend(["-c", _config_string("model_provider", provider)])
-    if reasoning_effort:
+    if selected_model:
+        options.extend(["-m", selected_model])
+        if selected_provider:
+            options.extend(
+                ["-c", _config_string("model_provider", selected_provider)]
+            )
+    if selected_reasoning_effort:
         options.extend(
             [
                 "-c",
-                _config_string("model_reasoning_effort", reasoning_effort),
+                _config_string("model_reasoning_effort", selected_reasoning_effort),
             ]
         )
     return options
@@ -168,6 +186,9 @@ class CodexRunner:
         preserve_native_instructions: bool = False,
         preserve_native_approval_config: bool = False,
         ignore_user_config: bool = False,
+        model: str | None = None,
+        provider: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> list[str]:
         if approval_policy not in {"untrusted", "never"}:
             raise ValueError("unsupported approval policy")
@@ -223,7 +244,11 @@ class CodexRunner:
             *(
                 []
                 if preserve_native_model_config
-                else codex_model_config_options()
+                else codex_model_config_options(
+                    model=model,
+                    provider=provider,
+                    reasoning_effort=reasoning_effort,
+                )
             ),
             *approval_options,
             *instruction_options,
