@@ -164,6 +164,7 @@ class _ReadOnlyCommandIsolation(StrEnum):
     NO_TOOLS = "no_tools"
     MEMORY_RECALL_ONLY = "memory_recall_only"
     MEMORY_READS = "memory_reads"
+    MEMORY_WRITE_ONLY = "memory_write_only"
     AGENT_CLI_READS = "agent_cli_reads"
     REVIEWED_READS = "reviewed_reads"
 
@@ -378,6 +379,25 @@ class ApprovedCodexCommandFactory:
             seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
 
+    @classmethod
+    def effectful_memory_write(
+        cls,
+        *,
+        developer_instructions: str,
+        output_schema_path: Path | None = None,
+        use_output_schema: bool = False,
+    ) -> ApprovedCodexCommandFactory:
+        return cls(
+            effect_mode=ExecutionEffectMode.EFFECTFUL,
+            developer_instructions=developer_instructions,
+            output_schema_path=output_schema_path,
+            use_output_schema=use_output_schema,
+            image_paths=(),
+            command_isolation=_ReadOnlyCommandIsolation.MEMORY_WRITE_ONLY,
+            required_reviewed_mcp_servers=frozenset({"memory_connector"}),
+            seal=_APPROVED_COMMAND_FACTORY_SEAL,
+        )
+
     @property
     def _approved_policy(self) -> _ApprovedExecutionPolicy:
         return self._policy
@@ -418,7 +438,7 @@ class ApprovedCodexCommandFactory:
             sandbox_mode="read-only" if read_only else None,
         )
         env = adapter.build_env(route)
-        if read_only:
+        if read_only or self._command_isolation is not _ReadOnlyCommandIsolation.STANDARD:
             _apply_read_only_command_isolation(
                 command,
                 env=env,
@@ -452,6 +472,8 @@ def _apply_read_only_command_isolation(
     allowed_tools: dict[str, tuple[str, ...]] = {}
     if isolation is _ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY:
         allowed_tools["memory_connector"] = ("memory_recall",)
+    elif isolation is _ReadOnlyCommandIsolation.MEMORY_WRITE_ONLY:
+        allowed_tools["memory_connector"] = ("memory_write",)
     elif isolation is _ReadOnlyCommandIsolation.MEMORY_READS:
         allowed_tools["memory_connector"] = (
             "memory_get",
@@ -499,7 +521,11 @@ def _apply_read_only_command_isolation(
                     (
                         ["execute_reviewed_write"]
                         if server_name == "agent_cli"
-                        else ["memory_write"]
+                        else [
+                            "memory_recall"
+                            if isolation is _ReadOnlyCommandIsolation.MEMORY_WRITE_ONLY
+                            else "memory_write"
+                        ]
                     ),
                     separators=(",", ":"),
                 ),
@@ -697,6 +723,14 @@ def _is_retryable_external_runtime_failure(failure: RuntimeFailure) -> bool:
         RuntimeFailureClass.CAPACITY,
         RuntimeFailureClass.TRANSPORT,
     }
+
+
+def _agent_run_workload_id(workload_kind: str, workload_key: str) -> int | None:
+    if workload_kind != "agent_run":
+        return None
+    if not workload_key.isdecimal() or int(workload_key) <= 0:
+        raise ValueError("agent_run workload key must be a persisted ID")
+    return int(workload_key)
 
 
 class RoutedCodexPolicyAbort(RuntimeError):
@@ -1102,11 +1136,14 @@ class RoutedCodexExecution:
         next_validation_retry_policy_id = ""
         next_validation_result_schema_id = ""
 
-        self._store.recover_expired_runtime_operation_attempt(
-            workload_kind, workload_key, now=self._now()
-        )
-        existing_attempts = self._store.list_runtime_operation_attempts(
-            workload_kind, workload_key
+        agent_run_id = _agent_run_workload_id(workload_kind, workload_key)
+
+        if agent_run_id is None:
+            self._store.recover_expired_runtime_operation_attempt(
+                workload_kind, workload_key, now=self._now()
+            )
+        existing_attempts = self._runtime_attempts(
+            workload_kind, workload_key, agent_run_id=agent_run_id
         )
         if existing_attempts:
             latest = existing_attempts[-1]
@@ -1220,13 +1257,13 @@ class RoutedCodexExecution:
                     failover_permitted=latest.failover_permitted,
                 )
                 terminal_failure = persisted_failure
-                decision = self._router.next_operation_route(
+                decision = self._next_route_after_failure(
                     workload_kind=workload_kind,
                     workload_key=workload_key,
+                    agent_run_id=agent_run_id,
                     failed_attempt=latest,
                     failure=persisted_failure,
                     required_capabilities=required_capabilities,
-                    read_only_policy_proven=True,
                 )
         else:
             decision = self._router.first_route_decision(
@@ -1373,12 +1410,7 @@ class RoutedCodexExecution:
                 active_attempt,
                 stage="lease_renewal",
                 evidence=current_evidence,
-                action=lambda: self._store.renew_runtime_operation_attempt_lease(
-                    active_attempt.id,
-                    owner=self._owner,
-                    lease_seconds=self._lease_seconds,
-                    now=self._now(),
-                ),
+                action=lambda: self._renew_attempt_parent_lease(active_attempt),
             )
             command, env = self._finalized_step(
                 active_attempt,
@@ -1395,12 +1427,7 @@ class RoutedCodexExecution:
                 active_attempt,
                 stage="lease_renewal",
                 evidence=current_evidence,
-                action=lambda: self._store.renew_runtime_operation_attempt_lease(
-                    active_attempt.id,
-                    owner=self._owner,
-                    lease_seconds=self._lease_seconds,
-                    now=self._now(),
-                ),
+                action=lambda: self._renew_attempt_parent_lease(active_attempt),
             )
             process = self._finalized_step(
                 active_attempt,
@@ -1751,13 +1778,13 @@ class RoutedCodexExecution:
                     ),
                 )
 
-            next_decision = self._router.next_operation_route(
+            next_decision = self._next_route_after_failure(
                 workload_kind=workload_kind,
                 workload_key=workload_key,
+                agent_run_id=agent_run_id,
                 failed_attempt=failed_attempt,
                 failure=failure,
                 required_capabilities=required_capabilities,
-                read_only_policy_proven=True,
             )
             if next_decision.route is None:
                 raise RoutedCodexExecutionError(
@@ -1806,26 +1833,42 @@ class RoutedCodexExecution:
         validation_result_schema_id: str = "",
     ) -> AgentRuntimeAttempt:
         try:
-            attempt = self._store.claim_runtime_operation_attempt(
-                workload_kind,
-                workload_key,
-                route.name,
-                route.runtime_kind.value,
-                route.credential_mode.value,
-                route.model,
-                session_mode=(
-                    RuntimeAttemptSessionMode.RESUME
-                    if session_id
-                    else RuntimeAttemptSessionMode.FRESH
-                ),
-                source_session_id=session_id or "",
-                attempt_purpose=attempt_purpose,
-                validation_retry_policy_id=validation_retry_policy_id,
-                validation_result_schema_id=validation_result_schema_id,
-                owner=self._owner,
-                lease_seconds=self._lease_seconds,
-                now=self._now(),
+            session_mode = (
+                RuntimeAttemptSessionMode.RESUME
+                if session_id
+                else RuntimeAttemptSessionMode.FRESH
             )
+            agent_run_id = _agent_run_workload_id(workload_kind, workload_key)
+            if agent_run_id is not None:
+                attempt = self._store.claim_agent_runtime_attempt(
+                    agent_run_id,
+                    route.name,
+                    route.runtime_kind.value,
+                    route.credential_mode.value,
+                    route.model,
+                    session_mode=session_mode,
+                    source_session_id=session_id or "",
+                    attempt_purpose=attempt_purpose,
+                    validation_retry_policy_id=validation_retry_policy_id,
+                    validation_result_schema_id=validation_result_schema_id,
+                )
+            else:
+                attempt = self._store.claim_runtime_operation_attempt(
+                    workload_kind,
+                    workload_key,
+                    route.name,
+                    route.runtime_kind.value,
+                    route.credential_mode.value,
+                    route.model,
+                    session_mode=session_mode,
+                    source_session_id=session_id or "",
+                    attempt_purpose=attempt_purpose,
+                    validation_retry_policy_id=validation_retry_policy_id,
+                    validation_result_schema_id=validation_result_schema_id,
+                    owner=self._owner,
+                    lease_seconds=self._lease_seconds,
+                    now=self._now(),
+                )
         except RuntimeRoutePausedError as exc:
             raise RoutedCodexExecutionError("runtime_route_unavailable") from exc
         try:
@@ -1839,6 +1882,71 @@ class RoutedCodexExecution:
         except AgentRuntimeAttemptStartConflictError as exc:
             raise RoutedCodexExecutionError("runtime_attempt_active") from exc
         return running
+
+    def _runtime_attempts(
+        self,
+        workload_kind: str,
+        workload_key: str,
+        *,
+        agent_run_id: int | None,
+    ) -> list[AgentRuntimeAttempt]:
+        if agent_run_id is not None:
+            return self._store.list_agent_runtime_attempts(agent_run_id)
+        return self._store.list_runtime_operation_attempts(workload_kind, workload_key)
+
+    def _renew_attempt_parent_lease(
+        self, attempt: AgentRuntimeAttempt
+    ) -> AgentRuntimeAttempt:
+        if attempt.agent_run_id is None:
+            return self._store.renew_runtime_operation_attempt_lease(
+                attempt.id,
+                owner=self._owner,
+                lease_seconds=self._lease_seconds,
+                now=self._now(),
+            )
+        run = self._store.get_agent_run(attempt.agent_run_id)
+        if run is None or not run.lease_owner:
+            raise ValueError("agent run lease evidence is missing")
+        self._store.renew_agent_run_lease(
+            run.id,
+            owner=run.lease_owner,
+            lease_seconds=self._lease_seconds,
+            now=self._now(),
+        )
+        persisted = self._store.get_agent_runtime_attempt(attempt.id)
+        if persisted is None:
+            raise ValueError("agent runtime attempt is missing")
+        return persisted
+
+    def _next_route_after_failure(
+        self,
+        *,
+        workload_kind: str,
+        workload_key: str,
+        agent_run_id: int | None,
+        failed_attempt: AgentRuntimeAttempt,
+        failure: RuntimeFailure,
+        required_capabilities: frozenset[str],
+    ) -> RuntimeRouteDecision:
+        if agent_run_id is None:
+            return self._router.next_operation_route(
+                workload_kind=workload_kind,
+                workload_key=workload_key,
+                failed_attempt=failed_attempt,
+                failure=failure,
+                required_capabilities=required_capabilities,
+                read_only_policy_proven=True,
+            )
+        run = self._store.get_agent_run(agent_run_id)
+        if run is None:
+            return RuntimeRouteDecision(None, False, "run_not_found")
+        return self._router.next_route(
+            run=run,
+            failed_attempt=failed_attempt,
+            failure=failure,
+            required_capabilities=required_capabilities,
+            recovery_phase="",
+        )
 
     def _session_for_route(
         self, conversation_id: str | None, route_name: str

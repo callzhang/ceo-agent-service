@@ -4,7 +4,6 @@ from __future__ import annotations
 from app.codex_decision import CodexDecisionRunner
 from app.wechat.codex_safety import make_read_only_with_memory_tools
 
-
 WECHAT_DECISION_DEVELOPER_INSTRUCTIONS = """You are a read-only WeChat reply decision worker.
 
 - Use the supplied WeChat context. When it is genuinely useful, use only the
@@ -28,3 +27,11 @@ class WechatDecisionRunner(CodexDecisionRunner):
         )
         kwargs.setdefault("command_mutator", make_read_only_with_memory_tools)
         super().__init__(*args, **kwargs)
+
+    def _routed_command_factory(self, image_paths):
+        from app.agent_runtime_router import ApprovedCodexCommandFactory
+
+        return ApprovedCodexCommandFactory.read_only_project_memory(
+            developer_instructions=WECHAT_DECISION_DEVELOPER_INSTRUCTIONS,
+            image_paths=image_paths,
+        )

@@ -920,6 +920,20 @@ Use these explicit workload identities:
 - WeChat approved-candidate write:
   `memory:wechat_memory_candidate:<candidate_id>`.
 
+The legacy WeChat reply consumer creates a real Consumer `agent_runs` parent
+from the already-claimed `reply_tasks` row before invoking the decision model.
+Its identity is the existing reply-task generation plus proposal revision zero
+and the task attempt number; routed execution uses `agent_run:<agent_run_id>`.
+The consumer alone terminalizes that parent after the durable routed result is
+available. It must not derive an identity from prompt or result shape.
+
+`app/workbench/codex_runtime.py` is the sole non-adapter direct `CodexRunner`
+exemption. Workbench is an interactive, user-owned runtime request rather than
+a service-owned persisted operation, so it has no operation-ledger parent and
+must not be forced through `RoutedCodexExecution`. The AST migration guard names
+this exact file and `app/codex_runtime_adapter.py`; it does not allow directory,
+class-name, or pattern-based exemptions.
+
 If a caller lacks the named persisted row, add that row before starting the
 runtime attempt in the caller's existing domain table. Do not use random UUIDs,
 prompt text, or a synthetic reply task as workload identity.

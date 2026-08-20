@@ -3697,8 +3697,9 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
             constructed["cached_dws_args"] = (dws, org_directory)
 
     class FakeCodex:
-        def __init__(self, workspace, timeout_seconds, idle_timeout_seconds):
+        def __init__(self, workspace, store, timeout_seconds, idle_timeout_seconds):
             constructed["codex_workspace"] = workspace
+            constructed["codex_store"] = store
             constructed["codex_timeout_seconds"] = timeout_seconds
             constructed["codex_idle_timeout_seconds"] = idle_timeout_seconds
 

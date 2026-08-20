@@ -810,6 +810,7 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
     cached_dws = CachedDwsClient(dws=dws, org_directory=CachedOrgDirectory(store))
     codex = CodexDecisionRunner(
         workspace=settings.workspace,
+        store=store,
         timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
@@ -2593,6 +2594,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
 
         runner = WechatDecisionRunner(
             workspace=settings.workspace,
+            store=store,
             timeout_seconds=settings.codex_timeout_seconds,
             idle_timeout_seconds=settings.codex_idle_timeout_seconds,
         )

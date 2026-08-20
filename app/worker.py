@@ -462,11 +462,10 @@ class DingTalkAutoReplyWorker:
     def _agent_orchestrator(self) -> AgentOrchestrator:
         if self.agent_orchestrator is not None:
             return self.agent_orchestrator
-        runner = getattr(self.codex, "runner", None)
-        workspace = getattr(runner, "workspace", None)
+        workspace = getattr(self.codex, "workspace", None)
         if workspace is None:
             raise RuntimeError("native Codex runner workspace is unavailable")
-        codex_bin = str(getattr(runner, "codex_bin", "codex"))
+        codex_bin = str(getattr(self.codex, "codex_bin", "codex"))
         self.agent_orchestrator = AgentOrchestrator(
             store=self.store,
             consumer=ConsumerAgentRunner(

@@ -4,21 +4,36 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.agent_runtime_production import build_production_routed_codex_execution
+from app.agent_runtime_router import (
+    ApprovedCodexCommandFactory,
+    RoutedCodexExecution,
+    RoutedCodexExecutionError,
+    RoutedResultCodec,
+)
+
 WRITE_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas" / "wechat_memory_write_result.schema.json"
+MEMORY_ID_CODEC = RoutedResultCodec.text(schema_id="wechat_memory_write.id.v1")
+MEMORY_WRITE_CAPABILITIES = frozenset(
+    {"structured_output", "mcp:memory_connector:memory_write"}
+)
 class MemoryWriteOutcomeUnknown(RuntimeError):
     pass
 
 
 class CodexMemoryWriteBackend:
-    def __init__(self, workspace: Path, codex_bin: str = "codex", executor=None,
+    def __init__(self, workspace: Path, store, codex_bin: str = "codex",
+                 routed_execution: RoutedCodexExecution | None = None,
                  timeout_seconds: int = 1200, idle_timeout_seconds: int = 900):
-        from app.codex_runner import CodexRunner
-        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
-        self.executor = executor
-        self.timeout_seconds = timeout_seconds
-        self.idle_timeout_seconds = idle_timeout_seconds
+        self.routed_execution = routed_execution or build_production_routed_codex_execution(
+            store=store,
+            workspace=workspace,
+            codex_bin=codex_bin,
+            total_timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+        )
 
-    def write(self, statement: str, *, source_time_start: str, source_time_end: str) -> str:
+    def write(self, candidate_id: int, statement: str, *, source_time_start: str, source_time_end: str) -> str:
         prompt = (
             "必须且只能调用一次 memory_write。data 只传下面 final_statement；"
             "type 使用 text；created_at 使用 source_time_start（为空才使用 source_time_end）。"
@@ -28,43 +43,39 @@ class CodexMemoryWriteBackend:
                           "source_time_start": source_time_start,
                           "source_time_end": source_time_end}, ensure_ascii=False)
         )
-        command = self.runner.build_command(prompt, None, output_schema_path=WRITE_SCHEMA_PATH)
-        from app.wechat.codex_safety import disable_configured_mcp_servers
-        disable_configured_mcp_servers(
-            command, except_names=frozenset({"memory_connector"}))
-        command[-1:-1] = [
-            "-c", 'mcp_servers.memory_connector.enabled_tools=["memory_write"]',
-            "-c", 'mcp_servers.memory_connector.disabled_tools=["memory_recall"]',
-        ]
-        if self.executor is not None:
-            raw = self.executor(command, prompt)
-        else:
-            from app.codex_decision import _subprocess_failure_reason
-            from app.process_runner import run_process_with_idle_timeout
-            completed = run_process_with_idle_timeout(
-                command, prompt=prompt, env=self.runner.build_env(),
-                total_timeout_seconds=self.timeout_seconds,
-                idle_timeout_seconds=self.idle_timeout_seconds,
+        try:
+            result = self.routed_execution.execute(
+                workload_kind="memory",
+                workload_key=f"wechat_memory_candidate:{candidate_id}",
+                prompt=prompt,
+                command_factory=ApprovedCodexCommandFactory.effectful_memory_write(
+                    developer_instructions=(
+                        "Call exactly one memory_connector.memory_write using the exact "
+                        "approved statement and created_at. Do not call any other tool."
+                    ),
+                    output_schema_path=WRITE_SCHEMA_PATH,
+                ),
+                parser=lambda raw: self._memory_id_from_audit(
+                    raw,
+                    statement=statement,
+                    expected_created_at=source_time_start or source_time_end,
+                ),
+                result_codec=MEMORY_ID_CODEC,
+                required_capabilities=MEMORY_WRITE_CAPABILITIES,
             )
-            if completed.timed_out:
-                raise MemoryWriteOutcomeUnknown(completed.timeout_reason or "memory write outcome unknown")
-            if completed.returncode != 0:
-                reason = _subprocess_failure_reason(completed.stderr, completed.stdout)
-                raise MemoryWriteOutcomeUnknown(
-                    f"memory write outcome unknown: {reason}"
-                )
-            raw = completed.stdout
-        return self._memory_id_from_audit(
-            raw, statement=statement,
-            expected_created_at=source_time_start or source_time_end,
-        )
+        except RoutedCodexExecutionError as exc:
+            raise MemoryWriteOutcomeUnknown("memory write outcome unknown") from exc
+        return result.value
 
     @staticmethod
     def _memory_id_from_audit(
         raw: str, *, statement: str, expected_created_at: str,
     ) -> str:
         from app.store import AutoReplyStore
-        from app.wechat.codex_safety import completed_mcp_tool_calls, completed_tool_events
+        from app.wechat.codex_safety import (
+            completed_mcp_tool_calls,
+            completed_tool_events,
+        )
 
         calls = completed_mcp_tool_calls(raw)
         memory_calls = [call for call in calls
@@ -120,13 +131,22 @@ class WechatMemoryWriter:
         if claim["outcome"] == "written":
             return claim["memory_id"]
         if claim["outcome"] == "writing":
-            raise RuntimeError("memory write already in progress")
-        if claim["outcome"] != "claimed":
+            attempts = self.store.list_runtime_operation_attempts(
+                "memory", f"wechat_memory_candidate:{candidate_id}"
+            )
+            if not attempts or attempts[-1].status != "completed":
+                raise RuntimeError("memory write already in progress")
+            row = self.store.get_wechat_memory_candidate(candidate_id)
+            if row is None:
+                raise ValueError("candidate not found")
+            row["edited_statement"] = row["edited_statement"] or row["statement"]
+        elif claim["outcome"] != "claimed":
             raise ValueError(claim["reason"])
-        row = claim["candidate"]
+        else:
+            row = claim["candidate"]
         try:
             memory_id = self.memory_backend.write(
-                row["edited_statement"], source_time_start=row["source_time_start"],
+                candidate_id, row["edited_statement"], source_time_start=row["source_time_start"],
                 source_time_end=row["source_time_end"],
             )
         except MemoryWriteOutcomeUnknown:

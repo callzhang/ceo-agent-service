@@ -17,6 +17,7 @@ from app.agent_envelope import SendDingTalkReplyAction
 from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.codex_runner import recover_native_codex_auth_failures
 from app.dingtalk_models import CodexAction
+from app.store import AgentRole
 from app.wechat.models import WechatAccount, WechatMessage
 from app.wechat.prompt import build_wechat_turn_prompt
 
@@ -129,7 +130,37 @@ class WechatReplyConsumer:
             task.id,
             expected_execution_generation=task.execution_generation,
         )
-        decision = self.runner.decide(prompt, None)
+        turn_attempt = max(task.attempts - 1, 0)
+        run_owner = (
+            f"wechat-decision:{task.id}:{task.execution_generation}:{turn_attempt}"
+        )
+        run_claim = self.store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=turn_attempt,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner=run_owner,
+            lease_seconds=max(1800, int(self.retry_delay.total_seconds()) + 60),
+        )
+        if not run_claim.claimed:
+            raise RuntimeError("wechat decision agent run is already active")
+        try:
+            decision = self.runner.decide(prompt, None, run_id=run_claim.run.id)
+        except Exception as exc:
+            self.store.fail_agent_run(
+                run_claim.run.id,
+                {"code": "wechat_decision_failed", "detail": str(exc)[:500]},
+                owner=run_owner,
+            )
+            raise
+        self.store.complete_agent_run(
+            run_claim.run.id,
+            decision.model_dump(mode="json"),
+            owner=run_owner,
+        )
 
         if decision.action in (CodexAction.SEND_REPLY, CodexAction.ASK_CLARIFYING_QUESTION):
             unsupported_actions = [

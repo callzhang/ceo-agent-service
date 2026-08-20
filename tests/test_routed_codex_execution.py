@@ -30,7 +30,7 @@ from app.agent_runtime_router import (
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.process_runner import ProcessRunResult
-from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AutoReplyStore
+from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AgentRole, AutoReplyStore
 
 NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
 CAPABILITIES = frozenset({"structured_output", "reviewed_read_tools"})
@@ -139,6 +139,34 @@ def seed_structured_parent(store: AutoReplyStore, request_id: int = 12) -> str:
     return str(request_id)
 
 
+def seed_agent_run_parent(store: AutoReplyStore, task_id: int = 901) -> int:
+    generation = f"generation-{task_id}"
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into reply_tasks (
+                id, conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, execution_generation, status
+            ) values (?, ?, 'WeChat', 1, ?, '2026-08-20 10:00:00',
+                      'sender', 'hello', ?, 'processing')
+            """,
+            (task_id, f"wechat-{task_id}", f"message-{task_id}", generation),
+        )
+    claim = store.claim_agent_run(
+        task_id,
+        generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="decision-owner",
+    )
+    assert claim.claimed is True
+    return claim.run.id
+
+
 @pytest.fixture
 def store(tmp_path):
     return AutoReplyStore(tmp_path / "routed-codex.sqlite3")
@@ -243,6 +271,9 @@ def test_reviewed_mcp_surface_mapping_is_exact_per_caller():
     assert required(ApprovedCodexCommandFactory.read_only_weekly_okr) == frozenset(
         {"agent_cli", "memory_connector"}
     )
+    assert required(
+        ApprovedCodexCommandFactory.effectful_memory_write
+    ) == frozenset({"memory_connector"})
 
 
 def test_absent_reviewed_mcp_transport_is_never_synthesized(
@@ -407,6 +438,35 @@ def test_reviewed_read_factories_pre_spawn_allow_only_exact_reviewed_tools(
         assert ["--disable", feature] == command[
             command.index(feature) - 1 : command.index(feature) + 1
         ]
+
+
+def test_effectful_memory_write_factory_enables_only_memory_write(
+    config, tmp_path, monkeypatch
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.agent_cli]\ncommand='agent'\n"
+        "[mcp_servers.memory_connector]\nurl='https://memory.example/mcp/'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    command, _ = ApprovedCodexCommandFactory.effectful_memory_write(
+        developer_instructions="one reviewed memory write"
+    ).build(
+        adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
+        route=config.routes[0],
+        prompt="write",
+        session_id=None,
+    )
+    argv = "\n".join(command)
+
+    assert 'mcp_servers.memory_connector.enabled_tools=["memory_write"]' in argv
+    assert 'mcp_servers.memory_connector.disabled_tools=["memory_recall"]' in argv
+    assert 'enabled_tools=["memory_recall"]' not in argv
+    assert "mcp_servers.agent_cli.enabled=false" in argv
+    assert "mcp_servers.agent_cli.enabled=true" not in argv
 
 
 def test_result_codec_enforces_utf8_byte_limit_at_multibyte_boundary():
@@ -1811,6 +1871,58 @@ def test_completed_effectful_result_is_recovered_without_replay(store, config):
     assert routed.execute(**arguments).value == 42
     assert routed.execute(**arguments).value == 42
     assert calls == 1
+
+
+def test_agent_run_parent_routes_and_recovers_completed_result(store, config):
+    run_id = seed_agent_run_parent(store)
+    calls = 0
+
+    def executor(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                [
+                    json.dumps(
+                        {"type": "thread.started", "thread_id": "agent-session"}
+                    ),
+                    '{"decision":"no_reply"}',
+                ]
+            ),
+            "",
+        )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+        session_line_counter=lambda _session: 2,
+        session_effect_probe=lambda *_args: False,
+    )
+    arguments = {
+        "workload_kind": "agent_run",
+        "workload_key": str(run_id),
+        "prompt": "decide",
+        "command_factory": ApprovedCodexCommandFactory.read_only_without_tools(
+            developer_instructions="read-only decision"
+        ),
+        "parser": lambda raw: raw.splitlines()[-1],
+        "result_codec": TEXT_CODEC,
+        "required_capabilities": CAPABILITIES,
+    }
+
+    first = routed.execute(**arguments)
+    second = routed.execute(**arguments)
+
+    assert first.value == second.value == '{"decision":"no_reply"}'
+    assert first.attempt_id == second.attempt_id
+    assert calls == 1
+    attempts = store.list_agent_runtime_attempts(run_id)
+    assert len(attempts) == 1
+    assert attempts[0].status == "completed"
 
 
 def test_oversize_result_terminalizes_before_durable_completion(store, config):

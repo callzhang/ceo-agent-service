@@ -59,9 +59,12 @@ def cmd_consume_once(args) -> int:
         print("no single ready account; run status first")
         return 1
     account = service.account_from_state(state)
-    from app.codex_decision import CodexDecisionRunner
+    from app.wechat.decision_runner import WechatDecisionRunner
 
-    runner = CodexDecisionRunner(workspace=config.workspace_path())
+    runner = WechatDecisionRunner(
+        workspace=config.workspace_path(),
+        store=store,
+    )
     n = service.run_consume_once(
         store, runner, _reader(), account
     )

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from app.agent_runtime_router import RoutedCodexExecutionError
 from app.store import AutoReplyStore
 from app.wechat.memory import (
     CodexMemoryExtractionRunner,
@@ -15,6 +16,7 @@ from app.wechat.memory import (
     WechatMemoryWriter,
 )
 from app.wechat.memory_import import CodexMemoryRecallMatcher, DurableMemoryMatch
+from app.wechat.memory_writer import MEMORY_ID_CODEC, MemoryWriteOutcomeUnknown
 from app.wechat.models import WechatMessage
 
 
@@ -626,7 +628,7 @@ class FakeMemoryBackend:
     def __init__(self):
         self.calls = 0
 
-    def write(self, statement, **kw):
+    def write(self, candidate_id, statement, **kw):
         self.calls += 1
         return "memory-1"
 
@@ -647,9 +649,93 @@ def test_approved_write_is_idempotent(store):
     assert backend.calls == 1
 
 
+def test_approved_write_routes_with_candidate_parent(store, tmp_path):
+    output = {
+        "structured_content": {
+            "result": json.dumps(
+                {
+                    "ok": True,
+                    "episode_uuid": "episode-routed",
+                    "processing_status": "completed",
+                }
+            )
+        }
+    }
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call",
+                "tool": "memory_write",
+                "arguments": {
+                    "data": "Derek prefers concise updates",
+                    "type": "text",
+                    "created_at": "2026-07-17T10:00:00+08:00",
+                },
+                "result": output,
+            },
+        }
+    )
+    routed = CallbackRouted(lambda _command, _prompt: raw)
+    backend = CodexMemoryWriteBackend(
+        tmp_path, store, routed_execution=routed
+    )
+    candidate_id = _seed_candidate(store, status="approved")
+
+    assert WechatMemoryWriter(store, backend).write(candidate_id) == "episode-routed"
+    call = routed.calls[0]
+    assert call["workload_kind"] == "memory"
+    assert call["workload_key"] == f"wechat_memory_candidate:{candidate_id}"
+    assert call["command_factory"].required_reviewed_mcp_servers == frozenset(
+        {"memory_connector"}
+    )
+
+
+def test_completed_routed_candidate_write_recovers_domain_row_without_new_effect(
+    store, tmp_path
+):
+    candidate_id = _seed_candidate(store, status="approved")
+    assert store.claim_wechat_memory_candidate_write(candidate_id)["outcome"] == "claimed"
+    attempt = store.claim_runtime_operation_attempt(
+        "memory",
+        f"wechat_memory_candidate:{candidate_id}",
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+        owner="writer-owner",
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        attempt.id, owner="writer-owner", effectful=True
+    )
+    store.complete_agent_runtime_attempt(
+        attempt.id,
+        "",
+        "",
+        0,
+        0,
+        owner="writer-owner",
+        result_schema_id=MEMORY_ID_CODEC.schema_id,
+        result_envelope_json=MEMORY_ID_CODEC.encode("memory-recovered"),
+    )
+    class CompletedRouted:
+        calls = 0
+
+        def execute(self, **_kwargs):
+            self.calls += 1
+            return SimpleNamespace(value="memory-recovered")
+
+    routed = CompletedRouted()
+    backend = CodexMemoryWriteBackend(tmp_path, store, routed_execution=routed)
+
+    assert WechatMemoryWriter(store, backend).write(candidate_id) == "memory-recovered"
+    assert routed.calls == 1
+    assert store.get_wechat_memory_candidate(candidate_id)["memory_write_status"] == "written"
+
+
 def test_concurrent_approved_write_calls_backend_once(store):
     class SlowBackend(FakeMemoryBackend):
-        def write(self, statement, **kw):
+        def write(self, candidate_id, statement, **kw):
             self.calls += 1
             time.sleep(.05)
             return "memory-1"
@@ -682,6 +768,24 @@ def test_unknown_write_is_not_auto_retryable(store):
     assert store.get_wechat_memory_candidate(cid)["memory_write_status"] == "unknown"
     with pytest.raises(ValueError, match="unknown"):
         WechatMemoryWriter(store, Unknown()).write(cid)
+
+
+def test_routed_effectful_failure_is_persisted_as_unknown(store, tmp_path):
+    class FailedRouted:
+        def execute(self, **_kwargs):
+            raise RoutedCodexExecutionError("runtime_execution_failed")
+
+    candidate_id = _seed_candidate(store, status="approved")
+    backend = CodexMemoryWriteBackend(
+        tmp_path, store, routed_execution=FailedRouted()
+    )
+
+    with pytest.raises(MemoryWriteOutcomeUnknown):
+        WechatMemoryWriter(store, backend).write(candidate_id)
+    assert (
+        store.get_wechat_memory_candidate(candidate_id)["memory_write_status"]
+        == "unknown"
+    )
 
 
 def test_failed_write_is_explicit_and_can_be_manually_retried(store):
@@ -783,45 +887,38 @@ def test_codex_write_backend_requires_successful_memory_write_tool_event(tmp_pat
         json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"final","type":"text","created_at":"2026-07-17"}, "result":output}}),
         json.dumps({"status":"attempted"}),
     ])
-    backend = CodexMemoryWriteBackend(tmp_path, executor=lambda command, prompt: success)
-    assert backend.write("final", source_time_start="2026-07-17", source_time_end="") == "episode-1"
-    fake = CodexMemoryWriteBackend(tmp_path, executor=lambda command, prompt: json.dumps({"memory_id":"fake"}))
+    parse = CodexMemoryWriteBackend._memory_id_from_audit
+    assert parse(success, statement="final", expected_created_at="2026-07-17") == "episode-1"
     with pytest.raises(Exception, match="unknown"):
-        fake.write("final", source_time_start="2026-07-17", source_time_end="")
+        parse(json.dumps({"memory_id":"fake"}), statement="final", expected_created_at="2026-07-17")
 
     extra_tool = "\n".join([
         json.dumps({"type":"item.completed","item":{"type":"tool_call", "call_id":"x", "tool_name":"exec_command", "arguments":{"cmd":"true"}}}),
         success,
     ])
     with pytest.raises(Exception, match="expected one tool call"):
-        CodexMemoryWriteBackend(
-            tmp_path, executor=lambda command, prompt: extra_tool
-        ).write("final", source_time_start="2026-07-17", source_time_end="")
+        parse(extra_tool, statement="final", expected_created_at="2026-07-17")
 
     malicious = success.replace('"data": "final"', '"data": "evil", "user_id": "u"')
     with pytest.raises(Exception, match="arguments"):
-        CodexMemoryWriteBackend(tmp_path, executor=lambda c, p: malicious).write(
-            "final", source_time_start="2026-07-17", source_time_end="")
+        parse(malicious, statement="final", expected_created_at="2026-07-17")
 
     vague = "\n".join([
         json.dumps({"type":"item.completed","item":{"type":"mcp_tool_call", "call_id":"c1", "tool":"memory_write", "arguments":{"data":"final","type":"text","created_at":"2026-07-17"}, "result":"550e8400-e29b-41d4-a716-446655440000"}}),
     ])
     with pytest.raises(Exception, match="unknown"):
-        CodexMemoryWriteBackend(tmp_path, executor=lambda c, p: vague).write(
-            "final", source_time_start="2026-07-17", source_time_end="")
+        parse(vague, statement="final", expected_created_at="2026-07-17")
 
     failed_output = {"structured_content":{"result":json.dumps({
         "ok":False, "episode_uuid":"episode-failed", "processing_status":"failed",
         "last_error":"backend rejected"})}}
     failed = success.replace(json.dumps(output), json.dumps(failed_output))
     with pytest.raises(RuntimeError, match="backend rejected"):
-        CodexMemoryWriteBackend(tmp_path, executor=lambda c, p: failed).write(
-            "final", source_time_start="2026-07-17", source_time_end="")
+        parse(failed, statement="final", expected_created_at="2026-07-17")
 
     preview = success.replace('"tool": "memory_write"', '"tool": "memory_write_preview"')
     with pytest.raises(Exception, match="expected one tool call"):
-        CodexMemoryWriteBackend(tmp_path, executor=lambda c, p: preview).write(
-            "final", source_time_start="2026-07-17", source_time_end="")
+        parse(preview, statement="final", expected_created_at="2026-07-17")
 
 
 def test_codex_extraction_runner_parses_batch_envelope_and_forbids_write(tmp_path):
@@ -934,9 +1031,9 @@ def test_real_codex_lifecycle_counts_completed_write_once_without_call_id(tmp_pa
         json.dumps({"type": "item.started", "item": call}),
         json.dumps({"type": "item.completed", "item": {**call, "result": tool_result}}),
     ])
-    backend = CodexMemoryWriteBackend(tmp_path, executor=lambda command, prompt: raw)
-    assert backend.write(
-        "final", source_time_start="2026-07-17", source_time_end="") == "episode-real"
+    assert CodexMemoryWriteBackend._memory_id_from_audit(
+        raw, statement="final", expected_created_at="2026-07-17"
+    ) == "episode-real"
 
 
 def test_recall_matcher_uses_one_exact_query_per_candidate(tmp_path):
@@ -996,7 +1093,7 @@ def test_recall_matcher_rejects_unbounded_candidate_count(tmp_path):
         ).match([candidate(f"fact {index}", category="fact") for index in range(101)])
 
 
-def test_memory_only_recall_and_write_do_not_disable_principal_mcp_tools(tmp_path, monkeypatch):
+def test_memory_recall_does_not_emit_unconfigured_principal_server(tmp_path, monkeypatch):
     recall_final = {"matches": [{"statement": "fact", "relation": "none",
                                   "memory_id": "", "evidence": "",
                                   "merged_statement": ""}]}
@@ -1016,19 +1113,6 @@ def test_memory_only_recall_and_write_do_not_disable_principal_mcp_tools(tmp_pat
     recall_matcher(tmp_path, recall_execute).match([
         candidate("fact", category="fact")])
 
-    write_result = {"structured_content": {"result": json.dumps({
-        "ok": True, "episode_uuid": "episode-1", "processing_status": "completed"})}}
-    write_raw = json.dumps({"type": "item.completed", "item": {
-        "type": "mcp_tool_call", "tool": "memory_write",
-        "arguments": {"data": "final", "type": "text", "created_at": "2026-07-17"},
-        "result": write_result}})
-
-    def write_execute(command, prompt):
-        commands.append(command)
-        return write_raw
-
-    CodexMemoryWriteBackend(tmp_path, executor=write_execute).write(
-        "final", source_time_start="2026-07-17", source_time_end="")
     assert all("mcp_servers.exa.enabled=false" not in command for command in commands)
 
 

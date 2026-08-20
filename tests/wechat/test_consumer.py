@@ -1,12 +1,12 @@
-import pytest
 from datetime import datetime, timedelta, timezone
 
-from app.store import AutoReplyStore
+import pytest
+
 from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.dingtalk_models import CodexAction, CodexDecision
-from app.wechat.models import WechatAccount
+from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.wechat.consumer import WechatReplyConsumer, WechatTaskProcessingError
-from app.store import AgentRunLeaseLostError
+from app.wechat.models import WechatAccount
 
 
 class FakeCodexRunner:
@@ -14,8 +14,9 @@ class FakeCodexRunner:
         self.decision = None
         self.prompts: list[str] = []
 
-    def decide(self, prompt, session_id, image_paths=None):
+    def decide(self, prompt, session_id, image_paths=None, *, run_id=None):
         self.prompts.append(prompt)
+        assert run_id is not None
         return self.decision
 
 

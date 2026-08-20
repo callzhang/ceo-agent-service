@@ -4773,6 +4773,9 @@ class AutoReplyStore:
         *,
         session_mode: str | RuntimeAttemptSessionMode = RuntimeAttemptSessionMode.FRESH,
         source_session_id: str = "",
+        attempt_purpose: str = "normal",
+        validation_retry_policy_id: str = "",
+        validation_result_schema_id: str = "",
     ) -> AgentRuntimeAttempt:
         if agent_run_id <= 0:
             raise ValueError("agent_run_id must be positive")
@@ -4786,6 +4789,9 @@ class AutoReplyStore:
             model=model,
             session_mode=session_mode,
             source_session_id=source_session_id,
+            attempt_purpose=attempt_purpose,
+            validation_retry_policy_id=validation_retry_policy_id,
+            validation_result_schema_id=validation_result_schema_id,
         )
 
     def claim_runtime_operation_attempt(

@@ -1,26 +1,33 @@
+from __future__ import annotations
+
 import json
+import os
 import re
 import shlex
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from app.agent_runtime_config import load_runtime_config
+from app.codex_failure import (
+    CODEX_PROVIDER_AUTH_FAILED,
+    classify_codex_process_failure,
+)
 from app.codex_history import (
     count_codex_session_lines,
     extract_codex_audit_events_from_session,
     find_codex_session_path,
 )
-from app.codex_failure import (
-    CODEX_PROVIDER_AUTH_FAILED,
-    classify_codex_process_failure,
-)
-from app.codex_runner import CodexRunner
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.config import assistant_signature, forbidden_path_prefixes
 from app.dingtalk_models import CodexAction, CodexDecision
 from app.process_runner import run_process_with_idle_timeout
+
+if TYPE_CHECKING:
+    from app.agent_runtime_router import RoutedCodexExecution
 
 
 SIGNATURE = assistant_signature()
@@ -44,6 +51,9 @@ SECRET_PATTERNS = (
     re.compile(r"appkey=[^\s]+", re.IGNORECASE),
     re.compile(r"cookie[:=][^\s]+", re.IGNORECASE),
     re.compile(r"oauth[_-]?code=[^\s&]+", re.IGNORECASE),
+)
+DECISION_RUNTIME_CAPABILITIES = frozenset(
+    {"structured_output", "consumer_read_only_enforcement"}
 )
 
 
@@ -658,11 +668,35 @@ class CodexDecisionRunner:
         use_approval_bypass: bool = True,
         developer_instructions: str | None = None,
         command_mutator: Callable[[list[str]], None] | None = None,
+        store=None,
+        routed_execution: RoutedCodexExecution | None = None,
     ):
         if approval_policy not in {"untrusted", "never"}:
             raise ValueError("unsupported approval policy")
-        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
+        self.workspace = workspace
+        self.codex_bin = codex_bin
+        self._legacy_adapter = None
+        if executor is not None:
+            runtime_config = load_runtime_config(os.environ)
+            self._legacy_adapter = CodexRuntimeAdapter(
+                workspace, runtime_config, codex_bin=codex_bin
+            )
         self.executor = executor or self._subprocess_executor
+        self.routed_execution = routed_execution
+        if self.routed_execution is None and executor is None:
+            if store is None:
+                raise ValueError("store is required for production decision routing")
+            from app.agent_runtime_production import (
+                build_production_routed_codex_execution,
+            )
+
+            self.routed_execution = build_production_routed_codex_execution(
+                store=store,
+                workspace=workspace,
+                codex_bin=codex_bin,
+                total_timeout_seconds=timeout_seconds,
+                idle_timeout_seconds=idle_timeout_seconds,
+            )
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
         self.codex_home = codex_home
@@ -680,7 +714,15 @@ class CodexDecisionRunner:
         prompt: str,
         session_id: str | None,
         image_paths: list[Path] | None = None,
+        *,
+        run_id: int | None = None,
     ) -> CodexDecision:
+        if self.routed_execution is not None:
+            if run_id is None or run_id <= 0:
+                raise ValueError("persisted agent run is required")
+            return self._decide_routed(
+                prompt, run_id=run_id, image_paths=image_paths or []
+            )
         raw_outputs: list[str] = []
         self.last_audit_tool_events = []
         self.last_session_id = session_id
@@ -765,13 +807,92 @@ class CodexDecisionRunner:
                     macos_notify=True,
                 )
 
+    def _decide_routed(
+        self, prompt: str, *, run_id: int, image_paths: list[Path]
+    ) -> CodexDecision:
+        from app.agent_runtime_router import (
+            RoutedCodexExecutionError,
+            RoutedResultCodec,
+            RoutedResultValidationError,
+            RoutedResultValidationRetry,
+        )
+
+        observed_raw = ""
+
+        def parse(raw: str) -> str:
+            nonlocal observed_raw
+            observed_raw = raw
+            try:
+                decision = parse_codex_json(raw, allow_legacy=False)
+                self._validate_decision(decision)
+            except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+                raise RoutedResultValidationError("invalid AgentEnvelope result") from exc
+            return decision.model_dump_json()
+
+        try:
+            result = self.routed_execution.execute(
+                workload_kind="agent_run",
+                workload_key=str(run_id),
+                prompt=prompt,
+                command_factory=self._routed_command_factory(image_paths),
+                parser=parse,
+                result_codec=RoutedResultCodec.text(schema_id="codex_decision.v1"),
+                required_capabilities=DECISION_RUNTIME_CAPABILITIES,
+                result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
+                    correction_prompt=lambda _prompt, _error: (
+                        "Resume the same decision turn. Output one valid AgentEnvelope "
+                        "JSON object only. Reply actions require non-empty text and all "
+                        "non-error decisions require a non-empty audit summary."
+                    )
+                ),
+            )
+        except RoutedCodexExecutionError as exc:
+            return CodexDecision(
+                action=CodexAction.STOP_WITH_ERROR,
+                reason=exc.failure_code or exc.code,
+                audit_summary=exc.failure_code or exc.code,
+                external_dependency_failed=exc.retryable_external_dependency,
+                failure_code=exc.failure_code,
+            )
+        self.last_session_id = result.session_id
+        self.last_transcript_start_line = result.transcript_start
+        self.last_transcript_end_line = result.transcript_end
+        session_events = extract_codex_audit_events_from_session(
+            result.session_id,
+            codex_home=self.codex_home,
+            start_line=result.transcript_start,
+            end_line=result.transcript_end,
+        )
+        self.last_audit_tool_events = session_events or extract_codex_audit_events(
+            observed_raw
+        )
+        return self._finalize_decision(
+            CodexDecision.model_validate_json(result.value),
+            [observed_raw] if observed_raw else [],
+            remember_events=False,
+        )
+
+    def _routed_command_factory(self, image_paths: list[Path]):
+        from app.agent_runtime_router import ApprovedCodexCommandFactory
+
+        return ApprovedCodexCommandFactory.read_only_without_tools(
+            developer_instructions=(
+                self.developer_instructions
+                or "Produce exactly one read-only AgentEnvelope decision."
+            ),
+            image_paths=image_paths,
+        )
+
     def _finalize_decision(
         self,
         decision: CodexDecision,
         raw_outputs: list[str],
+        *,
+        remember_events: bool = True,
     ) -> CodexDecision:
         self._validate_decision(decision)
-        self._remember_audit_tool_events(raw_outputs)
+        if remember_events:
+            self._remember_audit_tool_events(raw_outputs)
         failed_command = _failed_dws_transient_read_command(
             self.last_audit_tool_events
         )
@@ -805,10 +926,16 @@ class CodexDecisionRunner:
         *,
         image_paths: list[Path] | None = None,
     ) -> list[str]:
-        command = self.runner.build_command(
-            prompt,
-            session_id,
+        if self._legacy_adapter is None:
+            raise RuntimeError("legacy command path is unavailable")
+        route = self._legacy_adapter.config.routes[0]
+        command = self._legacy_adapter.build_command(
+            route=route,
+            prompt=prompt,
+            session_id=session_id,
             image_paths=image_paths,
+            output_schema_path=None,
+            use_output_schema=False,
             approval_policy=self.approval_policy,
             developer_instructions=self.developer_instructions,
             use_approval_bypass=self.use_approval_bypass,
@@ -892,10 +1019,12 @@ class CodexDecisionRunner:
             raise ValueError("reply_text is required for reply actions")
 
     def _subprocess_executor(self, command: list[str], prompt: str) -> str:
+        if self._legacy_adapter is None:
+            raise RuntimeError("direct subprocess execution is not available")
         completed = run_process_with_idle_timeout(
             command,
             prompt=prompt,
-            env=self.runner.build_env(),
+            env=self._legacy_adapter.build_env(self._legacy_adapter.config.routes[0]),
             total_timeout_seconds=self.timeout_seconds,
             idle_timeout_seconds=self.idle_timeout_seconds,
         )

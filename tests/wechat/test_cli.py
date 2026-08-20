@@ -259,7 +259,7 @@ def test_produce_once_builds_direction_aware_reader(tmp_path, monkeypatch):
 
 
 def test_consume_once_builds_direction_aware_reader(tmp_path, monkeypatch):
-    from app import codex_decision
+    from app.wechat import decision_runner
 
     db = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db)
@@ -270,7 +270,9 @@ def test_consume_once_builds_direction_aware_reader(tmp_path, monkeypatch):
     reader = object()
     built_with = []
     captured = []
-    monkeypatch.setattr(codex_decision, "CodexDecisionRunner", lambda **kwargs: object())
+    monkeypatch.setattr(
+        decision_runner, "WechatDecisionRunner", lambda **kwargs: object()
+    )
     monkeypatch.setattr(
         cli, "_reader",
         lambda: built_with.append(True) or reader,

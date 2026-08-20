@@ -8323,7 +8323,7 @@ def create_audit_app(
         from app import config as _config
         from app.wechat.memory import CodexMemoryWriteBackend, WechatMemoryWriter
         return WechatMemoryWriter(
-            store, CodexMemoryWriteBackend(_config.workspace_path())
+            store, CodexMemoryWriteBackend(_config.workspace_path(), store)
         )
 
     register_wechat_memory_review_routes(
