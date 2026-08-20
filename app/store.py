@@ -15515,7 +15515,7 @@ class AutoReplyStore:
         keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             cursor = db.execute(
                 f"insert into work_updates ({columns}) values ({placeholders})",
                 [filtered[key] for key in keys],
