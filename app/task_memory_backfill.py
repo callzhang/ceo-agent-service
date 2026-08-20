@@ -24,7 +24,11 @@ class ProjectMemoryContextCodexRunner:
         routed_execution=None,
     ):
         from app.agent_runtime_config import load_runtime_config
-        from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+        from app.agent_runtime_router import (
+            AgentRuntimeRouter,
+            RoutedCodexExecution,
+            local_codex_session_effect_probe,
+        )
         from app.codex_decision import (
             extract_codex_audit_events,
         )
@@ -50,6 +54,7 @@ class ProjectMemoryContextCodexRunner:
                     snapshots={},
                 ),
                 "adapter": adapter,
+                "session_effect_probe": local_codex_session_effect_probe(),
                 "total_timeout_seconds": timeout_seconds,
                 "idle_timeout_seconds": idle_timeout_seconds,
             }

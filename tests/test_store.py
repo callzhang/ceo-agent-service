@@ -646,6 +646,58 @@ def test_runtime_attempt_requires_parent_to_be_in_runnable_state(tmp_path: Path)
         )
 
 
+def test_runtime_attempt_correction_lineage_is_sealed_and_immutable(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-correction-lineage.sqlite3")
+    _seed_runtime_operation_parent(store, "structured", "91")
+
+    normal = store.claim_runtime_operation_attempt(
+        "structured", "91", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+    assert (
+        normal.attempt_purpose,
+        normal.validation_retry_policy_id,
+        normal.validation_result_schema_id,
+    ) == ("normal", "", "")
+    store.fail_agent_runtime_attempt(
+        normal.id,
+        "result",
+        "runtime_result_validation_failed",
+        False,
+    )
+    correction = store.claim_runtime_operation_attempt(
+        "structured",
+        "91",
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+        attempt_purpose="result_validation_correction",
+        validation_retry_policy_id="result_validation_retry.v1:test",
+        validation_result_schema_id="test.integer.v1",
+    )
+    assert correction.attempt_purpose == "result_validation_correction"
+
+    with store._connect() as db, pytest.raises(
+        sqlite3.IntegrityError, match="lineage is immutable"
+    ):
+        db.execute(
+            "update agent_runtime_attempts set attempt_purpose='normal', "
+            "validation_retry_policy_id='', validation_result_schema_id='' "
+            "where id=?",
+            (correction.id,),
+        )
+    with pytest.raises(ValueError, match="cannot carry correction lineage"):
+        store.claim_runtime_operation_attempt(
+            "structured",
+            "91",
+            "codex_api",
+            "codex_cli",
+            "service_api",
+            "gpt-5.5",
+            validation_retry_policy_id="forged",
+        )
+
+
 def test_task_memory_backfill_parent_is_work_project_not_summary_input(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task-memory-parent.sqlite3")
     with store._connect() as db:
@@ -9037,7 +9089,13 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
         db.execute("drop index idx_runtime_attempt_active_lease")
         db.execute("drop trigger trg_runtime_attempt_generalized_lease_insert")
         db.execute("drop trigger trg_runtime_attempt_generalized_lease_update")
+        db.execute("drop trigger trg_runtime_attempt_lineage_insert")
+        db.execute("drop trigger trg_runtime_attempt_lineage_update")
+        db.execute("drop trigger trg_runtime_attempt_lineage_immutable")
         for column in (
+            "validation_result_schema_id",
+            "validation_retry_policy_id",
+            "attempt_purpose",
             "result_envelope_json",
             "result_schema_id",
             "lease_expires_at",
@@ -9062,6 +9120,9 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
     assert {
         "lease_owner",
         "lease_expires_at",
+        "attempt_purpose",
+        "validation_retry_policy_id",
+        "validation_result_schema_id",
         "result_schema_id",
         "result_envelope_json",
     } <= columns

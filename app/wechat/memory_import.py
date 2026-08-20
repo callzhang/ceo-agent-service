@@ -55,7 +55,11 @@ def _build_routed_execution(
     idle_timeout_seconds: int,
 ):
     from app.agent_runtime_config import load_runtime_config
-    from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+    from app.agent_runtime_router import (
+        AgentRuntimeRouter,
+        RoutedCodexExecution,
+        local_codex_session_effect_probe,
+    )
     from app.codex_runtime_adapter import CodexRuntimeAdapter
 
     runtime_config = load_runtime_config(os.environ)
@@ -68,6 +72,7 @@ def _build_routed_execution(
             snapshots={},
         ),
         adapter=CodexRuntimeAdapter(workspace, runtime_config, codex_bin=codex_bin),
+        session_effect_probe=local_codex_session_effect_probe(),
         total_timeout_seconds=timeout_seconds,
         idle_timeout_seconds=idle_timeout_seconds,
     )
@@ -247,7 +252,7 @@ class CodexMemoryExtractionRunner:
                 workload_kind="memory",
                 workload_key=f"wechat_memory_import_job:{job_id}",
                 prompt=prompt,
-                command_factory=ApprovedCodexCommandFactory.read_only(
+                command_factory=ApprovedCodexCommandFactory.read_only_without_tools(
                     developer_instructions=(
                         "Extract only from the supplied bounded message batch. "
                         "Do not call tools or perform any external action."
@@ -380,7 +385,7 @@ class CodexMemoryRecallMatcher:
                 workload_kind="memory",
                 workload_key=f"wechat_memory_import_job:{job_id}",
                 prompt=prompt,
-                command_factory=ApprovedCodexCommandFactory.read_only(
+                command_factory=ApprovedCodexCommandFactory.read_only_memory_recall(
                     developer_instructions=(
                         "Call only memory_recall exactly once with the supplied "
                         "statement and return the structured deduplication result."

@@ -1,4 +1,5 @@
 import json
+import threading
 from datetime import datetime
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -492,6 +493,39 @@ def test_force_run_publishes_verified_document_then_group_summary(tmp_path):
         if "评分附录" in name
     } == {"doc-main"}
     assert store.state["weekly_okr_report:last_success_date"] == "2026-07-30"
+
+
+def test_report_orchestration_returns_typed_wait_result_for_in_progress(tmp_path):
+    store = FakeStore()
+    gateway = FakeGateway(managers())
+
+    class InProgressAgent:
+        def analyze(self, **_kwargs):
+            raise weekly_okr_report_module.WeeklyOkrAnalysisInProgress(
+                job_id=17,
+                manager_user_id="u1",
+            )
+
+    result = run_weekly_okr_report(
+        store=store,
+        gateway=gateway,
+        source=FakeSource(),
+        agent=InProgressAgent(),
+        workspace=tmp_path,
+        now=datetime(2026, 7, 30, 12, tzinfo=SHANGHAI),
+        force=True,
+        deliver=True,
+        period_label="2026 Q3",
+    )
+
+    assert result == WeeklyOkrReportResult(
+        status="analysis_in_progress",
+        report_date="2026-07-30",
+        period_label="2026 Q3",
+        manager_count=2,
+    )
+    assert gateway.published == []
+    assert gateway.sent == []
 
 
 def test_refresh_company_okr_archive_writes_raw_and_latest_index(tmp_path):
@@ -1058,6 +1092,99 @@ def test_codex_agent_reclaims_completed_job_when_cache_artifact_is_missing(tmp_p
         jobs = db.execute("select id, status from weekly_okr_analysis_jobs").fetchall()
     assert len(jobs) == 1
     assert jobs[0]["status"] == "completed"
+
+
+def test_codex_agent_in_progress_non_owner_never_spawns_or_terminalizes(tmp_path):
+    store = AutoReplyStore(tmp_path / "weekly-concurrent.sqlite3")
+    manager = managers()[0]
+    source = FakeSource()
+    source_path = tmp_path / "live-concurrent.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "managers": [
+                    {
+                        "manager": {"name": manager.name, "userId": manager.user_id},
+                        "liveOkr": source.fetch_user_okr(
+                            user_id=manager.user_id,
+                            period_label="2026 Q3",
+                        ),
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    first_results = []
+    first_errors = []
+
+    class OwnerRouted:
+        calls = 0
+
+        def execute(self, **kwargs):
+            self.calls += 1
+            entered.set()
+            assert release.wait(timeout=5)
+            raw = json.dumps(_weekly_payload_for(manager.name), ensure_ascii=False)
+            return SimpleNamespace(value=kwargs["parser"](raw), session_id="owner")
+
+    class NonOwnerRouted:
+        calls = 0
+
+        def execute(self, **_kwargs):
+            self.calls += 1
+            raise AssertionError("non-owner must not spawn a routed model child")
+
+    owner_routed = OwnerRouted()
+    non_owner_routed = NonOwnerRouted()
+
+    def analyze(routed):
+        return CodexWeeklyOkrAgent(
+            workspace=tmp_path,
+            store=store,
+            routed_execution=routed,
+        ).analyze(
+            source_path=source_path,
+            managers=[manager],
+            period_label="2026 Q3",
+            week_start=datetime(2026, 8, 17).date(),
+            week_end=datetime(2026, 8, 23).date(),
+        )
+
+    def run_owner():
+        try:
+            first_results.append(analyze(owner_routed))
+        except Exception as exc:  # noqa: BLE001 - surfaced after thread join
+            first_errors.append(exc)
+
+    thread = threading.Thread(target=run_owner)
+    thread.start()
+    assert entered.wait(timeout=5)
+
+    with pytest.raises(
+        weekly_okr_report_module.WeeklyOkrAnalysisInProgress
+    ) as exc_info:
+        analyze(non_owner_routed)
+    assert exc_info.value.job_id > 0
+    assert non_owner_routed.calls == 0
+    with store._connect() as db:
+        assert db.execute(
+            "select status from weekly_okr_analysis_jobs"
+        ).fetchone()["status"] == "running"
+
+    release.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert first_errors == []
+    assert len(first_results) == 1
+    assert owner_routed.calls == 1
+    with store._connect() as db:
+        assert db.execute(
+            "select status from weekly_okr_analysis_jobs"
+        ).fetchone()["status"] == "completed"
 
 
 def test_codex_agent_retries_incomplete_kr_coverage_once(tmp_path):

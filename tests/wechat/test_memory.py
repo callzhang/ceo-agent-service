@@ -63,6 +63,38 @@ def recall_matcher(tmp_path, callback):
     )
 
 
+def built_factory_command(factory, tmp_path):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir(exist_ok=True)
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.foreign_user]\ncommand = 'foreign-mcp'\n",
+        encoding="utf-8",
+    )
+
+    class Adapter:
+        def build_command(self, **_kwargs):
+            return [
+                "codex",
+                "exec",
+                "-c",
+                'mcp_servers.foreign_route.command="foreign-route-mcp"',
+                "--cd",
+                str(tmp_path),
+                "-",
+            ]
+
+        def build_env(self, _route):
+            return {"CODEX_HOME": str(codex_home)}
+
+    command, _env = factory.build(
+        adapter=Adapter(),
+        route=SimpleNamespace(name="codex_oauth"),
+        prompt="bounded",
+        session_id=None,
+    )
+    return command
+
+
 @pytest.fixture
 def store(tmp_path):
     return AutoReplyStore(tmp_path / "w.sqlite3")
@@ -799,6 +831,13 @@ def test_codex_extraction_creates_parent_before_routed_read_only_invocation(
     assert calls[0]["conversation_id"] is None
     assert calls[0]["required_capabilities"] == frozenset({"structured_output"})
     assert calls[0]["command_factory"]._approved_policy.effect_mode == "read_only"
+    command = built_factory_command(calls[0]["command_factory"], tmp_path)
+    assert "tools.enabled_tools=[]" in command
+    assert 'web_search="disabled"' in command
+    assert "mcp_servers.foreign_route.enabled=false" in command
+    assert "mcp_servers.foreign_user.enabled=false" in command
+    assert "mcp_servers.memory_connector.enabled=false" in command
+    assert not any("memory_connector.enabled_tools" in item for item in command)
     with store._connect() as db:
         job = db.execute("select status from wechat_memory_import_jobs").fetchone()
     assert job["status"] == "completed"
@@ -877,6 +916,17 @@ def test_recall_matcher_uses_one_exact_query_per_candidate(tmp_path):
     workload_keys = [call["workload_key"] for call in matcher.routed_execution.calls]
     assert len(set(workload_keys)) == 2
     assert all(key.startswith("wechat_memory_import_job:") for key in workload_keys)
+    command = built_factory_command(
+        matcher.routed_execution.calls[0]["command_factory"],
+        tmp_path,
+    )
+    assert "tools.enabled_tools=[]" in command
+    assert 'web_search="disabled"' in command
+    assert "mcp_servers.foreign_route.enabled=false" in command
+    assert "mcp_servers.foreign_user.enabled=false" in command
+    assert "mcp_servers.memory_connector.enabled=true" in command
+    assert 'mcp_servers.memory_connector.enabled_tools=["memory_recall"]' in command
+    assert 'mcp_servers.memory_connector.disabled_tools=["memory_write"]' in command
     with matcher.store._connect() as db:
         jobs = db.execute(
             "select status from wechat_memory_import_jobs order by id"

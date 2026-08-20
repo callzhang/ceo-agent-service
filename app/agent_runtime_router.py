@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import tomllib
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -27,7 +30,7 @@ from app.agent_runtime_contracts import (
     RuntimeRoute,
 )
 from app.codex_decision import extract_codex_session_id
-from app.codex_history import count_codex_session_lines
+from app.codex_history import count_codex_session_lines, find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.native_cli_metadata import NativeCliMetadataClassifier
@@ -136,10 +139,30 @@ class RoutedResultValidationRetry:
             f"{self.correction_instructions}"
         )
 
+    @property
+    def policy_id(self) -> str:
+        payload = json.dumps(
+            {
+                "contract": "result_validation_retry.v1",
+                "correction_instructions": self.correction_instructions,
+                "resume_same_session": self.resume_same_session,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return f"result_validation_retry.v1:{digest}"
+
 
 class ExecutionEffectMode(StrEnum):
     READ_ONLY = "read_only"
     EFFECTFUL = "effectful"
+
+
+class _ReadOnlyCommandIsolation(StrEnum):
+    STANDARD = "standard"
+    NO_TOOLS = "no_tools"
+    MEMORY_RECALL_ONLY = "memory_recall_only"
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +189,7 @@ class ApprovedCodexCommandFactory:
     _output_schema_path: Path | None
     _use_output_schema: bool
     _image_paths: tuple[Path, ...]
+    _command_isolation: _ReadOnlyCommandIsolation
 
     def __init__(
         self,
@@ -175,6 +199,7 @@ class ApprovedCodexCommandFactory:
         output_schema_path: Path | None,
         use_output_schema: bool,
         image_paths: tuple[Path, ...],
+        command_isolation: _ReadOnlyCommandIsolation,
         seal: object,
     ) -> None:
         if seal is not _APPROVED_COMMAND_FACTORY_SEAL:
@@ -187,6 +212,7 @@ class ApprovedCodexCommandFactory:
         object.__setattr__(self, "_output_schema_path", output_schema_path)
         object.__setattr__(self, "_use_output_schema", use_output_schema)
         object.__setattr__(self, "_image_paths", image_paths)
+        object.__setattr__(self, "_command_isolation", command_isolation)
 
     @classmethod
     def read_only(
@@ -203,6 +229,45 @@ class ApprovedCodexCommandFactory:
             output_schema_path=output_schema_path,
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
+            command_isolation=_ReadOnlyCommandIsolation.STANDARD,
+            seal=_APPROVED_COMMAND_FACTORY_SEAL,
+        )
+
+    @classmethod
+    def read_only_without_tools(
+        cls,
+        *,
+        developer_instructions: str,
+        output_schema_path: Path | None = None,
+        use_output_schema: bool = False,
+        image_paths: Sequence[Path] = (),
+    ) -> ApprovedCodexCommandFactory:
+        return cls(
+            effect_mode=ExecutionEffectMode.READ_ONLY,
+            developer_instructions=developer_instructions,
+            output_schema_path=output_schema_path,
+            use_output_schema=use_output_schema,
+            image_paths=tuple(image_paths),
+            command_isolation=_ReadOnlyCommandIsolation.NO_TOOLS,
+            seal=_APPROVED_COMMAND_FACTORY_SEAL,
+        )
+
+    @classmethod
+    def read_only_memory_recall(
+        cls,
+        *,
+        developer_instructions: str,
+        output_schema_path: Path | None = None,
+        use_output_schema: bool = False,
+        image_paths: Sequence[Path] = (),
+    ) -> ApprovedCodexCommandFactory:
+        return cls(
+            effect_mode=ExecutionEffectMode.READ_ONLY,
+            developer_instructions=developer_instructions,
+            output_schema_path=output_schema_path,
+            use_output_schema=use_output_schema,
+            image_paths=tuple(image_paths),
+            command_isolation=_ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY,
             seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
 
@@ -221,6 +286,7 @@ class ApprovedCodexCommandFactory:
             output_schema_path=output_schema_path,
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
+            command_isolation=_ReadOnlyCommandIsolation.STANDARD,
             seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
 
@@ -249,7 +315,81 @@ class ApprovedCodexCommandFactory:
             use_approval_bypass=not read_only,
             sandbox_mode="read-only" if read_only else None,
         )
-        return command, adapter.build_env(route)
+        env = adapter.build_env(route)
+        if self._command_isolation is not _ReadOnlyCommandIsolation.STANDARD:
+            _apply_read_only_command_isolation(
+                command,
+                env=env,
+                isolation=self._command_isolation,
+            )
+        return command, env
+
+
+def _apply_read_only_command_isolation(
+    command: list[str],
+    *,
+    env: Mapping[str, str],
+    isolation: _ReadOnlyCommandIsolation,
+) -> None:
+    server_names = _configured_mcp_server_names(command, env=env)
+    options = [
+        "-c",
+        "tools.enabled_tools=[]",
+        "-c",
+        'web_search="disabled"',
+    ]
+    for server_name in server_names:
+        if (
+            isolation is _ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY
+            and server_name == "memory_connector"
+        ):
+            continue
+        options.extend(["-c", f"mcp_servers.{server_name}.enabled=false"])
+    if isolation is _ReadOnlyCommandIsolation.NO_TOOLS and (
+        "memory_connector" not in server_names
+    ):
+        options.extend(["-c", "mcp_servers.memory_connector.enabled=false"])
+    elif isolation is _ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY:
+        options.extend(
+            [
+                "-c",
+                "mcp_servers.memory_connector.enabled=true",
+                "-c",
+                'mcp_servers.memory_connector.enabled_tools=["memory_recall"]',
+                "-c",
+                'mcp_servers.memory_connector.disabled_tools=["memory_write"]',
+            ]
+        )
+    insertion_index = len(command) - 1
+    if command[1:3] == ["exec", "resume"]:
+        insertion_index -= 1
+    command[insertion_index:insertion_index] = options
+
+
+def _configured_mcp_server_names(
+    command: Sequence[str], *, env: Mapping[str, str]
+) -> tuple[str, ...]:
+    names: set[str] = set()
+    for index, value in enumerate(command[:-1]):
+        if value != "-c":
+            continue
+        option = command[index + 1]
+        if option.startswith("mcp_servers."):
+            parts = option.split(".", 2)
+            if len(parts) == 3 and parts[1]:
+                names.add(parts[1])
+    codex_home_text = env.get("CODEX_HOME", os.environ.get("CODEX_HOME", "")).strip()
+    config_path = Path(codex_home_text) / "config.toml" if codex_home_text else None
+    if config_path is not None and config_path.is_file():
+        try:
+            configured = tomllib.loads(config_path.read_text(encoding="utf-8")).get(
+                "mcp_servers", {}
+            )
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise ValueError("Codex MCP configuration is not safely readable") from exc
+        if isinstance(configured, dict):
+            names.update(str(name) for name in configured if str(name).strip())
+    return tuple(sorted(names))
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -753,6 +893,9 @@ class RoutedCodexExecution:
         result_validation_retries_used = 0
         forced_retry_session_id: str | None = None
         terminal_failure: RuntimeFailure | None = None
+        next_attempt_purpose = "normal"
+        next_validation_retry_policy_id = ""
+        next_validation_result_schema_id = ""
 
         self._store.recover_expired_runtime_operation_attempt(
             workload_kind, workload_key, now=self._now()
@@ -787,6 +930,12 @@ class RoutedCodexExecution:
                 raise RoutedCodexExecutionError("runtime_effectful_replay_blocked")
             if latest.status != "failed":
                 raise RoutedCodexExecutionError("runtime_attempt_state_invalid")
+            if latest.attempt_purpose == "result_validation_correction":
+                raise RoutedCodexExecutionError(
+                    "runtime_result_validation_retry_consumed",
+                    failure_class=RuntimeFailureClass.RESULT,
+                    failure_code="runtime_result_validation_retry_consumed",
+                )
             validation_failures = sum(
                 attempt.failure_code == "runtime_result_validation_failed"
                 for attempt in existing_attempts
@@ -831,6 +980,9 @@ class RoutedCodexExecution:
                         ),
                     )
                     result_validation_retries_used = 1
+                    next_attempt_purpose = "result_validation_correction"
+                    next_validation_retry_policy_id = result_validation_retry.policy_id
+                    next_validation_result_schema_id = result_codec.schema_id
                 else:
                     decision = RuntimeRouteDecision(
                         route=None,
@@ -882,7 +1034,14 @@ class RoutedCodexExecution:
             )
         )
         active_attempt = self._claim_and_start(
-            workload_kind, workload_key, route, route_session_id, policy.effect_mode
+            workload_kind,
+            workload_key,
+            route,
+            route_session_id,
+            policy.effect_mode,
+            attempt_purpose=next_attempt_purpose,
+            validation_retry_policy_id=next_validation_retry_policy_id,
+            validation_result_schema_id=next_validation_result_schema_id,
         )
         if existing_attempts and existing_attempts[-1].status == "failed":
             previous = existing_attempts[-1]
@@ -1121,6 +1280,9 @@ class RoutedCodexExecution:
                         route,
                         successor_session_id,
                         policy.effect_mode,
+                        attempt_purpose="result_validation_correction",
+                        validation_retry_policy_id=result_validation_retry.policy_id,
+                        validation_result_schema_id=result_codec.schema_id,
                     )
                     self._finalized_step(
                         successor,
@@ -1333,6 +1495,10 @@ class RoutedCodexExecution:
         route: RuntimeRoute,
         session_id: str | None,
         effect_mode: ExecutionEffectMode,
+        *,
+        attempt_purpose: str = "normal",
+        validation_retry_policy_id: str = "",
+        validation_result_schema_id: str = "",
     ) -> AgentRuntimeAttempt:
         try:
             attempt = self._store.claim_runtime_operation_attempt(
@@ -1348,6 +1514,9 @@ class RoutedCodexExecution:
                     else RuntimeAttemptSessionMode.FRESH
                 ),
                 source_session_id=session_id or "",
+                attempt_purpose=attempt_purpose,
+                validation_retry_policy_id=validation_retry_policy_id,
+                validation_result_schema_id=validation_result_schema_id,
                 owner=self._owner,
                 lease_seconds=self._lease_seconds,
                 now=self._now(),
@@ -1463,6 +1632,115 @@ class RoutedCodexExecution:
             owner=self._owner,
             now=self._now(),
         )
+
+
+def local_codex_session_effect_probe(
+    *,
+    codex_home: Path | None = None,
+    effect_registry: McpToolEffectRegistry | None = None,
+    native_cli_classifier: NativeCliMetadataClassifier | None = None,
+) -> Callable[[str, int, int], bool | None]:
+    """Build a fail-closed probe over an exact persisted Codex transcript range."""
+
+    registry = effect_registry or McpToolEffectRegistry.default()
+    classifier = native_cli_classifier or NativeCliMetadataClassifier()
+
+    def probe(session_id: str, start_line: int, end_line: int) -> bool | None:
+        if start_line < 0 or end_line < start_line:
+            return None
+        path = find_codex_session_path(session_id, codex_home=codex_home)
+        if path is None:
+            return None
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            return None
+        if end_line > len(lines):
+            return None
+        for raw_line in lines[start_line:end_line]:
+            try:
+                payload = json.loads(raw_line)
+            except json.JSONDecodeError:
+                return None
+            item = _persisted_session_effect_item(payload)
+            if item is None:
+                continue
+            outcome = _classify_session_effect_item(
+                item,
+                effect_registry=registry,
+                native_cli_classifier=classifier,
+            )
+            if outcome is not False:
+                return outcome
+        return False
+
+    return probe
+
+
+def _persisted_session_effect_item(payload: object) -> dict[str, object] | None:
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("type") == "item.started":
+        item = payload.get("item")
+        return item if isinstance(item, dict) else None
+    if payload.get("type") != "response_item":
+        return None
+    item = payload.get("payload")
+    if not isinstance(item, dict) or item.get("type") != "function_call":
+        return None
+    name = item.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return {"type": "unknown_tool_call"}
+    arguments = item.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return {"type": "unknown_tool_call"}
+    if not isinstance(arguments, dict):
+        return {"type": "unknown_tool_call"}
+    if name.startswith("mcp__"):
+        parts = name.split("__", 2)
+        if len(parts) != 3 or not parts[1] or not parts[2]:
+            return {"type": "unknown_tool_call"}
+        return {
+            "type": "mcp_tool_call",
+            "server": parts[1],
+            "tool": parts[2],
+            "arguments": arguments,
+        }
+    if name in {"exec_command", "shell", "command_execution"}:
+        command = arguments.get("cmd") or arguments.get("command")
+        return {"type": "command_execution", "command": command}
+    return {"type": "unknown_tool_call"}
+
+
+def _classify_session_effect_item(
+    item: dict[str, object],
+    *,
+    effect_registry: McpToolEffectRegistry,
+    native_cli_classifier: NativeCliMetadataClassifier,
+) -> bool | None:
+    metadata = item.get("metadata")
+    if isinstance(metadata, dict):
+        if metadata.get("effect") == "effectful":
+            return True
+        if metadata.get("effect") == "read_only":
+            return False
+    if item.get("type") == "mcp_tool_call":
+        call = effect_registry.classify(item)
+        if call is None:
+            return None
+        return call.effect is EffectKind.EFFECTFUL
+    if item.get("type") == "command_execution":
+        try:
+            command = native_cli_classifier.classify(item)
+        except RuntimeError:
+            return None
+        if command is None or command.effect is None:
+            return None
+        return command.effect is EffectKind.EFFECTFUL
+    return None
 
 
 def _line_violates_read_only_policy(

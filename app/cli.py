@@ -966,7 +966,11 @@ def consume_once(settings: WorkerSettings) -> int:
 
 def process_work_items_command(settings: WorkerSettings) -> int:
     from app.agent_runtime_config import load_runtime_config
-    from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+    from app.agent_runtime_router import (
+        AgentRuntimeRouter,
+        RoutedCodexExecution,
+        local_codex_session_effect_probe,
+    )
     from app.codex_runtime_adapter import CodexRuntimeAdapter
     from app.task_agent import (
         TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
@@ -991,6 +995,7 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             snapshots={},
         ),
         adapter=CodexRuntimeAdapter(settings.workspace, runtime_config),
+        session_effect_probe=local_codex_session_effect_probe(),
         total_timeout_seconds=min(
             settings.task_codex_timeout_seconds,
             TASK_AGENT_MAX_TIMEOUT_SECONDS,
@@ -1227,7 +1232,11 @@ def backfill_routine_process_todos_command(
 
 def process_okr_reviews_command(settings: WorkerSettings) -> int:
     from app.agent_runtime_config import load_runtime_config
-    from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+    from app.agent_runtime_router import (
+        AgentRuntimeRouter,
+        RoutedCodexExecution,
+        local_codex_session_effect_probe,
+    )
     from app.codex_runtime_adapter import CodexRuntimeAdapter
     from app.okr_review import process_okr_review_request
     from app.structured_agent import AgentSpec, StructuredCodexRunner
@@ -1272,6 +1281,7 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
             snapshots={},
         ),
         adapter=CodexRuntimeAdapter(settings.workspace, runtime_config),
+        session_effect_probe=local_codex_session_effect_probe(),
         total_timeout_seconds=max(
             settings.codex_timeout_seconds, OKR_REVIEW_CODEX_TIMEOUT_SECONDS
         ),
@@ -2377,7 +2387,11 @@ def run_meeting_consumer_loop(
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     from app.agent_runtime_config import load_runtime_config
-    from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+    from app.agent_runtime_router import (
+        AgentRuntimeRouter,
+        RoutedCodexExecution,
+        local_codex_session_effect_probe,
+    )
     from app.codex_runtime_adapter import CodexRuntimeAdapter
 
     store = AutoReplyStore(settings.db_path)
@@ -2392,6 +2406,7 @@ def run_meeting_consumer_loop(
             snapshots={},
         ),
         adapter=CodexRuntimeAdapter(settings.workspace, runtime_config),
+        session_effect_probe=local_codex_session_effect_probe(),
         total_timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )

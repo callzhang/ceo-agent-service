@@ -129,6 +129,15 @@ class WeeklyOkrReportResult:
     send_state: str = ""
 
 
+class WeeklyOkrAnalysisInProgress(RuntimeError):
+    """The exact manager analysis job is owned by another invocation."""
+
+    def __init__(self, *, job_id: int, manager_user_id: str) -> None:
+        self.job_id = job_id
+        self.manager_user_id = manager_user_id
+        super().__init__("weekly_okr_analysis_in_progress")
+
+
 @dataclass(frozen=True)
 class CompanyOkrArchiveResult:
     status: str
@@ -214,7 +223,11 @@ class CodexWeeklyOkrAgent:
         routed_execution=None,
     ):
         from app.agent_runtime_config import load_runtime_config
-        from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+        from app.agent_runtime_router import (
+            AgentRuntimeRouter,
+            RoutedCodexExecution,
+            local_codex_session_effect_probe,
+        )
         from app.codex_runtime_adapter import CodexRuntimeAdapter
 
         if routed_execution is None:
@@ -231,6 +244,7 @@ class CodexWeeklyOkrAgent:
                     snapshots={},
                 ),
                 "adapter": adapter,
+                "session_effect_probe": local_codex_session_effect_probe(),
                 "total_timeout_seconds": timeout_seconds,
                 "idle_timeout_seconds": idle_timeout_seconds,
             }
@@ -365,6 +379,11 @@ class CodexWeeklyOkrAgent:
                     **job_values,
                 )
                 owns_job = claim.outcome == "claimed"
+        if claim.outcome == "in_progress":
+            raise WeeklyOkrAnalysisInProgress(
+                job_id=claim.job_id,
+                manager_user_id=manager_user_id,
+            )
         prompt = build_weekly_okr_prompt(
             source_path=source_path,
             managers=[manager],
@@ -1049,13 +1068,21 @@ def run_weekly_okr_report(
         encoding="utf-8",
     )
 
-    analysis = agent.analyze(
-        source_path=raw_path,
-        managers=roster.managers,
-        period_label=resolved_period,
-        week_start=week_start,
-        week_end=week_end,
-    )
+    try:
+        analysis = agent.analyze(
+            source_path=raw_path,
+            managers=roster.managers,
+            period_label=resolved_period,
+            week_start=week_start,
+            week_end=week_end,
+        )
+    except WeeklyOkrAnalysisInProgress:
+        return WeeklyOkrReportResult(
+            status="analysis_in_progress",
+            report_date=report_date,
+            period_label=resolved_period,
+            manager_count=len(roster.managers),
+        )
     _validate_manager_coverage(analysis, roster.managers)
     _validate_kr_coverage(analysis, manager_payloads)
     report_title = (

@@ -102,6 +102,9 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "agent_runtime_attempts": (
         "session_mode",
         "source_session_id",
+        "attempt_purpose",
+        "validation_retry_policy_id",
+        "validation_result_schema_id",
         "lease_owner",
         "lease_expires_at",
         "result_schema_id",
@@ -133,6 +136,9 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_session_evidence_trim_update",
     "trg_runtime_attempt_generalized_lease_insert",
     "trg_runtime_attempt_generalized_lease_update",
+    "trg_runtime_attempt_lineage_insert",
+    "trg_runtime_attempt_lineage_update",
+    "trg_runtime_attempt_lineage_immutable",
 )
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RUNTIME_RESULT_ENVELOPE_BYTES = 64 * 1024
@@ -502,6 +508,9 @@ class AgentRuntimeAttempt(BaseModel):
     model: str
     session_mode: RuntimeAttemptSessionMode = RuntimeAttemptSessionMode.FRESH
     source_session_id: str = ""
+    attempt_purpose: str = "normal"
+    validation_retry_policy_id: str = ""
+    validation_result_schema_id: str = ""
     session_id: str = ""
     status: str
     failure_class: str = ""
@@ -1196,6 +1205,12 @@ class AutoReplyStore:
                     session_mode text not null default 'fresh'
                         check(session_mode in ('fresh', 'resume')),
                     source_session_id text not null default '',
+                    attempt_purpose text not null default 'normal'
+                        check(attempt_purpose in (
+                            'normal', 'result_validation_correction'
+                        )),
+                    validation_retry_policy_id text not null default '',
+                    validation_result_schema_id text not null default '',
                     session_id text not null default '',
                     status text not null check(status in (
                         'starting', 'running', 'completed', 'failed', 'superseded'
@@ -2772,6 +2787,76 @@ class AutoReplyStore:
                     f"alter table agent_runtime_attempts add column "
                     f"{column} text not null default ''"
                 )
+        lineage_columns = {
+            "attempt_purpose": "text not null default 'normal'",
+            "validation_retry_policy_id": "text not null default ''",
+            "validation_result_schema_id": "text not null default ''",
+        }
+        for column, definition in lineage_columns.items():
+            if column not in columns:
+                db.execute(
+                    f"alter table agent_runtime_attempts add column "
+                    f"{column} {definition}"
+                )
+        db.execute(
+            "update agent_runtime_attempts set attempt_purpose='normal', "
+            "validation_retry_policy_id='', validation_result_schema_id='' "
+            "where attempt_purpose not in "
+            "('normal', 'result_validation_correction') "
+            "or (attempt_purpose='normal' and "
+            "(validation_retry_policy_id<>'' or validation_result_schema_id<>'')) "
+            "or (attempt_purpose='result_validation_correction' and "
+            "(trim(validation_retry_policy_id)='' "
+            "or trim(validation_result_schema_id)=''))"
+        )
+        db.execute("drop trigger if exists trg_runtime_attempt_lineage_insert")
+        db.execute("drop trigger if exists trg_runtime_attempt_lineage_update")
+        db.execute("drop trigger if exists trg_runtime_attempt_lineage_immutable")
+        lineage_invalid = """
+            new.attempt_purpose not in ('normal', 'result_validation_correction')
+            or (new.attempt_purpose='normal' and
+                (new.validation_retry_policy_id<>''
+                 or new.validation_result_schema_id<>''))
+            or (new.attempt_purpose='result_validation_correction' and
+                (trim(new.validation_retry_policy_id)=''
+                 or trim(new.validation_result_schema_id)=''))
+        """
+        db.execute(
+            f"""
+            create trigger trg_runtime_attempt_lineage_insert
+            before insert on agent_runtime_attempts
+            when {lineage_invalid}
+            begin
+                select raise(abort, 'invalid runtime attempt correction lineage');
+            end
+            """
+        )
+        db.execute(
+            f"""
+            create trigger trg_runtime_attempt_lineage_update
+            before update of attempt_purpose, validation_retry_policy_id,
+                             validation_result_schema_id
+            on agent_runtime_attempts
+            when {lineage_invalid}
+            begin
+                select raise(abort, 'invalid runtime attempt correction lineage');
+            end
+            """
+        )
+        db.execute(
+            """
+            create trigger trg_runtime_attempt_lineage_immutable
+            before update of attempt_purpose, validation_retry_policy_id,
+                             validation_result_schema_id
+            on agent_runtime_attempts
+            when new.attempt_purpose<>old.attempt_purpose
+              or new.validation_retry_policy_id<>old.validation_retry_policy_id
+              or new.validation_result_schema_id<>old.validation_result_schema_id
+            begin
+                select raise(abort, 'runtime attempt correction lineage is immutable');
+            end
+            """
+        )
         db.execute(
             """
             create index if not exists idx_runtime_attempt_active_lease
@@ -4463,6 +4548,9 @@ class AutoReplyStore:
         model: str,
         session_mode: str | RuntimeAttemptSessionMode,
         source_session_id: str,
+        attempt_purpose: str = "normal",
+        validation_retry_policy_id: str = "",
+        validation_result_schema_id: str = "",
         owner: str = "",
         lease_seconds: int = 0,
         now: str | datetime | None = None,
@@ -4484,6 +4572,20 @@ class AutoReplyStore:
                 source_session_id,
             )
         )
+        if attempt_purpose not in {"normal", "result_validation_correction"}:
+            raise ValueError("unsupported runtime attempt purpose")
+        if attempt_purpose == "normal":
+            if validation_retry_policy_id or validation_result_schema_id:
+                raise ValueError("normal runtime attempt cannot carry correction lineage")
+        else:
+            validation_retry_policy_id = self._require_runtime_attempt_text(
+                validation_retry_policy_id,
+                field="validation_retry_policy_id",
+            )
+            validation_result_schema_id = self._require_runtime_attempt_text(
+                validation_result_schema_id,
+                field="validation_result_schema_id",
+            )
         if agent_run_id is None:
             owner = self._require_runtime_attempt_text(owner, field="owner")
             if lease_seconds <= 0:
@@ -4532,6 +4634,9 @@ class AutoReplyStore:
                     "model",
                     "session_mode",
                     "source_session_id",
+                    "attempt_purpose",
+                    "validation_retry_policy_id",
+                    "validation_result_schema_id",
                 )
                 if any(active[field] != value for field, value in zip(
                     immutable,
@@ -4541,6 +4646,9 @@ class AutoReplyStore:
                         model,
                         session_mode,
                         source_session_id,
+                        attempt_purpose,
+                        validation_retry_policy_id,
+                        validation_result_schema_id,
                     ),
                     strict=True,
                 )):
@@ -4561,10 +4669,12 @@ class AutoReplyStore:
                 insert into agent_runtime_attempts (
                     agent_run_id, workload_kind, workload_key, attempt_number,
                     route_name, runtime_kind, credential_mode, model, session_mode,
-                    source_session_id, status,
+                    source_session_id, attempt_purpose,
+                    validation_retry_policy_id, validation_result_schema_id, status,
                     lease_owner, lease_expires_at,
                     started_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting',
+                          ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_run_id,
@@ -4577,6 +4687,9 @@ class AutoReplyStore:
                     model,
                     session_mode,
                     source_session_id,
+                    attempt_purpose,
+                    validation_retry_policy_id,
+                    validation_result_schema_id,
                     owner,
                     lease_expires_at,
                     now_text,
@@ -4626,6 +4739,9 @@ class AutoReplyStore:
         *,
         session_mode: str | RuntimeAttemptSessionMode = RuntimeAttemptSessionMode.FRESH,
         source_session_id: str = "",
+        attempt_purpose: str = "normal",
+        validation_retry_policy_id: str = "",
+        validation_result_schema_id: str = "",
         owner: str = "legacy-runtime-owner",
         lease_seconds: int = 1800,
         now: str | datetime | None = None,
@@ -4643,6 +4759,9 @@ class AutoReplyStore:
             model=model,
             session_mode=session_mode,
             source_session_id=source_session_id,
+            attempt_purpose=attempt_purpose,
+            validation_retry_policy_id=validation_retry_policy_id,
+            validation_result_schema_id=validation_result_schema_id,
             owner=owner,
             lease_seconds=lease_seconds,
             now=now,

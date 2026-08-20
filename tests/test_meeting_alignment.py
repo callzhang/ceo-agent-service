@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import pytest
 
 import app.meeting_alignment as meeting_alignment
+from app.agent_runtime_contracts import RuntimeFailureClass
+from app.agent_runtime_router import RoutedCodexExecutionError
 from app.dws_client import (
     DwsCalendarAttendee,
     DwsCalendarEvent,
@@ -19,7 +21,6 @@ from app.meeting_alignment import (
 )
 from app.meeting_alignment_models import MeetingAlignmentDecision
 from app.store import AutoReplyStore
-
 
 NOW = datetime.fromisoformat("2026-07-14T10:10:00+08:00")
 
@@ -916,6 +917,60 @@ def test_meeting_process_failure_continues_prior_capacity_wait(tmp_path):
     assert job.attempts == 0
     assert job.available_at == (NOW + timedelta(minutes=91)).isoformat()
     assert "codex_capacity_pause" in job.error
+
+
+@pytest.mark.parametrize(
+    ("failure_class", "failure_code"),
+    [
+        (RuntimeFailureClass.AUTHENTICATION, "codex_login_required"),
+        (RuntimeFailureClass.CAPABILITY, "runtime_effect_policy_violation"),
+        (RuntimeFailureClass.RESULT, "runtime_result_validation_failed"),
+        (RuntimeFailureClass.SESSION, "runtime_session_conflict"),
+    ],
+)
+def test_meeting_routed_terminal_failure_is_not_retried_or_capacity_reclassified(
+    tmp_path, failure_class, failure_code
+):
+    store = AutoReplyStore(tmp_path / f"meeting-terminal-{failure_class}.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class CapacityThenTerminalRunner:
+        last_session_id = "meeting-terminal"
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+        calls = 0
+
+        def decide(self, *, prompt: str, run_id=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("Your workspace is out of credits.")
+            raise RoutedCodexExecutionError(
+                failure_code,
+                failure_class=failure_class,
+                failure_code=failure_code,
+                retryable_external_dependency=False,
+            )
+
+    runner = CapacityThenTerminalRunner()
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    consume_meeting_alignment_jobs(
+        store,
+        dws,
+        runner,
+        now=NOW + timedelta(minutes=31),
+        limit=1,
+    )
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "failed"
+    assert json.loads(job.error) == {
+        "kind": "meeting_agent",
+        "message": failure_code,
+    }
+    runs = store.list_meeting_alignment_runs(job_id)
+    assert [run.status for run in runs] == ["failed", "retry"]
 
 
 def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):

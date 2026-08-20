@@ -23,6 +23,7 @@ from app.agent_runtime_router import (
     RoutedResultCodec,
     RoutedResultValidationError,
     RoutedResultValidationRetry,
+    local_codex_session_effect_probe,
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import ProcessRunResult
@@ -36,6 +37,52 @@ TEXT_CODEC = RoutedResultCodec.text(schema_id="test.text.v1")
 
 def failed_session_probe(*_args):
     raise OSError("session evidence unavailable")
+
+
+def test_local_session_effect_probe_requires_full_reviewed_range(tmp_path):
+    from app.agent_effects import McpToolEffectRegistry
+    from app.agent_result import EffectKind
+    from app.native_cli_metadata import NativeCliMetadataClassifier
+
+    session_id = "session-effect-probe"
+    session_dir = tmp_path / "sessions" / "2026" / "08"
+    session_dir.mkdir(parents=True)
+    session_path = session_dir / f"rollout-{session_id}.jsonl"
+    read_call = {
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "mcp__memory_connector__memory_recall",
+            "arguments": json.dumps({"query": "bounded"}),
+        },
+    }
+    effect_call = {
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "mcp__memory_connector__memory_write",
+            "arguments": json.dumps({"data": "bounded"}),
+        },
+    }
+    session_path.write_text(
+        "\n".join(json.dumps(item) for item in (read_call, effect_call)) + "\n",
+        encoding="utf-8",
+    )
+    probe = local_codex_session_effect_probe(
+        codex_home=tmp_path,
+        effect_registry=McpToolEffectRegistry(
+            {
+                ("memory_connector", "memory_recall"): EffectKind.READ_ONLY,
+                ("memory_connector", "memory_write"): EffectKind.EFFECTFUL,
+            }
+        ),
+        native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+    )
+
+    assert probe(session_id, 0, 1) is False
+    assert probe(session_id, 0, 2) is True
+    assert probe(session_id, 0, 3) is None
+    assert probe("missing-session", 0, 1) is None
 
 
 class FakeAdapter:
@@ -287,6 +334,13 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
     assert [attempt.route_name for attempt in attempts] == ["codex_oauth", "codex_oauth"]
     assert attempts[0].failure_code == "runtime_result_validation_failed"
     assert [attempt.session_mode for attempt in attempts] == ["fresh", "fresh"]
+    assert [attempt.attempt_purpose for attempt in attempts] == [
+        "normal",
+        "result_validation_correction",
+    ]
+    assert attempts[0].validation_retry_policy_id == ""
+    assert attempts[1].validation_retry_policy_id
+    assert attempts[1].validation_result_schema_id == INT_CODEC.schema_id
 
 
 def test_result_validation_retry_can_resume_same_persisted_session_once(store, config):
@@ -524,7 +578,10 @@ def test_result_validation_retry_is_consumed_after_exactly_one_repeat(store, con
         "runtime_result_validation_failed",
         "runtime_result_validation_failed",
     ]
-    with pytest.raises(RoutedCodexExecutionError, match="runtime_route_unavailable"):
+    with pytest.raises(
+        RoutedCodexExecutionError,
+        match="runtime_result_validation_retry_consumed",
+    ):
         routed.execute(
             workload_kind="structured",
             workload_key=key,
@@ -540,6 +597,95 @@ def test_result_validation_retry_is_consumed_after_exactly_one_repeat(store, con
             ),
         )
     assert calls == 2
+
+
+def test_expired_persisted_correction_attempt_never_starts_third_prompt_or_failover(
+    store, config
+):
+    key = seed_structured_parent(store, 76)
+    route = config.routes[0]
+    owner = "expired-correction-owner"
+    first = store.claim_runtime_operation_attempt(
+        "structured",
+        key,
+        route.name,
+        route.runtime_kind,
+        route.credential_mode,
+        route.model,
+        owner=owner,
+        now=NOW,
+    )
+    store.mark_agent_runtime_attempt_running_once(first.id, owner=owner, now=NOW)
+    store.fail_agent_runtime_attempt(
+        first.id,
+        RuntimeFailureClass.RESULT.value,
+        "runtime_result_validation_failed",
+        False,
+        owner=owner,
+        now=NOW,
+    )
+    correction = store.claim_runtime_operation_attempt(
+        "structured",
+        key,
+        route.name,
+        route.runtime_kind,
+        route.credential_mode,
+        route.model,
+        attempt_purpose="result_validation_correction",
+        validation_retry_policy_id="result_validation_retry.v1:test",
+        validation_result_schema_id=INT_CODEC.schema_id,
+        owner=owner,
+        lease_seconds=1,
+        now=NOW,
+    )
+    store.mark_agent_runtime_attempt_superseded(first.id)
+    store.mark_agent_runtime_attempt_running_once(
+        correction.id,
+        owner=owner,
+        lease_seconds=1,
+        now=NOW,
+    )
+    calls = 0
+
+    def executor(_command, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return ProcessRunResult(0, json.dumps({"value": 42}), "")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+        owner="recovery-owner",
+        now=lambda: NOW + timedelta(minutes=1),
+    )
+
+    with pytest.raises(
+        RoutedCodexExecutionError,
+        match="runtime_result_validation_retry_consumed",
+    ):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="original prompt must never execute again",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: json.loads(raw)["value"],
+            result_codec=INT_CODEC,
+            required_capabilities=CAPABILITIES,
+            result_validation_retry=RoutedResultValidationRetry.exactly_once(
+                correction_instructions="Return the complete result."
+            ),
+        )
+
+    assert calls == 0
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert len(attempts) == 2
+    assert attempts[-1].attempt_purpose == "result_validation_correction"
+    assert attempts[-1].failure_code == "runtime_lease_expired"
 
 
 def test_process_failure_after_result_validation_retry_does_not_fail_over(
