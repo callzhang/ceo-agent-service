@@ -382,7 +382,11 @@ class AgentRuntimeProbe:
                 proof=normalizer.terminal_proof(),
                 parser=_parse_probe_result,
             )
-            if result != {"ok": True}:
+            if not (
+                set(result) == {"ok"}
+                and type(result["ok"]) is bool
+                and result["ok"] is True
+            ):
                 raise ValueError("Claude probe result is invalid")
             return None, tuple(normalized)
         finally:
@@ -572,8 +576,15 @@ def _probe_stream_failure_code(raw: str) -> str | None:
 
 
 def _parse_probe_result(raw: str) -> dict[str, object]:
+    if raw != _PROBE_CANONICAL_RESULT:
+        raise ValueError("runtime probe result is not canonical")
     result = json.loads(raw)
-    if result != {"ok": True}:
+    if not (
+        isinstance(result, dict)
+        and set(result) == {"ok"}
+        and type(result["ok"]) is bool
+        and result["ok"] is True
+    ):
         raise ValueError("runtime probe result is invalid")
     return result
 
@@ -615,6 +626,7 @@ def _claude_probe_grammar_valid(
         isinstance(message, dict)
         and message.get("type") == "agent_message"
         and message.get("text") == _PROBE_CANONICAL_RESULT
+        and events[-1].get("result") == message.get("text")
     ):
         return False
     start_session = events[0].get("session_id")

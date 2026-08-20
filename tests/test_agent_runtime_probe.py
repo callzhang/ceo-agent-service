@@ -196,6 +196,27 @@ def _adversarial_claude_text_stream(*, effect: bool, mode: str) -> str:
     return "\n".join(json.dumps(payload) for payload in payloads)
 
 
+def _adversarial_claude_terminal_stream(*, effect: bool, mode: str) -> str:
+    payloads = [
+        json.loads(line)
+        for line in _successful_claude_probe_stream(effect=effect).splitlines()
+    ]
+    if mode == "integer_one":
+        payloads[-1]["result"] = '{"ok":1}'
+    elif mode == "float_one":
+        payloads[-1]["result"] = '{"ok":1.0}'
+    elif mode == "whitespace":
+        payloads[-1]["result"] = '{"ok": true}'
+    elif mode == "key_order":
+        payloads[-1]["result"] = '{"extra":0,"ok":true}'
+    elif mode == "assistant_final_mismatch":
+        payloads[-1]["result"] = '{"ok": true}'
+        assert payloads[-2]["message"]["content"][0]["text"] == '{"ok":true}'
+    else:
+        raise AssertionError(mode)
+    return "\n".join(json.dumps(payload) for payload in payloads)
+
+
 def test_claude_probe_proves_base_and_effect_visibility_without_business_tools(
     monkeypatch, tmp_path
 ):
@@ -372,6 +393,54 @@ def test_claude_probe_rejects_non_exact_normalized_grammar(
         "runtime_probe_grammar_invalid",
         "runtime_probe_failed",
     }
+
+
+@pytest.mark.parametrize("phase", ["baseline", "effect"])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "integer_one",
+        "float_one",
+        "whitespace",
+        "key_order",
+        "assistant_final_mismatch",
+    ],
+)
+def test_claude_probe_rejects_noncanonical_terminal_result(
+    monkeypatch, tmp_path, phase, mode
+):
+    config = _config(monkeypatch, routes="claude_api")
+
+    def executor(command, **_kwargs):
+        mcp_config = (
+            __import__("pathlib")
+            .Path(command[command.index("--mcp-config") + 1])
+            .read_text(encoding="utf-8")
+        )
+        effect = "mcp__runtime_probe__record_effect_start" in mcp_config
+        adversarial = phase == ("effect" if effect else "baseline")
+        return ProcessRunResult(
+            0,
+            (
+                _adversarial_claude_terminal_stream(effect=effect, mode=mode)
+                if adversarial
+                else _successful_claude_probe_stream(effect=effect)
+            ),
+            "",
+        )
+
+    snapshot = AgentRuntimeProbe(
+        config=config,
+        claude_bin="claude-test",
+        executor=executor,
+        now=lambda: NOW,
+        temporary_root=tmp_path,
+    ).run(route_name="claude_api")
+
+    assert snapshot.healthy is False
+    assert snapshot.capabilities == frozenset()
+    assert snapshot.failure is not None
+    assert snapshot.failure.code == "runtime_probe_failed"
 
 
 def test_probe_requires_structured_completion(monkeypatch, tmp_path):
