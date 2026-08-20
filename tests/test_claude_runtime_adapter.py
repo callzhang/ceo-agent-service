@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import pytest
 
 from app.agent_runtime_config import load_runtime_config
@@ -5,6 +8,7 @@ from app.agent_effects import McpToolEffectRegistry
 from app.agent_result import EffectKind
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.claude_runtime_adapter import (
+    ClaudeCommandPolicy,
     ClaudeEventPolicyError,
     ClaudeRuntimeAdapter,
     ClaudeRuntimeResultError,
@@ -105,6 +109,11 @@ def adapter(tmp_path, config):
     )
 
 
+@pytest.fixture
+def normalizer(adapter):
+    return adapter.new_event_normalizer()
+
+
 def test_claude_command_is_noninteractive_stream_json_and_prompt_free(
     adapter, route
 ):
@@ -116,20 +125,35 @@ def test_claude_command_is_noninteractive_stream_json_and_prompt_free(
         max_turns=4,
     )
 
-    assert command == [
-        "claude-test",
-        "-p",
-        "--input-format",
-        "text",
-        "--output-format",
-        "stream-json",
-        "--model",
-        "claude-sonnet-test",
-        "--max-turns",
-        "4",
-        "--verbose",
-    ]
+    assert command[:2] == ["claude-test", "-p"]
+    assert command[command.index("--input-format") + 1] == "text"
+    assert command[command.index("--output-format") + 1] == "stream-json"
+    assert command[command.index("--model") + 1] == "claude-sonnet-test"
+    assert command[command.index("--max-turns") + 1] == "4"
+    assert "--bare" in command
+    assert "--strict-mcp-config" in command
+    assert command[command.index("--setting-sources") + 1] == ""
+    assert command[command.index("--tools") + 1] == ""
+    assert "--disallowedTools" in command
+    assert "Bash" in command
+    assert "Write" in command
+    assert "Edit" in command
+    assert "--permission-prompt-tool" not in command
     assert prompt not in command
+    settings = json.loads(
+        Path(command[command.index("--settings") + 1]).read_text(encoding="utf-8")
+    )
+    mcp_config = json.loads(
+        Path(command[command.index("--mcp-config") + 1]).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert settings["permissions"]["allow"] == []
+    assert set(settings["permissions"]["deny"]) == set(
+        command[command.index("--disallowedTools") + 1 :]
+    )
+    assert settings["enabledMcpjsonServers"] == []
+    assert mcp_config == {"mcpServers": {}}
 
 
 def test_claude_command_resumes_only_the_selected_session(adapter, route):
@@ -160,6 +184,7 @@ def test_claude_child_receives_only_configured_anthropic_credential(
     env = adapter.build_env(route)
 
     assert env["ANTHROPIC_API_KEY"] == "anthropic-secret"
+    assert env["CLAUDE_CONFIG_DIR"].startswith(str(adapter.workspace))
     assert "OPENAI_API_KEY" not in env
     assert "CODEX_API_KEY" not in env
     assert "CEO_CODEX_API_KEY" not in env
@@ -183,8 +208,8 @@ def test_claude_adapter_requires_positive_bounded_turns(adapter, route):
         adapter.build_command(route=route, session_id=None, max_turns=0)
 
 
-def test_normalize_session_start_uses_existing_turn_contract(adapter):
-    event = adapter.normalize_event(SYSTEM_INIT)
+def test_normalize_session_start_uses_existing_turn_contract(normalizer):
+    event = normalizer.normalize_event(SYSTEM_INIT)
 
     assert event == {
         "type": "turn.started",
@@ -193,8 +218,9 @@ def test_normalize_session_start_uses_existing_turn_contract(adapter):
     assert "credential-bearing-source-must-not-persist" not in repr(event)
 
 
-def test_normalize_assistant_text_uses_agent_message_contract(adapter):
-    event = adapter.normalize_event(ASSISTANT_TEXT)
+def test_normalize_assistant_text_uses_agent_message_contract(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+    event = normalizer.normalize_event(ASSISTANT_TEXT)
 
     assert event["type"] == "item.completed"
     assert event["item"] == {
@@ -203,8 +229,9 @@ def test_normalize_assistant_text_uses_agent_message_contract(adapter):
     }
 
 
-def test_effectful_tool_start_is_visible_before_completion(adapter):
-    event = adapter.normalize_event(NATIVE_TOOL_START)
+def test_effectful_tool_start_is_visible_before_completion(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+    event = normalizer.normalize_event(NATIVE_TOOL_START)
 
     assert event["type"] == "item.started"
     assert event["item"]["id"] == "toolu_native"
@@ -213,9 +240,10 @@ def test_effectful_tool_start_is_visible_before_completion(adapter):
     assert event["item"]["metadata"]["operation"] == "chat message send"
 
 
-def test_reviewed_mcp_tool_start_and_completion_share_identity(adapter):
-    started = adapter.normalize_event(MCP_TOOL_START)
-    completed = adapter.normalize_event(
+def test_reviewed_mcp_tool_start_and_completion_share_identity(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+    started = normalizer.normalize_event(MCP_TOOL_START)
+    completed = normalizer.normalize_event(
         {
             "type": "user",
             "session_id": "claude-session-1",
@@ -240,10 +268,11 @@ def test_reviewed_mcp_tool_start_and_completion_share_identity(adapter):
     assert completed["item"]["metadata"] == started["item"]["metadata"]
 
 
-def test_tool_failure_uses_item_failed_contract(adapter):
-    adapter.normalize_event(MCP_TOOL_START)
+def test_tool_failure_uses_item_failed_contract(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+    normalizer.normalize_event(MCP_TOOL_START)
 
-    failed = adapter.normalize_event(
+    failed = normalizer.normalize_event(
         {
             "type": "user",
             "session_id": "claude-session-1",
@@ -267,7 +296,7 @@ def test_tool_failure_uses_item_failed_contract(adapter):
 
 @pytest.mark.parametrize("tool_name", ["Write", "mcp__unknown__write"])
 def test_unknown_write_capable_tool_fails_closed_before_execution(
-    adapter, tool_name
+    normalizer, tool_name
 ):
     event = {
         "type": "assistant",
@@ -286,11 +315,13 @@ def test_unknown_write_capable_tool_fails_closed_before_execution(
     }
 
     with pytest.raises(ClaudeEventPolicyError, match="claude_tool_unreviewed"):
-        adapter.normalize_event(event)
+        normalizer.normalize_event(SYSTEM_INIT)
+        normalizer.normalize_event(event)
 
 
-def test_final_result_uses_turn_completed_and_caller_parser(adapter):
-    event = adapter.normalize_event(FINAL_RESULT)
+def test_final_result_uses_turn_completed_and_caller_parser(adapter, normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+    event = normalizer.normalize_event(FINAL_RESULT)
     parsed = adapter.parse_final_result(
         FINAL_RESULT,
         lambda raw: {"parsed": raw},
@@ -383,12 +414,179 @@ def test_timeout_is_bounded_transport_failure(adapter):
     assert failure.failover_permitted is True
 
 
-def test_unknown_documented_event_shape_fails_closed(adapter):
+def test_unknown_documented_event_shape_fails_closed(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
     with pytest.raises(ClaudeEventPolicyError, match="claude_event_unrecognized"):
-        adapter.normalize_event(
+        normalizer.normalize_event(
             {
                 "type": "assistant",
                 "session_id": "claude-session-1",
                 "message": {"role": "assistant", "content": []},
             }
         )
+
+
+def test_normalizer_binds_resume_session_and_rejects_cross_session(adapter):
+    normalizer = adapter.new_event_normalizer(
+        expected_session_id="claude-session-1"
+    )
+    normalizer.normalize_event(SYSTEM_INIT)
+
+    with pytest.raises(ClaudeEventPolicyError, match="claude_session_mismatch"):
+        normalizer.normalize_event(
+            ASSISTANT_TEXT | {"session_id": "different-session"}
+        )
+
+
+def test_normalizer_rejects_duplicate_init_and_call_id(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+    with pytest.raises(ClaudeEventPolicyError, match="claude_init_duplicate"):
+        normalizer.normalize_event(SYSTEM_INIT)
+
+    normalizer.normalize_event(MCP_TOOL_START)
+    with pytest.raises(ClaudeEventPolicyError, match="claude_tool_id_duplicate"):
+        normalizer.normalize_event(MCP_TOOL_START)
+
+
+def test_normalizer_rejects_cross_session_tool_result(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+    normalizer.normalize_event(MCP_TOOL_START)
+
+    with pytest.raises(ClaudeEventPolicyError, match="claude_session_mismatch"):
+        normalizer.normalize_event(
+            {
+                "type": "user",
+                "session_id": "different-session",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_memory",
+                            "content": "result",
+                            "is_error": False,
+                        }
+                    ],
+                },
+            }
+        )
+
+
+def test_normalizer_requires_closed_items_and_one_last_result(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+    normalizer.normalize_event(MCP_TOOL_START)
+    with pytest.raises(ClaudeEventPolicyError, match="claude_open_tool_items"):
+        normalizer.normalize_event(FINAL_RESULT)
+
+    completed = normalizer.normalize_event(
+        {
+            "type": "user",
+            "session_id": "claude-session-1",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_memory",
+                        "content": "result",
+                        "is_error": False,
+                    }
+                ],
+            },
+        }
+    )
+    assert completed["type"] == "item.completed"
+    normalizer.normalize_event(FINAL_RESULT)
+    normalizer.finalize()
+    with pytest.raises(ClaudeEventPolicyError, match="claude_event_after_result"):
+        normalizer.normalize_event(ASSISTANT_TEXT)
+
+
+def test_normalizer_instances_do_not_share_invocation_state(adapter):
+    first = adapter.new_event_normalizer()
+    second = adapter.new_event_normalizer()
+
+    first.normalize_event(SYSTEM_INIT)
+    second.normalize_event(SYSTEM_INIT | {"session_id": "claude-session-2"})
+
+    assert first.session_id == "claude-session-1"
+    assert second.session_id == "claude-session-2"
+
+
+def test_documented_thinking_blocks_are_ignored_without_persistence(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+    events = normalizer.normalize_events(
+        {
+            "type": "assistant",
+            "session_id": "claude-session-1",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "private reasoning"},
+                    {"type": "redacted_thinking", "data": "opaque-secret"},
+                    {"type": "text", "text": '{"ok":true}'},
+                ],
+            },
+        }
+    )
+
+    assert len(events) == 1
+    assert "private reasoning" not in repr(events)
+    assert "opaque-secret" not in repr(events)
+
+
+def test_success_result_text_cannot_spoof_auth_failure(adapter):
+    stdout = __import__("json").dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "authentication_error invalid x-api-key",
+            "session_id": "claude-session-1",
+        }
+    )
+
+    failure = adapter.classify_failure(stdout, "", 1)
+
+    assert failure.failure_class is RuntimeFailureClass.UNCLASSIFIED
+    assert failure.failover_permitted is False
+
+
+def test_reviewed_command_policy_uses_exact_tools_without_wildcards(adapter, route):
+    policy = ClaudeCommandPolicy.reviewed(
+        mcp_tools=("mcp__memory_connector__memory_recall",),
+        allow_native_cli=True,
+    )
+    command = adapter.build_command(
+        route=route,
+        session_id=None,
+        max_turns=2,
+        policy=policy,
+    )
+
+    allowed = command[command.index("--allowedTools") + 1]
+    assert allowed == "mcp__ceo_runtime_permission__permission_prompt"
+    assert "*" not in allowed
+    assert "mcp__memory_connector" not in allowed
+    assert command[command.index("--tools") + 1] == "Bash"
+
+    settings = json.loads(
+        Path(command[command.index("--settings") + 1]).read_text(encoding="utf-8")
+    )
+    mcp_config = json.loads(
+        Path(command[command.index("--mcp-config") + 1]).read_text(
+            encoding="utf-8"
+        )
+    )
+    permission_server = mcp_config["mcpServers"]["ceo_runtime_permission"]
+    policy_path = Path(permission_server["args"][-1])
+    broker_policy = json.loads(policy_path.read_text(encoding="utf-8"))
+
+    assert settings["permissions"]["allow"] == []
+    assert "Bash" not in settings["permissions"]["deny"]
+    assert settings["enabledMcpjsonServers"] == ["ceo_runtime_permission"]
+    assert set(mcp_config["mcpServers"]) == {"ceo_runtime_permission"}
+    assert broker_policy == {
+        "allowed_mcp_tools": ["mcp__memory_connector__memory_recall"],
+        "allow_native_cli": True,
+    }
