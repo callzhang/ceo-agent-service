@@ -75,7 +75,7 @@ Write chosen values to `.env` from `.env.example`. Keep user-specific values in
 
    ```sh
    python3 -m venv .venv
-   .venv/bin/pip install -e '.[dev]'
+   "$HOME/miniforge3/bin/python" -m pip install -e '.[dev]'
    ```
 
 5. Install and verify the Agent Workbench dependencies and production build:
@@ -284,7 +284,7 @@ Agent tasks:
 3. Build the local AI-minutes style corpus:
 
    ```sh
-   .venv/bin/ceo-agent build-corpus \
+   "$HOME/miniforge3/bin/ceo-agent" build-corpus \
      --workspace "$HOME/Documents/memory" \
      --corpus-dir ./data/corpus
    ```
@@ -292,7 +292,7 @@ Agent tasks:
 4. Append recent DingTalk sent-message samples:
 
    ```sh
-   .venv/bin/ceo-agent collect-corpus \
+   "$HOME/miniforge3/bin/ceo-agent" collect-corpus \
      --workspace "$HOME/Documents/memory" \
      --corpus-dir ./data/corpus
    ```
@@ -305,7 +305,7 @@ permission, fix `dws` before continuing.
 1. Build the initial profile and evidence index:
 
    ```sh
-   .venv/bin/ceo-agent build-work-profile \
+   "$HOME/miniforge3/bin/ceo-agent" build-work-profile \
      --workspace "$HOME/Documents/memory" \
      --corpus-dir ./data/corpus
    ```
@@ -313,7 +313,7 @@ permission, fix `dws` before continuing.
 2. If the user provided a DingTalk KB workspace id or URL, include it:
 
    ```sh
-   .venv/bin/ceo-agent build-work-profile \
+   "$HOME/miniforge3/bin/ceo-agent" build-work-profile \
      --workspace "$HOME/Documents/memory" \
      --corpus-dir ./data/corpus \
      --dingtalk-kb-workspace '<workspace-id-or-url>'
@@ -342,7 +342,7 @@ permission, fix `dws` before continuing.
 6. Verify runtime consumption:
 
    ```sh
-   .venv/bin/pytest \
+   "$HOME/miniforge3/bin/pytest" \
      tests/test_work_profile.py \
      tests/test_prompt.py \
      tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content \
@@ -356,7 +356,7 @@ Runtime reads the profile through `app.prompt:work_profile_instruction()`.
 Run read probes first:
 
 ```sh
-.venv/bin/ceo-agent probe-dws
+"$HOME/miniforge3/bin/ceo-agent" probe-dws
 dws auth status
 dws doctor --json --timeout 5
 ```
@@ -397,7 +397,7 @@ deployment boundary.
 2. Start the audit web UI:
 
    ```sh
-   .venv/bin/python -m app.cli audit-web \
+   "$HOME/miniforge3/bin/python" -m app.cli audit-web \
      --reload \
      --host 127.0.0.1 \
      --port 8765
@@ -428,7 +428,7 @@ deployment boundary.
 5. Run one dry-run pass:
 
    ```sh
-   CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message
+   CEO_NOT_SEND_MESSAGE=1 "$HOME/miniforge3/bin/ceo-agent" run-once --not-send-message
    ```
 
 6. Review the web UI for:
@@ -502,7 +502,7 @@ Only after reviewing dry-run attempts with the user:
 
    ```sh
    CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 \
-     .venv/bin/ceo-agent send-attempt --attempt-id <reviewed-attempt-id>
+     "$HOME/miniforge3/bin/ceo-agent" send-attempt --attempt-id <reviewed-attempt-id>
    ```
 
 5. Re-check `/attempts/{id}`, `/errors`, and recent DingTalk state.

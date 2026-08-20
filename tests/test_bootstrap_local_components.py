@@ -96,19 +96,23 @@ def test_bootstrap_business_skill_conflict_fails_closed(tmp_path: Path):
 @pytest.mark.parametrize(
     ("interpreter_content", "expected_detail"),
     [
-        (None, "missing checkout Python interpreter"),
-        ("#!/bin/sh\nexit 42\n", "invalid checkout Python interpreter"),
+        (None, "missing central Conda Python interpreter"),
+        ("#!/bin/sh\nexit 42\n", "invalid central Conda Python interpreter"),
     ],
 )
-def test_bootstrap_business_skills_rejects_missing_or_invalid_checkout_python(
+def test_bootstrap_business_skills_rejects_missing_or_invalid_conda_python(
     tmp_path: Path,
     interpreter_content: str | None,
     expected_detail: str,
 ):
     checkout, script = _isolated_checkout(tmp_path)
+    conda_prefix = tmp_path / "conda"
+    interpreter = conda_prefix / "bin" / "python"
     if interpreter_content is not None:
-        _write_executable(checkout / ".venv" / "bin" / "python", interpreter_content)
+        _write_executable(interpreter, interpreter_content)
     env = _shell_only_env(tmp_path / "home", tmp_path / "bin")
+    env["CEO_CONDA_PREFIX"] = str(conda_prefix)
+    env.pop("CEO_PYTHON", None)
 
     completed = subprocess.run(
         [str(script), "--component", "ceo-business-skills"],
@@ -126,20 +130,23 @@ def test_bootstrap_business_skills_rejects_missing_or_invalid_checkout_python(
 @pytest.mark.parametrize(
     ("interpreter_content", "detail_prefix"),
     [
-        (None, "missing checkout Python interpreter"),
-        ("#!/bin/sh\nexit 42\n", "invalid checkout Python interpreter"),
+        (None, "missing central Conda Python interpreter"),
+        ("#!/bin/sh\nexit 42\n", "invalid central Conda Python interpreter"),
     ],
 )
-def test_bootstrap_json_reports_unavailable_checkout_python(
+def test_bootstrap_json_reports_unavailable_conda_python(
     tmp_path: Path,
     interpreter_content: str | None,
     detail_prefix: str,
 ):
     checkout, script = _isolated_checkout(tmp_path)
-    interpreter = checkout / ".venv" / "bin" / "python"
+    conda_prefix = tmp_path / "conda"
+    interpreter = conda_prefix / "bin" / "python"
     if interpreter_content is not None:
         _write_executable(interpreter, interpreter_content)
     env = _shell_only_env(tmp_path / "home", tmp_path / "bin")
+    env["CEO_CONDA_PREFIX"] = str(conda_prefix)
+    env.pop("CEO_PYTHON", None)
 
     completed = subprocess.run(
         [str(script), "--component", "ceo-business-skills", "--format", "json"],
@@ -162,10 +169,10 @@ def test_bootstrap_json_reports_unavailable_checkout_python(
     ]
 
 
-def test_bootstrap_business_skills_invokes_exact_checkout_python(tmp_path: Path):
+def test_bootstrap_business_skills_invokes_exact_conda_python(tmp_path: Path):
     checkout, script = _isolated_checkout(tmp_path)
     log_path = tmp_path / "python-invocations.log"
-    interpreter = checkout / ".venv" / "bin" / "python"
+    interpreter = tmp_path / "conda" / "bin" / "python"
     _write_executable(
         interpreter,
         """#!/bin/sh
@@ -179,6 +186,7 @@ printf 'installed controlled skills\n'
     )
     home = tmp_path / "home"
     env = _controlled_env(home, tmp_path / "bin")
+    env["CEO_PYTHON"] = str(interpreter)
     env["BOOTSTRAP_PYTHON_LOG"] = str(log_path)
 
     completed = subprocess.run(
@@ -198,7 +206,7 @@ printf 'installed controlled skills\n'
 
 def test_bootstrap_json_retains_complete_multiline_failure(tmp_path: Path):
     checkout, script = _isolated_checkout(tmp_path)
-    interpreter = checkout / ".venv" / "bin" / "python"
+    interpreter = tmp_path / "conda" / "bin" / "python"
     _write_executable(
         interpreter,
         """#!/bin/sh
@@ -211,6 +219,7 @@ exit 1
 """,
     )
     env = _controlled_env(tmp_path / "home", tmp_path / "bin")
+    env["CEO_PYTHON"] = str(interpreter)
     env["CHECKOUT_TEST_REAL_PYTHON"] = sys.executable
 
     completed = subprocess.run(
@@ -230,10 +239,11 @@ exit 1
     )
 
 
-def test_bootstrap_json_uses_checkout_python_without_python3_on_path(
+def test_bootstrap_json_uses_configured_conda_python_without_python3_on_path(
     tmp_path: Path,
 ):
     env = _shell_only_env(tmp_path / "home", tmp_path / "bin")
+    env["CEO_PYTHON"] = sys.executable
 
     completed = subprocess.run(
         [str(SCRIPT), "--component", "ceo-business-skills", "--format", "json"],
@@ -259,6 +269,7 @@ def _controlled_env(home: Path, bin_dir: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    env["CEO_PYTHON"] = sys.executable
     env.pop("CODEX_INSTALL_COMMAND", None)
     env.pop("NVWA_SKILL_SOURCE", None)
     return env
@@ -273,6 +284,8 @@ def _shell_only_env(home: Path, bin_dir: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = str(bin_dir)
+    env.pop("CEO_CONDA_PREFIX", None)
+    env.pop("CEO_PYTHON", None)
     return env
 
 

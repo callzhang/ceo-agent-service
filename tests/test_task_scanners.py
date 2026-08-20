@@ -357,9 +357,6 @@ def test_scan_ai_minutes_walks_paginated_adapter(tmp_path):
         def __init__(self):
             self.tokens = []
 
-        def list_minutes(self):
-            raise AssertionError("paginated adapter should be used")
-
         def list_minutes_page(self, *, limit, cursor):
             self.tokens.append((limit, cursor))
             if not cursor:

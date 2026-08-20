@@ -51,6 +51,7 @@ from app.dws_client import (
     DwsUserProfile,
 )
 from app.store import AgentRole, AutoReplyStore
+from app.runtime_environment import central_python
 from app.worker import (
     DWS_AUTH_LOGIN_STATE_KEY,
     HANDOFF_NOTIFICATION_PREFIX,
@@ -12262,7 +12263,7 @@ def test_rerun_message_uses_explicit_oa_url_when_trigger_has_no_link(
     assert '"process_instance_id": "proc-1"' in material.reference
     assert '"task_id": "task-1"' in material.reference
     assert material.read_commands == (
-        ".venv/bin/python -m app.cli read-oa-approval-detail --instance-id proc-1",
+        f"{central_python()} -m app.cli read-oa-approval-detail --instance-id proc-1",
         "dws oa approval tasks --instance-id proc-1 --format json",
     )
 

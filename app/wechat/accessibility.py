@@ -511,7 +511,9 @@ class MacWechatAccessibility:
                 False,
                 failure_reason="wechat_not_running",
             )
-        app = mk_app(pid)
+        # Prime the pre-activation AX root. WeChat replaces this root when it is
+        # foregrounded, so all searches below deliberately request a fresh root.
+        mk_app(pid)
 
         def g(el, attr):
             err, val = get_attr(el, attr, None)
@@ -676,7 +678,8 @@ class MacWechatAccessibility:
         pid = self._wechat_pid()
         if not pid:
             return ""
-        app = mk_app(pid)
+        # Consume the pre-activation root before _activate_wait foregrounds WeChat.
+        mk_app(pid)
 
         def g(el, attr):
             err, val = get_attr(el, attr, None)

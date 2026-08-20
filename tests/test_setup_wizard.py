@@ -63,6 +63,23 @@ def test_setup_wizard_steps_are_ordered_and_gated():
     assert get_action_definition("setup_mcp").step_id == "mcp"
 
 
+def test_preflight_accepts_central_conda_python(monkeypatch, tmp_path: Path):
+    (tmp_path / "README.md").write_text("ready\n", encoding="utf-8")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "tests").mkdir()
+    python = tmp_path / "conda" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python.chmod(0o755)
+    monkeypatch.setenv("CEO_PYTHON", str(python))
+
+    status = check_setup_step("preflight", repo_root=tmp_path)
+
+    assert status.status == "done"
+    assert status.summary == "Repository checkout and central Conda Python are ready."
+    assert status.evidence == {"conda_python": True}
+
+
 def test_wechat_setup_is_available_without_mcp_or_service_config(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_setup_wizard_step(
@@ -1240,11 +1257,20 @@ def test_run_setup_action_executes_dry_run_without_sending(
     event = run_setup_action(
         "run_dry_run",
         repo_root=tmp_path,
-        env={"CEO_NOT_SEND_MESSAGE": "0"},
+        env={
+            "CEO_NOT_SEND_MESSAGE": "0",
+            "CEO_PYTHON": "/central/conda/bin/python",
+        },
     )
 
     args, kwargs = calls[0]
-    assert args == [".venv/bin/ceo-agent", "run-once", "--not-send-message"]
+    assert args == [
+        "/central/conda/bin/python",
+        "-m",
+        "app.cli",
+        "run-once",
+        "--not-send-message",
+    ]
     assert kwargs["cwd"] == tmp_path
     assert kwargs["env"]["CEO_NOT_SEND_MESSAGE"] == "1"
     assert kwargs["timeout"] == 900

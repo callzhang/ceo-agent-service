@@ -29,7 +29,8 @@ def test_enrich_context_respects_limit(monkeypatch):
     calls = []
 
     def fake_fetch(url, max_chars=1500):
-        calls.append(url); return "B"
+        calls.append(url)
+        return "B"
 
     enrich_context(msgs, limit=2, fetch=fake_fetch)
     assert len(calls) == 2

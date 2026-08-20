@@ -14,6 +14,7 @@ from app.agent_result import EffectKind
 from app.native_cli_metadata import AgentReadOnlyViolationError, NativeCliMetadataClassifier
 from app.native_cli_metadata import describe_native_command
 from app.dws_client import DwsClient
+from app.runtime_environment import central_python
 
 
 def test_classifier_rejects_generic_local_read_pipeline():
@@ -63,7 +64,7 @@ def test_describe_native_command_allows_service_owned_oa_detail_read():
         {
             "type": "command_execution",
             "argv": [
-                ".venv/bin/python",
+                str(central_python()),
                 "-m",
                 "app.cli",
                 "read-oa-approval-detail",

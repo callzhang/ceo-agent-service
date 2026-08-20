@@ -276,16 +276,16 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 
 ```bash
 # DWS + Lark 通道状态
-.venv/bin/ceo-agent channel-doctor
+"$HOME/miniforge3/bin/ceo-agent" channel-doctor
 
 # MCP 注册与可用性诊断；加 --verify-live 做实时探测
-.venv/bin/ceo-agent doctor-mcp --verify-live
+"$HOME/miniforge3/bin/ceo-agent" doctor-mcp --verify-live
 
 # 单次 dry-run
-CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message
+CEO_NOT_SEND_MESSAGE=1 "$HOME/miniforge3/bin/ceo-agent" run-once --not-send-message
 
 # 质量巡检并验证外部通道
-.venv/bin/ceo-agent quality-check --verify-channels
+"$HOME/miniforge3/bin/ceo-agent" quality-check --verify-channels
 
 # 当前唯一 launchd job
 launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'

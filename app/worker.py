@@ -85,6 +85,7 @@ from app.org_cache import (
 )
 from app.permission import PermissionGate
 from app.prompt import MaterialReferenceContext
+from app.runtime_environment import central_python
 from app.store import (
     AgentRun,
     AgentRunLeaseLostError,
@@ -2671,7 +2672,8 @@ class DingTalkAutoReplyWorker:
                 continue
             if process_instance_id:
                 detail_command = (
-                    ".venv/bin/python -m app.cli "
+                    shlex.quote(str(central_python()))
+                    + " -m app.cli "
                     "read-oa-approval-detail --instance-id "
                     + shlex.quote(process_instance_id)
                 )

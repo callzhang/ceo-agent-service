@@ -168,9 +168,9 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 - `CEO_OKR_SOURCE_KIND=dingteam_web` 时，必须设置 `CEO_OKR_LIVE_SOURCE_COMMAND`。该命令接收
   `{user_id}` 和 `{period_label}` 占位符，并返回 worker 可用的实时 OKR JSON。
   本机 Dingteam Web source 命令示例：
-  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/Documents/Projects/ceo-agent-service/.venv/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}`。
+  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/miniforge3/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}`。
   该命令使用 `dingtang-okr-review` skill 的专用 headless browser profile 和 token cache；登录态过期时先运行
-  `/Users/derek/Documents/Projects/ceo-agent-service/.venv/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py login`
+  `/Users/derek/miniforge3/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py login`
   并扫码。脚本不读取普通 Chrome cookie、localStorage 或 session 文件。
 - 只有确认企业 OKR 数据暴露在 Agoal objective API 中时，才设置 `CEO_OKR_SOURCE_KIND=agoal`。
 - Agoal 模式从 `~/.dingtalk-skills/config` 或 `.env` 读取应用凭证；如果规则列表为空或不唯一，
@@ -232,7 +232,7 @@ Lark 可通过 `LARK_CLI_INSTALL_COMMAND` 覆盖默认 npm 安装命令。
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
+"$HOME/miniforge3/bin/python" -m pip install -e '.[dev]'
 npm install --prefix frontend
 npm run test:workbench
 npm run build:workbench
@@ -333,7 +333,7 @@ CEO Agent Service 会把“知识库”分成两类：本地知识库和外部�
 
 ```bash
 dws auth status --format json --timeout 5
-.venv/bin/ceo-agent channel-doctor
+"$HOME/miniforge3/bin/ceo-agent" channel-doctor
 dws doc info --node '<alidocs-url>' --format json
 dws doc read --node '<alidocs-url>' --format json
 ```
@@ -342,7 +342,7 @@ dws doc read --node '<alidocs-url>' --format json
 
 ```bash
 cd /path/to/ceo-agent-service
-.venv/bin/ceo-agent build-work-profile \
+"$HOME/miniforge3/bin/ceo-agent" build-work-profile \
   --workspace /path/to/workspace \
   --corpus-dir /path/to/data/corpus \
   --dingtalk-kb-workspace '<workspace-id-or-url>'
@@ -370,14 +370,14 @@ CEO Agent 不是只靠通用 prompt 模仿语气。人格蒸馏属于运行前�
 
 ```bash
 cd /path/to/ceo-agent-service
-CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message
+CEO_NOT_SEND_MESSAGE=1 "$HOME/miniforge3/bin/ceo-agent" run-once --not-send-message
 ```
 
 ### 7. 启动审计页面
 
 ```bash
 cd /path/to/ceo-agent-service
-.venv/bin/python -m app.cli audit-web --reload --host 127.0.0.1 --port 8765
+"$HOME/miniforge3/bin/python" -m app.cli audit-web --reload --host 127.0.0.1 --port 8765
 ```
 
 打开：
@@ -455,16 +455,16 @@ Follow-up 发送使用稳定的幂等键。若钉钉返回登录、权限或已�
 cd /path/to/ceo-agent-service
 
 # 处理 reply worker 已写入的 Work Item
-.venv/bin/ceo-agent process-work-items --max-batches 20
+"$HOME/miniforge3/bin/ceo-agent" process-work-items --max-batches 20
 
 # 扫描新增 AI 听记和 CEO_WORKSPACE 下的新增 Markdown/text 文件
-.venv/bin/ceo-agent scan-task-sources
+"$HOME/miniforge3/bin/ceo-agent" scan-task-sources
 
 # 扫描当前登录人的钉钉 OA 待审批
-.venv/bin/ceo-agent scan-oa-approvals
+"$HOME/miniforge3/bin/ceo-agent" scan-oa-approvals
 
 # 扫描、处理 Work Item、处理到期 follow-up
-CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent daily-task-maintenance --not-send-message
+CEO_NOT_SEND_MESSAGE=1 "$HOME/miniforge3/bin/ceo-agent" daily-task-maintenance --not-send-message
 ```
 
 `scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。AI 听记通过当前 `dws` 登录态从最新页读取到已记录的时间边界；首次只建立最新页基线，后续在到达该边界时停止，不会为查找历史 ID 持续使用易失效分页游标。旧版仅含 ID 的状态会安全读取一页、处理该恢复窗口中未记录的条目，并建立时间边界。
@@ -490,7 +490,7 @@ Direct Agent 的另一套运行清单，也不负责复制或补全用户凭证�
 手动检查：
 
 ```bash
-.venv/bin/ceo-agent doctor-mcp --verify-live
+"$HOME/miniforge3/bin/ceo-agent" doctor-mcp --verify-live
 ```
 
 Memory 与其他 MCP 一样来自安装用户现有的 Codex 配置和认证。若当前 Codex session 可以调用
@@ -533,7 +533,7 @@ meeting producer 首次启用时会持久化激活时间。服务启动恢复队
 本地 dry-run 验证：
 
 ```bash
-CEO_NOT_SEND_MESSAGE=1 .venv/bin/python -m app.cli service \
+CEO_NOT_SEND_MESSAGE=1 "$HOME/miniforge3/bin/python" -m app.cli service \
   --host 127.0.0.1 --port 8765
 ```
 
@@ -549,7 +549,7 @@ from meeting_alignment_runs order by id desc limit 20;
 
 ```bash
 CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 \
-  .venv/bin/ceo-agent replay-recent-meetings --limit 10
+  "$HOME/miniforge3/bin/ceo-agent" replay-recent-meetings --limit 10
 ```
 
 可用 `--offset` 跳过已完成的小批量窗口，例如先跑 `--limit 1`，确认后再跑 `--limit 9 --offset 1`，两次合计覆盖最新 10 条且不重复。
@@ -559,14 +559,14 @@ CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 \
 ```bash
 cd /path/to/ceo-agent-service
 CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 \
-  .venv/bin/ceo-agent send-attempt --attempt-id 123
+  "$HOME/miniforge3/bin/ceo-agent" send-attempt --attempt-id 123
 ```
 
 重跑指定消息：
 
 ```bash
 cd /path/to/ceo-agent-service
-.venv/bin/ceo-agent rerun-message \
+"$HOME/miniforge3/bin/ceo-agent" rerun-message \
   --conversation-id '<openConversationId>' \
   --message-id '<openMessageId>' \
   --force-new-decision
@@ -578,7 +578,7 @@ cd /path/to/ceo-agent-service
 
 ```bash
 cd /path/to/ceo-agent-service
-.venv/bin/ceo-agent build-corpus \
+"$HOME/miniforge3/bin/ceo-agent" build-corpus \
   --workspace /path/to/workspace \
   --corpus-dir /path/to/data/corpus
 ```
@@ -587,7 +587,7 @@ cd /path/to/ceo-agent-service
 
 ```bash
 cd /path/to/ceo-agent-service
-.venv/bin/ceo-agent collect-corpus \
+"$HOME/miniforge3/bin/ceo-agent" collect-corpus \
   --workspace /path/to/workspace \
   --corpus-dir /path/to/data/corpus
 ```
@@ -619,13 +619,13 @@ cd /path/to/ceo-agent-service
 npm test
 ```
 
-`npm test` 使用仓库的 `.venv/bin/python -m pytest` 运行 Python 测试，然后运行 Workbench 前端测试。修改 Workbench 后的本地集成流程是：
+`npm test` 使用统一的 `$HOME/miniforge3/bin/python -m pytest` 运行 Python 测试，并先运行 Ruff，再运行 Workbench 前端测试。仓库不创建或依赖私有 `.venv`。修改 Workbench 后的本地集成流程是：
 
 ```bash
 npm install --prefix frontend
 npm run test:workbench
 npm run build:workbench
-.venv/bin/python -m app.cli audit-web --reload --host 127.0.0.1 --port 8765
+"$HOME/miniforge3/bin/python" -m app.cli audit-web --reload --host 127.0.0.1 --port 8765
 ```
 
 构建产物写入被 Git 忽略的 `app/static/workbench/`；FastAPI 在 `/` 精确返回其 `index.html`，并从 `/workbench-assets/` 提供带哈希的 JS/CSS。在构建之前启动页面会明确返回 503，安装脚本也不会自动下载依赖或构建。
@@ -633,14 +633,14 @@ npm run build:workbench
 安装了 Chrome 和 Python `dev` 依赖后，可针对生产构建运行真实浏览器布局回归：
 
 ```bash
-WORKBENCH_BROWSER_TESTS=1 .venv/bin/python -m pytest tests/test_workbench_browser.py -q
+WORKBENCH_BROWSER_TESTS=1 "$HOME/miniforge3/bin/python" -m pytest tests/test_workbench_browser.py -q
 ```
 
 只跑相关测试：
 
 ```bash
 cd /path/to/ceo-agent-service
-.venv/bin/python -m pytest tests/test_worker.py -q
+"$HOME/miniforge3/bin/python" -m pytest tests/test_worker.py -q
 ```
 
 Live smoke tests 默认跳过，只有显式设置环境变量时才会访问真实钉钉或发送外部可见消息。
@@ -648,7 +648,7 @@ Live smoke tests 默认跳过，只有显式设置环境变量时才会访问真
 本地检查全部持久化队列覆盖、当前 backlog 和默认 channel gate：
 
 ```bash
-.venv/bin/python -m app.cli quality-check --db "$CEO_WORKER_DB"
+"$HOME/miniforge3/bin/python" -m app.cli quality-check --db "$CEO_WORKER_DB"
 ```
 
 命令成功不代表没有任何工作正在进行；`attention` 表示新鲜的排队或恢复，

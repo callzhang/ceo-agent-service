@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +11,6 @@ import pytest
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator
-from app.agent_result import SideEffectState
 from app.agent_turn_runner import AgentTurnRunResult
 from app.store import AgentRole, AutoReplyStore
 from tests.support.audit_sink_mcp import AuditSink

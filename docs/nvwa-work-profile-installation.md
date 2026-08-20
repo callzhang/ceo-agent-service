@@ -41,15 +41,15 @@ repository.
 ## Prepare Data
 
 ```bash
-.venv/bin/ceo-agent build-corpus \
+"$HOME/miniforge3/bin/ceo-agent" build-corpus \
   --workspace /Users/principal/Documents/memory \
   --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 
-.venv/bin/ceo-agent collect-corpus \
+"$HOME/miniforge3/bin/ceo-agent" collect-corpus \
   --workspace /Users/principal/Documents/memory \
   --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 
-.venv/bin/ceo-agent build-work-profile \
+"$HOME/miniforge3/bin/ceo-agent" build-work-profile \
   --workspace /Users/principal/Documents/memory \
   --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 ```

@@ -20,6 +20,9 @@ def test_local_service_script_runs_single_main_service():
     assert 'export HOME="${CEO_SERVICE_HOME:-${HOME}}"' in content
     assert 'export PYTHONPATH="${PYTHONPATH:-.}"' in content
     assert "export PYTHONDONTWRITEBYTECODE=1" in content
+    assert 'export CEO_CONDA_PREFIX="${CEO_CONDA_PREFIX:-${HOME}/miniforge3}"' in content
+    assert 'export CEO_PYTHON="${CEO_PYTHON:-${CEO_CONDA_PREFIX}/bin/python}"' in content
+    assert ".venv/bin/python" not in content
     assert 'export CEO_WORKSPACE="${CEO_WORKSPACE:-${HOME}/Documents/memory}"' in content
     assert "DWS_DISABLE_KEYCHAIN" not in content
     assert "DWS_KEYCHAIN_DIR" not in content
@@ -57,6 +60,9 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert command[:2] == ["/bin/zsh", "-lc"]
     assert "app.service_supervisor" in command[2]
     assert "export PYTHONDONTWRITEBYTECODE=1" in command[2]
+    assert 'CEO_CONDA_PREFIX="${CEO_CONDA_PREFIX:-${HOME}/miniforge3}"' in command[2]
+    assert 'CEO_PYTHON="${CEO_PYTHON:-${CEO_CONDA_PREFIX}/bin/python}"' in command[2]
+    assert ".venv/bin/python" not in command[2]
     assert "app.cli service" not in command[2]
     assert "--producer-interval-seconds" not in command[2]
     assert "--consumer-poll-interval-seconds" not in command[2]
@@ -92,6 +98,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
         "/Users/derek/Documents/memory/AI听记/.storage_state.json"
     )
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert env["CEO_CONDA_PREFIX"] == "/Users/derek/miniforge3"
     assert "HOME" not in env
     assert "CODEX_HOME" not in env
     assert "DWS_DISABLE_KEYCHAIN" not in env

@@ -3,8 +3,6 @@ import subprocess
 from argparse import Namespace
 from pathlib import Path
 
-import pytest
-
 from app import service_supervisor
 
 

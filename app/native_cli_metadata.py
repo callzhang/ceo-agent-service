@@ -12,6 +12,7 @@ from app.agent_result import EffectKind
 from app.bounded_process import ProcessOutputLimitError, run_bounded_process
 from app.history import safe_observability_error
 from app.leak_check import contains_credential
+from app.runtime_environment import central_python
 
 
 _SHELL_CONNECTORS = frozenset({"&&", "||", "|", ";"})
@@ -522,7 +523,7 @@ def _is_service_read_only_python_command(argv: tuple[str, ...]) -> bool:
         return False
     executable, module_flag, module, command, instance_flag, process_id = argv
     return (
-        executable == ".venv/bin/python"
+        executable == str(central_python())
         and module_flag == "-m"
         and module == "app.cli"
         and command in _SERVICE_READ_ONLY_PYTHON_COMMANDS

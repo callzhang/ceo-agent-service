@@ -43,6 +43,7 @@ from app.audit_agent import (
 from app.consumer_agent import AUDIT_DYNAMIC_SKILL_BODY, audit_developer_instructions
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
+from app.runtime_environment import central_python
 from app.store import AgentRole, AutoReplyStore
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 from tests.prompt_structure import validate_prompt_structure
@@ -4131,7 +4132,7 @@ def test_service_owned_oa_detail_readback_matches_approval_comment_target():
         {
             "type": "command_execution",
             "argv": [
-                ".venv/bin/python",
+                str(central_python()),
                 "-m",
                 "app.cli",
                 "read-oa-approval-detail",

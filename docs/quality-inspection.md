@@ -10,7 +10,7 @@
 入口：
 
 ```sh
-.venv/bin/python -m app.cli quality-check --db "$CEO_WORKER_DB"
+"$HOME/miniforge3/bin/python" -m app.cli quality-check --db "$CEO_WORKER_DB"
 ```
 
 命令调用 `app.quality_gate.scan_hourly_quality()`，把结果原子写入

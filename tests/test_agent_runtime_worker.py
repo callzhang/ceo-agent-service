@@ -22,6 +22,7 @@ from app.dws_client import DwsClient
 from app.native_cli_metadata import describe_native_command
 from app.store import AgentRole, AutoReplyStore
 from app.process_runner import ProcessRunResult
+from app.runtime_environment import central_python
 from app.worker import ORCHESTRATION_ATTEMPT_STATUS, DingTalkAutoReplyWorker
 from tests.support.image_bytes import TINY_PNG
 
@@ -2110,7 +2111,7 @@ class NativeCommandStub:
     def __call__(self, command: str) -> str:
         self.calls.append(command)
         if command.startswith((
-            ".venv/bin/python -m app.cli read-oa-approval-detail ",
+            f"{central_python()} -m app.cli read-oa-approval-detail ",
             "dws oa approval detail ",
             "dws oa approval tasks ",
         )):
@@ -3308,7 +3309,7 @@ def test_oa_material_binds_exact_target_from_quoted_approval_card(tmp_path: Path
     }
     assert material.source_message_id == "quoted-oa-1"
     assert material.read_commands == (
-        ".venv/bin/python -m app.cli read-oa-approval-detail "
+        f"{central_python()} -m app.cli read-oa-approval-detail "
         "--instance-id quoted-proc",
         "dws oa approval tasks --instance-id quoted-proc --format json",
     )

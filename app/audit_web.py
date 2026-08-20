@@ -98,6 +98,7 @@ from app.history_actions import (
     reply_history_attention,
     task_history_attention,
 )
+from app.runtime_environment import central_python
 from app.developer_prompt import (
     configurable_prompt_variable_pairs,
     DeveloperPromptTemplateError,
@@ -1308,6 +1309,9 @@ def _setup_action_response(request: Request, payload) -> Response:
 
 
 def _tutorial_steps() -> list[_TutorialStep]:
+    python = str(central_python())
+    cli = str(central_python().parent / "ceo-agent")
+    pytest = str(central_python().parent / "pytest")
     return [
         {
             "phase": "Phase 0",
@@ -1337,7 +1341,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
             ],
             "commands": [
                 "python3 -m venv .venv",
-                ".venv/bin/pip install -e '.[dev]'",
+                f"{python} -m pip install -e '.[dev]'",
                 "dws auth status",
                 "codex --version",
             ],
@@ -1355,7 +1359,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
             ],
             "commands": [
                 "cp .env.example .env",
-                ".venv/bin/ceo-agent setup-memory-connector --memory-url '<memory-mcp-url>'",
+                f"{cli} setup-memory-connector --memory-url '<memory-mcp-url>'",
                 "mkdir -p data/corpus \"$HOME/Documents/memory\"",
             ],
             "links": [("System config", "/config?tab=system")],
@@ -1371,8 +1375,8 @@ def _tutorial_steps() -> list[_TutorialStep]:
                 "data/corpus/style_corpus.csv is local runtime data, not source code",
             ],
             "commands": [
-                ".venv/bin/ceo-agent build-corpus --workspace \"$HOME/Documents/memory\" --corpus-dir ./data/corpus",
-                ".venv/bin/ceo-agent collect-corpus --workspace \"$HOME/Documents/memory\" --corpus-dir ./data/corpus",
+                f'{cli} build-corpus --workspace "$HOME/Documents/memory" --corpus-dir ./data/corpus',
+                f'{cli} collect-corpus --workspace "$HOME/Documents/memory" --corpus-dir ./data/corpus',
             ],
             "links": [("Tasks", "/tasks")],
         },
@@ -1387,8 +1391,8 @@ def _tutorial_steps() -> list[_TutorialStep]:
                 "Runtime consumes the profile through work_profile_instruction()",
             ],
             "commands": [
-                ".venv/bin/ceo-agent build-work-profile --workspace \"$HOME/Documents/memory\" --corpus-dir ./data/corpus",
-                ".venv/bin/pytest tests/test_work_profile.py tests/test_prompt.py tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content -q",
+                f'{cli} build-work-profile --workspace "$HOME/Documents/memory" --corpus-dir ./data/corpus',
+                f"{pytest} tests/test_work_profile.py tests/test_prompt.py tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content -q",
             ],
             "links": [("Config", "/config"), ("Logs", "/logs")],
         },
@@ -1403,9 +1407,9 @@ def _tutorial_steps() -> list[_TutorialStep]:
                 "No unresolved failed or processing backlog remains",
             ],
             "commands": [
-                ".venv/bin/ceo-agent probe-dws",
-                ".venv/bin/python -m app.cli audit-web --reload --host 127.0.0.1 --port 8765",
-                "CEO_NOT_SEND_MESSAGE=1 .venv/bin/ceo-agent run-once --not-send-message",
+                f"{cli} probe-dws",
+                f"{python} -m app.cli audit-web --reload --host 127.0.0.1 --port 8765",
+                f"CEO_NOT_SEND_MESSAGE=1 {cli} run-once --not-send-message",
             ],
             "links": [("History", "/history"), ("Logs", "/logs"), ("Tasks", "/tasks")],
         },
@@ -1422,7 +1426,7 @@ def _tutorial_steps() -> list[_TutorialStep]:
             "commands": [
                 "scripts/install-auto-reply-agents.sh",
                 "launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'",
-                "CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 .venv/bin/ceo-agent send-attempt --attempt-id <reviewed-attempt-id>",
+                f"CEO_NOT_SEND_MESSAGE=0 CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1 {cli} send-attempt --attempt-id <reviewed-attempt-id>",
             ],
             "links": [("History", "/history"), ("Logs", "/logs")],
         },
@@ -7707,7 +7711,7 @@ def handle_needs_human_decision_post(
             render_page("Decision unavailable", "<p>该 attempt 已选择其他处理方式。</p>"),
         )
     try:
-        result = handle_reviewed_message_reply(
+        handle_reviewed_message_reply(
             store,
             attempt_id=source.id,
             reply_text="",

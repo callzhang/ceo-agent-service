@@ -54,7 +54,7 @@ Build the local AI meeting-note corpus:
 
 ```bash
 cd /path/to/ceo-agent-service
-.venv/bin/ceo-agent build-corpus \
+"$HOME/miniforge3/bin/ceo-agent" build-corpus \
   --workspace /Users/principal/Documents/memory \
   --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 ```
@@ -62,7 +62,7 @@ cd /path/to/ceo-agent-service
 Append recent DingTalk sent-message examples:
 
 ```bash
-.venv/bin/ceo-agent collect-corpus \
+"$HOME/miniforge3/bin/ceo-agent" collect-corpus \
   --workspace /Users/principal/Documents/memory \
   --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 ```
@@ -87,7 +87,7 @@ Satisfies when:
 Run the profile builder:
 
 ```bash
-.venv/bin/ceo-agent build-work-profile \
+"$HOME/miniforge3/bin/ceo-agent" build-work-profile \
   --workspace /Users/principal/Documents/memory \
   --corpus-dir /Users/principal/Documents/Projects/ceo-agent-service/data/corpus
 ```
@@ -104,9 +104,9 @@ By default this command:
 Use these flags when you need a narrower run:
 
 ```bash
-.venv/bin/ceo-agent build-work-profile --skip-minutes-corpus
-.venv/bin/ceo-agent build-work-profile --skip-dingtalk-messages
-.venv/bin/ceo-agent build-work-profile --skip-dingtalk-kb
+"$HOME/miniforge3/bin/ceo-agent" build-work-profile --skip-minutes-corpus
+"$HOME/miniforge3/bin/ceo-agent" build-work-profile --skip-dingtalk-messages
+"$HOME/miniforge3/bin/ceo-agent" build-work-profile --skip-dingtalk-kb
 ```
 
 Checker:
@@ -182,13 +182,13 @@ Run the focused tests:
 
 ```bash
 cd /path/to/ceo-agent-service
-.venv/bin/pytest tests/test_work_profile.py tests/test_prompt.py tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content -q
+"$HOME/miniforge3/bin/pytest" tests/test_work_profile.py tests/test_prompt.py tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content -q
 ```
 
 Run the full local-service suite before committing behavior changes:
 
 ```bash
-.venv/bin/pytest -q
+"$HOME/miniforge3/bin/pytest" -q
 ```
 
 Final checker:

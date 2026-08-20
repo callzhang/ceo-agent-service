@@ -14,8 +14,9 @@
   "scripts": {
     "build:workbench": "npm run build --prefix frontend",
     "dev:local": "ceo-agent run",
-    "test": "npm run test:local && npm run test:workbench",
-    "test:local": ".venv/bin/python -m pytest",
+    "test": "npm run lint:local && npm run test:local && npm run test:workbench",
+    "lint:local": "${CEO_RUFF:-$HOME/miniforge3/bin/ruff} check app tests",
+    "test:local": "${CEO_PYTHON:-$HOME/miniforge3/bin/python} -m pytest",
     "test:workbench": "npm run test --prefix frontend -- --run"
   }
 }

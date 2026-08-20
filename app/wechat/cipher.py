@@ -90,7 +90,6 @@ class WcdbCipherBackend:
         enc_key = enc_key_from_passphrase(passphrase, salt)
         if not validates(snapshot, passphrase):
             raise CipherError("passphrase did not validate page 1")
-        mac_key = _mac_key(enc_key, salt)
         out = bytearray()
         npages = len(data) // PAGE
         for i in range(npages):

@@ -1,0 +1,33 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      CEO_PYTHON: python
+      CEO_RUFF: ruff
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - run: python -m pip install '.[dev]'
+      - run: npm ci
+      - run: npm ci --prefix frontend
+      - run: npm test
+      - run: npm run build:workbench
+      - run: python -m playwright install --with-deps chromium
+      - run: WORKBENCH_BROWSER_TESTS=1 python -m pytest -q tests/test_workbench_browser.py

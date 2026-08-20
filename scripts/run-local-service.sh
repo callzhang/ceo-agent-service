@@ -8,6 +8,8 @@ export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/
 export HOME="${CEO_SERVICE_HOME:-${HOME}}"
 export PYTHONPATH="${PYTHONPATH:-.}"
 export PYTHONDONTWRITEBYTECODE=1
+export CEO_CONDA_PREFIX="${CEO_CONDA_PREFIX:-${HOME}/miniforge3}"
+export CEO_PYTHON="${CEO_PYTHON:-${CEO_CONDA_PREFIX}/bin/python}"
 export CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"
 export CEO_CODEX_MODEL="${CEO_CODEX_MODEL:-gpt-5.5}"
 export CEO_CODEX_MODEL_REASONING_EFFORT="${CEO_CODEX_MODEL_REASONING_EFFORT:-medium}"
@@ -16,12 +18,9 @@ export CEO_DING_ROBOT_NAME="${CEO_DING_ROBOT_NAME:-磊哥}"
 export CEO_WORKER_DB="${CEO_WORKER_DB:-${repo_root}/data/auto-reply.sqlite3}"
 export CEO_NOT_SEND_MESSAGE="${CEO_NOT_SEND_MESSAGE:-${CEO_DRY_RUN:-0}}"
 export CEO_CORPUS_DIR="${CEO_CORPUS_DIR:-${repo_root}/data/corpus}"
-export CEO_OKR_LIVE_SOURCE_COMMAND="${CEO_OKR_LIVE_SOURCE_COMMAND:-${repo_root}/.venv/bin/python ${HOME}/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}}"
+export CEO_OKR_LIVE_SOURCE_COMMAND="${CEO_OKR_LIVE_SOURCE_COMMAND:-${CEO_PYTHON} ${HOME}/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}}"
 
-ceo_agent_cmd=(.venv/bin/python -c 'from app.cli import main; main()')
-if [[ -x .venv/bin/ceo-agent ]]; then
-  ceo_agent_cmd=(.venv/bin/ceo-agent)
-fi
+ceo_agent_cmd=("${CEO_PYTHON}" -c 'from app.cli import main; main()')
 
 if [[ -n "${CEO_MAX_BATCHES:-}" ]]; then
   exec "${ceo_agent_cmd[@]}" run-once --max-batches "${CEO_MAX_BATCHES}"

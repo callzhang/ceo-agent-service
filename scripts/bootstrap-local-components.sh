@@ -5,7 +5,8 @@ FORMAT_TEXT=1
 COMPONENT="all"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CHECKOUT_PYTHON="${REPO_ROOT}/.venv/bin/python"
+CEO_CONDA_PREFIX="${CEO_CONDA_PREFIX:-${HOME}/miniforge3}"
+CEO_PYTHON="${CEO_PYTHON:-${CEO_CONDA_PREFIX}/bin/python}"
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -230,16 +231,16 @@ ensure_nvwa() {
 
 ensure_ceo_business_skills() {
   local detail
-  if [[ ! -x "${CHECKOUT_PYTHON}" ]]; then
-    record "ceo-business-skills" "failed" "missing checkout Python interpreter: ${CHECKOUT_PYTHON}"
+  if [[ ! -x "${CEO_PYTHON}" ]]; then
+    record "ceo-business-skills" "failed" "missing central Conda Python interpreter: ${CEO_PYTHON}"
     return
   fi
-  if ! "${CHECKOUT_PYTHON}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
-    record "ceo-business-skills" "failed" "invalid checkout Python interpreter: ${CHECKOUT_PYTHON}"
+  if ! "${CEO_PYTHON}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' >/dev/null 2>&1; then
+    record "ceo-business-skills" "failed" "invalid central Conda Python interpreter: ${CEO_PYTHON}"
     return
   fi
   if detail="$(
-    PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" "${CHECKOUT_PYTHON}" - "${HOME}/.agents/skills" 2>&1 <<'PY'
+    PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" "${CEO_PYTHON}" - "${HOME}/.agents/skills" 2>&1 <<'PY'
 from pathlib import Path
 import sys
 

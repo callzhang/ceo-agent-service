@@ -14,6 +14,7 @@ from app.developer_prompt import (
 from app.audit_rules import SEED_AUDIT_RULES_TEMPLATE
 from app.mcp_doctor import check_mcp_statuses
 from app.prompt import DEFAULT_WORK_PROFILE_TEXT
+from app.runtime_environment import MINIMUM_PYTHON, central_python
 from app.service_codex_config import (
     DEFAULT_SERVICE_MCP_CONFIG_PATH,
     ServiceMcpConfigError,
@@ -624,25 +625,42 @@ def _check_preflight(*, repo_root: Path) -> SetupStepStatus:
         for name in ("README.md", "app", "tests")
         if not (repo_root / name).exists()
     ]
-    python_ready = (repo_root / ".venv" / "bin" / "python").exists()
+    python = central_python()
+    python_ready = python.is_file() and os.access(python, os.X_OK)
+    if python_ready:
+        version_check = subprocess.run(
+            [
+                str(python),
+                "-c",
+                (
+                    "import sys; raise SystemExit(0 if sys.version_info >= "
+                    f"{MINIMUM_PYTHON!r} else 1)"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        python_ready = version_check.returncode == 0
     if missing:
         return _status(
             "preflight",
             title="Preflight",
             status="needs_action",
             summary="Repository checkout is incomplete: " + ", ".join(missing),
-            evidence={"python_venv": python_ready},
+            evidence={"conda_python": python_ready},
         )
     return _status(
         "preflight",
         title="Preflight",
         status="done" if python_ready else "needs_action",
         summary=(
-            "Repository checkout and virtualenv are ready."
+            "Repository checkout and central Conda Python are ready."
             if python_ready
-            else "Repository checkout is present, but .venv/bin/python is missing."
+            else f"Repository checkout is present, but {python} is unavailable or older than Python 3.12."
         ),
-        evidence={"python_venv": python_ready},
+        evidence={"conda_python": python_ready},
     )
 
 
@@ -920,7 +938,13 @@ def _run_dry_run_action(
     merged_env = os.environ.copy()
     merged_env.update(env)
     merged_env["CEO_NOT_SEND_MESSAGE"] = "1"
-    args = [".venv/bin/ceo-agent", "run-once", "--not-send-message"]
+    args = [
+        str(central_python(merged_env)),
+        "-m",
+        "app.cli",
+        "run-once",
+        "--not-send-message",
+    ]
     completed = subprocess.run(
         args,
         cwd=repo_root,

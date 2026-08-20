@@ -177,14 +177,14 @@ the request may have reached the helper, any timeout or broken response remains
 ## Diagnostic CLI
 
 ```bash
-.venv/bin/python -m app.wechat.cli status                     # probe capability per account
-.venv/bin/python -m app.wechat.cli read-recent --db data/auto-reply.sqlite3 --target-id filehelper --limit 100   # uses persisted self_user_id; redacted metadata
-.venv/bin/python -m app.wechat.cli read-recent --db data/auto-reply.sqlite3 --target-id filehelper --include-text  # explicit local verify
-.venv/bin/python -m app.wechat.cli produce-once               # scan enabled scopes → enqueue
-.venv/bin/python -m app.cli wechat import-memory --db data/auto-reply.sqlite3 \
+"$HOME/miniforge3/bin/python" -m app.wechat.cli status                     # probe capability per account
+"$HOME/miniforge3/bin/python" -m app.wechat.cli read-recent --db data/auto-reply.sqlite3 --target-id filehelper --limit 100   # uses persisted self_user_id; redacted metadata
+"$HOME/miniforge3/bin/python" -m app.wechat.cli read-recent --db data/auto-reply.sqlite3 --target-id filehelper --include-text  # explicit local verify
+"$HOME/miniforge3/bin/python" -m app.wechat.cli produce-once               # scan enabled scopes → enqueue
+"$HOME/miniforge3/bin/python" -m app.cli wechat import-memory --db data/auto-reply.sqlite3 \
     --account-id '<ready-account-id>' --target-id '<wxid-or-chatroom-id>' \
     --since '2026-01-01' --until '2026-07-20T23:59:59+08:00' --limit 1000
-.venv/bin/python scripts/wechat_key_probe.py --passphrase-file ~/.config/wx_read/passphrase.hex \
+"$HOME/miniforge3/bin/python" scripts/wechat_key_probe.py --passphrase-file ~/.config/wx_read/passphrase.hex \
     --account-db-dir "$HOME/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<acct>/db_storage"
 ```
 
@@ -279,7 +279,7 @@ pending.
 
 ## Controlled verification (before any live send)
 
-1. `.venv/bin/python -m pytest -q` — full suite green.
+1. `"$HOME/miniforge3/bin/python" -m pytest -q` — full suite green.
 2. `wechat status` → the account reports `ready`; `read-recent --include-text` on
    File Transfer Helper — compare count/order/direction/timestamp/sender/text;
    run twice, confirm `produce-once` enqueues zero duplicates on the second scan.

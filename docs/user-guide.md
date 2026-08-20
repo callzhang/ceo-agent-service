@@ -357,8 +357,8 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 安装者可运行：
 
 ```bash
-.venv/bin/ceo-agent channel-doctor
-.venv/bin/ceo-agent doctor-mcp --verify-live
+"$HOME/miniforge3/bin/ceo-agent" channel-doctor
+"$HOME/miniforge3/bin/ceo-agent" doctor-mcp --verify-live
 ```
 
 只有 gate 明确返回 `needs_login` 时才启动一次登录。Agent 本身不得在任务执行中调用 `dws auth login`。

@@ -68,7 +68,6 @@ def build_sender(*, socket_path=None):
 
 def build_setup_service(store):
     """Construct a WechatSetupService from config (reader + accessibility preflight)."""
-    from app import config
     from app.wechat.setup import WechatSetupService
 
     reader = build_reader()

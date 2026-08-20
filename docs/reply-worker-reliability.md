@@ -167,8 +167,8 @@ Agent 不会被并发重入队。
 Agent 启动前，service 使用 gate 检查依赖：
 
 ```bash
-.venv/bin/ceo-agent channel-doctor
-.venv/bin/ceo-agent doctor-mcp --verify-live
+"$HOME/miniforge3/bin/ceo-agent" channel-doctor
+"$HOME/miniforge3/bin/ceo-agent" doctor-mcp --verify-live
 ```
 
 `channel-doctor` 检查 DWS 和 Lark CLI 的结构化状态与认证探测。`doctor-mcp` 检查服务 MCP
