@@ -285,16 +285,28 @@ Generalized workloads that do not own an `agent_run` use
 `RoutedCodexExecution`. The executor accepts only a persisted enumerated
 workload identity and an `ApprovedCodexCommandFactory`. That factory issues a
 sealed execution policy: read-only commands use `approval_policy=never`, do not
-use the approval bypass, and every streamed native-command or MCP start is
-validated by the existing reviewed read classifiers. Callers cannot enable
-failover with a boolean or construct their own policy object. An unknown or
+use the approval bypass, explicitly force the Codex `read-only` sandbox even
+when the ambient Codex configuration is more permissive, and every streamed
+native-command or MCP start is validated by the existing reviewed read
+classifiers. The frozen exact-type factory cannot be replaced or mutated
+through the ordinary execution API. Callers cannot enable failover with a
+boolean or construct their own policy object. An unknown or
 effectful tool, hidden local-session effect, or local-session evidence that the
 runner cannot inspect writes `first_effect_started_at` and blocks failover.
 
+Each generalized attempt has a persisted owner and expiry. The executor renews
+the lease immediately before child creation, and the lease duration is never
+shorter than the enforced total process timeout plus a safety margin. A live
+owner therefore cannot be reclaimed while a silent child is still within its
+bounded run. After expiry, only a read-only attempt with no effect fence may be
+terminalized as `runtime_lease_expired` and routed again. An expired effectful
+attempt remains fail-closed and is never replayed.
+
 Effectful generalized workloads use the same attempt ledger but are
 ledger-only: after the one-shot attempt start fence succeeds, the executor
-persists `first_effect_started_at` before starting the child process and never
-selects a fallback route. Read-only failures may select a next route only after
+has atomically persisted `first_effect_started_at` in the same compare-and-set
+transaction, before starting the child process, and never selects a fallback
+route. Read-only failures may select a next route only after
 the router re-reads the exact failed attempt, runnable parent identity, typed
 failure tuple, prior bounded route attempts, pauses, and current capability
 snapshots. A `codex_api` resume rejection may repeat that route once with a
@@ -309,6 +321,15 @@ reference, before later output handling. A rejected read-only `item.started`
 persists the effect fence and raises the executor's dedicated abort exception;
 the process runner then terminates the child process group rather than waiting
 for a normal process result.
+
+Successful generalized results use a sealed, versioned `RoutedResultCodec`.
+The codec validates both the newly parsed value and any value restored after a
+restart. Its schema ID and bounded result envelope are persisted in the same
+transaction that records transcript evidence, updates the conversation route
+session, and marks the attempt completed. The envelope excludes the prompt,
+raw transcript, environment, and credential-like or local-runtime data. A
+retry with the matching codec returns the prior completed result without
+starting another child; a missing, corrupt, or mismatched codec fails closed.
 
 Failover is unsafe as soon as one effectful `item.started` event exists, even
 when the command later reports failure. The run becomes or remains `unknown`

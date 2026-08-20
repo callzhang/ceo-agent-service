@@ -9026,3 +9026,43 @@ def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
         row = db.execute("select resolved_at from errors").fetchone()
     assert row is not None
     assert row["resolved_at"]
+
+
+def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "current-version-old-runtime-attempt.sqlite3"
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        db.execute("drop index idx_runtime_attempt_active_lease")
+        db.execute("drop trigger trg_runtime_attempt_generalized_lease_insert")
+        db.execute("drop trigger trg_runtime_attempt_generalized_lease_update")
+        for column in (
+            "result_envelope_json",
+            "result_schema_id",
+            "lease_expires_at",
+            "lease_owner",
+        ):
+            db.execute(f"alter table agent_runtime_attempts drop column {column}")
+        db.execute(
+            "update service_state set value='2026-08-20.1' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    assert store._schema_is_current() is False
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    reopened = AutoReplyStore(db_path)
+
+    with reopened._connect() as db:
+        columns = {
+            row["name"]
+            for row in db.execute("pragma table_info(agent_runtime_attempts)")
+        }
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-20.1"
+    assert {
+        "lease_owner",
+        "lease_expires_at",
+        "result_schema_id",
+        "result_envelope_json",
+    } <= columns
+    assert reopened._schema_is_current() is True

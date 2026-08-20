@@ -160,6 +160,31 @@ def test_process_runner_callback_error_terminates_child_and_propagates():
         os.kill(child_pids[0], 0)
 
 
+def test_callback_error_after_parent_exit_still_kills_forked_descendant(tmp_path):
+    marker = tmp_path / "descendant-continued"
+    script = (
+        "import os,sys,time,pathlib; "
+        "child=os.fork(); "
+        f"(os.close(1),os.close(2),time.sleep(0.3),pathlib.Path({str(marker)!r}).write_text('alive'),os._exit(0)) "
+        "if child == 0 else (sys.stdout.write('tail'),sys.stdout.flush(),os._exit(0))"
+    )
+
+    with pytest.raises(RuntimeError, match="reject final line"):
+        run_process_with_idle_timeout(
+            [sys.executable, "-c", script],
+            prompt="",
+            env=None,
+            total_timeout_seconds=5,
+            idle_timeout_seconds=5,
+            on_stdout_line=lambda _line: (_ for _ in ()).throw(
+                RuntimeError("reject final line")
+            ),
+        )
+
+    time.sleep(0.5)
+    assert marker.exists() is False
+
+
 def test_process_runner_timeout_flushes_partial_stdout_line_once():
     lines = []
 
@@ -201,12 +226,12 @@ def test_process_runner_allows_independent_codex_processes_to_overlap(tmp_path):
     codex = tmp_path / "codex"
     codex.write_text(
         "#!/bin/sh\n"
-        "printf 'start %s\\n' \"$$\" >> \"$EVENTS\"\n"
-        "while [ \"$(wc -l < \"$EVENTS\")\" -lt 2 ]; do\n"
+        'printf \'start %s\\n\' "$$" >> "$EVENTS"\n'
+        'while [ "$(wc -l < "$EVENTS")" -lt 2 ]; do\n'
         "  printf '.\\n'\n"
         "  sleep 0.01\n"
         "done\n"
-        "printf 'end %s\\n' \"$$\" >> \"$EVENTS\"\n",
+        'printf \'end %s\\n\' "$$" >> "$EVENTS"\n',
         encoding="utf-8",
     )
     codex.chmod(0o755)

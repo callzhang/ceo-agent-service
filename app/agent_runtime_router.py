@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,6 +29,7 @@ from app.agent_runtime_contracts import (
 from app.codex_decision import extract_codex_session_id
 from app.codex_history import count_codex_session_lines
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import (
@@ -36,12 +38,14 @@ from app.store import (
     AgentRuntimeAttemptStartConflictError,
     AutoReplyStore,
     RuntimeAttemptSessionMode,
+    RuntimeRoutePausedError,
 )
 
 ResultT = TypeVar("ResultT")
 StepT = TypeVar("StepT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 _APPROVED_COMMAND_FACTORY_SEAL = object()
+_ROUTED_RESULT_CODEC_SEAL = object()
 
 
 class ExecutionEffectMode(StrEnum):
@@ -59,6 +63,7 @@ class _ApprovedExecutionPolicy:
             raise ValueError("execution policy was not issued by the approved factory")
 
 
+@dataclass(frozen=True, slots=True, init=False)
 class ApprovedCodexCommandFactory:
     """Build only the two reviewed Codex command policy shapes.
 
@@ -66,6 +71,12 @@ class ApprovedCodexCommandFactory:
     caller cannot opt into failover by passing a boolean or an arbitrary policy
     object.
     """
+
+    _policy: _ApprovedExecutionPolicy
+    _developer_instructions: str
+    _output_schema_path: Path | None
+    _use_output_schema: bool
+    _image_paths: tuple[Path, ...]
 
     def __init__(
         self,
@@ -82,11 +93,11 @@ class ApprovedCodexCommandFactory:
         developer_instructions = developer_instructions.strip()
         if not developer_instructions:
             raise ValueError("developer_instructions must be non-empty")
-        self._policy = _ApprovedExecutionPolicy(effect_mode, seal)
-        self._developer_instructions = developer_instructions
-        self._output_schema_path = output_schema_path
-        self._use_output_schema = use_output_schema
-        self._image_paths = image_paths
+        object.__setattr__(self, "_policy", _ApprovedExecutionPolicy(effect_mode, seal))
+        object.__setattr__(self, "_developer_instructions", developer_instructions)
+        object.__setattr__(self, "_output_schema_path", output_schema_path)
+        object.__setattr__(self, "_use_output_schema", use_output_schema)
+        object.__setattr__(self, "_image_paths", image_paths)
 
     @classmethod
     def read_only(
@@ -147,8 +158,70 @@ class ApprovedCodexCommandFactory:
             approval_policy="never" if read_only else "untrusted",
             developer_instructions=self._developer_instructions,
             use_approval_bypass=not read_only,
+            sandbox_mode="read-only" if read_only else None,
         )
         return command, adapter.build_env(route)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class RoutedResultCodec[ResultT]:
+    """A sealed, versioned codec for durable generalized-operation results."""
+
+    schema_id: str
+    _kind: str
+    _seal: object
+
+    def __init__(self, *, schema_id: str, kind: str, seal: object) -> None:
+        if seal is not _ROUTED_RESULT_CODEC_SEAL:
+            raise ValueError("result codecs use named constructors")
+        schema_id = schema_id.strip()
+        if not schema_id or not all(
+            part.replace("-", "").replace("_", "").isalnum()
+            for part in schema_id.split(".")
+        ):
+            raise ValueError("schema_id must be a versioned identifier")
+        object.__setattr__(self, "schema_id", schema_id)
+        object.__setattr__(self, "_kind", kind)
+        object.__setattr__(self, "_seal", seal)
+
+    @classmethod
+    def integer(cls, *, schema_id: str) -> RoutedResultCodec[int]:
+        return cls(schema_id=schema_id, kind="integer", seal=_ROUTED_RESULT_CODEC_SEAL)
+
+    @classmethod
+    def text(cls, *, schema_id: str) -> RoutedResultCodec[str]:
+        return cls(schema_id=schema_id, kind="text", seal=_ROUTED_RESULT_CODEC_SEAL)
+
+    def encode(self, value: ResultT) -> str:
+        self._validate(value)
+        encoded = json.dumps(
+            {"schema_id": self.schema_id, "value": value},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if contains_credential(encoded) or contains_local_runtime_leak(encoded):
+            raise ValueError("result envelope contains sensitive runtime data")
+        return encoded
+
+    def decode(self, encoded: str) -> ResultT:
+        try:
+            envelope = json.loads(encoded)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ValueError("invalid persisted result envelope") from exc
+        if (
+            not isinstance(envelope, dict)
+            or set(envelope) != {"schema_id", "value"}
+            or envelope["schema_id"] != self.schema_id
+        ):
+            raise ValueError("persisted result schema mismatch")
+        value = envelope["value"]
+        self._validate(value)
+        return value
+
+    def _validate(self, value: object) -> None:
+        valid = type(value) is int if self._kind == "integer" else type(value) is str
+        if not valid:
+            raise ValueError(f"result does not match {self._kind} codec")
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +243,10 @@ class RoutedCodexExecutionError(RuntimeError):
 
 class RoutedCodexPolicyAbort(RuntimeError):
     """Abort the child process immediately after fail-closed policy evidence."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,6 +575,9 @@ class RoutedCodexExecution:
         idle_timeout_seconds: float = IDLE_TIMEOUT_SECONDS,
         effect_registry: McpToolEffectRegistry | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
+        owner: str | None = None,
+        lease_seconds: int = 1800,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
         self._config = config
@@ -515,6 +595,13 @@ class RoutedCodexExecution:
         self._native_cli_classifier = (
             native_cli_classifier or NativeCliMetadataClassifier()
         )
+        self._owner = (owner or f"routed-codex-{uuid.uuid4().hex}").strip()
+        if not self._owner:
+            raise ValueError("owner must be non-empty")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        self._lease_seconds = max(lease_seconds, int(total_timeout_seconds) + 60)
+        self._now = now or (lambda: datetime.now(UTC))
 
     def execute(
         self,
@@ -524,6 +611,7 @@ class RoutedCodexExecution:
         prompt: str,
         command_factory: ApprovedCodexCommandFactory,
         parser: Callable[[str], ResultT],
+        result_codec: RoutedResultCodec[ResultT],
         conversation_id: str | None = None,
         required_capabilities: frozenset[str] = frozenset(),
     ) -> RoutedCodexExecutionResult[ResultT]:
@@ -532,21 +620,44 @@ class RoutedCodexExecution:
         policy = command_factory._approved_policy
         if policy.seal is not _APPROVED_COMMAND_FACTORY_SEAL:
             raise ValueError("command_factory policy is not approved")
+        if (
+            type(result_codec) is not RoutedResultCodec
+            or result_codec._seal is not _ROUTED_RESULT_CODEC_SEAL
+        ):
+            raise ValueError("result_codec must be approved")
         prompt = prompt.strip()
         if not prompt:
             raise ValueError("prompt must be non-empty")
 
+        self._store.recover_expired_runtime_operation_attempt(
+            workload_kind, workload_key, now=self._now()
+        )
         existing_attempts = self._store.list_runtime_operation_attempts(
             workload_kind, workload_key
         )
-        if policy.effect_mode is ExecutionEffectMode.EFFECTFUL and existing_attempts:
-            raise RoutedCodexExecutionError("runtime_effectful_replay_blocked")
         if existing_attempts:
             latest = existing_attempts[-1]
             if latest.status in {"starting", "running"}:
+                if latest.first_effect_started_at:
+                    raise RoutedCodexExecutionError("runtime_effectful_replay_blocked")
                 raise RoutedCodexExecutionError("runtime_attempt_active")
             if latest.status == "completed":
-                raise RoutedCodexExecutionError("runtime_operation_completed")
+                try:
+                    value = result_codec.decode(latest.result_envelope_json)
+                except ValueError as exc:
+                    raise RoutedCodexExecutionError(
+                        "runtime_result_schema_mismatch"
+                    ) from exc
+                return RoutedCodexExecutionResult(
+                    value=value,
+                    route_name=latest.route_name,
+                    attempt_id=latest.id,
+                    session_id=latest.session_id,
+                    transcript_start=latest.transcript_start,
+                    transcript_end=latest.transcript_end,
+                )
+            if policy.effect_mode is ExecutionEffectMode.EFFECTFUL:
+                raise RoutedCodexExecutionError("runtime_effectful_replay_blocked")
             if latest.status != "failed":
                 raise RoutedCodexExecutionError("runtime_attempt_state_invalid")
             persisted_failure = RuntimeFailure(
@@ -580,6 +691,21 @@ class RoutedCodexExecution:
         active_attempt = self._claim_and_start(
             workload_kind, workload_key, route, route_session_id, policy.effect_mode
         )
+        if existing_attempts and existing_attempts[-1].status == "failed":
+            previous = existing_attempts[-1]
+            self._finalized_step(
+                active_attempt,
+                stage="attempt_supersede",
+                evidence=lambda: (
+                    route_session_id or "",
+                    f"codex_session:{route_session_id}" if route_session_id else "",
+                    0,
+                    0,
+                ),
+                action=lambda: self._store.mark_agent_runtime_attempt_superseded(
+                    previous.id
+                ),
+            )
 
         while True:
             transcript_start = 0
@@ -617,12 +743,19 @@ class RoutedCodexExecution:
                 line_count += 1
                 streamed_session_id = self._session_id_parser(line)
                 if streamed_session_id:
+                    if (
+                        observed_session_id
+                        and streamed_session_id != observed_session_id
+                    ):
+                        raise RoutedCodexPolicyAbort("runtime_session_conflict")
                     observed_session_id = streamed_session_id
                     transcript_reference = f"codex_session:{streamed_session_id}"
                     active_attempt = self._store.set_agent_runtime_attempt_session(
                         active_attempt.id,
                         streamed_session_id,
                         transcript_reference,
+                        owner=self._owner,
+                        now=self._now(),
                     )
                 if _line_violates_read_only_policy(
                     line,
@@ -633,13 +766,26 @@ class RoutedCodexExecution:
                     if persisted is not None and not persisted.first_effect_started_at:
                         active_attempt = (
                             self._store.note_runtime_attempt_effect_started(
-                                active_attempt.id
+                                active_attempt.id,
+                                owner=self._owner,
+                                at=self._now(),
                             )
                         )
                     if policy.effect_mode is ExecutionEffectMode.READ_ONLY:
                         effect_policy_violated = True
                         raise RoutedCodexPolicyAbort("runtime_effect_policy_violation")
 
+            active_attempt = self._finalized_step(
+                active_attempt,
+                stage="lease_renewal",
+                evidence=current_evidence,
+                action=lambda: self._store.renew_runtime_operation_attempt_lease(
+                    active_attempt.id,
+                    owner=self._owner,
+                    lease_seconds=self._lease_seconds,
+                    now=self._now(),
+                ),
+            )
             command, env = self._finalized_step(
                 active_attempt,
                 stage="command_build",
@@ -649,6 +795,17 @@ class RoutedCodexExecution:
                     route=route,
                     prompt=prompt,
                     session_id=route_session_id,
+                ),
+            )
+            active_attempt = self._finalized_step(
+                active_attempt,
+                stage="lease_renewal",
+                evidence=current_evidence,
+                action=lambda: self._store.renew_runtime_operation_attempt_lease(
+                    active_attempt.id,
+                    owner=self._owner,
+                    lease_seconds=self._lease_seconds,
+                    now=self._now(),
                 ),
             )
             process = self._finalized_step(
@@ -665,15 +822,28 @@ class RoutedCodexExecution:
                 ),
             )
 
-            observed_session_id = (
+            buffered_session_id = self._finalized_step(
+                active_attempt,
+                stage="transcript_evidence",
+                evidence=current_evidence,
+                action=lambda: self._session_id_parser(process.stdout),
+            )
+            if (
+                buffered_session_id
+                and observed_session_id
+                and buffered_session_id != observed_session_id
+            ):
+
+                def abort_conflicting_session() -> None:
+                    raise RoutedCodexPolicyAbort("runtime_session_conflict")
+
                 self._finalized_step(
                     active_attempt,
                     stage="transcript_evidence",
                     evidence=current_evidence,
-                    action=lambda: self._session_id_parser(process.stdout),
+                    action=abort_conflicting_session,
                 )
-                or observed_session_id
-            )
+            observed_session_id = buffered_session_id or observed_session_id
             transcript_end = max(transcript_start + line_count, transcript_start)
             if observed_session_id:
                 transcript_end = max(
@@ -696,6 +866,33 @@ class RoutedCodexExecution:
                     evidence=current_evidence,
                     action=lambda: parser(process.stdout),
                 )
+                result_envelope = self._finalized_step(
+                    active_attempt,
+                    stage="result_persistence",
+                    evidence=current_evidence,
+                    action=lambda: result_codec.encode(value),
+                )
+                if (
+                    observed_session_id
+                    and policy.effect_mode is ExecutionEffectMode.READ_ONLY
+                    and self._probe_session_effect(
+                        observed_session_id, transcript_start, transcript_end
+                    )
+                    is not False
+                ):
+                    active_attempt = self._store.note_runtime_attempt_effect_started(
+                        active_attempt.id, owner=self._owner, at=self._now()
+                    )
+                    self._terminalize_active_attempt(
+                        active_attempt,
+                        failure_class=RuntimeFailureClass.CAPABILITY,
+                        failure_code="runtime_effect_policy_violation",
+                        session_id=observed_session_id,
+                        transcript_reference=transcript_reference,
+                        transcript_start=transcript_start,
+                        transcript_end=transcript_end,
+                    )
+                    raise RoutedCodexExecutionError("runtime_effect_policy_violation")
                 completed = self._finalized_step(
                     active_attempt,
                     stage="attempt_completion",
@@ -706,12 +903,14 @@ class RoutedCodexExecution:
                         transcript_reference,
                         transcript_start,
                         transcript_end,
+                        owner=self._owner,
+                        result_schema_id=result_codec.schema_id,
+                        result_envelope_json=result_envelope,
+                        conversation_id=conversation_id or "",
+                        route_name=route.name,
+                        now=self._now(),
                     ),
                 )
-                if conversation_id and observed_session_id:
-                    self._store.upsert_conversation_runtime_session(
-                        conversation_id, route.name, observed_session_id
-                    )
                 return RoutedCodexExecutionResult(
                     value=value,
                     route_name=route.name,
@@ -744,7 +943,7 @@ class RoutedCodexExecution:
                 persisted = self._store.get_agent_runtime_attempt(active_attempt.id)
                 if persisted is not None and not persisted.first_effect_started_at:
                     active_attempt = self._store.note_runtime_attempt_effect_started(
-                        active_attempt.id
+                        active_attempt.id, owner=self._owner, at=self._now()
                     )
                 effect_policy_violated = True
             if failure.route_pause_required:
@@ -755,7 +954,7 @@ class RoutedCodexExecution:
                     action=lambda: self._store.open_runtime_route_pause(
                         route.name,
                         failure.code,
-                        datetime.now(UTC) + self._config.retry_delay,
+                        self._now() + self._config.retry_delay,
                     ),
                 )
             failed_attempt = self._finalized_step(
@@ -771,6 +970,8 @@ class RoutedCodexExecution:
                     transcript_reference=transcript_reference,
                     transcript_start=transcript_start,
                     transcript_end=transcript_end,
+                    owner=self._owner,
+                    now=self._now(),
                 ),
             )
             if effect_policy_violated:
@@ -822,42 +1023,36 @@ class RoutedCodexExecution:
         session_id: str | None,
         effect_mode: ExecutionEffectMode,
     ) -> AgentRuntimeAttempt:
-        attempt = self._store.claim_runtime_operation_attempt(
-            workload_kind,
-            workload_key,
-            route.name,
-            route.runtime_kind.value,
-            route.credential_mode.value,
-            route.model,
-            session_mode=(
-                RuntimeAttemptSessionMode.RESUME
-                if session_id
-                else RuntimeAttemptSessionMode.FRESH
-            ),
-            source_session_id=session_id or "",
-        )
         try:
-            running = self._store.mark_agent_runtime_attempt_running_once(attempt.id)
+            attempt = self._store.claim_runtime_operation_attempt(
+                workload_kind,
+                workload_key,
+                route.name,
+                route.runtime_kind.value,
+                route.credential_mode.value,
+                route.model,
+                session_mode=(
+                    RuntimeAttemptSessionMode.RESUME
+                    if session_id
+                    else RuntimeAttemptSessionMode.FRESH
+                ),
+                source_session_id=session_id or "",
+                owner=self._owner,
+                lease_seconds=self._lease_seconds,
+                now=self._now(),
+            )
+        except RuntimeRoutePausedError as exc:
+            raise RoutedCodexExecutionError("runtime_route_unavailable") from exc
+        try:
+            running = self._store.mark_agent_runtime_attempt_running_once(
+                attempt.id,
+                owner=self._owner,
+                lease_seconds=self._lease_seconds,
+                effectful=effect_mode is ExecutionEffectMode.EFFECTFUL,
+                now=self._now(),
+            )
         except AgentRuntimeAttemptStartConflictError as exc:
             raise RoutedCodexExecutionError("runtime_attempt_active") from exc
-        if effect_mode is ExecutionEffectMode.EFFECTFUL:
-            try:
-                return self._store.note_runtime_attempt_effect_started(running.id)
-            except Exception as exc:
-                self._terminalize_active_attempt(
-                    running,
-                    failure_class=RuntimeFailureClass.PROCESS,
-                    failure_code="runtime_effect_fence_failed",
-                    session_id=session_id or "",
-                    transcript_reference=(
-                        f"codex_session:{session_id}" if session_id else ""
-                    ),
-                    transcript_start=0,
-                    transcript_end=0,
-                )
-                raise RoutedCodexExecutionError(
-                    "runtime_post_start_failed", "effect_fence"
-                ) from exc
         return running
 
     def _session_for_route(
@@ -891,14 +1086,18 @@ class RoutedCodexExecution:
             session_id, reference, start, end = evidence()
             self._terminalize_active_attempt(
                 attempt,
-                failure_class=RuntimeFailureClass.CAPABILITY,
-                failure_code="runtime_effect_policy_violation",
+                failure_class=(
+                    RuntimeFailureClass.SESSION
+                    if exc.code == "runtime_session_conflict"
+                    else RuntimeFailureClass.CAPABILITY
+                ),
+                failure_code=exc.code,
                 session_id=session_id,
                 transcript_reference=reference,
                 transcript_start=start,
                 transcript_end=end,
             )
-            raise RoutedCodexExecutionError("runtime_effect_policy_violation") from exc
+            raise RoutedCodexExecutionError(exc.code) from exc
         except Exception as exc:
             session_id, reference, start, end = evidence()
             failure_code = {
@@ -949,6 +1148,8 @@ class RoutedCodexExecution:
             ),
             transcript_start=max(transcript_start, 0),
             transcript_end=max(transcript_end, transcript_start, 0),
+            owner=self._owner,
+            now=self._now(),
         )
 
 

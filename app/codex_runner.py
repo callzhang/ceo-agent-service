@@ -84,7 +84,9 @@ def _config_value(value: object) -> str:
         items: list[str] = []
         for item_key, item_value in value.items():
             if not isinstance(item_key, str) or not isinstance(item_value, str):
-                raise TypeError("config inline table values must be string keyed strings")
+                raise TypeError(
+                    "config inline table values must be string keyed strings"
+                )
             items.append(
                 f"{json.dumps(item_key, ensure_ascii=False)} = "
                 f"{json.dumps(item_value, ensure_ascii=False)}"
@@ -147,9 +149,7 @@ def codex_model_config_options(
     if selected_model:
         options.extend(["-m", selected_model])
         if selected_provider:
-            options.extend(
-                ["-c", _config_string("model_provider", selected_provider)]
-            )
+            options.extend(["-c", _config_string("model_provider", selected_provider)])
     if selected_reasoning_effort:
         options.extend(
             [
@@ -234,12 +234,18 @@ class CodexRunner:
         reasoning_effort: str | None = None,
         model_provider_settings: Mapping[str, str] | None = None,
         shell_environment_policy_core: bool = False,
+        sandbox_mode: str | None = None,
     ) -> list[str]:
         if approval_policy not in {"untrusted", "never"}:
             raise ValueError("unsupported approval policy")
-        effective_approval_bypass = (
-            use_approval_bypass and approval_policy != "never"
-        )
+        if sandbox_mode not in {
+            None,
+            "read-only",
+            "workspace-write",
+            "danger-full-access",
+        }:
+            raise ValueError("unsupported sandbox mode")
+        effective_approval_bypass = use_approval_bypass and approval_policy != "never"
         if preserve_native_instructions:
             effective_developer_instructions = ""
         else:
@@ -284,6 +290,7 @@ class CodexRunner:
             ]
         )
         common_options = [
+            *(["--sandbox", sandbox_mode] if sandbox_mode else []),
             "--json",
             *(["--ignore-user-config"] if ignore_user_config else []),
             *(

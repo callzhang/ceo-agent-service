@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import UTC, datetime
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -18,12 +20,16 @@ from app.agent_runtime_router import (
     ApprovedCodexCommandFactory,
     RoutedCodexExecution,
     RoutedCodexExecutionError,
+    RoutedResultCodec,
 )
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
 
 NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
 CAPABILITIES = frozenset({"structured_output", "reviewed_read_tools"})
+INT_CODEC = RoutedResultCodec.integer(schema_id="test.integer.v1")
+TEXT_CODEC = RoutedResultCodec.text(schema_id="test.text.v1")
 
 
 def failed_session_probe(*_args):
@@ -45,6 +51,7 @@ class FakeAdapter:
         approval_policy,
         developer_instructions,
         use_approval_bypass,
+        sandbox_mode=None,
     ):
         self.commands.append(
             (route.name, session_id, approval_policy, use_approval_bypass)
@@ -118,6 +125,30 @@ def make_router(store, config, *, snapshots=None):
     )
 
 
+def test_read_only_factory_forces_sandbox_and_is_immutable(
+    config, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CODEX_SANDBOX", "danger-full-access")
+    adapter = CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test")
+    factory = ApprovedCodexCommandFactory.read_only(
+        developer_instructions="reviewed reads only"
+    )
+
+    command, _env = factory.build(
+        adapter=adapter,
+        route=config.routes[0],
+        prompt="read",
+        session_id=None,
+    )
+
+    assert ["--sandbox", "read-only"] == command[2:4]
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    with pytest.raises((AttributeError, TypeError)):
+        factory._developer_instructions = "allow writes"
+    with pytest.raises((AttributeError, TypeError)):
+        factory.build = lambda **_kwargs: (["unsafe"], {})
+
+
 def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
     key = seed_structured_parent(store)
     adapter = FakeAdapter()
@@ -142,6 +173,7 @@ def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
         adapter=adapter,
         executor=executor,
         session_line_counter=lambda session_id: 7,
+        session_effect_probe=lambda *_args: False,
     )
 
     result = routed.execute(
@@ -152,6 +184,7 @@ def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
             developer_instructions="reviewed reads only"
         ),
         parser=lambda raw: json.loads(raw.splitlines()[-1])["value"],
+        result_codec=INT_CODEC,
         conversation_id="cid-12",
         required_capabilities=CAPABILITIES,
     )
@@ -200,6 +233,7 @@ def test_effectful_execution_records_start_and_never_fails_over(store, config):
                 developer_instructions="reviewed write"
             ),
             parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
             required_capabilities=CAPABILITIES,
         )
 
@@ -220,9 +254,37 @@ def test_effectful_execution_records_start_and_never_fails_over(store, config):
                 developer_instructions="reviewed write"
             ),
             parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
             required_capabilities=CAPABILITIES,
         )
     assert len(calls) == 1
+
+
+def test_effectful_start_fence_atomically_records_no_replay_evidence(store, config):
+    key = seed_structured_parent(store)
+    route = config.routes[0]
+    claimed = store.claim_runtime_operation_attempt(
+        "structured",
+        key,
+        route.name,
+        route.runtime_kind.value,
+        route.credential_mode.value,
+        route.model,
+        owner="effect-owner",
+        lease_seconds=30,
+        now=NOW,
+    )
+
+    running = store.mark_agent_runtime_attempt_running_once(
+        claimed.id,
+        owner="effect-owner",
+        lease_seconds=30,
+        effectful=True,
+        now=NOW,
+    )
+
+    assert running.status == "running"
+    assert running.first_effect_started_at == "2026-08-20 10:00:00"
 
 
 def test_active_attempt_start_fence_allows_only_one_process(store, config):
@@ -261,6 +323,7 @@ def test_active_attempt_start_fence_allows_only_one_process(store, config):
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
             required_capabilities=CAPABILITIES,
         )
     assert called is False
@@ -301,6 +364,7 @@ def test_read_only_policy_detects_effect_event_and_blocks_failover(store, config
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
             required_capabilities=CAPABILITIES,
         )
 
@@ -353,6 +417,7 @@ def test_read_only_policy_abort_terminates_child_before_rejected_work_runs(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
             required_capabilities=CAPABILITIES,
         )
 
@@ -396,6 +461,7 @@ def test_thread_started_is_persisted_before_executor_failure(store, config):
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
             required_capabilities=CAPABILITIES,
         )
 
@@ -405,6 +471,86 @@ def test_thread_started_is_persisted_before_executor_failure(store, config):
     assert attempt.session_id == "early-session"
     assert attempt.transcript_reference == "codex_session:early-session"
     assert attempt.transcript_end >= 1
+
+
+def test_conflicting_streamed_session_id_aborts_without_mixing_evidence(store, config):
+    key = seed_structured_parent(store)
+
+    def executor(command, **kwargs):
+        kwargs["on_stdout_line"](
+            json.dumps({"type": "thread.started", "thread_id": "session-one"})
+        )
+        kwargs["on_stdout_line"](
+            json.dumps({"type": "thread.started", "thread_id": "session-two"})
+        )
+        return ProcessRunResult(0, "{}", "")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+    )
+
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_session_conflict"):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+    attempt = store.list_runtime_operation_attempts("structured", key)[0]
+    assert attempt.status == "failed"
+    assert attempt.failure_code == "runtime_session_conflict"
+    assert attempt.session_id == "session-one"
+    assert attempt.transcript_reference == "codex_session:session-one"
+
+
+def test_conflicting_buffered_session_id_cannot_replace_streamed_session(store, config):
+    key = seed_structured_parent(store)
+
+    def executor(command, **kwargs):
+        kwargs["on_stdout_line"](
+            json.dumps({"type": "thread.started", "thread_id": "session-one"})
+        )
+        return ProcessRunResult(
+            0,
+            json.dumps({"type": "thread.started", "thread_id": "session-two"}),
+            "",
+        )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+    )
+
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_session_conflict"):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+    attempt = store.list_runtime_operation_attempts("structured", key)[0]
+    assert attempt.status == "failed"
+    assert attempt.failure_code == "runtime_session_conflict"
+    assert attempt.session_id == "session-one"
 
 
 @pytest.mark.parametrize(
@@ -488,6 +634,7 @@ def test_post_start_exception_terminalizes_attempt_and_retry_stays_bounded(
             developer_instructions="reviewed reads only"
         ),
         "parser": parser,
+        "result_codec": TEXT_CODEC,
         "required_capabilities": CAPABILITIES,
     }
 
@@ -546,6 +693,7 @@ def test_hidden_or_ambiguous_local_session_blocks_read_only_failover(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
             required_capabilities=CAPABILITIES,
         )
 
@@ -563,6 +711,7 @@ def test_hidden_or_ambiguous_local_session_blocks_read_only_failover(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
             required_capabilities=CAPABILITIES,
         )
     assert len(calls) == 1
@@ -586,6 +735,7 @@ def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
             required_capabilities=CAPABILITIES,
         )
 
@@ -606,5 +756,347 @@ def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+
+def test_completed_result_is_recovered_by_matching_codec_without_child(store, config):
+    key = seed_structured_parent(store)
+    calls = 0
+
+    def executor(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                [
+                    json.dumps(
+                        {"type": "thread.started", "thread_id": "result-session"}
+                    ),
+                    '{"value":42}',
+                ]
+            ),
+            "",
+        )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+        session_line_counter=lambda _session: 2,
+        session_effect_probe=lambda *_args: False,
+    )
+    arguments = {
+        "workload_kind": "structured",
+        "workload_key": key,
+        "prompt": "read",
+        "command_factory": ApprovedCodexCommandFactory.read_only(
+            developer_instructions="reviewed reads only"
+        ),
+        "parser": lambda raw: json.loads(raw.splitlines()[-1])["value"],
+        "result_codec": INT_CODEC,
+        "conversation_id": "cid-12",
+        "required_capabilities": CAPABILITIES,
+    }
+
+    first = routed.execute(**arguments)
+    # Simulate the caller crashing after durable completion but before using value.
+    second = routed.execute(**arguments)
+
+    assert first.value == second.value == 42
+    assert first.attempt_id == second.attempt_id
+    assert calls == 1
+    attempt = store.get_agent_runtime_attempt(first.attempt_id)
+    assert attempt is not None
+    assert attempt.result_schema_id == "test.integer.v1"
+    assert "read" not in attempt.result_envelope_json
+    assert (
+        store.get_conversation_runtime_session("cid-12", "codex_oauth")
+        == "result-session"
+    )
+    with pytest.raises(
+        RoutedCodexExecutionError, match="runtime_result_schema_mismatch"
+    ):
+        routed.execute(
+            **{
+                **arguments,
+                "result_codec": RoutedResultCodec.integer(schema_id="test.integer.v2"),
+            }
+        )
+    assert calls == 1
+
+
+def test_completed_effectful_result_is_recovered_without_replay(store, config):
+    key = seed_structured_parent(store)
+    calls = 0
+
+    def executor(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        return ProcessRunResult(0, "42", "")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+    )
+    arguments = {
+        "workload_kind": "structured",
+        "workload_key": key,
+        "prompt": "write once",
+        "command_factory": ApprovedCodexCommandFactory.effectful(
+            developer_instructions="reviewed write"
+        ),
+        "parser": lambda raw: int(raw),
+        "result_codec": INT_CODEC,
+        "required_capabilities": CAPABILITIES,
+    }
+
+    assert routed.execute(**arguments).value == 42
+    assert routed.execute(**arguments).value == 42
+    assert calls == 1
+
+
+def test_live_silent_process_cannot_be_reclaimed_after_nominal_lease(store, config):
+    key = seed_structured_parent(store)
+    current = [NOW]
+    calls = 0
+
+    def executor(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        current[0] += timedelta(seconds=2)
+        competing = RoutedCodexExecution(
+            store=store,
+            config=config,
+            router=make_router(store, config),
+            adapter=FakeAdapter(),
+            executor=lambda *_args, **_kwargs: pytest.fail("must not reclaim"),
+            owner="competing-owner",
+            lease_seconds=1,
+            total_timeout_seconds=30,
+            now=lambda: current[0],
+        )
+        with pytest.raises(RoutedCodexExecutionError, match="runtime_attempt_active"):
+            competing.execute(
+                workload_kind="structured",
+                workload_key=key,
+                prompt="read",
+                command_factory=ApprovedCodexCommandFactory.read_only(
+                    developer_instructions="reviewed reads only"
+                ),
+                parser=lambda raw: int(raw),
+                result_codec=INT_CODEC,
+                required_capabilities=CAPABILITIES,
+            )
+        return ProcessRunResult(0, "42", "")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+        owner="live-owner",
+        lease_seconds=1,
+        total_timeout_seconds=30,
+        now=lambda: current[0],
+    )
+
+    assert (
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: int(raw),
+            result_codec=INT_CODEC,
+            required_capabilities=CAPABILITIES,
+        ).value
+        == 42
+    )
+    assert calls == 1
+
+
+def test_concurrent_executors_start_exactly_one_child(store, config):
+    key = seed_structured_parent(store)
+    child_started = threading.Event()
+    release_child = threading.Event()
+    calls = 0
+
+    def executor(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        child_started.set()
+        assert release_child.wait(timeout=5)
+        return ProcessRunResult(0, "42", "")
+
+    def execute(owner):
+        return RoutedCodexExecution(
+            store=store,
+            config=config,
+            router=make_router(store, config),
+            adapter=FakeAdapter(),
+            executor=executor,
+            owner=owner,
+        ).execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: int(raw),
+            result_codec=INT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(execute, "owner-one")
+        assert child_started.wait(timeout=5)
+        second = pool.submit(execute, "owner-two")
+        with pytest.raises(RoutedCodexExecutionError, match="runtime_attempt_active"):
+            second.result(timeout=5)
+        release_child.set()
+        assert first.result(timeout=5).value == 42
+    assert calls == 1
+
+
+def test_route_pause_opened_during_selection_is_rechecked_before_start(
+    store, config, monkeypatch
+):
+    key = seed_structured_parent(store)
+    original_claim = store.claim_runtime_operation_attempt
+
+    def pause_then_claim(*args, **kwargs):
+        store.open_runtime_route_pause(
+            "codex_oauth", "late_pause", datetime.now(UTC) + timedelta(minutes=5)
+        )
+        return original_claim(*args, **kwargs)
+
+    monkeypatch.setattr(store, "claim_runtime_operation_attempt", pause_then_claim)
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=lambda *_args, **_kwargs: pytest.fail("must not start"),
+        now=lambda: NOW,
+    )
+
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_route_unavailable"):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+    assert store.list_runtime_operation_attempts("structured", key) == []
+
+
+def test_expired_read_only_crash_is_terminalized_then_routes_once(store, config):
+    key = seed_structured_parent(store)
+    route = config.routes[0]
+    crashed = store.claim_runtime_operation_attempt(
+        "structured",
+        key,
+        route.name,
+        route.runtime_kind.value,
+        route.credential_mode.value,
+        route.model,
+        owner="dead-owner",
+        lease_seconds=5,
+        now=NOW,
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        crashed.id, owner="dead-owner", lease_seconds=5, now=NOW
+    )
+    later = NOW + timedelta(seconds=6)
+    calls = []
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=lambda command, **kwargs: (
+            calls.append(command) or ProcessRunResult(0, "42", "")
+        ),
+        owner="replacement-owner",
+        now=lambda: later,
+    )
+
+    result = routed.execute(
+        workload_kind="structured",
+        workload_key=key,
+        prompt="read",
+        command_factory=ApprovedCodexCommandFactory.read_only(
+            developer_instructions="reviewed reads only"
+        ),
+        parser=lambda raw: int(raw),
+        result_codec=INT_CODEC,
+        required_capabilities=CAPABILITIES,
+    )
+
+    assert result.route_name == "codex_api"
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [item.status for item in attempts] == ["superseded", "completed"]
+    assert attempts[0].failure_code == "runtime_lease_expired"
+    assert len(calls) == 1
+
+
+def test_expired_effect_fence_is_never_reclaimed(store, config):
+    key = seed_structured_parent(store)
+    route = config.routes[0]
+    crashed = store.claim_runtime_operation_attempt(
+        "structured",
+        key,
+        route.name,
+        route.runtime_kind.value,
+        route.credential_mode.value,
+        route.model,
+        owner="dead-owner",
+        lease_seconds=5,
+        now=NOW,
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        crashed.id, owner="dead-owner", lease_seconds=5, now=NOW
+    )
+    store.note_runtime_attempt_effect_started(crashed.id, owner="dead-owner", at=NOW)
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=lambda *_args, **_kwargs: pytest.fail("must not replay"),
+        owner="replacement-owner",
+        now=lambda: NOW + timedelta(seconds=6),
+    )
+    with pytest.raises(
+        RoutedCodexExecutionError, match="runtime_effectful_replay_blocked"
+    ):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="write",
+            command_factory=ApprovedCodexCommandFactory.effectful(
+                developer_instructions="reviewed write"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
             required_capabilities=CAPABILITIES,
         )

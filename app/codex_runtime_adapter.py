@@ -1,4 +1,5 @@
 """Route-scoped native Codex command and environment construction."""
+
 from __future__ import annotations
 
 import json
@@ -103,6 +104,7 @@ class CodexRuntimeAdapter:
         approval_policy: str,
         developer_instructions: str | None,
         use_approval_bypass: bool,
+        sandbox_mode: str | None = None,
     ) -> list[str]:
         configured_route = self._configured_route(route)
         return self.runner.build_command(
@@ -122,6 +124,7 @@ class CodexRuntimeAdapter:
                 else None
             ),
             shell_environment_policy_core=True,
+            sandbox_mode=sandbox_mode,
         )
 
     def build_env(
@@ -252,10 +255,7 @@ def _is_codex_login_required_error(value: str) -> bool:
     normalized = value.casefold()
     return (
         "failed to refresh token" in normalized
-        and (
-            "session has ended" in normalized
-            or "invalid refresh token" in normalized
-        )
+        and ("session has ended" in normalized or "invalid refresh token" in normalized)
     ) or "token_invalidated" in normalized
 
 

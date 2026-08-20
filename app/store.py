@@ -78,6 +78,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_runtime_attempt_active_route",
+    "idx_runtime_attempt_active_lease",
     "idx_task_agent_runs_active_input",
     "idx_meeting_alignment_runs_active_job",
     "idx_weekly_okr_analysis_jobs_identity",
@@ -98,7 +99,14 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "reply_attempts": ("human_decision_options_json",),
-    "agent_runtime_attempts": ("session_mode", "source_session_id"),
+    "agent_runtime_attempts": (
+        "session_mode",
+        "source_session_id",
+        "lease_owner",
+        "lease_expires_at",
+        "result_schema_id",
+        "result_envelope_json",
+    ),
     "conversation_runtime_sessions": ("contract_hash",),
     "task_agent_runs": ("status", "error", "finished_at", "updated_at"),
     "meeting_alignment_runs": ("finished_at", "updated_at"),
@@ -123,6 +131,8 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_session_evidence_trim_insert",
     "trg_runtime_attempt_session_evidence_trim_update",
+    "trg_runtime_attempt_generalized_lease_insert",
+    "trg_runtime_attempt_generalized_lease_update",
 )
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
@@ -435,6 +445,14 @@ class AgentRuntimeAttemptStartConflictError(RuntimeError):
     """Raised when another executor already started a persisted attempt."""
 
 
+class AgentRuntimeAttemptLeaseLostError(RuntimeError):
+    """Raised when a generalized attempt write has lost its owner lease."""
+
+
+class RuntimeRoutePausedError(RuntimeError):
+    """Raised when a route pause races with generalized attempt selection."""
+
+
 class AgentRun(BaseModel):
     id: int
     reply_task_id: int
@@ -492,6 +510,10 @@ class AgentRuntimeAttempt(BaseModel):
     transcript_start: int = 0
     transcript_end: int = 0
     first_effect_started_at: str = ""
+    lease_owner: str = ""
+    lease_expires_at: str = ""
+    result_schema_id: str = ""
+    result_envelope_json: str = ""
     started_at: str
     finished_at: str = ""
     created_at: str
@@ -1184,6 +1206,10 @@ class AutoReplyStore:
                     transcript_start integer not null default 0,
                     transcript_end integer not null default 0,
                     first_effect_started_at text not null default '',
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    result_schema_id text not null default '',
+                    result_envelope_json text not null default '',
                     started_at text not null default current_timestamp,
                     finished_at text not null default '',
                     created_at text not null default current_timestamp,
@@ -2063,6 +2089,7 @@ class AutoReplyStore:
                         f"alter table agent_runs add column {column} {definition}"
                     )
             self._migrate_runtime_attempt_session_evidence(db)
+            self._migrate_runtime_attempt_execution_state(db)
             self._migrate_agent_run_turn_identity(db)
             agent_run_columns = {
                 row["name"]
@@ -2710,6 +2737,7 @@ class AutoReplyStore:
             end
             """
         )
+
         db.execute(
             """
             create trigger trg_runtime_attempt_session_evidence_trim_update
@@ -2720,6 +2748,60 @@ class AutoReplyStore:
             )
             begin
                 select raise(abort, 'invalid runtime attempt session evidence');
+            end
+            """
+        )
+
+    @staticmethod
+    def _migrate_runtime_attempt_execution_state(db: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in db.execute(
+                "pragma table_info(agent_runtime_attempts)"
+            ).fetchall()
+        }
+        for column in (
+            "lease_owner",
+            "lease_expires_at",
+            "result_schema_id",
+            "result_envelope_json",
+        ):
+            if column not in columns:
+                db.execute(
+                    f"alter table agent_runtime_attempts add column "
+                    f"{column} text not null default ''"
+                )
+        db.execute(
+            """
+            create index if not exists idx_runtime_attempt_active_lease
+            on agent_runtime_attempts(status, lease_expires_at)
+            where agent_run_id is null and status in ('starting', 'running')
+            """
+        )
+        db.execute("drop trigger if exists trg_runtime_attempt_generalized_lease_insert")
+        db.execute("drop trigger if exists trg_runtime_attempt_generalized_lease_update")
+        db.execute(
+            """
+            create trigger trg_runtime_attempt_generalized_lease_insert
+            before insert on agent_runtime_attempts
+            when new.agent_run_id is null
+              and new.status in ('starting', 'running')
+              and (trim(new.lease_owner)='' or trim(new.lease_expires_at)='')
+            begin
+                select raise(abort, 'active generalized attempt requires lease');
+            end
+            """
+        )
+        db.execute(
+            """
+            create trigger trg_runtime_attempt_generalized_lease_update
+            before update of status, lease_owner, lease_expires_at
+            on agent_runtime_attempts
+            when new.agent_run_id is null
+              and new.status in ('starting', 'running')
+              and (trim(new.lease_owner)='' or trim(new.lease_expires_at)='')
+            begin
+                select raise(abort, 'active generalized attempt requires lease');
             end
             """
         )
@@ -4380,6 +4462,9 @@ class AutoReplyStore:
         model: str,
         session_mode: str | RuntimeAttemptSessionMode,
         source_session_id: str,
+        owner: str = "",
+        lease_seconds: int = 0,
+        now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         (
             route_name,
@@ -4398,7 +4483,18 @@ class AutoReplyStore:
                 source_session_id,
             )
         )
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+        if agent_run_id is None:
+            owner = self._require_runtime_attempt_text(owner, field="owner")
+            if lease_seconds <= 0:
+                raise ValueError("lease_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
+            lease_expires_at = (
+                (now_value + timedelta(seconds=lease_seconds)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                if agent_run_id is None
+                else ""
+            )
             if agent_run_id is not None:
                 run = db.execute(
                     "select 1 from agent_runs where id=?", (agent_run_id,)
@@ -4411,6 +4507,14 @@ class AutoReplyStore:
                 raise ValueError(
                     "runtime operation parent does not exist or is not running"
                 )
+            elif db.execute(
+                """
+                select 1 from runtime_route_pauses
+                where route_name=? and retry_at>?
+                """,
+                (route_name, now_text),
+            ).fetchone() is not None:
+                raise RuntimeRoutePausedError("runtime route is paused")
             active = db.execute(
                 """
                 select * from agent_runtime_attempts
@@ -4457,8 +4561,9 @@ class AutoReplyStore:
                     agent_run_id, workload_kind, workload_key, attempt_number,
                     route_name, runtime_kind, credential_mode, model, session_mode,
                     source_session_id, status,
+                    lease_owner, lease_expires_at,
                     started_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_run_id,
@@ -4471,6 +4576,8 @@ class AutoReplyStore:
                     model,
                     session_mode,
                     source_session_id,
+                    owner,
+                    lease_expires_at,
                     now_text,
                     now_text,
                     now_text,
@@ -4518,6 +4625,9 @@ class AutoReplyStore:
         *,
         session_mode: str | RuntimeAttemptSessionMode = RuntimeAttemptSessionMode.FRESH,
         source_session_id: str = "",
+        owner: str = "legacy-runtime-owner",
+        lease_seconds: int = 1800,
+        now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         workload_kind, workload_key = self._validate_runtime_operation_workload(
             workload_kind, workload_key
@@ -4532,6 +4642,9 @@ class AutoReplyStore:
             model=model,
             session_mode=session_mode,
             source_session_id=source_session_id,
+            owner=owner,
+            lease_seconds=lease_seconds,
+            now=now,
         )
 
     def _runtime_attempt_for_transition(
@@ -4545,6 +4658,17 @@ class AutoReplyStore:
         if row is None:
             raise ValueError("agent runtime attempt does not exist")
         return row
+
+    @staticmethod
+    def _require_runtime_attempt_owner(
+        row: sqlite3.Row, *, owner: str, now_text: str
+    ) -> None:
+        if row["agent_run_id"] is not None:
+            return
+        if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
+            raise AgentRuntimeAttemptLeaseLostError(
+                f"runtime attempt lease lost: {row['id']}"
+            )
 
     def mark_agent_runtime_attempt_running(
         self,
@@ -4575,9 +4699,18 @@ class AutoReplyStore:
     def mark_agent_runtime_attempt_running_once(
         self,
         attempt_id: int,
+        *,
+        owner: str = "legacy-runtime-owner",
+        lease_seconds: int = 1800,
+        effectful: bool = False,
+        now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         """Acquire the one-shot process-start fence for a runtime attempt."""
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        if not isinstance(effectful, bool):
+            raise TypeError("effectful must be a boolean")
+        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
             if row["status"] != "starting":
                 raise AgentRuntimeAttemptStartConflictError(
@@ -4586,10 +4719,28 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update agent_runtime_attempts
-                set status='running', updated_at=?
+                set status='running',
+                    lease_expires_at=case when agent_run_id is null then ?
+                                          else lease_expires_at end,
+                    first_effect_started_at=case
+                        when agent_run_id is null and ? then ?
+                        else first_effect_started_at end,
+                    updated_at=?
                 where id=? and status='starting'
+                  and (agent_run_id is not null
+                       or (lease_owner=? and lease_expires_at>?))
                 """,
-                (now_text, attempt_id),
+                (
+                    (now_value + timedelta(seconds=lease_seconds)).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    ),
+                    int(effectful),
+                    now_text,
+                    now_text,
+                    attempt_id,
+                    owner,
+                    now_text,
+                ),
             )
             if cursor.rowcount != 1:
                 raise AgentRuntimeAttemptStartConflictError(
@@ -4606,47 +4757,160 @@ class AutoReplyStore:
         transcript_reference: str,
         transcript_start: int,
         transcript_end: int,
+        *,
+        owner: str = "legacy-runtime-owner",
+        result_schema_id: str = "",
+        result_envelope_json: str = "",
+        conversation_id: str = "",
+        route_name: str = "",
+        now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         if not isinstance(session_id, str) or not isinstance(transcript_reference, str):
             raise TypeError("runtime attempt session and transcript reference must be strings")
         if transcript_start < 0 or transcript_end < transcript_start:
             raise ValueError("invalid runtime attempt transcript range")
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+        if result_schema_id:
+            result_schema_id = self._require_runtime_attempt_text(
+                result_schema_id, field="result_schema_id"
+            )
+            try:
+                envelope = json.loads(result_envelope_json)
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise ValueError("result envelope must be valid JSON") from exc
+            if not isinstance(envelope, dict) or envelope.get("schema_id") != result_schema_id:
+                raise ValueError("result envelope schema mismatch")
+        elif result_envelope_json:
+            raise ValueError("result schema is required")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
-            expected = (session_id, transcript_reference, transcript_start, transcript_end)
+            expected = (
+                session_id, transcript_reference, transcript_start, transcript_end,
+                result_schema_id, result_envelope_json,
+            )
             actual = (
                 row["session_id"],
                 row["transcript_reference"],
                 row["transcript_start"],
                 row["transcript_end"],
+                row["result_schema_id"],
+                row["result_envelope_json"],
             )
             if row["status"] == "completed":
                 if actual == expected:
                     return self._agent_runtime_attempt_from_row(row)
                 raise ValueError("conflicting terminal rewrite")
+            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
             if row["status"] in {"failed", "superseded"}:
                 raise ValueError("cannot complete terminal runtime attempt")
             cursor = db.execute(
                 """
                 update agent_runtime_attempts
                 set status='completed', session_id=?, transcript_reference=?,
-                    transcript_start=?, transcript_end=?, finished_at=?, updated_at=?
+                    transcript_start=?, transcript_end=?, result_schema_id=?,
+                    result_envelope_json=?, lease_owner='', lease_expires_at='',
+                    finished_at=?, updated_at=?
                 where id=? and status in ('starting', 'running')
+                  and (agent_run_id is not null
+                       or (lease_owner=? and lease_expires_at>?))
                 """,
                 (
                     session_id,
                     transcript_reference,
                     transcript_start,
                     transcript_end,
+                    result_schema_id,
+                    result_envelope_json,
                     now_text,
                     now_text,
                     attempt_id,
+                    owner,
+                    now_text,
                 ),
             )
             if cursor.rowcount != 1:
                 raise ValueError("runtime attempt transition conflict")
+            if conversation_id and session_id:
+                self._upsert_conversation_runtime_session_in_connection(
+                    db, conversation_id, route_name, session_id, "", now_text
+                )
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def renew_runtime_operation_attempt_lease(
+        self,
+        attempt_id: int,
+        *,
+        owner: str,
+        lease_seconds: int,
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["agent_run_id"] is not None:
+                raise ValueError("operation lease requires generalized workload")
+            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
+            expires_at = (
+                now_value + timedelta(seconds=lease_seconds)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set lease_expires_at=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                  and lease_owner=? and lease_expires_at>?
+                """,
+                (expires_at, now_text, attempt_id, owner, now_text),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRuntimeAttemptLeaseLostError(
+                    f"runtime attempt lease lost: {attempt_id}"
+                )
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def recover_expired_runtime_operation_attempt(
+        self,
+        workload_kind: str,
+        workload_key: str,
+        *,
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt | None:
+        workload_kind, workload_key = self._validate_runtime_operation_workload(
+            workload_kind, workload_key
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select * from agent_runtime_attempts
+                where agent_run_id is null and workload_kind=? and workload_key=?
+                  and status in ('starting', 'running')
+                order by attempt_number desc limit 1
+                """,
+                (workload_kind, workload_key),
+            ).fetchone()
+            if row is None or row["lease_expires_at"] > now_text:
+                return None
+            if row["first_effect_started_at"]:
+                return self._agent_runtime_attempt_from_row(row)
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='failed', failure_class='process',
+                    failure_code='runtime_lease_expired', failover_permitted=1,
+                    lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                  and first_effect_started_at='' and lease_expires_at<=?
+                """,
+                (now_text, now_text, row["id"], now_text),
+            )
+            if cursor.rowcount != 1:
+                return None
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, row["id"])
             )
 
     def set_agent_runtime_attempt_session(
@@ -4654,6 +4918,9 @@ class AutoReplyStore:
         attempt_id: int,
         session_id: str,
         transcript_reference: str | None = None,
+        *,
+        owner: str = "legacy-runtime-owner",
+        now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         session_id = self._require_runtime_attempt_text(
             session_id, field="session_id"
@@ -4662,7 +4929,7 @@ class AutoReplyStore:
             transcript_reference, str
         ):
             raise TypeError("transcript_reference must be a string")
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
             selected_reference = (
                 row["transcript_reference"]
@@ -4676,13 +4943,19 @@ class AutoReplyStore:
                 ):
                     return self._agent_runtime_attempt_from_row(row)
                 raise ValueError("cannot mutate terminal runtime attempt")
+            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
             db.execute(
                 """
                 update agent_runtime_attempts
                 set session_id=?, transcript_reference=?, updated_at=?
                 where id=? and status in ('starting', 'running')
+                  and (agent_run_id is not null
+                       or (lease_owner=? and lease_expires_at>?))
                 """,
-                (session_id, selected_reference, now_text, attempt_id),
+                (
+                    session_id, selected_reference, now_text, attempt_id,
+                    owner, now_text,
+                ),
             )
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
@@ -4699,6 +4972,8 @@ class AutoReplyStore:
         transcript_reference: str | None = None,
         transcript_start: int | None = None,
         transcript_end: int | None = None,
+        owner: str = "legacy-runtime-owner",
+        now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         failure_class, failure_code, failover_permitted = self._validate_runtime_failure(
             failure_class, failure_code, failover_permitted
@@ -4707,7 +4982,7 @@ class AutoReplyStore:
             raise TypeError("runtime attempt session and transcript reference must be strings")
         if transcript_reference is not None and not isinstance(transcript_reference, str):
             raise TypeError("runtime attempt session and transcript reference must be strings")
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
             session_id = row["session_id"] if session_id is None else session_id
             transcript_reference = (
@@ -4747,6 +5022,7 @@ class AutoReplyStore:
                 if actual == expected:
                     return self._agent_runtime_attempt_from_row(row)
                 raise ValueError("conflicting terminal rewrite")
+            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
             if row["status"] == "completed":
                 raise ValueError("cannot transition from completed runtime attempt")
             if row["status"] == "superseded":
@@ -4756,8 +5032,11 @@ class AutoReplyStore:
                 update agent_runtime_attempts
                 set status='failed', failure_class=?, failure_code=?,
                     failover_permitted=?, session_id=?, transcript_reference=?,
-                    transcript_start=?, transcript_end=?, finished_at=?, updated_at=?
+                    transcript_start=?, transcript_end=?, lease_owner='',
+                    lease_expires_at='', finished_at=?, updated_at=?
                 where id=? and status in ('starting', 'running')
+                  and (agent_run_id is not null
+                       or (lease_owner=? and lease_expires_at>?))
                 """,
                 (
                     failure_class,
@@ -4770,6 +5049,8 @@ class AutoReplyStore:
                     now_text,
                     now_text,
                     attempt_id,
+                    owner,
+                    now_text,
                 ),
             )
             if cursor.rowcount != 1:
@@ -4873,14 +5154,17 @@ class AutoReplyStore:
         self,
         attempt_id: int,
         at: str | datetime | None = None,
+        *,
+        owner: str = "legacy-runtime-owner",
     ) -> AgentRuntimeAttempt:
         _, effect_started_at = _utc_store_time(at)
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+        with self._agent_run_write_transaction(at) as (db, (_, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
             if row["status"] == "completed":
                 raise ValueError("cannot mutate completed runtime attempt")
             if row["status"] in {"failed", "superseded"}:
                 raise ValueError("cannot mutate terminal runtime attempt")
+            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
             if row["first_effect_started_at"]:
                 return self._agent_runtime_attempt_from_row(row)
             cursor = db.execute(
@@ -4889,8 +5173,10 @@ class AutoReplyStore:
                 set first_effect_started_at=?, updated_at=?
                 where id=? and status in ('starting', 'running')
                   and first_effect_started_at=''
+                  and (agent_run_id is not null
+                       or (lease_owner=? and lease_expires_at>?))
                 """,
-                (effect_started_at, now_text, attempt_id),
+                (effect_started_at, now_text, attempt_id, owner, now_text),
             )
             if cursor.rowcount != 1:
                 raise ValueError("runtime attempt transition conflict")
@@ -10830,7 +11116,20 @@ class AutoReplyStore:
         session_id = self._require_runtime_attempt_text(session_id, field="session_id")
         contract_hash = contract_hash.strip()
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
-            db.execute(
+            self._upsert_conversation_runtime_session_in_connection(
+                db, conversation_id, route_name, session_id, contract_hash, now_text
+            )
+
+    @staticmethod
+    def _upsert_conversation_runtime_session_in_connection(
+        db: sqlite3.Connection,
+        conversation_id: str,
+        route_name: str,
+        session_id: str,
+        contract_hash: str,
+        now_text: str,
+    ) -> None:
+        db.execute(
                 """
                 insert into conversation_runtime_sessions (
                     conversation_id, route_name, session_id, contract_hash, updated_at
@@ -10841,16 +11140,16 @@ class AutoReplyStore:
                     updated_at=excluded.updated_at
                 """,
                 (conversation_id, route_name, session_id, contract_hash, now_text),
-            )
-            if route_name == "codex_oauth":
-                db.execute(
+        )
+        if route_name == "codex_oauth":
+            db.execute(
                     """
                     update conversations
                     set codex_session_id=?, codex_session_contract_hash=?
                     where conversation_id=?
                     """,
                     (session_id, contract_hash, conversation_id),
-                )
+            )
 
     def get_conversation_runtime_session(
         self,
