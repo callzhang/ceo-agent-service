@@ -29,12 +29,13 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     )
     if not names or len(names) != len(set(names)):
         raise ValueError("CEO_AGENT_RUNTIME_ROUTES must contain unique routes")
-    supported = {"codex_oauth", "codex_api"}
+    supported = {"codex_oauth", "codex_api", "claude_api"}
     unknown = set(names) - supported
     if unknown:
         raise ValueError(f"unsupported runtime routes: {sorted(unknown)}")
     model = env.get("CEO_CODEX_MODEL", "gpt-5.5").strip()
     api_model = env.get("CEO_CODEX_API_MODEL", model).strip()
+    claude_model = env.get("CEO_CLAUDE_MODEL", "sonnet").strip()
     routes = []
     secrets: dict[str, SecretStr] = {}
     for name in names:
@@ -47,7 +48,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
                     model=model,
                 )
             )
-        else:
+        elif name == "codex_api":
             raw_secret = env.get("CEO_CODEX_API_KEY", "").strip()
             if not raw_secret:
                 raise ValueError("codex_api requires CEO_CODEX_API_KEY")
@@ -57,6 +58,19 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
                     runtime_kind=RuntimeKind.CODEX_CLI,
                     credential_mode=CredentialMode.SERVICE_API,
                     model=api_model,
+                )
+            )
+            secrets[name] = SecretStr(raw_secret)
+        else:
+            raw_secret = env.get("CEO_CLAUDE_API_KEY", "").strip()
+            if not raw_secret:
+                raise ValueError("claude_api requires CEO_CLAUDE_API_KEY")
+            routes.append(
+                RuntimeRoute(
+                    name=name,
+                    runtime_kind=RuntimeKind.CLAUDE_CLI,
+                    credential_mode=CredentialMode.SERVICE_API,
+                    model=claude_model,
                 )
             )
             secrets[name] = SecretStr(raw_secret)
