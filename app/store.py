@@ -4816,6 +4816,39 @@ class AutoReplyStore:
             ).fetchall()
             return [self._agent_runtime_attempt_from_row(row) for row in rows]
 
+    def list_runtime_operation_attempts(
+        self,
+        workload_kind: str,
+        workload_key: str,
+    ) -> list[AgentRuntimeAttempt]:
+        workload_kind, workload_key = self._validate_runtime_operation_workload(
+            workload_kind, workload_key
+        )
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from agent_runtime_attempts
+                where agent_run_id is null
+                  and workload_kind=? and workload_key=?
+                order by attempt_number
+                """,
+                (workload_kind, workload_key),
+            ).fetchall()
+            return [self._agent_runtime_attempt_from_row(row) for row in rows]
+
+    def runtime_operation_parent_is_runnable(
+        self,
+        workload_kind: str,
+        workload_key: str,
+    ) -> bool:
+        workload_kind, workload_key = self._validate_runtime_operation_workload(
+            workload_kind, workload_key
+        )
+        with self._connect() as db:
+            return self._runtime_operation_parent_exists(
+                db, workload_kind, workload_key
+            )
+
     def get_agent_runtime_attempt(self, attempt_id: int) -> AgentRuntimeAttempt | None:
         with self._connect() as db:
             row = db.execute(

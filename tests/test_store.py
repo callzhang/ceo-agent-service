@@ -547,6 +547,30 @@ def test_runtime_attempt_operation_accepts_approved_stable_workload_keys(
     assert attempt.agent_run_id is None
 
 
+def test_runtime_operation_attempts_are_listed_only_for_exact_workload(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-operation-list.sqlite3")
+    _seed_runtime_operation_parent(store, "structured", "12")
+    _seed_runtime_operation_parent(store, "memory", "memory_write_event:13")
+    first = store.claim_runtime_operation_attempt(
+        "structured", "12", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+    store.mark_agent_runtime_attempt_running_once(first.id)
+    store.fail_agent_runtime_attempt(
+        first.id, "authentication", "codex_login_required", True
+    )
+    second = store.claim_runtime_operation_attempt(
+        "structured", "12", "codex_api", "codex_cli", "service_api", "gpt-5.5"
+    )
+    store.claim_runtime_operation_attempt(
+        "memory", "memory_write_event:13", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+
+    attempts = store.list_runtime_operation_attempts("structured", "12")
+
+    assert [attempt.id for attempt in attempts] == [first.id, second.id]
+    assert [attempt.attempt_number for attempt in attempts] == [1, 2]
+
+
 @pytest.mark.parametrize(
     ("workload_kind", "workload_key"),
     [

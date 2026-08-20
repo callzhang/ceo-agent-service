@@ -886,6 +886,17 @@ conversation ID. It claims the generalized `agent_runtime_attempts` row through
 `claim_runtime_operation_attempt`. It may fail over only when the caller is
 runner-enforced read-only. Do not create synthetic reply tasks.
 
+The command factory is `ApprovedCodexCommandFactory`, not an arbitrary callable
+or caller-supplied `read_only` boolean. Its sealed policy is validated by the
+executor. Read-only commands disable the approval bypass, use `never`, and
+validate streamed native CLI and MCP starts with the reviewed classifiers.
+Hidden or ambiguous local-session effect evidence fails closed. Effectful
+commands write `first_effect_started_at` after the one-shot process-start fence
+and before the child starts, then execute only the first eligible route without
+automatic provider failover. Operation next-route selection re-reads the exact
+parent, attempt, failure tuple, prior routes, pauses, and capability snapshots,
+and shares the Agent-run route eligibility selector.
+
 - [ ] **Step 4: Migrate callers one family at a time**
 
 For each listed caller, inject `AgentRuntimeRouter`/`CodexRuntimeAdapter`, replace direct `CodexRunner` construction, preserve its existing timeout/output parser, and persist its domain result only after the routed execution returns. Conversation-bound structured requests may use their route-scoped session lookup. Meeting analysis always starts fresh and never reads or updates a Consumer session. Weekly OKR, project-memory backfill, and WeChat import extraction also use fresh sessions.

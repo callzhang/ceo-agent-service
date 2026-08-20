@@ -281,6 +281,25 @@ Failover is safe when all of the following are true:
 Consumer A and other runner-enforced read-only jobs satisfy conditions 1–3 even
 after read tools have run. Those reads may be repeated by a fallback route.
 
+Generalized workloads that do not own an `agent_run` use
+`RoutedCodexExecution`. The executor accepts only a persisted enumerated
+workload identity and an `ApprovedCodexCommandFactory`. That factory issues a
+sealed execution policy: read-only commands use `approval_policy=never`, do not
+use the approval bypass, and every streamed native-command or MCP start is
+validated by the existing reviewed read classifiers. Callers cannot enable
+failover with a boolean or construct their own policy object. An unknown or
+effectful tool, hidden local-session effect, or local-session evidence that the
+runner cannot inspect writes `first_effect_started_at` and blocks failover.
+
+Effectful generalized workloads use the same attempt ledger but are
+ledger-only: after the one-shot attempt start fence succeeds, the executor
+persists `first_effect_started_at` before starting the child process and never
+selects a fallback route. Read-only failures may select a next route only after
+the router re-reads the exact failed attempt, runnable parent identity, typed
+failure tuple, prior bounded route attempts, pauses, and current capability
+snapshots. A `codex_api` resume rejection may repeat that route once with a
+fresh session under the same persisted session-evidence rules as Agent runs.
+
 Failover is unsafe as soon as one effectful `item.started` event exists, even
 when the command later reports failure. The run becomes or remains `unknown`
 until the existing reconciliation path proves whether the external system

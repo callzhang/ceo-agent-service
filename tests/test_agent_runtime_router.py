@@ -67,6 +67,52 @@ def session_incompatible_failure() -> RuntimeFailure:
     )
 
 
+def seed_structured_operation(store: AutoReplyStore, request_id: int = 12) -> str:
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into okr_review_requests (
+                id, conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, period_label, period_start,
+                period_end, status
+            ) values (?, ?, 'title', ?, 'sender', 'text', 'period',
+                      'start', 'end', 'processing')
+            """,
+            (request_id, f"cid-{request_id}", f"msg-{request_id}"),
+        )
+    return str(request_id)
+
+
+def failed_operation_attempt(
+    store: AutoReplyStore,
+    *,
+    workload_key: str,
+    route_name: str = "codex_oauth",
+    failure: RuntimeFailure | None = None,
+    session_mode: str = "fresh",
+    source_session_id: str = "",
+):
+    selected_failure = failure or failover_failure()
+    selected_route = route(route_name)
+    attempt = store.claim_runtime_operation_attempt(
+        "structured",
+        workload_key,
+        selected_route.name,
+        selected_route.runtime_kind.value,
+        selected_route.credential_mode.value,
+        selected_route.model,
+        session_mode=session_mode,
+        source_session_id=source_session_id,
+    )
+    store.mark_agent_runtime_attempt_running_once(attempt.id)
+    return store.fail_agent_runtime_attempt(
+        attempt.id,
+        selected_failure.failure_class.value,
+        selected_failure.code,
+        selected_failure.failover_permitted,
+    )
+
+
 def make_router(
     store: AutoReplyStore,
     *,
@@ -130,24 +176,211 @@ def test_initial_route_rejects_expired_or_missing_capability_evidence(store):
     assert router.first_eligible_route(required_capabilities=required) is None
 
 
+def test_operation_failover_uses_persisted_identity_failure_and_capabilities(store):
+    workload_key = seed_structured_operation(store)
+    failure = failover_failure()
+    failed = failed_operation_attempt(store, workload_key=workload_key, failure=failure)
+    required = frozenset({"structured_output", "reviewed_read_tools"})
+    router = make_router(
+        store,
+        snapshots={
+            "codex_oauth": snapshot("codex_oauth", capabilities=required),
+            "codex_api": snapshot("codex_api", capabilities=required),
+        },
+    )
+
+    decision = router.next_operation_route(
+        workload_kind="structured",
+        workload_key=workload_key,
+        failed_attempt=failed,
+        failure=failure,
+        required_capabilities=required,
+        read_only_policy_proven=True,
+    )
+
+    assert decision.route == route("codex_api")
+    assert decision.fresh_session is False
+
+
+def test_operation_failover_rejects_foreign_workload_and_failure_tuple(store):
+    first_key = seed_structured_operation(store, 12)
+    second_key = seed_structured_operation(store, 13)
+    failure = failover_failure()
+    failed = failed_operation_attempt(store, workload_key=first_key, failure=failure)
+    router = make_router(store)
+
+    foreign = router.next_operation_route(
+        workload_kind="structured",
+        workload_key=second_key,
+        failed_attempt=failed,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        read_only_policy_proven=True,
+    )
+    mismatch = router.next_operation_route(
+        workload_kind="structured",
+        workload_key=first_key,
+        failed_attempt=failed,
+        failure=failover_failure("different_typed_code"),
+        required_capabilities=frozenset({"structured_output"}),
+        read_only_policy_proven=True,
+    )
+
+    assert foreign.reason == "attempt_workload_mismatch"
+    assert mismatch.reason == "failure_mismatch"
+
+
+def test_operation_failover_requires_runnable_parent_and_sealed_read_only_policy(store):
+    workload_key = seed_structured_operation(store)
+    failure = failover_failure()
+    failed = failed_operation_attempt(store, workload_key=workload_key, failure=failure)
+    router = make_router(store)
+
+    unproven = router.next_operation_route(
+        workload_kind="structured",
+        workload_key=workload_key,
+        failed_attempt=failed,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        read_only_policy_proven=False,
+    )
+    with store._connect() as db:
+        db.execute(
+            "update okr_review_requests set status='failed' where id=?",
+            (int(workload_key),),
+        )
+    terminal_parent = router.next_operation_route(
+        workload_kind="structured",
+        workload_key=workload_key,
+        failed_attempt=failed,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        read_only_policy_proven=True,
+    )
+
+    assert unproven.reason == "read_only_policy_unproven"
+    assert terminal_parent.reason == "operation_not_runnable"
+
+
+def test_operation_failover_blocks_effect_evidence_and_honors_route_pause(store):
+    workload_key = seed_structured_operation(store)
+    failure = failover_failure()
+    claimed = store.claim_runtime_operation_attempt(
+        "structured",
+        workload_key,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+    )
+    store.mark_agent_runtime_attempt_running_once(claimed.id)
+    store.note_runtime_attempt_effect_started(claimed.id, at=NOW)
+    failed = store.fail_agent_runtime_attempt(
+        claimed.id, failure.failure_class.value, failure.code, True
+    )
+    router = make_router(store)
+
+    blocked = router.next_operation_route(
+        workload_kind="structured",
+        workload_key=workload_key,
+        failed_attempt=failed,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        read_only_policy_proven=True,
+    )
+    assert blocked.reason == "effect_started"
+
+    workload_key_2 = seed_structured_operation(store, 13)
+    failed_2 = failed_operation_attempt(store, workload_key=workload_key_2)
+    store.open_runtime_route_pause(
+        "codex_api", "provider_paused", retry_at="2026-08-20 10:30:00"
+    )
+    paused = router.next_operation_route(
+        workload_kind="structured",
+        workload_key=workload_key_2,
+        failed_attempt=failed_2,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        read_only_policy_proven=True,
+    )
+    assert paused.reason == "no_eligible_route"
+
+
+def test_operation_api_resume_may_retry_once_as_fresh_session(store):
+    workload_key = seed_structured_operation(store)
+    failure = session_incompatible_failure()
+    failed = failed_operation_attempt(
+        store,
+        workload_key=workload_key,
+        route_name="codex_api",
+        failure=failure,
+        session_mode="resume",
+        source_session_id="api-session",
+    )
+    router = make_router(store, routes=(route("codex_api"),))
+
+    decision = router.next_operation_route(
+        workload_kind="structured",
+        workload_key=workload_key,
+        failed_attempt=failed,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        read_only_policy_proven=True,
+    )
+
+    assert decision.route == route("codex_api")
+    assert decision.fresh_session is True
+
+    fresh = store.claim_runtime_operation_attempt(
+        "structured",
+        workload_key,
+        "codex_api",
+        "codex_cli",
+        "service_api",
+        "gpt-5.5",
+    )
+    store.mark_agent_runtime_attempt_running_once(fresh.id)
+    fresh_failed = store.fail_agent_runtime_attempt(
+        fresh.id, failure.failure_class.value, failure.code, True
+    )
+    repeated = router.next_operation_route(
+        workload_kind="structured",
+        workload_key=workload_key,
+        failed_attempt=fresh_failed,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        read_only_policy_proven=True,
+    )
+    assert repeated.reason == "no_eligible_route"
+
+
 def test_legacy_oauth_bootstrap_never_trusts_unprobed_api(store):
     routes = (route("codex_oauth"), route("codex_api"))
     router = make_router(store, routes=routes, snapshots={})
 
-    assert router.first_eligible_route(
-        required_capabilities=frozenset({"structured_output"}),
-        allow_legacy_oauth_bootstrap=True,
-    ) == routes[0]
-    assert router.first_eligible_route(
-        required_capabilities=frozenset({"structured_output"}),
-        allow_legacy_oauth_bootstrap=False,
-    ) is None
+    assert (
+        router.first_eligible_route(
+            required_capabilities=frozenset({"structured_output"}),
+            allow_legacy_oauth_bootstrap=True,
+        )
+        == routes[0]
+    )
+    assert (
+        router.first_eligible_route(
+            required_capabilities=frozenset({"structured_output"}),
+            allow_legacy_oauth_bootstrap=False,
+        )
+        is None
+    )
 
     api_only = make_router(store, routes=(routes[1],), snapshots={})
-    assert api_only.first_eligible_route(
-        required_capabilities=frozenset(),
-        allow_legacy_oauth_bootstrap=True,
-    ) is None
+    assert (
+        api_only.first_eligible_route(
+            required_capabilities=frozenset(),
+            allow_legacy_oauth_bootstrap=True,
+        )
+        is None
+    )
 
 
 @pytest.fixture
@@ -356,7 +589,9 @@ def test_router_rejects_a_missing_persisted_run(router, store, running_attempt):
     assert decision.reason == "run_not_found"
 
 
-@pytest.mark.parametrize("attempt_status", ["starting", "running", "completed", "superseded"])
+@pytest.mark.parametrize(
+    "attempt_status", ["starting", "running", "completed", "superseded"]
+)
 def test_router_requires_a_persisted_failed_attempt(
     router, store, running_attempt, attempt_status
 ):
@@ -692,9 +927,7 @@ def test_resumed_codex_api_session_incompatibility_gets_one_fresh_retry(
     )
     router = make_router(store)
 
-    decision = next_route(
-        router, store, api, failure=session_incompatible_failure()
-    )
+    decision = next_route(router, store, api, failure=session_incompatible_failure())
 
     assert decision.route.name == "codex_api"
     assert decision.fresh_session is True
@@ -792,9 +1025,7 @@ def test_fresh_codex_api_session_incompatibility_does_not_repeat(
     )
     router = make_router(store)
 
-    decision = next_route(
-        router, store, api, failure=session_incompatible_failure()
-    )
+    decision = next_route(router, store, api, failure=session_incompatible_failure())
 
     assert decision.route is None
     assert decision.fresh_session is False
