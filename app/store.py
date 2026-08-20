@@ -3851,18 +3851,34 @@ class AutoReplyStore:
         now: str | datetime | None,
     ) -> Iterator[tuple[sqlite3.Connection, tuple[datetime, str]]]:
         for attempt in range(AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS):
+            connection = self._connect()
             try:
-                with self._connect() as db:
+                db = connection.__enter__()
+                try:
                     db.execute("begin immediate")
-                    yield db, _utc_store_time(now)
-                    return
+                except sqlite3.OperationalError as exc:
+                    connection.__exit__(type(exc), exc, exc.__traceback__)
+                    if (
+                        not _is_sqlite_lock_error(exc)
+                        or attempt + 1 >= AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS
+                    ):
+                        raise
             except sqlite3.OperationalError as exc:
                 if (
                     not _is_sqlite_lock_error(exc)
                     or attempt + 1 >= AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS
                 ):
                     raise
-                time.sleep(AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+            else:
+                try:
+                    yield db, _utc_store_time(now)
+                except BaseException as exc:
+                    connection.__exit__(type(exc), exc, exc.__traceback__)
+                    raise
+                else:
+                    connection.__exit__(None, None, None)
+                return
+            time.sleep(AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
 
     @staticmethod
     def _require_runtime_attempt_text(value: str, *, field: str) -> str:
@@ -3884,7 +3900,7 @@ class AutoReplyStore:
         )
         if workload_kind not in RUNTIME_OPERATION_WORKLOAD_KINDS:
             raise ValueError("unsupported runtime operation workload kind")
-        if workload_kind in {"structured", "meeting", "memory"}:
+        if workload_kind in {"structured", "meeting"}:
             if not workload_key.isdecimal() or int(workload_key) <= 0:
                 raise ValueError("runtime operation workload key must be a persisted ID")
         elif workload_kind == "task":
@@ -3893,7 +3909,7 @@ class AutoReplyStore:
                 raise ValueError("task workload key must start with a persisted ID")
             if separator and suffix != "memory_backfill":
                 raise ValueError("task workload key has an unsupported suffix")
-        else:
+        elif workload_kind == "weekly_okr":
             week_end, separator, remaining = workload_key.partition(":")
             manager_user_id, separator_2, source_digest = remaining.partition(":")
             try:
@@ -3906,10 +3922,43 @@ class AutoReplyStore:
                 or not separator_2
                 or not manager_user_id.strip()
                 or not source_digest.strip()
-                or ":" in source_digest
+                or len(source_digest) != 64
+                or any(char not in "0123456789abcdef" for char in source_digest)
             ):
                 raise ValueError("weekly_okr workload key must be stable and complete")
+        else:
+            source, separator, source_id = workload_key.partition(":")
+            if (
+                source not in {"memory_write_event", "wechat_memory_candidate"}
+                or not separator
+                or not source_id.isdecimal()
+                or int(source_id) <= 0
+            ):
+                raise ValueError("memory workload key must name a persisted source row")
         return workload_kind, workload_key
+
+    @staticmethod
+    def _runtime_operation_parent_exists(
+        db: sqlite3.Connection, workload_kind: str, workload_key: str
+    ) -> bool:
+        if workload_kind == "weekly_okr":
+            return True
+        if workload_kind == "structured":
+            table_name, row_id = "okr_review_requests", workload_key
+        elif workload_kind == "meeting":
+            table_name, row_id = "meeting_alignment_runs", workload_key
+        elif workload_kind == "task":
+            row_id, separator, _ = workload_key.partition(":")
+            table_name = "work_summary_inputs" if separator else "task_agent_runs"
+        else:
+            source, _, row_id = workload_key.partition(":")
+            table_name = {
+                "memory_write_event": "memory_write_events",
+                "wechat_memory_candidate": "wechat_memory_candidates",
+            }[source]
+        return db.execute(
+            f"select 1 from {table_name} where id=?", (int(row_id),)
+        ).fetchone() is not None
 
     @staticmethod
     def _validate_runtime_attempt_details(
@@ -3974,6 +4023,10 @@ class AutoReplyStore:
                 ).fetchone()
                 if run is None:
                     raise ValueError("agent run does not exist")
+            elif not self._runtime_operation_parent_exists(
+                db, workload_kind, workload_key
+            ):
+                raise ValueError("runtime operation parent does not exist")
             active = db.execute(
                 """
                 select * from agent_runtime_attempts
@@ -3984,6 +4037,11 @@ class AutoReplyStore:
                 (workload_kind, workload_key, route_name),
             ).fetchone()
             if active is not None:
+                immutable = ("runtime_kind", "credential_mode", "model")
+                if any(active[field] != value for field, value in zip(
+                    immutable, (runtime_kind, credential_mode, model), strict=True
+                )):
+                    raise ValueError("conflicting active runtime attempt claim")
                 return self._agent_runtime_attempt_from_row(active)
             attempt_number = int(
                 db.execute(
@@ -4251,6 +4309,13 @@ class AutoReplyStore:
                 (agent_run_id,),
             ).fetchall()
             return [self._agent_runtime_attempt_from_row(row) for row in rows]
+
+    def get_agent_runtime_attempt(self, attempt_id: int) -> AgentRuntimeAttempt | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from agent_runtime_attempts where id=?", (attempt_id,)
+            ).fetchone()
+            return None if row is None else self._agent_runtime_attempt_from_row(row)
 
     def note_runtime_attempt_effect_started(
         self,
@@ -10164,9 +10229,20 @@ class AutoReplyStore:
             raise ValueError("failure_code must be a typed code")
         _, retry_at_text = _utc_store_time(retry_at)
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            existing = db.execute(
+                "select retry_at from runtime_route_pauses where route_name=?",
+                (route_name,),
+            ).fetchone()
+            if existing is not None and str(existing["retry_at"]) > now_text:
+                return False
+            if existing is not None:
+                db.execute(
+                    "delete from runtime_route_pauses where route_name=? and retry_at<=?",
+                    (route_name, now_text),
+                )
             cursor = db.execute(
                 """
-                insert or ignore into runtime_route_pauses (
+                insert into runtime_route_pauses (
                     route_name, failure_code, retry_at, opened_at, updated_at
                 ) values (?, ?, ?, ?, ?)
                 """,

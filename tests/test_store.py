@@ -99,6 +99,31 @@ def _claimed_runtime_agent_run(store: AutoReplyStore):
     return _claim_audit_run(store, task_id, "initial", owner="runtime-attempt").run
 
 
+def _seed_runtime_operation_parent(
+    store: AutoReplyStore, workload_kind: str, workload_key: str
+) -> None:
+    with store._connect() as db:
+        db.execute("pragma foreign_keys = off")
+        if workload_kind == "structured":
+            db.execute("insert into okr_review_requests (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, period_label, period_start, period_end) values (?, 'cid', 'title', 'msg', 'sender', 'text', 'period', 'start', 'end')", (int(workload_key),))
+        elif workload_kind == "meeting":
+            db.execute("insert into meeting_alignment_runs (id, job_id, status) values (?, 1, 'running')", (int(workload_key),))
+        elif workload_kind == "task":
+            source_id, separator, _ = workload_key.partition(":")
+            table_name = "work_summary_inputs" if separator else "task_agent_runs"
+            if separator:
+                db.execute("insert into work_summary_inputs (id, source_type, source_ref, payload_json) values (?, 'test', ?, '{}')", (int(source_id), f"ref-{source_id}"))
+            else:
+                db.execute("insert into task_agent_runs (id, summary_input_id) values (?, 1)", (int(source_id),))
+        elif workload_kind == "memory":
+            source, _, source_id = workload_key.partition(":")
+            table_name = "memory_write_events" if source == "memory_write_event" else "wechat_memory_candidates"
+            if table_name == "memory_write_events":
+                db.execute("insert into memory_write_events (id, attempt_id, event_type, payload_json) values (?, 1, 'test', '{}')", (int(source_id),))
+            else:
+                db.execute("insert into wechat_memory_candidates (id, import_run_id, account_id, statement, category, confidence, sensitivity) values (?, 'import', 'account', 'statement', 'fact', 1, 'low')", (int(source_id),))
+
+
 def test_runtime_attempt_claim_is_ordered_and_idempotent(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
     run = _claimed_runtime_agent_run(store)
@@ -154,8 +179,8 @@ def test_runtime_attempt_claim_numbers_follow_terminal_attempts(tmp_path: Path):
         ("meeting", "13"),
         ("task", "14"),
         ("task", "15:memory_backfill"),
-        ("weekly_okr", "2026-08-16:manager-1:source-digest"),
-        ("memory", "16"),
+        ("weekly_okr", "2026-08-16:manager-1:" + "a" * 64),
+        ("memory", "memory_write_event:16"),
     ],
 )
 def test_runtime_attempt_operation_accepts_approved_stable_workload_keys(
@@ -164,6 +189,7 @@ def test_runtime_attempt_operation_accepts_approved_stable_workload_keys(
     workload_key: str,
 ):
     store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    _seed_runtime_operation_parent(store, workload_kind, workload_key)
 
     attempt = store.claim_runtime_operation_attempt(
         workload_kind,
@@ -187,8 +213,10 @@ def test_runtime_attempt_operation_accepts_approved_stable_workload_keys(
         ("structured", "request-12"),
         ("meeting", "meeting-13"),
         ("task", "not-a-persisted-id"),
+        ("structured", "999"),
         ("weekly_okr", "not-a-stable-key"),
         ("memory", "memory-16"),
+        ("memory", "memory_write_event:999"),
     ],
 )
 def test_runtime_attempt_operation_rejects_unapproved_or_freeform_workload_keys(
@@ -207,6 +235,24 @@ def test_runtime_attempt_operation_rejects_unapproved_or_freeform_workload_keys(
             "local_oauth",
             "gpt-5.5",
         )
+
+
+def test_runtime_attempt_memory_keys_are_source_qualified_and_collision_free(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    _seed_runtime_operation_parent(store, "memory", "memory_write_event:1")
+    _seed_runtime_operation_parent(store, "memory", "wechat_memory_candidate:1")
+
+    event_attempt = store.claim_runtime_operation_attempt(
+        "memory", "memory_write_event:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+    candidate_attempt = store.claim_runtime_operation_attempt(
+        "memory", "wechat_memory_candidate:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+
+    assert event_attempt.workload_key != candidate_attempt.workload_key
+    assert {event_attempt.attempt_number, candidate_attempt.attempt_number} == {1}
 
 
 def test_runtime_attempt_transitions_are_terminal_safe(tmp_path: Path):
@@ -360,6 +406,80 @@ def test_route_pause_open_close_is_independent_and_idempotent(tmp_path: Path):
     assert store.close_runtime_route_pause("codex_oauth")
     assert not store.close_runtime_route_pause("codex_oauth")
     assert store.active_runtime_route_pause("codex_oauth", now="2026-08-20 10:00:00") is None
+
+
+def test_route_pause_reopens_after_expiry_without_prior_read(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "route-pauses.sqlite3")
+    assert store.open_runtime_route_pause(
+        "codex_oauth", "old_failure", retry_at="2000-01-01 00:00:00"
+    )
+
+    assert store.open_runtime_route_pause(
+        "codex_oauth", "new_failure", retry_at="2099-01-01 00:00:00"
+    )
+    assert store.active_runtime_route_pause("codex_oauth", now="2026-08-20 10:00:00") == (
+        "new_failure"
+    )
+
+
+def test_route_pause_open_and_expiry_cleanup_are_serialized(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "route-pauses.sqlite3")
+    assert store.open_runtime_route_pause(
+        "codex_oauth", "old_failure", retry_at="2000-01-01 00:00:00"
+    )
+    barrier = Barrier(2)
+    results = Queue()
+
+    def open_new_pause():
+        barrier.wait(timeout=5)
+        results.put(store.open_runtime_route_pause(
+            "codex_oauth", "new_failure", retry_at="2099-01-01 00:00:00"
+        ))
+
+    thread = Thread(target=open_new_pause)
+    thread.start()
+    barrier.wait(timeout=5)
+    store.active_runtime_route_pause("codex_oauth", now="2026-08-20 10:00:00")
+    thread.join(timeout=5)
+
+    assert results.get(timeout=1) is True
+    assert store.active_runtime_route_pause("codex_oauth", now="2026-08-20 10:00:00") == "new_failure"
+
+
+@pytest.mark.parametrize("field, replacement", [
+    ("runtime_kind", "claude_cli"),
+    ("credential_mode", "service_api"),
+    ("model", "gpt-5.6"),
+])
+def test_runtime_attempt_active_claim_rejects_conflicting_immutable_data(
+    tmp_path: Path, field: str, replacement: str
+):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    values = {"runtime_kind": "codex_cli", "credential_mode": "local_oauth", "model": "gpt-5.5"}
+    store.claim_agent_runtime_attempt(run.id, "codex_oauth", **values)
+    values[field] = replacement
+
+    with pytest.raises(ValueError, match="conflicting active runtime attempt"):
+        store.claim_agent_runtime_attempt(run.id, "codex_oauth", **values)
+
+
+def test_runtime_attempt_readback_reflects_effect_start(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    attempt = store.claim_agent_runtime_attempt(run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5")
+    assert store.get_agent_runtime_attempt(attempt.id) == attempt
+    assert store.get_agent_runtime_attempt(999999) is None
+    store.note_runtime_attempt_effect_started(attempt.id, at="2026-08-20 10:00:00")
+    assert store.get_agent_runtime_attempt(attempt.id).first_effect_started_at == "2026-08-20 10:00:00"
+
+
+def test_agent_run_write_transaction_propagates_post_yield_lock_error(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "transaction.sqlite3")
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        with store._agent_run_write_transaction(None):
+            raise sqlite3.OperationalError("database is locked")
 
 
 def test_list_agent_run_summaries_for_terminal_runs_batches_without_events(
