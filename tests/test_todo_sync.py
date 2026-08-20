@@ -6,6 +6,7 @@ import pytest
 from app.dws_client import DwsError
 from app.store import AutoReplyStore
 from app.todo_sync import (
+    dispatch_task_todo_sync_outbox,
     maybe_create_dingtalk_todo,
     pull_dingtalk_todo_statuses,
     refresh_dingtalk_todo_before_follow_up,
@@ -96,6 +97,74 @@ def _project_and_todo(store: AutoReplyStore, **todo_values):
     }
     defaults.update(todo_values)
     return project_id, store.create_work_todo(**defaults)
+
+
+def test_task_todo_outbox_expired_delivery_becomes_unknown_without_replay(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    store.enqueue_task_todo_sync_outbox(
+        operation_key="task-agent:1:todo:1:create",
+        work_todo_id=todo_id,
+        operation="create",
+    )
+    claimed = store.claim_task_todo_sync_outbox(
+        owner="worker-a", now="2026-06-27 10:00:00", lease_seconds=1
+    )
+    assert claimed is not None
+
+    assert store.claim_task_todo_sync_outbox(
+        owner="worker-b", now="2026-06-27 10:01:00"
+    ) is None
+    unknown = store.list_task_todo_sync_outbox(statuses=("unknown",))
+    assert len(unknown) == 1
+    assert unknown[0]["error"] == "receipt_reconciliation_required"
+
+
+def test_task_todo_outbox_claim_allows_one_sender(tmp_path):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    store.enqueue_task_todo_sync_outbox(
+        operation_key="task-agent:1:todo:1:create",
+        work_todo_id=todo_id,
+        operation="create",
+    )
+
+    first = store.claim_task_todo_sync_outbox(owner="worker-a", now="2026-06-27 10:00:00")
+    second = store.claim_task_todo_sync_outbox(owner="worker-b", now="2026-06-27 10:00:00")
+
+    assert first is not None
+    assert second is None
+
+
+def test_task_todo_outbox_receipt_write_failure_never_blindly_replays(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    _, todo_id = _project_and_todo(store)
+    store.enqueue_task_todo_sync_outbox(
+        operation_key="task-agent:1:todo:1:create",
+        work_todo_id=todo_id,
+        operation="create",
+    )
+    dws = FakeTodoDws()
+    original_finish = store.finish_task_todo_sync_outbox
+
+    def fail_receipt(**_kwargs):
+        raise RuntimeError("receipt database unavailable")
+
+    monkeypatch.setattr(store, "finish_task_todo_sync_outbox", fail_receipt)
+    with pytest.raises(RuntimeError, match="receipt database unavailable"):
+        dispatch_task_todo_sync_outbox(
+            store, dws, owner="worker-a", now="2026-06-27 10:00:00"
+        )
+    assert len(dws.created) == 1
+
+    monkeypatch.setattr(store, "finish_task_todo_sync_outbox", original_finish)
+    assert dispatch_task_todo_sync_outbox(
+        store, dws, owner="worker-b", now="2026-06-27 10:10:00"
+    ) == 0
+    assert len(dws.created) == 1
+    assert store.list_task_todo_sync_outbox(statuses=("unknown",))[0]["error"] == (
+        "receipt_reconciliation_required"
+    )
 
 
 def test_maybe_create_dingtalk_todo_creates_high_confidence_link(tmp_path):

@@ -62,6 +62,7 @@ REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-08-20.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
+    "task_todo_sync_outbox",
     "agent_runtime_attempts",
     "conversation_runtime_sessions",
     "weekly_okr_analysis_jobs",
@@ -1651,6 +1652,24 @@ class AutoReplyStore:
                 create unique index if not exists idx_work_todo_dingtalk_links_active_todo
                     on work_todo_dingtalk_links(work_todo_id)
                     where status in ('creating', 'active');
+                create table if not exists task_todo_sync_outbox (
+                    id integer primary key autoincrement,
+                    operation_key text not null unique,
+                    work_todo_id integer not null,
+                    operation text not null check(operation in ('create', 'complete')),
+                    evidence_json text not null default '{}',
+                    status text not null default 'queued'
+                        check(status in ('queued', 'running', 'completed', 'failed', 'unknown')),
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    receipt_json text not null default '{}',
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    completed_at text not null default ''
+                );
+                create index if not exists idx_task_todo_sync_outbox_due
+                    on task_todo_sync_outbox(status, lease_expires_at, id);
                 create table if not exists work_updates (
                     id integer primary key autoincrement,
                     project_id integer not null,
@@ -15498,6 +15517,76 @@ class AutoReplyStore:
             link = self._normalize_dingtalk_todo_link_row(row)
             result.setdefault(link.work_todo_id, []).append(link)
         return result
+
+    def enqueue_task_todo_sync_outbox(
+        self,
+        *,
+        operation_key: str,
+        work_todo_id: int,
+        operation: str,
+        evidence_json: str = "{}",
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        if operation not in {"create", "complete"}:
+            raise ValueError("task todo sync operation is invalid")
+        with self._optional_connection(_db) as db:
+            db.execute(
+                "insert or ignore into task_todo_sync_outbox "
+                "(operation_key, work_todo_id, operation, evidence_json) values (?, ?, ?, ?)",
+                (operation_key, work_todo_id, operation, evidence_json),
+            )
+
+    def list_task_todo_sync_outbox(
+        self, *, statuses: tuple[str, ...] | None = None
+    ) -> list[sqlite3.Row]:
+        query = "select * from task_todo_sync_outbox"
+        args: list[str] = []
+        if statuses:
+            query += f" where status in ({','.join('?' for _ in statuses)})"
+            args.extend(statuses)
+        with self._connect() as db:
+            return list(db.execute(f"{query} order by id", args).fetchall())
+
+    def claim_task_todo_sync_outbox(
+        self, *, owner: str, now: str, lease_seconds: int = 300
+    ) -> sqlite3.Row | None:
+        lease_until = (
+            datetime.strptime(now, "%Y-%m-%d %H:%M:%S")
+            + timedelta(seconds=lease_seconds)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with self._agent_run_write_transaction(now) as (db, _):
+            db.execute(
+                "update task_todo_sync_outbox set status='unknown', lease_owner='', "
+                "lease_expires_at='', error='receipt_reconciliation_required', updated_at=? "
+                "where status='running' and lease_expires_at<=?",
+                (now, now),
+            )
+            row = db.execute(
+                "select * from task_todo_sync_outbox where status='queued' order by id limit 1"
+            ).fetchone()
+            if row is None:
+                return None
+            changed = db.execute(
+                "update task_todo_sync_outbox set status='running', lease_owner=?, "
+                "lease_expires_at=?, updated_at=? where id=? and status='queued'",
+                (owner, lease_until, now, row["id"]),
+            )
+            return row if changed.rowcount == 1 else None
+
+    def finish_task_todo_sync_outbox(
+        self, *, outbox_id: int, owner: str, status: str, receipt_json: str = "{}", error: str = ""
+    ) -> None:
+        if status not in {"completed", "failed", "unknown"}:
+            raise ValueError("task todo sync terminal status is invalid")
+        with self._connect() as db:
+            changed = db.execute(
+                "update task_todo_sync_outbox set status=?, receipt_json=?, error=?, "
+                "lease_owner='', lease_expires_at='', completed_at=current_timestamp, "
+                "updated_at=current_timestamp where id=? and status='running' and lease_owner=?",
+                (status, receipt_json, error, outbox_id, owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("task todo sync receipt ownership lost")
 
     def create_work_update(
         self, *, _db: sqlite3.Connection | None = None, **values

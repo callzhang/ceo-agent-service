@@ -3693,7 +3693,7 @@ def test_process_work_item_rolls_back_domain_changes_when_apply_is_interrupted(
     monkeypatch.setattr("app.task_agent._apply_todo_change", interrupt_after_project)
 
     with pytest.raises(RuntimeError, match="todo apply interrupted"):
-        process_work_item(store, TaskAgentRunner(codex), work_input)
+        process_work_item(store, TaskAgentRunner(codex), work_input, dws=object())
 
     with store._connect() as db:
         project_count = db.execute("select count(*) from work_projects").fetchone()[0]
@@ -3704,6 +3704,64 @@ def test_process_work_item_rolls_back_domain_changes_when_apply_is_interrupted(
     assert project_count == 0
     assert update_count == 0
     assert run["status"] == "failed"
+    assert store.list_task_todo_sync_outbox() == []
+
+
+def test_process_work_item_delivers_task_todo_after_domain_commit(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    decision = {
+        "action": "create_project",
+        "project": {
+            "title": "售前知识库建设",
+            "category": "sales",
+            "memory_context": _memory_context(),
+        },
+        "todo_changes": [{
+            "action": "create",
+            "todo_ref": "sources",
+            "title": "补齐来源链接",
+            "owner_user_id": "owner-1",
+            "owner_name": "Alex",
+            "owner_evidence": _owner_evidence(),
+            "status": "open",
+            "priority": "P1",
+            "deadline_at": "2026-07-01 18:00:00",
+        }],
+        "follow_up_drafts": [],
+        "follow_up_changes": [],
+        "update_summary": "创建项目并补齐来源。",
+        "merge_reason": "新工作项。",
+        "memory_recall_used": True,
+        "confidence": 0.9,
+    }
+
+    class CommitAwareDws:
+        def __init__(self):
+            self.visible_todo_counts = []
+
+        def create_todo_task(self, **_kwargs):
+            self.visible_todo_counts.append(len(store.list_work_todos()))
+            return {"todoTaskId": "dt-after-commit"}
+
+        def get_todo_task(self, task_id):
+            return {"id": task_id, "done": False}
+
+    dws = CommitAwareDws()
+    process_work_item(
+        store,
+        TaskAgentRunner(FakeCodexWithAuditEvents(decision, [{"tool": "memory_recall"}])),
+        work_input,
+        dws=dws,
+        now="2026-06-27 10:00:00",
+    )
+
+    assert dws.visible_todo_counts == [1]
+    assert store.list_task_todo_sync_outbox(statuses=("completed",))[0]["operation"] == "create"
 
 
 def test_process_work_item_repairs_unsupported_project_owner_evidence(tmp_path):

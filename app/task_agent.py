@@ -33,7 +33,11 @@ from app.task_retrieval import (
     retrieve_project_candidates,
 )
 from app.todo_completion import complete_follow_ups_for_todo
-from app.todo_sync import maybe_create_dingtalk_todo, sync_completed_todo_to_dingtalk
+from app.todo_sync import (
+    dispatch_task_todo_sync_outbox,
+    maybe_create_dingtalk_todo,
+    sync_completed_todo_to_dingtalk,
+)
 
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 TASK_AGENT_MAX_TIMEOUT_SECONDS = 300
@@ -581,6 +585,13 @@ def process_work_item(
                 _db=db,
             )
         active_run_id = None
+        if dws is not None:
+            dispatch_task_todo_sync_outbox(
+                store,
+                dws,
+                owner=f"task-agent-outbox:{work_input.id}",
+                now=now or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
     except Exception as exc:
         if active_run_id is not None:
             store.finish_task_agent_run(
@@ -677,13 +688,21 @@ def apply_task_agent_decision(
             and bool(todo_change.completion_evidence)
         ):
             sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            sync_completed_todo_to_dingtalk(
-                store,
-                dws,
-                work_todo_id=todo_id,
-                evidence=todo_change.completion_evidence,
-                now=sync_now,
-            )
+            if _db is not None:
+                store.enqueue_task_todo_sync_outbox(
+                    operation_key=(
+                        f"task-agent:{summary_input_id}:todo:{todo_id}:complete"
+                    ),
+                    work_todo_id=todo_id,
+                    operation="complete",
+                    evidence_json=_json_dumps(todo_change.completion_evidence),
+                    _db=_db,
+                )
+            else:
+                sync_completed_todo_to_dingtalk(
+                    store, dws, work_todo_id=todo_id,
+                    evidence=todo_change.completion_evidence, now=sync_now,
+                )
         if todo_change.action in {"create", "update"}:
             create_sync_todo_ids.append(todo_id)
         if todo_change.action == "create" and todo_change.todo_ref.strip():
@@ -701,12 +720,17 @@ def apply_task_agent_decision(
     if dws is not None:
         sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for todo_id in create_sync_todo_ids:
-            maybe_create_dingtalk_todo(
-                store,
-                dws,
-                work_todo_id=todo_id,
-                now=sync_now,
-            )
+            if _db is not None:
+                store.enqueue_task_todo_sync_outbox(
+                    operation_key=f"task-agent:{summary_input_id}:todo:{todo_id}:create",
+                    work_todo_id=todo_id,
+                    operation="create",
+                    _db=_db,
+                )
+            else:
+                maybe_create_dingtalk_todo(
+                    store, dws, work_todo_id=todo_id, now=sync_now
+                )
     return project_id
 
 
