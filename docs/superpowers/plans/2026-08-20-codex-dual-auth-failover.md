@@ -417,7 +417,7 @@ create table if not exists agent_runtime_attempts (
     ),
     check(
         (session_mode='fresh' and source_session_id='')
-        or (session_mode='resume' and source_session_id<>'')
+        or (session_mode='resume' and trim(source_session_id)<>'')
     ),
     unique(workload_kind, workload_key, attempt_number),
     foreign key(agent_run_id) references agent_runs(id)
@@ -458,7 +458,7 @@ the same route, and inserts `starting`. Transition methods use `where status in
 expired row before returning `None`.
 
 Claims default to `session_mode='fresh'` with an empty `source_session_id`.
-Resume claims require a nonempty source session, and active-claim idempotency
+Resume claims require a trimmed, nonempty source session, and active-claim idempotency
 compares both fields. Upgrades add the defaulted fields and database triggers so
 invalid fresh/resume combinations cannot enter the attempt ledger directly.
 

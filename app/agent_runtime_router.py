@@ -73,9 +73,20 @@ class AgentRuntimeRouter:
         recovery_phase: str,
         has_confirmed_receipt: bool = False,
     ) -> RuntimeRouteDecision:
+        attempts = self._store.list_agent_runtime_attempts(run.id)
+        persisted_attempt = next(
+            (attempt for attempt in attempts if attempt.id == failed_attempt.id),
+            None,
+        )
+        if (
+            failed_attempt.agent_run_id != run.id
+            or persisted_attempt is None
+            or persisted_attempt != failed_attempt
+        ):
+            return RuntimeRouteDecision(None, False, "attempt_run_mismatch")
         safe, reason = failover_is_safe(
             run=run,
-            attempt=failed_attempt,
+            attempt=persisted_attempt,
             failure=failure,
             has_confirmed_receipt=has_confirmed_receipt,
             recovery_phase=recovery_phase,
@@ -84,19 +95,19 @@ class AgentRuntimeRouter:
             return RuntimeRouteDecision(None, False, reason)
 
         now = _parse_timestamp(self._now())
-        attempts = self._store.list_agent_runtime_attempts(run.id)
         attempted_routes = {attempt.route_name for attempt in attempts}
 
         for route in self._routes:
+            fresh_session_retry = False
             if route.name in attempted_routes:
-                if self._fresh_session_retry_is_permitted(
+                fresh_session_retry = self._fresh_session_retry_is_permitted(
                     route=route,
-                    failed_attempt=failed_attempt,
+                    failed_attempt=persisted_attempt,
                     failure=failure,
                     attempts=attempts,
-                ):
-                    return RuntimeRouteDecision(route, True, "fresh_session_retry")
-                continue
+                )
+                if not fresh_session_retry:
+                    continue
             if self._store.active_runtime_route_pause(route.name, now=now) is not None:
                 continue
             if not self._snapshot_is_current_and_eligible(
@@ -105,7 +116,11 @@ class AgentRuntimeRouter:
                 now=now,
             ):
                 continue
-            return RuntimeRouteDecision(route, False, "eligible_route")
+            return RuntimeRouteDecision(
+                route,
+                fresh_session_retry,
+                "fresh_session_retry" if fresh_session_retry else "eligible_route",
+            )
         return RuntimeRouteDecision(None, False, "no_eligible_route")
 
     @staticmethod
@@ -124,7 +139,7 @@ class AgentRuntimeRouter:
             route.name == "codex_api"
             and failed_attempt.route_name == "codex_api"
             and failed_attempt.session_mode == RuntimeAttemptSessionMode.RESUME
-            and bool(failed_attempt.source_session_id)
+            and bool(failed_attempt.source_session_id.strip())
             and failure.code == "session_route_incompatible"
         )
 

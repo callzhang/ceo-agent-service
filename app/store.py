@@ -1148,7 +1148,7 @@ class AutoReplyStore:
                     ),
                     check(
                         (session_mode='fresh' and source_session_id='')
-                        or (session_mode='resume' and source_session_id<>'')
+                        or (session_mode='resume' and trim(source_session_id)<>'')
                     ),
                     unique(workload_kind, workload_key, attempt_number),
                     foreign key(agent_run_id) references agent_runs(id)
@@ -2466,7 +2466,7 @@ class AutoReplyStore:
             "or source_session_id is null "
             "or session_mode not in ('fresh', 'resume') "
             "or (session_mode='fresh' and source_session_id<>'') "
-            "or (session_mode='resume' and source_session_id='')"
+            "or (session_mode='resume' and trim(source_session_id)='')"
         )
         db.execute(
             """
@@ -2474,7 +2474,7 @@ class AutoReplyStore:
             before insert on agent_runtime_attempts
             when new.session_mode is null or new.source_session_id is null or not (
                 (new.session_mode='fresh' and new.source_session_id='')
-                or (new.session_mode='resume' and new.source_session_id<>'')
+                or (new.session_mode='resume' and trim(new.source_session_id)<>'')
             )
             begin
                 select raise(abort, 'invalid runtime attempt session evidence');
@@ -2487,7 +2487,7 @@ class AutoReplyStore:
             before update of session_mode, source_session_id on agent_runtime_attempts
             when new.session_mode is null or new.source_session_id is null or not (
                 (new.session_mode='fresh' and new.source_session_id='')
-                or (new.session_mode='resume' and new.source_session_id<>'')
+                or (new.session_mode='resume' and trim(new.source_session_id)<>'')
             )
             begin
                 select raise(abort, 'invalid runtime attempt session evidence');

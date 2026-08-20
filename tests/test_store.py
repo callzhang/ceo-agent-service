@@ -229,6 +229,20 @@ def test_runtime_attempt_session_evidence_is_persisted_and_validated(tmp_path: P
             "gpt-5.5",
             source_session_id=1,
         )
+    with store._connect() as db, pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            """
+            insert into agent_runtime_attempts (
+                agent_run_id, workload_kind, workload_key, attempt_number,
+                route_name, runtime_kind, credential_mode, model, session_mode,
+                source_session_id, status, started_at, created_at, updated_at
+            ) values (?, 'agent_run', ?, 99, 'direct', 'codex_cli',
+                      'local_oauth', 'gpt-5.5', 'resume', '   ', 'starting',
+                      '2026-08-20 10:00:00', '2026-08-20 10:00:00',
+                      '2026-08-20 10:00:00')
+            """,
+            (run.id, str(run.id)),
+        )
 
 
 def test_runtime_attempt_active_claim_compares_session_evidence(tmp_path: Path):
@@ -319,8 +333,8 @@ def test_runtime_attempt_upgrade_adds_session_evidence_constraints(tmp_path: Pat
     assert restored.source_session_id == ""
     with upgraded._connect() as db, pytest.raises(sqlite3.IntegrityError):
         db.execute(
-            "update agent_runtime_attempts set session_mode='fresh', "
-            "source_session_id='invalid' where id=?",
+            "update agent_runtime_attempts set session_mode='resume', "
+            "source_session_id='   ' where id=?",
             (attempt.id,),
         )
 

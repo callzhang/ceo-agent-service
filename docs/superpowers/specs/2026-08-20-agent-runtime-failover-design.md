@@ -380,7 +380,7 @@ workload; free-form or random identifiers are rejected. Attempt numbers are
 claimed transactionally. A completed attempt cannot be superseded. A failed
 attempt is `superseded` only after the next attempt is durably claimed. `fresh`
 attempts persist an empty `source_session_id`; `resume` attempts persist the
-nonempty session supplied to the provider. New tables enforce this pairing with
+trimmed, nonempty session supplied to the provider. New tables enforce this pairing with
 checks; upgrades add the fields with `fresh` defaults and use database triggers
 to reject invalid direct writes.
 

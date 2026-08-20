@@ -345,6 +345,86 @@ def test_resumed_codex_api_session_incompatibility_gets_one_fresh_retry(
     assert decision.reason == "fresh_session_retry"
 
 
+@pytest.mark.parametrize(
+    ("snapshots", "required_capabilities", "pause_api"),
+    [
+        ({}, frozenset({"structured_output"}), False),
+        (
+            {"codex_api": snapshot("codex_api", healthy=False)},
+            frozenset({"structured_output"}),
+            False,
+        ),
+        (
+            {"codex_api": snapshot("codex_api")},
+            frozenset({"structured_output", "read_only"}),
+            False,
+        ),
+        ({"codex_api": snapshot("codex_api")}, frozenset({"structured_output"}), True),
+    ],
+)
+def test_fresh_session_retry_requires_the_normal_route_eligibility_gate(
+    store,
+    running_attempt,
+    snapshots,
+    required_capabilities,
+    pause_api,
+):
+    store.fail_agent_runtime_attempt(
+        running_attempt.id, "authentication", "codex_login_required", True
+    )
+    api = store.claim_agent_runtime_attempt(
+        running_attempt.agent_run_id,
+        "codex_api",
+        "codex_cli",
+        "service_api",
+        "gpt-5.5",
+        session_mode="resume",
+        source_session_id="oauth-session",
+    )
+    if pause_api:
+        store.open_runtime_route_pause(
+            "codex_api", "provider_unavailable", retry_at="2026-08-20 10:30:00"
+        )
+    router = make_router(store, snapshots=snapshots)
+
+    decision = next_route(
+        router,
+        store,
+        api,
+        failure=failover_failure("session_route_incompatible"),
+        capabilities=required_capabilities,
+    )
+
+    assert decision.route is None
+    assert decision.fresh_session is False
+    assert decision.reason == "no_eligible_route"
+
+
+@pytest.mark.parametrize(
+    "failed_attempt",
+    [
+        lambda attempt: attempt.model_copy(update={"agent_run_id": 999999}),
+        lambda attempt: attempt.model_copy(
+            update={"source_session_id": "different-ledger-evidence"}
+        ),
+    ],
+)
+def test_router_rejects_foreign_or_nonledger_failed_attempt(
+    router, store, running_attempt, failed_attempt
+):
+    decision = router.next_route(
+        run=store.get_agent_run(running_attempt.agent_run_id),
+        failed_attempt=failed_attempt(running_attempt),
+        failure=failover_failure(),
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="",
+    )
+
+    assert decision.route is None
+    assert decision.fresh_session is False
+    assert decision.reason == "attempt_run_mismatch"
+
+
 def test_fresh_codex_api_session_incompatibility_does_not_repeat(
     store, running_attempt
 ):
