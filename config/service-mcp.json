@@ -12,8 +12,7 @@
       }
     },
     "xiaoqing_interview": {
-      "command_env": "CEO_XIAOQING_MCP_COMMAND",
-      "args_env": "CEO_XIAOQING_MCP_ARGS_JSON"
+      "url": "https://interview.hr.startask.net/api/mcp"
     }
   }
 }

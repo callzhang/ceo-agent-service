@@ -1,5 +1,10 @@
 # Changelog
 
+- Keep Xiaoqing in the generated service MCP manifest through its stable OAuth
+  endpoint, so candidate and resume requests can read the authoritative
+  interview package instead of being escalated because an optional local
+  transport command was absent.
+
 - Restore SQLite WAL mode on every service process startup even when the schema
   is already current, preventing a database restored in rollback-journal mode
   from serializing readers behind long-running writers.

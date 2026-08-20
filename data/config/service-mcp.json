@@ -2,6 +2,9 @@
   "servers": {
     "exa": {
       "url": "https://mcp.exa.ai/mcp"
+    },
+    "xiaoqing_interview": {
+      "url": "https://interview.hr.startask.net/api/mcp"
     }
   }
 }

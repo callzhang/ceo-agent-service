@@ -688,11 +688,17 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     assert service_manifest.is_file()
     payload = json.loads(service_manifest.read_text(encoding="utf-8"))
     assert payload == {
-        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}
+        "servers": {
+            "exa": {"url": "https://mcp.exa.ai/mcp"},
+            "xiaoqing_interview": {
+                "url": "https://interview.hr.startask.net/api/mcp"
+            },
+        }
     }
-    assert [server.name for server in load_service_mcp_servers(service_manifest, env={})] == [
-        "exa"
-    ]
+    assert [
+        server.name
+        for server in load_service_mcp_servers(service_manifest, env={})
+    ] == ["exa", "xiaoqing_interview"]
 
 
 def test_run_setup_service_config_defaults_database_to_application_support(
@@ -759,7 +765,12 @@ def test_run_setup_mcp_writes_service_manifest_and_environment(tmp_path: Path):
     assert not personal_config.exists()
     manifest = tmp_path / "data" / "config" / "service-mcp.json"
     assert json.loads(manifest.read_text(encoding="utf-8")) == {
-        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}
+        "servers": {
+            "exa": {"url": "https://mcp.exa.ai/mcp"},
+            "xiaoqing_interview": {
+                "url": "https://interview.hr.startask.net/api/mcp"
+            },
+        }
     }
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "CEO_SERVICE_MCP_CONFIG_PATH=data/config/service-mcp.json" in env_text
@@ -1019,7 +1030,12 @@ def test_run_setup_mcp_uses_os_service_path_and_redacts_output(
 
     assert event.status == "done"
     assert json.loads(service_config.read_text(encoding="utf-8")) == {
-        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}
+        "servers": {
+            "exa": {"url": "https://mcp.exa.ai/mcp"},
+            "xiaoqing_interview": {
+                "url": "https://interview.hr.startask.net/api/mcp"
+            },
+        }
     }
     assert event.evidence["service_mcp_config"] == "[REDACTED_PATH]"
     assert str(tmp_path) not in json.dumps(event.evidence)
@@ -1151,7 +1167,12 @@ def test_run_setup_mcp_reports_missing_memory_url(monkeypatch, tmp_path: Path):
     assert missing.status == "done"
     manifest = tmp_path / "data/config/service-mcp.json"
     assert json.loads(manifest.read_text(encoding="utf-8")) == {
-        "servers": {"exa": {"url": "https://mcp.exa.ai/mcp"}}
+        "servers": {
+            "exa": {"url": "https://mcp.exa.ai/mcp"},
+            "xiaoqing_interview": {
+                "url": "https://interview.hr.startask.net/api/mcp"
+            },
+        }
     }
 
 

@@ -8,8 +8,10 @@ when they are not used. A present entry must resolve to one complete URL or
 command transport, otherwise runtime and MCP doctor fail closed.
 
 The manifest may contain non-secret static values and environment variable
-names. Bearer tokens and dynamic header values belong only in the service
-environment, never in the JSON file.
+names. The Xiaoqing OAuth MCP endpoint is static so service runs reuse the
+existing Codex OAuth session without a second transport configuration. Bearer
+tokens and dynamic header values belong only in the service environment, never
+in the JSON file.
 
 `mcp-tool-effects.json` is the reviewed allowlist used to classify native Codex
 MCP events as read-only or effectful. Unknown server/tool pairs remain
