@@ -6581,6 +6581,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             agent_runs,
             attention,
             reply_task,
+            [item for run in agent_runs for item in store.list_agent_runtime_attempts(run.id)],
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
@@ -8965,6 +8966,7 @@ def _attempt_detail_body(
     agent_runs: list[AgentRun] | None = None,
     attention: HistoryAttention | None = None,
     reply_task: ReplyTask | None = None,
+    runtime_attempts: list[object] | None = None,
 ) -> str:
     agent_runs = agent_runs or []
     resolved_by_later = later_attempt is not None and _attempt_is_terminal(
@@ -9050,8 +9052,23 @@ def _attempt_detail_body(
             f"{_text_card('Audit summary', attempt.audit_summary)}"
             f"{'' if agent_runs else _audit_tool_uses_card(attempt)}"
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
+            f"{_runtime_attempt_evidence_card(runtime_attempts or [])}"
         ),
     )
+
+
+def _runtime_attempt_evidence_card(attempts: list[object]) -> str:
+    if not attempts:
+        return ""
+    lines = []
+    for attempt in attempts:
+        values = [
+            getattr(attempt, name, "")
+            for name in ("route_name", "runtime_kind", "credential_mode", "model", "session_id", "status", "failure_code", "transcript_reference", "first_effect_started_at")
+        ]
+        safe = [safe_observability_error(str(value), limit=180) for value in values]
+        lines.append(" | ".join(safe))
+    return _text_card("Runtime attempts", "\n".join(lines))
 
 
 def _agent_failure_reason_card(
