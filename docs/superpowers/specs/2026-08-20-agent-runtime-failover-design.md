@@ -422,6 +422,14 @@ error and finish timestamp cleared; completed jobs are never presented as a
 runnable claim. Manager IDs are trimmed before the natural key is built, and a
 non-canonical padded runtime key is rejected.
 
+A `cache_hit` is not sufficient by itself: the caller must validate that its
+local analysis artifact exists and parses successfully. Only after a confirmed
+missing or corrupt artifact may it call the explicit cache-miss reclaim API
+with the job ID and expected natural key. That API atomically changes the same
+row from completed to running, returns `claimed` to one caller and
+`in_progress` to concurrent callers, and fails closed for the wrong key or any
+other status.
+
 Meeting run completion accepts only the production terminal states `failed`,
 `retry`, `no_action`, and `ready_to_send`. When upgrading a legacy table that
 contains more than one running row for a job, migration preserves every row,

@@ -15160,6 +15160,56 @@ class AutoReplyStore:
                 (status, error, job_id),
             )
 
+    def reclaim_weekly_okr_analysis_job_cache_miss(
+        self,
+        job_id: int,
+        *,
+        week_end: str,
+        manager_user_id: str,
+        source_digest: str,
+    ) -> WeeklyOkrAnalysisJobClaim:
+        if job_id <= 0:
+            raise ValueError("weekly OKR analysis job id must be positive")
+        manager_user_id = self._require_runtime_attempt_text(
+            manager_user_id, field="manager_user_id"
+        )
+        _, workload_key = self._validate_runtime_operation_workload(
+            "weekly_okr", f"{week_end}:{manager_user_id}:{source_digest}"
+        )
+        expected_key = tuple(workload_key.split(":", 2))
+        with self._agent_run_write_transaction(None) as (db, _):
+            row = db.execute(
+                "select week_end, manager_user_id, source_digest, status "
+                "from weekly_okr_analysis_jobs where id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None or tuple(
+                row[field]
+                for field in ("week_end", "manager_user_id", "source_digest")
+            ) != expected_key:
+                raise ValueError("weekly OKR analysis job natural key mismatch")
+            if row["status"] == "completed":
+                changed = db.execute(
+                    "update weekly_okr_analysis_jobs set status='running', "
+                    "error='', finished_at='', updated_at=current_timestamp "
+                    "where id=? and status='completed'",
+                    (job_id,),
+                )
+                if changed.rowcount != 1:
+                    raise RuntimeError("weekly OKR cache-miss reclaim lost")
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
+                )
+            if row["status"] == "running":
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.IN_PROGRESS,
+                )
+            raise ValueError(
+                "weekly OKR cache-miss reclaim requires completed or running job"
+            )
+
     def begin_wechat_memory_import_job(
         self, *, import_run_id: str, account_id: str
     ) -> int:

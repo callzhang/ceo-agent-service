@@ -740,6 +740,93 @@ def test_weekly_okr_failed_job_reopen_is_concurrency_safe(tmp_path: Path):
     assert sorted(claim.outcome for claim in claims) == ["claimed", "in_progress"]
 
 
+def test_weekly_okr_completed_cache_miss_reclaims_same_job(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "weekly-cache-miss.sqlite3")
+    values = {
+        "week_end": "2026-08-16",
+        "manager_user_id": "manager-1",
+        "source_digest": "e" * 64,
+    }
+    original = store.begin_weekly_okr_analysis_job(**values)
+    store.finish_weekly_okr_analysis_job(original.job_id, status="completed")
+    assert store.begin_weekly_okr_analysis_job(**values).outcome == "cache_hit"
+
+    reclaimed = store.reclaim_weekly_okr_analysis_job_cache_miss(
+        original.job_id, **values
+    )
+
+    assert reclaimed.job_id == original.job_id
+    assert reclaimed.outcome == "claimed"
+    with store._connect() as db:
+        row = db.execute(
+            "select status, error, finished_at from weekly_okr_analysis_jobs "
+            "where id=?",
+            (original.job_id,),
+        ).fetchone()
+    assert tuple(row) == ("running", "", "")
+
+
+def test_weekly_okr_completed_cache_miss_reclaim_is_concurrency_safe(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "weekly-cache-miss-concurrent.sqlite3")
+    values = {
+        "week_end": "2026-08-16",
+        "manager_user_id": "manager-1",
+        "source_digest": "f" * 64,
+    }
+    original = store.begin_weekly_okr_analysis_job(**values)
+    store.finish_weekly_okr_analysis_job(original.job_id, status="completed")
+    barrier = Barrier(3)
+    claims = []
+
+    def reclaim() -> None:
+        barrier.wait(timeout=5)
+        claims.append(
+            store.reclaim_weekly_okr_analysis_job_cache_miss(
+                original.job_id, **values
+            )
+        )
+
+    threads = [Thread(target=reclaim) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait(timeout=5)
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert len(claims) == 2
+    assert {claim.job_id for claim in claims} == {original.job_id}
+    assert sorted(claim.outcome for claim in claims) == ["claimed", "in_progress"]
+
+
+def test_weekly_okr_cache_miss_reclaim_wrong_key_or_status_fails_closed(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "weekly-cache-miss-guard.sqlite3")
+    values = {
+        "week_end": "2026-08-16",
+        "manager_user_id": "manager-1",
+        "source_digest": "1" * 64,
+    }
+    original = store.begin_weekly_okr_analysis_job(**values)
+    store.finish_weekly_okr_analysis_job(original.job_id, status="completed")
+
+    with pytest.raises(ValueError, match="natural key"):
+        store.reclaim_weekly_okr_analysis_job_cache_miss(
+            original.job_id,
+            **{**values, "source_digest": "2" * 64},
+        )
+    store.reclaim_weekly_okr_analysis_job_cache_miss(original.job_id, **values)
+    store.finish_weekly_okr_analysis_job(
+        original.job_id, status="failed", error="provider unavailable"
+    )
+    with pytest.raises(ValueError, match="completed or running"):
+        store.reclaim_weekly_okr_analysis_job_cache_miss(
+            original.job_id, **values
+        )
+
+
 def test_task_agent_run_begin_is_concurrent_and_finish_is_idempotent(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task-run-lifecycle.sqlite3")
     summary_id = store.enqueue_work_summary_input("local_file", "source", "{}")

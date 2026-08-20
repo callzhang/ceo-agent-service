@@ -927,6 +927,12 @@ index, migration preserves duplicate legacy running rows, keeps the newest by
 `created_at` then `id`, and closes the older rows with an auditable migration
 failure reason.
 
+After `cache_hit`, the weekly caller must validate the local analysis artifact.
+If it is missing or corrupt, call the explicit cache-miss reclaim API with the
+job ID and complete expected natural key; never reopen completed work from the
+normal begin path. Reclaim uses a completed-to-running CAS and exposes
+`claimed` versus `in_progress` to concurrent callers.
+
 - [ ] **Step 5: Run each affected suite**
 
 Run:
