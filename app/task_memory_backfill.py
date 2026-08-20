@@ -1,11 +1,11 @@
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
 from app.task_models import ProjectMemoryContext, WorkProject, WorkTodo, WorkUpdate
-
 
 PROJECT_MEMORY_CONTEXT_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "project_memory_context.schema.json"
@@ -20,26 +20,45 @@ class ProjectMemoryContextCodexRunner:
         executor=None,
         timeout_seconds: int = 1200,
         idle_timeout_seconds: int = 900,
+        store=None,
+        routed_execution=None,
     ):
+        from app.agent_runtime_config import load_runtime_config
+        from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
         from app.codex_decision import (
-            _subprocess_failure_reason,
             extract_codex_audit_events,
-            extract_codex_session_id,
         )
-        from app.codex_runner import CodexRunner
-        from app.process_runner import run_process_with_idle_timeout
+        from app.codex_runtime_adapter import CodexRuntimeAdapter
 
         self.workspace = workspace
-        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
-        self.executor = executor
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
-        self._run_process_with_idle_timeout = run_process_with_idle_timeout
-        self._extract_codex_session_id = extract_codex_session_id
         self._extract_codex_audit_events = extract_codex_audit_events
-        self._subprocess_failure_reason = _subprocess_failure_reason
+        if routed_execution is None:
+            if store is None:
+                raise ValueError("store is required for routed project memory backfill")
+            runtime_config = load_runtime_config(os.environ)
+            adapter = CodexRuntimeAdapter(
+                workspace, runtime_config, codex_bin=codex_bin
+            )
+            routed_kwargs = {
+                "store": store,
+                "config": runtime_config,
+                "router": AgentRuntimeRouter(
+                    routes=runtime_config.routes,
+                    store=store,
+                    snapshots={},
+                ),
+                "adapter": adapter,
+                "total_timeout_seconds": timeout_seconds,
+                "idle_timeout_seconds": idle_timeout_seconds,
+            }
+            if executor is not None:
+                routed_kwargs["executor"] = executor
+            routed_execution = RoutedCodexExecution(**routed_kwargs)
+        self.routed_execution = routed_execution
         self.last_session_id: str | None = None
-        self.last_audit_tool_events: list[dict[str, str]] = []
+        self.last_audit_tool_events: list[dict[str, str]] | None = None
 
     def build(
         self,
@@ -53,37 +72,41 @@ class ProjectMemoryContextCodexRunner:
             todos=todos,
             updates=updates,
         )
-        raw = self._execute(prompt)
-        self.last_session_id = self._extract_codex_session_id(raw)
-        self.last_audit_tool_events = self._extract_codex_audit_events(raw)
-        return parse_project_memory_context(raw)
-
-    def _execute(self, prompt: str) -> str:
-        command = self.runner.build_command(
-            prompt,
-            session_id=None,
-            image_paths=None,
-            output_schema_path=PROJECT_MEMORY_CONTEXT_SCHEMA_PATH,
+        from app.agent_runtime_router import (
+            ApprovedCodexCommandFactory,
+            RoutedResultCodec,
         )
-        if self.executor is not None:
-            return self.executor(command, prompt)
-        completed = self._run_process_with_idle_timeout(
-            command,
+
+        def parse_and_validate(raw: str) -> str:
+            context = parse_project_memory_context(raw)
+            audit_events = self._extract_codex_audit_events(raw)
+            validate_project_memory_context(context, audit_events)
+            self.last_audit_tool_events = audit_events
+            return context.model_dump_json()
+
+        result = self.routed_execution.execute(
+            workload_kind="task",
+            workload_key=f"{project.id}:memory_backfill",
             prompt=prompt,
-            env=self.runner.build_env(),
-            total_timeout_seconds=self.timeout_seconds,
-            idle_timeout_seconds=self.idle_timeout_seconds,
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions=(
+                    "Only read reviewed Memory Connector evidence and return the "
+                    "requested structured project-memory context. Do not write data."
+                ),
+                output_schema_path=PROJECT_MEMORY_CONTEXT_SCHEMA_PATH,
+                use_output_schema=True,
+            ),
+            parser=parse_and_validate,
+            result_codec=RoutedResultCodec.text(
+                schema_id="project_memory_context.v1"
+            ),
+            conversation_id=None,
+            required_capabilities=frozenset(
+                {"structured_output", "memory_connector_read"}
+            ),
         )
-        if completed.timed_out:
-            raise RuntimeError(
-                completed.timeout_reason or "project memory backfill codex timed out"
-            )
-        if completed.returncode != 0:
-            raise RuntimeError(
-                self._subprocess_failure_reason(completed.stderr, completed.stdout)
-            )
-        return completed.stdout
-
+        self.last_session_id = result.session_id or None
+        return ProjectMemoryContext.model_validate_json(result.value)
 
 def build_project_memory_context_prompt(
     *,
@@ -158,7 +181,9 @@ def validate_project_memory_context(
     if not context.query.strip() or (
         not context.summary.strip() and not context.memories
     ):
-        raise ValueError("project memory context requires query and summary or memories")
+        raise ValueError(
+            "project memory context requires query and summary or memories"
+        )
     if audit_tool_events is None:
         return
     if not isinstance(audit_tool_events, list):
@@ -178,7 +203,9 @@ def validate_project_memory_context(
         tool = str(event.get("tool") or "")
         if "memory_recall" in tool:
             return
-    raise ValueError("project memory context backfill requires memory_recall tool event")
+    raise ValueError(
+        "project memory context backfill requires memory_recall tool event"
+    )
 
 
 def _project_payload(project: WorkProject) -> dict[str, Any]:

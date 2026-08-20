@@ -183,8 +183,12 @@ def test_import_memory_uses_unique_ready_account_and_explicit_bounds(tmp_path, m
             captured.update(kwargs)
             return {"import_run_id":"run", "messages":3, "candidates":1}
     monkeypatch.setattr(cli, "WechatMemoryImporter", Importer)
-    monkeypatch.setattr(cli, "CodexMemoryExtractionRunner", lambda workspace: "runner")
-    monkeypatch.setattr(cli, "CodexMemoryRecallMatcher", lambda workspace: "matcher")
+    monkeypatch.setattr(
+        cli, "CodexMemoryExtractionRunner", lambda workspace, **_kwargs: "runner"
+    )
+    monkeypatch.setattr(
+        cli, "CodexMemoryRecallMatcher", lambda workspace, **_kwargs: "matcher"
+    )
     monkeypatch.setattr(cli, "_reader", lambda **kwargs: "reader")
     args = SimpleNamespace(db=str(db), account_id="acct-1", target_id=["u1", "g@chatroom"],
                            since="2026-07-01", until="2026-07-20", limit=50)

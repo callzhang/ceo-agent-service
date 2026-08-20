@@ -1,14 +1,18 @@
 import json
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 from app.store import AutoReplyStore
 from app.wechat.memory import (
-    CodexMemoryExtractionRunner, CodexMemoryWriteBackend,
-    ExtractedMemoryCandidate, WechatMemoryImporter, WechatMemoryWriter,
+    CodexMemoryExtractionRunner,
+    CodexMemoryWriteBackend,
+    ExtractedMemoryCandidate,
+    WechatMemoryImporter,
+    WechatMemoryWriter,
 )
 from app.wechat.memory_import import CodexMemoryRecallMatcher, DurableMemoryMatch
 from app.wechat.models import WechatMessage
@@ -25,8 +29,38 @@ def candidate(statement, *, category, source_message_ids=("m1",)):
 
 
 class NoDurableMatch:
-    def match(self, candidates):
+    def match(self, candidates, **_kwargs):
         return {item.statement: "none" for item in candidates}
+
+
+class CallbackRouted:
+    def __init__(self, callback):
+        self.callback = callback
+        self.calls = []
+
+    def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        raw = self.callback([], kwargs["prompt"])
+        return SimpleNamespace(
+            value=kwargs["parser"](raw),
+            session_id="wechat-test-session",
+        )
+
+
+def extraction_runner(tmp_path, callback):
+    return CodexMemoryExtractionRunner(
+        tmp_path,
+        store=AutoReplyStore(tmp_path / "extraction-runtime.sqlite3"),
+        routed_execution=CallbackRouted(callback),
+    )
+
+
+def recall_matcher(tmp_path, callback):
+    return CodexMemoryRecallMatcher(
+        tmp_path,
+        store=AutoReplyStore(tmp_path / "recall-runtime.sqlite3"),
+        routed_execution=CallbackRouted(callback),
+    )
 
 
 @pytest.fixture
@@ -133,7 +167,7 @@ def test_run_persists_pending_candidates(store):
             )]
 
     class FakeCodex:
-        def extract(self, messages):
+        def extract(self, messages, **_kwargs):
             assert [m.message_id for m in messages] == ["m1"]
             return [
                 candidate("Derek approves the Q3 budget", category="decision").model_copy(
@@ -148,9 +182,24 @@ def test_run_persists_pending_candidates(store):
                             account_dir="/a", db_dir="/a/db", app_version="4")
     importer = WechatMemoryImporter(
         store, reader=FakeReader(), codex=FakeCodex(), matcher=NoDurableMatch())
-    result = importer.run(account=account, target_ids=["u1"],
-                          since="2026-07-01", until="2026-07-31", limit=100)
+    result = importer.run(
+        account=account,
+        target_ids=["u1"],
+        since="2026-07-01",
+        until="2026-07-31",
+        limit=100,
+        import_run_id="stable-import-run",
+    )
     assert result["candidates"] == 1
+    repeated = importer.run(
+        account=account,
+        target_ids=["u1"],
+        since="2026-07-01",
+        until="2026-07-31",
+        limit=100,
+        import_run_id="stable-import-run",
+    )
+    assert repeated["candidates"] == 0
     pending = store.list_wechat_memory_candidates(status="pending")
     assert [p["statement"] for p in pending] == ["Derek approves the Q3 budget"]
 
@@ -171,7 +220,9 @@ def test_import_does_not_change_scope_watermark(store):
     account = WechatAccount(account_id="acct-1", display_name="D", self_user_id="self",
                             account_dir="/a", db_dir="/a/db", app_version="4")
     reader = type("R", (), {"read_messages": lambda self, account, **kw: []})()
-    WechatMemoryImporter(store, reader=reader, codex=type("C", (), {"extract": lambda s, m: []})(), matcher=NoDurableMatch()).run(
+    WechatMemoryImporter(store, reader=reader, codex=type(
+        "C", (), {"extract": lambda s, m, **_kwargs: []}
+    )(), matcher=NoDurableMatch()).run(
         account=account, target_ids=["u1"], since="2026-07-01", until="", limit=10)
     assert store.get_wechat_reply_scope("acct-1", "direct", "u1").last_active_at == before
 
@@ -192,7 +243,7 @@ def test_import_reads_each_target_with_correct_conversation_type_and_total_limit
                 sent_at="2026-07-17T10:00:00+08:00", kind="text", text="hello",
                 source_version="4")]
     class Extractor:
-        def extract(self, messages):
+        def extract(self, messages, **_kwargs):
             return []
     result = WechatMemoryImporter(store, Reader(), Extractor(), NoDurableMatch()).run(
         account=account, target_ids=["u1", "g@chatroom"], since="2026-07-01",
@@ -220,7 +271,7 @@ def test_import_global_newest_selection_is_target_order_independent(store):
         def read_messages(self, account, **kwargs): return rows[kwargs["conversation_id"]]
     seen = []
     class Extractor:
-        def extract(self, messages):
+        def extract(self, messages, **_kwargs):
             seen.append([m.message_id for m in messages])
             return []
     WechatMemoryImporter(store, Reader(), Extractor(), NoDurableMatch()).run(
@@ -243,7 +294,7 @@ def test_import_filters_non_text_before_extraction(store):
         def read_messages(self, account, **kwargs): return messages
     seen = []
     class Extractor:
-        def extract(self, batch):
+        def extract(self, batch, **_kwargs):
             seen.extend(m.kind for m in batch)
             return []
     WechatMemoryImporter(store, Reader(), Extractor(), NoDurableMatch()).run(
@@ -259,7 +310,7 @@ def test_import_rejects_invalid_date_bounds_before_read(store):
 
 def test_durable_exact_match_skips_pending_candidate(store):
     class Exact:
-        def match(self, candidates):
+        def match(self, candidates, **_kwargs):
             return {item.statement: DurableMemoryMatch(
                 statement=item.statement, relation="exact", memory_id="mem-1",
                 evidence="durable fact") for item in candidates}
@@ -271,7 +322,11 @@ def test_durable_exact_match_skips_pending_candidate(store):
         sender_id="s", sender_display_name="S", conversation_type="direct", direction="inbound",
         sent_at="2026-07-17T10:00:00+08:00", kind="text", text="fact", source_version="4")
     reader = type("R", (), {"read_messages": lambda self, account, **kw: [message]})()
-    extractor = type("E", (), {"extract": lambda self, batch: [candidate("fact", category="fact")]})()
+    extractor = type(
+        "E",
+        (),
+        {"extract": lambda self, batch, **_kwargs: [candidate("fact", category="fact")]},
+    )()
     result = WechatMemoryImporter(store, reader, extractor, Exact()).run(
         account=account, target_ids=["c1"], since="2026-07-01", until="", limit=10)
     assert result["durable_duplicates"] == 1
@@ -299,32 +354,35 @@ def test_codex_recall_matcher_accepts_only_audited_memory_recall(tmp_path):
     def execute(command, prompt):
         captured["command"] = command
         return success
-    matcher = CodexMemoryRecallMatcher(tmp_path, executor=execute)
+    matcher = recall_matcher(tmp_path, execute)
     assert matcher.match([candidate("fact", category="fact")])["fact"].relation == "exact"
-    assert 'mcp_servers.memory_connector.enabled_tools=["memory_recall"]' in captured["command"]
-    assert 'mcp_servers.memory_connector.disabled_tools=["memory_write"]' in captured["command"]
+    routed_call = matcher.routed_execution.calls[0]
+    assert routed_call["required_capabilities"] == frozenset(
+        {"structured_output", "memory_connector_read"}
+    )
+    assert routed_call["command_factory"]._approved_policy.effect_mode == "read_only"
     malicious = success.replace('"tool": "memory_recall"', '"tool": "memory_write"')
     with pytest.raises(RuntimeError, match="only memory_recall"):
-        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: malicious).match(
+        recall_matcher(tmp_path, lambda c, p: malicious).match(
             [candidate("fact", category="fact")])
 
     unrelated_events = [json.loads(line) for line in success.splitlines()]
     unrelated_events[0]["item"]["arguments"]["query"] = "unrelated"
     unrelated = "\n".join(json.dumps(event) for event in unrelated_events)
     with pytest.raises(RuntimeError, match="query does not match"):
-        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: unrelated).match(
+        recall_matcher(tmp_path, lambda c, p: unrelated).match(
             [candidate("fact", category="fact")])
     missing_memories = success.replace('"memories":', '"items":')
     with pytest.raises(RuntimeError, match="memories list"):
-        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: missing_memories).match(
+        recall_matcher(tmp_path, lambda c, p: missing_memories).match(
             [candidate("fact", category="fact")])
     fabricated = success.replace("durable fact", "unrelated evidence", 1)
     with pytest.raises(RuntimeError, match="same recalled memory"):
-        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: fabricated).match(
+        recall_matcher(tmp_path, lambda c, p: fabricated).match(
             [candidate("fact", category="fact")])
     fabricated_id = success.replace("mem-1", "other-id", 1)
     with pytest.raises(RuntimeError, match="same recalled memory"):
-        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: fabricated_id).match(
+        recall_matcher(tmp_path, lambda c, p: fabricated_id).match(
             [candidate("fact", category="fact")])
 
 
@@ -342,7 +400,7 @@ def test_codex_recall_matcher_accepts_real_empty_memories_as_none(tmp_path):
     def execute(command, prompt):
         captured["prompt"] = prompt
         return raw
-    result = CodexMemoryRecallMatcher(tmp_path, executor=execute).match(
+    result = recall_matcher(tmp_path, execute).match(
         [candidate("fact", category="fact")])
     assert result["fact"].relation == "none"
     assert "relation=none 时 memory_id、evidence、merged_statement 必须全部为空字符串" in (
@@ -390,7 +448,7 @@ def test_matcher_rejects_observed_none_with_explanation_evidence(tmp_path):
             "type": "agent_message", "text": json.dumps(final)}}),
     ])
     with pytest.raises(RuntimeError, match="no structured result"):
-        CodexMemoryRecallMatcher(tmp_path, executor=lambda command, prompt: raw).match([
+        recall_matcher(tmp_path, lambda command, prompt: raw).match([
             candidate("fact", category="fact")])
 
 
@@ -407,7 +465,7 @@ def test_codex_recall_support_must_come_from_same_memory_object(tmp_path):
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
     with pytest.raises(RuntimeError, match="same recalled memory"):
-        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: raw).match(
+        recall_matcher(tmp_path, lambda c, p: raw).match(
             [candidate("fact", category="fact")])
 
 
@@ -422,7 +480,7 @@ def test_codex_recall_explicit_is_error_fails(tmp_path):
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
     with pytest.raises(RuntimeError, match="tool error"):
-        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: raw).match(
+        recall_matcher(tmp_path, lambda c, p: raw).match(
             [candidate("fact", category="fact")])
 
 
@@ -439,13 +497,13 @@ def test_codex_recall_rejects_blank_or_too_short_evidence(tmp_path, bad_evidence
         json.dumps({"type":"item.completed","item":{"type":"agent_message","text":json.dumps(final)}}),
     ])
     with pytest.raises(RuntimeError, match="no structured result"):
-        CodexMemoryRecallMatcher(tmp_path, executor=lambda c, p: raw).match(
+        recall_matcher(tmp_path, lambda c, p: raw).match(
             [candidate("fact", category="fact")])
 
 
 def test_compatible_durable_match_persists_safe_merged_statement(store):
     class Compatible:
-        def match(self, candidates):
+        def match(self, candidates, **_kwargs):
             return {item.statement: DurableMemoryMatch(
                 statement=item.statement, relation="compatible", memory_id="mem-1",
                 evidence="supporting evidence",
@@ -458,7 +516,7 @@ def test_compatible_durable_match_persists_safe_merged_statement(store):
         sender_id="s", sender_display_name="S", conversation_type="direct", direction="inbound",
         sent_at="2026-07-17T10:00:00+08:00", kind="text", text="fact", source_version="4")
     reader = type("R", (), {"read_messages": lambda self, account, **kw: [message]})()
-    extractor = type("E", (), {"extract": lambda self, batch: [candidate(
+    extractor = type("E", (), {"extract": lambda self, batch, **_kwargs: [candidate(
         "Derek prefers concise updates", category="preference")]})()
     WechatMemoryImporter(store, reader, extractor, Compatible()).run(
         account=account, target_ids=["c1"], since="2026-07-01", until="", limit=10)
@@ -693,19 +751,66 @@ def test_codex_extraction_runner_parses_batch_envelope_and_forbids_write(tmp_pat
         sender_display_name="U", conversation_type="direct", direction="inbound",
         sent_at="2026-07-17T10:00:00+08:00", kind="text", text="hello",
         source_version="4")
-    result = CodexMemoryExtractionRunner(tmp_path, executor=execute).extract([message])
+    runner = extraction_runner(tmp_path, execute)
+    result = runner.extract([message])
     assert [item.statement for item in result] == ["durable fact"]
     assert "不会提供 memory_write" in captured["prompt"]
-    assert "wechat_memory_candidates.schema.json" in " ".join(captured["command"])
-    assert "tools.enabled_tools=[]" in captured["command"]
+    factory = runner.routed_execution.calls[0]["command_factory"]
+    assert factory._output_schema_path.name == "wechat_memory_candidates.schema.json"
+    assert factory._approved_policy.effect_mode == "read_only"
+
+
+def test_codex_extraction_creates_parent_before_routed_read_only_invocation(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "wechat-routed.sqlite3")
+    calls = []
+    payload = {"candidates": [candidate("durable fact", category="fact").model_dump()]}
+
+    class Routed:
+        def execute(self, **kwargs):
+            calls.append(kwargs)
+            job_id = int(kwargs["workload_key"].rsplit(":", 1)[1])
+            with store._connect() as db:
+                job = db.execute(
+                    "select status from wechat_memory_import_jobs where id=?",
+                    (job_id,),
+                ).fetchone()
+            assert job["status"] == "running"
+            return SimpleNamespace(
+                value=kwargs["parser"](json.dumps(payload, ensure_ascii=False)),
+                session_id="wechat-session",
+            )
+
+    runner = CodexMemoryExtractionRunner(
+        tmp_path,
+        store=store,
+        routed_execution=Routed(),
+    )
+    result = runner.extract(
+        [],
+        import_run_id="wechat-scope",
+        account_id="account-1",
+    )
+
+    assert result[0].statement == "durable fact"
+    assert calls[0]["workload_kind"] == "memory"
+    assert calls[0]["workload_key"].startswith("wechat_memory_import_job:")
+    assert calls[0]["conversation_id"] is None
+    assert calls[0]["required_capabilities"] == frozenset({"structured_output"})
+    assert calls[0]["command_factory"]._approved_policy.effect_mode == "read_only"
+    with store._connect() as db:
+        job = db.execute("select status from wechat_memory_import_jobs").fetchone()
+    assert job["status"] == "completed"
 
 
 def test_codex_extraction_parses_live_item_completed_agent_message(tmp_path):
     payload = {"candidates": [candidate("durable fact", category="fact").model_dump()]}
     raw = json.dumps({"type":"item.completed", "item":{
         "type":"agent_message", "text":json.dumps(payload)}})
-    result = CodexMemoryExtractionRunner(
-        tmp_path, executor=lambda command, prompt: raw).extract([])
+    result = extraction_runner(
+        tmp_path, lambda command, prompt: raw
+    ).extract([])
     assert result[0].statement == "durable fact"
 
 
@@ -722,7 +827,7 @@ def test_real_codex_lifecycle_counts_completed_recall_once_without_call_id(tmp_p
         json.dumps({"type": "item.completed", "item": {
             "type": "agent_message", "text": json.dumps(final)}}),
     ])
-    result = CodexMemoryRecallMatcher(tmp_path, executor=lambda command, prompt: raw).match([
+    result = recall_matcher(tmp_path, lambda command, prompt: raw).match([
         candidate("fact", category="fact")])
     assert result["fact"].relation == "none"
 
@@ -762,18 +867,27 @@ def test_recall_matcher_uses_one_exact_query_per_candidate(tmp_path):
                 "type": "agent_message", "text": json.dumps(final)}}),
         ])
 
-    result = CodexMemoryRecallMatcher(tmp_path, executor=execute).match([
+    matcher = recall_matcher(tmp_path, execute)
+    result = matcher.match([
         candidate("zeta fact", category="fact"),
         candidate("alpha fact", category="fact", source_message_ids=("m2",)),
     ])
     assert calls == ["alpha fact", "zeta fact"]
     assert set(result) == {"alpha fact", "zeta fact"}
+    workload_keys = [call["workload_key"] for call in matcher.routed_execution.calls]
+    assert len(set(workload_keys)) == 2
+    assert all(key.startswith("wechat_memory_import_job:") for key in workload_keys)
+    with matcher.store._connect() as db:
+        jobs = db.execute(
+            "select status from wechat_memory_import_jobs order by id"
+        ).fetchall()
+    assert [job["status"] for job in jobs] == ["completed", "completed"]
 
 
 def test_recall_matcher_rejects_unbounded_candidate_count(tmp_path):
     with pytest.raises(ValueError, match="at most 100"):
-        CodexMemoryRecallMatcher(
-            tmp_path, executor=lambda command, prompt: pytest.fail("must not execute")
+        recall_matcher(
+            tmp_path, lambda command, prompt: pytest.fail("must not execute")
         ).match([candidate(f"fact {index}", category="fact") for index in range(101)])
 
 
@@ -794,7 +908,7 @@ def test_memory_only_recall_and_write_do_not_disable_principal_mcp_tools(tmp_pat
         commands.append(command)
         return recall_raw
 
-    CodexMemoryRecallMatcher(tmp_path, executor=recall_execute).match([
+    recall_matcher(tmp_path, recall_execute).match([
         candidate("fact", category="fact")])
 
     write_result = {"structured_content": {"result": json.dumps({
@@ -841,7 +955,8 @@ def test_extraction_filters_sensitive_input_and_runs_read_only_without_tools(
             sent_at="2026-07-17T10:00:00+08:00", kind=kind, text=text,
             source_version="4")
 
-    CodexMemoryExtractionRunner(tmp_path, executor=execute).extract([
+    runner = extraction_runner(tmp_path, execute)
+    runner.extract([
         message("credential", "password is hunter2"),
         message("medical", "诊断为高血压"),
         message("financial", "账户余额 1000000"),
@@ -859,13 +974,11 @@ def test_extraction_filters_sensitive_input_and_runs_read_only_without_tools(
     assert "alice@example.com" not in captured["prompt"]
     assert "13800138000" not in captured["prompt"]
     assert "12345678" not in captured["prompt"]
-    assert "--dangerously-bypass-approvals-and-sandbox" not in captured["command"]
-    assert "read-only" in captured["command"]
-    assert "tools.enabled_tools=[]" in captured["command"]
-    assert 'web_search="disabled"' in captured["command"]
-    assert "mcp_servers.xiaoqing_interview.enabled=false" not in captured["command"]
-    assert "mcp_servers.exa.enabled=false" not in captured["command"]
-    assert "mcp_servers.github.enabled=false" not in captured["command"]
+    factory = runner.routed_execution.calls[0]["command_factory"]
+    assert factory._approved_policy.effect_mode == "read_only"
+    assert runner.routed_execution.calls[0]["required_capabilities"] == frozenset(
+        {"structured_output"}
+    )
 
 
 def test_extraction_fails_closed_if_codex_emits_any_tool_call(tmp_path):
@@ -876,8 +989,9 @@ def test_extraction_fails_closed_if_codex_emits_any_tool_call(tmp_path):
         json.dumps({"candidates": []}),
     ])
     with pytest.raises(RuntimeError, match="must not call tools"):
-        CodexMemoryExtractionRunner(
-            tmp_path, executor=lambda command, prompt: raw).extract([])
+        extraction_runner(
+            tmp_path, lambda command, prompt: raw
+        ).extract([])
 
 
 def test_clean_candidate_time_bounds_compare_instants_not_iso_strings(store):
@@ -907,7 +1021,9 @@ def test_import_source_times_accept_equivalent_z_and_offset_instants(store):
         "source_time_start": "2026-07-17T10:00:00+08:00",
         "source_time_end": "2026-07-17T10:00:00+08:00",
     })
-    extractor = type("E", (), {"extract": lambda self, batch: [extracted]})()
+    extractor = type(
+        "E", (), {"extract": lambda self, batch, **_kwargs: [extracted]}
+    )()
     result = WechatMemoryImporter(
         store, reader, extractor, NoDurableMatch()).run(
             account=account, target_ids=["c1"], since="2026-07-17", until="", limit=10)

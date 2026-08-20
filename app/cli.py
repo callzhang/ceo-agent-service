@@ -1146,6 +1146,7 @@ def backfill_task_memory_context_command(settings: WorkerSettings) -> int:
         workspace=settings.workspace,
         timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        store=store,
     )
     updated = 0
     failed = 0

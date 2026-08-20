@@ -21,6 +21,8 @@ from app.agent_runtime_router import (
     RoutedCodexExecution,
     RoutedCodexExecutionError,
     RoutedResultCodec,
+    RoutedResultValidationError,
+    RoutedResultValidationRetry,
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import ProcessRunResult
@@ -217,6 +219,311 @@ def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
     assert (
         store.get_conversation_runtime_session("cid-12", "codex_api") == "api-session"
     )
+
+
+def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
+    store, config
+):
+    key = seed_structured_parent(store, 71)
+    adapter = FakeAdapter()
+    prompts = []
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        value = 0 if len(prompts) == 1 else 42
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                [
+                    json.dumps(
+                        {"type": "thread.started", "thread_id": f"session-{len(prompts)}"}
+                    ),
+                    json.dumps({"type": "result", "value": value}),
+                ]
+            ),
+            "",
+        )
+
+    def parse(raw):
+        value = json.loads(raw.splitlines()[-1])["value"]
+        if value != 42:
+            raise RoutedResultValidationError("expected complete KR coverage")
+        return value
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=adapter,
+        executor=executor,
+        session_line_counter=lambda _session_id: 2,
+        session_effect_probe=lambda *_args: False,
+    )
+    result = routed.execute(
+        workload_kind="structured",
+        workload_key=key,
+        prompt="analyze all KRs",
+        command_factory=ApprovedCodexCommandFactory.read_only(
+            developer_instructions="reviewed reads only"
+        ),
+        parser=parse,
+        result_codec=INT_CODEC,
+        required_capabilities=CAPABILITIES,
+        result_validation_retry=RoutedResultValidationRetry.exactly_once(
+            correction_instructions="Return every KR and revalidate the full result."
+        ),
+    )
+
+    assert result.value == 42
+    assert adapter.commands == [
+        ("codex_oauth", None, "never", False),
+        ("codex_oauth", None, "never", False),
+    ]
+    assert prompts[0] == "analyze all KRs"
+    assert "Return every KR" in prompts[1]
+    assert "expected complete KR coverage" in prompts[1]
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.status for attempt in attempts] == ["superseded", "completed"]
+    assert [attempt.route_name for attempt in attempts] == ["codex_oauth", "codex_oauth"]
+    assert attempts[0].failure_code == "runtime_result_validation_failed"
+    assert [attempt.session_mode for attempt in attempts] == ["fresh", "fresh"]
+
+
+def test_persisted_result_validation_failure_resumes_one_same_route_correction(
+    store, config
+):
+    key = seed_structured_parent(store, 75)
+    route = config.routes[0]
+    owner = "result-validation-recovery-test"
+    failed = store.claim_runtime_operation_attempt(
+        "structured",
+        key,
+        route.name,
+        route.runtime_kind,
+        route.credential_mode,
+        route.model,
+        owner=owner,
+        now=NOW,
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        failed.id,
+        owner=owner,
+        now=NOW,
+    )
+    store.fail_agent_runtime_attempt(
+        failed.id,
+        RuntimeFailureClass.RESULT.value,
+        "runtime_result_validation_failed",
+        False,
+        owner=owner,
+        now=NOW,
+    )
+    prompts = []
+    adapter = FakeAdapter()
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        return ProcessRunResult(0, json.dumps({"value": 42}), "")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=adapter,
+        executor=executor,
+        owner=owner,
+        now=lambda: NOW,
+    )
+    result = routed.execute(
+        workload_kind="structured",
+        workload_key=key,
+        prompt="analyze all KRs",
+        command_factory=ApprovedCodexCommandFactory.read_only(
+            developer_instructions="reviewed reads only"
+        ),
+        parser=lambda raw: json.loads(raw)["value"],
+        result_codec=INT_CODEC,
+        required_capabilities=CAPABILITIES,
+        result_validation_retry=RoutedResultValidationRetry.exactly_once(
+            correction_instructions="Return every KR and revalidate the full result."
+        ),
+    )
+
+    assert result.value == 42
+    assert adapter.commands == [("codex_oauth", None, "never", False)]
+    assert len(prompts) == 1
+    assert "Return every KR" in prompts[0]
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.status for attempt in attempts] == ["superseded", "completed"]
+    assert [attempt.route_name for attempt in attempts] == [
+        "codex_oauth",
+        "codex_oauth",
+    ]
+    assert attempts[0].failure_code == "runtime_result_validation_failed"
+
+
+def test_result_validation_retry_is_consumed_after_exactly_one_repeat(store, config):
+    key = seed_structured_parent(store, 72)
+    calls = 0
+
+    def executor(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        return ProcessRunResult(0, json.dumps({"value": 0}), "")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+    )
+
+    with pytest.raises(
+        RoutedCodexExecutionError, match="runtime_result_validation_failed"
+    ):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="analyze",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda _raw: (_ for _ in ()).throw(
+                RoutedResultValidationError("still incomplete")
+            ),
+            result_codec=INT_CODEC,
+            required_capabilities=CAPABILITIES,
+            result_validation_retry=RoutedResultValidationRetry.exactly_once(
+                correction_instructions="Return the complete result."
+            ),
+        )
+
+    assert calls == 2
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.status for attempt in attempts] == ["superseded", "failed"]
+    assert [attempt.failure_code for attempt in attempts] == [
+        "runtime_result_validation_failed",
+        "runtime_result_validation_failed",
+    ]
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_route_unavailable"):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="analyze",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda _raw: 42,
+            result_codec=INT_CODEC,
+            required_capabilities=CAPABILITIES,
+            result_validation_retry=RoutedResultValidationRetry.exactly_once(
+                correction_instructions="Return the complete result."
+            ),
+        )
+    assert calls == 2
+
+
+def test_process_failure_after_result_validation_retry_does_not_fail_over(
+    store, config
+):
+    key = seed_structured_parent(store, 73)
+    adapter = FakeAdapter()
+    calls = 0
+
+    def executor(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ProcessRunResult(0, json.dumps({"value": 0}), "")
+        return ProcessRunResult(1, "", "login failed")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=adapter,
+        executor=executor,
+    )
+
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="analyze",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda _raw: (_ for _ in ()).throw(
+                RoutedResultValidationError("incomplete")
+            ),
+            result_codec=INT_CODEC,
+            required_capabilities=CAPABILITIES,
+            result_validation_retry=RoutedResultValidationRetry.exactly_once(
+                correction_instructions="Return the complete result."
+            ),
+        )
+
+    assert adapter.commands == [
+        ("codex_oauth", None, "never", False),
+        ("codex_oauth", None, "never", False),
+    ]
+
+
+def test_result_validation_retry_stops_when_session_effect_is_not_proven_absent(
+    store, config
+):
+    key = seed_structured_parent(store, 74)
+    calls = 0
+
+    def executor(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "session-74"}),
+                    json.dumps({"value": 0}),
+                ]
+            ),
+            "",
+        )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+        session_line_counter=lambda _session_id: 2,
+        session_effect_probe=lambda *_args: None,
+    )
+
+    with pytest.raises(
+        RoutedCodexExecutionError, match="runtime_effect_policy_violation"
+    ):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="analyze",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda _raw: (_ for _ in ()).throw(
+                RoutedResultValidationError("incomplete")
+            ),
+            result_codec=INT_CODEC,
+            required_capabilities=CAPABILITIES,
+            result_validation_retry=RoutedResultValidationRetry.exactly_once(
+                correction_instructions="Return the complete result."
+            ),
+        )
+
+    assert calls == 1
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert attempts[0].failure_code == "runtime_effect_policy_violation"
+    assert attempts[0].first_effect_started_at
 
 
 def test_effectful_execution_records_start_and_never_fails_over(store, config):

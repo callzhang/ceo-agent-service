@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import re
 import shlex
@@ -14,13 +14,8 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 
-from app.codex_decision import _subprocess_failure_reason
-from app.codex_runner import CodexRunner
 from app.dws_client import DwsClient, DwsError
-from app.external_retry import run_external
 from app.okr_review import DwsLiveOkrSource, current_quarter_period
-from app.process_runner import run_process_with_idle_timeout
-
 
 DEFAULT_GROUP_NAME = "CEO-2 管理群"
 DEFAULT_WIKI_NAME = "🎯  目标与执行"
@@ -215,11 +210,39 @@ class CodexWeeklyOkrAgent:
         timeout_seconds: int = 1800,
         idle_timeout_seconds: int = 900,
         executor: Callable[[list[str], str, dict[str, str]], str] | None = None,
+        store=None,
+        routed_execution=None,
     ):
-        self.runner = CodexRunner(workspace=workspace)
+        from app.agent_runtime_config import load_runtime_config
+        from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+        from app.codex_runtime_adapter import CodexRuntimeAdapter
+
+        if routed_execution is None:
+            if store is None:
+                raise ValueError("store is required for routed weekly OKR analysis")
+            runtime_config = load_runtime_config(os.environ)
+            adapter = CodexRuntimeAdapter(workspace, runtime_config)
+            routed_kwargs = {
+                "store": store,
+                "config": runtime_config,
+                "router": AgentRuntimeRouter(
+                    routes=runtime_config.routes,
+                    store=store,
+                    snapshots={},
+                ),
+                "adapter": adapter,
+                "total_timeout_seconds": timeout_seconds,
+                "idle_timeout_seconds": idle_timeout_seconds,
+            }
+            if executor is not None:
+                routed_kwargs["executor"] = executor
+            routed_execution = RoutedCodexExecution(**routed_kwargs)
+        if store is None:
+            raise ValueError("store is required for weekly OKR job ownership")
+        self.store = store
+        self.routed_execution = routed_execution
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
-        self.executor = executor
 
     def analyze(
         self,
@@ -316,18 +339,32 @@ class CodexWeeklyOkrAgent:
         week_start: date,
         week_end: date,
     ) -> WeeklyOkrAnalysis:
-        if analysis_path.exists():
-            cached = json.loads(analysis_path.read_text(encoding="utf-8"))
-            if cached.get("source_hash") == source_hash:
-                analysis = WeeklyOkrAnalysis.model_validate(cached.get("analysis"))
-                _validate_manager_coverage(analysis, [manager])
-                filtered_payload = json.loads(source_path.read_text(encoding="utf-8"))
-                _validate_kr_coverage(analysis, filtered_payload["managers"])
-                return analysis
         filtered_payload = json.loads(source_path.read_text(encoding="utf-8"))
         expected_kr_count = len(
             _live_kr_rows(filtered_payload["managers"], manager.name)
         )
+        manager_user_id = manager.user_id.strip()
+        job_values = {
+            "week_end": week_end.isoformat(),
+            "manager_user_id": manager_user_id,
+            "source_digest": source_hash,
+        }
+        claim = self.store.begin_weekly_okr_analysis_job(**job_values)
+        owns_job = claim.outcome == "claimed"
+        if claim.outcome == "cache_hit":
+            try:
+                return _load_weekly_analysis_cache(
+                    analysis_path=analysis_path,
+                    source_hash=source_hash,
+                    manager=manager,
+                    filtered_payload=filtered_payload,
+                )
+            except (OSError, ValueError, ValidationError, json.JSONDecodeError):
+                claim = self.store.reclaim_weekly_okr_analysis_job_cache_miss(
+                    claim.job_id,
+                    **job_values,
+                )
+                owns_job = claim.outcome == "claimed"
         prompt = build_weekly_okr_prompt(
             source_path=source_path,
             managers=[manager],
@@ -339,58 +376,51 @@ class CodexWeeklyOkrAgent:
             f"\n硬性输出校验：{manager.name} 必须返回恰好 {expected_kr_count} 条 "
             "kr_reviews；少一条或多一条都不可提交。"
         )
-        env = self.runner.build_env()
-        validation_error = ""
-        for attempt in range(2):
-            attempt_prompt = prompt
-            if validation_error:
-                attempt_prompt += (
-                    "\n上一轮输出未通过结构化校验："
-                    f"{validation_error}。请完整重做该成员的全部 KR，不得只返回示例行。"
-                )
-            command = self.runner.build_command(
-                attempt_prompt,
-                session_id=None,
-                output_schema_path=WEEKLY_OKR_REPORT_SCHEMA_PATH,
-                preserve_native_model_config=True,
-                preserve_native_instructions=True,
-            )
-            if self.executor is not None:
-                raw = self.executor(command, attempt_prompt, env)
-            else:
-                def run_read_only_analysis() -> str:
-                    completed = run_process_with_idle_timeout(
-                        command,
-                        prompt=attempt_prompt,
-                        env=env,
-                        total_timeout_seconds=self.timeout_seconds,
-                        idle_timeout_seconds=self.idle_timeout_seconds,
-                    )
-                    if completed.timed_out:
-                        raise RuntimeError(
-                            completed.timeout_reason or "weekly OKR agent timed out"
-                        )
-                    if completed.returncode != 0:
-                        raise RuntimeError(
-                            _subprocess_failure_reason(completed.stderr, completed.stdout)
-                        )
-                    return completed.stdout
+        from app.agent_runtime_router import (
+            ApprovedCodexCommandFactory,
+            RoutedResultCodec,
+            RoutedResultValidationError,
+            RoutedResultValidationRetry,
+        )
 
-                raw = run_external(
-                    "weekly_okr_manager_analysis",
-                    run_read_only_analysis,
-                    max_attempts=3,
-                    dependency="codex",
-                )
+        def parse_validated(raw: str) -> str:
             try:
                 analysis = WeeklyOkrAnalysis.model_validate(_extract_report_payload(raw))
                 _validate_manager_coverage(analysis, [manager])
                 _validate_kr_coverage(analysis, filtered_payload["managers"])
-            except ValueError as exc:
-                if attempt == 0:
-                    validation_error = str(exc)
-                    continue
-                raise
+            except (ValueError, ValidationError) as exc:
+                raise RoutedResultValidationError(str(exc)) from exc
+            return analysis.model_dump_json()
+
+        try:
+            routed = self.routed_execution.execute(
+                workload_kind="weekly_okr",
+                workload_key=(
+                    f"{week_end.isoformat()}:{manager_user_id}:{source_hash}"
+                ),
+                prompt=prompt,
+                command_factory=ApprovedCodexCommandFactory.read_only(
+                    developer_instructions=(
+                        "Perform only reviewed read-only OKR evidence analysis. "
+                        "Do not send messages or create or update documents."
+                    ),
+                    output_schema_path=WEEKLY_OKR_REPORT_SCHEMA_PATH,
+                    use_output_schema=True,
+                ),
+                parser=parse_validated,
+                result_codec=RoutedResultCodec.text(
+                    schema_id="weekly_okr_analysis.v1"
+                ),
+                conversation_id=None,
+                required_capabilities=_weekly_okr_required_capabilities(),
+                result_validation_retry=RoutedResultValidationRetry.exactly_once(
+                    correction_instructions=(
+                        "请完整重做该成员的全部 KR，不得只返回示例行；"
+                        "再次提交前校验管理者和 KR 覆盖完整。"
+                    )
+                ),
+            )
+            analysis = WeeklyOkrAnalysis.model_validate_json(routed.value)
             analysis_path.write_text(
                 json.dumps(
                     {"source_hash": source_hash, "analysis": analysis.model_dump()},
@@ -399,8 +429,47 @@ class CodexWeeklyOkrAgent:
                 ),
                 encoding="utf-8",
             )
+            self.store.finish_weekly_okr_analysis_job(
+                claim.job_id,
+                status="completed",
+            )
             return analysis
-        raise AssertionError("weekly OKR validation retry exhausted")
+        except Exception as exc:
+            if owns_job:
+                self.store.finish_weekly_okr_analysis_job(
+                    claim.job_id,
+                    status="failed",
+                    error=str(exc),
+                )
+            raise
+
+
+def _load_weekly_analysis_cache(
+    *,
+    analysis_path: Path,
+    source_hash: str,
+    manager: ManagerIdentity,
+    filtered_payload: dict[str, Any],
+) -> WeeklyOkrAnalysis:
+    cached = json.loads(analysis_path.read_text(encoding="utf-8"))
+    if cached.get("source_hash") != source_hash:
+        raise ValueError("weekly OKR cache source digest mismatch")
+    analysis = WeeklyOkrAnalysis.model_validate(cached.get("analysis"))
+    _validate_manager_coverage(analysis, [manager])
+    _validate_kr_coverage(analysis, filtered_payload["managers"])
+    return analysis
+
+
+def _weekly_okr_required_capabilities() -> frozenset[str]:
+    skill_digest = hashlib.sha256(OKR_REVIEW_SKILL_PATH.read_bytes()).hexdigest()
+    return frozenset(
+        {
+            "structured_output",
+            "memory_connector_read",
+            "dws_read",
+            f"reviewed_skill:dingtang-okr-review:{skill_digest}",
+        }
+    )
 
 
 class DwsWeeklyOkrGateway:
@@ -1154,6 +1223,7 @@ def weekly_okr_report_command(
         source=source,
         agent=CodexWeeklyOkrAgent(
             workspace=settings.workspace,
+            store=store,
             timeout_seconds=min(
                 settings.codex_timeout_seconds,
                 WEEKLY_OKR_AGENT_MAX_TIMEOUT_SECONDS,

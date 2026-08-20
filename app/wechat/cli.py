@@ -18,7 +18,9 @@ from app import config
 from app.store import AutoReplyStore
 from app.wechat import service
 from app.wechat.memory import (
-    CodexMemoryExtractionRunner, CodexMemoryRecallMatcher, WechatMemoryImporter,
+    CodexMemoryExtractionRunner,
+    CodexMemoryRecallMatcher,
+    WechatMemoryImporter,
 )
 
 DEFAULT_DB = "data/auto-reply.sqlite3"
@@ -158,8 +160,8 @@ def cmd_import_memory(args) -> int:
     account = service.account_from_state(state)
     importer = WechatMemoryImporter(
         store, _reader(),
-        CodexMemoryExtractionRunner(config.workspace_path()),
-        CodexMemoryRecallMatcher(config.workspace_path()),
+        CodexMemoryExtractionRunner(config.workspace_path(), store=store),
+        CodexMemoryRecallMatcher(config.workspace_path(), store=store),
     )
     try:
         result = importer.run(

@@ -5,12 +5,14 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+import app.weekly_okr_report as weekly_okr_report_module
+from app.store import AutoReplyStore
 from app.weekly_okr_report import (
-    CeoAttentionItem,
-    CodexWeeklyOkrAgent,
     DEFAULT_ARCHIVE_DIR_NAME,
     LATEST_ARCHIVE_INDEX_NAME,
     LATEST_ARCHIVE_RAW_NAME,
+    CeoAttentionItem,
+    CodexWeeklyOkrAgent,
     DimensionScoreReview,
     DwsWeeklyOkrGateway,
     GroupRoster,
@@ -20,14 +22,12 @@ from app.weekly_okr_report import (
     PublishedDocument,
     WeeklyOkrAnalysis,
     WeeklyOkrReportResult,
-    _manager_scorecards,
     _extract_report_payload,
+    _manager_scorecards,
     refresh_company_okr_archive,
     run_weekly_okr_report,
     weekly_okr_report_window_open,
 )
-import app.weekly_okr_report as weekly_okr_report_module
-
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
@@ -41,6 +41,29 @@ class FakeStore:
 
     def set_service_state(self, key, value):
         self.state[key] = value
+
+
+class CallbackRouted:
+    def __init__(self, callback):
+        self.callback = callback
+        self.calls = []
+
+    def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        raw = self.callback([], kwargs["prompt"], {})
+        try:
+            value = kwargs["parser"](raw)
+        except Exception as exc:
+            retry = kwargs.get("result_validation_retry")
+            if retry is None:
+                raise
+            corrected = retry.corrected_prompt(kwargs["prompt"], exc)
+            raw = self.callback([], corrected, {})
+            value = kwargs["parser"](raw)
+        return SimpleNamespace(
+            value=value,
+            session_id="weekly-test-session",
+        )
 
 
 class FakeDws:
@@ -867,11 +890,6 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
     seen = []
 
     def executor(_command, prompt, _env):
-        assert "--ignore-user-config" not in _command
-        assert "-m" not in _command
-        assert not any(
-            part.startswith("developer_instructions=") for part in _command
-        )
         source_line = next(
             line for line in prompt.splitlines() if line.startswith("- 实时叮当 OKR 聚合文件：")
         )
@@ -882,9 +900,12 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
         seen.append(name)
         return json.dumps(_weekly_payload_for(name), ensure_ascii=False)
 
+    store = AutoReplyStore(tmp_path / "weekly-bounded.sqlite3")
+    routed = CallbackRouted(executor)
     analysis = CodexWeeklyOkrAgent(
         workspace=tmp_path,
-        executor=executor,
+        store=store,
+        routed_execution=routed,
     ).analyze(
         source_path=source_path,
         managers=roster,
@@ -906,7 +927,8 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
     )
     cached = CodexWeeklyOkrAgent(
         workspace=tmp_path,
-        executor=executor,
+        store=store,
+        routed_execution=CallbackRouted(executor),
     ).analyze(
         source_path=source_path,
         managers=roster,
@@ -917,6 +939,125 @@ def test_codex_agent_analyzes_each_manager_in_a_bounded_source_file(tmp_path):
 
     assert len(seen) == 2
     assert [review.name for review in cached.manager_reviews] == ["甲", "乙"]
+
+
+def test_codex_agent_claims_exact_weekly_job_before_routed_execution(tmp_path):
+    store = AutoReplyStore(tmp_path / "weekly.sqlite3")
+    manager = managers()[0]
+    source = FakeSource()
+    source_path = tmp_path / "live-routed.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "managers": [
+                    {
+                        "manager": {"name": manager.name, "userId": manager.user_id},
+                        "liveOkr": source.fetch_user_okr(
+                            user_id=manager.user_id,
+                            period_label="2026 Q3",
+                        ),
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    class Routed:
+        def execute(self, **kwargs):
+            calls.append(kwargs)
+            with store._connect() as db:
+                parent = db.execute(
+                    "select status from weekly_okr_analysis_jobs where "
+                    "week_end=? and manager_user_id=? and source_digest=?",
+                    tuple(kwargs["workload_key"].split(":", 2)),
+                ).fetchone()
+            assert parent["status"] == "running"
+            value = kwargs["parser"](
+                json.dumps(_weekly_payload_for(manager.name), ensure_ascii=False)
+            )
+            return SimpleNamespace(value=value, session_id="weekly-session")
+
+    result = CodexWeeklyOkrAgent(
+        workspace=tmp_path,
+        store=store,
+        routed_execution=Routed(),
+    ).analyze(
+        source_path=source_path,
+        managers=[manager],
+        period_label="2026 Q3",
+        week_start=datetime(2026, 8, 17).date(),
+        week_end=datetime(2026, 8, 23).date(),
+    )
+
+    assert result.manager_reviews[0].name == manager.name
+    assert calls[0]["workload_kind"] == "weekly_okr"
+    assert calls[0]["workload_key"].startswith("2026-08-23:u1:")
+    assert calls[0]["conversation_id"] is None
+    assert calls[0]["required_capabilities"] >= {
+        "structured_output",
+        "memory_connector_read",
+        "dws_read",
+    }
+    with store._connect() as db:
+        row = db.execute("select status from weekly_okr_analysis_jobs").fetchone()
+    assert row["status"] == "completed"
+
+
+def test_codex_agent_reclaims_completed_job_when_cache_artifact_is_missing(tmp_path):
+    store = AutoReplyStore(tmp_path / "weekly-reclaim.sqlite3")
+    manager = managers()[0]
+    source = FakeSource()
+    source_path = tmp_path / "live-reclaim.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "managers": [
+                    {
+                        "manager": {"name": manager.name, "userId": manager.user_id},
+                        "liveOkr": source.fetch_user_okr(
+                            user_id=manager.user_id,
+                            period_label="2026 Q3",
+                        ),
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def execute(_command, _prompt, _env):
+        return json.dumps(_weekly_payload_for(manager.name), ensure_ascii=False)
+
+    def analyze(routed):
+        return CodexWeeklyOkrAgent(
+            workspace=tmp_path,
+            store=store,
+            routed_execution=routed,
+        ).analyze(
+            source_path=source_path,
+            managers=[manager],
+            period_label="2026 Q3",
+            week_start=datetime(2026, 8, 17).date(),
+            week_end=datetime(2026, 8, 23).date(),
+        )
+
+    analyze(CallbackRouted(execute))
+    cache_path = next(tmp_path.glob("analysis.manager-*.json"))
+    cache_path.unlink()
+    recovered_route = CallbackRouted(execute)
+
+    recovered = analyze(recovered_route)
+
+    assert recovered.manager_reviews[0].name == manager.name
+    assert len(recovered_route.calls) == 1
+    with store._connect() as db:
+        jobs = db.execute("select id, status from weekly_okr_analysis_jobs").fetchall()
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == "completed"
 
 
 def test_codex_agent_retries_incomplete_kr_coverage_once(tmp_path):
@@ -949,7 +1090,12 @@ def test_codex_agent_retries_incomplete_kr_coverage_once(tmp_path):
             payload["manager_reviews"][0]["kr_reviews"] = []
         return json.dumps(payload, ensure_ascii=False)
 
-    analysis = CodexWeeklyOkrAgent(workspace=tmp_path, executor=executor).analyze(
+    store = AutoReplyStore(tmp_path / "weekly-invalid.sqlite3")
+    analysis = CodexWeeklyOkrAgent(
+        workspace=tmp_path,
+        store=store,
+        routed_execution=CallbackRouted(executor),
+    ).analyze(
         source_path=source_path,
         managers=roster,
         period_label="2026 Q3",
@@ -1027,7 +1173,7 @@ def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):
     assert captured["agent"].idle_timeout_seconds == 900
 
 
-def test_codex_agent_preserves_configured_model_provider(tmp_path, monkeypatch):
+def test_codex_agent_delegates_route_model_selection_to_runtime_adapter(tmp_path):
     manager = managers()[0]
     source = FakeSource()
     source_path = tmp_path / "live-auth.json"
@@ -1048,20 +1194,14 @@ def test_codex_agent_preserves_configured_model_provider(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    agent = CodexWeeklyOkrAgent(workspace=tmp_path)
-    seen = []
-    commands = []
-
-    def build_env(*, preserve_local_cli_auth=False):
-        seen.append(preserve_local_cli_auth)
-        return {}
-
-    monkeypatch.setattr(agent.runner, "build_env", build_env)
-    def executor(command, _prompt, _env):
-        commands.append(command)
+    def executor(_command, _prompt, _env):
         return json.dumps(_weekly_payload_for(manager.name), ensure_ascii=False)
-
-    agent.executor = executor
+    routed = CallbackRouted(executor)
+    agent = CodexWeeklyOkrAgent(
+        workspace=tmp_path,
+        store=AutoReplyStore(tmp_path / "weekly-route.sqlite3"),
+        routed_execution=routed,
+    )
 
     agent.analyze(
         source_path=source_path,
@@ -1071,9 +1211,8 @@ def test_codex_agent_preserves_configured_model_provider(tmp_path, monkeypatch):
         week_end=datetime(2026, 8, 23).date(),
     )
 
-    assert seen == [False]
-    assert "--ignore-user-config" not in commands[0]
-    assert "-m" not in commands[0]
+    assert routed.calls[0]["conversation_id"] is None
+    assert routed.calls[0]["command_factory"]._approved_policy.effect_mode == "read_only"
 
 
 def _weekly_payload_for(name):
