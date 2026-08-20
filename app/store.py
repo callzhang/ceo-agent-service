@@ -4753,6 +4753,20 @@ class AutoReplyStore:
                     strict=True,
                 )):
                     raise ValueError("conflicting active runtime attempt claim")
+                if unknown_recovery_owner and active["status"] == "starting":
+                    cursor = db.execute(
+                        "update agent_runtime_attempts set status='running', "
+                        "updated_at=? where id=? and status='starting'",
+                        (now_text, active["id"]),
+                    )
+                    if cursor.rowcount != 1:
+                        raise AgentRuntimeAttemptStartConflictError(
+                            "runtime attempt process start already claimed"
+                        )
+                    active = db.execute(
+                        "select * from agent_runtime_attempts where id=?",
+                        (active["id"],),
+                    ).fetchone()
                 return self._agent_runtime_attempt_from_row(active)
             attempt_number = int(
                 db.execute(
@@ -4773,7 +4787,7 @@ class AutoReplyStore:
                     validation_retry_policy_id, validation_result_schema_id, status,
                     lease_owner, lease_expires_at,
                     started_at, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting',
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                           ?, ?, ?, ?, ?)
                 """,
                 (
@@ -4790,6 +4804,7 @@ class AutoReplyStore:
                     attempt_purpose,
                     validation_retry_policy_id,
                     validation_result_schema_id,
+                    "running" if unknown_recovery_owner else "starting",
                     owner,
                     lease_expires_at,
                     now_text,

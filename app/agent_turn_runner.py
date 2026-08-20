@@ -49,7 +49,12 @@ from app.agent_skill_usage import (
     loaded_skill_receipts,
     normalized_read_skill_metadata,
 )
-from app.claude_runtime_adapter import require_claude_session_id
+from app.claude_runtime_adapter import (
+    ClaudeCommandPolicy,
+    ClaudeEventNormalizer,
+    ClaudeRuntimeAdapter,
+    require_claude_session_id,
+)
 from app.codex_capacity import (
     CODEX_PROVIDER_CAPACITY_EXHAUSTED,
     codex_provider_failure_code,
@@ -79,6 +84,7 @@ from app.store import (
     AgentRole,
     AgentRun,
     AgentRuntimeAttempt,
+    AgentRuntimeAttemptStartConflictError,
     AutoReplyStore,
     ReplyTask,
     RuntimeAttemptSessionMode,
@@ -224,6 +230,7 @@ class AgentTurnProcess(Generic[ResultT]):
         runtime_config: AgentRuntimeConfig | None = None,
         runtime_router: AgentRuntimeRouter | None = None,
         codex_adapter: CodexRuntimeAdapter | None = None,
+        claude_adapter: ClaudeRuntimeAdapter | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
     ) -> None:
@@ -234,6 +241,8 @@ class AgentTurnProcess(Generic[ResultT]):
         self.codex_adapter = codex_adapter or CodexRuntimeAdapter(
             workspace, self.runtime_config, codex_bin=codex_bin
         )
+        self.workspace = workspace
+        self.claude_adapter = claude_adapter
         self._allow_legacy_oauth_bootstrap = runtime_router is None
         self.runtime_router = runtime_router or AgentRuntimeRouter(
             routes=self.runtime_config.routes,
@@ -283,6 +292,7 @@ class AgentTurnProcess(Generic[ResultT]):
         active_route: RuntimeRoute | None = None
         replayed_effect_evidence = False
         session_transcript_end = 0
+        claude_normalizer: ClaudeEventNormalizer | None = None
         turn_event_start = len(run.tool_events)
         recovery_event_start = turn_event_start
         completed_before_recovery = (
@@ -418,43 +428,24 @@ class AgentTurnProcess(Generic[ResultT]):
                 self.store.append_agent_run_event(run.id, event, owner=self.owner)
             self._record_direct_send_receipt(event, payload, run=run)
 
-        def persist_line(line: str) -> None:
-            nonlocal line_count, saw_json, observed_session_id, active_attempt
+        def persist_payload(
+            payload: dict[str, object], *, trusted_claude_session_id: str = ""
+        ) -> None:
+            nonlocal observed_session_id, active_attempt
             nonlocal primary_turn_started, primary_turn_closed
-            if not line.strip():
-                return
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError as exc:
-                if saw_json:
-                    raise RuntimeError("codex_stream_invalid") from exc
-                return
-            saw_json = True
-            if not isinstance(payload, dict):
-                raise RuntimeError("codex_stream_invalid")
             payload_type = payload.get("type")
             if primary_turn_closed:
                 return
             if payload_type == "turn.started":
                 primary_turn_started = True
-            line_count += 1
-            if recover_unknown:
-                self.store.renew_agent_run_lease(
-                    run.id,
-                    owner=self.owner,
-                    lease_seconds=LEASE_SECONDS,
-                    expected_status="unknown",
-                )
-            else:
-                self.store.renew_agent_run_lease(
-                    run.id, owner=self.owner, lease_seconds=LEASE_SECONDS
-                )
-            if on_progress is not None:
-                on_progress()
-            new_session = _session_id(payload)
+            new_session = trusted_claude_session_id or _session_id(payload)
             if new_session:
                 observed_session_id = new_session
-                if active_attempt is not None:
+                is_claude = (
+                    active_route is not None
+                    and active_route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                )
+                if active_attempt is not None and not is_claude:
                     active_attempt = self.store.set_agent_runtime_attempt_session(
                         active_attempt.id, new_session
                     )
@@ -474,7 +465,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             run.role is AgentRole.CONSUMER
                         ),
                     )
-                if (
+                if not is_claude and (
                     run.role is AgentRole.CONSUMER
                     and not recover_unknown
                     and active_route is not None
@@ -485,7 +476,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         new_session,
                         conversation_contract_hash,
                     )
-                if (
+                if not is_claude and (
                     persist_conversation_session
                     and run.role is AgentRole.CONSUMER
                     and not recover_unknown
@@ -504,6 +495,52 @@ class AgentTurnProcess(Generic[ResultT]):
                 "turn.failed",
             }:
                 primary_turn_closed = True
+
+        def persist_line(line: str) -> None:
+            nonlocal line_count, saw_json
+            if not line.strip():
+                return
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                if saw_json:
+                    raise RuntimeError("codex_stream_invalid") from exc
+                return
+            saw_json = True
+            if not isinstance(payload, dict):
+                raise RuntimeError("codex_stream_invalid")
+            line_count += 1
+            if recover_unknown:
+                self.store.renew_agent_run_lease(
+                    run.id,
+                    owner=self.owner,
+                    lease_seconds=LEASE_SECONDS,
+                    expected_status="unknown",
+                )
+            else:
+                self.store.renew_agent_run_lease(
+                    run.id, owner=self.owner, lease_seconds=LEASE_SECONDS
+                )
+            if on_progress is not None:
+                on_progress()
+            if (
+                active_route is not None
+                and active_route.runtime_kind is RuntimeKind.CLAUDE_CLI
+            ):
+                if claude_normalizer is None:
+                    raise RuntimeError("claude_event_normalizer_missing")
+                normalized_events = claude_normalizer.normalize_events(payload)
+                for event in normalized_events:
+                    persist_payload(
+                        event,
+                        trusted_claude_session_id=(
+                            claude_normalizer.session_id or ""
+                            if event.get("type") == "turn.started"
+                            else ""
+                        ),
+                    )
+                return
+            persist_payload(payload)
 
         def stabilize_and_replay_session(
             session_for_receipts: str,
@@ -612,6 +649,9 @@ class AgentTurnProcess(Generic[ResultT]):
                 observed_session_id = ""
                 replayed_effect_evidence = False
                 active_route = route
+                route_uses_codex_history = (
+                    route.runtime_kind is RuntimeKind.CODEX_CLI
+                )
                 attempt_line_start = line_count
                 if not attempt_is_preclaimed:
                     active_attempt = self._claim_and_start_attempt(
@@ -624,40 +664,97 @@ class AgentTurnProcess(Generic[ResultT]):
                     count_codex_session_lines(
                         route_session_id, codex_home=_codex_home()
                     )
-                    if route_session_id
+                    if route_session_id and route_uses_codex_history
                     else 0
                 )
                 attempt_is_preclaimed = False
-                command = self.codex_adapter.build_command(
-                    route=route,
-                    prompt=prompt,
-                    session_id=route_session_id,
-                    image_paths=image_paths,
-                    output_schema_path=None,
-                    use_output_schema=False,
-                    approval_policy=(
-                        "untrusted" if allow_effectful_tools else "never"
-                    ),
-                    developer_instructions=developer_instructions,
-                    use_approval_bypass=allow_effectful_tools,
-                )
-                configure_command(command)
+                if route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+                    claude_adapter = self._claude_adapter()
+                    command = claude_adapter.build_command(
+                        route=route,
+                        session_id=route_session_id,
+                        max_turns=1,
+                        policy=ClaudeCommandPolicy.no_tools(),
+                    )
+                    claude_normalizer = claude_adapter.new_event_normalizer(
+                        expected_session_id=route_session_id,
+                        command=command,
+                    )
+                    command_env = claude_adapter.build_env(route, command=command)
+                else:
+                    claude_adapter = None
+                    claude_normalizer = None
+                    command = self.codex_adapter.build_command(
+                        route=route,
+                        prompt=prompt,
+                        session_id=route_session_id,
+                        image_paths=image_paths,
+                        output_schema_path=None,
+                        use_output_schema=False,
+                        approval_policy=(
+                            "untrusted" if allow_effectful_tools else "never"
+                        ),
+                        developer_instructions=developer_instructions,
+                        use_approval_bypass=allow_effectful_tools,
+                    )
+                    configure_command(command)
+                    command_env = self.codex_adapter.build_env(route)
                 try:
                     process = self.executor(
                         command,
                         prompt=prompt,
-                        env=self.codex_adapter.build_env(route),
+                        env=command_env,
                         total_timeout_seconds=TOTAL_TIMEOUT_SECONDS,
                         idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
                         on_stdout_line=persist_line,
                     )
                 except Exception:
+                    if claude_adapter is not None:
+                        claude_adapter.finish_invocation(command)
                     self._fail_runtime_attempt_unclassified(active_attempt)
                     raise
                 if process.returncode == 0 and not process.timed_out:
-                    result = parse_result(process.stdout)
+                    if claude_adapter is not None:
+                        assert claude_normalizer is not None
+                        claude_normalizer.finalize()
+                        result = claude_adapter.parse_final_result(
+                            normalizer=claude_normalizer,
+                            proof=claude_normalizer.terminal_proof(),
+                            parser=lambda raw: parse_result(
+                                json.dumps(
+                                    {
+                                        "type": "item.completed",
+                                        "item": {
+                                            "type": "agent_message",
+                                            "text": raw,
+                                        },
+                                    },
+                                    separators=(",", ":"),
+                                )
+                            ),
+                        )
+                        trusted_session_id = claude_normalizer.session_id
+                        if not trusted_session_id:
+                            raise RuntimeError("claude_session_evidence_missing")
+                        observed_session_id = trusted_session_id
+                        if active_attempt is not None:
+                            active_attempt = self.store.set_agent_runtime_attempt_session(
+                                active_attempt.id, trusted_session_id
+                            )
+                        if run.role is AgentRole.CONSUMER and not recover_unknown:
+                            self.store.upsert_conversation_runtime_session(
+                                self.task.conversation_id,
+                                route.name,
+                                trusted_session_id,
+                                conversation_contract_hash,
+                            )
+                    else:
+                        result = parse_result(process.stdout)
                     break
-                failure = self.codex_adapter.classify_failure(
+                if claude_adapter is not None:
+                    claude_adapter.finish_invocation(command)
+                failure_adapter = claude_adapter or self.codex_adapter
+                failure = failure_adapter.classify_failure(
                     process.stdout,
                     process.stderr,
                     process.returncode,
@@ -670,7 +767,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     attempt_transcript_start,
                 )
                 evidence_uncertain = bool(expected_effect_actions) and not failed_session_id
-                if failed_session_id:
+                if failed_session_id and route_uses_codex_history:
                     try:
                         failed_transcript_end = max(
                             failed_transcript_end,
@@ -776,7 +873,7 @@ class AgentTurnProcess(Generic[ResultT]):
             session_for_receipts = (
                 observed_session_id or route_session_id or run.codex_session_id
             )
-            if session_for_receipts:
+            if session_for_receipts and route.runtime_kind is RuntimeKind.CODEX_CLI:
                 session_start = attempt_transcript_start
                 session_transcript_end = stabilize_and_replay_session(
                     session_for_receipts,
@@ -982,6 +1079,16 @@ class AgentTurnProcess(Generic[ResultT]):
             )
         return persisted
 
+    def _claude_adapter(self) -> ClaudeRuntimeAdapter:
+        if self.claude_adapter is None:
+            self.claude_adapter = ClaudeRuntimeAdapter(
+                workspace=self.workspace,
+                config=self.runtime_config,
+                effect_registry=self.effects,
+                native_cli_classifier=self.native_cli,
+            )
+        return self.claude_adapter
+
     def _clear_incompatible_route_session_for_fresh_retry(
         self,
         *,
@@ -1028,6 +1135,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 route.model,
                 owner=self.owner,
             )
+            if attempt.status != "running":
+                raise AgentRuntimeAttemptStartConflictError(
+                    "unknown recovery runtime attempt was not atomically started"
+                )
+            return attempt
         else:
             attempt = self.store.claim_agent_runtime_attempt(
                 run.id,

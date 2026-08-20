@@ -5,9 +5,13 @@ from pathlib import Path
 
 import pytest
 
+from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
+from app.agent_runtime_router import RuntimeRouteDecision
 from app.agent_turn_runner import AgentTurnProcess, _required_runtime_capabilities
+from app.agent_wire_contracts import parse_consumer_agent_wire_result
 from app.native_cli_metadata import describe_native_command
+from app.process_runner import ProcessRunResult
 from app.store import (
     MAX_RECONCILIATION_EVENTS,
     RECONCILIATION_EVENT_LIMIT_ERROR,
@@ -200,6 +204,155 @@ def test_malformed_or_legacy_claude_session_never_resumes(tmp_path):
             recovery_phase="",
             conversation_contract_hash="current-contract",
         )
+
+
+def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    route = _claude_route()
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_oauth", "oauth-session", "contract-v1"
+    )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_api", "api-session", "contract-v1"
+    )
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+            "CEO_CLAUDE_API_KEY": "test-claude-secret",
+            "CEO_CLAUDE_MODEL": route.model,
+        }
+    )
+
+    def reject_codex_history(*args, **kwargs):
+        raise AssertionError("Claude session must not touch Codex history")
+
+    monkeypatch.setattr(
+        "app.agent_turn_runner.count_codex_session_lines", reject_codex_history
+    )
+    monkeypatch.setattr(
+        "app.agent_turn_runner.extract_codex_mcp_tool_results_from_session",
+        reject_codex_history,
+    )
+
+    class OneRouteRouter:
+        def first_route_decision(self, **kwargs):
+            return RuntimeRouteDecision(route, False, "eligible_route")
+
+    raw_result = json.dumps(
+        {
+            "outcome": "no_action",
+            "summary": "Nothing to do.",
+            "proposal": None,
+            "decision_options": [],
+            "error_code": "",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        },
+        separators=(",", ":"),
+    )
+    session_id = "collision-codex-session"
+    stream = "\n".join(
+        (
+            json.dumps(
+                {"type": "system", "subtype": "init", "session_id": session_id}
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "session_id": session_id,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": raw_result}],
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "session_id": session_id,
+                    "result": raw_result,
+                }
+            ),
+        )
+    )
+
+    class Executor:
+        def __init__(self):
+            self.commands = []
+
+        def __call__(self, command, *, on_stdout_line, **kwargs):
+            self.commands.append(command)
+            for line in stream.splitlines():
+                on_stdout_line(line)
+            return ProcessRunResult(0, stream, "")
+
+    executor = Executor()
+
+    def execute(current_task):
+        run = _claim_consumer(store, current_task).run
+        return AgentTurnProcess(
+            store=store,
+            task=current_task,
+            workspace=tmp_path,
+            owner="consumer",
+            executor=executor,
+            runtime_config=config,
+            runtime_router=OneRouteRouter(),
+        ).execute(
+            run=run,
+            prompt="Read-only decision",
+            session_id=None,
+            developer_instructions="Return the exact schema.",
+            configure_command=lambda command: None,
+            parse_result=parse_consumer_agent_wire_result,
+            persist_conversation_session=True,
+            conversation_contract_hash="contract-v1",
+        )
+
+    execute(task)
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
+    ) == session_id
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_oauth", required_contract_hash="contract-v1"
+    ) == "oauth-session"
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_api", required_contract_hash="contract-v1"
+    ) == "api-session"
+    [first_attempt] = store.list_agent_runtime_attempts(
+        store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation
+        )[0].id
+    )
+    assert first_attempt.session_id == session_id
+
+    assert store.enqueue_reply_task(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        single_chat=task.single_chat,
+        trigger_message_id="msg-turns-2",
+        trigger_create_time="2026-08-06 10:01:00",
+        trigger_sender="Derek",
+        trigger_text="Handle the next task",
+        execution_generation="generation-2",
+    )
+    second = store.get_reply_task_for_message(task.conversation_id, "msg-turns-2")
+    assert second is not None
+    second = store.claim_reply_task(second.id)
+    assert second is not None
+    execute(second)
+
+    assert "--resume" not in executor.commands[0]
+    resume_index = executor.commands[1].index("--resume")
+    assert executor.commands[1][resume_index + 1] == session_id
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
+    ) == session_id
 
 
 def _effect_event(event_type="item.started", **metadata):

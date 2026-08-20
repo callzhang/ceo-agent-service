@@ -17,6 +17,7 @@ from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
     AgentRunLeaseLostError,
+    AgentRuntimeAttemptStartConflictError,
     AutoReplyStore,
 )
 
@@ -279,6 +280,9 @@ def test_unknown_recovery_attempt_requires_owned_persisted_effect_evidence(
 
     assert recovery.session_mode == "fresh"
     assert recovery.source_session_id == ""
+    assert recovery.status == "running"
+    with pytest.raises(AgentRuntimeAttemptStartConflictError):
+        store.mark_agent_runtime_attempt_running_once(recovery.id)
 
 
 def test_unknown_recovery_attempt_rejects_unknown_run_without_effect(tmp_path: Path):
