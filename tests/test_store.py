@@ -103,14 +103,15 @@ def _seed_runtime_operation_parent(
     store: AutoReplyStore, workload_kind: str, workload_key: str
 ) -> None:
     with store._connect() as db:
-        db.execute("pragma foreign_keys = off")
+        assert db.execute("pragma foreign_keys").fetchone()[0] == 1
         if workload_kind == "structured":
             db.execute("insert into okr_review_requests (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, period_label, period_start, period_end) values (?, 'cid', 'title', 'msg', 'sender', 'text', 'period', 'start', 'end')", (int(workload_key),))
         elif workload_kind == "meeting":
+            db.execute("insert into meeting_alignment_jobs (id, meeting_id) values (1, 'meeting-1')")
             db.execute("insert into meeting_alignment_runs (id, job_id, status) values (?, 1, 'running')", (int(workload_key),))
         elif workload_kind == "task":
             source_id, separator, _ = workload_key.partition(":")
-            table_name = "work_summary_inputs" if separator else "task_agent_runs"
+            db.execute("insert into work_summary_inputs (id, source_type, source_ref, payload_json) values (1, 'test', 'task-parent', '{}')")
             if separator:
                 db.execute("insert into work_summary_inputs (id, source_type, source_ref, payload_json) values (?, 'test', ?, '{}')", (int(source_id), f"ref-{source_id}"))
             else:
@@ -119,6 +120,7 @@ def _seed_runtime_operation_parent(
             source, _, source_id = workload_key.partition(":")
             table_name = "memory_write_events" if source == "memory_write_event" else "wechat_memory_candidates"
             if table_name == "memory_write_events":
+                db.execute("insert into reply_attempts (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, action, sensitivity_kind, final_reply_text, permission_action, permission_reason, send_status) values (1, 'cid', 'title', 'msg', 'sender', 'text', 'none', 'none', '', 'none', '', 'pending')")
                 db.execute("insert into memory_write_events (id, attempt_id, event_type, payload_json) values (?, 1, 'test', '{}')", (int(source_id),))
             else:
                 db.execute("insert into wechat_memory_candidates (id, import_run_id, account_id, statement, category, confidence, sensitivity) values (?, 'import', 'account', 'statement', 'fact', 1, 'low')", (int(source_id),))
@@ -480,6 +482,64 @@ def test_agent_run_write_transaction_propagates_post_yield_lock_error(tmp_path: 
     with pytest.raises(sqlite3.OperationalError, match="database is locked"):
         with store._agent_run_write_transaction(None):
             raise sqlite3.OperationalError("database is locked")
+
+
+def test_agent_run_write_transaction_retries_begin_then_runs_body_once(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "transaction.sqlite3")
+    original_connect = store._connect
+    attempts = 0
+    body_runs = 0
+
+    @contextmanager
+    def flaky_connect():
+        nonlocal attempts
+        attempts += 1
+        with original_connect() as db:
+            if attempts == 1:
+                class BeginLocked:
+                    def execute(self, _sql):
+                        raise sqlite3.OperationalError("database is locked")
+                yield BeginLocked()
+            else:
+                yield db
+
+    monkeypatch.setattr(store, "_connect", flaky_connect)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _seconds: None)
+
+    with store._agent_run_write_transaction(None):
+        body_runs += 1
+
+    assert attempts == 2
+    assert body_runs == 1
+
+
+def test_agent_run_write_transaction_closes_every_failed_begin_connection(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "transaction.sqlite3")
+    closed = 0
+
+    @contextmanager
+    def locked_connect():
+        nonlocal closed
+        try:
+            class BeginLocked:
+                def execute(self, _sql):
+                    raise sqlite3.OperationalError("database is locked")
+            yield BeginLocked()
+        finally:
+            closed += 1
+
+    monkeypatch.setattr(store, "_connect", locked_connect)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        with store._agent_run_write_transaction(None):
+            pytest.fail("transaction body must not run")
+
+    assert closed == store_module.AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS
 
 
 def test_list_agent_run_summaries_for_terminal_runs_batches_without_events(

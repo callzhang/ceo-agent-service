@@ -3854,21 +3854,25 @@ class AutoReplyStore:
             connection = self._connect()
             try:
                 db = connection.__enter__()
-                try:
-                    db.execute("begin immediate")
-                except sqlite3.OperationalError as exc:
-                    connection.__exit__(type(exc), exc, exc.__traceback__)
-                    if (
-                        not _is_sqlite_lock_error(exc)
-                        or attempt + 1 >= AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS
-                    ):
-                        raise
             except sqlite3.OperationalError as exc:
                 if (
                     not _is_sqlite_lock_error(exc)
                     or attempt + 1 >= AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS
                 ):
                     raise
+                time.sleep(AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+                continue
+            try:
+                db.execute("begin immediate")
+            except sqlite3.OperationalError as exc:
+                connection.__exit__(type(exc), exc, exc.__traceback__)
+                if (
+                    not _is_sqlite_lock_error(exc)
+                    or attempt + 1 >= AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS
+                ):
+                    raise
+                time.sleep(AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+                continue
             else:
                 try:
                     yield db, _utc_store_time(now)
@@ -3878,7 +3882,6 @@ class AutoReplyStore:
                 else:
                     connection.__exit__(None, None, None)
                 return
-            time.sleep(AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
 
     @staticmethod
     def _require_runtime_attempt_text(value: str, *, field: str) -> str:
