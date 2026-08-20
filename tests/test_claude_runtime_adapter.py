@@ -323,7 +323,7 @@ def test_final_result_uses_turn_completed_and_caller_parser(adapter, normalizer)
     normalizer.normalize_event(SYSTEM_INIT)
     event = normalizer.normalize_event(FINAL_RESULT)
     parsed = adapter.parse_final_result(
-        FINAL_RESULT,
+        normalizer.terminal_proof(),
         lambda raw: {"parsed": raw},
     )
 
@@ -335,12 +335,14 @@ def test_final_result_uses_turn_completed_and_caller_parser(adapter, normalizer)
     assert parsed == {"parsed": '{"ok":true}'}
 
 
-def test_caller_parser_failure_is_typed_and_failover_closed(adapter):
+def test_caller_parser_failure_is_typed_and_failover_closed(adapter, normalizer):
     def reject(_raw):
         raise ValueError("shape mismatch")
 
+    normalizer.normalize_event(SYSTEM_INIT)
+    normalizer.normalize_event(FINAL_RESULT)
     with pytest.raises(ClaudeRuntimeResultError) as exc:
-        adapter.parse_final_result(FINAL_RESULT, reject)
+        adapter.parse_final_result(normalizer.terminal_proof(), reject)
 
     assert exc.value.failure.failure_class is RuntimeFailureClass.RESULT
     assert exc.value.failure.code == "claude_result_validation_failed"
@@ -438,14 +440,16 @@ def test_normalizer_binds_resume_session_and_rejects_cross_session(adapter):
         )
 
 
-def test_normalizer_rejects_duplicate_init_and_call_id(normalizer):
+def test_normalizer_rejects_duplicate_init_and_call_id(adapter, normalizer):
     normalizer.normalize_event(SYSTEM_INIT)
     with pytest.raises(ClaudeEventPolicyError, match="claude_init_duplicate"):
         normalizer.normalize_event(SYSTEM_INIT)
 
-    normalizer.normalize_event(MCP_TOOL_START)
+    call_normalizer = adapter.new_event_normalizer()
+    call_normalizer.normalize_event(SYSTEM_INIT)
+    call_normalizer.normalize_event(MCP_TOOL_START)
     with pytest.raises(ClaudeEventPolicyError, match="claude_tool_id_duplicate"):
-        normalizer.normalize_event(MCP_TOOL_START)
+        call_normalizer.normalize_event(MCP_TOOL_START)
 
 
 def test_normalizer_rejects_cross_session_tool_result(normalizer):
@@ -472,13 +476,18 @@ def test_normalizer_rejects_cross_session_tool_result(normalizer):
         )
 
 
-def test_normalizer_requires_closed_items_and_one_last_result(normalizer):
+def test_normalizer_requires_closed_items_and_one_last_result(adapter, normalizer):
     normalizer.normalize_event(SYSTEM_INIT)
     normalizer.normalize_event(MCP_TOOL_START)
     with pytest.raises(ClaudeEventPolicyError, match="claude_open_tool_items"):
         normalizer.normalize_event(FINAL_RESULT)
+    with pytest.raises(ClaudeEventPolicyError, match="claude_invocation_failed"):
+        normalizer.normalize_event(FINAL_RESULT)
 
-    completed = normalizer.normalize_event(
+    valid = adapter.new_event_normalizer()
+    valid.normalize_event(SYSTEM_INIT)
+    valid.normalize_event(MCP_TOOL_START)
+    completed = valid.normalize_event(
         {
             "type": "user",
             "session_id": "claude-session-1",
@@ -496,10 +505,10 @@ def test_normalizer_requires_closed_items_and_one_last_result(normalizer):
         }
     )
     assert completed["type"] == "item.completed"
-    normalizer.normalize_event(FINAL_RESULT)
-    normalizer.finalize()
+    valid.normalize_event(FINAL_RESULT)
+    valid.finalize()
     with pytest.raises(ClaudeEventPolicyError, match="claude_event_after_result"):
-        normalizer.normalize_event(ASSISTANT_TEXT)
+        valid.normalize_event(ASSISTANT_TEXT)
 
 
 def test_normalizer_instances_do_not_share_invocation_state(adapter):
@@ -552,7 +561,25 @@ def test_success_result_text_cannot_spoof_auth_failure(adapter):
     assert failure.failover_permitted is False
 
 
-def test_reviewed_command_policy_uses_exact_tools_without_wildcards(adapter, route):
+def test_reviewed_command_policy_uses_exact_tools_without_wildcards(
+    adapter, route, tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "memory_connector": {
+                        "command": "/opt/service/memory-mcp",
+                        "args": ["serve", "--stdio"],
+                    },
+                    "foreign": {"url": "https://foreign.invalid/mcp"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
     policy = ClaudeCommandPolicy.reviewed(
         mcp_tools=("mcp__memory_connector__memory_recall",),
         allow_native_cli=True,
@@ -584,9 +611,128 @@ def test_reviewed_command_policy_uses_exact_tools_without_wildcards(adapter, rou
 
     assert settings["permissions"]["allow"] == []
     assert "Bash" not in settings["permissions"]["deny"]
-    assert settings["enabledMcpjsonServers"] == ["ceo_runtime_permission"]
-    assert set(mcp_config["mcpServers"]) == {"ceo_runtime_permission"}
+    assert settings["enabledMcpjsonServers"] == [
+        "ceo_runtime_permission",
+        "memory_connector",
+    ]
+    assert set(mcp_config["mcpServers"]) == {
+        "ceo_runtime_permission",
+        "memory_connector",
+    }
+    assert mcp_config["mcpServers"]["memory_connector"] == {
+        "type": "stdio",
+        "command": "/opt/service/memory-mcp",
+        "args": ["serve", "--stdio"],
+    }
+    assert "foreign" not in mcp_config["mcpServers"]
     assert broker_policy == {
         "allowed_mcp_tools": ["mcp__memory_connector__memory_recall"],
         "allow_native_cli": True,
     }
+
+
+def test_reviewed_mcp_policy_rejects_unreviewed_or_missing_transport(
+    adapter, route, tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {"servers": {"foreign": {"url": "https://foreign.invalid/mcp"}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+
+    with pytest.raises(ValueError, match="reviewed MCP tool"):
+        adapter.build_command(
+            route=route,
+            session_id=None,
+            max_turns=2,
+            policy=ClaudeCommandPolicy.reviewed(
+                mcp_tools=("mcp__foreign__write",)
+            ),
+        )
+    with pytest.raises(ValueError, match="transport"):
+        adapter.build_command(
+            route=route,
+            session_id=None,
+            max_turns=2,
+            policy=ClaudeCommandPolicy.reviewed(
+                mcp_tools=("mcp__memory_connector__memory_recall",)
+            ),
+        )
+
+
+def test_reviewed_mcp_policy_copies_exact_service_url_transport(
+    adapter, route, tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "memory_connector": {
+                        "url": "https://memory.example.test/mcp"
+                    },
+                    "foreign": {"url": "https://foreign.invalid/mcp"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+
+    command = adapter.build_command(
+        route=route,
+        session_id=None,
+        max_turns=2,
+        policy=ClaudeCommandPolicy.reviewed(
+            mcp_tools=("mcp__memory_connector__memory_recall",)
+        ),
+    )
+    mcp_config = json.loads(
+        Path(command[command.index("--mcp-config") + 1]).read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert mcp_config["mcpServers"]["memory_connector"] == {
+        "type": "http",
+        "url": "https://memory.example.test/mcp",
+    }
+    assert "foreign" not in mcp_config["mcpServers"]
+    assert "mcp__memory_connector__memory_recall" not in command[
+        command.index("--allowedTools") + 1 :
+    ]
+
+
+def test_multiblock_event_failure_is_atomic_and_terminal(normalizer):
+    normalizer.normalize_event(SYSTEM_INIT)
+    event = {
+        "type": "assistant",
+        "session_id": "claude-session-1",
+        "message": {
+            "role": "assistant",
+            "content": [
+                MCP_TOOL_START["message"]["content"][0],
+                {
+                    "type": "tool_use",
+                    "id": "toolu_forbidden",
+                    "name": "Write",
+                    "input": {"path": "/tmp/no"},
+                },
+            ],
+        },
+    }
+
+    with pytest.raises(ClaudeEventPolicyError, match="claude_tool_unreviewed"):
+        normalizer.normalize_events(event)
+    with pytest.raises(ClaudeEventPolicyError, match="claude_invocation_failed"):
+        normalizer.normalize_event(FINAL_RESULT)
+
+
+def test_parser_rejects_raw_result_without_terminal_state_proof(adapter):
+    with pytest.raises(ClaudeRuntimeResultError) as exc:
+        adapter.parse_final_result(FINAL_RESULT, lambda raw: raw)
+
+    assert exc.value.failure.code == "claude_result_incomplete"

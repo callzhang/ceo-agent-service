@@ -24,9 +24,11 @@ from app.agent_runtime_contracts import (
 )
 from app.codex_runtime_adapter import _safe_child_environment
 from app.native_cli_metadata import NativeCliMetadataClassifier
+from app.service_codex_config import ServiceMcpServer, load_service_mcp_servers
 
 ResultT = TypeVar("ResultT")
 _POLICY_SEAL = object()
+_TERMINAL_PROOF_SEAL = object()
 _PERMISSION_TOOL = "mcp__ceo_runtime_permission__permission_prompt"
 _BUILTIN_TOOLS = frozenset(
     {
@@ -47,6 +49,22 @@ class ClaudeRuntimeResultError(RuntimeError):
     def __init__(self, failure: RuntimeFailure) -> None:
         self.failure = failure
         super().__init__(failure.code)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ClaudeTerminalProof:
+    """Opaque proof that one invocation reached a valid terminal result."""
+
+    result: str
+    session_id: str
+    _seal: object
+
+    def __init__(self, *, result: str, session_id: str, seal: object) -> None:
+        if seal is not _TERMINAL_PROOF_SEAL:
+            raise ValueError("Claude terminal proofs are normalizer-owned")
+        object.__setattr__(self, "result", result)
+        object.__setattr__(self, "session_id", session_id)
+        object.__setattr__(self, "_seal", seal)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -178,11 +196,17 @@ class ClaudeRuntimeAdapter:
         )
 
     def parse_final_result(
-        self, event: dict[str, object], parser: Callable[[str], ResultT]
+        self, proof: ClaudeTerminalProof, parser: Callable[[str], ResultT]
     ) -> ResultT:
-        raw = _validated_success_result(event)
+        if (
+            not isinstance(proof, ClaudeTerminalProof)
+            or proof._seal is not _TERMINAL_PROOF_SEAL
+        ):
+            raise ClaudeRuntimeResultError(
+                _result_failure("claude_result_incomplete")
+            )
         try:
-            return parser(raw)
+            return parser(proof.result)
         except Exception as exc:
             raise ClaudeRuntimeResultError(
                 _result_failure("claude_result_validation_failed")
@@ -279,13 +303,17 @@ class ClaudeRuntimeAdapter:
             - ({"Bash"} if policy.allow_native_cli else set())
         )
         broker_enabled = bool(policy.mcp_tools or policy.allow_native_cli)
+        reviewed_transports = self._reviewed_mcp_transports(policy)
         settings_path.write_text(
             json.dumps(
                 {
                     "permissions": {"allow": [], "deny": denied_builtins},
                     "enableAllProjectMcpServers": False,
                     "enabledMcpjsonServers": (
-                        ["ceo_runtime_permission"] if broker_enabled else []
+                        [
+                            *(["ceo_runtime_permission"] if broker_enabled else []),
+                            *sorted(reviewed_transports),
+                        ]
                     ),
                 }, sort_keys=True, separators=(",", ":"),
             ), encoding="utf-8",
@@ -293,8 +321,9 @@ class ClaudeRuntimeAdapter:
         mcp_path.write_text(
             json.dumps(
                 {
-                    "mcpServers": (
-                        {
+                    "mcpServers": {
+                        **(
+                            {
                             "ceo_runtime_permission": {
                                 "type": "stdio",
                                 "command": sys.executable,
@@ -306,16 +335,41 @@ class ClaudeRuntimeAdapter:
                                 ],
                                 "env": {},
                             }
-                        }
-                        if broker_enabled
-                        else {}
-                    )
+                            }
+                            if broker_enabled
+                            else {}
+                        ),
+                        **reviewed_transports,
+                    }
                 },
                 sort_keys=True,
                 separators=(",", ":"),
             ), encoding="utf-8",
         )
         return settings_path, mcp_path
+
+    def _reviewed_mcp_transports(
+        self, policy: ClaudeCommandPolicy
+    ) -> dict[str, dict[str, object]]:
+        if not policy.mcp_tools:
+            return {}
+        reviewed = self.effects.reviewed_tools()
+        required_servers: set[str] = set()
+        for exact_name in policy.mcp_tools:
+            _, server, tool = exact_name.split("__", 2)
+            if tool not in reviewed.get(server, ()):
+                raise ValueError("Claude policy requires a reviewed MCP tool")
+            required_servers.add(server)
+        configured = {
+            server.name: server for server in load_service_mcp_servers(env=os.environ)
+        }
+        missing = required_servers - configured.keys()
+        if missing:
+            raise ValueError("Claude reviewed MCP transport is missing")
+        return {
+            name: _claude_mcp_transport(configured[name])
+            for name in sorted(required_servers)
+        }
 
     def _configured_route(self, route: RuntimeRoute) -> RuntimeRoute:
         if (
@@ -351,6 +405,8 @@ class ClaudeEventNormalizer:
         self._session_id: str | None = None
         self._init_seen = False
         self._final_seen = False
+        self._failed = False
+        self._terminal_proof: ClaudeTerminalProof | None = None
         self._started_items: dict[str, dict[str, object]] = {}
         self._seen_call_ids: set[str] = set()
         self._mcp_tool_names = {
@@ -372,8 +428,37 @@ class ClaudeEventNormalizer:
     def normalize_events(
         self, event: dict[str, object]
     ) -> tuple[dict[str, object], ...]:
+        if self._failed:
+            raise ClaudeEventPolicyError("claude_invocation_failed")
         if self._final_seen:
             raise ClaudeEventPolicyError("claude_event_after_result")
+        snapshot = (
+            self._session_id,
+            self._init_seen,
+            self._final_seen,
+            dict(self._started_items),
+            set(self._seen_call_ids),
+            self._terminal_proof,
+        )
+        try:
+            return self._normalize_events_unchecked(event)
+        except (ClaudeEventPolicyError, ClaudeRuntimeResultError) as exc:
+            (
+                self._session_id,
+                self._init_seen,
+                self._final_seen,
+                self._started_items,
+                self._seen_call_ids,
+                self._terminal_proof,
+            ) = snapshot
+            self._failed = True
+            if isinstance(exc, ClaudeRuntimeResultError):
+                raise ClaudeEventPolicyError(exc.failure.code) from exc
+            raise
+
+    def _normalize_events_unchecked(
+        self, event: dict[str, object]
+    ) -> tuple[dict[str, object], ...]:
         event_type = event.get("type")
         session_id = _required_string(event.get("session_id"))
         if event_type == "system" and event.get("subtype") == "init":
@@ -415,16 +500,31 @@ class ClaudeEventNormalizer:
             if self._started_items:
                 raise ClaudeEventPolicyError("claude_open_tool_items")
             self._final_seen = True
+            assert self._session_id is not None
+            self._terminal_proof = ClaudeTerminalProof(
+                result=raw,
+                session_id=self._session_id,
+                seal=_TERMINAL_PROOF_SEAL,
+            )
             return ({"type": RuntimeEventType.TURN_COMPLETED.value, "session_id": self._session_id, "result": raw},)
         raise ClaudeEventPolicyError("claude_event_unrecognized")
 
     def finalize(self) -> None:
+        if self._failed:
+            raise ClaudeEventPolicyError("claude_invocation_failed")
         if not self._init_seen:
             raise ClaudeEventPolicyError("claude_session_evidence_missing")
         if self._started_items:
             raise ClaudeEventPolicyError("claude_open_tool_items")
         if not self._final_seen:
             raise ClaudeEventPolicyError("claude_result_incomplete")
+
+    def terminal_proof(self) -> ClaudeTerminalProof:
+        if self._failed or not self._final_seen or self._terminal_proof is None:
+            raise ClaudeRuntimeResultError(
+                _result_failure("claude_result_incomplete")
+            )
+        return self._terminal_proof
 
     def _require_active_session(self, session_id: str | None) -> None:
         if not self._init_seen:
@@ -492,6 +592,27 @@ class ClaudeEventNormalizer:
         item["status"] = "failed" if is_error else "completed"
         item["result"] = block.get("content")
         return {"type": RuntimeEventType.ITEM_FAILED.value if is_error else RuntimeEventType.ITEM_COMPLETED.value, "item": item}
+
+
+def _claude_mcp_transport(server: ServiceMcpServer) -> dict[str, object]:
+    if server.command is not None:
+        return {
+            "type": "stdio",
+            "command": server.command,
+            "args": list(server.args),
+        }
+    if server.url is None:
+        raise ValueError("Claude reviewed MCP transport is incomplete")
+    headers = dict(server.http_headers)
+    headers.update(
+        {name: f"${{{env_name}}}" for name, env_name in server.env_http_headers}
+    )
+    if server.bearer_token_env_var is not None:
+        headers["Authorization"] = f"Bearer ${{{server.bearer_token_env_var}}}"
+    transport: dict[str, object] = {"type": "http", "url": server.url}
+    if headers:
+        transport["headers"] = headers
+    return transport
 
 
 def _required_string(value: object) -> str | None:
