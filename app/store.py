@@ -4653,23 +4653,36 @@ class AutoReplyStore:
         self,
         attempt_id: int,
         session_id: str,
+        transcript_reference: str | None = None,
     ) -> AgentRuntimeAttempt:
         session_id = self._require_runtime_attempt_text(
             session_id, field="session_id"
         )
+        if transcript_reference is not None and not isinstance(
+            transcript_reference, str
+        ):
+            raise TypeError("transcript_reference must be a string")
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
+            selected_reference = (
+                row["transcript_reference"]
+                if transcript_reference is None
+                else transcript_reference
+            )
             if row["status"] not in {"starting", "running"}:
-                if row["session_id"] == session_id:
+                if (
+                    row["session_id"] == session_id
+                    and row["transcript_reference"] == selected_reference
+                ):
                     return self._agent_runtime_attempt_from_row(row)
                 raise ValueError("cannot mutate terminal runtime attempt")
             db.execute(
                 """
                 update agent_runtime_attempts
-                set session_id=?, updated_at=?
+                set session_id=?, transcript_reference=?, updated_at=?
                 where id=? and status in ('starting', 'running')
                 """,
-                (session_id, now_text, attempt_id),
+                (session_id, selected_reference, now_text, attempt_id),
             )
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)

@@ -300,6 +300,16 @@ failure tuple, prior bounded route attempts, pauses, and current capability
 snapshots. A `codex_api` resume rejection may repeat that route once with a
 fresh session under the same persisted session-evidence rules as Agent runs.
 
+After the one-shot start fence, every command-build, process, parser,
+transcript-counter, failure-classification, and pause-write step passes through
+one fail-closed finalization boundary. An exception terminalizes the active
+attempt with typed, detail-free evidence and disables failover. A streamed
+`thread.started` event immediately persists the session ID and transcript
+reference, before later output handling. A rejected read-only `item.started`
+persists the effect fence and raises the executor's dedicated abort exception;
+the process runner then terminates the child process group rather than waiting
+for a normal process result.
+
 Failover is unsafe as soon as one effectful `item.started` event exists, even
 when the command later reports failure. The run becomes or remains `unknown`
 until the existing reconciliation path proves whether the external system

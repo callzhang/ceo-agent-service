@@ -1,3 +1,7 @@
+# The route-loop closures below are passed only to `_finalized_step`, which
+# invokes them synchronously and never stores them beyond the current attempt.
+# ruff: noqa: B023
+
 from __future__ import annotations
 
 import json
@@ -35,6 +39,7 @@ from app.store import (
 )
 
 ResultT = TypeVar("ResultT")
+StepT = TypeVar("StepT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 _APPROVED_COMMAND_FACTORY_SEAL = object()
 
@@ -161,6 +166,10 @@ class RoutedCodexExecutionError(RuntimeError):
         self.code = code
         self.reason = reason
         super().__init__(code)
+
+
+class RoutedCodexPolicyAbort(RuntimeError):
+    """Abort the child process immediately after fail-closed policy evidence."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -573,15 +582,48 @@ class RoutedCodexExecution:
         )
 
         while True:
-            transcript_start = (
-                self._session_line_counter(route_session_id) if route_session_id else 0
-            )
+            transcript_start = 0
+            transcript_end = 0
             line_count = 0
             effect_policy_violated = False
+            observed_session_id = route_session_id or ""
+            transcript_reference = (
+                f"codex_session:{observed_session_id}" if observed_session_id else ""
+            )
+
+            def current_evidence() -> tuple[str, str, int, int]:
+                return (
+                    observed_session_id,
+                    transcript_reference,
+                    transcript_start,
+                    max(
+                        transcript_start + line_count,
+                        transcript_start,
+                        transcript_end,
+                    ),
+                )
+
+            if route_session_id:
+                transcript_start = self._finalized_step(
+                    active_attempt,
+                    stage="transcript_evidence",
+                    evidence=current_evidence,
+                    action=lambda: self._session_line_counter(route_session_id),
+                )
 
             def observe_stdout_line(line: str) -> None:
                 nonlocal line_count, effect_policy_violated, active_attempt
+                nonlocal observed_session_id, transcript_reference
                 line_count += 1
+                streamed_session_id = self._session_id_parser(line)
+                if streamed_session_id:
+                    observed_session_id = streamed_session_id
+                    transcript_reference = f"codex_session:{streamed_session_id}"
+                    active_attempt = self._store.set_agent_runtime_attempt_session(
+                        active_attempt.id,
+                        streamed_session_id,
+                        transcript_reference,
+                    )
                 if _line_violates_read_only_policy(
                     line,
                     effect_registry=self._effect_registry,
@@ -596,71 +638,75 @@ class RoutedCodexExecution:
                         )
                     if policy.effect_mode is ExecutionEffectMode.READ_ONLY:
                         effect_policy_violated = True
+                        raise RoutedCodexPolicyAbort("runtime_effect_policy_violation")
 
-            command, env = command_factory.build(
-                adapter=self._adapter,
-                route=route,
-                prompt=prompt,
-                session_id=route_session_id,
+            command, env = self._finalized_step(
+                active_attempt,
+                stage="command_build",
+                evidence=current_evidence,
+                action=lambda: command_factory.build(
+                    adapter=self._adapter,
+                    route=route,
+                    prompt=prompt,
+                    session_id=route_session_id,
+                ),
             )
-            try:
-                process = self._executor(
+            process = self._finalized_step(
+                active_attempt,
+                stage="process_execution",
+                evidence=current_evidence,
+                action=lambda: self._executor(
                     command,
                     prompt=prompt,
                     env=env,
                     total_timeout_seconds=self._total_timeout_seconds,
                     idle_timeout_seconds=self._idle_timeout_seconds,
                     on_stdout_line=observe_stdout_line,
-                )
-            except Exception as exc:
-                self._fail_unclassified(active_attempt)
-                raise RoutedCodexExecutionError(
-                    "runtime_executor_failed", "process_executor_failed"
-                ) from exc
+                ),
+            )
 
             observed_session_id = (
-                self._session_id_parser(process.stdout) or route_session_id or ""
+                self._finalized_step(
+                    active_attempt,
+                    stage="transcript_evidence",
+                    evidence=current_evidence,
+                    action=lambda: self._session_id_parser(process.stdout),
+                )
+                or observed_session_id
             )
             transcript_end = max(transcript_start + line_count, transcript_start)
             if observed_session_id:
                 transcript_end = max(
                     transcript_end,
-                    self._session_line_counter(observed_session_id),
+                    self._finalized_step(
+                        active_attempt,
+                        stage="transcript_evidence",
+                        evidence=current_evidence,
+                        action=lambda: self._session_line_counter(observed_session_id),
+                    ),
                 )
             transcript_reference = (
                 f"codex_session:{observed_session_id}" if observed_session_id else ""
             )
 
             if process.returncode == 0 and not process.timed_out:
-                if effect_policy_violated:
-                    self._fail_policy_violation(
-                        active_attempt,
+                value = self._finalized_step(
+                    active_attempt,
+                    stage="result_parse",
+                    evidence=current_evidence,
+                    action=lambda: parser(process.stdout),
+                )
+                completed = self._finalized_step(
+                    active_attempt,
+                    stage="attempt_completion",
+                    evidence=current_evidence,
+                    action=lambda: self._store.complete_agent_runtime_attempt(
+                        active_attempt.id,
                         observed_session_id,
                         transcript_reference,
                         transcript_start,
                         transcript_end,
-                    )
-                    raise RoutedCodexExecutionError("runtime_effect_policy_violation")
-                try:
-                    value = parser(process.stdout)
-                except Exception as exc:
-                    self._store.fail_agent_runtime_attempt(
-                        active_attempt.id,
-                        RuntimeFailureClass.RESULT.value,
-                        "runtime_result_invalid",
-                        False,
-                        session_id=observed_session_id,
-                        transcript_reference=transcript_reference,
-                        transcript_start=transcript_start,
-                        transcript_end=transcript_end,
-                    )
-                    raise RoutedCodexExecutionError("runtime_result_invalid") from exc
-                completed = self._store.complete_agent_runtime_attempt(
-                    active_attempt.id,
-                    observed_session_id,
-                    transcript_reference,
-                    transcript_start,
-                    transcript_end,
+                    ),
                 )
                 if conversation_id and observed_session_id:
                     self._store.upsert_conversation_runtime_session(
@@ -675,12 +721,17 @@ class RoutedCodexExecution:
                     transcript_end=transcript_end,
                 )
 
-            failure = self._adapter.classify_failure(
-                process.stdout,
-                process.stderr,
-                process.returncode,
-                timed_out=process.timed_out,
-                timeout_kind=process.timeout_kind,
+            failure = self._finalized_step(
+                active_attempt,
+                stage="failure_classification",
+                evidence=current_evidence,
+                action=lambda: self._adapter.classify_failure(
+                    process.stdout,
+                    process.stderr,
+                    process.returncode,
+                    timed_out=process.timed_out,
+                    timeout_kind=process.timeout_kind,
+                ),
             )
             if (
                 observed_session_id
@@ -696,22 +747,32 @@ class RoutedCodexExecution:
                         active_attempt.id
                     )
                 effect_policy_violated = True
-            failed_attempt = self._store.fail_agent_runtime_attempt(
-                active_attempt.id,
-                failure.failure_class.value,
-                failure.code,
-                failure.failover_permitted,
-                session_id=observed_session_id,
-                transcript_reference=transcript_reference,
-                transcript_start=transcript_start,
-                transcript_end=transcript_end,
-            )
             if failure.route_pause_required:
-                self._store.open_runtime_route_pause(
-                    route.name,
-                    failure.code,
-                    datetime.now(UTC) + self._config.retry_delay,
+                self._finalized_step(
+                    active_attempt,
+                    stage="route_pause",
+                    evidence=current_evidence,
+                    action=lambda: self._store.open_runtime_route_pause(
+                        route.name,
+                        failure.code,
+                        datetime.now(UTC) + self._config.retry_delay,
+                    ),
                 )
+            failed_attempt = self._finalized_step(
+                active_attempt,
+                stage="attempt_failure",
+                evidence=current_evidence,
+                action=lambda: self._store.fail_agent_runtime_attempt(
+                    active_attempt.id,
+                    failure.failure_class.value,
+                    failure.code,
+                    failure.failover_permitted,
+                    session_id=observed_session_id,
+                    transcript_reference=transcript_reference,
+                    transcript_start=transcript_start,
+                    transcript_end=transcript_end,
+                ),
+            )
             if effect_policy_violated:
                 raise RoutedCodexExecutionError("runtime_effect_policy_violation")
             if policy.effect_mode is ExecutionEffectMode.EFFECTFUL:
@@ -738,7 +799,19 @@ class RoutedCodexExecution:
             successor = self._claim_and_start(
                 workload_kind, workload_key, route, route_session_id, policy.effect_mode
             )
-            self._store.mark_agent_runtime_attempt_superseded(failed_attempt.id)
+            self._finalized_step(
+                successor,
+                stage="attempt_supersede",
+                evidence=lambda: (
+                    route_session_id or "",
+                    (f"codex_session:{route_session_id}" if route_session_id else ""),
+                    0,
+                    0,
+                ),
+                action=lambda: self._store.mark_agent_runtime_attempt_superseded(
+                    failed_attempt.id
+                ),
+            )
             active_attempt = successor
 
     def _claim_and_start(
@@ -768,7 +841,23 @@ class RoutedCodexExecution:
         except AgentRuntimeAttemptStartConflictError as exc:
             raise RoutedCodexExecutionError("runtime_attempt_active") from exc
         if effect_mode is ExecutionEffectMode.EFFECTFUL:
-            return self._store.note_runtime_attempt_effect_started(running.id)
+            try:
+                return self._store.note_runtime_attempt_effect_started(running.id)
+            except Exception as exc:
+                self._terminalize_active_attempt(
+                    running,
+                    failure_class=RuntimeFailureClass.PROCESS,
+                    failure_code="runtime_effect_fence_failed",
+                    session_id=session_id or "",
+                    transcript_reference=(
+                        f"codex_session:{session_id}" if session_id else ""
+                    ),
+                    transcript_start=0,
+                    transcript_end=0,
+                )
+                raise RoutedCodexExecutionError(
+                    "runtime_post_start_failed", "effect_fence"
+                ) from exc
         return running
 
     def _session_for_route(
@@ -788,34 +877,78 @@ class RoutedCodexExecution:
         except (OSError, RuntimeError, TypeError, ValueError):
             return None
 
-    def _fail_unclassified(self, attempt: AgentRuntimeAttempt) -> None:
-        persisted = self._store.get_agent_runtime_attempt(attempt.id)
-        if persisted is None or persisted.status not in {"starting", "running"}:
-            return
-        self._store.fail_agent_runtime_attempt(
-            persisted.id,
-            RuntimeFailureClass.PROCESS.value,
-            "runtime_executor_failed",
-            False,
-        )
-
-    def _fail_policy_violation(
+    def _finalized_step(
         self,
         attempt: AgentRuntimeAttempt,
+        *,
+        stage: str,
+        evidence: Callable[[], tuple[str, str, int, int]],
+        action: Callable[[], StepT],
+    ) -> StepT:
+        try:
+            return action()
+        except RoutedCodexPolicyAbort as exc:
+            session_id, reference, start, end = evidence()
+            self._terminalize_active_attempt(
+                attempt,
+                failure_class=RuntimeFailureClass.CAPABILITY,
+                failure_code="runtime_effect_policy_violation",
+                session_id=session_id,
+                transcript_reference=reference,
+                transcript_start=start,
+                transcript_end=end,
+            )
+            raise RoutedCodexExecutionError("runtime_effect_policy_violation") from exc
+        except Exception as exc:
+            session_id, reference, start, end = evidence()
+            failure_code = {
+                "process_execution": "runtime_executor_failed",
+                "result_parse": "runtime_result_invalid",
+            }.get(stage, f"runtime_{stage}_failed")
+            self._terminalize_active_attempt(
+                attempt,
+                failure_class=(
+                    RuntimeFailureClass.RESULT
+                    if stage == "result_parse"
+                    else RuntimeFailureClass.PROCESS
+                ),
+                failure_code=failure_code,
+                session_id=session_id,
+                transcript_reference=reference,
+                transcript_start=start,
+                transcript_end=end,
+            )
+            error_code = {
+                "process_execution": "runtime_executor_failed",
+                "result_parse": "runtime_result_invalid",
+            }.get(stage, "runtime_post_start_failed")
+            raise RoutedCodexExecutionError(error_code, stage) from exc
+
+    def _terminalize_active_attempt(
+        self,
+        attempt: AgentRuntimeAttempt,
+        *,
+        failure_class: RuntimeFailureClass,
+        failure_code: str,
         session_id: str,
         transcript_reference: str,
         transcript_start: int,
         transcript_end: int,
     ) -> None:
+        persisted = self._store.get_agent_runtime_attempt(attempt.id)
+        if persisted is None or persisted.status not in {"starting", "running"}:
+            return
         self._store.fail_agent_runtime_attempt(
-            attempt.id,
-            RuntimeFailureClass.CAPABILITY.value,
-            "runtime_effect_policy_violation",
+            persisted.id,
+            failure_class.value,
+            failure_code,
             False,
-            session_id=session_id,
-            transcript_reference=transcript_reference,
-            transcript_start=transcript_start,
-            transcript_end=transcript_end,
+            session_id=session_id or persisted.session_id,
+            transcript_reference=(
+                transcript_reference or persisted.transcript_reference
+            ),
+            transcript_start=max(transcript_start, 0),
+            transcript_end=max(transcript_end, transcript_start, 0),
         )
 
 
