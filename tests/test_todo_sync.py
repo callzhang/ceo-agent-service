@@ -167,6 +167,40 @@ def test_task_todo_outbox_receipt_write_failure_never_blindly_replays(tmp_path, 
     )
 
 
+def test_legacy_task_todo_outbox_migrates_retry_cap_without_status_violation(tmp_path):
+    store = _store(tmp_path)
+    with store._connect() as db:
+        db.execute("drop table task_todo_sync_outbox")
+        db.execute(
+            """
+            create table task_todo_sync_outbox (
+                id integer primary key autoincrement,
+                operation_key text not null unique,
+                work_todo_id integer not null,
+                operation text not null check(operation in ('create', 'complete')),
+                evidence_json text not null default '{}',
+                status text not null default 'queued'
+                    check(status in ('queued', 'running', 'completed', 'failed', 'unknown')),
+                lease_owner text not null default '', lease_expires_at text not null default '',
+                receipt_json text not null default '{}', error text not null default '',
+                created_at text not null default current_timestamp, updated_at text not null default current_timestamp,
+                completed_at text not null default ''
+            )
+            """
+        )
+    store._initialize()
+    _, todo_id = _project_and_todo(store)
+    store.enqueue_task_todo_sync_outbox(operation_key="legacy", work_todo_id=todo_id, operation="create")
+    for now in ("2026-06-27 10:00:00", "2026-06-27 10:02:00", "2026-06-27 10:05:00"):
+        item = store.claim_task_todo_sync_outbox(owner="worker", now=now)
+        assert item is not None
+        store.retry_task_todo_sync_outbox(outbox_id=item["id"], owner="worker", error="no_effect", now=now)
+    exhausted = store.list_task_todo_sync_outbox(statuses=("failed",))[0]
+    assert exhausted["attempt_count"] == 3 and exhausted["next_attempt_at"] == ""
+    store.enqueue_task_todo_sync_outbox(operation_key="later", work_todo_id=todo_id, operation="create")
+    assert store.claim_task_todo_sync_outbox(owner="later", now="2026-06-27 10:10:00")["operation_key"] == "later"
+
+
 def test_maybe_create_dingtalk_todo_creates_high_confidence_link(tmp_path):
     store = _store(tmp_path)
     _, todo_id = _project_and_todo(store)
