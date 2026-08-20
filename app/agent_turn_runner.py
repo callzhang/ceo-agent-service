@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -202,7 +203,6 @@ class AgentTurnProcess(Generic[ResultT]):
         recovery_started_actions: set[int] = set()
         effect_action_counts = [0] * len(expected_effect_actions)
         effect_action_by_call_id: dict[str, int] = {}
-        completed_effect_call_ids: set[str] = set()
         suppressed_session_replay_call_ids: set[str] = set()
         observed_session_id = ""
         session_transcript_end = 0
@@ -266,8 +266,6 @@ class AgentTurnProcess(Generic[ResultT]):
                     raise AgentReadOnlyViolationError(
                         "audit_skill_reread_missing"
                     )
-            if event.get("type") == "item.completed" and call_id:
-                completed_effect_call_ids.add(call_id)
             if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
                 if event.get("type") == "item.started":
                     authorization_id = metadata.get("authorization_id")
@@ -438,6 +436,36 @@ class AgentTurnProcess(Generic[ResultT]):
                     previous_count = session_end
                     time.sleep(0.05)
                 session_transcript_end = max(previous_count, 0)
+                persisted_for_replay = self.store.get_agent_run(run.id)
+                persisted_completed_call_ids = {
+                    str(item.get("id") or item.get("call_id") or "")
+                    for event in (
+                        persisted_for_replay.tool_events
+                        if persisted_for_replay is not None
+                        else ()
+                    )
+                    if event.get("type") == "item.completed"
+                    for item in [event.get("item")]
+                    if isinstance(item, dict)
+                }
+                persisted_read_counts = Counter(
+                    (
+                        str(metadata.get("reviewed_server") or ""),
+                        str(metadata.get("reviewed_tool") or ""),
+                        str(metadata.get("arguments_digest") or ""),
+                    )
+                    for event in (
+                        persisted_for_replay.tool_events
+                        if persisted_for_replay is not None
+                        else ()
+                    )
+                    if event.get("type") == "item.completed"
+                    for item in [event.get("item")]
+                    if isinstance(item, dict)
+                    for metadata in [item.get("metadata")]
+                    if isinstance(metadata, dict)
+                    and metadata.get("effect") == EffectKind.READ_ONLY.value
+                )
                 for completed_payload in extract_codex_mcp_tool_results_from_session(
                     session_for_receipts,
                     codex_home=_codex_home(),
@@ -450,7 +478,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         if isinstance(completed_item, dict)
                         else ""
                     )
-                    if not call_id or call_id in completed_effect_call_ids:
+                    if not call_id or call_id in persisted_completed_call_ids:
                         continue
                     # Session history contains every MCP call, including
                     # read-only integrations owned outside this effect registry.
@@ -460,15 +488,17 @@ class AgentTurnProcess(Generic[ResultT]):
                     call = self.effects.classify(completed_item)
                     if call is None:
                         continue
-                    if run.role is AgentRole.CONSUMER:
+                    if call.server == "agent_cli" and (
+                        run.role is AgentRole.CONSUMER
+                        or call.effect is EffectKind.READ_ONLY
+                    ):
                         continue
-                    if recovery_phase != "reconcile" and call.effect is EffectKind.READ_ONLY:
-                        continue
-                    # A session-only read without a controlled receipt cannot
-                    # become audit evidence. Ignore it here; reconciliation
-                    # validation will still reject a result that relies on it.
+                    # Read-only native MCP calls are valid audit evidence even
+                    # when Codex records them only in the session JSONL. They
+                    # still pass through the reviewed registry and the normal
+                    # sanitizer below; raw arguments and results are not stored.
                     try:
-                        self._normalized_effect_event(
+                        normalized_completion = self._normalized_effect_event(
                             completed_payload,
                             read_only=(recovery_phase == "reconcile"),
                             operation_id=run.operation_id,
@@ -480,6 +510,26 @@ class AgentTurnProcess(Generic[ResultT]):
                         if str(exc) != "agent_cli_receipt_invalid":
                             raise
                         continue
+                    if call.effect is EffectKind.READ_ONLY:
+                        normalized_item = (
+                            normalized_completion.get("item")
+                            if isinstance(normalized_completion, dict)
+                            else None
+                        )
+                        normalized_metadata = (
+                            normalized_item.get("metadata")
+                            if isinstance(normalized_item, dict)
+                            else None
+                        )
+                        if isinstance(normalized_metadata, dict):
+                            read_key = (
+                                str(normalized_metadata.get("reviewed_server") or ""),
+                                str(normalized_metadata.get("reviewed_tool") or ""),
+                                str(normalized_metadata.get("arguments_digest") or ""),
+                            )
+                            if persisted_read_counts[read_key] > 0:
+                                persisted_read_counts[read_key] -= 1
+                                continue
                     start_payload = {
                         "type": "item.started",
                         "item": {

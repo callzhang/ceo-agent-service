@@ -67,9 +67,6 @@ def count_codex_session_lines(
     codex_home: Path | None = None,
 ) -> int:
     root = codex_home or DEFAULT_CODEX_HOME
-    indexed = _indexed_session(session_id, root)
-    if indexed and indexed.line_count is not None:
-        return indexed.line_count
     path = find_codex_session_path(session_id, codex_home=root)
     if path is None:
         return 0
@@ -120,11 +117,24 @@ def extract_codex_mcp_tool_results_from_session(
     if path is None:
         return []
     events: list[dict[str, object]] = []
+    selected_turn_id = ""
     for line in _iter_file_lines(path, start_line=start_line, end_line=end_line):
         try:
             payload = json.loads(line)
         except json.JSONDecodeError:
             continue
+        event_payload = payload.get("payload") if isinstance(payload, dict) else None
+        if isinstance(event_payload, dict) and payload.get("type") == "event_msg":
+            event_type = event_payload.get("type")
+            turn_id = event_payload.get("turn_id")
+            if event_type == "turn_started" and isinstance(turn_id, str):
+                if not selected_turn_id:
+                    selected_turn_id = turn_id
+                elif turn_id != selected_turn_id:
+                    break
+                continue
+            if selected_turn_id and turn_id not in {None, selected_turn_id}:
+                continue
         event = _mcp_tool_result_from_event_msg(payload)
         if event is not None:
             events.append(event)
@@ -178,7 +188,10 @@ def refresh_codex_session_path_index(codex_home: Path | None = None) -> int:
     index_path = root / SESSION_PATH_INDEX
     index_path.parent.mkdir(parents=True, exist_ok=True)
     index_path.write_text(
-        "\n".join(json.dumps(record, ensure_ascii=False) for record in records.values()),
+        "".join(
+            json.dumps(record, ensure_ascii=False) + "\n"
+            for record in records.values()
+        ),
         encoding="utf-8",
     )
     return len(records)
@@ -229,7 +242,14 @@ def _append_session_path_index(
         path,
         line_count=line_count,
     )
+    needs_separator = index_path.exists() and index_path.stat().st_size > 0
+    if needs_separator:
+        with index_path.open("rb") as existing:
+            existing.seek(-1, 2)
+            needs_separator = existing.read(1) != b"\n"
     with index_path.open("a", encoding="utf-8") as file:
+        if needs_separator:
+            file.write("\n")
         file.write(json.dumps(record, ensure_ascii=False))
         file.write("\n")
 
@@ -257,14 +277,8 @@ def _session_path_index_record(
 
 
 def _session_index_record_matches_file(record: dict[str, Any], path: Path) -> bool:
-    try:
-        stat = path.stat()
-    except OSError:
-        return False
-    return (
-        record.get("mtime_ns") == stat.st_mtime_ns
-        and record.get("size") == stat.st_size
-    )
+    session_id = record.get("session_id")
+    return isinstance(session_id, str) and _file_session_id(path) == session_id
 
 
 def _count_file_lines(path: Path) -> int:
@@ -443,7 +457,22 @@ def _mcp_tool_result_from_event_msg(
     if payload.get("type") != "event_msg":
         return None
     event = payload.get("payload")
-    if not isinstance(event, dict) or event.get("type") != "mcp_tool_call_end":
+    if not isinstance(event, dict):
+        return None
+    if event.get("type") == "item_completed":
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "McpToolCall":
+            return None
+        if not all(
+            isinstance(item.get(key), str) and item.get(key)
+            for key in ("id", "server", "tool")
+        ) or not isinstance(item.get("arguments"), dict):
+            return None
+        return {
+            "type": "item.completed",
+            "item": {**item, "type": "mcp_tool_call"},
+        }
+    if event.get("type") != "mcp_tool_call_end":
         return None
     invocation = event.get("invocation")
     result = event.get("result")

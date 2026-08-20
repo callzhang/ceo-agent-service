@@ -231,6 +231,9 @@ Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的�
 - A/B session ID 与 transcript 行范围；
 - operation ID、run 状态、租约和下一次可用时间；
 - 结构化最终结果、外部结果状态和精确去重键。
+- 当前业务 turn 的受审工具生命周期元数据，包括 capability、operation 和参数/结果摘要；
+  原始参数与工具结果仍只保留在 Codex session JSONL。若原生 MCP 事件只出现在 session
+  JSONL，运行器会在进程结束后按 turn ID 回放这些元数据，并排除随后执行的 hook turn。
 
 服务不在 SQLite 复制完整 Codex transcript，也不维护另一套业务审计日志。History 页面按
 session 指针读取 JSONL，并只向普通用户展示业务结果；内部角色、规划标签和原始敏感工具

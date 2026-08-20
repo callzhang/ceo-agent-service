@@ -184,6 +184,13 @@ def test_find_codex_session_path_uses_refreshed_path_index(tmp_path: Path):
     assert find_codex_session_path(session_id, codex_home=tmp_path) == session_path
     assert count_codex_session_lines(session_id, codex_home=tmp_path) == 2
 
+    with session_path.open("a", encoding="utf-8") as session_file:
+        session_file.write(
+            "\n" + json.dumps({"type": "event_msg", "payload": {}}),
+        )
+
+    assert count_codex_session_lines(session_id, codex_home=tmp_path) == 3
+
 
 def test_render_local_codex_session_renders_reasoning_summary_and_skips_system_events(tmp_path: Path):
     session_id = "019e2c00-test-session"

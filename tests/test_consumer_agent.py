@@ -245,6 +245,102 @@ def _result_jsonl(*, session: str = "session-a") -> str:
     )
 
 
+def test_consumer_persists_native_mcp_reads_from_codex_session(
+    store, task, context, tmp_path, monkeypatch
+):
+    session_id = "session-native-mcp"
+    session_dir = tmp_path / "sessions" / "2026" / "08" / "20"
+    session_dir.mkdir(parents=True)
+    session_path = session_dir / f"rollout-{session_id}.jsonl"
+    records = [
+        {"type": "session_meta", "payload": {"id": session_id}},
+        {
+            "type": "event_msg",
+            "payload": {"type": "turn_started", "turn_id": "turn-business"},
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "turn_id": "turn-business",
+                "item": {
+                    "type": "McpToolCall",
+                    "id": "controlled-wrapper-1",
+                    "server": "agent_cli",
+                    "tool": "execute_reviewed_read",
+                    "arguments": {"argv": ["unsupported", "read"]},
+                    "status": "completed",
+                    "result": {"content": [{"type": "text", "text": "ignored"}]},
+                },
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "turn_id": "turn-business",
+                "item": {
+                    "type": "McpToolCall",
+                    "id": "xiaoqing-read-1",
+                    "server": "xiaoqing_interview",
+                    "tool": "search_candidates",
+                    "arguments": {"query": "candidate"},
+                    "status": "completed",
+                    "result": {"content": [{"type": "text", "text": "found"}]},
+                },
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {"type": "turn_started", "turn_id": "turn-hook"},
+        },
+        {
+            "type": "event_msg",
+            "payload": {
+                "type": "item_completed",
+                "turn_id": "turn-hook",
+                "item": {
+                    "type": "McpToolCall",
+                    "id": "hook-write-1",
+                    "server": "memory_connector",
+                    "tool": "memory_write",
+                    "arguments": {"data": "hook"},
+                    "status": "completed",
+                    "result": {"content": [{"type": "text", "text": "stored"}]},
+                },
+            },
+        },
+    ]
+    session_path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+
+    stdout_events = _result_jsonl(session=session_id).splitlines()
+    stdout_events.insert(1, json.dumps({"type": "turn.started"}))
+    stdout_events.append(json.dumps({"type": "turn.completed"}))
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor("\n".join(stdout_events)),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run(result.run_id)
+    assert run is not None
+    assert [event["type"] for event in run.tool_events] == [
+        "item.started",
+        "item.completed",
+    ]
+    completed = run.tool_events[-1]
+    assert completed["item"]["metadata"]["capability"] == (
+        "xiaoqing_interview"
+    )
+    assert completed["item"]["metadata"]["operation"] == (
+        "search_candidates"
+    )
+
+
 def _proposal_jsonl(payload: dict[str, object]) -> str:
     result = {
         "outcome": "proposal",
