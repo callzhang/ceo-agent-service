@@ -34,6 +34,29 @@ def test_quality_gate_fails_closed_when_a_required_source_is_missing(tmp_path):
     assert {issue.code for issue in report.violations} == {"source_missing"}
 
 
+def test_quality_gate_runtime_attempt_invariants_use_persisted_rows(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute(
+            """insert into agent_runtime_attempts
+            (agent_run_id, workload_kind, workload_key, attempt_number, route_name,
+             runtime_kind, credential_mode, model, status, first_effect_started_at)
+            values (999, 'agent_run', '999', 1, 'codex_oauth', 'codex_cli',
+                    'local_oauth', 'gpt-5.5', 'completed', '2026-08-07 00:00:00')"""
+        )
+        db.execute(
+            """insert into agent_runtime_attempts
+            (agent_run_id, workload_kind, workload_key, attempt_number, route_name, runtime_kind,
+             credential_mode, model, status)
+            values (999, 'agent_run', '999', 2, 'codex_api', 'codex_cli', 'service_api',
+                    'gpt-5.5', 'running')"""
+        )
+    codes = {issue.code for issue in scan_hourly_quality(store.path, now=NOW).violations}
+    assert {"runtime_attempt_without_parent", "completed_runtime_attempt_without_final_run",
+            "unsafe_runtime_failover", "unknown_effect_with_fallback_attempt"} <= codes
+
+
 def test_required_live_channels_skips_unused_lark_but_includes_referenced_lark(
     tmp_path,
 ):
