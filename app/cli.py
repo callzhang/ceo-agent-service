@@ -2299,12 +2299,13 @@ def run_loop(
         if not network_ready():
             sleep(poll_interval_seconds)
             continue
-        worker.run_once(max_batches=max_batches)
         if runtime_refresher is not None:
             try:
                 runtime_refresher.refresh_expired()
             except Exception:  # noqa: BLE001 - keep the sole long-lived owner alive
-                pass
+                sleep(poll_interval_seconds)
+                continue
+        worker.run_once(max_batches=max_batches)
         sleep(poll_interval_seconds)
 
 
@@ -2338,15 +2339,16 @@ def run_consumer_loop(
         if not network_ready():
             sleep(poll_interval_seconds)
             continue
-        try:
-            worker.consume_once(max_tasks=max_tasks)
-        except Exception as exc:
-            worker.store.record_error("", "", "consumer_loop_error", str(exc))
         if runtime_refresher is not None:
             try:
                 runtime_refresher.refresh_expired()
             except Exception:  # noqa: BLE001 - keep the sole long-lived owner alive
-                pass
+                sleep(poll_interval_seconds)
+                continue
+        try:
+            worker.consume_once(max_tasks=max_tasks)
+        except Exception as exc:
+            worker.store.record_error("", "", "consumer_loop_error", str(exc))
         sleep(poll_interval_seconds)
 
 

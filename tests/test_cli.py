@@ -4644,7 +4644,38 @@ def test_run_loop_calls_run_once_and_sleeps_once():
             runtime_refresher=Refresher(),
         )
 
-    assert calls == [3, "refresh", "sleep:7"]
+    assert calls == ["refresh", 3, "sleep:7"]
+
+
+def test_run_loop_does_not_claim_work_when_runtime_refresh_fails():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class FakeWorker:
+        def run_once(self, max_batches=None):
+            calls.append("run")
+
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+            raise RuntimeError("stale")
+
+    def sleep(seconds):
+        calls.append(f"sleep:{seconds}")
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_loop(
+            FakeWorker(),
+            poll_interval_seconds=7,
+            sleep=sleep,
+            network_ready=lambda: True,
+            runtime_refresher=Refresher(),
+        )
+
+    assert calls == ["refresh", "sleep:7"]
 
 
 def test_explicit_runtime_startup_refreshes_once_and_returns_owner(tmp_path):
@@ -4780,10 +4811,41 @@ def test_producer_and_consumer_loops_call_separate_methods_once():
     assert calls == [
         "produce:3",
         "sleep:7",
-        "consume:5",
         "refresh",
+        "consume:5",
         "sleep:11",
     ]
+
+
+def test_consumer_loop_does_not_claim_work_when_runtime_refresh_fails():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class FakeWorker:
+        def consume_once(self, max_tasks=None):
+            calls.append("consume")
+
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+            raise RuntimeError("stale")
+
+    def sleep(seconds):
+        calls.append(f"sleep:{seconds}")
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_consumer_loop(
+            FakeWorker(),
+            poll_interval_seconds=11,
+            sleep=sleep,
+            network_ready=lambda: True,
+            runtime_refresher=Refresher(),
+        )
+
+    assert calls == ["refresh", "sleep:11"]
 
 
 def test_producer_and_consumer_loops_skip_when_network_not_ready():

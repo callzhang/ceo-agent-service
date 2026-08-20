@@ -19,6 +19,7 @@ from app.agent_runtime_router import (
     local_codex_session_effect_probe,
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.store import AutoReplyStore
 
 
@@ -140,14 +141,21 @@ def build_production_runtime_refresher(
     executor: ProcessExecutor | None = None,
     capability_registry: RuntimeCapabilityRegistry = PRODUCTION_RUNTIME_CAPABILITIES,
     temporary_root: Path | None = None,
+    native_cli_classifier: NativeCliMetadataClassifier | None = None,
 ):
     """Build the route probe/refresher that owns the shared production view."""
 
     from app.agent_runtime_probe import AgentRuntimeProbe, RuntimeCapabilityRefresher
 
     runtime_config = load_runtime_config(os.environ)
+    classifier = native_cli_classifier or NativeCliMetadataClassifier()
+    classifier.prewarm()
     capability_registry.refresh_surface_manifests(
-        _reviewed_surface_manifests(runtime_config, codex_bin=codex_bin)
+        _reviewed_surface_manifests(
+            runtime_config,
+            codex_bin=codex_bin,
+            native_cli_classifier=classifier,
+        )
     )
     probe_kwargs = {
         "config": runtime_config,
@@ -164,9 +172,18 @@ def build_production_runtime_refresher(
     )
 
 
-def _reviewed_surface_manifests(runtime_config, *, codex_bin: str):
+def _reviewed_surface_manifests(
+    runtime_config,
+    *,
+    codex_bin: str,
+    native_cli_classifier: NativeCliMetadataClassifier,
+):
     adapter = CodexRuntimeAdapter(Path.cwd(), runtime_config, codex_bin=codex_bin)
-    reviewed_skills = _reviewed_skill_capabilities()
+    reviewed_skills = _explicit_reviewed_skill_capabilities()
+    reviewed_agent_cli_capabilities = frozenset(
+        f"agent_cli.{cli}"
+        for cli, _operation in native_cli_classifier.cache_keys
+    )
     manifests = {}
     for route in runtime_config.routes:
         transports = frozenset(
@@ -197,6 +214,7 @@ def _reviewed_surface_manifests(runtime_config, *, codex_bin: str):
                     "mcp:agent_cli:reviewed_write",
                     "dws_read",
                     *reviewed_skills,
+                    *reviewed_agent_cli_capabilities,
                 }
             )
         if "memory_connector" in transports:
@@ -214,21 +232,29 @@ def _reviewed_surface_manifests(runtime_config, *, codex_bin: str):
     return manifests
 
 
-def _reviewed_skill_capabilities() -> frozenset[str]:
-    roots = (
-        Path.home() / ".agents" / "skills",
-        Path(__file__).resolve().parents[1] / "skills",
+def _explicit_reviewed_skill_capabilities() -> frozenset[str]:
+    """Capabilities for production workloads with an explicit skill contract.
+
+    A file merely appearing below a skill root is not authorization. Each entry
+    here corresponds to a concrete production workload requirement.
+    """
+    reviewed_paths = (
+        (
+            "dingtang-okr-review",
+            Path.home()
+            / ".agents"
+            / "skills"
+            / "dingtang-okr-review"
+            / "SKILL.md",
+        ),
     )
     capabilities = set()
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for skill_path in root.rglob("SKILL.md"):
-            try:
-                digest = hashlib.sha256(skill_path.read_bytes()).hexdigest()
-            except OSError:
+    for expected_name, skill_path in reviewed_paths:
+        try:
+            if skill_path.parent.name != expected_name or not skill_path.is_file():
                 continue
-            capabilities.add(
-                f"reviewed_skill:{skill_path.parent.name}:{digest}"
-            )
+            digest = hashlib.sha256(skill_path.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        capabilities.add(f"reviewed_skill:{expected_name}:{digest}")
     return frozenset(capabilities)
