@@ -3384,6 +3384,7 @@ def main() -> None:
         test_ding_command(settings)
     elif args.command == "rerun-message":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         rerun_message_command(
             settings,
             conversation_id=args.conversation_id,

@@ -3248,6 +3248,41 @@ def test_parser_supports_rerun_message_command():
     assert args.force_new_decision is True
 
 
+def test_main_initializes_runtime_routes_before_rerun_message(
+    monkeypatch, tmp_path
+):
+    calls = []
+    monkeypatch.setenv("CEO_DRY_RUN", "1")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ceo-agent",
+            "rerun-message",
+            "--db",
+            str(tmp_path / "worker.sqlite3"),
+            "--conversation-id",
+            "cid-1",
+            "--message-id",
+            "msg-1",
+        ],
+    )
+    monkeypatch.setattr(
+        cli,
+        "initialize_agent_runtime_routes",
+        lambda settings: calls.append("initialize"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "rerun_message_command",
+        lambda *args, **kwargs: calls.append("rerun"),
+    )
+
+    cli.main()
+
+    assert calls == ["initialize", "rerun"]
+
+
 def test_parser_supports_send_attempt_command():
     parser = build_parser()
 
