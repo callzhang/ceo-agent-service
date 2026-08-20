@@ -159,6 +159,64 @@ def test_runtime_failure_fails_agent_run_without_completing_business_stop(
     }
     assert secret not in run.structured_error_json
     assert run.final_result_json == ""
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "failed"
+    assert task.recovery_code == CODEX_PROVIDER_AUTH_FAILED
+    assert task.locked_at is None
+    attempt = store.get_reply_attempt(1)
+    assert attempt is not None
+    assert attempt.action == "runtime_failure"
+    assert attempt.send_error == CODEX_PROVIDER_AUTH_FAILED
+
+
+def test_retryable_runtime_transport_failure_requeues_and_unlocks_task(store, account):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="u9",
+        conversation_title="Alex",
+        single_chat=True,
+        trigger_message_id="m1",
+        trigger_create_time="2026-07-17T10:00:00",
+        trigger_sender="Alex",
+        trigger_text="下午能给结论吗",
+    )
+
+    class RuntimeFailingRunner:
+        def decide(self, *_args, **_kwargs):
+            raise RoutedCodexExecutionError(
+                "runtime_route_unavailable",
+                "unsafe provider detail",
+                failure_class=RuntimeFailureClass.TRANSPORT,
+                failure_code="codex_transport_disconnected",
+                retryable_external_dependency=True,
+            )
+
+    now = datetime(2026, 8, 8, 8, 0, tzinfo=timezone.utc)
+    consumer = WechatReplyConsumer(
+        store,
+        RuntimeFailingRunner(),
+        reader=None,
+        account=account,
+        retry_delay=timedelta(minutes=5),
+        now_provider=lambda: now,
+    )
+
+    with pytest.raises(WechatTaskProcessingError):
+        consumer.run_once(limit=1)
+
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.available_at == "2026-08-08 08:05:00"
+    assert task.locked_at is None
+    assert task.error == "codex_transport_disconnected"
+    [run] = store.list_agent_runs_for_task_generation(1, "initial")
+    assert run.status == "failed"
+    assert "unsafe provider detail" not in run.structured_error_json
 
 
 def test_external_dependency_failure_defers_wechat_task_for_retry(

@@ -170,6 +170,31 @@ class WechatReplyConsumer:
                 structured_error,
                 owner=run_owner,
             )
+            if isinstance(exc, RoutedCodexExecutionError):
+                failure_code = exc.failure_code or exc.code
+                retryable = (
+                    exc.retryable_external_dependency
+                    and failure_code != CODEX_PROVIDER_AUTH_FAILED
+                    and task.attempts < self.max_task_attempts
+                )
+                self.store.finalize_wechat_reply_task(
+                    task_id=task.id,
+                    expected_execution_generation=task.execution_generation,
+                    action="runtime_failure",
+                    sensitivity_kind="normal",
+                    codex_reason=failure_code,
+                    draft_reply_text="",
+                    audit_summary=failure_code,
+                    send_status="failed",
+                    send_error=failure_code,
+                    recovery_code=(
+                        CODEX_PROVIDER_AUTH_FAILED
+                        if failure_code == CODEX_PROVIDER_AUTH_FAILED
+                        else ""
+                    ),
+                    task_status="pending" if retryable else "failed",
+                    available_at=self._retry_available_at() if retryable else "",
+                )
             raise
         self.store.complete_agent_run(
             run_claim.run.id,
