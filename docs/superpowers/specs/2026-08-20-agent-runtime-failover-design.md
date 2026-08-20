@@ -393,6 +393,31 @@ trimmed, nonempty session supplied to the provider. New tables enforce this pair
 checks; upgrades add the fields with `fresh` defaults and use database triggers
 to reject invalid direct writes.
 
+Non-reply workload identity is backed by an exact persisted parent, checked in
+the same transaction that claims its runtime attempt:
+
+- `structured:<okr_review_request_id>` requires a processing request;
+- `task:<task_agent_run_id>` requires a pre-call running `task_agent_runs` row;
+- `task:<project_id>:memory_backfill` names the existing `work_projects` row;
+- `meeting:<meeting_alignment_run_id>` requires a pre-call running
+  `meeting_alignment_runs` row;
+- `weekly_okr:<week_end>:<manager_user_id>:<source_digest>` requires the exact
+  running natural-key row in `weekly_okr_analysis_jobs`;
+- `memory:memory_write_event:<id>`,
+  `memory:wechat_memory_import_job:<id>`, and
+  `memory:wechat_memory_candidate:<id>` are source-qualified so equal numeric
+  IDs from different tables cannot collide.
+
+Legacy `task_agent_runs` rows migrate as completed. New task and meeting runs
+are inserted as running before provider launch and closed idempotently after
+the result or failure is persisted. Meeting analysis always starts fresh: it
+does not consume or update a Consumer conversation-session slot. Weekly OKR,
+project-memory backfill, and WeChat import extraction also start fresh.
+
+Memory outbox and approved-candidate writers are effectful. They use the
+runtime-attempt ledger for evidence only and never receive automatic provider
+failover; interrupted writes remain on their existing reconciliation path.
+
 Do not store:
 
 - API keys, OAuth tokens, cookies, authorization headers, or token fragments;

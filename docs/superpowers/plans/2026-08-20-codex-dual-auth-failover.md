@@ -841,16 +841,33 @@ git commit -m "feat: fail over Consumer and Audit Codex turns safely"
 Create `tests/test_runtime_route_coverage.py`:
 
 ```python
+import ast
 from pathlib import Path
+
+
+class CodexRunnerConstructorVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.lines: list[int] = []
+
+    def visit_Call(self, node: ast.Call) -> None:
+        target = node.func
+        if (
+            isinstance(target, ast.Name) and target.id == "CodexRunner"
+        ) or (
+            isinstance(target, ast.Attribute) and target.attr == "CodexRunner"
+        ):
+            self.lines.append(node.lineno)
+        self.generic_visit(node)
 
 
 def test_production_modules_do_not_construct_codex_runner_directly():
     allowed = {"app/codex_runtime_adapter.py"}
     offenders = []
     for path in Path("app").rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if "CodexRunner(" in text and str(path) not in allowed:
-            offenders.append(str(path))
+        visitor = CodexRunnerConstructorVisitor()
+        visitor.visit(ast.parse(path.read_text(encoding="utf-8")))
+        if visitor.lines and str(path) not in allowed:
+            offenders.append((str(path), visitor.lines))
     assert offenders == []
 ```
 
@@ -871,7 +888,7 @@ runner-enforced read-only. Do not create synthetic reply tasks.
 
 - [ ] **Step 4: Migrate callers one family at a time**
 
-For each listed caller, inject `AgentRuntimeRouter`/`CodexRuntimeAdapter`, replace direct `CodexRunner` construction, preserve its existing timeout/output parser, and persist its domain result only after the routed execution returns. Use the same route session lookup for conversation-bound structured and meeting runs; use fresh sessions for isolated weekly/backfill jobs.
+For each listed caller, inject `AgentRuntimeRouter`/`CodexRuntimeAdapter`, replace direct `CodexRunner` construction, preserve its existing timeout/output parser, and persist its domain result only after the routed execution returns. Conversation-bound structured requests may use their route-scoped session lookup. Meeting analysis always starts fresh and never reads or updates a Consumer session. Weekly OKR, project-memory backfill, and WeChat import extraction also use fresh sessions.
 
 Use these explicit workload identities:
 
@@ -879,16 +896,27 @@ Use these explicit workload identities:
 - structured OA/OKR request: `structured:<request_id>`;
 - task agent: insert the existing `task_agent_runs` row as running before the
   model call and use `task:<task_agent_run_id>`;
-- task-memory backfill: `task:<summary_input_id>:memory_backfill`;
+- task-memory backfill: `task:<project_id>:memory_backfill`;
 - meeting alignment: insert the existing `meeting_alignment_runs` row as
   running before the model call and use `meeting:<meeting_alignment_run_id>`;
-- weekly OKR analysis: `weekly_okr:<week_end>:<manager_user_id>:<source_digest>`;
-- Memory outbox/import: `memory:<existing_outbox_or_import_row_id>`;
-- WeChat Memory jobs: `memory:<existing_wechat_import_or_write_row_id>`.
+- weekly OKR analysis: insert or reuse the exact natural-key
+  `weekly_okr_analysis_jobs` row before the model call and use
+  `weekly_okr:<week_end>:<manager_user_id>:<source_digest>`;
+- Memory outbox write: `memory:memory_write_event:<event_id>`;
+- WeChat Memory extraction: insert a `wechat_memory_import_jobs` row for every
+  invocation before the model call and use
+  `memory:wechat_memory_import_job:<job_id>`;
+- WeChat approved-candidate write:
+  `memory:wechat_memory_candidate:<candidate_id>`.
 
 If a caller lacks the named persisted row, add that row before starting the
 runtime attempt in the caller's existing domain table. Do not use random UUIDs,
 prompt text, or a synthetic reply task as workload identity.
+
+The Memory outbox and approved-candidate writers are effectful. Migrate them to
+the attempt ledger for durable route evidence, but do not permit automatic
+provider failover; ambiguous completion remains owned by their existing
+write/reconciliation lifecycle.
 
 - [ ] **Step 5: Run each affected suite**
 

@@ -64,6 +64,8 @@ STORE_SCHEMA_VERSION = "2026-08-20.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_runtime_attempts",
     "conversation_runtime_sessions",
+    "weekly_okr_analysis_jobs",
+    "wechat_memory_import_jobs",
     "agent_run_events",
     "follow_up_send_attempts",
     "runtime_route_pauses",
@@ -76,6 +78,10 @@ STORE_SCHEMA_REQUIRED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_runtime_attempt_active_route",
+    "idx_task_agent_runs_active_input",
+    "idx_meeting_alignment_runs_active_job",
+    "idx_weekly_okr_analysis_jobs_identity",
+    "idx_wechat_memory_import_jobs_status",
     "idx_workbench_events_turn_id_id",
     "idx_workbench_artifacts_turn_created_id",
     "idx_workbench_turns_task_created_id",
@@ -94,6 +100,25 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "reply_attempts": ("human_decision_options_json",),
     "agent_runtime_attempts": ("session_mode", "source_session_id"),
     "conversation_runtime_sessions": ("contract_hash",),
+    "task_agent_runs": ("status", "error", "finished_at", "updated_at"),
+    "meeting_alignment_runs": ("finished_at", "updated_at"),
+    "weekly_okr_analysis_jobs": (
+        "week_end",
+        "manager_user_id",
+        "source_digest",
+        "status",
+        "error",
+        "finished_at",
+        "updated_at",
+    ),
+    "wechat_memory_import_jobs": (
+        "import_run_id",
+        "account_id",
+        "status",
+        "error",
+        "finished_at",
+        "updated_at",
+    ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_session_evidence_trim_insert",
@@ -1261,6 +1286,19 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_wechat_deliveries_status
                     on wechat_deliveries(status, id);
+                create table if not exists wechat_memory_import_jobs (
+                    id integer primary key autoincrement,
+                    import_run_id text not null,
+                    account_id text not null,
+                    status text not null default 'running'
+                        check(status in ('running', 'completed', 'failed')),
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
+                );
+                create index if not exists idx_wechat_memory_import_jobs_status
+                    on wechat_memory_import_jobs(status, id);
                 create table if not exists wechat_memory_candidates (
                     id integer primary key autoincrement,
                     import_run_id text not null,
@@ -1323,12 +1361,16 @@ class AutoReplyStore:
                     status text not null,
                     error text not null default '',
                     created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp,
                     foreign key(job_id) references meeting_alignment_jobs(id)
                 );
                 create index if not exists idx_meeting_alignment_runs_job
                     on meeting_alignment_runs(job_id, id);
                 create index if not exists idx_meeting_alignment_runs_created
                     on meeting_alignment_runs(created_at, id);
+                create unique index if not exists idx_meeting_alignment_runs_active_job
+                    on meeting_alignment_runs(job_id) where status='running';
                 create table if not exists codex_session_search_index (
                     id integer primary key autoincrement,
                     session_id text not null unique,
@@ -1575,10 +1617,31 @@ class AutoReplyStore:
                     decision_json text not null default '{}',
                     audit_summary text not null default '',
                     memory_recall_used integer not null default 0,
-                    created_at text not null default current_timestamp
+                    status text not null default 'completed'
+                        check(status in ('running', 'completed', 'failed')),
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
                 );
                 create index if not exists idx_task_agent_runs_input
                     on task_agent_runs(summary_input_id, id);
+                create table if not exists weekly_okr_analysis_jobs (
+                    id integer primary key autoincrement,
+                    week_end text not null,
+                    manager_user_id text not null,
+                    source_digest text not null,
+                    status text not null default 'running'
+                        check(status in ('running', 'completed', 'failed')),
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
+                );
+                create unique index if not exists idx_weekly_okr_analysis_jobs_identity
+                    on weekly_okr_analysis_jobs(
+                        week_end, manager_user_id, source_digest
+                    );
                 create table if not exists follow_up_drafts (
                     id integer primary key autoincrement,
                     project_id integer not null,
@@ -2371,6 +2434,34 @@ class AutoReplyStore:
                     on meeting_alignment_runs(created_at, id)
                 """
             )
+            meeting_run_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(meeting_alignment_runs)"
+                ).fetchall()
+            }
+            for column, definition in (
+                ("finished_at", "text not null default ''"),
+                ("updated_at", "text not null default ''"),
+            ):
+                if column not in meeting_run_columns:
+                    db.execute(
+                        "alter table meeting_alignment_runs "
+                        f"add column {column} {definition}"
+                    )
+            db.execute(
+                "update meeting_alignment_runs set updated_at=created_at "
+                "where updated_at=''"
+            )
+            db.execute(
+                "update meeting_alignment_runs set finished_at=created_at "
+                "where status<>'running' and finished_at=''"
+            )
+            db.execute(
+                "create unique index if not exists "
+                "idx_meeting_alignment_runs_active_job "
+                "on meeting_alignment_runs(job_id) where status='running'"
+            )
             db.execute(
                 """
                 create index if not exists idx_work_updates_created
@@ -2382,6 +2473,56 @@ class AutoReplyStore:
                 create index if not exists idx_work_summary_inputs_updated
                     on work_summary_inputs(updated_at desc, id desc)
                 """
+            )
+            task_run_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(task_agent_runs)").fetchall()
+            }
+            for column, definition in (
+                ("status", "text not null default 'completed'"),
+                ("error", "text not null default ''"),
+                ("finished_at", "text not null default ''"),
+                ("updated_at", "text not null default ''"),
+            ):
+                if column not in task_run_columns:
+                    db.execute(
+                        f"alter table task_agent_runs add column {column} {definition}"
+                    )
+            db.execute(
+                "update task_agent_runs set status='completed' "
+                "where status is null or status=''"
+            )
+            db.execute(
+                "update task_agent_runs set finished_at=created_at "
+                "where status<>'running' and finished_at=''"
+            )
+            db.execute(
+                "update task_agent_runs set updated_at=created_at where updated_at=''"
+            )
+            db.execute(
+                "create unique index if not exists idx_task_agent_runs_active_input "
+                "on task_agent_runs(summary_input_id) where status='running'"
+            )
+            db.execute(
+                """
+                create table if not exists weekly_okr_analysis_jobs (
+                    id integer primary key autoincrement,
+                    week_end text not null,
+                    manager_user_id text not null,
+                    source_digest text not null,
+                    status text not null default 'running'
+                        check(status in ('running', 'completed', 'failed')),
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
+                )
+                """
+            )
+            db.execute(
+                "create unique index if not exists "
+                "idx_weekly_okr_analysis_jobs_identity "
+                "on weekly_okr_analysis_jobs(week_end, manager_user_id, source_digest)"
             )
             org_user_profile_columns = {
                 row["name"]
@@ -2408,6 +2549,25 @@ class AutoReplyStore:
                     "alter table wechat_memory_candidates add column "
                     "memory_write_error text not null default ''"
                 )
+            db.execute(
+                """
+                create table if not exists wechat_memory_import_jobs (
+                    id integer primary key autoincrement,
+                    import_run_id text not null,
+                    account_id text not null,
+                    status text not null default 'running'
+                        check(status in ('running', 'completed', 'failed')),
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
+                )
+                """
+            )
+            db.execute(
+                "create index if not exists idx_wechat_memory_import_jobs_status "
+                "on wechat_memory_import_jobs(status, id)"
+            )
             wechat_delivery_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(wechat_deliveries)").fetchall()
@@ -4043,7 +4203,11 @@ class AutoReplyStore:
         else:
             source, separator, source_id = workload_key.partition(":")
             if (
-                source not in {"memory_write_event", "wechat_memory_candidate"}
+                source not in {
+                    "memory_write_event",
+                    "wechat_memory_candidate",
+                    "wechat_memory_import_job",
+                }
                 or not separator
                 or not source_id.isdecimal()
                 or int(source_id) <= 0
@@ -4056,23 +4220,47 @@ class AutoReplyStore:
         db: sqlite3.Connection, workload_kind: str, workload_key: str
     ) -> bool:
         if workload_kind == "weekly_okr":
-            return True
+            week_end, manager_user_id, source_digest = workload_key.split(":", 2)
+            return db.execute(
+                "select 1 from weekly_okr_analysis_jobs "
+                "where week_end=? and manager_user_id=? and source_digest=? "
+                "and status='running'",
+                (week_end, manager_user_id, source_digest),
+            ).fetchone() is not None
         if workload_kind == "structured":
-            table_name, row_id = "okr_review_requests", workload_key
+            query = "select 1 from okr_review_requests where id=? and status='processing'"
+            args = (int(workload_key),)
         elif workload_kind == "meeting":
-            table_name, row_id = "meeting_alignment_runs", workload_key
+            query = "select 1 from meeting_alignment_runs where id=? and status='running'"
+            args = (int(workload_key),)
         elif workload_kind == "task":
             row_id, separator, _ = workload_key.partition(":")
-            table_name = "work_summary_inputs" if separator else "task_agent_runs"
+            if separator:
+                query = (
+                    "select 1 from work_projects where id=? "
+                    "and status in ('active', 'waiting', 'done', 'archived')"
+                )
+            else:
+                query = "select 1 from task_agent_runs where id=? and status='running'"
+            args = (int(row_id),)
         else:
             source, _, row_id = workload_key.partition(":")
-            table_name = {
-                "memory_write_event": "memory_write_events",
-                "wechat_memory_candidate": "wechat_memory_candidates",
+            query = {
+                "memory_write_event": (
+                    "select 1 from memory_write_events where id=? "
+                    "and status in ('pending', 'failed')"
+                ),
+                "wechat_memory_candidate": (
+                    "select 1 from wechat_memory_candidates where id=? "
+                    "and status='approved' and memory_write_status='writing'"
+                ),
+                "wechat_memory_import_job": (
+                    "select 1 from wechat_memory_import_jobs "
+                    "where id=? and status='running'"
+                ),
             }[source]
-        return db.execute(
-            f"select 1 from {table_name} where id=?", (int(row_id),)
-        ).fetchone() is not None
+            args = (int(row_id),)
+        return db.execute(query, args).fetchone() is not None
 
     @staticmethod
     def _validate_runtime_attempt_details(
@@ -4177,7 +4365,9 @@ class AutoReplyStore:
             elif not self._runtime_operation_parent_exists(
                 db, workload_kind, workload_key
             ):
-                raise ValueError("runtime operation parent does not exist")
+                raise ValueError(
+                    "runtime operation parent does not exist or is not running"
+                )
             active = db.execute(
                 """
                 select * from agent_runtime_attempts
@@ -10000,6 +10190,89 @@ class AutoReplyStore:
                 return None
             return self._meeting_alignment_job_from_row(row)
 
+    def begin_meeting_alignment_run(self, job_id: int) -> int:
+        if job_id <= 0:
+            raise ValueError("meeting alignment job id must be positive")
+        with self._agent_run_write_transaction(None) as (db, _):
+            parent = db.execute(
+                "select 1 from meeting_alignment_jobs "
+                "where id=? and status='processing'",
+                (job_id,),
+            ).fetchone()
+            if parent is None:
+                raise ValueError("meeting alignment job is not processing")
+            active = db.execute(
+                "select id from meeting_alignment_runs "
+                "where job_id=? and status='running'",
+                (job_id,),
+            ).fetchone()
+            if active is not None:
+                return int(active["id"])
+            cursor = db.execute(
+                "insert into meeting_alignment_runs "
+                "(job_id, status, finished_at, updated_at) "
+                "values (?, 'running', '', current_timestamp)",
+                (job_id,),
+            )
+            return int(cursor.lastrowid)
+
+    def finish_meeting_alignment_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        codex_session_id: str = "",
+        codex_transcript_start_line: int = 0,
+        codex_transcript_end_line: int = 0,
+        decision_json: str = "{}",
+        audit_tool_events_json: str = "[]",
+        audit_summary: str = "",
+        error: str = "",
+    ) -> None:
+        if status == "running" or not status.strip():
+            raise ValueError("meeting alignment run terminal status is invalid")
+        values = (
+            status,
+            codex_session_id,
+            codex_transcript_start_line,
+            codex_transcript_end_line,
+            decision_json,
+            audit_tool_events_json,
+            audit_summary,
+            error,
+        )
+        with self._agent_run_write_transaction(None) as (db, _):
+            row = db.execute(
+                "select * from meeting_alignment_runs where id=?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("meeting alignment run does not exist")
+            if row["status"] != "running":
+                actual = tuple(
+                    row[field]
+                    for field in (
+                        "status",
+                        "codex_session_id",
+                        "codex_transcript_start_line",
+                        "codex_transcript_end_line",
+                        "decision_json",
+                        "audit_tool_events_json",
+                        "audit_summary",
+                        "error",
+                    )
+                )
+                if actual == values:
+                    return
+                raise ValueError("conflicting meeting alignment run terminal rewrite")
+            db.execute(
+                "update meeting_alignment_runs set status=?, codex_session_id=?, "
+                "codex_transcript_start_line=?, codex_transcript_end_line=?, "
+                "decision_json=?, audit_tool_events_json=?, audit_summary=?, error=?, "
+                "finished_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and status='running'",
+                (*values, run_id),
+            )
+
     def record_meeting_alignment_run(
         self,
         *,
@@ -10025,9 +10298,13 @@ class AutoReplyStore:
                     audit_tool_events_json,
                     audit_summary,
                     status,
-                    error
+                    error,
+                    finished_at,
+                    updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        case when ?='running' then '' else current_timestamp end,
+                        current_timestamp)
                 """,
                 (
                     job_id,
@@ -10039,6 +10316,7 @@ class AutoReplyStore:
                     audit_summary,
                     status,
                     error,
+                    status,
                 ),
             )
             return int(cursor.lastrowid)
@@ -14740,9 +15018,12 @@ class AutoReplyStore:
                     codex_session_id,
                     decision_json,
                     audit_summary,
-                    memory_recall_used
+                    memory_recall_used,
+                    status,
+                    finished_at,
+                    updated_at
                 )
-                values (?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, 'completed', current_timestamp, current_timestamp)
                 """,
                 (
                     summary_input_id,
@@ -14753,6 +15034,172 @@ class AutoReplyStore:
                 ),
             )
             return int(cursor.lastrowid)
+
+    def begin_weekly_okr_analysis_job(
+        self,
+        *,
+        week_end: str,
+        manager_user_id: str,
+        source_digest: str,
+    ) -> int:
+        _, workload_key = self._validate_runtime_operation_workload(
+            "weekly_okr", f"{week_end}:{manager_user_id}:{source_digest}"
+        )
+        normalized_week_end, normalized_manager, normalized_digest = (
+            workload_key.split(":", 2)
+        )
+        with self._agent_run_write_transaction(None) as (db, _):
+            db.execute(
+                "insert or ignore into weekly_okr_analysis_jobs "
+                "(week_end, manager_user_id, source_digest, status) "
+                "values (?, ?, ?, 'running')",
+                (normalized_week_end, normalized_manager, normalized_digest),
+            )
+            row = db.execute(
+                "select id from weekly_okr_analysis_jobs "
+                "where week_end=? and manager_user_id=? and source_digest=?",
+                (normalized_week_end, normalized_manager, normalized_digest),
+            ).fetchone()
+            return int(row["id"])
+
+    def finish_weekly_okr_analysis_job(
+        self, job_id: int, *, status: str, error: str = ""
+    ) -> None:
+        if status not in {"completed", "failed"}:
+            raise ValueError("weekly OKR analysis terminal status is invalid")
+        with self._agent_run_write_transaction(None) as (db, _):
+            row = db.execute(
+                "select status, error from weekly_okr_analysis_jobs where id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("weekly OKR analysis job does not exist")
+            if row["status"] != "running":
+                if (row["status"], row["error"]) == (status, error):
+                    return
+                raise ValueError("conflicting weekly OKR analysis terminal rewrite")
+            db.execute(
+                "update weekly_okr_analysis_jobs set status=?, error=?, "
+                "finished_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and status='running'",
+                (status, error, job_id),
+            )
+
+    def begin_wechat_memory_import_job(
+        self, *, import_run_id: str, account_id: str
+    ) -> int:
+        import_run_id = self._require_runtime_attempt_text(
+            import_run_id, field="import_run_id"
+        )
+        account_id = self._require_runtime_attempt_text(
+            account_id, field="account_id"
+        )
+        with self._agent_run_write_transaction(None) as (db, _):
+            cursor = db.execute(
+                "insert into wechat_memory_import_jobs "
+                "(import_run_id, account_id, status) values (?, ?, 'running')",
+                (import_run_id, account_id),
+            )
+            return int(cursor.lastrowid)
+
+    def finish_wechat_memory_import_job(
+        self, job_id: int, *, status: str, error: str = ""
+    ) -> None:
+        if status not in {"completed", "failed"}:
+            raise ValueError("WeChat Memory import terminal status is invalid")
+        with self._agent_run_write_transaction(None) as (db, _):
+            row = db.execute(
+                "select status, error from wechat_memory_import_jobs where id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("WeChat Memory import job does not exist")
+            if row["status"] != "running":
+                if (row["status"], row["error"]) == (status, error):
+                    return
+                raise ValueError("conflicting WeChat Memory import terminal rewrite")
+            db.execute(
+                "update wechat_memory_import_jobs set status=?, error=?, "
+                "finished_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and status='running'",
+                (status, error, job_id),
+            )
+
+    def begin_task_agent_run(self, summary_input_id: int) -> int:
+        if summary_input_id <= 0:
+            raise ValueError("summary_input_id must be positive")
+        with self._agent_run_write_transaction(None) as (db, _):
+            parent = db.execute(
+                "select 1 from work_summary_inputs "
+                "where id=? and status='processing'",
+                (summary_input_id,),
+            ).fetchone()
+            if parent is None:
+                raise ValueError("task agent run parent is not processing")
+            active = db.execute(
+                "select id from task_agent_runs "
+                "where summary_input_id=? and status='running'",
+                (summary_input_id,),
+            ).fetchone()
+            if active is not None:
+                return int(active["id"])
+            cursor = db.execute(
+                "insert into task_agent_runs "
+                "(summary_input_id, status, finished_at, updated_at) "
+                "values (?, 'running', '', current_timestamp)",
+                (summary_input_id,),
+            )
+            return int(cursor.lastrowid)
+
+    def finish_task_agent_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        codex_session_id: str = "",
+        decision_json: str = "{}",
+        audit_summary: str = "",
+        memory_recall_used: bool = False,
+        error: str = "",
+    ) -> None:
+        if status not in {"completed", "failed"}:
+            raise ValueError("task agent run terminal status is invalid")
+        expected = (
+            status,
+            codex_session_id,
+            decision_json,
+            audit_summary,
+            int(memory_recall_used),
+            error,
+        )
+        with self._agent_run_write_transaction(None) as (db, _):
+            row = db.execute(
+                "select * from task_agent_runs where id=?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("task agent run does not exist")
+            if row["status"] != "running":
+                actual = tuple(
+                    row[field]
+                    for field in (
+                        "status",
+                        "codex_session_id",
+                        "decision_json",
+                        "audit_summary",
+                        "memory_recall_used",
+                        "error",
+                    )
+                )
+                if actual == expected:
+                    return
+                raise ValueError("conflicting task agent run terminal rewrite")
+            db.execute(
+                "update task_agent_runs set status=?, codex_session_id=?, "
+                "decision_json=?, audit_summary=?, memory_recall_used=?, error=?, "
+                "finished_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and status='running'",
+                (*expected, run_id),
+            )
 
     def create_follow_up_draft(self, **values) -> int:
         allowed_columns = {

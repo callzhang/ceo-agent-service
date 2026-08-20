@@ -105,7 +105,7 @@ def _seed_runtime_operation_parent(
     with store._connect() as db:
         assert db.execute("pragma foreign_keys").fetchone()[0] == 1
         if workload_kind == "structured":
-            db.execute("insert into okr_review_requests (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, period_label, period_start, period_end) values (?, 'cid', 'title', 'msg', 'sender', 'text', 'period', 'start', 'end')", (int(workload_key),))
+            db.execute("insert into okr_review_requests (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, period_label, period_start, period_end, status) values (?, 'cid', 'title', 'msg', 'sender', 'text', 'period', 'start', 'end', 'processing')", (int(workload_key),))
         elif workload_kind == "meeting":
             db.execute("insert into meeting_alignment_jobs (id, meeting_id) values (1, 'meeting-1')")
             db.execute("insert into meeting_alignment_runs (id, job_id, status) values (?, 1, 'running')", (int(workload_key),))
@@ -113,17 +113,37 @@ def _seed_runtime_operation_parent(
             source_id, separator, _ = workload_key.partition(":")
             db.execute("insert into work_summary_inputs (id, source_type, source_ref, payload_json) values (1, 'test', 'task-parent', '{}')")
             if separator:
-                db.execute("insert into work_summary_inputs (id, source_type, source_ref, payload_json) values (?, 'test', ?, '{}')", (int(source_id), f"ref-{source_id}"))
+                db.execute("insert into work_projects (id, title, category, status, priority, risk_level) values (?, ?, 'other', 'active', 'none', 'none')", (int(source_id), f"project-{source_id}"))
             else:
-                db.execute("insert into task_agent_runs (id, summary_input_id) values (?, 1)", (int(source_id),))
+                db.execute("update work_summary_inputs set status='processing' where id=1")
+                db.execute("insert into task_agent_runs (id, summary_input_id, status) values (?, 1, 'running')", (int(source_id),))
+        elif workload_kind == "weekly_okr":
+            week_end, manager_user_id, source_digest = workload_key.split(":", 2)
+            db.execute(
+                "insert into weekly_okr_analysis_jobs "
+                "(week_end, manager_user_id, source_digest, status) "
+                "values (?, ?, ?, 'running')",
+                (week_end, manager_user_id, source_digest),
+            )
         elif workload_kind == "memory":
             source, _, source_id = workload_key.partition(":")
-            table_name = "memory_write_events" if source == "memory_write_event" else "wechat_memory_candidates"
+            table_name = {
+                "memory_write_event": "memory_write_events",
+                "wechat_memory_candidate": "wechat_memory_candidates",
+                "wechat_memory_import_job": "wechat_memory_import_jobs",
+            }[source]
             if table_name == "memory_write_events":
                 db.execute("insert into reply_attempts (id, conversation_id, conversation_title, trigger_message_id, trigger_sender, trigger_text, action, sensitivity_kind, final_reply_text, permission_action, permission_reason, send_status) values (1, 'cid', 'title', 'msg', 'sender', 'text', 'none', 'none', '', 'none', '', 'pending')")
                 db.execute("insert into memory_write_events (id, attempt_id, event_type, payload_json) values (?, 1, 'test', '{}')", (int(source_id),))
+            elif table_name == "wechat_memory_candidates":
+                db.execute("insert into wechat_memory_candidates (id, import_run_id, account_id, statement, category, confidence, sensitivity, status, memory_write_status) values (?, 'import', 'account', 'statement', 'fact', 1, 'low', 'approved', 'writing')", (int(source_id),))
             else:
-                db.execute("insert into wechat_memory_candidates (id, import_run_id, account_id, statement, category, confidence, sensitivity) values (?, 'import', 'account', 'statement', 'fact', 1, 'low')", (int(source_id),))
+                db.execute(
+                    "insert into wechat_memory_import_jobs "
+                    "(id, import_run_id, account_id, status) "
+                    "values (?, 'import', 'account', 'running')",
+                    (int(source_id),),
+                )
 
 
 def test_runtime_attempt_claim_is_ordered_and_idempotent(tmp_path: Path):
@@ -502,6 +522,7 @@ def test_runtime_attempt_upgrade_replaces_pretrim_session_evidence_triggers(
         ("task", "15:memory_backfill"),
         ("weekly_okr", "2026-08-16:manager-1:" + "a" * 64),
         ("memory", "memory_write_event:16"),
+        ("memory", "wechat_memory_import_job:17"),
     ],
 )
 def test_runtime_attempt_operation_accepts_approved_stable_workload_keys(
@@ -538,6 +559,7 @@ def test_runtime_attempt_operation_accepts_approved_stable_workload_keys(
         ("weekly_okr", "not-a-stable-key"),
         ("memory", "memory-16"),
         ("memory", "memory_write_event:999"),
+        ("memory", "wechat_memory_import_job:999"),
     ],
 )
 def test_runtime_attempt_operation_rejects_unapproved_or_freeform_workload_keys(
@@ -564,6 +586,7 @@ def test_runtime_attempt_memory_keys_are_source_qualified_and_collision_free(
     store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
     _seed_runtime_operation_parent(store, "memory", "memory_write_event:1")
     _seed_runtime_operation_parent(store, "memory", "wechat_memory_candidate:1")
+    _seed_runtime_operation_parent(store, "memory", "wechat_memory_import_job:1")
 
     event_attempt = store.claim_runtime_operation_attempt(
         "memory", "memory_write_event:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
@@ -571,9 +594,261 @@ def test_runtime_attempt_memory_keys_are_source_qualified_and_collision_free(
     candidate_attempt = store.claim_runtime_operation_attempt(
         "memory", "wechat_memory_candidate:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
     )
+    import_attempt = store.claim_runtime_operation_attempt(
+        "memory", "wechat_memory_import_job:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
 
-    assert event_attempt.workload_key != candidate_attempt.workload_key
-    assert {event_attempt.attempt_number, candidate_attempt.attempt_number} == {1}
+    assert len({
+        event_attempt.workload_key,
+        candidate_attempt.workload_key,
+        import_attempt.workload_key,
+    }) == 3
+    assert {
+        event_attempt.attempt_number,
+        candidate_attempt.attempt_number,
+        import_attempt.attempt_number,
+    } == {1}
+
+
+def test_runtime_attempt_requires_parent_to_be_in_runnable_state(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-parent-state.sqlite3")
+    _seed_runtime_operation_parent(store, "meeting", "13")
+    with store._connect() as db:
+        db.execute("update meeting_alignment_runs set status='failed' where id=13")
+
+    with pytest.raises(ValueError, match="parent does not exist or is not running"):
+        store.claim_runtime_operation_attempt(
+            "meeting", "13", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+        )
+
+
+def test_task_memory_backfill_parent_is_work_project_not_summary_input(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task-memory-parent.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            "insert into work_summary_inputs "
+            "(id, source_type, source_ref, payload_json) values (41, 'test', 'ref', '{}')"
+        )
+
+    with pytest.raises(ValueError, match="parent does not exist"):
+        store.claim_runtime_operation_attempt(
+            "task", "41:memory_backfill", "codex_oauth", "codex_cli",
+            "local_oauth", "gpt-5.5",
+        )
+
+
+def test_weekly_okr_parent_matches_the_complete_natural_key(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "weekly-parent.sqlite3")
+    digest = "a" * 64
+    job_id = store.begin_weekly_okr_analysis_job(
+        week_end="2026-08-16", manager_user_id="manager-1", source_digest=digest
+    )
+
+    attempt = store.claim_runtime_operation_attempt(
+        "weekly_okr", f"2026-08-16:manager-1:{digest}", "codex_oauth",
+        "codex_cli", "local_oauth", "gpt-5.5",
+    )
+    assert attempt.workload_key.endswith(digest)
+
+    store.finish_weekly_okr_analysis_job(job_id, status="completed")
+    with pytest.raises(ValueError, match="parent does not exist or is not running"):
+        store.claim_runtime_operation_attempt(
+            "weekly_okr", f"2026-08-16:manager-1:{digest}", "codex_oauth",
+            "codex_cli", "local_oauth", "gpt-5.5",
+        )
+
+
+def test_task_agent_run_begin_is_concurrent_and_finish_is_idempotent(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task-run-lifecycle.sqlite3")
+    summary_id = store.enqueue_work_summary_input("local_file", "source", "{}")
+    claimed = store.claim_work_summary_inputs(1)[0]
+    assert claimed.id == summary_id
+    barrier = Barrier(3)
+    run_ids: list[int] = []
+
+    def begin() -> None:
+        barrier.wait(timeout=5)
+        run_ids.append(store.begin_task_agent_run(summary_id))
+
+    threads = [Thread(target=begin) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait(timeout=5)
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert len(run_ids) == 2
+    assert len(set(run_ids)) == 1
+    run_id = run_ids[0]
+    store.finish_task_agent_run(
+        run_id,
+        status="completed",
+        codex_session_id="session-task",
+        decision_json='{"action":"discard"}',
+        audit_summary="done",
+        memory_recall_used=True,
+    )
+    store.finish_task_agent_run(
+        run_id,
+        status="completed",
+        codex_session_id="session-task",
+        decision_json='{"action":"discard"}',
+        audit_summary="done",
+        memory_recall_used=True,
+    )
+    with store._connect() as db:
+        row = db.execute("select * from task_agent_runs where id=?", (run_id,)).fetchone()
+    assert row["status"] == "completed"
+    assert row["finished_at"]
+
+
+def test_meeting_run_begin_is_idempotent_and_finish_closes_running_parent(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "meeting-run-lifecycle.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-lifecycle", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at="2026-08-20T10:00:00+08:00",
+        eligible_at="2026-08-20T10:10:00+08:00", status="pending",
+    )
+    [job] = store.claim_meeting_alignment_jobs(1, now="2026-08-20T10:11:00+08:00")
+    assert job.id == job_id
+
+    run_id = store.begin_meeting_alignment_run(job_id)
+    assert store.begin_meeting_alignment_run(job_id) == run_id
+    store.finish_meeting_alignment_run(
+        run_id, status="no_action", decision_json='{"action":"no_action"}'
+    )
+    assert store.get_meeting_alignment_run(run_id).status == "no_action"
+
+
+def test_wechat_import_jobs_are_distinct_per_invocation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "wechat-import-job.sqlite3")
+    first = store.begin_wechat_memory_import_job(
+        import_run_id="wechat-scope", account_id="account-1"
+    )
+    second = store.begin_wechat_memory_import_job(
+        import_run_id="wechat-scope", account_id="account-1"
+    )
+    assert first != second
+    attempt = store.claim_runtime_operation_attempt(
+        "memory", f"wechat_memory_import_job:{first}", "codex_oauth",
+        "codex_cli", "local_oauth", "gpt-5.5",
+    )
+    assert attempt.workload_key == f"wechat_memory_import_job:{first}"
+    store.finish_wechat_memory_import_job(first, status="completed")
+
+
+def test_current_schema_sentinel_rejects_complete_legacy_task_run_shape(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "legacy-task-run-shape.sqlite3"
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        db.execute(
+            "insert into work_summary_inputs "
+            "(id, source_type, source_ref, payload_json) "
+            "values (1, 'local_file', 'legacy', '{}')"
+        )
+        db.execute(
+            "insert into task_agent_runs "
+            "(id, summary_input_id, codex_session_id, decision_json, "
+            "audit_summary, memory_recall_used) "
+            "values (9, 1, 'legacy-session', '{}', 'legacy', 0)"
+        )
+        db.execute("drop index idx_task_agent_runs_active_input")
+        db.execute("alter table task_agent_runs rename to task_agent_runs_current")
+        db.execute(
+            "create table task_agent_runs ("
+            "id integer primary key autoincrement, "
+            "summary_input_id integer not null, "
+            "codex_session_id text not null default '', "
+            "decision_json text not null default '{}', "
+            "audit_summary text not null default '', "
+            "memory_recall_used integer not null default 0, "
+            "created_at text not null default current_timestamp)"
+        )
+        db.execute(
+            "insert into task_agent_runs select id, summary_input_id, "
+            "codex_session_id, decision_json, audit_summary, memory_recall_used, "
+            "created_at from task_agent_runs_current"
+        )
+        db.execute("drop table task_agent_runs_current")
+    assert store._schema_is_current() is False
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+    with upgraded._connect() as db:
+        row = db.execute("select * from task_agent_runs where id=9").fetchone()
+    assert row["status"] == "completed"
+    assert row["finished_at"] == row["created_at"]
+    assert row["updated_at"] == row["created_at"]
+
+
+def test_current_schema_sentinel_requires_new_runtime_parent_tables(tmp_path: Path):
+    db_path = tmp_path / "legacy-runtime-parent-tables.sqlite3"
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        db.execute("drop index idx_weekly_okr_analysis_jobs_identity")
+        db.execute("drop table weekly_okr_analysis_jobs")
+    assert store._schema_is_current() is False
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    reopened = AutoReplyStore(db_path)
+    with reopened._connect() as db:
+        tables = {
+            row["name"]
+            for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            ).fetchall()
+        }
+    assert {"weekly_okr_analysis_jobs", "wechat_memory_import_jobs"} <= tables
+
+
+def test_current_schema_sentinel_migrates_complete_legacy_meeting_run_shape(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "legacy-meeting-run-shape.sqlite3"
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        db.execute(
+            "insert into meeting_alignment_jobs (id, meeting_id) "
+            "values (1, 'legacy-meeting')"
+        )
+        db.execute(
+            "insert into meeting_alignment_runs "
+            "(id, job_id, status, error) values (7, 1, 'failed', 'legacy')"
+        )
+        db.execute("drop index idx_meeting_alignment_runs_active_job")
+        db.execute(
+            "alter table meeting_alignment_runs rename to meeting_alignment_runs_current"
+        )
+        db.execute(
+            "create table meeting_alignment_runs ("
+            "id integer primary key autoincrement, job_id integer not null, "
+            "codex_session_id text not null default '', "
+            "codex_transcript_start_line integer not null default 0, "
+            "codex_transcript_end_line integer not null default 0, "
+            "decision_json text not null default '{}', "
+            "audit_tool_events_json text not null default '[]', "
+            "audit_summary text not null default '', status text not null, "
+            "error text not null default '', "
+            "created_at text not null default current_timestamp, "
+            "foreign key(job_id) references meeting_alignment_jobs(id))"
+        )
+        db.execute(
+            "insert into meeting_alignment_runs select id, job_id, codex_session_id, "
+            "codex_transcript_start_line, codex_transcript_end_line, decision_json, "
+            "audit_tool_events_json, audit_summary, status, error, created_at "
+            "from meeting_alignment_runs_current"
+        )
+        db.execute("drop table meeting_alignment_runs_current")
+    assert store._schema_is_current() is False
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+    run = upgraded.get_meeting_alignment_run(7)
+    assert run is not None
+    assert run.finished_at == run.created_at
+    assert run.updated_at == run.created_at
 
 
 def test_runtime_attempt_transitions_are_terminal_safe(tmp_path: Path):

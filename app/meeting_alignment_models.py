@@ -243,3 +243,5 @@ class MeetingAlignmentRun(StrictModel):
     status: str
     error: str
     created_at: str
+    finished_at: str = ""
+    updated_at: str = ""
