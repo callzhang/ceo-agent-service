@@ -807,6 +807,13 @@ def test_consumer_read_events_can_fail_over_within_same_run(
         "session-a",
         "session-api",
     ]
+    assert attempts[0].transcript_start == 0
+    assert attempts[0].transcript_end > attempts[0].transcript_start
+    assert attempts[1].transcript_start == 0
+    assert attempts[1].transcript_end > attempts[1].transcript_start
+    assert store.active_runtime_route_pause(
+        "codex_oauth", now="2026-08-20 00:00:00"
+    ) == "codex_login_required"
     assert persisted_task is not None
     assert persisted_task.execution_generation == task.execution_generation
     assert store.get_conversation_runtime_session(
@@ -818,6 +825,47 @@ def test_consumer_read_events_can_fail_over_within_same_run(
     assert persisted_run.codex_session_id == "session-a"
     assert "OPENAI_API_KEY" not in executor.environments[0]
     assert executor.environments[1]["OPENAI_API_KEY"] == "fallback-test-key"
+
+
+def test_transport_failure_opens_route_pause_before_api_successor(
+    store, task, context
+):
+    executor = SequencedRuntimeExecutor(
+        ProcessRunResult(
+            1,
+            "\n".join(
+                (
+                    json.dumps(
+                        {"type": "thread.started", "thread_id": "oauth-transport"}
+                    ),
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": "stream disconnected before completion",
+                        }
+                    ),
+                )
+            ),
+            "",
+        ),
+        ProcessRunResult(0, _result_jsonl(session="api-success"), ""),
+    )
+    config, router, adapter = _consumer_runtime_dependencies(store)
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.outcome.value == "no_action"
+    assert len(executor.commands) == 2
+    assert store.active_runtime_route_pause(
+        "codex_oauth", now="2026-08-20 00:00:00"
+    ) == "codex_transport_disconnected"
 
 
 def test_consumer_does_not_start_unprobed_api_fallback(
@@ -962,7 +1010,6 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
             workspace=Path("/workspace"),
             executor=FailingExecutor(stdout),
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
     run = store.get_agent_run_for_turn(
         task.id,
         task.execution_generation,
@@ -973,6 +1020,9 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
     assert run is not None
     assert '"code":"codex_provider_capacity_exhausted"' in run.structured_error_json
     assert '"retryable":true' in run.structured_error_json
+    assert store.active_runtime_route_pause(
+        "codex_oauth", now="2026-08-20 00:00:00"
+    ) == "codex_provider_capacity_exhausted"
 
 
 def test_retryable_consumer_turn_uses_the_current_conversation_session(
@@ -997,6 +1047,7 @@ def test_retryable_consumer_turn_uses_the_current_conversation_session(
             executor=FailingExecutor(provider_failure),
             codex_session_exists=lambda _: True,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    store.close_runtime_route_pause("codex_oauth")
     store.upsert_conversation(
         task.conversation_id,
         task.conversation_title,
@@ -1058,6 +1109,7 @@ def test_retry_turn_parse_failure_clears_only_its_current_conversation_session(
             executor=FailingExecutor(provider_failure),
             codex_session_exists=lambda _: True,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    store.close_runtime_route_pause("codex_oauth")
     store.upsert_conversation(
         task.conversation_id,
         task.conversation_title,

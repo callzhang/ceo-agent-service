@@ -209,6 +209,74 @@ def test_audit_effect_start_blocks_api_fallback(setup, monkeypatch):
     assert len(executor.commands) == 1
 
 
+def test_failed_route_replays_hidden_completed_write_before_failover(
+    setup, monkeypatch
+):
+    store, task, audit_context, parent = setup
+    completed_write = next(
+        payload
+        for line in _audit_result_jsonl(
+            "executed",
+            operation_id="operation-1",
+            session="oauth-hidden-write",
+            include_write=True,
+        ).splitlines()
+        if (payload := json.loads(line)).get("type") == "item.completed"
+        and payload.get("item", {}).get("tool") == "execute_reviewed_write"
+    )
+    skill_path = Path(audit_context.consumer_skills[0].path)
+    skill_event, _ = _skill_read_jsonl(
+        skill_path, skill_path.read_text(encoding="utf-8")
+    )
+    failure_stream = "\n".join(
+        (
+            json.dumps(
+                {"type": "thread.started", "thread_id": "oauth-hidden-write"}
+            ),
+            skill_event,
+            json.dumps(
+                {"type": "error", "message": "stream disconnected before completion"}
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "app.agent_turn_runner.count_codex_session_lines", lambda *args, **kwargs: 5
+    )
+    monkeypatch.setattr(
+        "app.agent_turn_runner.extract_codex_mcp_tool_results_from_session",
+        lambda *args, **kwargs: [completed_write],
+    )
+    config, router, adapter = _audit_runtime_dependencies(store)
+    executor = CapturingExecutor(failure_stream, returncode=1)
+
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+            runtime_config=config,
+            runtime_router=router,
+            codex_adapter=adapter,
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.status == "unknown"
+    [attempt] = store.list_agent_runtime_attempts(run.id)
+    assert attempt.route_name == "codex_oauth"
+    assert attempt.status == "failed"
+    assert attempt.session_id == "oauth-hidden-write"
+    assert attempt.transcript_start == 0
+    assert attempt.transcript_end == 5
+    assert attempt.first_effect_started_at
+    assert len(executor.commands) == 1
+
+
 def test_audit_never_resumes_or_overwrites_consumer_oauth_route_session(setup):
     store, task, audit_context, parent = setup
     store.upsert_conversation_runtime_session(

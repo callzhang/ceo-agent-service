@@ -732,6 +732,19 @@ codex_adapter: CodexRuntimeAdapter | None = None,
 
 Replace the single command/process block with a bounded route loop. Claim the attempt before process start, pass the existing `persist_line` callback unchanged, call `note_runtime_attempt_effect_started()` inside the existing normalized effect `item.started` branch, and complete/fail the attempt before choosing another route.
 
+On every nonzero exit or timeout, stabilize the failed route's observed/resumed
+local session and replay its completed controlled calls through the same
+receipt/effect validator before consulting `next_route()`. A replayed or
+ambiguous effect pins the run to unknown/reconciliation; Consumer may fail over
+only after its read-only contract and replay prove no effect. Persist the failed
+attempt's route-local session and transcript bounds. Each successor starts its
+own transcript range, excluding the predecessor's evidence.
+
+When classified failure evidence has `route_pause_required=true`, open the
+failed route's persisted pause with the configured runtime retry delay before
+successor selection. Pause opening is transactional/idempotent; Task 8 owns
+successful probe-based closure.
+
 Initial selection must use current injected capability snapshots and persisted
 route pauses, not configured route order alone. Configuration does not prove API
 health. Until Task 8 installs probe refresh, only the pre-existing local OAuth

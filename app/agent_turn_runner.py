@@ -279,6 +279,7 @@ class AgentTurnProcess(Generic[ResultT]):
         observed_session_id = ""
         active_attempt: AgentRuntimeAttempt | None = None
         active_route: RuntimeRoute | None = None
+        replayed_effect_evidence = False
         session_transcript_end = 0
         turn_event_start = len(run.tool_events)
         recovery_event_start = turn_event_start
@@ -502,6 +503,78 @@ class AgentTurnProcess(Generic[ResultT]):
             }:
                 primary_turn_closed = True
 
+        def stabilize_and_replay_session(
+            session_for_receipts: str,
+            *,
+            session_start: int,
+        ) -> int:
+            """Stabilize local evidence and replay it through normal validation."""
+            nonlocal active_attempt, replayed_effect_evidence
+            previous_count = -1
+            for _ in range(4):
+                session_end = count_codex_session_lines(
+                    session_for_receipts, codex_home=_codex_home()
+                )
+                if session_end == previous_count:
+                    break
+                previous_count = session_end
+                time.sleep(0.05)
+            stable_end = max(previous_count, 0)
+            for completed_payload in extract_codex_mcp_tool_results_from_session(
+                session_for_receipts,
+                codex_home=_codex_home(),
+                start_line=session_start,
+                end_line=stable_end,
+            ):
+                completed_item = completed_payload.get("item")
+                call_id = (
+                    str(completed_item.get("id") or "")
+                    if isinstance(completed_item, dict)
+                    else ""
+                )
+                if not call_id or call_id in completed_effect_call_ids:
+                    continue
+                call = self.effects.classify(completed_item)
+                if call is None:
+                    continue
+                if run.role is AgentRole.CONSUMER:
+                    if call.effect is not EffectKind.READ_ONLY and active_attempt is not None:
+                        replayed_effect_evidence = True
+                        active_attempt_with_effect = (
+                            self.store.note_runtime_attempt_effect_started(
+                                active_attempt.id
+                            )
+                        )
+                        active_attempt = active_attempt_with_effect
+                    continue
+                if recovery_phase != "reconcile" and call.effect is EffectKind.READ_ONLY:
+                    continue
+                if call.effect is EffectKind.EFFECTFUL:
+                    replayed_effect_evidence = True
+                try:
+                    self._normalized_effect_event(
+                        completed_payload,
+                        read_only=(recovery_phase == "reconcile"),
+                        operation_id=run.operation_id,
+                        require_recovery_authorization=(recovery_phase == "execute"),
+                    )
+                except AgentReadOnlyViolationError as exc:
+                    if str(exc) != "agent_cli_receipt_invalid":
+                        raise
+                    continue
+                start_payload = {
+                    "type": "item.started",
+                    "item": {
+                        key: value
+                        for key, value in completed_item.items()
+                        if key not in {"status", "result"}
+                    }
+                    | {"status": "in_progress"},
+                }
+                persist_effect_event(start_payload, from_session_replay=True)
+                persist_effect_event(completed_payload, from_session_replay=True)
+            return stable_end
+
         try:
             required_capabilities = _required_runtime_capabilities(
                 run=run,
@@ -535,6 +608,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 primary_turn_started = False
                 primary_turn_closed = False
                 observed_session_id = ""
+                replayed_effect_evidence = False
                 active_route = route
                 if not attempt_is_preclaimed:
                     active_attempt = self._claim_and_start_attempt(
@@ -542,6 +616,13 @@ class AgentTurnProcess(Generic[ResultT]):
                         route,
                         route_session_id,
                     )
+                attempt_transcript_start = (
+                    count_codex_session_lines(
+                        route_session_id, codex_home=_codex_home()
+                    )
+                    if route_session_id
+                    else 0
+                )
                 attempt_is_preclaimed = False
                 command = self.codex_adapter.build_command(
                     route=route,
@@ -579,14 +660,56 @@ class AgentTurnProcess(Generic[ResultT]):
                     timed_out=process.timed_out,
                     timeout_kind=process.timeout_kind,
                 )
+                failed_session_id = observed_session_id or route_session_id or ""
+                failed_transcript_end = max(
+                    attempt_transcript_start + line_count,
+                    attempt_transcript_start,
+                )
+                evidence_uncertain = bool(expected_effect_actions) and not failed_session_id
+                if failed_session_id:
+                    try:
+                        failed_transcript_end = max(
+                            failed_transcript_end,
+                            stabilize_and_replay_session(
+                                failed_session_id,
+                                session_start=attempt_transcript_start,
+                            ),
+                        )
+                    except Exception:
+                        evidence_uncertain = True
+                if evidence_uncertain and active_attempt is not None:
+                    active_attempt = self.store.note_runtime_attempt_effect_started(
+                        active_attempt.id
+                    )
                 failed_attempt = self.store.fail_agent_runtime_attempt(
                     active_attempt.id,
                     failure.failure_class.value,
                     failure.code,
                     failure.failover_permitted,
+                    session_id=failed_session_id,
+                    transcript_start=attempt_transcript_start,
+                    transcript_end=failed_transcript_end,
                 )
+                if failure.route_pause_required:
+                    self.store.open_runtime_route_pause(
+                        route.name,
+                        failure.code,
+                        datetime.now(timezone.utc) + self.runtime_config.retry_delay,
+                    )
                 persisted = self.store.get_agent_run(run.id)
                 assert persisted is not None
+                if evidence_uncertain or replayed_effect_evidence:
+                    code = "runtime_failed_route_effect_requires_reconciliation"
+                    if recover_unknown:
+                        self._defer_unknown(run, code)
+                    else:
+                        self.store.mark_agent_run_unknown(
+                            run.id,
+                            {"code": code, "retryable": True},
+                            owner=self.owner,
+                        )
+                    self._raise_for_process_failure(process, run=run)
+                    raise AssertionError("unreachable process failure")
                 fallback = _recovery_execution_result_from_receipts(
                     run=run,
                     recovery_phase=recovery_phase,
@@ -643,73 +766,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 observed_session_id or route_session_id or run.codex_session_id
             )
             if session_for_receipts:
-                session_start = 0 if recover_unknown else transcript_start
-                # The CLI can flush local session events after the JSON stream has
-                # ended. Wait briefly for a stable line count, then replay only
-                # previously unseen completed calls through the normal validator.
-                previous_count = -1
-                for _ in range(4):
-                    session_end = count_codex_session_lines(
-                        session_for_receipts, codex_home=_codex_home()
-                    )
-                    if session_end == previous_count:
-                        break
-                    previous_count = session_end
-                    time.sleep(0.05)
-                session_transcript_end = max(previous_count, 0)
-                for completed_payload in extract_codex_mcp_tool_results_from_session(
+                session_start = attempt_transcript_start
+                session_transcript_end = stabilize_and_replay_session(
                     session_for_receipts,
-                    codex_home=_codex_home(),
-                    start_line=session_start,
-                    end_line=max(previous_count, 0),
-                ):
-                    completed_item = completed_payload.get("item")
-                    call_id = (
-                        str(completed_item.get("id") or "")
-                        if isinstance(completed_item, dict)
-                        else ""
-                    )
-                    if not call_id or call_id in completed_effect_call_ids:
-                        continue
-                    # Session history contains every MCP call, including
-                    # read-only integrations owned outside this effect registry.
-                    # They are useful audit context but cannot create execution
-                    # evidence here; only a reviewed call may be replayed into
-                    # the durable effect ledger.
-                    call = self.effects.classify(completed_item)
-                    if call is None:
-                        continue
-                    if run.role is AgentRole.CONSUMER:
-                        continue
-                    if recovery_phase != "reconcile" and call.effect is EffectKind.READ_ONLY:
-                        continue
-                    # A session-only read without a controlled receipt cannot
-                    # become audit evidence. Ignore it here; reconciliation
-                    # validation will still reject a result that relies on it.
-                    try:
-                        self._normalized_effect_event(
-                            completed_payload,
-                            read_only=(recovery_phase == "reconcile"),
-                            operation_id=run.operation_id,
-                            require_recovery_authorization=(
-                                recovery_phase == "execute"
-                            ),
-                        )
-                    except AgentReadOnlyViolationError as exc:
-                        if str(exc) != "agent_cli_receipt_invalid":
-                            raise
-                        continue
-                    start_payload = {
-                        "type": "item.started",
-                        "item": {
-                            key: value
-                            for key, value in completed_item.items()
-                            if key not in {"status", "result"}
-                        }
-                        | {"status": "in_progress"},
-                    }
-                    persist_effect_event(start_payload, from_session_replay=True)
-                    persist_effect_event(completed_payload, from_session_replay=True)
+                    session_start=session_start,
+                )
             if _contains_sensitive_value(result.model_dump(mode="json")):
                 raise ValueError("agent_result_contains_sensitive_value")
             persisted_attempt = (
@@ -722,8 +783,11 @@ class AgentTurnProcess(Generic[ResultT]):
                     persisted_attempt.id,
                     observed_session_id,
                     "",
-                    transcript_start,
-                    max(transcript_start + line_count, session_transcript_end),
+                    attempt_transcript_start,
+                    max(
+                        attempt_transcript_start + line_count,
+                        session_transcript_end,
+                    ),
                 )
         except RuntimeRouteUnavailableError:
             raise

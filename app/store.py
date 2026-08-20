@@ -4448,17 +4448,54 @@ class AutoReplyStore:
         failure_class: str,
         failure_code: str,
         failover_permitted: bool,
+        *,
+        session_id: str | None = None,
+        transcript_reference: str | None = None,
+        transcript_start: int | None = None,
+        transcript_end: int | None = None,
     ) -> AgentRuntimeAttempt:
         failure_class, failure_code, failover_permitted = self._validate_runtime_failure(
             failure_class, failure_code, failover_permitted
         )
+        if session_id is not None and not isinstance(session_id, str):
+            raise TypeError("runtime attempt session and transcript reference must be strings")
+        if transcript_reference is not None and not isinstance(transcript_reference, str):
+            raise TypeError("runtime attempt session and transcript reference must be strings")
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
-            expected = (failure_class, failure_code, failover_permitted)
+            session_id = row["session_id"] if session_id is None else session_id
+            transcript_reference = (
+                row["transcript_reference"]
+                if transcript_reference is None
+                else transcript_reference
+            )
+            transcript_start = (
+                row["transcript_start"]
+                if transcript_start is None
+                else transcript_start
+            )
+            transcript_end = (
+                row["transcript_end"] if transcript_end is None else transcript_end
+            )
+            if transcript_start < 0 or transcript_end < transcript_start:
+                raise ValueError("invalid runtime attempt transcript range")
+            expected = (
+                failure_class,
+                failure_code,
+                failover_permitted,
+                session_id,
+                transcript_reference,
+                transcript_start,
+                transcript_end,
+            )
             actual = (
                 row["failure_class"],
                 row["failure_code"],
                 row["failover_permitted"],
+                row["session_id"],
+                row["transcript_reference"],
+                row["transcript_start"],
+                row["transcript_end"],
             )
             if row["status"] == "failed":
                 if actual == expected:
@@ -4472,13 +4509,18 @@ class AutoReplyStore:
                 """
                 update agent_runtime_attempts
                 set status='failed', failure_class=?, failure_code=?,
-                    failover_permitted=?, finished_at=?, updated_at=?
+                    failover_permitted=?, session_id=?, transcript_reference=?,
+                    transcript_start=?, transcript_end=?, finished_at=?, updated_at=?
                 where id=? and status in ('starting', 'running')
                 """,
                 (
                     failure_class,
                     failure_code,
                     failover_permitted,
+                    session_id,
+                    transcript_reference,
+                    transcript_start,
+                    transcript_end,
                     now_text,
                     now_text,
                     attempt_id,
