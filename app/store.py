@@ -6675,6 +6675,100 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
+    def settle_failed_reply_task_without_replay(
+        self,
+        task_id: int,
+        *,
+        reason: str,
+        audit_summary: str,
+    ) -> int:
+        """Close a failed task when read-only reconciliation proves replay stale.
+
+        This is deliberately stricter than a manual status update: any active
+        run, persisted delivery, or recorded side effect keeps the task failed
+        until its external state can be reconciled through the normal path.
+        """
+        reason = reason.strip()
+        audit_summary = audit_summary.strip()
+        if not reason or not audit_summary:
+            raise ValueError("reason and audit_summary must be non-empty")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            task = db.execute(
+                "select * from reply_tasks where id=? and status='failed'",
+                (task_id,),
+            ).fetchone()
+            if task is None:
+                raise ValueError("failed reply task was not found")
+            unsafe = db.execute(
+                """
+                select 1
+                where exists (
+                    select 1 from agent_runs
+                    where reply_task_id=? and execution_generation=?
+                      and (status in ('running', 'unknown')
+                           or side_effect_state<>'none')
+                ) or exists (
+                    select 1 from sent_replies
+                    where channel=? and conversation_id=?
+                      and trigger_message_id=?
+                ) or exists (
+                    select 1
+                    from agent_execution_receipts as receipts
+                    join agent_runs as runs on runs.id=receipts.agent_run_id
+                    where runs.reply_task_id=?
+                      and receipts.completed=1 and receipts.persisted=1
+                ) or exists (
+                    select 1 from wechat_deliveries
+                    where reply_task_id=?
+                      and status not in ('failed', 'superseded')
+                )
+                """,
+                (
+                    task_id,
+                    task["execution_generation"],
+                    task["channel"],
+                    task["conversation_id"],
+                    task["trigger_message_id"],
+                    task_id,
+                    task_id,
+                ),
+            ).fetchone()
+            if unsafe is not None:
+                raise ValueError("failed reply task requires external reconciliation")
+            cursor = db.execute(
+                """
+                insert into reply_attempts (
+                    conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    codex_reason, audit_summary, send_status, send_error, channel
+                ) values (?, ?, ?, ?, ?, 'no_reply', 'general', ?, ?,
+                          'skipped', ?, ?)
+                """,
+                (
+                    task["conversation_id"],
+                    task["conversation_title"],
+                    task["trigger_message_id"],
+                    task["trigger_sender"],
+                    task["trigger_text"],
+                    reason,
+                    audit_summary,
+                    "settled_without_replay",
+                    task["channel"],
+                ),
+            )
+            db.execute(
+                """
+                update reply_tasks
+                set status='done', locked_at=null, available_at='', error='',
+                    recovery_code='settled_without_replay',
+                    updated_at=current_timestamp
+                where id=? and status='failed'
+                """,
+                (task_id,),
+            )
+            return int(cursor.lastrowid)
+
     def fail_reply_task(
         self,
         task_id: int,

@@ -4561,6 +4561,78 @@ def test_complete_reply_task_marks_generation_bound_task_done(tmp_path: Path):
     assert tasks[0].error == ""
 
 
+def test_settle_failed_reply_task_without_replay_records_skipped_terminal_attempt(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Private chat",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="time-sensitive fragment",
+        channel="dingtalk",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    store.fail_reply_task(
+        task.id,
+        "provider unavailable",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    attempt_id = store.settle_failed_reply_task_without_replay(
+        task.id,
+        reason="Later live conversation made the fragment stale.",
+        audit_summary="Read-only reconciliation found no delivery or side effect.",
+    )
+
+    settled = store.list_reply_tasks(limit=1)[0]
+    attempt = store.get_reply_attempt(attempt_id)
+    assert settled.status == "done"
+    assert settled.recovery_code == "settled_without_replay"
+    assert attempt is not None
+    assert attempt.action == "no_reply"
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "settled_without_replay"
+
+
+def test_settle_failed_reply_task_without_replay_rejects_delivery_receipt(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Private chat",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="hello",
+        channel="dingtalk",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    store.fail_reply_task(
+        task.id,
+        "provider unavailable",
+        expected_execution_generation=task.execution_generation,
+    )
+    store.record_sent_reply(
+        conversation_id="cid-1",
+        trigger_message_id="msg-1",
+        reply_text="delivered",
+        send_result_json="{}",
+    )
+
+    with pytest.raises(ValueError, match="external reconciliation"):
+        store.settle_failed_reply_task_without_replay(
+            task.id,
+            reason="stale",
+            audit_summary="read-only reconciliation",
+        )
+
+
 def test_list_reply_tasks_filters_statuses_newest_first(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
