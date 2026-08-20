@@ -1,7 +1,7 @@
 import json
 import os
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from app.dingtalk_models import CodexDecision
@@ -143,6 +143,32 @@ def codex_model_config_options(
     return options
 
 
+def codex_model_provider_settings_options(
+    provider: str | None,
+    settings: Mapping[str, str] | None,
+) -> list[str]:
+    if settings is None:
+        return []
+    if not provider or not provider.isidentifier():
+        raise ValueError("model provider settings require an identifier provider")
+    allowed = {"name", "base_url", "env_key", "wire_api"}
+    unknown = set(settings) - allowed
+    if unknown:
+        raise ValueError("unsupported model provider setting")
+    if any(not isinstance(value, str) for value in settings.values()):
+        raise TypeError("model provider settings must be strings")
+    options: list[str] = []
+    for key in ("name", "base_url", "env_key", "wire_api"):
+        if key in settings:
+            options.extend(
+                [
+                    "-c",
+                    _config_string(f"model_providers.{provider}.{key}", settings[key]),
+                ]
+            )
+    return options
+
+
 def memory_connector_config_issue() -> str:
     """Do not infer native OAuth availability from a copied service config."""
     return ""
@@ -189,6 +215,8 @@ class CodexRunner:
         model: str | None = None,
         provider: str | None = None,
         reasoning_effort: str | None = None,
+        model_provider_settings: Mapping[str, str] | None = None,
+        shell_environment_policy_core: bool = False,
     ) -> list[str]:
         if approval_policy not in {"untrusted", "never"}:
             raise ValueError("unsupported approval policy")
@@ -249,6 +277,20 @@ class CodexRunner:
                     provider=provider,
                     reasoning_effort=reasoning_effort,
                 )
+            ),
+            *codex_model_provider_settings_options(provider, model_provider_settings),
+            *(
+                [
+                    "-c",
+                    _config_string("shell_environment_policy.inherit", "core"),
+                    "-c",
+                    _config_string(
+                        "shell_environment_policy.ignore_default_excludes",
+                        False,
+                    ),
+                ]
+                if shell_environment_policy_core
+                else []
             ),
             *approval_options,
             *instruction_options,

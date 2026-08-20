@@ -21,7 +21,14 @@ def is_codex_provider_auth_error(value: str) -> bool:
         "unexpected status 403 forbidden" in detail
         and "chatgpt.com/backend-api/codex/responses" in detail
     )
-    return responses_api_auth_failed or chatgpt_codex_forbidden
+    explicit_invalid_api_key = (
+        "incorrect api key provided" in detail and "invalid_api_key" in detail
+    )
+    return (
+        responses_api_auth_failed
+        or chatgpt_codex_forbidden
+        or explicit_invalid_api_key
+    )
 
 
 def classify_codex_process_failure(stdout: str, stderr: str) -> str:

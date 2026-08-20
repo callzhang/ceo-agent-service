@@ -1,6 +1,7 @@
 """Route-scoped native Codex command and environment construction."""
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from app.codex_capacity import (
     codex_provider_failure_code,
 )
 from app.codex_failure import (
+    CODEX_PROCESS_FAILED,
     CODEX_PROVIDER_AUTH_FAILED,
     classify_codex_process_failure,
 )
@@ -29,13 +31,42 @@ from app.codex_runner import (
     CodexRunner,
 )
 
-_PROVIDER_CREDENTIAL_ENV_KEYS = (
-    "CEO_CODEX_API_KEY",
-    "OPENAI_API_KEY",
-    "CODEX_API_KEY",
-    "CEO_CLAUDE_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
+_SAFE_ENV_KEYS = {
+    "CODEX_CA_CERTIFICATE",
+    "CODEX_HOME",
+    "COLORTERM",
+    "CURL_CA_BUNDLE",
+    "HOME",
+    "LANG",
+    "LANGUAGE",
+    "LOGNAME",
+    "NODE_EXTRA_CA_CERTS",
+    "PATH",
+    "REQUESTS_CA_BUNDLE",
+    "SHELL",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "TEMP",
+    "TERM",
+    "TMP",
+    "TMPDIR",
+    "TZ",
+    "USER",
+}
+_API_PROVIDER = "ceo_openai_api"
+_API_PROVIDER_SETTINGS = {
+    "name": "CEO OpenAI API fallback",
+    "base_url": "https://api.openai.com/v1",
+    "env_key": "OPENAI_API_KEY",
+    "wire_api": "responses",
+}
+_CREDENTIAL_NAME_MARKERS = (
+    "KEY",
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "CREDENTIAL",
+    "AUTH",
 )
 
 
@@ -75,6 +106,12 @@ class CodexRuntimeAdapter:
             use_approval_bypass=use_approval_bypass,
             model=configured_route.model,
             provider=self._provider_for(configured_route),
+            model_provider_settings=(
+                _API_PROVIDER_SETTINGS
+                if configured_route.credential_mode == CredentialMode.SERVICE_API
+                else None
+            ),
+            shell_environment_policy_core=True,
         )
 
     def build_env(
@@ -83,9 +120,7 @@ class CodexRuntimeAdapter:
         api_key: str | None = None,
     ) -> dict[str, str]:
         configured_route = self._configured_route(route)
-        env = self.runner.build_env()
-        for key in _PROVIDER_CREDENTIAL_ENV_KEYS:
-            env.pop(key, None)
+        env = _safe_child_environment(self.runner.build_env())
         if configured_route.credential_mode == CredentialMode.SERVICE_API:
             env["OPENAI_API_KEY"] = self._api_key_for(configured_route, api_key)
         elif api_key is not None:
@@ -97,8 +132,31 @@ class CodexRuntimeAdapter:
         stdout: str,
         stderr: str,
         returncode: int,
+        *,
+        timed_out: bool = False,
+        timeout_kind: str = "",
+        terminal_succeeded: bool = False,
     ) -> RuntimeFailure:
-        detail = f"{stdout}\n{stderr}"
+        if returncode == 0 or terminal_succeeded:
+            return RuntimeFailure(
+                failure_class=RuntimeFailureClass.UNCLASSIFIED,
+                code="runtime_unclassified",
+                detail="Codex completed without a classified runtime failure.",
+            )
+        if timed_out:
+            timeout_code = {
+                "idle": "codex_idle_timeout",
+                "total": "codex_total_timeout",
+            }.get(timeout_kind)
+            if timeout_code is not None:
+                return _transport_failure(timeout_code, "Codex execution timed out.")
+        if not stdout.strip() and not stderr.strip():
+            return RuntimeFailure(
+                failure_class=RuntimeFailureClass.PROCESS,
+                code=CODEX_PROCESS_FAILED,
+                detail="Codex exited without output.",
+            )
+        detail = _provider_failure_text(stdout, stderr)
         if _is_codex_login_required_error(detail):
             return RuntimeFailure(
                 failure_class=RuntimeFailureClass.AUTHENTICATION,
@@ -107,7 +165,12 @@ class CodexRuntimeAdapter:
                 failover_permitted=True,
                 route_pause_required=True,
             )
-        process_code = classify_codex_process_failure(stdout, stderr)
+        if "stream disconnected before completion" in detail.casefold():
+            return _transport_failure(
+                "codex_transport_disconnected",
+                "Codex provider connection ended before completion.",
+            )
+        process_code = classify_codex_process_failure(detail, "")
         if process_code == CODEX_PROVIDER_AUTH_FAILED:
             return RuntimeFailure(
                 failure_class=RuntimeFailureClass.AUTHENTICATION,
@@ -153,7 +216,7 @@ class CodexRuntimeAdapter:
 
     def _provider_for(self, route: RuntimeRoute) -> str:
         if route.credential_mode == CredentialMode.SERVICE_API:
-            return "openai"
+            return _API_PROVIDER
         return os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
 
     def _api_key_for(self, route: RuntimeRoute, api_key: str | None) -> str:
@@ -181,3 +244,53 @@ def _unclassified_failure_detail(returncode: int) -> str:
     if returncode == 0:
         return "Codex did not return a classified runtime failure."
     return "Codex exited without a classified runtime failure."
+
+
+def _safe_child_environment(base_env: dict[str, str]) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in base_env.items()
+        if (key in _SAFE_ENV_KEYS or key.startswith("LC_"))
+        and not any(marker in key.upper() for marker in _CREDENTIAL_NAME_MARKERS)
+    }
+
+
+def _provider_failure_text(stdout: str, stderr: str) -> str:
+    messages = [stderr]
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("type") not in {
+            "error",
+            "turn.failed",
+        }:
+            continue
+        messages.extend(_event_error_messages(event))
+    return "\n".join(message for message in messages if message)
+
+
+def _event_error_messages(event: dict[str, object]) -> list[str]:
+    values: list[str] = []
+    for key in ("message", "error"):
+        value = event.get(key)
+        if isinstance(value, str):
+            values.append(value)
+        elif isinstance(value, dict):
+            for nested_key in ("message", "code"):
+                nested = value.get(nested_key)
+                if isinstance(nested, str):
+                    values.append(nested)
+    return values
+
+
+def _transport_failure(code: str, detail: str) -> RuntimeFailure:
+    return RuntimeFailure(
+        failure_class=RuntimeFailureClass.TRANSPORT,
+        code=code,
+        detail=detail,
+        retryable_on_same_route=True,
+        failover_permitted=True,
+        route_pause_required=True,
+    )

@@ -199,6 +199,29 @@ def test_codex_model_options_accept_explicit_route_overrides(tmp_path: Path):
     assert 'model_reasoning_effort="high"' in command
 
 
+def test_codex_command_accepts_explicit_provider_settings_and_shell_policy(
+    tmp_path: Path,
+):
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="hello",
+        session_id=None,
+        model="gpt-5.5",
+        provider="ceo_openai_api",
+        model_provider_settings={
+            "name": "CEO OpenAI API fallback",
+            "base_url": "https://api.openai.com/v1",
+            "env_key": "OPENAI_API_KEY",
+            "wire_api": "responses",
+        },
+        shell_environment_policy_core=True,
+    )
+
+    assert 'model_provider="ceo_openai_api"' in command
+    assert 'model_providers.ceo_openai_api.env_key="OPENAI_API_KEY"' in command
+    assert 'shell_environment_policy.inherit="core"' in command
+    assert "shell_environment_policy.ignore_default_excludes=false" in command
+
+
 def test_codex_model_options_without_arguments_keep_environment_defaults(monkeypatch):
     monkeypatch.setenv("CEO_CODEX_MODEL", "gpt-5.5-default")
     monkeypatch.setenv("CEO_CODEX_MODEL_PROVIDER", "default-provider")
