@@ -543,6 +543,49 @@ def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
     )
 
 
+def test_pause_opened_after_selection_prevents_attempt_and_child(store, config):
+    run_id = seed_agent_run_parent(store, task_id=944)
+    calls = []
+    delegate = make_router(store, config)
+
+    class RacingRouter:
+        def first_route_decision(self, **kwargs):
+            decision = delegate.first_route_decision(**kwargs)
+            assert decision.route is not None
+            store.open_runtime_route_pause(
+                decision.route.name,
+                "probe_failed",
+                retry_at="2099-01-01T00:00:00+00:00",
+            )
+            return decision
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=RacingRouter(),
+        adapter=FakeAdapter(),
+        executor=lambda *_args, **_kwargs: (
+            calls.append("child") or ProcessRunResult(0, "42", "")
+        ),
+    )
+
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_route_unavailable"):
+        routed.execute(
+            workload_kind="agent_run",
+            workload_key=str(run_id),
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+    assert calls == []
+    assert store.list_agent_runtime_attempts(run_id) == []
+
+
 @pytest.mark.parametrize("returncode", [0, 1])
 def test_read_only_missing_session_evidence_is_terminal_without_failover(
     store, config, returncode

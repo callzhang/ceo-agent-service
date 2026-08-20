@@ -150,9 +150,24 @@ class WechatReplyConsumer:
         try:
             decision = self.runner.decide(prompt, None, run_id=run_claim.run.id)
         except Exception as exc:
+            from app.agent_runtime_router import RoutedCodexExecutionError
+
+            if isinstance(exc, RoutedCodexExecutionError):
+                structured_error = {
+                    "code": exc.code,
+                    "failure_class": (
+                        exc.failure_class.value if exc.failure_class is not None else ""
+                    ),
+                    "failure_code": exc.failure_code,
+                }
+            else:
+                structured_error = {
+                    "code": "wechat_decision_failed",
+                    "detail": str(exc)[:500],
+                }
             self.store.fail_agent_run(
                 run_claim.run.id,
-                {"code": "wechat_decision_failed", "detail": str(exc)[:500]},
+                structured_error,
                 owner=run_owner,
             )
             raise

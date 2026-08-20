@@ -169,6 +169,57 @@ def test_runtime_attempt_claim_is_ordered_and_idempotent(tmp_path: Path):
     assert repeated.id == first.id
 
 
+@pytest.mark.parametrize("terminal_status", ["completed", "failed"])
+def test_runtime_attempt_claim_requires_running_agent_parent(
+    tmp_path: Path, terminal_status: str
+):
+    store = AutoReplyStore(tmp_path / "runtime-parent.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    if terminal_status == "completed":
+        store.complete_agent_run(run.id, {"outcome": "done"}, owner="runtime-attempt")
+    else:
+        store.fail_agent_run(
+            run.id, {"code": "terminal"}, owner="runtime-attempt"
+        )
+
+    with pytest.raises(ValueError, match="does not exist or is not running"):
+        store.claim_agent_runtime_attempt(
+            run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+        )
+
+    assert store.list_agent_runtime_attempts(run.id) == []
+
+
+def test_runtime_attempt_claim_rejects_missing_agent_parent(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-parent.sqlite3")
+
+    with pytest.raises(ValueError, match="does not exist or is not running"):
+        store.claim_agent_runtime_attempt(
+            999, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+        )
+
+    with store._connect() as db:
+        assert db.execute("select count(*) from agent_runtime_attempts").fetchone()[0] == 0
+
+
+def test_agent_runtime_attempt_claim_atomically_rechecks_route_pause(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-parent.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    store.open_runtime_route_pause(
+        "codex_oauth",
+        "codex_login_required",
+        retry_at="2099-01-01T00:00:00+00:00",
+    )
+
+    with pytest.raises(Exception, match="runtime route is paused") as raised:
+        store.claim_agent_runtime_attempt(
+            run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+        )
+
+    assert type(raised.value).__name__ == "RuntimeRoutePausedError"
+    assert store.list_agent_runtime_attempts(run.id) == []
+
+
 def test_runtime_attempt_claim_numbers_follow_terminal_attempts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
     run = _claimed_runtime_agent_run(store)

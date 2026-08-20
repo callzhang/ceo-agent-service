@@ -127,6 +127,40 @@ def test_stop_with_error_records_failed_attempt(fake_codex, consumer, store):
     assert attempt.send_error == "missing_wechat_context"
 
 
+def test_runtime_failure_fails_agent_run_without_completing_business_stop(
+    consumer, store
+):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    secret = "provider-secret-detail"
+
+    class RuntimeFailingRunner:
+        def decide(self, *_args, **_kwargs):
+            raise RoutedCodexExecutionError(
+                "runtime_route_unavailable",
+                secret,
+                failure_class=RuntimeFailureClass.AUTHENTICATION,
+                failure_code="codex_provider_auth_failed",
+            )
+
+    consumer.runner = RuntimeFailingRunner()
+
+    with pytest.raises(WechatTaskProcessingError):
+        consumer.run_once(limit=1)
+
+    [run] = store.list_agent_runs_for_task_generation(1, "initial")
+    assert run.status == "failed"
+    error = __import__("json").loads(run.structured_error_json)
+    assert error == {
+        "code": "runtime_route_unavailable",
+        "failure_class": "authentication",
+        "failure_code": "codex_provider_auth_failed",
+    }
+    assert secret not in run.structured_error_json
+    assert run.final_result_json == ""
+
+
 def test_external_dependency_failure_defers_wechat_task_for_retry(
     fake_codex, store, account
 ):

@@ -846,14 +846,8 @@ class CodexDecisionRunner:
                     )
                 ),
             )
-        except RoutedCodexExecutionError as exc:
-            return CodexDecision(
-                action=CodexAction.STOP_WITH_ERROR,
-                reason=exc.failure_code or exc.code,
-                audit_summary=exc.failure_code or exc.code,
-                external_dependency_failed=exc.retryable_external_dependency,
-                failure_code=exc.failure_code,
-            )
+        except RoutedCodexExecutionError:
+            raise
         self.last_session_id = result.session_id
         self.last_transcript_start_line = result.transcript_start
         self.last_transcript_end_line = result.transcript_end

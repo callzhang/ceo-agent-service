@@ -4660,17 +4660,17 @@ class AutoReplyStore:
             )
             if agent_run_id is not None:
                 run = db.execute(
-                    "select 1 from agent_runs where id=?", (agent_run_id,)
+                    "select status from agent_runs where id=?", (agent_run_id,)
                 ).fetchone()
-                if run is None:
-                    raise ValueError("agent run does not exist")
+                if run is None or run["status"] != "running":
+                    raise ValueError("agent run does not exist or is not running")
             elif not self._runtime_operation_parent_exists(
                 db, workload_kind, workload_key
             ):
                 raise ValueError(
                     "runtime operation parent does not exist or is not running"
                 )
-            elif db.execute(
+            if db.execute(
                 """
                 select 1 from runtime_route_pauses
                 where route_name=? and retry_at>?

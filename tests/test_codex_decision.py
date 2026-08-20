@@ -88,6 +88,29 @@ def test_routed_decision_requires_and_uses_persisted_agent_run(tmp_path: Path):
     assert runner.last_session_id == "decision-session"
 
 
+def test_routed_decision_propagates_runtime_failure_instead_of_business_stop(
+    tmp_path: Path,
+):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    class Routed:
+        def execute(self, **_kwargs):
+            raise RoutedCodexExecutionError(
+                "runtime_route_unavailable",
+                "provider detail with secret material",
+                failure_class=RuntimeFailureClass.AUTHENTICATION,
+                failure_code="codex_provider_auth_failed",
+            )
+
+    runner = CodexDecisionRunner(workspace=tmp_path, routed_execution=Routed())
+
+    with pytest.raises(RoutedCodexExecutionError) as raised:
+        runner.decide("decide", None, run_id=41)
+
+    assert raised.value.code == "runtime_route_unavailable"
+
+
 def _agent_envelope_json(
     *,
     mode: str = "no_reply",
