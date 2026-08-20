@@ -12,6 +12,7 @@ from app.claude_runtime_adapter import (
     ClaudeEventPolicyError,
     ClaudeRuntimeAdapter,
     ClaudeRuntimeResultError,
+    ClaudeTerminalProof,
 )
 from app.native_cli_metadata import NativeCliMetadataClassifier
 
@@ -323,8 +324,9 @@ def test_final_result_uses_turn_completed_and_caller_parser(adapter, normalizer)
     normalizer.normalize_event(SYSTEM_INIT)
     event = normalizer.normalize_event(FINAL_RESULT)
     parsed = adapter.parse_final_result(
-        normalizer.terminal_proof(),
-        lambda raw: {"parsed": raw},
+        normalizer=normalizer,
+        proof=normalizer.terminal_proof(),
+        parser=lambda raw: {"parsed": raw},
     )
 
     assert event == {
@@ -342,7 +344,11 @@ def test_caller_parser_failure_is_typed_and_failover_closed(adapter, normalizer)
     normalizer.normalize_event(SYSTEM_INIT)
     normalizer.normalize_event(FINAL_RESULT)
     with pytest.raises(ClaudeRuntimeResultError) as exc:
-        adapter.parse_final_result(normalizer.terminal_proof(), reject)
+        adapter.parse_final_result(
+            normalizer=normalizer,
+            proof=normalizer.terminal_proof(),
+            parser=reject,
+        )
 
     assert exc.value.failure.failure_class is RuntimeFailureClass.RESULT
     assert exc.value.failure.code == "claude_result_validation_failed"
@@ -733,6 +739,164 @@ def test_multiblock_event_failure_is_atomic_and_terminal(normalizer):
 
 def test_parser_rejects_raw_result_without_terminal_state_proof(adapter):
     with pytest.raises(ClaudeRuntimeResultError) as exc:
-        adapter.parse_final_result(FINAL_RESULT, lambda raw: raw)
+        adapter.parse_final_result(  # type: ignore[arg-type]
+            normalizer=adapter.new_event_normalizer(),
+            proof=FINAL_RESULT,
+            parser=lambda raw: raw,
+        )
 
     assert exc.value.failure.code == "claude_result_incomplete"
+
+
+def test_terminal_proof_is_owner_bound_unforgeable_and_single_consume(
+    adapter, config, tmp_path
+):
+    first = adapter.new_event_normalizer()
+    second = adapter.new_event_normalizer()
+    first.normalize_event(SYSTEM_INIT)
+    first.normalize_event(FINAL_RESULT)
+    proof = first.terminal_proof()
+    forged = ClaudeTerminalProof(
+        result=proof.result,
+        session_id=proof.session_id,
+        nonce=proof.nonce,
+    )
+    other_adapter = ClaudeRuntimeAdapter(
+        workspace=tmp_path,
+        config=config,
+        claude_bin="claude-other",
+    )
+
+    for normalizer, candidate in ((second, proof), (first, forged)):
+        with pytest.raises(ClaudeRuntimeResultError) as exc:
+            adapter.parse_final_result(
+                normalizer=normalizer,
+                proof=candidate,
+                parser=lambda raw: raw,
+            )
+        assert exc.value.failure.code == "claude_result_incomplete"
+    with pytest.raises(ClaudeRuntimeResultError):
+        other_adapter.parse_final_result(
+            normalizer=first,
+            proof=proof,
+            parser=lambda raw: raw,
+        )
+
+    assert adapter.parse_final_result(
+        normalizer=first,
+        proof=proof,
+        parser=lambda raw: raw,
+    ) == '{"ok":true}'
+    with pytest.raises(ClaudeRuntimeResultError):
+        adapter.parse_final_result(
+            normalizer=first,
+            proof=proof,
+            parser=lambda raw: raw,
+        )
+
+
+def test_terminal_proof_is_consumed_even_when_caller_parser_fails(adapter):
+    normalizer = adapter.new_event_normalizer()
+    normalizer.normalize_event(SYSTEM_INIT)
+    normalizer.normalize_event(FINAL_RESULT)
+    proof = normalizer.terminal_proof()
+
+    with pytest.raises(ClaudeRuntimeResultError):
+        adapter.parse_final_result(
+            normalizer=normalizer,
+            proof=proof,
+            parser=lambda _raw: (_ for _ in ()).throw(ValueError("invalid")),
+        )
+    with pytest.raises(ClaudeRuntimeResultError):
+        adapter.parse_final_result(
+            normalizer=normalizer,
+            proof=proof,
+            parser=lambda raw: raw,
+        )
+
+
+def test_reviewed_transport_env_is_exact_and_secrets_stay_out_of_files(
+    adapter, route, tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "memory_connector": {
+                        "url": "https://memory.example.test/mcp",
+                        "bearer_token_env_var": "CONNECTOR_API_KEY",
+                        "env_http_headers": {
+                            "X-Memory-Auth": "MEMORY_AUTH_TYPE"
+                        },
+                    },
+                    "foreign": {
+                        "url": "https://foreign.invalid/mcp",
+                        "bearer_token_env_var": "FOREIGN_API_KEY",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+    monkeypatch.setenv("CONNECTOR_API_KEY", "raw-memory-secret")
+    monkeypatch.setenv("MEMORY_AUTH_TYPE", "raw-auth-secret")
+    monkeypatch.setenv("FOREIGN_API_KEY", "raw-foreign-secret")
+    command = adapter.build_command(
+        route=route,
+        session_id=None,
+        max_turns=2,
+        policy=ClaudeCommandPolicy.reviewed(
+            mcp_tools=("mcp__memory_connector__memory_recall",)
+        ),
+    )
+
+    child_env = adapter.build_env(route, command=command)
+    mcp_path = Path(command[command.index("--mcp-config") + 1])
+    settings_path = Path(command[command.index("--settings") + 1])
+    serialized = "\n".join(
+        [*command, mcp_path.read_text(), settings_path.read_text()]
+    )
+
+    assert child_env["CONNECTOR_API_KEY"] == "raw-memory-secret"
+    assert child_env["MEMORY_AUTH_TYPE"] == "raw-auth-secret"
+    assert "FOREIGN_API_KEY" not in child_env
+    assert "raw-memory-secret" not in serialized
+    assert "raw-auth-secret" not in serialized
+    assert "raw-foreign-secret" not in serialized
+
+
+def test_environment_backed_mcp_args_fail_closed_before_serialization(
+    adapter, route, tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "memory_connector": {
+                        "command": "/opt/service/memory-mcp",
+                        "args_env": "MEMORY_MCP_ARGS",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+    monkeypatch.setenv("MEMORY_MCP_ARGS", '["--token","raw-args-secret"]')
+
+    with pytest.raises(ValueError, match="args_env"):
+        adapter.build_command(
+            route=route,
+            session_id=None,
+            max_turns=2,
+            policy=ClaudeCommandPolicy.reviewed(
+                mcp_tools=("mcp__memory_connector__memory_recall",)
+            ),
+        )
+    assert not any(
+        "raw-args-secret" in path.read_text(encoding="utf-8")
+        for path in Path(adapter._runtime_root.name).iterdir()
+    )
