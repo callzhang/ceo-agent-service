@@ -5369,6 +5369,69 @@ def test_follow_up_delivery_loop_runs_independently_of_task_maintenance(
     ]
 
 
+@pytest.mark.parametrize(
+    ("loop", "patch_target", "error_kind", "loop_kwargs"),
+    [
+        (
+            cli.run_meeting_consumer_loop,
+            "consume_meeting_alignment_jobs",
+            "meeting_alignment_consumer",
+            {"poll_interval_seconds": 10, "max_tasks": 1},
+        ),
+        (
+            run_follow_up_delivery_loop,
+            "process_follow_ups_command",
+            "follow_up_delivery",
+            {"interval_seconds": 60},
+        ),
+    ],
+)
+def test_service_loop_records_only_persistent_sqlite_lock(
+    monkeypatch,
+    tmp_path,
+    loop,
+    patch_target,
+    error_kind,
+    loop_kwargs,
+):
+    class StopLoop(Exception):
+        pass
+
+    settings = WorkerSettings(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path / "memory",
+    )
+    store = AutoReplyStore(settings.db_path)
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: store)
+    monkeypatch.setattr(
+        cli,
+        patch_target,
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            sqlite3.OperationalError("database is locked")
+        ),
+    )
+    if patch_target == "consume_meeting_alignment_jobs":
+        monkeypatch.setattr(cli, "_create_meeting_dws", lambda _settings: object())
+        monkeypatch.setattr(
+            cli, "MeetingAlignmentCodexRunner", lambda **_kwargs: object()
+        )
+
+    sleeps = 0
+
+    def sleep(_seconds):
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps == 3:
+            raise StopLoop
+
+    with pytest.raises(StopLoop):
+        loop(settings, sleep=sleep, network_ready=lambda: True, **loop_kwargs)
+
+    [error] = store.list_errors(limit=10)
+    assert error.kind == error_kind
+    assert error.detail == "database is locked"
+
+
 def test_task_maintenance_loop_skips_oa_scan_when_disabled(monkeypatch, tmp_path):
     calls = []
 

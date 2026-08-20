@@ -1,5 +1,9 @@
 # Changelog
 
+- Retry isolated SQLite lock contention in DingTalk reads, meeting consumption,
+  and follow-up delivery; record an error only when the same loop remains locked
+  for three consecutive attempts.
+
 - Retry transient SQLite contention in WeChat loops and report it only when the lock persists for three consecutive iterations.
 - Keep valid unread DingTalk messages when DWS returns an unsupported row in the same unread window, without promoting older read-overlap rows.
 - Add a guarded failed-task settlement path for stale or superseded replies. It records an explicit skipped attempt and refuses to close tasks with active runs, delivery receipts, or external side effects, preventing unsafe replay without hiding the audit trail.

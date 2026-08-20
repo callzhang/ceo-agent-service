@@ -2358,6 +2358,7 @@ def run_meeting_consumer_loop(
         if embedding_enabled()
         else None
     )
+    consecutive_sqlite_lock_failures = 0
     while True:
         if not network_ready():
             sleep(poll_interval_seconds)
@@ -2372,8 +2373,19 @@ def run_meeting_consumer_loop(
                 deliver=not settings.dry_run,
                 embedding_client=embedding_client,
             )
+            consecutive_sqlite_lock_failures = 0
         except Exception as exc:
-            if not _is_dws_transient_dependency_error(exc):
+            if isinstance(exc, sqlite3.OperationalError) and (
+                "database is locked" in str(exc).casefold()
+                or "database is busy" in str(exc).casefold()
+            ):
+                consecutive_sqlite_lock_failures += 1
+                if consecutive_sqlite_lock_failures >= 3:
+                    store.record_error(
+                        "", "", "meeting_alignment_consumer", str(exc)
+                    )
+            elif not _is_dws_transient_dependency_error(exc):
+                consecutive_sqlite_lock_failures = 0
                 store.record_error(
                     "",
                     "",
@@ -2476,6 +2488,7 @@ def run_follow_up_delivery_loop(
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
+    consecutive_sqlite_lock_failures = 0
     while True:
         if network_ready():
             try:
@@ -2485,8 +2498,18 @@ def run_follow_up_delivery_loop(
                     refresh_evidence=False,
                     limit=50,
                 )
+                consecutive_sqlite_lock_failures = 0
             except Exception as exc:
-                store.record_error("", "", "follow_up_delivery", str(exc))
+                if isinstance(exc, sqlite3.OperationalError) and (
+                    "database is locked" in str(exc).casefold()
+                    or "database is busy" in str(exc).casefold()
+                ):
+                    consecutive_sqlite_lock_failures += 1
+                    if consecutive_sqlite_lock_failures >= 3:
+                        store.record_error("", "", "follow_up_delivery", str(exc))
+                else:
+                    consecutive_sqlite_lock_failures = 0
+                    store.record_error("", "", "follow_up_delivery", str(exc))
         sleep(interval_seconds)
 
 

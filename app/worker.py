@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shlex
+import sqlite3
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -469,6 +470,7 @@ class DingTalkAutoReplyWorker:
         )
         self._pass_channel_results: dict[str, ChannelGateResult] = {}
         self._task_image_paths: dict[int, set[Path]] = {}
+        self._sqlite_lock_failures: dict[str, int] = {}
         self.agent_orchestrator = agent_orchestrator
 
     def _agent_orchestrator(self) -> AgentOrchestrator:
@@ -535,6 +537,7 @@ class DingTalkAutoReplyWorker:
     ) -> T:
         try:
             result = call()
+            self._sqlite_lock_failures.pop(kind, None)
             self._clear_dws_transient_error(kind)
             if conversation_id:
                 self._clear_dws_read_forbidden(conversation_id)
@@ -560,6 +563,16 @@ class DingTalkAutoReplyWorker:
                 self._mark_dws_read_forbidden(conversation_id)
             should_notify = bool(notify_title)
             should_record_error = record_forbidden_error or not is_forbidden_read
+            if isinstance(exc, sqlite3.OperationalError) and (
+                "database is locked" in str(exc).casefold()
+                or "database is busy" in str(exc).casefold()
+            ):
+                failures = self._sqlite_lock_failures.get(kind, 0) + 1
+                self._sqlite_lock_failures[kind] = failures
+                should_record_error = failures >= 3
+                should_notify = False
+            else:
+                self._sqlite_lock_failures.pop(kind, None)
             if pat_authorization_requested:
                 should_record_error = False
                 should_notify = False

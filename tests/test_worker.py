@@ -2046,6 +2046,41 @@ def test_call_dws_suppresses_message_read_system_errors(tmp_path: Path, monkeypa
     assert state["count"] == 3
 
 
+def test_call_dws_records_only_persistent_sqlite_lock(tmp_path: Path, monkeypatch):
+    dws = FakeDws([], {})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    def fail_read():
+        raise sqlite3.OperationalError("database is locked")
+
+    for _ in range(2):
+        assert worker._call_dws("read_recent_messages", fail_read, default=[]) == []
+    assert worker.store.count_errors() == 0
+
+    assert worker._call_dws("read_recent_messages", fail_read, default=[]) == []
+    [error] = worker.store.list_errors(limit=10)
+    assert error.kind == "read_recent_messages"
+    assert error.detail == "database is locked"
+
+
+def test_call_dws_resets_sqlite_lock_count_after_success(tmp_path: Path, monkeypatch):
+    dws = FakeDws([], {})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    def fail_read():
+        raise sqlite3.OperationalError("database is locked")
+
+    for _ in range(2):
+        worker._call_dws("read_recent_messages", fail_read, default=[])
+    assert worker._call_dws("read_recent_messages", lambda: ["ok"], default=[]) == ["ok"]
+    for _ in range(2):
+        worker._call_dws("read_recent_messages", fail_read, default=[])
+
+    assert worker.store.count_errors() == 0
+
+
 def test_call_dws_suppresses_prepare_call_tool_error_for_mentioned_messages(
     tmp_path: Path, monkeypatch
 ):
