@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tomllib
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX, _config_string
 
@@ -26,6 +29,11 @@ WECHAT_MEMORY_READ_TOOLS = (
     "memory_recall",
     "timeline_get",
     "user_get",
+)
+
+_BACKGROUND_DISABLED_FEATURES = (
+    "plugins", "apps", "chronicle", "computer_use", "browser_use",
+    "in_app_browser", "memories", "skill_search",
 )
 
 
@@ -126,6 +134,28 @@ def disable_configured_mcp_servers(
             )
 
 
+def _user_mcp_server_names() -> tuple[str, ...]:
+    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    config_path = codex_home / "config.toml"
+    if not config_path.is_file():
+        return ()
+    with config_path.open("rb") as handle:
+        configured = tomllib.load(handle).get("mcp_servers", {})
+    if not isinstance(configured, dict):
+        return ()
+    return tuple(sorted(str(name) for name in configured))
+
+
+def _isolate_background_agent_context(command: list[str]) -> None:
+    options: list[str] = []
+    for feature in _BACKGROUND_DISABLED_FEATURES:
+        options.extend(["--disable", feature])
+    for server_name in _user_mcp_server_names():
+        if server_name != "agent_cli":
+            options.extend(["-c", f"mcp_servers.{server_name}.enabled=false"])
+    _insert_command_options(command, options)
+
+
 def make_read_only_without_tools(command: list[str]) -> None:
     """Constrain extraction to read-only Codex with no MCP, web, or other tools."""
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
@@ -152,6 +182,7 @@ def make_role_agent_command(
     allow_write: bool,
     allow_local_credential_store: bool = False,
 ) -> None:
+    _isolate_background_agent_context(command)
     if allow_local_credential_store:
         # DWS stores the principal's local login state outside the workspace.
         # Let the controlled MCP reach it, but remove native command tools so

@@ -1,5 +1,9 @@
 # Changelog
 
+- Isolate background Consumer and Audit Codex turns from desktop plugins,
+  browser features, session memory, and unrelated user MCP servers while
+  retaining the configured model provider and existing Codex login.
+
 - Reconcile unknown direct follow-up sends with a complete, exact DingTalk
   conversation readback. A matching outbound message now finalizes delivery;
   a complete absence releases the same revision for an idempotent retry, while

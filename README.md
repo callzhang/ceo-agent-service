@@ -21,6 +21,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **结构化消息发现**：按会话来源、明确 @ 和稳定平台对象发现 trigger；业务类型和处理方式由 Agent 动态读取 Skill 判断，不使用关键词 router。
 - **本地任务队列**：使用 SQLite 保存 `reply_tasks`、`reply_attempts`、`seen_messages`、`sent_replies`，避免重复处理和重复发送。
 - **Consumer / Audit Agent 执行**：Consumer A 是管理者的 read-oriented representative，用原生 `codex exec` 读取材料、判断业务并提出精确候选；按角色协议不得主动执行外部写操作。Audit B 独立审阅，并且是 service 生命周期中唯一获授权发布 accepted action、执行和读回外部动作的 Agent。
+- **后台 Codex 隔离**：Consumer/Audit 沿用当前用户配置的 provider 与登录态，但关闭桌面插件、浏览器能力、会话记忆和无关 MCP；外部操作只通过服务注入的受控 `agent_cli` 执行。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
 - **Skill-first 材料处理**：服务只传递材料引用、原始 ID、链接和精确读取命令；A 动态读取业务 Skill 和操作 Skill，自行决定展开哪些材料，B 按 verified Skill receipt 重读相同 Skill 并在写入前核对实时状态。
 - **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。DingTalk 和 Lark 使用显式通道 gate；Codex 直接沿用本地 App/CLI 登录状态，认证失败立即落为可见失败。写入结果未知时只在原 B session 中核对，不能盲目重放。

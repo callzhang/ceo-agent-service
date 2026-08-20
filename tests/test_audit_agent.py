@@ -1191,8 +1191,9 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(
     # The service validates the final wire result after Codex returns; avoid
     # constraining dynamically loaded reviewed MCP tools in the transport.
     assert "--output-schema" not in command
-    assert "features.plugins=false" not in command
-    assert "features.apps=false" not in command
+    assert command.count("--disable") == 8
+    assert command[command.index("--disable") + 1] == "plugins"
+    assert "apps" in command
     assert "tools.enabled_tools=[]" in command
     assert 'approval_policy="untrusted"' in command
     assert 'approvals_reviewer="auto_review"' in command
