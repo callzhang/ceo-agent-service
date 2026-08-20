@@ -678,6 +678,7 @@ def dispatch_task_todo_sync_outbox(
                     "link_id": link.id if link is not None else 0,
                     "dingtalk_task_id": link.dingtalk_task_id if link is not None else "",
                 }
+                delivered_now = link is not None and link.status != "failed"
             else:
                 delivered_now = sync_completed_todo_to_dingtalk(
                     store,
@@ -687,6 +688,13 @@ def dispatch_task_todo_sync_outbox(
                     now=now,
                 )
                 receipt = {"delivered": delivered_now}
+            if not delivered_now:
+                store.finish_task_todo_sync_outbox(
+                    outbox_id=item["id"], owner=owner, status="failed",
+                    receipt_json=json.dumps(receipt, ensure_ascii=False),
+                    error="dingtalk_todo_effect_not_delivered",
+                )
+                break
             store.finish_task_todo_sync_outbox(
                 outbox_id=item["id"], owner=owner, status="completed",
                 receipt_json=json.dumps(receipt, ensure_ascii=False),

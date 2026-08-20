@@ -15562,13 +15562,14 @@ class AutoReplyStore:
                 (now, now),
             )
             row = db.execute(
-                "select * from task_todo_sync_outbox where status='queued' order by id limit 1"
+                "select * from task_todo_sync_outbox "
+                "where status in ('queued', 'failed') order by id limit 1"
             ).fetchone()
             if row is None:
                 return None
             changed = db.execute(
                 "update task_todo_sync_outbox set status='running', lease_owner=?, "
-                "lease_expires_at=?, updated_at=? where id=? and status='queued'",
+                "lease_expires_at=?, updated_at=? where id=? and status in ('queued', 'failed')",
                 (owner, lease_until, now, row["id"]),
             )
             return row if changed.rowcount == 1 else None

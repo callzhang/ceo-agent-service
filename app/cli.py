@@ -90,7 +90,11 @@ from app.task_noise_backfill import (
     backfill_routine_process_todos,
 )
 from app.todo_completion import enqueue_follow_up_completion_checks
-from app.todo_sync import pull_dingtalk_todo_statuses, retry_failed_dingtalk_todo_links
+from app.todo_sync import (
+    dispatch_task_todo_sync_outbox,
+    pull_dingtalk_todo_statuses,
+    retry_failed_dingtalk_todo_links,
+)
 from app.work_profile import (
     build_initial_profile,
     collect_dingtalk_kb_evidence,
@@ -1004,6 +1008,13 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             ding_receiver_user_id=settings.ding_receiver_user_id,
             transient_retry_attempts=settings.dws_transient_retry_attempts,
             transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+        )
+        dispatch_task_todo_sync_outbox(
+            store,
+            dws,
+            owner="process-work-items-recovery",
+            now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            limit=min(limit, 20),
         )
     processed = 0
     for _ in range(limit):
