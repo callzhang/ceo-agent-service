@@ -4,9 +4,12 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from app.codex_runner import CodexRunner
+from app.agent_runtime_router import (
+    ApprovedCodexCommandFactory,
+    RoutedCodexExecution,
+    RoutedResultCodec,
+)
 from app.config import work_profile_path
-from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
     DeliveryTarget,
     MeetingAlignmentDecision,
@@ -22,6 +25,17 @@ MEETING_ALIGNMENT_DECISION_SCHEMA_PATH = (
     / "meeting_alignment_decision.schema.json"
 )
 MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT = 200
+MEETING_RUNTIME_CAPABILITIES = frozenset(
+    {
+        "structured_output",
+        "local_schema_validation",
+        "consumer_read_only_enforcement",
+        "reviewed_read_tools",
+    }
+)
+MEETING_RESULT_CODEC = RoutedResultCodec.text(
+    schema_id="meeting_alignment.decision.v1"
+)
 
 
 class MeetingAlignmentTargetError(ValueError):
@@ -34,7 +48,7 @@ class MeetingAlignmentCodex(Protocol):
     last_transcript_end_line: int
     last_audit_tool_events: list[dict[str, str]]
 
-    def decide(self, *, prompt: str) -> MeetingAlignmentDecision: ...
+    def decide(self, *, prompt: str, run_id: int) -> MeetingAlignmentDecision: ...
 
 
 class MeetingAlignmentAgent:
@@ -48,14 +62,18 @@ class MeetingAlignmentAgent:
         source: MeetingSource,
         *,
         similar_sessions: list[CodexSessionSearchResult] | None = None,
+        run_id: int | None = None,
     ) -> MeetingAlignmentDecision:
-        decision = self.codex.decide(
-            prompt=build_meeting_alignment_prompt(
-                source,
-                work_profile=work_profile_instruction(),
-                work_profile_source=str(work_profile_path()),
-                similar_sessions=similar_sessions or [],
-            )
+        prompt = build_meeting_alignment_prompt(
+            source,
+            work_profile=work_profile_instruction(),
+            work_profile_source=str(work_profile_path()),
+            similar_sessions=similar_sessions or [],
+        )
+        decision = (
+            self.codex.decide(prompt=prompt, run_id=run_id)
+            if run_id is not None
+            else self.codex.decide(prompt=prompt)
         )
         _validate_source_aware_target(source, decision)
         return decision
@@ -64,55 +82,54 @@ class MeetingAlignmentAgent:
 class MeetingAlignmentCodexRunner:
     def __init__(
         self,
-        workspace: Path,
-        codex_bin: str = "codex",
-        executor=None,
-        timeout_seconds: int = 1200,
-        idle_timeout_seconds: int = 900,
+        *,
+        routed_execution: RoutedCodexExecution,
         work_profile_source: str | None = None,
     ):
-        from app.codex_decision import (
-            _subprocess_failure_reason,
-            extract_codex_audit_events,
-            extract_codex_session_id,
-        )
+        from app.codex_decision import extract_codex_audit_events
         from app.codex_history import (
-            count_codex_session_lines,
             extract_codex_audit_events_from_session,
         )
-        from app.process_runner import run_process_with_idle_timeout
 
-        self.workspace = workspace
-        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
-        self.executor = executor
-        self.timeout_seconds = timeout_seconds
-        self.idle_timeout_seconds = idle_timeout_seconds
+        self.routed_execution = routed_execution
         self.work_profile_source = work_profile_source or str(work_profile_path())
-        self._run_process_with_idle_timeout = run_process_with_idle_timeout
-        self._extract_codex_session_id = extract_codex_session_id
         self._extract_codex_audit_events = extract_codex_audit_events
         self._extract_codex_audit_events_from_session = (
             extract_codex_audit_events_from_session
         )
-        self._session_line_count = count_codex_session_lines
-        self._subprocess_failure_reason = _subprocess_failure_reason
         self.last_session_id: str | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
 
-    def decide(self, *, prompt: str) -> MeetingAlignmentDecision:
+    def decide(self, *, prompt: str, run_id: int) -> MeetingAlignmentDecision:
         # Meeting decisions are intentionally isolated: never resume a reply,
         # task, or earlier meeting session.
         self.last_session_id = None
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
         self.last_audit_tool_events = []
-        raw = self._execute(prompt=prompt)
-        self.last_session_id = self._extract_codex_session_id(raw)
-        self.last_transcript_end_line = self._session_line_count(
-            self.last_session_id
+        result = self.routed_execution.execute(
+            workload_kind="meeting",
+            workload_key=str(run_id),
+            prompt=prompt,
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions=(
+                    "Return exactly one MeetingAlignmentDecision JSON object. "
+                    "Use only reviewed read tools."
+                ),
+                output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
+                use_output_schema=True,
+            ),
+            parser=_encode_meeting_alignment_result,
+            result_codec=MEETING_RESULT_CODEC,
+            conversation_id=None,
+            required_capabilities=MEETING_RUNTIME_CAPABILITIES,
         )
+        payload = json.loads(result.value)
+        self.last_session_id = result.session_id or None
+        self.last_transcript_start_line = result.transcript_start
+        self.last_transcript_end_line = result.transcript_end
         session_events: list[dict[str, str]] = []
         if self.last_session_id:
             session_events = self._extract_codex_audit_events_from_session(
@@ -123,13 +140,10 @@ class MeetingAlignmentCodexRunner:
             )
         self.last_audit_tool_events = (
             session_events
-            or self._extract_codex_audit_events(
-                raw,
-                limit=MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT,
-            )
+            or payload["audit_tool_events"]
         )
         try:
-            decision = parse_meeting_alignment_decision(raw)
+            decision = MeetingAlignmentDecision.model_validate(payload["decision"])
             _validate_historical_sources(
                 decision,
                 audit_tool_events=self.last_audit_tool_events,
@@ -141,42 +155,21 @@ class MeetingAlignmentCodexRunner:
             ) from exc
         return decision
 
-    def _execute(self, *, prompt: str) -> str:
-        command = self.runner.build_command(
-            prompt,
-            session_id=None,
-            image_paths=None,
-            output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
-        )
-        if self.executor is not None:
-            return self.executor(command, prompt)
-        completed = self._run_process_with_idle_timeout(
-            command,
-            prompt=prompt,
-            env=self.runner.build_env(),
-            total_timeout_seconds=self.timeout_seconds,
-            idle_timeout_seconds=self.idle_timeout_seconds,
-        )
-        if completed.timed_out:
-            raise ExternalDependencyError(
-                "codex meeting alignment",
-                RuntimeError(
-                    completed.timeout_reason or "meeting alignment codex timed out"
-                ),
-                dependency="codex",
-            )
-        if completed.returncode != 0:
-            raise ExternalDependencyError(
-                "codex meeting alignment",
-                RuntimeError(
-                    self._subprocess_failure_reason(
-                        completed.stderr,
-                        completed.stdout,
-                    )
-                ),
-                dependency="codex",
-            )
-        return completed.stdout
+
+def _encode_meeting_alignment_result(raw: str) -> str:
+    from app.codex_decision import extract_codex_audit_events
+
+    decision = parse_meeting_alignment_decision(raw)
+    return json.dumps(
+        {
+            "decision": decision.model_dump(mode="json"),
+            "audit_tool_events": extract_codex_audit_events(
+                raw, limit=MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT
+            ),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def build_meeting_alignment_prompt(

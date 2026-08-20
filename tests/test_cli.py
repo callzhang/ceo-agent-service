@@ -850,7 +850,13 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
 
     class FakeStructuredRunner:
         def __init__(self, **kwargs):
-            calls.append(("runner", kwargs["workspace"], kwargs["spec"].name))
+            calls.append(
+                (
+                    "runner",
+                    type(kwargs["routed_execution"]).__name__,
+                    kwargs["spec"].name,
+                )
+            )
 
     class FakeDwsClient:
         def __init__(self, **kwargs):
@@ -932,7 +938,7 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
     assert sent_reply.reply_text == "韩露 2026 Q2 OKR 审核结果"
     assert sent_reply.recall_key == "okr-recall-1"
     assert calls == [
-        ("runner", tmp_path, "okr_review"),
+        ("runner", "RoutedCodexExecution", "okr_review"),
         ("dws", 4),
         ("process", request_id, "帮我审核 OKR", "FakeStructuredRunner", True),
         (
@@ -1292,7 +1298,7 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
                     "action": "create_project",
@@ -1386,7 +1392,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
                     "action": "create_project",
@@ -1481,7 +1487,7 @@ def test_process_work_items_command_does_not_batch_claim_after_failure(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError("task agent unavailable")
 
     monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
@@ -1565,7 +1571,7 @@ def test_process_work_items_command_backoffs_transient_codex_failure(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "stream disconnected before completion: error sending request"
             )
@@ -1627,7 +1633,7 @@ def test_process_work_items_command_fails_native_codex_missing_auth_header(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "unexpected status 401 Unauthorized: Missing bearer or basic "
                 "authentication in header, url: "
@@ -1699,7 +1705,7 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "unexpected status 401 Unauthorized: Missing bearer or basic "
                 "authentication in header, url: "
@@ -1768,7 +1774,7 @@ def test_process_work_items_command_fails_codex_transport_failure_after_limit(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "stream disconnected before completion: error sending request "
                 "for url (https://api.openai.com/v1/responses)"
@@ -1836,7 +1842,7 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise ExternalDependencyError(
                 "codex task agent",
                 RuntimeError("Your workspace is out of credits."),
@@ -1902,7 +1908,7 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             type(self).calls += 1
             if type(self).calls == 1:
                 raise RuntimeError("Your workspace is out of credits.")
@@ -1972,7 +1978,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise ExternalDependencyError(
                 "codex task agent",
                 RuntimeError("remote context compaction unavailable"),
@@ -2036,7 +2042,7 @@ def test_process_work_items_command_backoffs_missing_memory_recall_tool_event(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "non-discard task decision requires memory_recall tool event"
             )
@@ -2098,7 +2104,7 @@ def test_process_work_items_command_discards_cross_project_follow_up_draft(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "follow_up_draft.todo_id 2240 does not belong to project 435"
             )
@@ -2160,7 +2166,7 @@ def test_process_work_items_command_uses_task_agent_timeouts(
         def __init__(self, **kwargs):
             constructed.update(kwargs)
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
                     "action": "discard",
@@ -2203,8 +2209,9 @@ def test_process_work_items_command_uses_task_agent_timeouts(
 
     assert processed == 1
     assert capsys.readouterr().out == "process-work-items processed=1\n"
-    assert constructed["timeout_seconds"] == 1200
-    assert constructed["idle_timeout_seconds"] == 900
+    routed_execution = constructed["routed_execution"]
+    assert routed_execution._total_timeout_seconds == 300
+    assert routed_execution._idle_timeout_seconds == 180
 
 
 def test_process_work_items_command_passes_dws_client_to_task_agent(
@@ -2294,7 +2301,7 @@ def test_process_work_items_command_respects_zero_max_batches(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise AssertionError("no inputs should be claimed")
 
     monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
@@ -4685,14 +4692,11 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     assert calls[0][3].utcoffset() is not None
     assert calls[0][4] == 600
     assert calls[1] == ("sleep", 60)
-    assert calls[2] == (
-        "runner",
-        {
-            "workspace": tmp_path / "memory",
-            "timeout_seconds": 1200,
-            "idle_timeout_seconds": 900,
-        },
-    )
+    assert calls[2][0] == "runner"
+    assert set(calls[2][1]) == {"routed_execution"}
+    routed_execution = calls[2][1]["routed_execution"]
+    assert routed_execution._total_timeout_seconds == 1200
+    assert routed_execution._idle_timeout_seconds == 900
     assert calls[3][:4] == ("consume-meeting", store, dws, runner)
     assert calls[3][4].utcoffset() is not None
     assert calls[3][5:7] == (4, True)

@@ -625,7 +625,16 @@ class FakeStructuredRunnerForOkr:
         self.envelope = envelope
         self.calls = []
 
-    def run(self, conversation_id, conversation_title, single_chat, prompt, *, owner):
+    def run(
+        self,
+        request_id,
+        conversation_id,
+        conversation_title,
+        single_chat,
+        prompt,
+        *,
+        owner,
+    ):
         self.calls.append((conversation_id, conversation_title, single_chat, prompt, owner))
         return type(
             "Run",

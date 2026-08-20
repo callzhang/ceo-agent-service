@@ -204,7 +204,7 @@ class FakeMeetingRunner:
         self.calls = 0
         self.prompts: list[str] = []
 
-    def decide(self, *, prompt: str) -> MeetingAlignmentDecision:
+    def decide(self, *, prompt: str, run_id=None) -> MeetingAlignmentDecision:
         self.calls += 1
         self.prompts.append(prompt)
         return self.decision
@@ -788,7 +788,7 @@ def test_consumer_retries_invalid_model_decision(tmp_path):
         last_transcript_end_line = 12
         last_audit_tool_events = []
 
-        def decide(self, *, prompt: str):
+        def decide(self, *, prompt: str, run_id=None):
             raise RuntimeError(
                 "Codex did not return a valid MeetingAlignmentDecision"
             )
@@ -821,7 +821,7 @@ def test_consumer_keeps_external_agent_failure_retryable_after_limit(tmp_path):
         last_transcript_end_line = 0
         last_audit_tool_events = []
 
-        def decide(self, *, prompt: str):
+        def decide(self, *, prompt: str, run_id=None):
             raise ExternalDependencyError(
                 "codex meeting alignment",
                 RuntimeError("provider temporarily unavailable"),
@@ -855,7 +855,7 @@ def test_consumer_pauses_meeting_analysis_after_codex_capacity_exhaustion(tmp_pa
         last_transcript_end_line = 0
         last_audit_tool_events = []
 
-        def decide(self, *, prompt: str):
+        def decide(self, *, prompt: str, run_id=None):
             raise ExternalDependencyError(
                 "codex meeting alignment",
                 RuntimeError("Your workspace is out of credits."),
@@ -892,7 +892,7 @@ def test_meeting_process_failure_continues_prior_capacity_wait(tmp_path):
         last_audit_tool_events = []
         calls = 0
 
-        def decide(self, *, prompt: str):
+        def decide(self, *, prompt: str, run_id=None):
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("Your workspace is out of credits.")

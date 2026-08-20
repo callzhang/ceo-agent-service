@@ -693,6 +693,7 @@ def process_okr_review_request(*, store, runner, request, single_chat: bool) -> 
         trigger_sender=request.trigger_sender,
     )
     run = runner.run(
+        request.id,
         request.conversation_id,
         request.conversation_title,
         single_chat,

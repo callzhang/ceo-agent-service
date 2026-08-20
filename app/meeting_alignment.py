@@ -639,13 +639,19 @@ def _analyze_meeting_job(
         isinstance(previous_error, dict)
         and previous_error.get("kind") == "codex_capacity_pause"
     )
+    run_id = store.begin_meeting_alignment_run(job.id)
     try:
-        decision = agent.decide(source, similar_sessions=similar_sessions)
+        decision = agent.decide(
+            source,
+            similar_sessions=similar_sessions,
+            run_id=run_id,
+        )
     except MeetingAlignmentTargetError as exc:
         error = _error_json("meeting_target", str(exc))
         _record_agent_run(
             store,
             runner,
+            run_id,
             job_id=job.id,
             decision=None,
             status="failed",
@@ -660,6 +666,7 @@ def _analyze_meeting_job(
         _record_agent_run(
             store,
             runner,
+            run_id,
             job_id=job.id,
             decision=None,
             status="failed",
@@ -687,6 +694,7 @@ def _analyze_meeting_job(
             _record_agent_run(
                 store,
                 runner,
+                run_id,
                 job_id=job.id,
                 decision=None,
                 status="retry",
@@ -706,6 +714,7 @@ def _analyze_meeting_job(
         _record_agent_run(
             store,
             runner,
+            run_id,
             job_id=job.id,
             decision=None,
             status=(
@@ -734,6 +743,7 @@ def _analyze_meeting_job(
         _record_agent_run(
             store,
             runner,
+            run_id,
             job_id=job.id,
             decision=None,
             status="failed",
@@ -750,6 +760,7 @@ def _analyze_meeting_job(
         run_id = _record_agent_run(
             store,
             runner,
+            run_id,
             job_id=job.id,
             decision=decision,
             status="no_action",
@@ -783,6 +794,7 @@ def _analyze_meeting_job(
     run_id = _record_agent_run(
         store,
         runner,
+        run_id,
         job_id=job.id,
         decision=decision,
         status="ready_to_send",
@@ -1062,14 +1074,15 @@ def _schedule_ready_reconciliation_or_fail(
 def _record_agent_run(
     store: AutoReplyStore,
     runner: Any,
+    run_id: int,
     *,
     job_id: int,
     decision: MeetingAlignmentDecision | None,
     status: str,
     error: str,
 ) -> int:
-    return store.record_meeting_alignment_run(
-        job_id=job_id,
+    store.finish_meeting_alignment_run(
+        run_id,
         codex_session_id=str(getattr(runner, "last_session_id", "") or ""),
         codex_transcript_start_line=int(
             getattr(runner, "last_transcript_start_line", 0) or 0
@@ -1086,6 +1099,7 @@ def _record_agent_run(
         status=status,
         error=error,
     )
+    return run_id
 
 
 def _retry_or_fail(

@@ -1,14 +1,17 @@
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
+from app.agent_runtime_router import (
+    ApprovedCodexCommandFactory,
+    RoutedCodexExecution,
+    RoutedResultCodec,
+)
 from app.codex_runner import memory_connector_config_issue
 from app.config import repo_root
-from app.external_retry import ExternalDependencyError
 from app.store import AutoReplyStore, RecentFollowUpCandidate
 from app.structured_agent import load_skill_text
 from app.task_models import (
@@ -40,6 +43,15 @@ FOLLOW_UP_WORK_START_HOUR = 9
 FOLLOW_UP_WORK_END_HOUR = 18
 FOLLOW_UP_WORK_TZ = ZoneInfo("Asia/Shanghai")
 WORK_TRACKING_SKILL_PATH = repo_root() / "skills" / "ceo-work-tracking" / "SKILL.md"
+TASK_RUNTIME_CAPABILITIES = frozenset(
+    {
+        "structured_output",
+        "local_schema_validation",
+        "consumer_read_only_enforcement",
+        "reviewed_read_tools",
+    }
+)
+TASK_RESULT_CODEC = RoutedResultCodec.text(schema_id="task_agent.decision.v1")
 
 
 class TaskCodex(Protocol):
@@ -51,7 +63,8 @@ class TaskCodex(Protocol):
         self,
         *,
         prompt: str,
-        session_id: str | None = None,
+        workload_key: str,
+        session_scope_id: str | None = None,
     ) -> TaskAgentDecision: ...
 
 
@@ -65,6 +78,8 @@ class TaskAgentRunner:
         candidate_prompt: str,
         *,
         memory_issue: str = "",
+        run_id: int,
+        session_scope_id: str,
     ) -> TaskAgentDecision:
         return self.codex.decide(
             prompt=build_task_agent_prompt(
@@ -72,7 +87,8 @@ class TaskAgentRunner:
                 candidate_prompt,
                 memory_issue=memory_issue,
             ),
-            session_id=None,
+            workload_key=str(run_id),
+            session_scope_id=session_scope_id,
         )
 
     def repair_owner_assignment(
@@ -83,6 +99,8 @@ class TaskAgentRunner:
         *,
         validation_error: str,
         memory_issue: str = "",
+        run_id: int,
+        session_scope_id: str,
     ) -> TaskAgentDecision:
         return self.codex.decide(
             prompt=build_owner_resolution_prompt(
@@ -92,47 +110,27 @@ class TaskAgentRunner:
                 validation_error=validation_error,
                 memory_issue=memory_issue,
             ),
-            session_id=getattr(self.codex, "last_session_id", None),
+            workload_key=str(run_id),
+            session_scope_id=session_scope_id,
         )
 
 
 class TaskAgentCodexRunner:
     def __init__(
         self,
-        workspace: Path,
-        codex_bin: str = "codex",
-        executor=None,
-        timeout_seconds: int = 1200,
-        idle_timeout_seconds: int = 900,
+        *,
+        routed_execution: RoutedCodexExecution,
     ):
-        from app.codex_decision import (
-            _subprocess_failure_reason,
-            extract_codex_audit_events,
-            extract_codex_session_id,
-        )
+        from app.codex_decision import extract_codex_audit_events
         from app.codex_history import (
-            count_codex_session_lines,
             extract_codex_audit_events_from_session,
         )
-        from app.codex_runner import CodexRunner
-        from app.process_runner import run_process_with_idle_timeout
 
-        self.workspace = workspace
-        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
-        self.executor = executor
-        self.timeout_seconds = min(timeout_seconds, TASK_AGENT_MAX_TIMEOUT_SECONDS)
-        self.idle_timeout_seconds = min(
-            idle_timeout_seconds,
-            TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
-        )
-        self._run_process_with_idle_timeout = run_process_with_idle_timeout
-        self._extract_codex_session_id = extract_codex_session_id
+        self.routed_execution = routed_execution
         self._extract_codex_audit_events = extract_codex_audit_events
         self._extract_codex_audit_events_from_session = (
             extract_codex_audit_events_from_session
         )
-        self._session_line_count = count_codex_session_lines
-        self._subprocess_failure_reason = _subprocess_failure_reason
         self.last_session_id: str | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
         self.last_transcript_start_line = 0
@@ -142,12 +140,33 @@ class TaskAgentCodexRunner:
         self,
         *,
         prompt: str,
-        session_id: str | None = None,
+        workload_key: str,
+        session_scope_id: str | None = None,
     ) -> TaskAgentDecision:
-        self.last_transcript_start_line = self._session_line_count(session_id)
-        raw = self._execute(prompt=prompt, session_id=session_id)
-        self.last_session_id = self._extract_codex_session_id(raw) or session_id
-        self.last_transcript_end_line = self._session_line_count(self.last_session_id)
+        self.last_session_id = None
+        self.last_audit_tool_events = []
+        self.last_transcript_start_line = 0
+        self.last_transcript_end_line = 0
+        result = self.routed_execution.execute(
+            workload_kind="task",
+            workload_key=workload_key,
+            prompt=prompt,
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions=(
+                    "Return exactly one TaskAgentDecision JSON object. "
+                    "Use only reviewed read tools."
+                ),
+            ),
+            parser=_encode_task_agent_result,
+            result_codec=TASK_RESULT_CODEC,
+            conversation_id=session_scope_id,
+            required_capabilities=TASK_RUNTIME_CAPABILITIES,
+        )
+        payload = json.loads(result.value)
+        decision = TaskAgentDecision.model_validate(payload["decision"])
+        self.last_session_id = result.session_id or None
+        self.last_transcript_start_line = result.transcript_start
+        self.last_transcript_end_line = result.transcript_end
         session_events = []
         if self.last_session_id:
             session_events = self._extract_codex_audit_events_from_session(
@@ -156,50 +175,22 @@ class TaskAgentCodexRunner:
                 end_line=self.last_transcript_end_line,
                 limit=TASK_AGENT_AUDIT_EVENT_LIMIT,
             )
-        self.last_audit_tool_events = (
-            session_events or self._extract_codex_audit_events(raw)
-        )
-        return _parse_task_agent_decision(raw)
+        self.last_audit_tool_events = session_events or payload["audit_tool_events"]
+        return decision
 
-    def _execute(self, *, prompt: str, session_id: str | None) -> str:
-        command = self.runner.build_command(
-            prompt,
-            session_id,
-            image_paths=None,
-            use_output_schema=False,
-            # The task prompt carries its own TaskAgentDecision schema. The
-            # consumer AgentEnvelope developer contract is incompatible here.
-            preserve_native_instructions=True,
-        )
-        if self.executor is not None:
-            return self.executor(command, prompt)
-        completed = self._run_process_with_idle_timeout(
-            command,
-            prompt=prompt,
-            env=self.runner.build_env(),
-            total_timeout_seconds=self.timeout_seconds,
-            idle_timeout_seconds=self.idle_timeout_seconds,
-        )
-        if completed.timed_out:
-            raise ExternalDependencyError(
-                "codex task agent",
-                RuntimeError(
-                    completed.timeout_reason or "task agent codex timed out"
-                ),
-                dependency="codex",
-            )
-        if completed.returncode != 0:
-            raise ExternalDependencyError(
-                "codex task agent",
-                RuntimeError(
-                    self._subprocess_failure_reason(
-                        completed.stderr,
-                        completed.stdout,
-                    )
-                ),
-                dependency="codex",
-            )
-        return completed.stdout
+
+def _encode_task_agent_result(raw: str) -> str:
+    from app.codex_decision import extract_codex_audit_events
+
+    decision = _parse_task_agent_decision(raw)
+    return json.dumps(
+        {
+            "decision": decision.model_dump(mode="json"),
+            "audit_tool_events": extract_codex_audit_events(raw),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def build_task_agent_prompt(
@@ -443,6 +434,7 @@ def process_work_item(
     dws=None,
     now: str = "",
 ) -> None:
+    active_run_id: int | None = None
     try:
         memory_issue = memory_connector_config_issue()
         work_item = WorkItem.model_validate_json(work_input.payload_json)
@@ -463,10 +455,14 @@ def process_work_item(
                 follow_up_candidates
             ),
         )
+        active_run_id = store.begin_task_agent_run(work_input.id)
+        session_scope_id = f"task:{active_run_id}"
         decision = runner.decide(
             work_item,
             candidate_prompt,
             memory_issue=memory_issue,
+            run_id=active_run_id,
+            session_scope_id=session_scope_id,
         )
         codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
         audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
@@ -490,22 +486,27 @@ def process_work_item(
             memory_runtime_unavailable=memory_runtime_unavailable,
             now=now,
         )
-        store.record_task_agent_run(
-            summary_input_id=work_input.id,
-            codex_session_id=codex_session_id,
-            decision_json=_json_dumps(decision.model_dump(mode="json")),
-            audit_summary=decision.update_summary,
-            memory_recall_used=decision.memory_recall_used,
-        )
         try:
             _validate_owner_changes(store, decision)
         except OwnerResolutionRequired as exc:
+            store.finish_task_agent_run(
+                active_run_id,
+                status="failed",
+                codex_session_id=codex_session_id,
+                decision_json=_json_dumps(decision.model_dump(mode="json")),
+                audit_summary=decision.update_summary,
+                memory_recall_used=decision.memory_recall_used,
+                error=str(exc),
+            )
+            active_run_id = store.begin_task_agent_run(work_input.id)
             decision = runner.repair_owner_assignment(
                 work_item,
                 candidate_prompt,
                 decision,
                 validation_error=str(exc),
                 memory_issue=memory_issue,
+                run_id=active_run_id,
+                session_scope_id=session_scope_id,
             )
             codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
             audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
@@ -533,14 +534,16 @@ def process_work_item(
                 memory_runtime_unavailable=memory_runtime_unavailable,
                 now=now,
             )
-            store.record_task_agent_run(
-                summary_input_id=work_input.id,
-                codex_session_id=codex_session_id,
-                decision_json=_json_dumps(decision.model_dump(mode="json")),
-                audit_summary=decision.update_summary,
-                memory_recall_used=decision.memory_recall_used,
-            )
             _validate_owner_changes(store, decision)
+        store.finish_task_agent_run(
+            active_run_id,
+            status="completed",
+            codex_session_id=codex_session_id,
+            decision_json=_json_dumps(decision.model_dump(mode="json")),
+            audit_summary=decision.update_summary,
+            memory_recall_used=decision.memory_recall_used,
+        )
+        active_run_id = None
         apply_task_agent_decision(
             store,
             summary_input_id=work_input.id,
@@ -562,6 +565,12 @@ def process_work_item(
         else:
             store.mark_work_summary_input_done(work_input.id)
     except Exception as exc:
+        if active_run_id is not None:
+            store.finish_task_agent_run(
+                active_run_id,
+                status="failed",
+                error=str(exc),
+            )
         store.mark_work_summary_input_failed(work_input.id, str(exc))
         raise
 

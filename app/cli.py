@@ -965,6 +965,14 @@ def consume_once(settings: WorkerSettings) -> int:
 
 
 def process_work_items_command(settings: WorkerSettings) -> int:
+    from app.agent_runtime_config import load_runtime_config
+    from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+    from app.codex_runtime_adapter import CodexRuntimeAdapter
+    from app.task_agent import (
+        TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+        TASK_AGENT_MAX_TIMEOUT_SECONDS,
+    )
+
     store = AutoReplyStore(settings.db_path)
     limit = 20 if settings.max_batches is None else settings.max_batches
     if limit <= 0:
@@ -973,12 +981,27 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     store.reset_stale_processing_work_summary_inputs(
         _work_summary_processing_stale_seconds(settings)
     )
+    runtime_config = load_runtime_config(os.environ)
+    routed_execution = RoutedCodexExecution(
+        store=store,
+        config=runtime_config,
+        router=AgentRuntimeRouter(
+            routes=runtime_config.routes,
+            store=store,
+            snapshots={},
+        ),
+        adapter=CodexRuntimeAdapter(settings.workspace, runtime_config),
+        total_timeout_seconds=min(
+            settings.task_codex_timeout_seconds,
+            TASK_AGENT_MAX_TIMEOUT_SECONDS,
+        ),
+        idle_timeout_seconds=min(
+            settings.task_codex_idle_timeout_seconds,
+            TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+        ),
+    )
     runner = TaskAgentRunner(
-        TaskAgentCodexRunner(
-            workspace=settings.workspace,
-            timeout_seconds=settings.task_codex_timeout_seconds,
-            idle_timeout_seconds=settings.task_codex_idle_timeout_seconds,
-        )
+        TaskAgentCodexRunner(routed_execution=routed_execution)
     )
     dws = None
     if not settings.dry_run:
@@ -1202,6 +1225,9 @@ def backfill_routine_process_todos_command(
 
 
 def process_okr_reviews_command(settings: WorkerSettings) -> int:
+    from app.agent_runtime_config import load_runtime_config
+    from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+    from app.codex_runtime_adapter import CodexRuntimeAdapter
     from app.okr_review import process_okr_review_request
     from app.structured_agent import AgentSpec, StructuredCodexRunner
 
@@ -1235,18 +1261,27 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
             "Return only AgentEnvelope JSON."
         ),
     )
-    runner = StructuredCodexRunner(
+    runtime_config = load_runtime_config(os.environ)
+    routed_execution = RoutedCodexExecution(
         store=store,
-        workspace=settings.workspace,
-        spec=spec,
-        timeout_seconds=max(
+        config=runtime_config,
+        router=AgentRuntimeRouter(
+            routes=runtime_config.routes,
+            store=store,
+            snapshots={},
+        ),
+        adapter=CodexRuntimeAdapter(settings.workspace, runtime_config),
+        total_timeout_seconds=max(
             settings.codex_timeout_seconds, OKR_REVIEW_CODEX_TIMEOUT_SECONDS
         ),
         idle_timeout_seconds=max(
             settings.codex_idle_timeout_seconds,
             OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS,
         ),
-        persist_conversation_session=False,
+    )
+    runner = StructuredCodexRunner(
+        routed_execution=routed_execution,
+        spec=spec,
     )
     dws = None
     if not settings.dry_run:
@@ -2340,12 +2375,27 @@ def run_meeting_consumer_loop(
     sleep: Callable[[int], None] = time.sleep,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
+    from app.agent_runtime_config import load_runtime_config
+    from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+    from app.codex_runtime_adapter import CodexRuntimeAdapter
+
     store = AutoReplyStore(settings.db_path)
     dws = _create_meeting_dws(settings)
-    runner = MeetingAlignmentCodexRunner(
-        workspace=settings.workspace,
-        timeout_seconds=settings.codex_timeout_seconds,
+    runtime_config = load_runtime_config(os.environ)
+    routed_execution = RoutedCodexExecution(
+        store=store,
+        config=runtime_config,
+        router=AgentRuntimeRouter(
+            routes=runtime_config.routes,
+            store=store,
+            snapshots={},
+        ),
+        adapter=CodexRuntimeAdapter(settings.workspace, runtime_config),
+        total_timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+    )
+    runner = MeetingAlignmentCodexRunner(
+        routed_execution=routed_execution,
     )
     embedding_client = (
         EmbeddingClient(

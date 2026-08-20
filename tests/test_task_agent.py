@@ -1,9 +1,9 @@
 import json
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
-from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
 from app.task_agent import (
     TaskAgentRunner,
@@ -25,7 +25,7 @@ class FakeCodex:
         self.payload = payload
         self.prompts = []
 
-    def decide(self, *, prompt, session_id=None):
+    def decide(self, *, prompt, session_id=None, workload_key=None, session_scope_id=None):
         self.prompts.append(prompt)
         return TaskAgentDecision.model_validate(self.payload)
 
@@ -38,6 +38,28 @@ class FakeCodexWithAuditEvents(FakeCodex):
     def __init__(self, payload, audit_tool_events):
         super().__init__(payload)
         self.last_audit_tool_events = audit_tool_events
+
+
+class FakeRoutedTaskExecution:
+    def __init__(self, raw, *, session_id="", transcript_end=0):
+        self.raw = raw
+        self.session_id = session_id
+        self.transcript_end = transcript_end
+        self.calls = []
+
+    def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        raw = self.raw() if callable(self.raw) else self.raw
+        value = kwargs["parser"](raw)
+        value = kwargs["result_codec"].decode(kwargs["result_codec"].encode(value))
+        return SimpleNamespace(
+            value=value,
+            route_name="codex_oauth",
+            attempt_id=1,
+            session_id=self.session_id,
+            transcript_start=0,
+            transcript_end=self.transcript_end,
+        )
 
 
 def _work_item(project_name="售前知识库"):
@@ -149,6 +171,51 @@ def _enqueue_and_process_work_item(
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     process_work_item(store, TaskAgentRunner(codex), work_input)
     return input_id
+
+
+def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tmp_path):
+    store = AutoReplyStore(tmp_path / "task-lifecycle.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    payload = {
+        "action": "discard",
+        "discard_reason": "no durable update",
+        "project": None,
+        "todo_changes": [],
+        "follow_up_drafts": [],
+        "follow_up_changes": [],
+        "update_summary": "discarded",
+        "merge_reason": "",
+        "memory_recall_used": False,
+        "confidence": 0.8,
+        "failure_risk": "none",
+        "failure_risk_score": 0,
+    }
+
+    class LifecycleCodex(FakeCodex):
+        last_audit_tool_events = []
+
+        def decide(self, **kwargs):
+            run_id = int(kwargs["workload_key"])
+            with store._connect() as db:
+                row = db.execute(
+                    "select status from task_agent_runs where id=?", (run_id,)
+                ).fetchone()
+            assert row["status"] == "running"
+            return super().decide(**kwargs)
+
+    process_work_item(store, TaskAgentRunner(LifecycleCodex(payload)), work_input)
+
+    with store._connect() as db:
+        runs = db.execute(
+            "select * from task_agent_runs where summary_input_id=?", (input_id,)
+        ).fetchall()
+    assert len(runs) == 1
+    assert runs[0]["status"] == "completed"
+    assert json.loads(runs[0]["decision_json"])["action"] == "discard"
 
 
 def _memory_context():
@@ -3105,7 +3172,7 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(
         ).fetchone()
     assert input_row[0] == "failed"
     assert "memory_recall tool event" in input_row[1]
-    assert run_row is None
+    assert run_row == (input_id, "", "", 0)
 
 
 def test_process_work_item_allows_memory_recall_runtime_failure_with_tool_event(
@@ -3312,12 +3379,9 @@ def test_process_work_item_continues_when_memory_connector_unavailable(
     assert "替代证据" not in memory_section
 
 
-def test_task_agent_codex_runner_reuses_user_config_for_memory_recall(tmp_path):
-    captured = {}
-
-    def executor(command, prompt):
-        captured["command"] = command
-        return json.dumps(
+def test_task_agent_codex_runner_uses_reviewed_read_only_factory():
+    routed = FakeRoutedTaskExecution(
+        json.dumps(
             {
                 "action": "discard",
                 "discard_reason": "输入不足以形成稳定项目。",
@@ -3331,14 +3395,16 @@ def test_task_agent_codex_runner_reuses_user_config_for_memory_recall(tmp_path):
                 "confidence": 0.8,
             }
         )
+    )
+    runner = TaskAgentCodexRunner(routed_execution=routed)
 
-    runner = TaskAgentCodexRunner(workspace=tmp_path, executor=executor)
+    runner.decide(prompt="{}", workload_key="1")
 
-    runner.decide(prompt="{}", session_id=None)
-
-    command = captured["command"]
-    assert "--ignore-user-config" not in command
-    assert "--disable" not in command
+    assert routed.calls[0]["workload_kind"] == "task"
+    assert (
+        routed.calls[0]["command_factory"]._approved_policy.effect_mode
+        == "read_only"
+    )
 
 
 def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():
@@ -3531,7 +3597,7 @@ def test_process_work_item_failure_does_not_create_partial_project(tmp_path):
     assert input_row == ("failed",)
     assert project_count == (0,)
     assert update_count == (0,)
-    assert run_count == (0,)
+    assert run_count == (1,)
 
 
 def test_process_work_item_repairs_unsupported_project_owner_evidence(tmp_path):
@@ -3587,9 +3653,9 @@ def test_process_work_item_repairs_unsupported_project_owner_evidence(tmp_path):
                 },
             ]
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             self.prompts.append(prompt)
-            self.session_ids.append(session_id)
+            self.session_ids.append(session_scope_id)
             return TaskAgentDecision.model_validate(self.decisions.pop(0))
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
@@ -3620,7 +3686,8 @@ def test_process_work_item_repairs_unsupported_project_owner_evidence(tmp_path):
     assert input_row == ("done", "")
     assert project_row == ("", "", "{}")
     assert run_count == (2,)
-    assert codex.session_ids == [None, "task-session-1"]
+    assert len(codex.session_ids) == 2
+    assert codex.session_ids[0] == codex.session_ids[1] == "task:1"
     assert "does not support assigned owner identity" in codex.prompts[1]
     assert "user_id and" in codex.prompts[1]
     assert "not create a TODO or follow-up" in codex.prompts[1]
@@ -3776,8 +3843,12 @@ def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
             '"}}\n'
         )
 
-    runner = TaskAgentCodexRunner(workspace=tmp_path, executor=executor)
-    decision = runner.decide(prompt="x")
+    runner = TaskAgentCodexRunner(
+        routed_execution=FakeRoutedTaskExecution(
+            executor([], "x"), session_id="session-task-1"
+        )
+    )
+    decision = runner.decide(prompt="x", workload_key="1")
 
     assert decision.action == "discard"
     assert runner.last_session_id == "session-task-1"
@@ -3823,8 +3894,12 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
             ]
         )
 
-    runner = TaskAgentCodexRunner(workspace=tmp_path, executor=executor)
-    decision = runner.decide(prompt="x")
+    runner = TaskAgentCodexRunner(
+        routed_execution=FakeRoutedTaskExecution(
+            executor([], "x"), session_id="session-task-2"
+        )
+    )
+    decision = runner.decide(prompt="x", workload_key="1")
 
     assert decision.action == "discard"
     assert decision.discard_reason == "只是确认收到"
@@ -3932,72 +4007,48 @@ def test_task_agent_decision_exposes_task_worthiness_risk_fields():
     assert decision.failure_risk_score == 0.1
 
 
-def test_task_agent_codex_runner_uses_process_runner_signature(tmp_path):
-    from app.task_agent import TaskAgentCodexRunner
-
-    calls = []
-
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return ProcessRunResult(
-            returncode=0,
-            stdout=json.dumps(
-                {
-                    "action": "discard",
-                    "discard_reason": "没有状态变化",
-                    "todo_changes": [],
-                    "follow_up_drafts": [],
-                    "follow_up_changes": [],
-                    "update_summary": "无变化",
-                    "merge_reason": "",
-                    "memory_recall_used": False,
-                    "confidence": 0.7,
-                },
-                ensure_ascii=False,
-            ),
-            stderr="",
+def test_task_agent_codex_runner_uses_routed_execution_contract():
+    routed = FakeRoutedTaskExecution(
+        json.dumps(
+            {
+                "action": "discard",
+                "discard_reason": "没有状态变化",
+                "todo_changes": [],
+                "follow_up_drafts": [],
+                "follow_up_changes": [],
+                "update_summary": "无变化",
+                "merge_reason": "",
+                "memory_recall_used": False,
+                "confidence": 0.7,
+            },
+            ensure_ascii=False,
         )
-
-    runner = TaskAgentCodexRunner(
-        workspace=tmp_path,
-        timeout_seconds=7,
-        idle_timeout_seconds=3,
     )
-    runner._run_process_with_idle_timeout = fake_run
+    runner = TaskAgentCodexRunner(routed_execution=routed)
 
-    decision = runner.decide(prompt="decide")
+    decision = runner.decide(prompt="decide", workload_key="9")
 
     assert decision.action == "discard"
-    assert calls
-    command = calls[0][0]
-    assert calls[0][1]["prompt"] == "decide"
-    assert calls[0][1]["env"] == runner.runner.build_env()
-    assert calls[0][1]["total_timeout_seconds"] == 7
-    assert calls[0][1]["idle_timeout_seconds"] == 3
-    assert "--output-schema" not in command
-    assert "--ignore-user-config" not in command
-    assert not any("developer_instructions" in arg for arg in command)
-    assert "--disable" not in command
-
-
-def test_task_agent_codex_runner_caps_stalled_codex_timeouts(tmp_path):
-    runner = TaskAgentCodexRunner(
-        workspace=tmp_path,
-        timeout_seconds=1_200,
-        idle_timeout_seconds=900,
+    assert routed.calls[0]["workload_key"] == "9"
+    assert routed.calls[0]["conversation_id"] is None
+    assert routed.calls[0]["required_capabilities"] == frozenset(
+        {
+            "structured_output",
+            "local_schema_validation",
+            "consumer_read_only_enforcement",
+            "reviewed_read_tools",
+        }
     )
 
-    assert runner.timeout_seconds == 300
-    assert runner.idle_timeout_seconds == 180
+
+def test_task_agent_codex_runner_requires_injected_execution():
+    with pytest.raises(TypeError):
+        TaskAgentCodexRunner()
 
 
-def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
-    from app.task_agent import TaskAgentCodexRunner
-
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=0,
-            stdout=json.dumps(
+def test_task_agent_codex_runner_reads_audit_events_from_session():
+    routed = FakeRoutedTaskExecution(
+        json.dumps(
                 {
                     "action": "create_project",
                     "project": {
@@ -4014,17 +4065,11 @@ def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
                     "confidence": 0.7,
                 },
                 ensure_ascii=False,
-            ),
-            stderr="",
-        )
-
-    runner = TaskAgentCodexRunner(workspace=tmp_path)
-    runner._run_process_with_idle_timeout = fake_run
-    runner._extract_codex_session_id = (
-        lambda raw: "019f0000-0000-7000-8000-000000000000"
+        ),
+        session_id="019f0000-0000-7000-8000-000000000000",
+        transcript_end=8,
     )
-    runner._extract_codex_audit_events = lambda raw: []
-    runner._session_line_count = lambda session_id: 8 if session_id else 0
+    runner = TaskAgentCodexRunner(routed_execution=routed)
     observed_limits = []
 
     def fake_session_events(session_id, start_line=0, end_line=None, limit=40):
@@ -4035,7 +4080,7 @@ def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
 
     runner._extract_codex_audit_events_from_session = fake_session_events
 
-    decision = runner.decide(prompt="decide")
+    decision = runner.decide(prompt="decide", workload_key="1")
 
     assert decision.action == "create_project"
     assert runner.last_transcript_start_line == 0
@@ -4046,22 +4091,14 @@ def test_task_agent_codex_runner_reads_audit_events_from_session(tmp_path):
     ]
 
 
-def test_task_agent_codex_runner_timeout_raises_reason(tmp_path):
-    from app.external_retry import ExternalDependencyError
-    from app.task_agent import TaskAgentCodexRunner
+def test_task_agent_codex_runner_propagates_routed_failure():
+    from app.agent_runtime_router import RoutedCodexExecutionError
 
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=-15,
-            stdout="",
-            stderr="",
-            timed_out=True,
-            timeout_kind="idle",
-            timeout_reason="process produced no output for 3 seconds",
-        )
+    class FailingRoutedExecution:
+        def execute(self, **kwargs):
+            raise RoutedCodexExecutionError("runtime_execution_failed")
 
-    runner = TaskAgentCodexRunner(workspace=tmp_path)
-    runner._run_process_with_idle_timeout = fake_run
+    runner = TaskAgentCodexRunner(routed_execution=FailingRoutedExecution())
 
-    with pytest.raises(ExternalDependencyError, match="no output for 3 seconds"):
-        runner.decide(prompt="decide")
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
+        runner.decide(prompt="decide", workload_key="1")

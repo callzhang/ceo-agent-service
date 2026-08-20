@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +12,28 @@ from app.meeting_alignment_agent import (
     parse_meeting_alignment_decision,
 )
 from app.meeting_alignment_models import MeetingSource
+
+
+class FakeRoutedMeetingExecution:
+    def __init__(self, raw, *, session_id="meeting-session", transcript_end=9):
+        self.raw = raw
+        self.session_id = session_id
+        self.transcript_end = transcript_end
+        self.calls = []
+
+    def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        raw = self.raw() if callable(self.raw) else self.raw
+        value = kwargs["parser"](raw)
+        value = kwargs["result_codec"].decode(kwargs["result_codec"].encode(value))
+        return SimpleNamespace(
+            value=value,
+            route_name="codex_oauth",
+            attempt_id=1,
+            session_id=self.session_id,
+            transcript_start=0,
+            transcript_end=self.transcript_end,
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -86,6 +109,33 @@ def no_action_payload() -> dict:
         ),
         "confidence": 0.9,
     }
+
+
+def test_meeting_runner_routes_persisted_run_fresh_with_exact_capabilities(tmp_path):
+    routed = FakeRoutedMeetingExecution(
+        json.dumps(no_action_payload(), ensure_ascii=False)
+    )
+    runner = MeetingAlignmentCodexRunner(
+        routed_execution=routed,
+        work_profile_source="/profile.md",
+    )
+
+    decision = runner.decide(prompt="decide", run_id=52)
+
+    call = routed.calls[0]
+    assert call["workload_kind"] == "meeting"
+    assert call["workload_key"] == "52"
+    assert call["conversation_id"] is None
+    assert call["required_capabilities"] == frozenset(
+        {
+            "structured_output",
+            "local_schema_validation",
+            "consumer_read_only_enforcement",
+            "reviewed_read_tools",
+        }
+    )
+    assert decision.action == "no_action"
+    assert runner.last_session_id == "meeting-session"
 
 
 def derek_view_payload(*, historical_sources: list[str]) -> dict:
@@ -397,19 +447,18 @@ def test_parser_rejects_extra_fields():
 
 
 def test_runner_always_starts_fresh_and_uses_schema(tmp_path: Path):
-    captured = {}
-
-    def executor(command, prompt):
-        captured["command"] = command
-        captured["prompt"] = prompt
-        return json.dumps(no_action_payload(), ensure_ascii=False)
-
-    runner = MeetingAlignmentCodexRunner(workspace=tmp_path, executor=executor)
-    decision = runner.decide(prompt="decide")
+    routed = FakeRoutedMeetingExecution(
+        json.dumps(no_action_payload(), ensure_ascii=False)
+    )
+    runner = MeetingAlignmentCodexRunner(routed_execution=routed)
+    decision = runner.decide(prompt="decide", run_id=8)
 
     assert decision.action == "no_action"
-    assert "resume" not in captured["command"]
-    assert "meeting_alignment_decision.schema.json" in " ".join(captured["command"])
+    assert routed.calls[0]["conversation_id"] is None
+    assert routed.calls[0]["workload_key"] == "8"
+    assert routed.calls[0]["command_factory"]._output_schema_path.name == (
+        "meeting_alignment_decision.schema.json"
+    )
     assert runner.last_transcript_start_line == 0
 
 
@@ -428,18 +477,19 @@ def test_runner_treats_invalid_model_decision_as_retryable(tmp_path: Path):
         }
     ]
     runner = MeetingAlignmentCodexRunner(
-        workspace=tmp_path,
-        executor=lambda command, prompt: json.dumps(payload, ensure_ascii=False),
+        routed_execution=FakeRoutedMeetingExecution(
+            json.dumps(payload, ensure_ascii=False)
+        ),
     )
 
-    with pytest.raises(RuntimeError, match="MeetingAlignmentDecision"):
-        runner.decide(prompt="decide")
+    with pytest.raises(ValueError, match="MeetingAlignmentDecision"):
+        runner.decide(prompt="decide", run_id=1)
 
 
 def test_runner_clears_prior_audit_metadata_before_executor_failure(tmp_path: Path):
     calls = 0
 
-    def executor(command, prompt):
+    def executor():
         nonlocal calls
         calls += 1
         if calls == 1:
@@ -463,15 +513,18 @@ def test_runner_clears_prior_audit_metadata_before_executor_failure(tmp_path: Pa
             )
         raise RuntimeError("executor failed")
 
-    runner = MeetingAlignmentCodexRunner(workspace=tmp_path, executor=executor)
-    runner._session_line_count = lambda session_id: 17 if session_id else 0
-    runner.decide(prompt="first")
+    runner = MeetingAlignmentCodexRunner(
+        routed_execution=FakeRoutedMeetingExecution(
+            executor, session_id="session-old", transcript_end=17
+        )
+    )
+    runner.decide(prompt="first", run_id=1)
     assert runner.last_session_id == "session-old"
     assert runner.last_transcript_end_line == 17
     assert runner.last_audit_tool_events
 
     with pytest.raises(RuntimeError, match="executor failed"):
-        runner.decide(prompt="second")
+        runner.decide(prompt="second", run_id=2)
 
     assert runner.last_session_id is None
     assert runner.last_transcript_start_line == 0
@@ -500,8 +553,10 @@ def test_runner_accepts_historical_sources_with_memory_recall_audit(tmp_path: Pa
             ]
         )
 
-    runner = MeetingAlignmentCodexRunner(workspace=tmp_path, executor=executor)
-    assert runner.decide(prompt="decide").action == "send"
+    runner = MeetingAlignmentCodexRunner(
+        routed_execution=FakeRoutedMeetingExecution(executor([], ""))
+    )
+    assert runner.decide(prompt="decide", run_id=1).action == "send"
     assert any(
         "memory_recall" in event.get("tool", "")
         for event in runner.last_audit_tool_events
@@ -511,26 +566,29 @@ def test_runner_accepts_historical_sources_with_memory_recall_audit(tmp_path: Pa
 def test_runner_accepts_configured_profile_as_unqueried_history(tmp_path: Path):
     configured = "/configured/work_profile.md"
     runner = MeetingAlignmentCodexRunner(
-        workspace=tmp_path,
-        executor=lambda command, prompt: json.dumps(
-            derek_view_payload(historical_sources=[configured]), ensure_ascii=False
+        routed_execution=FakeRoutedMeetingExecution(
+            json.dumps(
+                derek_view_payload(historical_sources=[configured]),
+                ensure_ascii=False,
+            )
         ),
         work_profile_source=configured,
     )
-    assert runner.decide(prompt="decide").action == "send"
+    assert runner.decide(prompt="decide", run_id=1).action == "send"
 
 
 def test_runner_retries_unaudited_historical_sources(tmp_path: Path):
     runner = MeetingAlignmentCodexRunner(
-        workspace=tmp_path,
-        executor=lambda command, prompt: json.dumps(
-            derek_view_payload(historical_sources=["某个未核验案例"]),
-            ensure_ascii=False,
+        routed_execution=FakeRoutedMeetingExecution(
+            json.dumps(
+                derek_view_payload(historical_sources=["某个未核验案例"]),
+                ensure_ascii=False,
+            )
         ),
         work_profile_source="/configured/work_profile.md",
     )
     with pytest.raises(RuntimeError, match="valid MeetingAlignmentDecision"):
-        runner.decide(prompt="decide")
+        runner.decide(prompt="decide", run_id=1)
 
 
 def _fixture_cases() -> list[dict]:
@@ -627,13 +685,15 @@ def _deterministic_payload(case: dict) -> dict:
 def test_semantic_fixtures_with_deterministic_executor(tmp_path: Path, case: dict):
     payload = _deterministic_payload(case)
     runner = MeetingAlignmentCodexRunner(
-        workspace=tmp_path,
-        executor=lambda command, prompt: json.dumps(payload, ensure_ascii=False),
+        routed_execution=FakeRoutedMeetingExecution(
+            json.dumps(payload, ensure_ascii=False)
+        ),
     )
     decision = runner.decide(
         prompt=build_meeting_alignment_prompt(
             _source_for_case(case), work_profile="", work_profile_source="profile"
-        )
+        ),
+        run_id=1,
     )
 
     fixture_id = case["id"]
