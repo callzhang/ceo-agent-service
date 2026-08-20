@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 
 from app.agent_effects import McpToolEffectRegistry
 from app.claude_tool_input import (
+    normalize_claude_tool_schema,
     reviewed_claude_tool_schema,
     validate_claude_tool_input,
 )
@@ -692,7 +693,9 @@ def _filter_tools_list(
             continue
         exact_name = f"mcp__{server_name}__{tool['name']}"
         reviewed_schema = reviewed_claude_tool_schema(exact_name)
-        if reviewed_schema is not None and tool.get("inputSchema") == reviewed_schema:
+        if reviewed_schema is not None and normalize_claude_tool_schema(
+            tool.get("inputSchema")
+        ) == normalize_claude_tool_schema(reviewed_schema):
             result["tools"].append(tool)
     return json.dumps(payload, separators=(",", ":")).encode()
 

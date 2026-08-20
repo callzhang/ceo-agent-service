@@ -20,6 +20,49 @@ def reviewed_claude_tool_schema(tool_name: str) -> dict[str, object] | None:
     return dict(schema) if isinstance(schema, dict) else None
 
 
+def normalize_claude_tool_schema(schema: object) -> dict[str, object] | None:
+    """Remove non-constraint display metadata while preserving exact semantics."""
+
+    if not isinstance(schema, dict):
+        return None
+    ignored = {"$schema", "description", "title"}
+    allowed = {
+        "additionalProperties",
+        "const",
+        "items",
+        "properties",
+        "required",
+        "type",
+    }
+    if set(schema) - allowed - ignored:
+        return None
+    normalized: dict[str, object] = {}
+    for key in allowed:
+        if key not in schema:
+            continue
+        value = schema[key]
+        if key == "properties":
+            if not isinstance(value, dict):
+                return None
+            properties = {}
+            for name, definition in value.items():
+                if not isinstance(name, str):
+                    return None
+                nested = normalize_claude_tool_schema(definition)
+                if nested is None:
+                    return None
+                properties[name] = nested
+            normalized[key] = properties
+        elif key == "items":
+            nested = normalize_claude_tool_schema(value)
+            if nested is None:
+                return None
+            normalized[key] = nested
+        else:
+            normalized[key] = value
+    return normalized
+
+
 def validate_claude_tool_input(tool_name: str, arguments: Mapping[str, object]) -> bool:
     schema = reviewed_claude_tool_schema(tool_name)
     if schema is None or schema.get("type") != "object":

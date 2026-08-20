@@ -237,14 +237,69 @@ class AgentRuntimeProbe:
                     expires_at=expires_at,
                     failure=effect_failure,
                 )
-            visible = any(
-                event.get("type") == RuntimeEventType.ITEM_STARTED.value
-                and isinstance(event.get("item"), dict)
-                and event["item"].get("server") == "runtime_probe"
-                and event["item"].get("tool") == "record_effect_start"
+            starts = [
+                event
+                for event in effect_events
+                if _matching_probe_tool_event(
+                    event, RuntimeEventType.ITEM_STARTED.value
+                )
+            ]
+            completions = [
+                event
+                for event in effect_events
+                if _matching_probe_tool_event(
+                    event, RuntimeEventType.ITEM_COMPLETED.value
+                )
+            ]
+            failed = any(
+                event.get("type") == RuntimeEventType.ITEM_FAILED.value
                 for event in effect_events
             )
-            if not visible:
+            turn_completions = sum(
+                event.get("type") == RuntimeEventType.TURN_COMPLETED.value
+                for event in effect_events
+            )
+            turn_starts = [
+                event
+                for event in effect_events
+                if event.get("type") == RuntimeEventType.TURN_STARTED.value
+            ]
+            completed_turns = [
+                event
+                for event in effect_events
+                if event.get("type") == RuntimeEventType.TURN_COMPLETED.value
+            ]
+            all_item_starts = sum(
+                event.get("type") == RuntimeEventType.ITEM_STARTED.value
+                for event in effect_events
+            )
+            expected_call = effects.classify(
+                {
+                    "type": "mcp_tool_call",
+                    "server": "runtime_probe",
+                    "tool": "record_effect_start",
+                    "arguments": {"marker": "ceo-agent-runtime-probe-v1"},
+                }
+            )
+            assert expected_call is not None
+            exact_evidence = (
+                len(starts) == 1
+                and len(completions) == 1
+                and not failed
+                and all_item_starts == 1
+                and len(turn_starts) == 1
+                and len(completed_turns) == 1
+                and turn_completions == 1
+                and starts[0]["item"]["id"] == completions[0]["item"]["id"]
+                and completions[0]["item"].get("status") == "completed"
+                and starts[0]["item"].get("metadata", {}).get("operation_digest")
+                == expected_call.operation_digest
+                and completions[0]["item"].get("metadata", {}).get("operation_digest")
+                == expected_call.operation_digest
+                and turn_starts[0].get("session_id")
+                == completed_turns[0].get("session_id")
+            )
+            if not exact_evidence:
                 return _snapshot(
                     route=route,
                     checked_at=checked_at,
@@ -503,6 +558,18 @@ def _parse_probe_result(raw: str) -> dict[str, object]:
     if result != {"ok": True}:
         raise ValueError("runtime probe result is invalid")
     return result
+
+
+def _matching_probe_tool_event(event: dict[str, object], event_type: str) -> bool:
+    item = event.get("item")
+    return (
+        event.get("type") == event_type
+        and isinstance(item, dict)
+        and item.get("server") == "runtime_probe"
+        and item.get("tool") == "record_effect_start"
+        and isinstance(item.get("id"), str)
+        and bool(item["id"])
+    )
 
 
 def _route_capabilities(
