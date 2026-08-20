@@ -101,7 +101,9 @@ def resolved_codex_home(environment: Mapping[str, str]) -> Path:
     """Resolve Codex home from the child base environment without creating it."""
     home = Path(environment.get("HOME", str(Path.home())))
     configured = environment.get("CODEX_HOME", "")
-    if configured.startswith("~/"):
+    if configured == "~":
+        candidate = home
+    elif configured.startswith("~/"):
         candidate = home / configured[2:]
     elif configured:
         candidate = Path(configured)

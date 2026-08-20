@@ -44,6 +44,8 @@ def test_routes_rebuild_environment_without_ambient_credentials(
         "AWS_SECRET_ACCESS_KEY": "aws",
         "SSH_AUTH_SOCK": "/private/ssh-agent.sock",
         "HTTPS_PROXY": "http://proxy.invalid",
+        "LC_UNREVIEWED": "blocked",
+        "LC_BACKDOOR": "blocked",
     }
     for key, value in ambient.items():
         monkeypatch.setenv(key, value)
@@ -59,6 +61,18 @@ def test_routes_rebuild_environment_without_ambient_credentials(
         assert env["OPENAI_API_KEY"] == "service-secret"
     assert os.environ["SSH_AUTH_SOCK"] == ambient["SSH_AUTH_SOCK"]
     assert all(base_env[key] == value for key, value in ambient.items())
+
+
+def test_child_environment_retains_only_reviewed_locale_keys(adapter, config, monkeypatch):
+    monkeypatch.setenv("LC_TIME", "en_US.UTF-8")
+    monkeypatch.setenv("LC_UNREVIEWED", "blocked")
+    monkeypatch.setenv("LC_BACKDOOR", "blocked")
+
+    env = adapter.build_env(route(config, "codex_oauth"))
+
+    assert env["LC_TIME"] == "en_US.UTF-8"
+    assert "LC_UNREVIEWED" not in env
+    assert "LC_BACKDOOR" not in env
 
 
 def test_api_route_injects_only_selected_secret(adapter, config):
@@ -112,6 +126,18 @@ def test_child_environment_resolves_explicit_codex_home_without_parent_mutation(
 
     assert env["CODEX_HOME"] == str((home / "runtime-codex-home").resolve())
     assert os.environ["CODEX_HOME"] == "runtime-codex-home"
+
+
+def test_child_environment_resolves_exact_tilde_to_preserved_home(
+    adapter, config, tmp_path, monkeypatch
+):
+    home = tmp_path / "installing-user"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", "~")
+
+    env = adapter.build_env(route(config, "codex_oauth"))
+
+    assert env["CODEX_HOME"] == str(home.resolve())
 
 
 def test_api_route_uses_configured_secret_when_no_override_is_supplied(adapter, config):
@@ -322,6 +348,53 @@ def test_structured_provider_error_is_classified_but_tool_output_is_not(adapter)
 
     assert structured.code == "codex_provider_auth_failed"
     assert tool_output.code == "runtime_unclassified"
+
+
+def test_structured_invalid_api_key_without_endpoint_has_provider_provenance(adapter):
+    failure = adapter.classify_failure(
+        stderr="",
+        stdout=(
+            '{"type":"error","error":{"message":"Incorrect API key provided",'
+            '"code":"invalid_api_key"}}'
+        ),
+        returncode=1,
+    )
+
+    assert failure.code == "codex_provider_auth_failed"
+
+
+@pytest.mark.parametrize(
+    "stderr, code",
+    [
+        (
+            (
+                "stream disconnected before completion; unexpected status 401 "
+                "Unauthorized: Invalid API key /v1/responses"
+            ),
+            "codex_provider_auth_failed",
+        ),
+        (
+            "stream disconnected before completion; workspace is out of credits",
+            "codex_provider_capacity_exhausted",
+        ),
+    ],
+)
+def test_terminal_cause_precedes_transport(adapter, stderr, code):
+    failure = adapter.classify_failure(stderr=stderr, stdout="", returncode=1)
+
+    assert failure.code == code
+    assert failure.retryable_on_same_route is False
+
+
+def test_responses_transport_error_is_typed(adapter):
+    failure = adapter.classify_failure(
+        stderr="error sending request for url (https://api.openai.com/v1/responses)",
+        stdout="",
+        returncode=1,
+    )
+
+    assert failure.code == "codex_transport_request_failed"
+    assert failure.failure_class.value == "transport"
 
 
 @pytest.mark.parametrize(

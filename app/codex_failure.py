@@ -22,7 +22,9 @@ def is_codex_provider_auth_error(value: str) -> bool:
         and "chatgpt.com/backend-api/codex/responses" in detail
     )
     explicit_invalid_api_key = (
-        "incorrect api key provided" in detail and "invalid_api_key" in detail
+        "incorrect api key provided" in detail
+        and "invalid_api_key" in detail
+        and "/v1/responses" in detail
     )
     return (
         responses_api_auth_failed

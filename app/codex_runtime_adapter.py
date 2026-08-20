@@ -54,6 +54,15 @@ _SAFE_ENV_KEYS = {
     "TZ",
     "USER",
 }
+_SAFE_LOCALE_ENV_KEYS = {
+    "LC_ALL",
+    "LC_COLLATE",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "LC_MONETARY",
+    "LC_NUMERIC",
+    "LC_TIME",
+}
 _API_PROVIDER = "ceo_openai_api"
 _API_PROVIDER_SETTINGS = {
     "name": "CEO OpenAI API fallback",
@@ -159,7 +168,7 @@ class CodexRuntimeAdapter:
                 code=CODEX_PROCESS_FAILED,
                 detail="Codex exited without output.",
             )
-        detail = _provider_failure_text(stdout, stderr)
+        detail, structured_messages = _provider_failure_text(stdout, stderr)
         if _is_codex_login_required_error(detail):
             return RuntimeFailure(
                 failure_class=RuntimeFailureClass.AUTHENTICATION,
@@ -168,13 +177,10 @@ class CodexRuntimeAdapter:
                 failover_permitted=True,
                 route_pause_required=True,
             )
-        if "stream disconnected before completion" in detail.casefold():
-            return _transport_failure(
-                "codex_transport_disconnected",
-                "Codex provider connection ended before completion.",
-            )
         process_code = classify_codex_process_failure(detail, "")
-        if process_code == CODEX_PROVIDER_AUTH_FAILED:
+        if process_code == CODEX_PROVIDER_AUTH_FAILED or _is_structured_invalid_api_key(
+            structured_messages
+        ):
             return RuntimeFailure(
                 failure_class=RuntimeFailureClass.AUTHENTICATION,
                 code=CODEX_PROVIDER_AUTH_FAILED,
@@ -195,6 +201,16 @@ class CodexRuntimeAdapter:
                     failover_permitted=True,
                     route_pause_required=True,
                 )
+        if "stream disconnected before completion" in detail.casefold():
+            return _transport_failure(
+                "codex_transport_disconnected",
+                "Codex provider connection ended before completion.",
+            )
+        if _is_responses_transport_error(detail):
+            return _transport_failure(
+                "codex_transport_request_failed",
+                "Codex provider request could not be sent.",
+            )
         return RuntimeFailure(
             failure_class=RuntimeFailureClass.UNCLASSIFIED,
             code="runtime_unclassified",
@@ -253,13 +269,14 @@ def _safe_child_environment(base_env: dict[str, str]) -> dict[str, str]:
     return {
         key: value
         for key, value in base_env.items()
-        if (key in _SAFE_ENV_KEYS or key.startswith("LC_"))
+        if (key in _SAFE_ENV_KEYS or key in _SAFE_LOCALE_ENV_KEYS)
         and not any(marker in key.upper() for marker in _CREDENTIAL_NAME_MARKERS)
     }
 
 
-def _provider_failure_text(stdout: str, stderr: str) -> str:
+def _provider_failure_text(stdout: str, stderr: str) -> tuple[str, list[str]]:
     messages = [stderr]
+    structured_messages: list[str] = []
     for line in stdout.splitlines():
         try:
             event = json.loads(line)
@@ -270,8 +287,10 @@ def _provider_failure_text(stdout: str, stderr: str) -> str:
             "turn.failed",
         }:
             continue
-        messages.extend(_event_error_messages(event))
-    return "\n".join(message for message in messages if message)
+        event_messages = _event_error_messages(event)
+        messages.extend(event_messages)
+        structured_messages.extend(event_messages)
+    return "\n".join(message for message in messages if message), structured_messages
 
 
 def _event_error_messages(event: dict[str, object]) -> list[str]:
@@ -286,6 +305,16 @@ def _event_error_messages(event: dict[str, object]) -> list[str]:
                 if isinstance(nested, str):
                     values.append(nested)
     return values
+
+
+def _is_structured_invalid_api_key(messages: list[str]) -> bool:
+    detail = "\n".join(messages).casefold()
+    return "incorrect api key provided" in detail and "invalid_api_key" in detail
+
+
+def _is_responses_transport_error(detail: str) -> bool:
+    normalized = detail.casefold()
+    return "error sending request" in normalized and "/v1/responses" in normalized
 
 
 def _transport_failure(code: str, detail: str) -> RuntimeFailure:
