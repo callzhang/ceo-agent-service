@@ -2008,3 +2008,26 @@ def test_route_session_without_contract_hash_is_never_resumed(store, task, conte
     assert store.get_conversation_runtime_session_contract_hash(
         task.conversation_id, "codex_api"
     ) == consumer_wire_contract_hash()
+
+
+def test_claude_route_session_is_not_checked_as_local_codex_history(store, task):
+    contract_hash = consumer_wire_contract_hash()
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "claude_api", "claude-session", contract_hash
+    )
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+            "CEO_CLAUDE_API_KEY": "test-claude-secret",
+        }
+    )
+    checked: list[str] = []
+    runner = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        runtime_config=config,
+        codex_session_exists=lambda session_id: checked.append(session_id) or False,
+    )
+
+    assert runner._route_session_exists("claude_api", "claude-session") is True
+    assert checked == []

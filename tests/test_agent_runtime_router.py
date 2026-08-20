@@ -21,13 +21,17 @@ NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
 def route(name: str) -> RuntimeRoute:
     return RuntimeRoute(
         name=name,
-        runtime_kind=RuntimeKind.CODEX_CLI,
+        runtime_kind=(
+            RuntimeKind.CLAUDE_CLI
+            if name == "claude_api"
+            else RuntimeKind.CODEX_CLI
+        ),
         credential_mode=(
             CredentialMode.SERVICE_API
-            if name == "codex_api"
+            if name in {"codex_api", "claude_api"}
             else CredentialMode.LOCAL_OAUTH
         ),
-        model="gpt-5.5",
+        model="claude-sonnet-4-5" if name == "claude_api" else "gpt-5.5",
     )
 
 
@@ -1000,6 +1004,100 @@ def test_resumed_codex_api_session_incompatibility_gets_one_fresh_retry(
     assert decision.route.name == "codex_api"
     assert decision.fresh_session is True
     assert decision.reason == "fresh_session_retry"
+
+
+def test_resumed_claude_session_incompatibility_gets_one_fresh_retry(
+    store, running_attempt
+):
+    store.fail_agent_runtime_attempt(
+        running_attempt.id, "authentication", "codex_login_required", True
+    )
+    claude = route("claude_api")
+    resumed = store.claim_agent_runtime_attempt(
+        running_attempt.agent_run_id,
+        claude.name,
+        claude.runtime_kind.value,
+        claude.credential_mode.value,
+        claude.model,
+        session_mode="resume",
+        source_session_id="claude-session-1",
+    )
+
+    decision = next_route(
+        make_router(store, routes=(claude,)),
+        store,
+        resumed,
+        failure=session_incompatible_failure(),
+    )
+
+    assert decision.route == claude
+    assert decision.fresh_session is True
+    assert decision.reason == "fresh_session_retry"
+
+
+def test_claude_session_retry_requires_no_effect(
+    store, running_attempt
+):
+    store.fail_agent_runtime_attempt(
+        running_attempt.id, "authentication", "codex_login_required", True
+    )
+    claude = route("claude_api")
+    resumed = store.claim_agent_runtime_attempt(
+        running_attempt.agent_run_id,
+        claude.name,
+        claude.runtime_kind.value,
+        claude.credential_mode.value,
+        claude.model,
+        session_mode="resume",
+        source_session_id="claude-session-1",
+    )
+    resumed = store.mark_agent_runtime_attempt_running_once(resumed.id)
+    store.note_runtime_attempt_effect_started(resumed.id)
+
+    effect = next_route(
+        make_router(store, routes=(claude,)),
+        store,
+        resumed,
+        failure=session_incompatible_failure(),
+    )
+
+    assert effect.route is None
+    assert effect.reason == "effect_started"
+
+
+def test_fresh_or_conflicting_claude_session_evidence_cannot_retry(
+    store, running_attempt
+):
+    store.fail_agent_runtime_attempt(
+        running_attempt.id, "authentication", "codex_login_required", True
+    )
+    claude = route("claude_api")
+    fresh = store.claim_agent_runtime_attempt(
+        running_attempt.agent_run_id,
+        claude.name,
+        claude.runtime_kind.value,
+        claude.credential_mode.value,
+        claude.model,
+    )
+    router = make_router(store, routes=(claude,))
+    fresh_decision = next_route(
+        router, store, fresh, failure=session_incompatible_failure()
+    )
+    persisted = store.get_agent_runtime_attempt(fresh.id)
+    assert persisted is not None
+    conflicting = persisted.model_copy(update={"source_session_id": "forged-session"})
+    conflicting_decision = router.next_route(
+        run=store.get_agent_run(running_attempt.agent_run_id),
+        failed_attempt=conflicting,
+        failure=session_incompatible_failure(),
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="",
+    )
+
+    assert fresh_decision.route is None
+    assert fresh_decision.fresh_session is False
+    assert conflicting_decision.route is None
+    assert conflicting_decision.reason == "attempt_run_mismatch"
 
 
 @pytest.mark.parametrize(

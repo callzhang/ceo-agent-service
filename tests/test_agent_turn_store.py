@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
 from app.agent_turn_runner import AgentTurnProcess, _required_runtime_capabilities
 from app.native_cli_metadata import describe_native_command
 from app.store import (
@@ -55,6 +56,150 @@ def _claim_audit(store, task):
         operation_id="operation-0",
         owner="audit",
     ).run
+
+
+def _claude_route() -> RuntimeRoute:
+    return RuntimeRoute(
+        name="claude_api",
+        runtime_kind=RuntimeKind.CLAUDE_CLI,
+        credential_mode=CredentialMode.SERVICE_API,
+        model="claude-sonnet-4-5",
+    )
+
+
+def test_claude_consumer_session_requires_exact_route_and_contract_hash(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_oauth", "oauth-session", "current-contract"
+    )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_api", "api-session", "current-contract"
+    )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "claude_api", "claude-session", "current-contract"
+    )
+    process = AgentTurnProcess(
+        store=store, task=task, workspace=tmp_path, owner="consumer"
+    )
+
+    assert process._session_for_route(
+        _claude_route(),
+        role=AgentRole.CONSUMER,
+        requested_session_id="oauth-session",
+        recovery_phase="",
+        conversation_contract_hash="current-contract",
+    ) == "claude-session"
+    assert process._session_for_route(
+        _claude_route(),
+        role=AgentRole.CONSUMER,
+        requested_session_id="claude-session",
+        recovery_phase="",
+        conversation_contract_hash="different-contract",
+    ) is None
+    assert process._session_for_route(
+        _claude_route(),
+        role=AgentRole.AUDIT,
+        requested_session_id="claude-session",
+        recovery_phase="",
+        conversation_contract_hash="current-contract",
+    ) is None
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_oauth"
+    ) == "oauth-session"
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_api"
+    ) == "api-session"
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "claude_api"
+    ) == "claude-session"
+
+
+def test_claude_incompatible_resume_clears_only_matching_route_slot(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_consumer(store, task).run
+    for route_name, session_id in (
+        ("codex_oauth", "oauth-session"),
+        ("codex_api", "api-session"),
+        ("claude_api", "claude-session"),
+    ):
+        store.upsert_conversation_runtime_session(
+            task.conversation_id, route_name, session_id, "contract"
+        )
+    route = _claude_route()
+    attempt = store.claim_agent_runtime_attempt(
+        run.id,
+        route.name,
+        route.runtime_kind.value,
+        route.credential_mode.value,
+        route.model,
+        session_mode="resume",
+        source_session_id="claude-session",
+    )
+    attempt = store.mark_agent_runtime_attempt_running_once(attempt.id)
+    attempt = store.fail_agent_runtime_attempt(
+        attempt.id,
+        "session",
+        "session_route_incompatible",
+        True,
+        session_id="claude-session",
+    )
+    process = AgentTurnProcess(
+        store=store, task=task, workspace=tmp_path, owner="consumer"
+    )
+
+    process._clear_incompatible_route_session_for_fresh_retry(
+        run=run, route=route, failed_attempt=attempt
+    )
+
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "claude_api"
+    ) is None
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_oauth"
+    ) == "oauth-session"
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_api"
+    ) == "api-session"
+    persisted = store.get_agent_runtime_attempt(attempt.id)
+    assert persisted is not None
+    assert persisted.session_mode == "resume"
+    assert persisted.source_session_id == "claude-session"
+
+
+def test_malformed_or_legacy_claude_session_never_resumes(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    process = AgentTurnProcess(
+        store=store, task=task, workspace=tmp_path, owner="consumer"
+    )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "claude_api", "legacy-claude-session"
+    )
+    assert process._session_for_route(
+        _claude_route(),
+        role=AgentRole.CONSUMER,
+        requested_session_id=None,
+        recovery_phase="",
+        conversation_contract_hash="current-contract",
+    ) is None
+    with store._connect() as db:
+        db.execute(
+            "update conversation_runtime_sessions set session_id='--malformed', "
+            "contract_hash='current-contract' where conversation_id=? "
+            "and route_name='claude_api'",
+            (task.conversation_id,),
+        )
+
+    with pytest.raises(ValueError, match="Claude session_id"):
+        process._session_for_route(
+            _claude_route(),
+            role=AgentRole.CONSUMER,
+            requested_session_id=None,
+            recovery_phase="",
+            conversation_contract_hash="current-contract",
+        )
 
 
 def _effect_event(event_type="item.started", **metadata):

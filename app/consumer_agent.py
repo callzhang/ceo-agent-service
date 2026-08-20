@@ -21,6 +21,7 @@ from app.agent_contracts import (
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_result import ResultParseError
 from app.agent_runtime_config import AgentRuntimeConfig
+from app.agent_runtime_contracts import RuntimeKind
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
 from app.agent_wire_contracts import (
@@ -302,6 +303,30 @@ class ConsumerAgentRunner:
         )
         return tuple(route.name for route in config.routes) if config else ("codex_oauth",)
 
+    def _route_session_exists(self, route_name: str, session_id: str) -> bool:
+        config = self.runtime_config or (
+            self.codex_adapter.config if self.codex_adapter is not None else None
+        )
+        route_kind = (
+            next(
+                (
+                    route.runtime_kind
+                    for route in config.routes
+                    if route.name == route_name
+                ),
+                None,
+            )
+            if config
+            else RuntimeKind.CODEX_CLI
+        )
+        if route_kind is None:
+            return False
+        if route_kind is RuntimeKind.CLAUDE_CLI:
+            # Claude owns its remote conversation ledger. The adapter validates
+            # the persisted ID before --resume and handles incompatibility safely.
+            return True
+        return self.codex_session_exists(session_id)
+
     def _consumer_route_sessions(
         self, conversation_id: str, contract_hash: str
     ) -> dict[str, str]:
@@ -416,7 +441,7 @@ class ConsumerAgentRunner:
             route_sessions = {}
             conversation_session_id = None
         for route_name, route_session_id in tuple(route_sessions.items()):
-            if not self.codex_session_exists(route_session_id):
+            if not self._route_session_exists(route_name, route_session_id):
                 self._clear_route_session(
                     task.conversation_id, route_name, route_session_id
                 )

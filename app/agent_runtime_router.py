@@ -1025,12 +1025,12 @@ class AgentRuntimeRouter:
         attempts: Sequence[AgentRuntimeAttempt],
     ) -> bool:
         return not any(
-            attempt.route_name == "codex_api"
+            attempt.route_name == route.name
             and attempt.session_mode == RuntimeAttemptSessionMode.FRESH
             for attempt in attempts
         ) and (
-            route.name == "codex_api"
-            and failed_attempt.route_name == "codex_api"
+            route.name in {"codex_api", "claude_api"}
+            and failed_attempt.route_name == route.name
             and failed_attempt.session_mode == RuntimeAttemptSessionMode.RESUME
             and bool(failed_attempt.source_session_id.strip())
             and failed_attempt.failure_class == RuntimeFailureClass.SESSION.value

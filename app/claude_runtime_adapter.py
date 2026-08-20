@@ -121,6 +121,22 @@ class ClaudeCommandPolicy:
         )
 
 
+def require_claude_session_id(session_id: str) -> str:
+    """Return one CLI-safe, normalized Claude conversation session ID."""
+    if not isinstance(session_id, str):
+        raise TypeError("Claude session_id must be a string")
+    if (
+        not session_id
+        or session_id != session_id.strip()
+        or len(session_id) > 256
+        or session_id.startswith("-")
+        or not session_id.isprintable()
+        or any(character.isspace() for character in session_id)
+    ):
+        raise ValueError("Claude session_id must be normalized and CLI-safe")
+    return session_id
+
+
 class ClaudeRuntimeAdapter:
     """Build isolated non-interactive Claude invocations for one route."""
 
@@ -174,10 +190,8 @@ class ClaudeRuntimeAdapter:
             or max_turns <= 0
         ):
             raise ValueError("max_turns must be a positive integer")
-        if session_id is not None and (
-            not session_id.strip() or session_id != session_id.strip()
-        ):
-            raise ValueError("session_id must be non-empty and normalized")
+        if session_id is not None:
+            require_claude_session_id(session_id)
         settings_path, mcp_path = self._write_invocation_boundary(selected_policy)
         exposed_builtins = "Bash" if selected_policy.allow_native_cli else ""
         denied_builtins = sorted(

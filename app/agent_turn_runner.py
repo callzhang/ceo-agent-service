@@ -40,6 +40,7 @@ from app.agent_result import (
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     RuntimeFailureClass,
+    RuntimeKind,
     RuntimeRoute,
 )
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -48,6 +49,7 @@ from app.agent_skill_usage import (
     loaded_skill_receipts,
     normalized_read_skill_metadata,
 )
+from app.claude_runtime_adapter import require_claude_session_id
 from app.codex_capacity import (
     CODEX_PROVIDER_CAPACITY_EXHAUSTED,
     codex_provider_failure_code,
@@ -741,6 +743,12 @@ class AgentTurnProcess(Generic[ResultT]):
                     self._raise_for_process_failure(process, run=run)
                     raise AssertionError("unreachable process failure")
                 route = decision.route
+                if decision.fresh_session:
+                    self._clear_incompatible_route_session_for_fresh_retry(
+                        run=run,
+                        route=route,
+                        failed_attempt=failed_attempt,
+                    )
                 route_session_id = (
                     None
                     if decision.fresh_session
@@ -962,6 +970,8 @@ class AgentTurnProcess(Generic[ResultT]):
             route.name,
             required_contract_hash=conversation_contract_hash,
         )
+        if persisted is not None and route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+            require_claude_session_id(persisted)
         if route.name == "codex_oauth":
             return (
                 requested_session_id
@@ -969,6 +979,33 @@ class AgentTurnProcess(Generic[ResultT]):
                 else persisted
             )
         return persisted
+
+    def _clear_incompatible_route_session_for_fresh_retry(
+        self,
+        *,
+        run: AgentRun,
+        route: RuntimeRoute,
+        failed_attempt: AgentRuntimeAttempt,
+    ) -> None:
+        persisted_attempt = self.store.get_agent_runtime_attempt(failed_attempt.id)
+        if (
+            run.role is not AgentRole.CONSUMER
+            or persisted_attempt is None
+            or persisted_attempt != failed_attempt
+            or persisted_attempt.agent_run_id != run.id
+            or persisted_attempt.route_name != route.name
+            or persisted_attempt.status != "failed"
+            or persisted_attempt.session_mode != RuntimeAttemptSessionMode.RESUME
+            or persisted_attempt.failure_class != RuntimeFailureClass.SESSION.value
+            or persisted_attempt.failure_code != "session_route_incompatible"
+            or not persisted_attempt.source_session_id
+        ):
+            raise ValueError("fresh session retry lacks persisted resume evidence")
+        self.store.clear_conversation_runtime_session_if_matches(
+            self.task.conversation_id,
+            route.name,
+            persisted_attempt.source_session_id,
+        )
 
     def _claim_and_start_attempt(
         self,

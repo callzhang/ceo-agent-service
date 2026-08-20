@@ -164,6 +164,15 @@ def test_claude_command_resumes_only_the_selected_session(adapter, route):
     assert command[-2:] == ["--resume", "claude-session-1"]
 
 
+@pytest.mark.parametrize(
+    "session_id",
+    ["--resume-other", "claude session", "claude\nsession", "claude\x00session"],
+)
+def test_claude_command_rejects_malformed_resume_session(adapter, route, session_id):
+    with pytest.raises(ValueError, match="session_id"):
+        adapter.build_command(route=route, session_id=session_id, max_turns=1)
+
+
 def test_claude_child_receives_only_configured_anthropic_credential(
     adapter, route, monkeypatch
 ):
