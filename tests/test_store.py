@@ -749,6 +749,55 @@ def test_route_session_migration_marks_existing_rows_contract_unknown(tmp_path: 
     ) is None
 
 
+def test_current_schema_reopens_and_repairs_old_route_session_shape(tmp_path: Path):
+    db_path = tmp_path / "current-version-old-route-table.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_conversation_runtime_session(
+        "cid", "codex_api", "old-api-session", "old-contract"
+    )
+    with store._connect() as db:
+        db.execute(
+            "alter table conversation_runtime_sessions rename to route_sessions_new"
+        )
+        db.execute(
+            """
+            create table conversation_runtime_sessions (
+                conversation_id text not null,
+                route_name text not null,
+                session_id text not null,
+                updated_at text not null default current_timestamp,
+                primary key(conversation_id, route_name)
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into conversation_runtime_sessions (
+                conversation_id, route_name, session_id, updated_at
+            )
+            select conversation_id, route_name, session_id, updated_at
+            from route_sessions_new
+            """
+        )
+        db.execute("drop table route_sessions_new")
+        version = db.execute(
+            "select value from service_state where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        ).fetchone()[0]
+    assert version == store_module.STORE_SCHEMA_VERSION
+    assert store._schema_is_current() is False
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    reopened = AutoReplyStore(db_path)
+
+    assert reopened.get_conversation_runtime_session_contract_hash(
+        "cid", "codex_api"
+    ) == ""
+    assert reopened.get_conversation_runtime_session(
+        "cid", "codex_api", required_contract_hash="current-contract"
+    ) is None
+
+
 def test_route_pause_is_independent_and_expires(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "route-pauses.sqlite3")
 

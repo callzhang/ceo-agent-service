@@ -93,6 +93,7 @@ STORE_SCHEMA_REMOVED_TABLES = (
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "reply_attempts": ("human_decision_options_json",),
     "agent_runtime_attempts": ("session_mode", "source_session_id"),
+    "conversation_runtime_sessions": ("contract_hash",),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_session_evidence_trim_insert",
