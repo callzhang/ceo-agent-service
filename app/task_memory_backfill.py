@@ -1,5 +1,4 @@
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -23,16 +22,12 @@ class ProjectMemoryContextCodexRunner:
         store=None,
         routed_execution=None,
     ):
-        from app.agent_runtime_config import load_runtime_config
-        from app.agent_runtime_router import (
-            AgentRuntimeRouter,
-            RoutedCodexExecution,
-            local_codex_session_effect_probe,
+        from app.agent_runtime_production import (
+            build_production_routed_codex_execution,
         )
         from app.codex_decision import (
             extract_codex_audit_events,
         )
-        from app.codex_runtime_adapter import CodexRuntimeAdapter
 
         self.workspace = workspace
         self.timeout_seconds = timeout_seconds
@@ -41,26 +36,14 @@ class ProjectMemoryContextCodexRunner:
         if routed_execution is None:
             if store is None:
                 raise ValueError("store is required for routed project memory backfill")
-            runtime_config = load_runtime_config(os.environ)
-            adapter = CodexRuntimeAdapter(
-                workspace, runtime_config, codex_bin=codex_bin
+            routed_execution = build_production_routed_codex_execution(
+                store=store,
+                workspace=workspace,
+                codex_bin=codex_bin,
+                total_timeout_seconds=timeout_seconds,
+                idle_timeout_seconds=idle_timeout_seconds,
+                executor=executor,
             )
-            routed_kwargs = {
-                "store": store,
-                "config": runtime_config,
-                "router": AgentRuntimeRouter(
-                    routes=runtime_config.routes,
-                    store=store,
-                    snapshots={},
-                ),
-                "adapter": adapter,
-                "session_effect_probe": local_codex_session_effect_probe(),
-                "total_timeout_seconds": timeout_seconds,
-                "idle_timeout_seconds": idle_timeout_seconds,
-            }
-            if executor is not None:
-                routed_kwargs["executor"] = executor
-            routed_execution = RoutedCodexExecution(**routed_kwargs)
         self.routed_execution = routed_execution
         self.last_session_id: str | None = None
         self.last_audit_tool_events: list[dict[str, str]] | None = None
@@ -93,7 +76,7 @@ class ProjectMemoryContextCodexRunner:
             workload_kind="task",
             workload_key=f"{project.id}:memory_backfill",
             prompt=prompt,
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=ApprovedCodexCommandFactory.read_only_project_memory(
                 developer_instructions=(
                     "Only read reviewed Memory Connector evidence and return the "
                     "requested structured project-memory context. Do not write data."

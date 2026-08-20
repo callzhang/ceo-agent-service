@@ -5,10 +5,11 @@ import json
 import os
 import re
 import shlex
+import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -221,42 +222,30 @@ class CodexWeeklyOkrAgent:
         executor: Callable[[list[str], str, dict[str, str]], str] | None = None,
         store=None,
         routed_execution=None,
+        now: Callable[[], datetime] | None = None,
     ):
-        from app.agent_runtime_config import load_runtime_config
-        from app.agent_runtime_router import (
-            AgentRuntimeRouter,
-            RoutedCodexExecution,
-            local_codex_session_effect_probe,
+        from app.agent_runtime_production import (
+            build_production_routed_codex_execution,
         )
-        from app.codex_runtime_adapter import CodexRuntimeAdapter
 
         if routed_execution is None:
             if store is None:
                 raise ValueError("store is required for routed weekly OKR analysis")
-            runtime_config = load_runtime_config(os.environ)
-            adapter = CodexRuntimeAdapter(workspace, runtime_config)
-            routed_kwargs = {
-                "store": store,
-                "config": runtime_config,
-                "router": AgentRuntimeRouter(
-                    routes=runtime_config.routes,
-                    store=store,
-                    snapshots={},
-                ),
-                "adapter": adapter,
-                "session_effect_probe": local_codex_session_effect_probe(),
-                "total_timeout_seconds": timeout_seconds,
-                "idle_timeout_seconds": idle_timeout_seconds,
-            }
-            if executor is not None:
-                routed_kwargs["executor"] = executor
-            routed_execution = RoutedCodexExecution(**routed_kwargs)
+            routed_execution = build_production_routed_codex_execution(
+                store=store,
+                workspace=workspace,
+                total_timeout_seconds=timeout_seconds,
+                idle_timeout_seconds=idle_timeout_seconds,
+                executor=executor,
+            )
         if store is None:
             raise ValueError("store is required for weekly OKR job ownership")
         self.store = store
         self.routed_execution = routed_execution
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
+        self._now = now or (lambda: datetime.now(UTC))
+        self._job_lease_seconds = max(int(timeout_seconds) + 60, 1)
 
     def analyze(
         self,
@@ -363,7 +352,13 @@ class CodexWeeklyOkrAgent:
             "manager_user_id": manager_user_id,
             "source_digest": source_hash,
         }
-        claim = self.store.begin_weekly_okr_analysis_job(**job_values)
+        owner = f"weekly-okr-{uuid.uuid4().hex}"
+        claim = self.store.begin_weekly_okr_analysis_job(
+            **job_values,
+            owner=owner,
+            lease_seconds=self._job_lease_seconds,
+            now=self._now(),
+        )
         owns_job = claim.outcome == "claimed"
         if claim.outcome == "cache_hit":
             try:
@@ -377,6 +372,9 @@ class CodexWeeklyOkrAgent:
                 claim = self.store.reclaim_weekly_okr_analysis_job_cache_miss(
                     claim.job_id,
                     **job_values,
+                    owner=owner,
+                    lease_seconds=self._job_lease_seconds,
+                    now=self._now(),
                 )
                 owns_job = claim.outcome == "claimed"
         if claim.outcome == "in_progress":
@@ -384,6 +382,24 @@ class CodexWeeklyOkrAgent:
                 job_id=claim.job_id,
                 manager_user_id=manager_user_id,
             )
+        if owns_job:
+            try:
+                cached = _load_weekly_analysis_cache(
+                    analysis_path=analysis_path,
+                    source_hash=source_hash,
+                    manager=manager,
+                    filtered_payload=filtered_payload,
+                )
+            except (OSError, ValueError, ValidationError, json.JSONDecodeError):
+                pass
+            else:
+                self.store.finish_weekly_okr_analysis_job(
+                    claim.job_id,
+                    status="completed",
+                    owner=owner,
+                    now=self._now(),
+                )
+                return cached
         prompt = build_weekly_okr_prompt(
             source_path=source_path,
             managers=[manager],
@@ -404,7 +420,9 @@ class CodexWeeklyOkrAgent:
 
         def parse_validated(raw: str) -> str:
             try:
-                analysis = WeeklyOkrAnalysis.model_validate(_extract_report_payload(raw))
+                analysis = WeeklyOkrAnalysis.model_validate(
+                    _extract_report_payload(raw)
+                )
                 _validate_manager_coverage(analysis, [manager])
                 _validate_kr_coverage(analysis, filtered_payload["managers"])
             except (ValueError, ValidationError) as exc:
@@ -418,7 +436,7 @@ class CodexWeeklyOkrAgent:
                     f"{week_end.isoformat()}:{manager_user_id}:{source_hash}"
                 ),
                 prompt=prompt,
-                command_factory=ApprovedCodexCommandFactory.read_only(
+                command_factory=ApprovedCodexCommandFactory.read_only_weekly_okr(
                     developer_instructions=(
                         "Perform only reviewed read-only OKR evidence analysis. "
                         "Do not send messages or create or update documents."
@@ -427,9 +445,7 @@ class CodexWeeklyOkrAgent:
                     use_output_schema=True,
                 ),
                 parser=parse_validated,
-                result_codec=RoutedResultCodec.text(
-                    schema_id="weekly_okr_analysis.v1"
-                ),
+                result_codec=RoutedResultCodec.text(schema_id="weekly_okr_analysis.v1"),
                 conversation_id=None,
                 required_capabilities=_weekly_okr_required_capabilities(),
                 result_validation_retry=RoutedResultValidationRetry.exactly_once(
@@ -451,6 +467,8 @@ class CodexWeeklyOkrAgent:
             self.store.finish_weekly_okr_analysis_job(
                 claim.job_id,
                 status="completed",
+                owner=owner,
+                now=self._now(),
             )
             return analysis
         except Exception as exc:
@@ -459,6 +477,8 @@ class CodexWeeklyOkrAgent:
                     claim.job_id,
                     status="failed",
                     error=str(exc),
+                    owner=owner,
+                    now=self._now(),
                 )
             raise
 

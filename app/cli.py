@@ -965,13 +965,9 @@ def consume_once(settings: WorkerSettings) -> int:
 
 
 def process_work_items_command(settings: WorkerSettings) -> int:
-    from app.agent_runtime_config import load_runtime_config
-    from app.agent_runtime_router import (
-        AgentRuntimeRouter,
-        RoutedCodexExecution,
-        local_codex_session_effect_probe,
+    from app.agent_runtime_production import (
+        build_production_routed_codex_execution,
     )
-    from app.codex_runtime_adapter import CodexRuntimeAdapter
     from app.task_agent import (
         TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
         TASK_AGENT_MAX_TIMEOUT_SECONDS,
@@ -985,17 +981,9 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     store.reset_stale_processing_work_summary_inputs(
         _work_summary_processing_stale_seconds(settings)
     )
-    runtime_config = load_runtime_config(os.environ)
-    routed_execution = RoutedCodexExecution(
+    routed_execution = build_production_routed_codex_execution(
         store=store,
-        config=runtime_config,
-        router=AgentRuntimeRouter(
-            routes=runtime_config.routes,
-            store=store,
-            snapshots={},
-        ),
-        adapter=CodexRuntimeAdapter(settings.workspace, runtime_config),
-        session_effect_probe=local_codex_session_effect_probe(),
+        workspace=settings.workspace,
         total_timeout_seconds=min(
             settings.task_codex_timeout_seconds,
             TASK_AGENT_MAX_TIMEOUT_SECONDS,
@@ -1231,13 +1219,9 @@ def backfill_routine_process_todos_command(
 
 
 def process_okr_reviews_command(settings: WorkerSettings) -> int:
-    from app.agent_runtime_config import load_runtime_config
-    from app.agent_runtime_router import (
-        AgentRuntimeRouter,
-        RoutedCodexExecution,
-        local_codex_session_effect_probe,
+    from app.agent_runtime_production import (
+        build_production_routed_codex_execution,
     )
-    from app.codex_runtime_adapter import CodexRuntimeAdapter
     from app.okr_review import process_okr_review_request
     from app.structured_agent import AgentSpec, StructuredCodexRunner
 
@@ -1271,17 +1255,9 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
             "Return only AgentEnvelope JSON."
         ),
     )
-    runtime_config = load_runtime_config(os.environ)
-    routed_execution = RoutedCodexExecution(
+    routed_execution = build_production_routed_codex_execution(
         store=store,
-        config=runtime_config,
-        router=AgentRuntimeRouter(
-            routes=runtime_config.routes,
-            store=store,
-            snapshots={},
-        ),
-        adapter=CodexRuntimeAdapter(settings.workspace, runtime_config),
-        session_effect_probe=local_codex_session_effect_probe(),
+        workspace=settings.workspace,
         total_timeout_seconds=max(
             settings.codex_timeout_seconds, OKR_REVIEW_CODEX_TIMEOUT_SECONDS
         ),
@@ -2386,27 +2362,15 @@ def run_meeting_consumer_loop(
     sleep: Callable[[int], None] = time.sleep,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
-    from app.agent_runtime_config import load_runtime_config
-    from app.agent_runtime_router import (
-        AgentRuntimeRouter,
-        RoutedCodexExecution,
-        local_codex_session_effect_probe,
+    from app.agent_runtime_production import (
+        build_production_routed_codex_execution,
     )
-    from app.codex_runtime_adapter import CodexRuntimeAdapter
 
     store = AutoReplyStore(settings.db_path)
     dws = _create_meeting_dws(settings)
-    runtime_config = load_runtime_config(os.environ)
-    routed_execution = RoutedCodexExecution(
+    routed_execution = build_production_routed_codex_execution(
         store=store,
-        config=runtime_config,
-        router=AgentRuntimeRouter(
-            routes=runtime_config.routes,
-            store=store,
-            snapshots={},
-        ),
-        adapter=CodexRuntimeAdapter(settings.workspace, runtime_config),
-        session_effect_probe=local_codex_session_effect_probe(),
+        workspace=settings.workspace,
         total_timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )

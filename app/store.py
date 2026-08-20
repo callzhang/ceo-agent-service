@@ -118,6 +118,8 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "manager_user_id",
         "source_digest",
         "status",
+        "lease_owner",
+        "lease_expires_at",
         "error",
         "finished_at",
         "updated_at",
@@ -446,6 +448,7 @@ class WeeklyOkrAnalysisJobClaimOutcome(StrEnum):
 class WeeklyOkrAnalysisJobClaim:
     job_id: int
     outcome: WeeklyOkrAnalysisJobClaimOutcome
+    reclaimed_stale: bool = False
 
 
 class AgentRuntimeAttemptStartConflictError(RuntimeError):
@@ -1701,6 +1704,8 @@ class AutoReplyStore:
                     source_digest text not null,
                     status text not null default 'running'
                         check(status in ('running', 'completed', 'failed')),
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
                     error text not null default '',
                     created_at text not null default current_timestamp,
                     finished_at text not null default '',
@@ -2604,6 +2609,8 @@ class AutoReplyStore:
                     source_digest text not null,
                     status text not null default 'running'
                         check(status in ('running', 'completed', 'failed')),
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
                     error text not null default '',
                     created_at text not null default current_timestamp,
                     finished_at text not null default '',
@@ -2616,6 +2623,18 @@ class AutoReplyStore:
                 "idx_weekly_okr_analysis_jobs_identity "
                 "on weekly_okr_analysis_jobs(week_end, manager_user_id, source_digest)"
             )
+            weekly_job_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(weekly_okr_analysis_jobs)"
+                ).fetchall()
+            }
+            for column in ("lease_owner", "lease_expires_at"):
+                if column not in weekly_job_columns:
+                    db.execute(
+                        f"alter table weekly_okr_analysis_jobs add column {column} "
+                        "text not null default ''"
+                    )
             org_user_profile_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
@@ -15586,6 +15605,9 @@ class AutoReplyStore:
         week_end: str,
         manager_user_id: str,
         source_digest: str,
+        owner: str = "legacy-weekly-owner",
+        lease_seconds: int = 1860,
+        now: str | datetime | None = None,
     ) -> WeeklyOkrAnalysisJobClaim:
         manager_user_id = self._require_runtime_attempt_text(
             manager_user_id, field="manager_user_id"
@@ -15593,18 +15615,32 @@ class AutoReplyStore:
         _, workload_key = self._validate_runtime_operation_workload(
             "weekly_okr", f"{week_end}:{manager_user_id}:{source_digest}"
         )
-        normalized_week_end, normalized_manager, normalized_digest = (
-            workload_key.split(":", 2)
+        normalized_week_end, normalized_manager, normalized_digest = workload_key.split(
+            ":", 2
         )
-        with self._agent_run_write_transaction(None) as (db, _):
+        owner = self._require_runtime_attempt_text(owner, field="owner")
+        if lease_seconds <= 0:
+            raise ValueError("weekly OKR lease_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (db, clock):
+            now_value, now_text = clock
+            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
             inserted = db.execute(
                 "insert or ignore into weekly_okr_analysis_jobs "
-                "(week_end, manager_user_id, source_digest, status) "
-                "values (?, ?, ?, 'running')",
-                (normalized_week_end, normalized_manager, normalized_digest),
+                "(week_end, manager_user_id, source_digest, status, lease_owner, "
+                "lease_expires_at, updated_at) values (?, ?, ?, 'running', ?, ?, ?)",
+                (
+                    normalized_week_end,
+                    normalized_manager,
+                    normalized_digest,
+                    owner,
+                    lease_expires_at,
+                    now_text,
+                ),
             )
             row = db.execute(
-                "select id, status from weekly_okr_analysis_jobs "
+                "select id, status, lease_expires_at from weekly_okr_analysis_jobs "
                 "where week_end=? and manager_user_id=? and source_digest=?",
                 (normalized_week_end, normalized_manager, normalized_digest),
             ).fetchone()
@@ -15617,9 +15653,10 @@ class AutoReplyStore:
             if row["status"] == "failed":
                 changed = db.execute(
                     "update weekly_okr_analysis_jobs set status='running', "
-                    "error='', finished_at='', updated_at=current_timestamp "
+                    "error='', finished_at='', lease_owner=?, lease_expires_at=?, "
+                    "updated_at=? "
                     "where id=? and status='failed'",
-                    (job_id,),
+                    (owner, lease_expires_at, now_text, job_id),
                 )
                 if changed.rowcount != 1:
                     raise RuntimeError("weekly OKR analysis reopen claim lost")
@@ -15634,19 +15671,43 @@ class AutoReplyStore:
                 )
             if row["status"] != "running":
                 raise RuntimeError("weekly OKR analysis job has invalid status")
+            if not row["lease_expires_at"] or row["lease_expires_at"] <= now_text:
+                changed = db.execute(
+                    "update weekly_okr_analysis_jobs set lease_owner=?, "
+                    "lease_expires_at=?, error='', finished_at='', updated_at=? "
+                    "where id=? and status='running' and "
+                    "(lease_expires_at='' or lease_expires_at<=?)",
+                    (owner, lease_expires_at, now_text, job_id, now_text),
+                )
+                if changed.rowcount != 1:
+                    raise RuntimeError("weekly OKR stale lease reclaim lost")
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
+                    reclaimed_stale=True,
+                )
             return WeeklyOkrAnalysisJobClaim(
                 job_id=job_id,
                 outcome=WeeklyOkrAnalysisJobClaimOutcome.IN_PROGRESS,
             )
 
     def finish_weekly_okr_analysis_job(
-        self, job_id: int, *, status: str, error: str = ""
+        self,
+        job_id: int,
+        *,
+        status: str,
+        error: str = "",
+        owner: str = "legacy-weekly-owner",
+        now: str | datetime | None = None,
     ) -> None:
         if status not in {"completed", "failed"}:
             raise ValueError("weekly OKR analysis terminal status is invalid")
-        with self._agent_run_write_transaction(None) as (db, _):
+        owner = self._require_runtime_attempt_text(owner, field="owner")
+        with self._agent_run_write_transaction(now) as (db, clock):
+            _, now_text = clock
             row = db.execute(
-                "select status, error from weekly_okr_analysis_jobs where id=?",
+                "select status, error, lease_owner, lease_expires_at "
+                "from weekly_okr_analysis_jobs where id=?",
                 (job_id,),
             ).fetchone()
             if row is None:
@@ -15655,12 +15716,17 @@ class AutoReplyStore:
                 if (row["status"], row["error"]) == (status, error):
                     return
                 raise ValueError("conflicting weekly OKR analysis terminal rewrite")
-            db.execute(
+            if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
+                raise ValueError("weekly OKR analysis lease ownership lost")
+            changed = db.execute(
                 "update weekly_okr_analysis_jobs set status=?, error=?, "
-                "finished_at=current_timestamp, updated_at=current_timestamp "
-                "where id=? and status='running'",
-                (status, error, job_id),
+                "lease_owner='', lease_expires_at='', finished_at=?, updated_at=? "
+                "where id=? and status='running' and lease_owner=? "
+                "and lease_expires_at>?",
+                (status, error, now_text, now_text, job_id, owner, now_text),
             )
+            if changed.rowcount != 1:
+                raise ValueError("weekly OKR analysis lease ownership lost")
 
     def reclaim_weekly_okr_analysis_job_cache_miss(
         self,
@@ -15669,6 +15735,9 @@ class AutoReplyStore:
         week_end: str,
         manager_user_id: str,
         source_digest: str,
+        owner: str = "legacy-weekly-owner",
+        lease_seconds: int = 1860,
+        now: str | datetime | None = None,
     ) -> WeeklyOkrAnalysisJobClaim:
         if job_id <= 0:
             raise ValueError("weekly OKR analysis job id must be positive")
@@ -15679,23 +15748,35 @@ class AutoReplyStore:
             "weekly_okr", f"{week_end}:{manager_user_id}:{source_digest}"
         )
         expected_key = tuple(workload_key.split(":", 2))
-        with self._agent_run_write_transaction(None) as (db, _):
+        owner = self._require_runtime_attempt_text(owner, field="owner")
+        if lease_seconds <= 0:
+            raise ValueError("weekly OKR lease_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (db, clock):
+            now_value, now_text = clock
+            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
             row = db.execute(
                 "select week_end, manager_user_id, source_digest, status "
                 "from weekly_okr_analysis_jobs where id=?",
                 (job_id,),
             ).fetchone()
-            if row is None or tuple(
-                row[field]
-                for field in ("week_end", "manager_user_id", "source_digest")
-            ) != expected_key:
+            if (
+                row is None
+                or tuple(
+                    row[field]
+                    for field in ("week_end", "manager_user_id", "source_digest")
+                )
+                != expected_key
+            ):
                 raise ValueError("weekly OKR analysis job natural key mismatch")
             if row["status"] == "completed":
                 changed = db.execute(
                     "update weekly_okr_analysis_jobs set status='running', "
-                    "error='', finished_at='', updated_at=current_timestamp "
+                    "error='', finished_at='', lease_owner=?, lease_expires_at=?, "
+                    "updated_at=? "
                     "where id=? and status='completed'",
-                    (job_id,),
+                    (owner, lease_expires_at, now_text, job_id),
                 )
                 if changed.rowcount != 1:
                     raise RuntimeError("weekly OKR cache-miss reclaim lost")

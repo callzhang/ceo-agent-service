@@ -24,7 +24,10 @@ from app.agent_runtime_router import (
     RoutedResultValidationError,
     RoutedResultValidationRetry,
     local_codex_session_effect_probe,
+    _line_violates_read_only_policy,
 )
+from app.agent_effects import McpToolEffectRegistry
+from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import ProcessRunResult
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AutoReplyStore
@@ -198,6 +201,77 @@ def test_read_only_factory_forces_sandbox_and_is_immutable(
         factory.build = lambda **_kwargs: (["unsafe"], {})
 
 
+def test_unknown_dynamic_started_item_fails_closed():
+    line = json.dumps(
+        {
+            "type": "item.started",
+            "item": {"type": "future_dynamic_capability", "name": "ambient"},
+        }
+    )
+
+    assert (
+        _line_violates_read_only_policy(
+            line,
+            effect_registry=McpToolEffectRegistry.default(),
+            native_cli_classifier=NativeCliMetadataClassifier(),
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "factory_builder",
+    [
+        ApprovedCodexCommandFactory.read_only_structured,
+        ApprovedCodexCommandFactory.read_only_task,
+        ApprovedCodexCommandFactory.read_only_meeting,
+        ApprovedCodexCommandFactory.read_only_weekly_okr,
+    ],
+)
+def test_reviewed_read_factories_pre_spawn_allow_only_exact_reviewed_tools(
+    config, tmp_path, monkeypatch, factory_builder
+):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.ambient_plugin]\ncommand='ambient'\n"
+        "[mcp_servers.agent_cli]\ncommand='agent'\n"
+        "[mcp_servers.memory_connector]\nurl='https://memory.example/mcp/'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    command, _ = factory_builder(developer_instructions="reviewed reads only").build(
+        adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
+        route=config.routes[0],
+        prompt="read",
+        session_id=None,
+    )
+    argv = "\n".join(command)
+
+    assert "mcp_servers.ambient_plugin.enabled=false" in argv
+    assert "mcp_servers.agent_cli.enabled=true" in argv
+    assert "mcp_servers.memory_connector.enabled=true" in argv
+    assert "execute_reviewed_read" in argv
+    assert "execute_reviewed_write" in argv  # explicitly disabled
+    assert "memory_recall" in argv
+    assert "memory_write" in argv  # explicitly disabled
+    assert "tools.enabled_tools=[]" in argv
+    assert 'web_search="disabled"' in argv
+    for feature in (
+        "plugins",
+        "apps",
+        "chronicle",
+        "computer_use",
+        "browser_use",
+        "in_app_browser",
+        "memories",
+        "skill_search",
+    ):
+        assert ["--disable", feature] == command[
+            command.index(feature) - 1 : command.index(feature) + 1
+        ]
+
+
 def test_result_codec_enforces_utf8_byte_limit_at_multibyte_boundary():
     empty_size = len(TEXT_CODEC.encode("").encode("utf-8"))
     multibyte_count = (MAX_RUNTIME_RESULT_ENVELOPE_BYTES - empty_size) // 3
@@ -218,7 +292,11 @@ def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
     def executor(command, **kwargs):
         calls.append((command, kwargs["env"]))
         if kwargs["env"]["ROUTE"] == "codex_oauth":
-            return ProcessRunResult(1, "", "login failed")
+            return ProcessRunResult(
+                1,
+                json.dumps({"type": "thread.started", "thread_id": "oauth-session"}),
+                "login failed",
+            )
         stdout = "\n".join(
             [
                 json.dumps({"type": "thread.started", "thread_id": "api-session"}),
@@ -268,6 +346,50 @@ def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
     )
 
 
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_read_only_missing_session_evidence_is_terminal_without_failover(
+    store, config, returncode
+):
+    key = seed_structured_parent(store, 119 + returncode)
+    calls = []
+
+    def executor(command, **kwargs):
+        calls.append(kwargs["env"]["ROUTE"])
+        return ProcessRunResult(returncode, "42" if returncode == 0 else "", "failed")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+        session_effect_probe=lambda *_args: False,
+    )
+
+    with pytest.raises(
+        RoutedCodexExecutionError, match="runtime_session_evidence_missing"
+    ) as caught:
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only_without_tools(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=int,
+            result_codec=INT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+    assert caught.value.failure_class is RuntimeFailureClass.SESSION
+    assert caught.value.failure_code == "runtime_session_evidence_missing"
+    assert calls == ["codex_oauth"]
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert len(attempts) == 1
+    assert attempts[0].status == "failed"
+    assert attempts[0].failure_code == "runtime_session_evidence_missing"
+
+
 def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
     store, config
 ):
@@ -283,7 +405,10 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
             "\n".join(
                 [
                     json.dumps(
-                        {"type": "thread.started", "thread_id": f"session-{len(prompts)}"}
+                        {
+                            "type": "thread.started",
+                            "thread_id": f"session-{len(prompts)}",
+                        }
                     ),
                     json.dumps({"type": "result", "value": value}),
                 ]
@@ -331,7 +456,10 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
     assert "expected complete KR coverage" in prompts[1]
     attempts = store.list_runtime_operation_attempts("structured", key)
     assert [attempt.status for attempt in attempts] == ["superseded", "completed"]
-    assert [attempt.route_name for attempt in attempts] == ["codex_oauth", "codex_oauth"]
+    assert [attempt.route_name for attempt in attempts] == [
+        "codex_oauth",
+        "codex_oauth",
+    ]
     assert attempts[0].failure_code == "runtime_result_validation_failed"
     assert [attempt.session_mode for attempt in attempts] == ["fresh", "fresh"]
     assert [attempt.attempt_purpose for attempt in attempts] == [
@@ -429,6 +557,10 @@ def test_persisted_result_validation_failure_resumes_one_same_route_correction(
         RuntimeFailureClass.RESULT.value,
         "runtime_result_validation_failed",
         False,
+        session_id="persisted-validation-session",
+        transcript_reference="codex_session:persisted-validation-session",
+        transcript_start=0,
+        transcript_end=1,
         owner=owner,
         now=NOW,
     )
@@ -445,6 +577,8 @@ def test_persisted_result_validation_failure_resumes_one_same_route_correction(
         router=make_router(store, config),
         adapter=adapter,
         executor=executor,
+        session_id_parser=lambda _raw: "validation-recovery-session",
+        session_effect_probe=lambda *_args: False,
         owner=owner,
         now=lambda: NOW,
     )
@@ -481,8 +615,14 @@ def test_same_session_validation_retry_recovers_after_persisted_failure(store, c
     route = config.routes[0]
     owner = "same-session-result-recovery"
     failed = store.claim_runtime_operation_attempt(
-        "structured", key, route.name, route.runtime_kind, route.credential_mode,
-        route.model, owner=owner, now=NOW,
+        "structured",
+        key,
+        route.name,
+        route.runtime_kind,
+        route.credential_mode,
+        route.model,
+        owner=owner,
+        now=NOW,
     )
     store.mark_agent_runtime_attempt_running_once(failed.id, owner=owner, now=NOW)
     store.fail_agent_runtime_attempt(
@@ -549,6 +689,8 @@ def test_result_validation_retry_is_consumed_after_exactly_one_repeat(store, con
         router=make_router(store, config),
         adapter=FakeAdapter(),
         executor=executor,
+        session_id_parser=lambda _raw: "validation-consumed-session",
+        session_effect_probe=lambda *_args: False,
     )
 
     with pytest.raises(
@@ -708,6 +850,8 @@ def test_process_failure_after_result_validation_retry_does_not_fail_over(
         router=make_router(store, config),
         adapter=adapter,
         executor=executor,
+        session_id_parser=lambda _raw: "validation-process-session",
+        session_effect_probe=lambda *_args: False,
     )
 
     with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
@@ -755,6 +899,8 @@ def test_exhausted_transport_failure_exposes_structured_external_retry_metadata(
         router=make_router(store, config),
         adapter=TransportAdapter(),
         executor=lambda command, **kwargs: ProcessRunResult(1, "", "failed"),
+        session_id_parser=lambda _raw: "transport-session",
+        session_effect_probe=lambda *_args: False,
     )
 
     with pytest.raises(RoutedCodexExecutionError) as raised:
@@ -783,6 +929,8 @@ def test_exhausted_auth_failure_is_not_external_dependency_retryable(store, conf
         router=make_router(store, config),
         adapter=FakeAdapter(),
         executor=lambda command, **kwargs: ProcessRunResult(1, "", "failed"),
+        session_id_parser=lambda _raw: "auth-session",
+        session_effect_probe=lambda *_args: False,
     )
 
     with pytest.raises(RoutedCodexExecutionError) as raised:
@@ -1040,8 +1188,12 @@ def test_read_only_policy_abort_terminates_child_before_rejected_work_runs(
                     "item": {"metadata": {"effect": "effectful"}},
                 }
             )
+            session = json.dumps(
+                {"type": "thread.started", "thread_id": "policy-abort-session"}
+            )
             code = (
                 "import pathlib,time; "
+                f"print({session!r}, flush=True); "
                 f"print({event!r}, flush=True); "
                 "time.sleep(2); "
                 f"pathlib.Path({str(marker)!r}).write_text('continued')"
@@ -1056,6 +1208,8 @@ def test_read_only_policy_abort_terminates_child_before_rejected_work_runs(
         config=config,
         router=make_router(store, config),
         adapter=ChildAdapter(),
+        session_id_parser=lambda _raw: "policy-abort-session",
+        session_effect_probe=lambda *_args: True,
     )
 
     with pytest.raises(
@@ -1273,6 +1427,8 @@ def test_post_start_exception_terminalizes_attempt_and_retry_stays_bounded(
         router=make_router(store, config),
         adapter=adapter,
         executor=executor,
+        session_id_parser=lambda _raw: "post-start-session",
+        session_effect_probe=lambda *_args: False,
         session_line_counter=(
             raise_stage_error if failure_stage == "counter" else lambda _session: 0
         ),
@@ -1302,7 +1458,12 @@ def test_post_start_exception_terminalizes_attempt_and_retry_stays_bounded(
         for item in store.list_runtime_operation_attempts("structured", key)
     )
 
-    with pytest.raises(RoutedCodexExecutionError, match="runtime_route_unavailable"):
+    retry_error = (
+        "runtime_session_evidence_missing"
+        if failure_stage == "build"
+        else "runtime_route_unavailable"
+    )
+    with pytest.raises(RoutedCodexExecutionError, match=retry_error):
         routed.execute(**execution_args)
     assert process_calls == (0 if failure_stage == "build" else 1)
 
@@ -1525,6 +1686,8 @@ def test_oversize_result_terminalizes_before_durable_completion(store, config):
         executor=lambda *_args, **_kwargs: ProcessRunResult(
             0, "界" * MAX_RUNTIME_RESULT_ENVELOPE_BYTES, ""
         ),
+        session_id_parser=lambda _raw: "oversize-session",
+        session_effect_probe=lambda *_args: False,
     )
 
     with pytest.raises(RoutedCodexExecutionError, match="runtime_result_invalid"):
@@ -1562,6 +1725,8 @@ def test_oversize_persisted_result_is_rejected_without_child(store, config):
         router=make_router(store, config),
         adapter=FakeAdapter(),
         executor=executor,
+        session_id_parser=lambda _raw: "persisted-oversize-session",
+        session_effect_probe=lambda *_args: False,
     )
     arguments = {
         "workload_kind": "structured",
@@ -1632,6 +1797,8 @@ def test_live_silent_process_cannot_be_reclaimed_after_nominal_lease(store, conf
         router=make_router(store, config),
         adapter=FakeAdapter(),
         executor=executor,
+        session_id_parser=lambda _raw: "live-silent-session",
+        session_effect_probe=lambda *_args: False,
         owner="live-owner",
         lease_seconds=1,
         total_timeout_seconds=30,
@@ -1675,6 +1842,8 @@ def test_concurrent_executors_start_exactly_one_child(store, config):
             router=make_router(store, config),
             adapter=FakeAdapter(),
             executor=executor,
+            session_id_parser=lambda _raw: "concurrent-session",
+            session_effect_probe=lambda *_args: False,
             owner=owner,
         ).execute(
             workload_kind="structured",
@@ -1736,7 +1905,7 @@ def test_route_pause_opened_during_selection_is_rechecked_before_start(
     assert store.list_runtime_operation_attempts("structured", key) == []
 
 
-def test_expired_read_only_crash_is_terminalized_then_routes_once(store, config):
+def test_expired_read_only_crash_without_session_never_routes_again(store, config):
     key = seed_structured_parent(store)
     route = config.routes[0]
     crashed = store.claim_runtime_operation_attempt(
@@ -1764,27 +1933,31 @@ def test_expired_read_only_crash_is_terminalized_then_routes_once(store, config)
         executor=lambda command, **kwargs: (
             calls.append(command) or ProcessRunResult(0, "42", "")
         ),
+        session_id_parser=lambda _raw: "expired-recovery-session",
+        session_effect_probe=lambda *_args: False,
         owner="replacement-owner",
         now=lambda: later,
     )
 
-    result = routed.execute(
-        workload_kind="structured",
-        workload_key=key,
-        prompt="read",
-        command_factory=ApprovedCodexCommandFactory.read_only(
-            developer_instructions="reviewed reads only"
-        ),
-        parser=lambda raw: int(raw),
-        result_codec=INT_CODEC,
-        required_capabilities=CAPABILITIES,
-    )
+    with pytest.raises(
+        RoutedCodexExecutionError, match="runtime_session_evidence_missing"
+    ):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: int(raw),
+            result_codec=INT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
 
-    assert result.route_name == "codex_api"
     attempts = store.list_runtime_operation_attempts("structured", key)
-    assert [item.status for item in attempts] == ["superseded", "completed"]
+    assert [item.status for item in attempts] == ["failed"]
     assert attempts[0].failure_code == "runtime_lease_expired"
-    assert len(calls) == 1
+    assert calls == []
 
 
 def test_expired_effect_fence_is_never_reclaimed(store, config):

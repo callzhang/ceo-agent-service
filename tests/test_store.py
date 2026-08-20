@@ -4,7 +4,7 @@ import json
 import sqlite3
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
 from pathlib import Path
 from queue import Queue
@@ -874,6 +874,49 @@ def test_weekly_okr_completed_cache_miss_reclaim_is_concurrency_safe(
     assert len(claims) == 2
     assert {claim.job_id for claim in claims} == {original.job_id}
     assert sorted(claim.outcome for claim in claims) == ["claimed", "in_progress"]
+
+
+def test_weekly_okr_live_lease_blocks_and_expired_owner_is_reclaimed(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "weekly-lease.sqlite3")
+    values = {
+        "week_end": "2026-08-16",
+        "manager_user_id": "manager-1",
+        "source_digest": "9" * 64,
+    }
+    now = datetime(2026, 8, 20, 10, 0, tzinfo=timezone.utc)
+    first = store.begin_weekly_okr_analysis_job(
+        **values, owner="owner-1", lease_seconds=5, now=now
+    )
+    blocked = store.begin_weekly_okr_analysis_job(
+        **values,
+        owner="owner-2",
+        lease_seconds=5,
+        now=now + timedelta(seconds=4),
+    )
+    reclaimed = store.begin_weekly_okr_analysis_job(
+        **values,
+        owner="owner-2",
+        lease_seconds=5,
+        now=now + timedelta(seconds=6),
+    )
+
+    assert blocked.outcome == "in_progress"
+    assert reclaimed.job_id == first.job_id
+    assert reclaimed.outcome == "claimed"
+    assert reclaimed.reclaimed_stale is True
+    with pytest.raises(ValueError, match="lease ownership lost"):
+        store.finish_weekly_okr_analysis_job(
+            first.job_id,
+            status="failed",
+            owner="owner-1",
+            now=now + timedelta(seconds=6),
+        )
+    store.finish_weekly_okr_analysis_job(
+        first.job_id,
+        status="completed",
+        owner="owner-2",
+        now=now + timedelta(seconds=7),
+    )
 
 
 def test_weekly_okr_cache_miss_reclaim_wrong_key_or_status_fails_closed(

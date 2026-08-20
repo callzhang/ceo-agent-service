@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import heapq
 import json
-import os
 import re
 from datetime import datetime, time, timezone
 from pathlib import Path
@@ -54,25 +53,14 @@ def _build_routed_execution(
     timeout_seconds: int,
     idle_timeout_seconds: int,
 ):
-    from app.agent_runtime_config import load_runtime_config
-    from app.agent_runtime_router import (
-        AgentRuntimeRouter,
-        RoutedCodexExecution,
-        local_codex_session_effect_probe,
+    from app.agent_runtime_production import (
+        build_production_routed_codex_execution,
     )
-    from app.codex_runtime_adapter import CodexRuntimeAdapter
 
-    runtime_config = load_runtime_config(os.environ)
-    return RoutedCodexExecution(
+    return build_production_routed_codex_execution(
         store=store,
-        config=runtime_config,
-        router=AgentRuntimeRouter(
-            routes=runtime_config.routes,
-            store=store,
-            snapshots={},
-        ),
-        adapter=CodexRuntimeAdapter(workspace, runtime_config, codex_bin=codex_bin),
-        session_effect_probe=local_codex_session_effect_probe(),
+        workspace=workspace,
+        codex_bin=codex_bin,
         total_timeout_seconds=timeout_seconds,
         idle_timeout_seconds=idle_timeout_seconds,
     )

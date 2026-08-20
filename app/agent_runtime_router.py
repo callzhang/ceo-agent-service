@@ -163,6 +163,8 @@ class _ReadOnlyCommandIsolation(StrEnum):
     STANDARD = "standard"
     NO_TOOLS = "no_tools"
     MEMORY_RECALL_ONLY = "memory_recall_only"
+    MEMORY_READS = "memory_reads"
+    REVIEWED_READS = "reviewed_reads"
 
 
 _READ_ONLY_DISABLED_DYNAMIC_FEATURES = (
@@ -241,7 +243,7 @@ class ApprovedCodexCommandFactory:
             output_schema_path=output_schema_path,
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
-            command_isolation=_ReadOnlyCommandIsolation.STANDARD,
+            command_isolation=_ReadOnlyCommandIsolation.NO_TOOLS,
             seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
 
@@ -280,6 +282,61 @@ class ApprovedCodexCommandFactory:
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
             command_isolation=_ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY,
+            seal=_APPROVED_COMMAND_FACTORY_SEAL,
+        )
+
+    @classmethod
+    def read_only_project_memory(cls, **kwargs) -> ApprovedCodexCommandFactory:
+        return cls._reviewed_read_only(
+            command_isolation=_ReadOnlyCommandIsolation.MEMORY_READS,
+            **kwargs,
+        )
+
+    @classmethod
+    def read_only_structured(cls, **kwargs) -> ApprovedCodexCommandFactory:
+        return cls._reviewed_read_only(
+            command_isolation=_ReadOnlyCommandIsolation.REVIEWED_READS,
+            **kwargs,
+        )
+
+    @classmethod
+    def read_only_task(cls, **kwargs) -> ApprovedCodexCommandFactory:
+        return cls._reviewed_read_only(
+            command_isolation=_ReadOnlyCommandIsolation.REVIEWED_READS,
+            **kwargs,
+        )
+
+    @classmethod
+    def read_only_meeting(cls, **kwargs) -> ApprovedCodexCommandFactory:
+        return cls._reviewed_read_only(
+            command_isolation=_ReadOnlyCommandIsolation.REVIEWED_READS,
+            **kwargs,
+        )
+
+    @classmethod
+    def read_only_weekly_okr(cls, **kwargs) -> ApprovedCodexCommandFactory:
+        return cls._reviewed_read_only(
+            command_isolation=_ReadOnlyCommandIsolation.REVIEWED_READS,
+            **kwargs,
+        )
+
+    @classmethod
+    def _reviewed_read_only(
+        cls,
+        *,
+        command_isolation: _ReadOnlyCommandIsolation,
+        developer_instructions: str,
+        output_schema_path: Path | None = None,
+        use_output_schema: bool = False,
+        image_paths: Sequence[Path] = (),
+    ) -> ApprovedCodexCommandFactory:
+        return cls(
+            effect_mode=ExecutionEffectMode.READ_ONLY,
+            developer_instructions=developer_instructions,
+            output_schema_path=output_schema_path,
+            use_output_schema=use_output_schema,
+            image_paths=tuple(image_paths),
+            command_isolation=command_isolation,
             seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
 
@@ -328,7 +385,7 @@ class ApprovedCodexCommandFactory:
             sandbox_mode="read-only" if read_only else None,
         )
         env = adapter.build_env(route)
-        if self._command_isolation is not _ReadOnlyCommandIsolation.STANDARD:
+        if read_only:
             _apply_read_only_command_isolation(
                 command,
                 env=env,
@@ -356,26 +413,56 @@ def _apply_read_only_command_isolation(
         "-c",
         'web_search="disabled"',
     ]
+    allowed_tools: dict[str, tuple[str, ...]] = {}
+    if isolation is _ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY:
+        allowed_tools["memory_connector"] = ("memory_recall",)
+    elif isolation is _ReadOnlyCommandIsolation.MEMORY_READS:
+        allowed_tools["memory_connector"] = (
+            "memory_get",
+            "memory_recall",
+            "timeline_get",
+            "user_get",
+        )
+    elif isolation is _ReadOnlyCommandIsolation.REVIEWED_READS:
+        allowed_tools = {
+            "agent_cli": (
+                "execute_reviewed_read",
+                "read_skill",
+                "read_text_file",
+                "read_spreadsheet",
+            ),
+            "memory_connector": (
+                "memory_get",
+                "memory_recall",
+                "timeline_get",
+                "user_get",
+            ),
+        }
     for server_name in server_names:
-        if (
-            isolation is _ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY
-            and server_name == "memory_connector"
-        ):
+        if server_name in allowed_tools:
             continue
         options.extend(["-c", f"mcp_servers.{server_name}.enabled=false"])
-    if isolation is _ReadOnlyCommandIsolation.NO_TOOLS and (
-        "memory_connector" not in server_names
-    ):
-        options.extend(["-c", "mcp_servers.memory_connector.enabled=false"])
-    elif isolation is _ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY:
+    for known_server in ("agent_cli", "memory_connector"):
+        if known_server not in allowed_tools and known_server not in server_names:
+            options.extend(["-c", f"mcp_servers.{known_server}.enabled=false"])
+    for server_name, tools in allowed_tools.items():
         options.extend(
             [
                 "-c",
-                "mcp_servers.memory_connector.enabled=true",
+                f"mcp_servers.{server_name}.enabled=true",
                 "-c",
-                'mcp_servers.memory_connector.enabled_tools=["memory_recall"]',
+                f"mcp_servers.{server_name}.enabled_tools="
+                + json.dumps(list(tools), separators=(",", ":")),
                 "-c",
-                'mcp_servers.memory_connector.disabled_tools=["memory_write"]',
+                f"mcp_servers.{server_name}.disabled_tools="
+                + json.dumps(
+                    (
+                        ["execute_reviewed_write"]
+                        if server_name == "agent_cli"
+                        else ["memory_write"]
+                    ),
+                    separators=(",", ":"),
+                ),
             ]
         )
     insertion_index = len(command) - 1
@@ -870,6 +957,7 @@ class RoutedCodexExecution:
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
         owner: str | None = None,
         lease_seconds: int = 1800,
+        allow_legacy_oauth_bootstrap: bool = False,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
@@ -894,6 +982,7 @@ class RoutedCodexExecution:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
         self._lease_seconds = max(lease_seconds, int(total_timeout_seconds) + 60)
+        self._allow_legacy_oauth_bootstrap = bool(allow_legacy_oauth_bootstrap)
         self._now = now or (lambda: datetime.now(UTC))
 
     def execute(
@@ -948,6 +1037,15 @@ class RoutedCodexExecution:
                     raise RoutedCodexExecutionError("runtime_effectful_replay_blocked")
                 raise RoutedCodexExecutionError("runtime_attempt_active")
             if latest.status == "completed":
+                if (
+                    policy.effect_mode is ExecutionEffectMode.READ_ONLY
+                    and not latest.session_id
+                ):
+                    raise RoutedCodexExecutionError(
+                        "runtime_session_evidence_missing",
+                        failure_class=RuntimeFailureClass.SESSION,
+                        failure_code="runtime_session_evidence_missing",
+                    )
                 try:
                     value = result_codec.decode(latest.result_envelope_json)
                 except RoutedResultEnvelopeTooLarge as exc:
@@ -973,6 +1071,15 @@ class RoutedCodexExecution:
                     "runtime_result_validation_retry_consumed",
                     failure_class=RuntimeFailureClass.RESULT,
                     failure_code="runtime_result_validation_retry_consumed",
+                )
+            if (
+                policy.effect_mode is ExecutionEffectMode.READ_ONLY
+                and not latest.session_id
+            ):
+                raise RoutedCodexExecutionError(
+                    "runtime_session_evidence_missing",
+                    failure_class=RuntimeFailureClass.SESSION,
+                    failure_code="runtime_session_evidence_missing",
                 )
             validation_failures = sum(
                 attempt.failure_code == "runtime_result_validation_failed"
@@ -1045,7 +1152,8 @@ class RoutedCodexExecution:
                 )
         else:
             decision = self._router.first_route_decision(
-                required_capabilities=required_capabilities
+                required_capabilities=required_capabilities,
+                allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,
             )
         if decision.route is None:
             raise RoutedCodexExecutionError(
@@ -1249,6 +1357,28 @@ class RoutedCodexExecution:
                 f"codex_session:{observed_session_id}" if observed_session_id else ""
             )
 
+            if (
+                policy.effect_mode is ExecutionEffectMode.READ_ONLY
+                and not observed_session_id
+                and not effect_policy_violated
+                and process.returncode == 0
+                and not process.timed_out
+            ):
+                self._terminalize_active_attempt(
+                    active_attempt,
+                    failure_class=RuntimeFailureClass.SESSION,
+                    failure_code="runtime_session_evidence_missing",
+                    session_id="",
+                    transcript_reference="",
+                    transcript_start=transcript_start,
+                    transcript_end=transcript_end,
+                )
+                raise RoutedCodexExecutionError(
+                    "runtime_session_evidence_missing",
+                    failure_class=RuntimeFailureClass.SESSION,
+                    failure_code="runtime_session_evidence_missing",
+                )
+
             if process.returncode == 0 and not process.timed_out:
                 try:
                     value = parser(process.stdout)
@@ -1427,6 +1557,15 @@ class RoutedCodexExecution:
                     timeout_kind=process.timeout_kind,
                 ),
             )
+            persisted_evidence = self._store.get_agent_runtime_attempt(
+                active_attempt.id
+            )
+            if (
+                policy.effect_mode is ExecutionEffectMode.READ_ONLY
+                and persisted_evidence is not None
+                and persisted_evidence.first_effect_started_at
+            ):
+                effect_policy_violated = True
             if (
                 observed_session_id
                 and policy.effect_mode is ExecutionEffectMode.READ_ONLY
@@ -1441,6 +1580,40 @@ class RoutedCodexExecution:
                         active_attempt.id, owner=self._owner, at=self._now()
                     )
                 effect_policy_violated = True
+            if (
+                policy.effect_mode is ExecutionEffectMode.READ_ONLY
+                and not observed_session_id
+                and not effect_policy_violated
+            ):
+                self._terminalize_active_attempt(
+                    active_attempt,
+                    failure_class=RuntimeFailureClass.SESSION,
+                    failure_code="runtime_session_evidence_missing",
+                    session_id="",
+                    transcript_reference="",
+                    transcript_start=transcript_start,
+                    transcript_end=transcript_end,
+                )
+                raise RoutedCodexExecutionError(
+                    "runtime_session_evidence_missing",
+                    failure_class=RuntimeFailureClass.SESSION,
+                    failure_code="runtime_session_evidence_missing",
+                )
+            if effect_policy_violated:
+                self._terminalize_active_attempt(
+                    active_attempt,
+                    failure_class=RuntimeFailureClass.CAPABILITY,
+                    failure_code="runtime_effect_policy_violation",
+                    session_id=observed_session_id,
+                    transcript_reference=transcript_reference,
+                    transcript_start=transcript_start,
+                    transcript_end=transcript_end,
+                )
+                raise RoutedCodexExecutionError(
+                    "runtime_effect_policy_violation",
+                    failure_class=RuntimeFailureClass.CAPABILITY,
+                    failure_code="runtime_effect_policy_violation",
+                )
             if failure.route_pause_required:
                 self._finalized_step(
                     active_attempt,
@@ -1469,8 +1642,6 @@ class RoutedCodexExecution:
                     now=self._now(),
                 ),
             )
-            if effect_policy_violated:
-                raise RoutedCodexExecutionError("runtime_effect_policy_violation")
             if (
                 policy.effect_mode is ExecutionEffectMode.EFFECTFUL
                 or result_validation_retries_used > 0
@@ -1806,7 +1977,10 @@ def _line_violates_read_only_policy(
     if item_type == "mcp_tool_call":
         call = effect_registry.classify(item)
         return call is None or call.effect is not EffectKind.READ_ONLY
-    return False
+    # Codex may add new dynamic item kinds independently of this service. A
+    # read-only caller may continue only after each started action type has
+    # been explicitly reviewed and classified above.
+    return True
 
 
 def _parse_timestamp(value: datetime | str) -> datetime:

@@ -1182,9 +1182,77 @@ def test_codex_agent_in_progress_non_owner_never_spawns_or_terminalizes(tmp_path
     assert len(first_results) == 1
     assert owner_routed.calls == 1
     with store._connect() as db:
-        assert db.execute(
-            "select status from weekly_okr_analysis_jobs"
-        ).fetchone()["status"] == "completed"
+        assert (
+            db.execute("select status from weekly_okr_analysis_jobs").fetchone()[
+                "status"
+            ]
+            == "completed"
+        )
+
+
+def test_codex_agent_recovers_expired_owner_from_durable_cache_without_child(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "weekly-crash-cache.sqlite3")
+    manager = managers()[0]
+    source = FakeSource()
+    source_path = tmp_path / "live-crash-cache.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "managers": [
+                    {
+                        "manager": {"name": manager.name, "userId": manager.user_id},
+                        "liveOkr": source.fetch_user_okr(
+                            user_id=manager.user_id, period_label="2026 Q3"
+                        ),
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    routed = CallbackRouted(
+        lambda *_args: json.dumps(_weekly_payload_for(manager.name), ensure_ascii=False)
+    )
+    first = CodexWeeklyOkrAgent(
+        workspace=tmp_path, store=store, routed_execution=routed
+    )
+    arguments = {
+        "source_path": source_path,
+        "managers": [manager],
+        "period_label": "2026 Q3",
+        "week_start": datetime(2026, 8, 17).date(),
+        "week_end": datetime(2026, 8, 23).date(),
+    }
+    first.analyze(**arguments)
+    with store._connect() as db:
+        db.execute(
+            "update weekly_okr_analysis_jobs set status='running', "
+            "lease_owner='crashed-owner', lease_expires_at='2026-08-20 00:00:00', "
+            "finished_at=''"
+        )
+
+    class NoChild:
+        calls = 0
+
+        def execute(self, **_kwargs):
+            self.calls += 1
+            raise AssertionError("durable cache recovery must not spawn a child")
+
+    no_child = NoChild()
+    recovered = CodexWeeklyOkrAgent(
+        workspace=tmp_path, store=store, routed_execution=no_child
+    ).analyze(**arguments)
+
+    assert recovered.manager_reviews[0].name == manager.name
+    assert no_child.calls == 0
+    with store._connect() as db:
+        row = db.execute(
+            "select status, lease_owner, lease_expires_at from weekly_okr_analysis_jobs"
+        ).fetchone()
+    assert tuple(row) == ("completed", "", "")
 
 
 def test_codex_agent_retries_incomplete_kr_coverage_once(tmp_path):
