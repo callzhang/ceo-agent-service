@@ -184,17 +184,13 @@ def forbidden_path_prefixes() -> tuple[str, ...]:
     return env_csv("CEO_FORBIDDEN_PATH_PREFIXES", (str(Path.home()) + "/",))
 
 
-def env_duration(name: str, default: timedelta) -> timedelta:
-    value = os.getenv(name)
+def parse_duration_value(
+    name: str, value: str | None, default: timedelta
+) -> timedelta:
     if value is None:
         return default
     text = value.strip().lower()
-    units = {
-        "s": 1,
-        "m": 60,
-        "h": 60 * 60,
-        "d": 24 * 60 * 60,
-    }
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
     unit = text[-1:]
     if unit not in units:
         raise ValueError(f"{name} must end with one of: s, m, h, d")
@@ -202,6 +198,10 @@ def env_duration(name: str, default: timedelta) -> timedelta:
     if not amount_text.isdigit():
         raise ValueError(f"{name} must use an integer duration like 30m or 1h")
     return timedelta(seconds=int(amount_text) * units[unit])
+
+
+def env_duration(name: str, default: timedelta) -> timedelta:
+    return parse_duration_value(name, os.getenv(name), default)
 
 
 def env_int(name: str, default: int) -> int:
