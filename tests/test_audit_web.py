@@ -783,8 +783,21 @@ def test_history_approval_cards_merge_business_evidence_with_latest_system_state
         action="oa_approval",
         sensitivity_kind="general",
         oa_process_instance_id="proc-history-production-b",
+        oa_task_id="123",
         oa_action="comment",
-        send_status="commented",
+        oa_action_result_json=json.dumps(
+            {
+                "success": True,
+                "status": "RUNNING",
+                "current_task": {
+                    "taskId": 123,
+                    "taskStatus": "RUNNING",
+                    "taskResult": "NONE",
+                },
+                "read_back_comment_found": True,
+            }
+        ),
+        send_status="decision_selected",
     )
     latest_failure_id = store.record_reply_attempt(
         conversation_id="cid-history-production-b",
@@ -795,6 +808,7 @@ def test_history_approval_cards_merge_business_evidence_with_latest_system_state
         action="agent_run",
         sensitivity_kind="general",
         oa_process_instance_id="proc-history-production-b",
+        oa_task_id="123",
         oa_action="review",
         audit_summary="Approval retry failed.",
         send_status="failed",

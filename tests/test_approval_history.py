@@ -287,6 +287,45 @@ def test_confirmed_comment_does_not_require_task_identifier():
     )
 
 
+def test_confirmed_structured_action_requires_persisted_process_identifier():
+    consumer = _run(
+        1,
+        AgentRole.CONSUMER,
+        _consumer_command(
+            [
+                "dws",
+                "oa",
+                "approval",
+                "approve",
+                "--instance-id",
+                "process",
+                "--task-id",
+                "task",
+                "--yes",
+            ]
+        ),
+    )
+    audit = _run(
+        2,
+        AgentRole.AUDIT,
+        _confirmed_audit(),
+        parent_agent_run_id=consumer.id,
+        side_effect_state=SideEffectState.CONFIRMED,
+    )
+
+    assert (
+        resolve_approval_history_result(
+            _attempt(
+                oa_process_instance_id="",
+                oa_task_id="task",
+                send_status="closed",
+            ),
+            [consumer, audit],
+        )
+        is ApprovalHistoryResult.UNKNOWN
+    )
+
+
 @pytest.mark.parametrize(
     ("status", "expected"),
     [
@@ -584,7 +623,99 @@ def test_typed_legacy_agree_receipt_is_strong_approval_evidence():
     )
 
 
-def test_typed_legacy_receipt_with_explicit_failure_is_unknown():
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {"response": {"success": False}},
+        {"errorCode": "500"},
+        {"error": "remote rejected action"},
+    ],
+)
+def test_typed_legacy_receipt_with_any_explicit_failure_is_unknown(failure):
+    receipt = {
+        "taskStatus": "COMPLETED",
+        "taskResult": "AGREE",
+        **failure,
+    }
+    attempt = _attempt(
+        oa_process_instance_id="process",
+        oa_task_id="task",
+        oa_action="approve",
+        send_status="closed",
+        oa_action_result_json=json.dumps(receipt),
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [])
+        is ApprovalHistoryResult.UNKNOWN
+    )
+
+
+def test_commented_status_with_explicitly_failed_receipt_is_unknown():
+    attempt = _attempt(
+        oa_process_instance_id="process",
+        oa_action="退回",
+        send_status="commented",
+        oa_action_result_json=json.dumps({"response": {"success": False}}),
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [])
+        is ApprovalHistoryResult.UNKNOWN
+    )
+
+
+def test_historical_commented_status_without_receipt_remains_comment():
+    attempt = _attempt(
+        oa_process_instance_id="process",
+        oa_action="退回",
+        send_status="commented",
+        oa_action_result_json="",
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [])
+        is ApprovalHistoryResult.COMMENTED_PENDING
+    )
+
+
+def test_confirmed_running_comment_receipt_is_pending_comment():
+    attempt = _attempt(
+        oa_process_instance_id="process",
+        oa_task_id="123",
+        oa_action="comment",
+        send_status="decision_selected",
+        oa_action_result_json=json.dumps(
+            {
+                "success": True,
+                "status": "RUNNING",
+                "current_task": {
+                    "taskId": 123,
+                    "taskStatus": "RUNNING",
+                    "taskResult": "NONE",
+                },
+                "read_back_comment_found": True,
+            }
+        ),
+    )
+
+    assert (
+        resolve_approval_history_result(attempt, [])
+        is ApprovalHistoryResult.COMMENTED_PENDING
+    )
+
+
+@pytest.mark.parametrize(
+    "identifiers",
+    [
+        {"processInstanceId": "other"},
+        {"instance-id": "other"},
+        {"taskId": "other"},
+        {"task-id": "other"},
+        {"process_instance_id": "process", "processInstanceId": "other"},
+    ],
+)
+def test_direct_receipt_all_identifier_spellings_must_match(identifiers):
     attempt = _attempt(
         oa_process_instance_id="process",
         oa_task_id="task",
@@ -592,10 +723,9 @@ def test_typed_legacy_receipt_with_explicit_failure_is_unknown():
         send_status="closed",
         oa_action_result_json=json.dumps(
             {
-                "success": False,
-                "errorCode": 500,
                 "taskStatus": "COMPLETED",
                 "taskResult": "AGREE",
+                **identifiers,
             }
         ),
     )
@@ -895,6 +1025,70 @@ def test_group_without_business_evidence_uses_latest_workflow_state():
     assert (
         _resolve_group([older_unknown, latest_failure])
         is ApprovalHistoryResult.FAILED
+    )
+
+
+def test_group_latest_completed_malformed_consumer_blocks_older_terminal_result():
+    older_approval = _attempt(
+        id=1,
+        created_at="2026-08-18T00:00:01Z",
+        oa_process_instance_id="process",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {"taskStatus": "COMPLETED", "taskResult": "AGREE"}
+        ),
+    )
+    latest_attempt = _attempt(
+        id=2,
+        created_at="2026-08-18T00:00:02Z",
+        oa_process_instance_id="process",
+        send_status="completed",
+    )
+    malformed_consumer = _run(
+        3,
+        AgentRole.CONSUMER,
+        "not-json",
+        status="completed",
+    )
+
+    assert (
+        _resolve_group(
+            [older_approval, latest_attempt],
+            {latest_attempt.id: [malformed_consumer]},
+        )
+        is ApprovalHistoryResult.UNKNOWN
+    )
+
+
+def test_group_noncompleted_latest_consumer_keeps_older_terminal_result():
+    older_approval = _attempt(
+        id=1,
+        created_at="2026-08-18T00:00:01Z",
+        oa_process_instance_id="process",
+        send_status="completed",
+        oa_action_result_json=json.dumps(
+            {"taskStatus": "COMPLETED", "taskResult": "AGREE"}
+        ),
+    )
+    latest_attempt = _attempt(
+        id=2,
+        created_at="2026-08-18T00:00:02Z",
+        oa_process_instance_id="process",
+        send_status="processing",
+    )
+    processing_consumer = _run(
+        3,
+        AgentRole.CONSUMER,
+        "not-json",
+        status="processing",
+    )
+
+    assert (
+        _resolve_group(
+            [older_approval, latest_attempt],
+            {latest_attempt.id: [processing_consumer]},
+        )
+        is ApprovalHistoryResult.APPROVED
     )
 
 

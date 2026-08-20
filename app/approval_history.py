@@ -14,6 +14,7 @@ from app.agent_contracts import (
     ProposedAction,
 )
 from app.agent_result import SideEffectState
+from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.native_cli_metadata import describe_native_command, native_command_argv
 from app.store import AgentRole, AgentRun, ReplyAttempt
 
@@ -116,6 +117,18 @@ def resolve_approval_history_group_result(
     )
     if not ordered:
         return ApprovalHistoryResult.UNKNOWN
+
+    latest_runs = agent_runs_by_attempt.get(ordered[0].id, ())
+    latest_completed_consumer = _latest_completed_consumer(
+        [run for run in latest_runs if run.role is AgentRole.CONSUMER]
+    )
+    if latest_completed_consumer is not None:
+        try:
+            ConsumerAgentResult.model_validate_json(
+                latest_completed_consumer.final_result_json
+            )
+        except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
+            return ApprovalHistoryResult.UNKNOWN
 
     latest_comment: ApprovalHistoryResult | None = None
     for attempt in ordered:
@@ -259,8 +272,10 @@ def _structured_action_result(
 
     process_instance_id = attempt.oa_process_instance_id.strip()
     command_process_id = descriptor.target_identifiers.get("instance-id", "")
-    if not command_process_id or (
-        process_instance_id and command_process_id != process_instance_id
+    if (
+        not process_instance_id
+        or not command_process_id
+        or command_process_id != process_instance_id
     ):
         return None
 
@@ -299,23 +314,32 @@ def _argv_option_value(argv: tuple[str, ...], option: str) -> str:
 
 
 def _direct_results(attempt: ReplyAttempt) -> set[ApprovalHistoryResult]:
-    if _normalize(attempt.send_status) == "commented":
-        return {ApprovalHistoryResult.COMMENTED_PENDING}
-
     raw = attempt.oa_action_result_json.strip()
     if not raw:
-        return set()
+        return (
+            {ApprovalHistoryResult.COMMENTED_PENDING}
+            if _normalize(attempt.send_status) == "commented"
+            else set()
+        )
     try:
         payload = json.loads(raw)
     except (TypeError, ValueError, json.JSONDecodeError):
         return set()
     if not isinstance(payload, dict):
         return set()
+    if legacy_receipt_has_explicit_failure(payload):
+        return set()
+    if not _direct_receipt_identifiers_match(attempt, payload):
+        return set()
+    if _normalize(attempt.send_status) == "commented":
+        return {ApprovalHistoryResult.COMMENTED_PENDING}
 
     typed_result = _typed_legacy_result(attempt, payload)
     if typed_result is not None:
         return {typed_result}
     if _legacy_comment_receipt_matches(attempt, payload):
+        return {ApprovalHistoryResult.COMMENTED_PENDING}
+    if _running_comment_receipt_matches(attempt, payload):
         return {ApprovalHistoryResult.COMMENTED_PENDING}
     direct_result = _DIRECT_CONFIRMED_ACTIONS.get(_normalize(attempt.oa_action))
     if direct_result is not None and _receipt_proves_success(payload):
@@ -327,20 +351,11 @@ def _typed_legacy_result(
     attempt: ReplyAttempt,
     payload: dict[str, object],
 ) -> ApprovalHistoryResult | None:
-    if _receipt_has_explicit_failure(payload):
-        return None
     readback = payload.get("readback")
     typed = readback if isinstance(readback, dict) else payload
     task_status = _normalize(str(typed.get("taskStatus") or ""))
     task_result = str(typed.get("taskResult") or "").strip().upper()
     if task_status != "completed":
-        return None
-
-    process_id = str(payload.get("process_instance_id") or "").strip()
-    if process_id and process_id != attempt.oa_process_instance_id.strip():
-        return None
-    task_id = str(payload.get("task_id") or "").strip()
-    if task_id and attempt.oa_task_id.strip() and task_id != attempt.oa_task_id.strip():
         return None
 
     if task_result == "AGREE":
@@ -386,8 +401,87 @@ def _legacy_comment_receipt_matches(
     return _receipt_proves_success(payload)
 
 
+def _running_comment_receipt_matches(
+    attempt: ReplyAttempt,
+    payload: dict[str, object],
+) -> bool:
+    if (
+        _normalize(attempt.oa_action) != "comment"
+        or _normalize(attempt.send_status) != "decision_selected"
+        or payload.get("success") is not True
+        or payload.get("read_back_comment_found") is not True
+        or _normalize(str(payload.get("status") or "")) != "running"
+        or not attempt.oa_process_instance_id.strip()
+        or not attempt.oa_task_id.strip()
+    ):
+        return False
+    current_task = payload.get("current_task")
+    return bool(
+        isinstance(current_task, dict)
+        and _normalize(str(current_task.get("taskStatus") or "")) == "running"
+        and str(current_task.get("taskId") or "").strip()
+        == attempt.oa_task_id.strip()
+    )
+
+
+def _direct_receipt_identifiers_match(
+    attempt: ReplyAttempt,
+    payload: dict[str, object],
+) -> bool:
+    process_ids, task_ids = _receipt_identifiers(payload)
+    return _all_identifiers_match(
+        process_ids,
+        attempt.oa_process_instance_id,
+    ) and _all_identifiers_match(task_ids, attempt.oa_task_id)
+
+
+def _all_identifiers_match(values: list[str], expected: str) -> bool:
+    if not values:
+        return True
+    normalized_expected = expected.strip()
+    return bool(normalized_expected) and all(
+        value == normalized_expected for value in values
+    )
+
+
+def _receipt_identifiers(value: object) -> tuple[list[str], list[str]]:
+    process_ids: list[str] = []
+    task_ids: list[str] = []
+
+    def collect(candidate: object) -> None:
+        if isinstance(candidate, list):
+            for item in candidate:
+                collect(item)
+            return
+        if not isinstance(candidate, dict):
+            return
+        for key, item in candidate.items():
+            if key in {
+                "process_instance_id",
+                "processInstanceId",
+                "instance-id",
+                "--instance-id",
+            }:
+                process_ids.append(str(item or "").strip())
+            elif key in {"task_id", "taskId", "task-id", "--task-id"}:
+                task_ids.append(str(item or "").strip())
+            elif key == "argv" and isinstance(item, list):
+                argv = tuple(str(part) for part in item)
+                for option, target in (
+                    ("--instance-id", process_ids),
+                    ("--task-id", task_ids),
+                ):
+                    identifier = _argv_option_value(argv, option)
+                    if identifier:
+                        target.append(identifier.strip())
+            collect(item)
+
+    collect(value)
+    return process_ids, task_ids
+
+
 def _receipt_proves_success(payload: dict[str, object]) -> bool:
-    if _receipt_has_explicit_failure(payload):
+    if legacy_receipt_has_explicit_failure(payload):
         return False
     indicators: list[bool] = []
 
@@ -415,16 +509,6 @@ def _receipt_proves_success(payload: dict[str, object]) -> bool:
         indicators.append(errcode == 0)
 
     return bool(indicators) and all(indicators)
-
-
-def _receipt_has_explicit_failure(payload: dict[str, object]) -> bool:
-    if payload.get("success") is False or payload.get("result") is False:
-        return True
-    for key in ("errcode", "errorCode", "dingOpenErrcode"):
-        value = payload.get(key)
-        if value is not None and type(value) is int and value != 0:
-            return True
-    return False
 
 
 def _workflow_result(status: str) -> ApprovalHistoryResult:

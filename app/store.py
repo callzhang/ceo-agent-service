@@ -39,6 +39,7 @@ from app.task_models import (
 )
 from app.feedback_policy import FeedbackPressureStats
 from app.history import HistoryItem
+from app.legacy_receipt import legacy_receipt_has_explicit_failure
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
@@ -2668,7 +2669,7 @@ class AutoReplyStore:
             receipt = None
         if not isinstance(receipt, dict) or not receipt:
             return "failed", "migrated_missing_execution_receipt"
-        if AutoReplyStore._legacy_receipt_has_explicit_failure(receipt):
+        if legacy_receipt_has_explicit_failure(receipt):
             return "failed", "migrated_explicit_execution_failure"
         if receipt.get("outcome") == "blocked":
             return "blocked", "migrated_structured_execution_block"
@@ -2697,39 +2698,6 @@ class AutoReplyStore:
         if _persisted_agent_receipt_ids(receipt):
             return status, ""
         return "failed", "migrated_unverified_execution_receipt"
-
-    @staticmethod
-    def _legacy_receipt_has_explicit_failure(value: object) -> bool:
-        if isinstance(value, list):
-            return any(
-                AutoReplyStore._legacy_receipt_has_explicit_failure(item)
-                for item in value
-            )
-        if not isinstance(value, dict):
-            return False
-        if value.get("success") is False or value.get("ok") is False:
-            return True
-        error = value.get("error")
-        if error is not None and error is not False and error != "":
-            return True
-        for field in ("errcode", "code"):
-            code = value.get(field)
-            if isinstance(code, int) and not isinstance(code, bool) and code != 0:
-                return True
-            if isinstance(code, str) and code.strip().lstrip("-").isdigit():
-                if int(code.strip()) != 0:
-                    return True
-        if value.get("status") in {"failed", "blocked", "unknown"}:
-            return True
-        if value.get("state") in {"failed", "blocked", "unknown"}:
-            return True
-        if value.get("outcome") in {"failed", "unknown", "preflight_failed"}:
-            return True
-        return any(
-            AutoReplyStore._legacy_receipt_has_explicit_failure(item)
-            for item in value.values()
-            if isinstance(item, (dict, list))
-        )
 
     @staticmethod
     def _legacy_action_receipt_is_success(
@@ -5143,7 +5111,6 @@ class AutoReplyStore:
             settled = 0
             for row in rows:
                 run_id = int(row["id"])
-                task_id = int(row["reply_task_id"])
                 cursor = db.execute(
                     """
                     update agent_runs
