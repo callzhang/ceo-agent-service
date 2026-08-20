@@ -941,6 +941,16 @@ class AutoReplyStore:
         finally:
             connection.close()
 
+    @contextmanager
+    def _optional_connection(
+        self, connection: sqlite3.Connection | None
+    ) -> Iterator[sqlite3.Connection]:
+        if connection is not None:
+            yield connection
+            return
+        with self._connect() as db:
+            yield db
+
     def _open_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
             self.path,
@@ -14834,8 +14844,10 @@ class AutoReplyStore:
             )
             return [WorkSummaryInput.model_validate(dict(row)) for row in rows]
 
-    def mark_work_summary_input_done(self, input_id: int) -> None:
-        with self._connect() as db:
+    def mark_work_summary_input_done(
+        self, input_id: int, *, _db: sqlite3.Connection | None = None
+    ) -> None:
+        with self._optional_connection(_db) as db:
             db.execute(
                 """
                 update work_summary_inputs
@@ -14845,8 +14857,14 @@ class AutoReplyStore:
                 (input_id,),
             )
 
-    def mark_work_summary_input_discarded(self, input_id: int, reason: str) -> None:
-        with self._connect() as db:
+    def mark_work_summary_input_discarded(
+        self,
+        input_id: int,
+        reason: str,
+        *,
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        with self._optional_connection(_db) as db:
             db.execute(
                 """
                 update work_summary_inputs
@@ -14945,7 +14963,9 @@ class AutoReplyStore:
             raise ValueError(f"Unsupported column(s): {unknown}")
         return dict(values)
 
-    def create_work_project(self, **values) -> int:
+    def create_work_project(
+        self, *, _db: sqlite3.Connection | None = None, **values
+    ) -> int:
         allowed_columns = {
             "title",
             "category",
@@ -14977,14 +14997,16 @@ class AutoReplyStore:
         keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             cursor = db.execute(
                 f"insert into work_projects ({columns}) values ({placeholders})",
                 [filtered[key] for key in keys],
             )
             return int(cursor.lastrowid)
 
-    def update_work_project(self, project_id: int, **values) -> None:
+    def update_work_project(
+        self, project_id: int, *, _db: sqlite3.Connection | None = None, **values
+    ) -> None:
         if not values:
             return
         allowed_columns = {
@@ -15016,7 +15038,7 @@ class AutoReplyStore:
                 bool(filtered["needs_derek_attention"])
             )
         assignments = ", ".join(f"{key}=?" for key in filtered)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             db.execute(
                 f"""
                 update work_projects
@@ -15044,8 +15066,10 @@ class AutoReplyStore:
                 (memory_context_json, project_id),
             )
 
-    def get_work_project(self, project_id: int) -> WorkProject | None:
-        with self._connect() as db:
+    def get_work_project(
+        self, project_id: int, *, _db: sqlite3.Connection | None = None
+    ) -> WorkProject | None:
+        with self._optional_connection(_db) as db:
             row = db.execute(
                 "select * from work_projects where id=?",
                 (project_id,),
@@ -15091,7 +15115,9 @@ class AutoReplyStore:
                 WorkProject.model_validate(dict(row)) for row in db.execute(query, args)
             ]
 
-    def create_work_todo(self, **values) -> int:
+    def create_work_todo(
+        self, *, _db: sqlite3.Connection | None = None, **values
+    ) -> int:
         allowed_columns = {
             "project_id",
             "title",
@@ -15112,14 +15138,16 @@ class AutoReplyStore:
         keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             cursor = db.execute(
                 f"insert into work_todos ({columns}) values ({placeholders})",
                 [filtered[key] for key in keys],
             )
             return int(cursor.lastrowid)
 
-    def update_work_todo(self, todo_id: int, **values) -> None:
+    def update_work_todo(
+        self, todo_id: int, *, _db: sqlite3.Connection | None = None, **values
+    ) -> None:
         if not values:
             return
         allowed_columns = {
@@ -15150,7 +15178,7 @@ class AutoReplyStore:
                 continue
             assignments.append(f"{key}=?")
             parameters.append(value)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             db.execute(
                 f"""
                 update work_todos
@@ -15160,8 +15188,10 @@ class AutoReplyStore:
                 [*parameters, todo_id],
             )
 
-    def get_work_todo(self, todo_id: int) -> WorkTodo | None:
-        with self._connect() as db:
+    def get_work_todo(
+        self, todo_id: int, *, _db: sqlite3.Connection | None = None
+    ) -> WorkTodo | None:
+        with self._optional_connection(_db) as db:
             row = db.execute(
                 "select * from work_todos where id=?",
                 (todo_id,),
@@ -15450,7 +15480,9 @@ class AutoReplyStore:
             result.setdefault(link.work_todo_id, []).append(link)
         return result
 
-    def create_work_update(self, **values) -> int:
+    def create_work_update(
+        self, *, _db: sqlite3.Connection | None = None, **values
+    ) -> int:
         allowed_columns = {
             "project_id",
             "source_type",
@@ -15756,6 +15788,7 @@ class AutoReplyStore:
         audit_summary: str = "",
         memory_recall_used: bool = False,
         error: str = "",
+        _db: sqlite3.Connection | None = None,
     ) -> None:
         if status not in {"completed", "failed"}:
             raise ValueError("task agent run terminal status is invalid")
@@ -15767,36 +15800,55 @@ class AutoReplyStore:
             int(memory_recall_used),
             error,
         )
+        if _db is not None:
+            self._finish_task_agent_run_in_connection(_db, run_id, expected)
+            return
         with self._agent_run_write_transaction(None) as (db, _):
-            row = db.execute(
-                "select * from task_agent_runs where id=?", (run_id,)
-            ).fetchone()
-            if row is None:
-                raise ValueError("task agent run does not exist")
-            if row["status"] != "running":
-                actual = tuple(
-                    row[field]
-                    for field in (
-                        "status",
-                        "codex_session_id",
-                        "decision_json",
-                        "audit_summary",
-                        "memory_recall_used",
-                        "error",
-                    )
-                )
-                if actual == expected:
-                    return
-                raise ValueError("conflicting task agent run terminal rewrite")
-            db.execute(
-                "update task_agent_runs set status=?, codex_session_id=?, "
-                "decision_json=?, audit_summary=?, memory_recall_used=?, error=?, "
-                "finished_at=current_timestamp, updated_at=current_timestamp "
-                "where id=? and status='running'",
-                (*expected, run_id),
-            )
+            self._finish_task_agent_run_in_connection(db, run_id, expected)
 
-    def create_follow_up_draft(self, **values) -> int:
+    @staticmethod
+    def _finish_task_agent_run_in_connection(
+        db: sqlite3.Connection,
+        run_id: int,
+        expected: tuple[str, str, str, str, int, str],
+    ) -> None:
+        row = db.execute(
+            "select * from task_agent_runs where id=?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("task agent run does not exist")
+        if row["status"] != "running":
+            actual = tuple(
+                row[field]
+                for field in (
+                    "status",
+                    "codex_session_id",
+                    "decision_json",
+                    "audit_summary",
+                    "memory_recall_used",
+                    "error",
+                )
+            )
+            if actual == expected:
+                return
+            raise ValueError("conflicting task agent run terminal rewrite")
+        db.execute(
+            "update task_agent_runs set status=?, codex_session_id=?, "
+            "decision_json=?, audit_summary=?, memory_recall_used=?, error=?, "
+            "finished_at=current_timestamp, updated_at=current_timestamp "
+            "where id=? and status='running'",
+            (*expected, run_id),
+        )
+
+    @contextmanager
+    def task_agent_domain_apply_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Make local task-domain changes and terminal run state one commit."""
+        with self._agent_run_write_transaction(None) as (db, _):
+            yield db
+
+    def create_follow_up_draft(
+        self, *, _db: sqlite3.Connection | None = None, **values
+    ) -> int:
         allowed_columns = {
             "project_id",
             "todo_id",
@@ -15828,7 +15880,7 @@ class AutoReplyStore:
         keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             dedupe_key = str(filtered.get("dedupe_key") or "").strip()
             if dedupe_key:
                 existing = db.execute(
@@ -15850,7 +15902,9 @@ class AutoReplyStore:
             )
             return int(cursor.lastrowid)
 
-    def update_follow_up_draft(self, draft_id: int, **values) -> None:
+    def update_follow_up_draft(
+        self, draft_id: int, *, _db: sqlite3.Connection | None = None, **values
+    ) -> None:
         if not values:
             return
         allowed_columns = {
@@ -15890,7 +15944,7 @@ class AutoReplyStore:
                 continue
             assignments.append(f"{key}=?")
             parameters.append(value)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             cursor = db.execute(
                 f"""
                 update follow_up_drafts
@@ -17148,10 +17202,12 @@ class AutoReplyStore:
             ).fetchone()
             return dict(row) if row is not None else None
 
-    def get_follow_up_draft(self, draft_id: int) -> FollowUpDraft | None:
+    def get_follow_up_draft(
+        self, draft_id: int, *, _db: sqlite3.Connection | None = None
+    ) -> FollowUpDraft | None:
         if draft_id <= 0:
             return None
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             row = db.execute(
                 "select * from follow_up_drafts where id=?",
                 (draft_id,),
@@ -17197,6 +17253,7 @@ class AutoReplyStore:
         todo_id: int,
         *,
         statuses: tuple[str, ...] = ("draft", "approved"),
+        _db: sqlite3.Connection | None = None,
     ) -> list[FollowUpDraft]:
         query = "select * from follow_up_drafts where todo_id=?"
         args: list[str | int] = [todo_id]
@@ -17204,7 +17261,7 @@ class AutoReplyStore:
             query = f"{query} and status in ({','.join('?' for _ in statuses)})"
             args.extend(statuses)
         query = f"{query} order by scheduled_at, id"
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             return [
                 FollowUpDraft.model_validate(dict(row))
                 for row in db.execute(query, args)

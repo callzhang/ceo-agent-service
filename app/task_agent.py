@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -14,6 +15,7 @@ from app.agent_runtime_router import (
 from app.codex_runner import memory_connector_config_issue
 from app.config import repo_root
 from app.external_retry import ExternalDependencyError
+from app.routed_result_privacy import audit_references_from_full_events
 from app.store import AutoReplyStore, RecentFollowUpCandidate
 from app.structured_agent import load_skill_text
 from app.task_models import (
@@ -30,9 +32,8 @@ from app.task_retrieval import (
     render_candidate_prompt,
     retrieve_project_candidates,
 )
-from app.todo_sync import maybe_create_dingtalk_todo, sync_completed_todo_to_dingtalk
 from app.todo_completion import complete_follow_ups_for_todo
-
+from app.todo_sync import maybe_create_dingtalk_todo, sync_completed_todo_to_dingtalk
 
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 TASK_AGENT_MAX_TIMEOUT_SECONDS = 300
@@ -154,7 +155,7 @@ class TaskAgentCodexRunner:
                 workload_kind="task",
                 workload_key=workload_key,
                 prompt=prompt,
-                command_factory=ApprovedCodexCommandFactory.read_only(
+                command_factory=ApprovedCodexCommandFactory.read_only_task(
                     developer_instructions=(
                         "Return exactly one TaskAgentDecision JSON object. "
                         "Use only reviewed read tools."
@@ -195,7 +196,10 @@ def _encode_task_agent_result(raw: str) -> str:
     return json.dumps(
         {
             "decision": decision.model_dump(mode="json"),
-            "audit_tool_events": extract_codex_audit_events(raw),
+            "audit_tool_events": audit_references_from_full_events(
+                extract_codex_audit_events(raw, limit=TASK_AGENT_AUDIT_EVENT_LIMIT),
+                limit=TASK_AGENT_AUDIT_EVENT_LIMIT,
+            ),
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -544,35 +548,39 @@ def process_work_item(
                 now=now,
             )
             _validate_owner_changes(store, decision)
-        store.finish_task_agent_run(
-            active_run_id,
-            status="completed",
-            codex_session_id=codex_session_id,
-            decision_json=_json_dumps(decision.model_dump(mode="json")),
-            audit_summary=decision.update_summary,
-            memory_recall_used=decision.memory_recall_used,
-        )
-        active_run_id = None
-        apply_task_agent_decision(
-            store,
-            summary_input_id=work_input.id,
-            work_item=work_item,
-            decision=decision,
-            codex_session_id=codex_session_id,
-            memory_issue=memory_issue,
-            memory_recall_attempted=memory_recall_attempted,
-            memory_runtime_unavailable=memory_runtime_unavailable,
-            record_run=False,
-            dws=dws,
-            now=now,
-        )
-        if decision.action == "discard":
-            store.mark_work_summary_input_discarded(
-                work_input.id,
-                decision.discard_reason or decision.update_summary,
+        with store.task_agent_domain_apply_transaction() as db:
+            apply_task_agent_decision(
+                store,
+                summary_input_id=work_input.id,
+                work_item=work_item,
+                decision=decision,
+                codex_session_id=codex_session_id,
+                memory_issue=memory_issue,
+                memory_recall_attempted=memory_recall_attempted,
+                memory_runtime_unavailable=memory_runtime_unavailable,
+                record_run=False,
+                dws=dws,
+                now=now,
+                _db=db,
             )
-        else:
-            store.mark_work_summary_input_done(work_input.id)
+            if decision.action == "discard":
+                store.mark_work_summary_input_discarded(
+                    work_input.id,
+                    decision.discard_reason or decision.update_summary,
+                    _db=db,
+                )
+            else:
+                store.mark_work_summary_input_done(work_input.id, _db=db)
+            store.finish_task_agent_run(
+                active_run_id,
+                status="completed",
+                codex_session_id=codex_session_id,
+                decision_json=_json_dumps(decision.model_dump(mode="json")),
+                audit_summary=decision.update_summary,
+                memory_recall_used=decision.memory_recall_used,
+                _db=db,
+            )
+        active_run_id = None
     except Exception as exc:
         if active_run_id is not None:
             store.finish_task_agent_run(
@@ -597,6 +605,7 @@ def apply_task_agent_decision(
     record_run: bool = True,
     dws=None,
     now: str = "",
+    _db: sqlite3.Connection | None = None,
 ) -> int | None:
     _validate_task_agent_decision(
         decision,
@@ -624,7 +633,7 @@ def apply_task_agent_decision(
     if decision.project is None:
         raise ValueError(f"{decision.action} requires project")
 
-    project_id = _apply_project(store, decision)
+    project_id = _apply_project(store, decision, _db=_db)
     update_id = store.create_work_update(
         project_id=project_id,
         source_type=work_item.source.type.value,
@@ -649,6 +658,7 @@ def apply_task_agent_decision(
         ),
         merge_reason=decision.merge_reason,
         confidence=decision.confidence,
+        _db=_db,
     )
     todo_refs: dict[str, int] = {}
     create_sync_todo_ids: list[int] = []
@@ -659,6 +669,7 @@ def apply_task_agent_decision(
             project_id=project_id,
             update_id=update_id,
             change=todo_change,
+            _db=_db,
         )
         if (
             dws is not None
@@ -683,9 +694,10 @@ def apply_task_agent_decision(
             project_id=project_id,
             draft=draft,
             todo_refs=todo_refs,
+            _db=_db,
         )
     for change in decision.follow_up_changes:
-        _apply_follow_up_change(store, change)
+        _apply_follow_up_change(store, change, _db=_db)
     if dws is not None:
         sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for todo_id in create_sync_todo_ids:
@@ -1056,15 +1068,20 @@ def _decision_reports_memory_runtime_unavailable(
     )
 
 
-def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:
+def _apply_project(
+    store: AutoReplyStore,
+    decision: TaskAgentDecision,
+    *,
+    _db: sqlite3.Connection | None = None,
+) -> int:
     project = decision.project
     if project is None:
         raise ValueError(f"{decision.action} requires project")
     if decision.action == "create_project":
-        return store.create_work_project(**_project_values(project))
+        return store.create_work_project(_db=_db, **_project_values(project))
     if project.id is None:
         raise ValueError("update_project requires project.id")
-    current_project = store.get_work_project(project.id)
+    current_project = store.get_work_project(project.id, _db=_db)
     fields = project.model_fields_set - {"id"}
     if current_project is not None:
         final_owner = {
@@ -1085,7 +1102,7 @@ def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:
         }:
             fields -= {"owner_user_id", "owner_name", "owner_evidence"}
     values = _project_values(project, only_fields=fields)
-    store.update_work_project(project.id, **values)
+    store.update_work_project(project.id, _db=_db, **values)
     return project.id
 
 
@@ -1140,17 +1157,19 @@ def _apply_todo_change(
     project_id: int,
     update_id: int,
     change: TodoChange,
+    _db: sqlite3.Connection | None = None,
 ) -> int:
     if change.action == "create":
         values = _todo_values(change)
         return store.create_work_todo(
+            _db=_db,
             project_id=project_id,
             created_from_update_id=update_id,
             **values,
         )
     if change.todo_id is None:
         raise ValueError(f"{change.action} requires todo_id")
-    current_todo = store.get_work_todo(change.todo_id)
+    current_todo = store.get_work_todo(change.todo_id, _db=_db)
     fields = change.model_fields_set - {"action", "todo_id"}
     if current_todo is not None:
         final_owner = {
@@ -1178,13 +1197,14 @@ def _apply_todo_change(
         values["status"] = "done"
     elif change.action == "cancel":
         values["status"] = "cancelled"
-    store.update_work_todo(change.todo_id, **values)
+    store.update_work_todo(change.todo_id, _db=_db, **values)
     if change.action == "close" and change.completion_evidence:
         complete_follow_ups_for_todo(
             store,
             todo_id=change.todo_id,
             evidence=change.completion_evidence,
             now=str(change.completion_evidence.get("completed_at") or ""),
+            _db=_db,
         )
     return change.todo_id
 
@@ -1255,20 +1275,23 @@ def _create_follow_up_draft(
     project_id: int,
     draft: FollowUpDraftDecision,
     todo_refs: dict[str, int],
+    _db: sqlite3.Connection | None = None,
 ) -> int:
     todo_id = _resolve_follow_up_todo_id(
         store,
         project_id=project_id,
         draft=draft,
         todo_refs=todo_refs,
+        _db=_db,
     )
-    todo = store.get_work_todo(todo_id)
+    todo = store.get_work_todo(todo_id, _db=_db)
     if todo is not None and (
         todo.status in {TodoStatus.DONE, TodoStatus.CANCELLED}
         or _has_json_content(todo.completion_evidence_json)
     ):
         return 0
     return store.create_follow_up_draft(
+        _db=_db,
         project_id=project_id,
         todo_id=todo_id,
         title=draft.title,
@@ -1292,8 +1315,10 @@ def _create_follow_up_draft(
 def _apply_follow_up_change(
     store: AutoReplyStore,
     change: FollowUpDraftChange,
+    *,
+    _db: sqlite3.Connection | None = None,
 ) -> None:
-    current = store.get_follow_up_draft(change.follow_up_id)
+    current = store.get_follow_up_draft(change.follow_up_id, _db=_db)
     if current is None:
         raise ValueError(
             f"follow_up_change.follow_up_id not found: {change.follow_up_id}"
@@ -1342,11 +1367,11 @@ def _apply_follow_up_change(
         values["scheduled_at"] = change.next_due_at or ""
         values["reaction_summary"] = change.reason
         if change.todo_id is not None:
-            todo = store.get_work_todo(change.todo_id)
+            todo = store.get_work_todo(change.todo_id, _db=_db)
             if todo is not None and todo.follow_up_question.strip():
                 values["question_text"] = todo.follow_up_question.strip()
 
-    store.update_follow_up_draft(change.follow_up_id, **values)
+    store.update_follow_up_draft(change.follow_up_id, _db=_db, **values)
 
 
 def _validate_follow_up_change_targets(
@@ -1366,6 +1391,7 @@ def _resolve_follow_up_todo_id(
     project_id: int,
     draft: FollowUpDraftDecision,
     todo_refs: dict[str, int],
+    _db: sqlite3.Connection | None = None,
 ) -> int:
     todo_id = draft.todo_id
     if todo_id is None and draft.todo_ref.strip():
@@ -1374,7 +1400,7 @@ def _resolve_follow_up_todo_id(
             raise ValueError(f"unknown follow_up_draft.todo_ref: {draft.todo_ref}")
     if todo_id is None or todo_id <= 0:
         raise ValueError("follow_up_draft requires todo_id or todo_ref")
-    todo = store.get_work_todo(todo_id)
+    todo = store.get_work_todo(todo_id, _db=_db)
     if todo is None:
         raise ValueError(f"follow_up_draft.todo_id not found: {todo_id}")
     if todo.project_id != project_id:

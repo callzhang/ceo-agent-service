@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+
 from app.agent_envelope import AgentEnvelope
 from app.agent_runtime_router import (
     ApprovedCodexCommandFactory,
@@ -14,7 +15,7 @@ from app.codex_decision import (
     extract_codex_audit_events_from_session,
 )
 from app.codex_runner import _codex_home
-
+from app.routed_result_privacy import audit_references_from_full_events
 
 STRUCTURED_RUNTIME_CAPABILITIES = frozenset(
     {
@@ -109,7 +110,7 @@ class StructuredCodexRunner:
             workload_kind="structured",
             workload_key=str(request_id),
             prompt=prompt,
-            command_factory=ApprovedCodexCommandFactory.read_only(
+            command_factory=ApprovedCodexCommandFactory.read_only_structured(
                 developer_instructions=self.spec.developer_instructions(),
                 output_schema_path=(
                     self.spec.output_schema_path or self.spec.schema_path
@@ -168,10 +169,15 @@ def _encode_structured_result(raw: str) -> str:
         raise RoutedResultValidationError(
             "invalid AgentEnvelope JSON", raw_output=raw
         ) from exc
+    envelope_payload = envelope.model_dump(mode="json")
+    envelope_payload["audit"]["documents"] = []
     return json.dumps(
         {
-            "envelope": envelope.model_dump(mode="json"),
-            "audit_tool_events": extract_codex_audit_events(raw),
+            "envelope": envelope_payload,
+            "audit_tool_events": audit_references_from_full_events(
+                extract_codex_audit_events(raw),
+                limit=40,
+            ),
         },
         ensure_ascii=False,
         separators=(",", ":"),

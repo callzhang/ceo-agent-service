@@ -6,13 +6,13 @@ import pytest
 
 from app.store import AutoReplyStore
 from app.task_agent import (
+    TaskAgentCodexRunner,
     TaskAgentRunner,
     apply_task_agent_decision,
     build_owner_resolution_prompt,
     build_task_agent_prompt,
     process_work_item,
 )
-from app.task_agent import TaskAgentCodexRunner
 from app.task_models import TaskAgentDecision, WorkItem
 
 
@@ -3598,6 +3598,112 @@ def test_process_work_item_failure_does_not_create_partial_project(tmp_path):
     assert project_count == (0,)
     assert update_count == (0,)
     assert run_count == (1,)
+
+
+def test_process_work_item_domain_apply_failure_terminalizes_the_active_run(
+    tmp_path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodexWithAuditEvents(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "创建售前知识库项目。",
+            "merge_reason": "新工作项。",
+            "memory_recall_used": True,
+            "confidence": 0.9,
+        },
+        [{"tool": "memory_recall"}],
+    )
+
+    def fail_domain_apply(*_args, **_kwargs):
+        raise RuntimeError("domain apply interrupted")
+
+    monkeypatch.setattr("app.task_agent._apply_project", fail_domain_apply)
+
+    with pytest.raises(RuntimeError, match="domain apply interrupted"):
+        process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with store._connect() as db:
+        run = db.execute(
+            "select status, error from task_agent_runs where summary_input_id=?",
+            (input_id,),
+        ).fetchone()
+    assert run["status"] == "failed"
+    assert run["error"] == "domain apply interrupted"
+
+
+def test_process_work_item_rolls_back_domain_changes_when_apply_is_interrupted(
+    tmp_path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodexWithAuditEvents(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "售前知识库建设",
+                "category": "sales",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "title": "补齐来源链接",
+                    "owner_user_id": "owner-1",
+                    "owner_name": "Alex",
+                    "owner_evidence": _owner_evidence(),
+                }
+            ],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "创建售前知识库项目。",
+            "merge_reason": "新工作项。",
+            "memory_recall_used": True,
+            "confidence": 0.9,
+        },
+        [{"tool": "memory_recall"}],
+    )
+
+    def interrupt_after_project(*_args, **_kwargs):
+        raise RuntimeError("todo apply interrupted")
+
+    monkeypatch.setattr("app.task_agent._apply_todo_change", interrupt_after_project)
+
+    with pytest.raises(RuntimeError, match="todo apply interrupted"):
+        process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with store._connect() as db:
+        project_count = db.execute("select count(*) from work_projects").fetchone()[0]
+        update_count = db.execute("select count(*) from work_updates").fetchone()[0]
+        run = db.execute(
+            "select status from task_agent_runs where summary_input_id=?", (input_id,)
+        ).fetchone()
+    assert project_count == 0
+    assert update_count == 0
+    assert run["status"] == "failed"
 
 
 def test_process_work_item_repairs_unsupported_project_owner_evidence(tmp_path):

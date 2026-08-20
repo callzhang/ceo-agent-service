@@ -18,8 +18,8 @@ from app.meeting_alignment_models import (
     MeetingSource,
 )
 from app.prompt import work_profile_instruction
+from app.routed_result_privacy import audit_references_from_full_events
 from app.store import CodexSessionSearchResult
-
 
 MEETING_ALIGNMENT_DECISION_SCHEMA_PATH = (
     Path(__file__).resolve().parent
@@ -116,7 +116,7 @@ class MeetingAlignmentCodexRunner:
                 workload_kind="meeting",
                 workload_key=str(run_id),
                 prompt=prompt,
-                command_factory=ApprovedCodexCommandFactory.read_only(
+                command_factory=ApprovedCodexCommandFactory.read_only_meeting(
                     developer_instructions=(
                         "Return exactly one MeetingAlignmentDecision JSON object. "
                         "Use only reviewed read tools."
@@ -172,8 +172,11 @@ def _encode_meeting_alignment_result(raw: str) -> str:
     return json.dumps(
         {
             "decision": decision.model_dump(mode="json"),
-            "audit_tool_events": extract_codex_audit_events(
-                raw, limit=MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT
+            "audit_tool_events": audit_references_from_full_events(
+                extract_codex_audit_events(
+                    raw, limit=MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT
+                ),
+                limit=MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT,
             ),
         },
         ensure_ascii=False,
