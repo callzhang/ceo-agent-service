@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from app.agent_contracts import AuditAgentResult, AuditExternalResult, AuditOutcome
+from app.agent_effects import McpToolEffectRegistry
+from app.agent_result import AgentError, EffectKind, SideEffectState
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
 from app.agent_runtime_router import RuntimeRouteDecision
@@ -13,6 +16,7 @@ from app.agent_turn_runner import (
     _decode_runtime_domain_result,
     _encode_runtime_domain_result,
     _required_runtime_capabilities,
+    _runtime_result_evidence,
 )
 from app.agent_wire_contracts import parse_consumer_agent_wire_result
 from app.native_cli_metadata import describe_native_command
@@ -515,16 +519,26 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     )
     [corrupt_attempt] = store.list_agent_runtime_attempts(corrupt_run.id)
     corrupt_envelope = json.loads(corrupt_attempt.result_envelope_json)
-    corrupt_envelope["version"] = 2
+    corrupt_envelope["evidence"]["events_sha256"] = "0" * 64
     with sqlite3.connect(store.path) as db:
         db.execute(
             "update agent_runtime_attempts set result_envelope_json=? where id=?",
             (json.dumps(corrupt_envelope), corrupt_attempt.id),
         )
     monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
-    with pytest.raises(ValueError, match="runtime_result_envelope_invalid"):
+    with pytest.raises(
+        ValueError, match="completed_runtime_result_envelope_invalid"
+    ):
         execute(corrupt_task)
     assert len(executor.commands) == corrupt_executor_calls
+    blocked_corrupt_run = store.get_agent_run(corrupt_run.id)
+    assert blocked_corrupt_run is not None
+    assert blocked_corrupt_run.status == "running"
+    assert blocked_corrupt_run.lease_owner == "consumer"
+    assert json.loads(blocked_corrupt_run.structured_error_json or "{}") == {}
+    blocked_corrupt_task = store.get_reply_task(corrupt_task.id)
+    assert blocked_corrupt_task is not None
+    assert blocked_corrupt_task.status == "processing"
 
     assert store.enqueue_reply_task(
         conversation_id=task.conversation_id,
@@ -557,7 +571,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
         ("Bearer sk-private-secret", "sensitive"),
         ("https://example.com/file?X-Amz-Signature=secret", "sensitive"),
         ("/private/var/tmp/claude-runtime.json", "local_path"),
-        ("x" * (33 * 1024), "too_large"),
+        ("x" * (33 * 1024), "summary_invalid"),
     ],
 )
 def test_runtime_domain_result_codec_rejects_private_values(
@@ -632,6 +646,452 @@ def test_runtime_domain_result_codec_rejects_corrupt_shape(mutation):
         )
 
 
+def test_runtime_domain_result_codec_rejects_business_document_reference(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    attempt = store.claim_agent_runtime_attempt(
+        run.id,
+        "claude_api",
+        "claude_cli",
+        "service_api",
+        "claude-sonnet-4-5",
+    )
+    store.mark_agent_runtime_attempt_running_once(attempt.id)
+    document_marker = "full-business-document-must-not-persist"
+    result = AuditAgentResult(
+        outcome=AuditOutcome.EXECUTED,
+        summary="Confirmed.",
+        proposal_revision=0,
+        side_effect_state=SideEffectState.CONFIRMED,
+        feedback=None,
+        external_result=AuditExternalResult(
+            operation_id="operation-0",
+            verification_summary="Confirmed from live state.",
+            live_result_reference={
+                "message_id": "mid-1",
+                "document_content": {"confidential": document_marker},
+            },
+        ),
+        reconciliation=(),
+        error=AgentError(),
+    )
+
+    with pytest.raises(
+        ValueError, match="runtime_result_envelope_external_reference_invalid"
+    ):
+        _encode_runtime_domain_result(
+            schema_id="schema-v1",
+            role=AgentRole.AUDIT,
+            recovery_phase="execute",
+            result=result,
+        )
+    assert document_marker.encode() not in store.path.read_bytes()
+    persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
+    assert persisted_attempt is not None and persisted_attempt.status == "running"
+
+
+def test_runtime_domain_result_codec_rejects_consumer_document_payload():
+    result = parse_consumer_agent_wire_result(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": json.dumps(
+                        {
+                            "outcome": "proposal",
+                            "summary": "Prepared a proposal.",
+                            "proposal": {
+                                "objective": "Send the reviewed update.",
+                                "actions": [
+                                    {
+                                        "description": "Send update",
+                                        "capability": "agent_cli.dws",
+                                        "operation": "chat message send",
+                                        "target": {"conversation_id": "cid-1"},
+                                        "payload": {
+                                            "document_content": (
+                                                "full-business-document-must-not-persist"
+                                            )
+                                        },
+                                        "expected_verification": "Read it back",
+                                    }
+                                ],
+                                "sourced_facts": [],
+                                "authored_judgment": "Ready.",
+                            },
+                            "decision_options": [],
+                            "error_code": "",
+                            "error_retryable": False,
+                            "error_authorization_required": False,
+                        }
+                    ),
+                },
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="runtime_result_envelope_document_field"):
+        _encode_runtime_domain_result(
+            schema_id="schema-v1",
+            role=AgentRole.CONSUMER,
+            recovery_phase="",
+            result=result,
+        )
+
+
+@pytest.mark.parametrize(
+    "evidence_mutation",
+    (
+        {"event_end": -1},
+        {"events_sha256": "short"},
+        {"recovery_started_actions": [True]},
+        {"unexpected": "field"},
+    ),
+)
+def test_runtime_domain_result_codec_rejects_corrupt_evidence(evidence_mutation):
+    result = parse_consumer_agent_wire_result(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": json.dumps(
+                        {
+                            "outcome": "no_action",
+                            "summary": "Nothing to do.",
+                            "proposal": None,
+                            "decision_options": [],
+                            "error_code": "",
+                            "error_retryable": False,
+                            "error_authorization_required": False,
+                        }
+                    ),
+                },
+            }
+        )
+    )
+    envelope = json.loads(
+        _encode_runtime_domain_result(
+            schema_id="schema-v1",
+            role=AgentRole.CONSUMER,
+            recovery_phase="",
+            result=result,
+        )
+    )
+    envelope["evidence"].update(evidence_mutation)
+
+    with pytest.raises(ValueError, match="runtime_result_envelope_invalid"):
+        _decode_runtime_domain_result(
+            json.dumps(envelope),
+            schema_id="schema-v1",
+            role=AgentRole.CONSUMER,
+            recovery_phase="",
+        )
+
+
+def _runtime_result_schema_for_test(
+    run,
+    *,
+    prompt,
+    developer_instructions,
+    recovery_phase,
+    expected_effect_actions,
+):
+    required_capabilities = _required_runtime_capabilities(
+        run=run,
+        recovery_phase=recovery_phase,
+        expected_effect_actions=expected_effect_actions,
+    )
+    contract = {
+        "version": 1,
+        "role": run.role.value,
+        "recovery_phase": recovery_phase,
+        "operation_id": run.operation_id,
+        "conversation_contract_hash": "",
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "developer_instructions_sha256": hashlib.sha256(
+            developer_instructions.encode()
+        ).hexdigest(),
+        "required_capabilities": sorted(required_capabilities),
+        "expected_actions_sha256": hashlib.sha256(
+            json.dumps(
+                expected_effect_actions,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest(),
+        "reviewed_skills": [],
+    }
+    contract_digest = hashlib.sha256(
+        json.dumps(contract, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return hashlib.sha256(
+        f"agent_turn_claude_result_v1\0{contract_digest}".encode()
+    ).hexdigest()
+
+
+def _unknown_audit_recovery_fixture(store, task, *, owner):
+    run = _claim_audit(store, task)
+    action = {
+        "capability": "mcp:write.send",
+        "reviewed_server": "write",
+        "reviewed_tool": "send",
+        "operation": "send",
+        "operation_digest": "operation-digest",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {"id": "target-1"},
+    }
+    store.append_agent_run_event(
+        run.id,
+        _effect_event(**action),
+        owner="audit",
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="audit",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner=owner)
+    assert claim.claimed
+    return claim.run, action
+
+
+@pytest.mark.parametrize("recovery_phase", ("reconcile", "execute"))
+def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spawn(
+    tmp_path,
+    recovery_phase,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    owner = f"audit-{recovery_phase}"
+    run, action = _unknown_audit_recovery_fixture(store, task, owner=owner)
+    actions = (action,)
+    registry = McpToolEffectRegistry(
+        {
+            ("write", "send"): EffectKind.EFFECTFUL,
+            ("read", "get"): EffectKind.READ_ONLY,
+        },
+        readbacks={("read", "get"): {("write", "send")}},
+    )
+    event_start = len(run.tool_events)
+    recovery_started_actions: set[int] = set()
+    completed_before_recovery: set[int] = set()
+    if recovery_phase == "reconcile":
+        store.append_unknown_agent_run_event(
+            run.id,
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "id": "read-1",
+                    "status": "completed",
+                    "metadata": {
+                        "effect": "read_only",
+                        "operation_id": run.operation_id,
+                        "reviewed_server": "read",
+                        "reviewed_tool": "get",
+                        "operation": "get",
+                        "target_identifiers": {"id": "target-1"},
+                        "result_digest": "read-result-digest",
+                    },
+                },
+            },
+            owner=owner,
+        )
+        result = AuditAgentResult(
+            outcome=AuditOutcome.RECONCILED,
+            summary="Live readback reconciled the action.",
+            proposal_revision=0,
+            side_effect_state=SideEffectState.UNKNOWN,
+            feedback=None,
+            external_result=None,
+            reconciliation=(
+                {
+                    "action_index": 0,
+                    "disposition": "present",
+                    "read_result_digest": "read-result-digest",
+                },
+            ),
+            error=AgentError(),
+        )
+    else:
+        recovery_started_actions = {0}
+        for event_type in ("item.started", "item.completed"):
+            event = _effect_event(
+                event_type=event_type, action_index=0, **action
+            )
+            event["item"]["id"] = "write-recovery"
+            store.append_unknown_agent_run_event(
+                run.id,
+                event,
+                owner=owner,
+            )
+        store.append_unknown_agent_run_event(
+            run.id,
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "id": "read-after-write",
+                    "status": "completed",
+                    "metadata": {
+                        "effect": "read_only",
+                        "operation_id": run.operation_id,
+                        "reviewed_server": "read",
+                        "reviewed_tool": "get",
+                        "operation": "get",
+                        "target_identifiers": {"id": "target-1"},
+                        "result_digest": "execute-read-result-digest",
+                    },
+                },
+            },
+            owner=owner,
+        )
+        result = AuditAgentResult(
+            outcome=AuditOutcome.EXECUTED,
+            summary="The authorized recovery action completed.",
+            proposal_revision=0,
+            side_effect_state=SideEffectState.CONFIRMED,
+            feedback=None,
+            external_result=AuditExternalResult(
+                operation_id=run.operation_id,
+                verification_summary="Persisted tool evidence confirms completion.",
+                live_result_reference={"id": "receipt-1"},
+            ),
+            reconciliation=(),
+            error=AgentError(),
+        )
+
+    prompt = f"Recover {recovery_phase}"
+    developer = "Use only persisted reviewed evidence."
+    schema_id = _runtime_result_schema_for_test(
+        run,
+        prompt=prompt,
+        developer_instructions=developer,
+        recovery_phase=recovery_phase,
+        expected_effect_actions=actions,
+    )
+    validator = AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=tmp_path,
+        owner=owner,
+        mcp_effect_registry=registry,
+    )
+    persisted_before_completion = store.get_agent_run(run.id)
+    assert persisted_before_completion is not None
+    if recovery_phase == "reconcile":
+        validated = validator._validate_audit_reconciliation_result(
+            run,
+            result,
+            persisted_before_completion,
+            expected_effect_actions=actions,
+            recovery_event_start=event_start,
+            completed_before_recovery=completed_before_recovery,
+        )
+        result = result.model_copy(
+            update={
+                "reconciliation": tuple(
+                    validated[index] for index in sorted(validated)
+                )
+            }
+        )
+    else:
+        validator._validate_audit_recovery_execution_result(
+            run,
+            result,
+            persisted_before_completion,
+            expected_effect_actions=actions,
+            recovery_started_actions=recovery_started_actions,
+            authorized_recovery_actions=frozenset({0}),
+        )
+    attempt = store.claim_unknown_recovery_agent_runtime_attempt(
+        run.id,
+        "claude_api",
+        "claude_cli",
+        "service_api",
+        "claude-sonnet-4-5",
+        owner=owner,
+    ).attempt
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    envelope = _encode_runtime_domain_result(
+        schema_id=schema_id,
+        role=AgentRole.AUDIT,
+        recovery_phase=recovery_phase,
+        result=result,
+        evidence=_runtime_result_evidence(
+            run=persisted,
+            event_start=event_start,
+            receipts=store.list_agent_execution_receipts(run.id),
+            recovery_started_actions=recovery_started_actions,
+            completed_before_recovery=completed_before_recovery,
+        ),
+    )
+    store.complete_agent_runtime_attempt(
+        attempt.id,
+        "claude-recovery-session",
+        "",
+        0,
+        3,
+        result_schema_id=schema_id,
+        result_envelope_json=envelope,
+    )
+
+    executor_calls = 0
+
+    def must_not_execute(*args, **kwargs):
+        nonlocal executor_calls
+        executor_calls += 1
+        raise AssertionError("completed recovery must not spawn")
+
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+            "CEO_CLAUDE_API_KEY": "test-claude-secret",
+            "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
+        }
+    )
+    recovered = AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=tmp_path,
+        owner=owner,
+        executor=must_not_execute,
+        runtime_config=config,
+        runtime_router=object(),
+        mcp_effect_registry=registry,
+    ).execute(
+        run=store.get_agent_run(run.id),
+        prompt=prompt,
+        session_id=None,
+        developer_instructions=developer,
+        configure_command=lambda command: None,
+        parse_result=lambda raw: (_ for _ in ()).throw(
+            AssertionError("completed recovery must not parse provider output")
+        ),
+        persist_conversation_session=False,
+        expected_effect_actions=actions,
+        recovery_phase=recovery_phase,
+        authorized_recovery_actions=(
+            frozenset({0}) if recovery_phase == "execute" else frozenset()
+        ),
+    )
+
+    assert executor_calls == 0
+    assert recovered.result.outcome is result.outcome
+    final_run = store.get_agent_run(run.id)
+    assert final_run is not None
+    assert final_run.status == (
+        "completed" if recovery_phase == "execute" else "unknown"
+    )
+    assert final_run.lease_owner == ""
+    final_task = store.get_reply_task(task.id)
+    assert final_task is not None and final_task.status == "processing"
+
+
 def test_completed_claude_result_contract_mismatch_with_effect_never_spawns(
     tmp_path,
 ):
@@ -688,7 +1148,7 @@ def test_completed_claude_result_contract_mismatch_with_effect_never_spawns(
             "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
         }
     )
-    with pytest.raises(RuntimeError, match="completed_runtime_result_contract_mismatch"):
+    with pytest.raises(ValueError, match="completed_runtime_result_contract_mismatch"):
         AgentTurnProcess(
             store=store,
             task=task,
@@ -719,6 +1179,16 @@ def test_completed_claude_result_contract_mismatch_with_effect_never_spawns(
         )
 
     assert executor_calls == 0
+    blocked_run = store.get_agent_run(run.id)
+    assert blocked_run is not None
+    assert blocked_run.status == "unknown"
+    assert blocked_run.lease_owner == ""
+    assert json.loads(blocked_run.structured_error_json)["code"] == (
+        "completed_runtime_result_contract_mismatch"
+    )
+    blocked_task = store.get_reply_task(task.id)
+    assert blocked_task is not None
+    assert blocked_task.status == "processing"
 
 
 def _effect_event(event_type="item.started", **metadata):
