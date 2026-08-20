@@ -339,6 +339,160 @@ def test_runtime_attempt_upgrade_adds_session_evidence_constraints(tmp_path: Pat
         )
 
 
+def test_runtime_attempt_upgrade_replaces_pretrim_session_evidence_triggers(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "runtime-attempt-pretrim-trigger-upgrade.sqlite3"
+    store = AutoReplyStore(db_path)
+    run = _claimed_runtime_agent_run(store)
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+    with store._connect() as db:
+        db.execute(
+            "drop trigger if exists trg_runtime_attempt_session_evidence_trim_insert"
+        )
+        db.execute(
+            "drop trigger if exists trg_runtime_attempt_session_evidence_trim_update"
+        )
+        db.execute(
+            "alter table agent_runtime_attempts rename to legacy_runtime_attempts"
+        )
+        db.execute(
+            """
+            create table agent_runtime_attempts (
+                id integer primary key autoincrement,
+                agent_run_id integer,
+                workload_kind text not null,
+                workload_key text not null,
+                attempt_number integer not null,
+                route_name text not null,
+                runtime_kind text not null,
+                credential_mode text not null,
+                model text not null,
+                session_mode text not null default 'fresh'
+                    check(session_mode in ('fresh', 'resume')),
+                source_session_id text not null default '',
+                session_id text not null default '',
+                status text not null,
+                failure_class text not null default '',
+                failure_code text not null default '',
+                failover_permitted integer not null default 0,
+                transcript_reference text not null default '',
+                transcript_start integer not null default 0,
+                transcript_end integer not null default 0,
+                first_effect_started_at text not null default '',
+                started_at text not null,
+                finished_at text not null default '',
+                created_at text not null,
+                updated_at text not null,
+                check(
+                    (session_mode='fresh' and source_session_id='')
+                    or (session_mode='resume' and source_session_id<>'')
+                ),
+                unique(agent_run_id, attempt_number),
+                foreign key(agent_run_id) references agent_runs(id)
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into agent_runtime_attempts (
+                id, agent_run_id, workload_kind, workload_key, attempt_number,
+                route_name, runtime_kind, credential_mode, model, session_mode,
+                source_session_id, session_id, status, failure_class, failure_code,
+                failover_permitted, transcript_reference, transcript_start,
+                transcript_end, first_effect_started_at, started_at, finished_at,
+                created_at, updated_at
+            )
+            select id, agent_run_id, workload_kind, workload_key, attempt_number,
+                route_name, runtime_kind, credential_mode, model, session_mode,
+                source_session_id, session_id, status, failure_class, failure_code,
+                failover_permitted, transcript_reference, transcript_start,
+                transcript_end, first_effect_started_at, started_at, finished_at,
+                created_at, updated_at
+            from legacy_runtime_attempts
+            """
+        )
+        db.execute("drop table legacy_runtime_attempts")
+        db.execute(
+            "create index idx_runtime_attempt_active_route "
+            "on agent_runtime_attempts(agent_run_id, route_name) "
+            "where status in ('starting', 'running')"
+        )
+        db.execute(
+            """
+            create trigger trg_runtime_attempt_session_evidence_insert
+            before insert on agent_runtime_attempts
+            when new.session_mode is null or new.source_session_id is null or not (
+                (new.session_mode='fresh' and new.source_session_id='')
+                or (new.session_mode='resume' and new.source_session_id<>'')
+            )
+            begin
+                select raise(abort, 'invalid runtime attempt session evidence');
+            end
+            """
+        )
+        db.execute(
+            """
+            create trigger trg_runtime_attempt_session_evidence_update
+            before update of session_mode, source_session_id on agent_runtime_attempts
+            when new.session_mode is null or new.source_session_id is null or not (
+                (new.session_mode='fresh' and new.source_session_id='')
+                or (new.session_mode='resume' and new.source_session_id<>'')
+            )
+            begin
+                select raise(abort, 'invalid runtime attempt session evidence');
+            end
+            """
+        )
+        trigger_names = {
+            str(row["name"])
+            for row in db.execute(
+                "select name from sqlite_master where type='trigger'"
+            ).fetchall()
+        }
+        assert {
+            "trg_runtime_attempt_session_evidence_insert",
+            "trg_runtime_attempt_session_evidence_update",
+        } <= trigger_names
+        db.execute(
+            "update service_state set value=? where key=?",
+            ("2026-08-20.1", store_module.STORE_SCHEMA_VERSION_KEY),
+        )
+        db.execute(
+            "update agent_runtime_attempts set session_mode='resume', "
+            "source_session_id='   ' where id=?",
+            (attempt.id,),
+        )
+    assert store._schema_is_current() is False
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    upgraded = AutoReplyStore(db_path)
+
+    with upgraded._connect() as db:
+        trigger_sql = {
+            str(row["name"]): str(row["sql"])
+            for row in db.execute(
+                "select name, sql from sqlite_master where type='trigger'"
+            ).fetchall()
+        }
+        assert "trg_runtime_attempt_session_evidence_insert" not in trigger_sql
+        assert "trg_runtime_attempt_session_evidence_update" not in trigger_sql
+        assert "trim(new.source_session_id)<>''" in trigger_sql[
+            "trg_runtime_attempt_session_evidence_trim_insert"
+        ]
+        assert "trim(new.source_session_id)<>''" in trigger_sql[
+            "trg_runtime_attempt_session_evidence_trim_update"
+        ]
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                "update agent_runtime_attempts set session_mode='resume', "
+                "source_session_id='   ' where id=?",
+                (attempt.id,),
+            )
+
+
 @pytest.mark.parametrize(
     ("workload_kind", "workload_key"),
     [

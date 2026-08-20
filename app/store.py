@@ -95,8 +95,8 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     "agent_runtime_attempts": ("session_mode", "source_session_id"),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
-    "trg_runtime_attempt_session_evidence_insert",
-    "trg_runtime_attempt_session_evidence_update",
+    "trg_runtime_attempt_session_evidence_trim_insert",
+    "trg_runtime_attempt_session_evidence_trim_update",
 )
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
@@ -2469,8 +2469,20 @@ class AutoReplyStore:
             "or (session_mode='resume' and trim(source_session_id)='')"
         )
         db.execute(
+            "drop trigger if exists trg_runtime_attempt_session_evidence_insert"
+        )
+        db.execute(
+            "drop trigger if exists trg_runtime_attempt_session_evidence_update"
+        )
+        db.execute(
+            "drop trigger if exists trg_runtime_attempt_session_evidence_trim_insert"
+        )
+        db.execute(
+            "drop trigger if exists trg_runtime_attempt_session_evidence_trim_update"
+        )
+        db.execute(
             """
-            create trigger if not exists trg_runtime_attempt_session_evidence_insert
+            create trigger trg_runtime_attempt_session_evidence_trim_insert
             before insert on agent_runtime_attempts
             when new.session_mode is null or new.source_session_id is null or not (
                 (new.session_mode='fresh' and new.source_session_id='')
@@ -2483,7 +2495,7 @@ class AutoReplyStore:
         )
         db.execute(
             """
-            create trigger if not exists trg_runtime_attempt_session_evidence_update
+            create trigger trg_runtime_attempt_session_evidence_trim_update
             before update of session_mode, source_session_id on agent_runtime_attempts
             when new.session_mode is null or new.source_session_id is null or not (
                 (new.session_mode='fresh' and new.source_session_id='')
