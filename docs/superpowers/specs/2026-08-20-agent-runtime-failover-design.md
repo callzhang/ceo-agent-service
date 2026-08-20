@@ -208,7 +208,11 @@ For `codex_oauth` it:
 For `codex_api` it:
 
 - uses the same Codex binary and Codex home;
-- explicitly selects the configured OpenAI API provider and model;
+- explicitly selects a service-owned `ceo_openai_api` provider and the configured
+  model. The command defines that provider with `base_url` set to the OpenAI
+  `/v1` endpoint, `env_key="OPENAI_API_KEY"`, and `wire_api="responses"`; it
+  does not use the built-in `openai` provider or set `requires_openai_auth`.
+  This prevents a cached ChatGPT login from selecting the API route's provider;
 - maps the service-private fallback secret into the single environment variable
   supported by the installed Codex version, only for that child process;
 - never exposes the fallback secret to the OAuth child process;
@@ -429,6 +433,13 @@ The initial routing matrix is:
 No routing decision is based on a generic substring such as `error`, `failed`,
 or `timeout`. CLI-specific text is parsed inside its adapter into the typed
 failure contract. Unclassified failures default to `failover_permitted=false`.
+`returncode == 0` or an observed terminal success is a hard boundary: it cannot
+authorize retry, failover, or a route pause even if its stdout happens to quote
+an error. On a nonzero result, the adapter combines stderr with only
+provider-owned JSONL error fields from `error` and `turn.failed` events; it
+does not scan tool output, model text, or arbitrary stdout. Idle/total timeout
+and the recognized stream-disconnect condition are typed transport failures;
+an empty nonzero process result is `codex_process_failed` and cannot fail over.
 
 ## Execution Flow
 
@@ -584,8 +595,15 @@ usage, and Anthropic API usage must not be combined into one unlabeled total.
 - Route secrets are loaded at runtime and injected only into the selected child
   process.
 - The primary OAuth route receives no provider API key.
-- Provider child processes receive only the business credentials already
-  allowed by the current task and role.
+- Child environments are rebuilt from an explicit macOS/launchd allowlist:
+  process basics (`HOME`, `PATH`, `SHELL`, temporary-directory, locale, user,
+  terminal, and time-zone variables), reviewed CA-bundle variables, and an
+  explicitly set `CODEX_HOME`. Proxy URLs and `SSH_AUTH_SOCK` are excluded.
+  No arbitrary inherited variable or later caller-provided credential may
+  expand that allowlist.
+- Both Codex routes configure `shell_environment_policy.inherit="core"` and
+  `shell_environment_policy.ignore_default_excludes=false`, so the API key is
+  available only to the Codex provider process and not model-launched shells.
 - Consumer remains unable to invoke effectful MCP or native CLI operations on
   every route.
 - Claude receives no Codex OAuth files or token export.
@@ -605,6 +623,10 @@ usage, and Anthropic API usage must not be combined into one unlabeled total.
 - route-specific environment construction removes unrelated credentials;
 - OAuth child environment cannot inherit the fallback OpenAI API key;
 - API and Claude secrets never enter command arguments or persisted records;
+- the API route uses the exact custom `env_key` provider configuration and no
+  key appears in argv, exceptions, representations, or dumps;
+- success-shaped output and tool/model text that merely quote provider errors
+  cannot influence failure classification;
 - failure adapters produce the correct typed classification;
 - unclassified errors cannot trigger failover;
 - route pauses are independent and expire according to configuration;

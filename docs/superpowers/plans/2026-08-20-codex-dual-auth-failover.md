@@ -569,7 +569,29 @@ build_env(route) -> dict[str, str]
 classify_failure(stdout, stderr, returncode) -> RuntimeFailure
 ```
 
-Start from `CodexRunner.build_env()`, remove `CEO_CODEX_API_KEY`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `CEO_CLAUDE_API_KEY`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_AUTH_TOKEN`, then inject only `OPENAI_API_KEY` for `codex_api`. Reuse `codex_capacity.codex_provider_failure_code` and current login/auth recognition, but return the typed failure model. Unknown text returns `runtime_unclassified` with `failover_permitted=False`.
+Start from `CodexRunner.build_env()`, then rebuild an explicit safe child
+environment from macOS/launchd essentials, reviewed CA-bundle variables, and
+an explicitly set `CODEX_HOME`. Do not pass proxy URLs, `SSH_AUTH_SOCK`, or
+unreviewed inherited values. Both routes configure
+`shell_environment_policy.inherit="core"` and
+`shell_environment_policy.ignore_default_excludes=false`. `codex_api` alone
+adds `OPENAI_API_KEY` and explicitly selects a custom `ceo_openai_api` provider
+using `model_providers.ceo_openai_api` with the OpenAI `/v1` base URL,
+`env_key="OPENAI_API_KEY"`, and `wire_api="responses"`; it must not use the
+built-in `openai` provider or set `requires_openai_auth`.
+
+Failure classification has a success hard boundary: a zero return code or a
+terminal success cannot authorize retry, failover, or pause. For nonzero
+results, classify only stderr plus provider-owned messages from JSONL `error`
+and `turn.failed` events, never arbitrary stdout, model text, or tool output.
+Recognize typed login/auth/capacity/transport errors; empty nonzero output is
+`codex_process_failed`; unknown output stays fail-closed as
+`runtime_unclassified`.
+
+Keep `codex_api` disabled for business routing until Task 8 runs its
+launchd-like, structured live probe successfully. Command construction and
+environment injection are not authentication proof, and this task does not
+run a real login or provider request.
 
 - [ ] **Step 5: Run focused tests and commit**
 
