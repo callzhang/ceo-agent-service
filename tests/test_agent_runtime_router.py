@@ -58,6 +58,15 @@ def failover_failure(code: str = "codex_login_required") -> RuntimeFailure:
     )
 
 
+def session_incompatible_failure() -> RuntimeFailure:
+    return RuntimeFailure(
+        failure_class=RuntimeFailureClass.SESSION,
+        code="session_route_incompatible",
+        detail="persisted session failure",
+        failover_permitted=True,
+    )
+
+
 def make_router(
     store: AutoReplyStore,
     *,
@@ -157,6 +166,40 @@ def test_oauth_failure_selects_api_once(router, store, running_attempt):
 
     assert decision.route.name == "codex_api"
     assert decision.fresh_session is False
+
+
+def test_persisted_confirmable_receipt_blocks_failover_when_caller_says_false(
+    router, store, running_attempt
+):
+    failure = failover_failure()
+    failed_attempt = store.fail_agent_runtime_attempt(
+        running_attempt.id,
+        failure.failure_class.value,
+        failure.code,
+        failure.failover_permitted,
+    )
+    store.record_agent_execution_receipt(
+        running_attempt.agent_run_id,
+        receipt_id="receipt-router",
+        operation_id="write-router",
+        cli="dws",
+        command_path="chat message send",
+        command_digest="router-receipt-digest",
+        exit_code=0,
+        owner="router-test",
+    )
+
+    decision = router.next_route(
+        run=store.get_agent_run(running_attempt.agent_run_id),
+        failed_attempt=failed_attempt,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="",
+        has_confirmed_receipt=False,
+    )
+
+    assert decision.route is None
+    assert decision.reason == "confirmed_receipt"
 
 
 @pytest.mark.parametrize(
@@ -585,7 +628,7 @@ def test_resumed_codex_api_session_incompatibility_gets_one_fresh_retry(
     router = make_router(store)
 
     decision = next_route(
-        router, store, api, failure=failover_failure("session_route_incompatible")
+        router, store, api, failure=session_incompatible_failure()
     )
 
     assert decision.route.name == "codex_api"
@@ -639,7 +682,7 @@ def test_fresh_session_retry_requires_the_normal_route_eligibility_gate(
         router,
         store,
         api,
-        failure=failover_failure("session_route_incompatible"),
+        failure=session_incompatible_failure(),
         capabilities=required_capabilities,
     )
 
@@ -685,7 +728,7 @@ def test_fresh_codex_api_session_incompatibility_does_not_repeat(
     router = make_router(store)
 
     decision = next_route(
-        router, store, api, failure=failover_failure("session_route_incompatible")
+        router, store, api, failure=session_incompatible_failure()
     )
 
     assert decision.route is None
@@ -720,8 +763,36 @@ def test_prior_fresh_codex_api_attempt_blocks_another_fresh_retry(
         router,
         store,
         second_api,
-        failure=failover_failure("session_route_incompatible"),
+        failure=session_incompatible_failure(),
     )
+
+    assert decision.route is None
+    assert decision.fresh_session is False
+    assert decision.reason == "no_eligible_route"
+
+
+def test_non_session_failure_with_session_incompatible_code_cannot_fresh_retry(
+    store, running_attempt
+):
+    initial_failure = failover_failure()
+    store.fail_agent_runtime_attempt(
+        running_attempt.id,
+        initial_failure.failure_class.value,
+        initial_failure.code,
+        initial_failure.failover_permitted,
+    )
+    api = store.claim_agent_runtime_attempt(
+        running_attempt.agent_run_id,
+        "codex_api",
+        "codex_cli",
+        "service_api",
+        "gpt-5.5",
+        session_mode="resume",
+        source_session_id="oauth-session",
+    )
+    wrong_class = failover_failure("session_route_incompatible")
+
+    decision = next_route(make_router(store), store, api, failure=wrong_class)
 
     assert decision.route is None
     assert decision.fresh_session is False

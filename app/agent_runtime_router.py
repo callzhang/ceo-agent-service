@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
     RuntimeFailure,
+    RuntimeFailureClass,
     RuntimeRoute,
 )
 from app.store import (
@@ -95,11 +96,17 @@ class AgentRuntimeRouter:
             return RuntimeRouteDecision(None, False, "failure_mismatch")
 
         attempts = self._store.list_agent_runtime_attempts(persisted_run.id)
+        has_persisted_confirmed_receipt = any(
+            receipt.completed and receipt.persisted and receipt.safe_to_confirm
+            for receipt in self._store.list_agent_execution_receipts(persisted_run.id)
+        )
         safe, reason = failover_is_safe(
             run=persisted_run,
             attempt=persisted_attempt,
             failure=failure,
-            has_confirmed_receipt=has_confirmed_receipt,
+            has_confirmed_receipt=(
+                has_confirmed_receipt or has_persisted_confirmed_receipt
+            ),
             recovery_phase=recovery_phase,
         )
         if not safe:
@@ -151,6 +158,8 @@ class AgentRuntimeRouter:
             and failed_attempt.route_name == "codex_api"
             and failed_attempt.session_mode == RuntimeAttemptSessionMode.RESUME
             and bool(failed_attempt.source_session_id.strip())
+            and failed_attempt.failure_class == RuntimeFailureClass.SESSION.value
+            and failure.failure_class == RuntimeFailureClass.SESSION
             and failure.code == "session_route_incompatible"
         )
 
