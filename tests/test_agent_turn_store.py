@@ -8,7 +8,12 @@ import pytest
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
 from app.agent_runtime_router import RuntimeRouteDecision
-from app.agent_turn_runner import AgentTurnProcess, _required_runtime_capabilities
+from app.agent_turn_runner import (
+    AgentTurnProcess,
+    _decode_runtime_domain_result,
+    _encode_runtime_domain_result,
+    _required_runtime_capabilities,
+)
 from app.agent_wire_contracts import parse_consumer_agent_wire_result
 from app.native_cli_metadata import describe_native_command
 from app.process_runner import ProcessRunResult
@@ -294,7 +299,12 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
 
     executor = Executor(stream)
 
-    def execute(current_task):
+    def execute(
+        current_task,
+        *,
+        current_prompt="Read-only decision",
+        current_developer_instructions="Return the exact schema.",
+    ):
         run = _claim_consumer(store, current_task).run
         return AgentTurnProcess(
             store=store,
@@ -306,9 +316,9 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
             runtime_router=OneRouteRouter(),
         ).execute(
             run=run,
-            prompt="Read-only decision",
+            prompt=current_prompt,
             session_id=None,
-            developer_instructions="Return the exact schema.",
+            developer_instructions=current_developer_instructions,
             configure_command=lambda command: None,
             parse_result=parse_consumer_agent_wire_result,
             persist_conversation_session=True,
@@ -319,7 +329,6 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     assert store.get_conversation_runtime_session(
         task.conversation_id, "claude_api", required_contract_hash="contract-v1"
     ) == session_id
-
     def stream_for_result(result_text: str) -> str:
         return "\n".join(
             (
@@ -477,6 +486,46 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     )
     assert first_attempt.session_id == session_id
 
+    # A completed provider result belongs to the full execution contract, not
+    # merely the wire schema. A new business context must execute again when
+    # the prior turn had no effects and is therefore safe to re-plan.
+    stale_task = next_task("msg-turns-stale", "generation-stale")
+    monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
+    with pytest.raises(RuntimeError, match="injected_parent_terminal_failure"):
+        execute(stale_task, current_prompt="OLD business context")
+    stale_executor_calls = len(executor.commands)
+    monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
+    execute(stale_task, current_prompt="NEW business context")
+    assert len(executor.commands) == stale_executor_calls + 1
+    [stale_run] = store.list_agent_runs_for_task_generation(
+        stale_task.id, stale_task.execution_generation
+    )
+    stale_attempts = store.list_agent_runtime_attempts(stale_run.id)
+    assert len(stale_attempts) == 2
+    assert all(attempt.status == "completed" for attempt in stale_attempts)
+    assert len({attempt.result_schema_id for attempt in stale_attempts}) == 2
+
+    corrupt_task = next_task("msg-turns-corrupt", "generation-corrupt")
+    monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
+    with pytest.raises(RuntimeError, match="injected_parent_terminal_failure"):
+        execute(corrupt_task)
+    corrupt_executor_calls = len(executor.commands)
+    [corrupt_run] = store.list_agent_runs_for_task_generation(
+        corrupt_task.id, corrupt_task.execution_generation
+    )
+    [corrupt_attempt] = store.list_agent_runtime_attempts(corrupt_run.id)
+    corrupt_envelope = json.loads(corrupt_attempt.result_envelope_json)
+    corrupt_envelope["version"] = 2
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runtime_attempts set result_envelope_json=? where id=?",
+            (json.dumps(corrupt_envelope), corrupt_attempt.id),
+        )
+    monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
+    with pytest.raises(ValueError, match="runtime_result_envelope_invalid"):
+        execute(corrupt_task)
+    assert len(executor.commands) == corrupt_executor_calls
+
     assert store.enqueue_reply_task(
         conversation_id=task.conversation_id,
         conversation_title=task.conversation_title,
@@ -500,6 +549,176 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     assert store.get_conversation_runtime_session(
         task.conversation_id, "claude_api", required_contract_hash="contract-v1"
     ) == session_id
+
+
+@pytest.mark.parametrize(
+    "unsafe_summary, expected",
+    [
+        ("Bearer sk-private-secret", "sensitive"),
+        ("https://example.com/file?X-Amz-Signature=secret", "sensitive"),
+        ("/private/var/tmp/claude-runtime.json", "local_path"),
+        ("x" * (33 * 1024), "too_large"),
+    ],
+)
+def test_runtime_domain_result_codec_rejects_private_values(
+    unsafe_summary, expected
+):
+    result = parse_consumer_agent_wire_result(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": json.dumps(
+                        {
+                            "outcome": "no_action",
+                            "summary": unsafe_summary,
+                            "proposal": None,
+                            "decision_options": [],
+                            "error_code": "",
+                            "error_retryable": False,
+                            "error_authorization_required": False,
+                        }
+                    ),
+                },
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match=expected):
+        _encode_runtime_domain_result(
+            schema_id="schema-v1",
+            role=AgentRole.CONSUMER,
+            recovery_phase="",
+            result=result,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"version": 2},
+        {"version": True},
+        {"unexpected": "field"},
+        {"result": []},
+    ],
+)
+def test_runtime_domain_result_codec_rejects_corrupt_shape(mutation):
+    valid = {
+        "schema_id": "schema-v1",
+        "version": 1,
+        "role": "consumer",
+        "recovery_phase": "",
+        "result": {
+            "outcome": "no_action",
+            "summary": "Nothing to do.",
+            "proposal": None,
+            "decision_options": [],
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        },
+    }
+    valid.update(mutation)
+
+    with pytest.raises(ValueError, match="runtime_result_envelope_invalid"):
+        _decode_runtime_domain_result(
+            json.dumps(valid),
+            schema_id="schema-v1",
+            role=AgentRole.CONSUMER,
+            recovery_phase="",
+        )
+
+
+def test_completed_claude_result_contract_mismatch_with_effect_never_spawns(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    store.append_agent_run_event(
+        run.id,
+        _effect_event(
+            capability="agent_cli.dws",
+            operation="chat message send",
+            operation_digest="command-digest",
+            arguments_digest="arguments-digest",
+            target_identifiers={"group": "cid"},
+        ),
+        owner="audit",
+    )
+    attempt = store.claim_agent_runtime_attempt(
+        run.id,
+        "claude_api",
+        "claude_cli",
+        "service_api",
+        "claude-sonnet-4-5",
+    )
+    attempt = store.mark_agent_runtime_attempt_running_once(attempt.id)
+    old_schema = "old-execution-contract"
+    store.complete_agent_runtime_attempt(
+        attempt.id,
+        "claude-session",
+        "",
+        0,
+        3,
+        result_schema_id=old_schema,
+        result_envelope_json=json.dumps(
+            {"schema_id": old_schema, "version": 1, "result": {}}
+        ),
+    )
+
+    class MustNotRoute:
+        def first_route_decision(self, **kwargs):
+            raise AssertionError("stale effectful result must fail before routing")
+
+    executor_calls = 0
+
+    def must_not_execute(*args, **kwargs):
+        nonlocal executor_calls
+        executor_calls += 1
+        raise AssertionError("stale effectful result must not spawn")
+
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+            "CEO_CLAUDE_API_KEY": "test-claude-secret",
+            "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
+        }
+    )
+    with pytest.raises(RuntimeError, match="completed_runtime_result_contract_mismatch"):
+        AgentTurnProcess(
+            store=store,
+            task=task,
+            workspace=tmp_path,
+            owner="audit",
+            executor=must_not_execute,
+            runtime_config=config,
+            runtime_router=MustNotRoute(),
+        ).execute(
+            run=store.get_agent_run(run.id),
+            prompt="NEW business context",
+            session_id=None,
+            developer_instructions="NEW reviewed rules",
+            configure_command=lambda command: None,
+            parse_result=lambda raw: (_ for _ in ()).throw(
+                AssertionError("stale result must not be parsed")
+            ),
+            persist_conversation_session=False,
+            expected_effect_actions=(
+                {
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "operation_digest": "command-digest",
+                    "arguments_digest": "arguments-digest",
+                    "target_identifiers": {"group": "cid"},
+                },
+            ),
+        )
+
+    assert executor_calls == 0
 
 
 def _effect_event(event_type="item.started", **metadata):

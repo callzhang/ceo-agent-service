@@ -17,6 +17,7 @@ from app.agent_contracts import (
     AuditExternalResult,
     AuditOutcome,
     AuditReconciliation,
+    ConsumerAgentResult,
     ConsumerOutcome,
     ReconciliationDisposition,
 )
@@ -71,7 +72,7 @@ from app.codex_history import (
 )
 from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
-from app.leak_check import contains_credential
+from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
@@ -106,6 +107,8 @@ _AUDIT_RUNTIME_CAPABILITIES = frozenset(
 _RECONCILIATION_RUNTIME_CAPABILITIES = frozenset(
     {"consumer_read_only_enforcement", "reconciliation_read_only"}
 )
+_RUNTIME_DOMAIN_RESULT_CODEC_VERSION = 1
+_RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 32 * 1024
 
 
 class RuntimeRouteUnavailableError(RuntimeError):
@@ -120,6 +123,68 @@ class RuntimeRouteUnavailableError(RuntimeError):
 
 class _RecoveredCompletedRuntimeResult(RuntimeError):
     """Internal control flow for a validated durable provider result."""
+
+
+def _encode_runtime_domain_result(
+    *,
+    schema_id: str,
+    role: AgentRole,
+    recovery_phase: str,
+    result: ConsumerAgentResult | AuditAgentResult,
+) -> str:
+    envelope = {
+        "schema_id": schema_id,
+        "version": _RUNTIME_DOMAIN_RESULT_CODEC_VERSION,
+        "role": role.value,
+        "recovery_phase": recovery_phase,
+        "result": result.model_dump(mode="json"),
+    }
+    if _contains_sensitive_value(envelope):
+        raise ValueError("runtime_result_envelope_contains_sensitive_value")
+    encoded = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
+    try:
+        encoded_size = len(encoded.encode("utf-8"))
+    except (UnicodeError, MemoryError) as exc:
+        raise ValueError("runtime_result_envelope_invalid_utf8") from exc
+    if encoded_size > _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES:
+        raise ValueError("runtime_result_envelope_too_large")
+    if contains_local_runtime_leak(encoded):
+        raise ValueError("runtime_result_envelope_contains_local_path")
+    return encoded
+
+
+def _decode_runtime_domain_result(
+    encoded: str,
+    *,
+    schema_id: str,
+    role: AgentRole,
+    recovery_phase: str,
+) -> ConsumerAgentResult | AuditAgentResult:
+    try:
+        if len(encoded.encode("utf-8")) > _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES:
+            raise ValueError("runtime_result_envelope_too_large")
+        envelope = json.loads(encoded)
+    except (json.JSONDecodeError, UnicodeError, MemoryError) as exc:
+        raise ValueError("runtime_result_envelope_invalid") from exc
+    if (
+        not isinstance(envelope, dict)
+        or set(envelope)
+        != {"schema_id", "version", "role", "recovery_phase", "result"}
+        or envelope.get("schema_id") != schema_id
+        or type(envelope.get("version")) is not int
+        or envelope.get("version") != _RUNTIME_DOMAIN_RESULT_CODEC_VERSION
+        or envelope.get("role") != role.value
+        or envelope.get("recovery_phase") != recovery_phase
+        or not isinstance(envelope.get("result"), dict)
+        or _contains_sensitive_value(envelope)
+        or contains_local_runtime_leak(encoded)
+    ):
+        raise ValueError("runtime_result_envelope_invalid")
+    model = ConsumerAgentResult if role is AgentRole.CONSUMER else AuditAgentResult
+    try:
+        return model.model_validate(envelope["result"])
+    except (ValidationError, ValueError) as exc:
+        raise ValueError("runtime_result_envelope_invalid") from exc
 
 
 def unknown_reconciliation_retry_at(
@@ -298,7 +363,6 @@ class AgentTurnProcess(Generic[ResultT]):
         session_transcript_end = 0
         claude_normalizer: ClaudeEventNormalizer | None = None
         pending_claude_session_id = ""
-        pending_claude_result_raw = ""
         recovered_completed_attempt = False
         turn_event_start = len(run.tool_events)
         recovery_event_start = turn_event_start
@@ -632,30 +696,68 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             )
 
+        required_capabilities = _required_runtime_capabilities(
+            run=run,
+            recovery_phase=recovery_phase,
+            expected_effect_actions=expected_effect_actions,
+            explicit_capabilities=required_capabilities,
+        )
+        execution_contract = {
+            "version": 1,
+            "role": run.role.value,
+            "recovery_phase": recovery_phase,
+            "operation_id": run.operation_id,
+            "conversation_contract_hash": conversation_contract_hash,
+            "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "developer_instructions_sha256": hashlib.sha256(
+                developer_instructions.encode("utf-8")
+            ).hexdigest(),
+            "required_capabilities": sorted(required_capabilities),
+            "expected_actions_sha256": hashlib.sha256(
+                json.dumps(
+                    expected_effect_actions,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            "reviewed_skills": sorted(
+                (receipt.name, receipt.sha256) for receipt in required_skill_receipts
+            ),
+        }
+        execution_contract_digest = hashlib.sha256(
+            json.dumps(
+                execution_contract, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
         runtime_result_schema_id = hashlib.sha256(
             (
-                "agent_turn_claude_result_v1\0"
-                + run.role.value
-                + "\0"
-                + (recovery_phase or "normal")
-                + "\0"
-                + conversation_contract_hash
+                "agent_turn_claude_result_v1\0" + execution_contract_digest
             ).encode("utf-8")
         ).hexdigest()
 
         try:
+            runtime_attempts = self.store.list_agent_runtime_attempts(run.id)
             completed_attempt = next(
                 (
                     attempt
-                    for attempt in reversed(
-                        self.store.list_agent_runtime_attempts(run.id)
-                    )
+                    for attempt in reversed(runtime_attempts)
                     if attempt.status == "completed"
                     and attempt.result_schema_id == runtime_result_schema_id
                     and attempt.result_envelope_json
                 ),
                 None,
             )
+            if (
+                completed_attempt is None
+                and run.effect_started_count > 0
+                and any(
+                    attempt.status == "completed"
+                    and attempt.result_envelope_json
+                    and attempt.runtime_kind == RuntimeKind.CLAUDE_CLI.value
+                    for attempt in runtime_attempts
+                )
+            ):
+                raise RuntimeError("completed_runtime_result_contract_mismatch")
             if completed_attempt is not None:
                 route = next(
                     (
@@ -668,17 +770,20 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
                 if route is None:
                     raise RuntimeError("completed runtime result route mismatch")
-                envelope = json.loads(completed_attempt.result_envelope_json)
-                raw_result = envelope.get("raw_result") if isinstance(envelope, dict) else None
-                if not isinstance(raw_result, str) or not raw_result:
-                    raise RuntimeError("completed runtime result envelope invalid")
-                result = parse_claude_result(raw_result)
+                result = cast(
+                    ResultT,
+                    _decode_runtime_domain_result(
+                        completed_attempt.result_envelope_json,
+                        schema_id=runtime_result_schema_id,
+                        role=run.role,
+                        recovery_phase=recovery_phase,
+                    ),
+                )
                 if _contains_sensitive_value(result.model_dump(mode="json")):
                     raise ValueError("agent_result_contains_sensitive_value")
                 active_attempt = completed_attempt
                 observed_session_id = completed_attempt.session_id
                 pending_claude_session_id = completed_attempt.session_id
-                pending_claude_result_raw = raw_result
                 attempt_transcript_start = completed_attempt.transcript_start
                 attempt_line_start = 0
                 line_count = (
@@ -688,12 +793,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 turn_event_start = 0
                 recovered_completed_attempt = True
                 raise _RecoveredCompletedRuntimeResult
-            required_capabilities = _required_runtime_capabilities(
-                run=run,
-                recovery_phase=recovery_phase,
-                expected_effect_actions=expected_effect_actions,
-                explicit_capabilities=required_capabilities,
-            )
             decision = self.runtime_router.first_route_decision(
                 required_capabilities=required_capabilities,
                 allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,
@@ -801,7 +900,6 @@ class AgentTurnProcess(Generic[ResultT]):
                             raise RuntimeError("claude_session_evidence_missing")
                         observed_session_id = trusted_session_id
                         pending_claude_session_id = trusted_session_id
-                        pending_claude_result_raw = proof.result
                     else:
                         result = parse_result(process.stdout)
                     break
@@ -1095,12 +1193,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 attempt_transcript_start,
                 attempt_transcript_start + (line_count - attempt_line_start),
                 result_schema_id=runtime_result_schema_id,
-                result_envelope_json=json.dumps(
-                    {
-                        "schema_id": runtime_result_schema_id,
-                        "raw_result": pending_claude_result_raw,
-                    },
-                    separators=(",", ":"),
+                result_envelope_json=_encode_runtime_domain_result(
+                    schema_id=runtime_result_schema_id,
+                    role=run.role,
+                    recovery_phase=recovery_phase,
+                    result=cast(ConsumerAgentResult | AuditAgentResult, result),
                 ),
                 conversation_id=(
                     self.task.conversation_id

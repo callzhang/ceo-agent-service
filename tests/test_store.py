@@ -599,6 +599,58 @@ def test_expired_recovery_with_effect_evidence_is_never_replayed(tmp_path: Path)
     assert persisted.first_effect_started_at
 
 
+def test_restarted_reconciler_reclaims_effect_free_expired_recovery(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-recovery-restarted-owner.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    store.append_agent_run_event(
+        run.id,
+        _runtime_effect_started_event(run.operation_id),
+        owner="runtime-attempt",
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="runtime-attempt",
+    )
+    started_at = datetime(2026, 8, 21, 3, 0, tzinfo=timezone.utc)
+    assert store.claim_unknown_agent_run(
+        run.id, owner="process-a", lease_seconds=60, now=started_at
+    ).claimed
+    abandoned = store.claim_unknown_recovery_agent_runtime_attempt(
+        run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+        owner="process-a",
+        lease_seconds=60,
+        now=started_at,
+    ).attempt
+
+    restarted_at = started_at + timedelta(seconds=61)
+    assert store.claim_unknown_agent_run(
+        run.id, owner="process-b", lease_seconds=1800, now=restarted_at
+    ).claimed
+    reclaimed = store.claim_unknown_recovery_agent_runtime_attempt(
+        run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+        owner="process-b",
+        lease_seconds=60,
+        now=restarted_at,
+    )
+
+    attempts = store.list_agent_runtime_attempts(run.id)
+    assert [attempt.status for attempt in attempts] == ["failed", "running"]
+    assert attempts[0].id == abandoned.id
+    assert attempts[0].failure_code == "runtime_recovery_lease_expired"
+    assert reclaimed.start_acquired is True
+    assert reclaimed.attempt.id == attempts[1].id
+    assert reclaimed.attempt.lease_owner == "process-b"
+
+
 def test_agent_runtime_attempt_claim_atomically_rechecks_route_pause(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "runtime-parent.sqlite3")
     run = _claimed_runtime_agent_run(store)

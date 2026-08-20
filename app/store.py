@@ -4728,8 +4728,7 @@ class AutoReplyStore:
                 )
             if active_recovery_conflict is not None:
                 if (
-                    active_recovery_conflict["lease_owner"]
-                    != unknown_recovery_owner
+                    not active_recovery_conflict["lease_owner"]
                     or not active_recovery_conflict["lease_expires_at"]
                     or active_recovery_conflict["lease_expires_at"] > now_text
                     or active_recovery_conflict["first_effect_started_at"]
@@ -4749,7 +4748,7 @@ class AutoReplyStore:
                         now_text,
                         now_text,
                         active_recovery_conflict["id"],
-                        unknown_recovery_owner,
+                        active_recovery_conflict["lease_owner"],
                         now_text,
                     ),
                 )
