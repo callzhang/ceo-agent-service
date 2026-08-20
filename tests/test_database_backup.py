@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from app import cli
+from app.database_backup import prune_database_backups
 
 
 def _create_database(path: Path) -> None:
@@ -32,10 +33,9 @@ def test_daily_backup_is_consistent_and_runs_only_once_per_day(tmp_path: Path):
         assert backup.execute("select body from messages").fetchone()[0] == "durable state"
 
 
-def test_backup_retention_keeps_daily_three_day_window_and_7_14_day_points(
+def test_backup_retention_keeps_only_newest_database_backup(
     tmp_path: Path,
 ):
-    assert hasattr(cli, "prune_database_backups")
     backup_dir = tmp_path / "backups"
     backup_dir.mkdir()
     today = date(2026, 7, 23)
@@ -43,29 +43,42 @@ def test_backup_retention_keeps_daily_three_day_window_and_7_14_day_points(
         backup_date = today - timedelta(days=age)
         (backup_dir / f"auto-reply-{backup_date.isoformat()}.sqlite3").touch()
 
-    cli.prune_database_backups(backup_dir, today=today)
-
-    remaining_ages = sorted(
-        (today - date.fromisoformat(path.stem.removeprefix("auto-reply-"))).days
-        for path in backup_dir.glob("auto-reply-*.sqlite3")
-    )
-    assert remaining_ages == [0, 1, 2, 3, 7, 14]
-
-
-def test_backup_retention_ignores_non_daily_backup_names(tmp_path: Path):
-    assert hasattr(cli, "prune_database_backups")
-    backup_dir = tmp_path / "backups"
-    backup_dir.mkdir()
     manual_backup = backup_dir / "auto-reply-before-recovery.sqlite3"
     manual_backup.touch()
+    newest = backup_dir / f"auto-reply-{today.isoformat()}.sqlite3"
+    newest.touch()
 
-    deleted = cli.prune_database_backups(
+    deleted = prune_database_backups(
         backup_dir,
-        today=date(2026, 7, 23),
+        today=today,
+        keep_path=newest,
     )
 
-    assert deleted == []
-    assert manual_backup.exists()
+    assert list(backup_dir.iterdir()) == [newest]
+    assert manual_backup in deleted
+    assert len(deleted) == 16
+
+
+def test_backup_retention_removes_sqlite_sidecars(tmp_path: Path):
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    keep = backup_dir / "auto-reply-2026-07-23.sqlite3"
+    keep.touch()
+    sidecars = [
+        backup_dir / "auto-reply-before-recovery.sqlite3-wal",
+        backup_dir / "auto-reply-before-recovery.sqlite3-shm",
+    ]
+    for sidecar in sidecars:
+        sidecar.touch()
+
+    deleted = prune_database_backups(
+        backup_dir,
+        today=date(2026, 7, 23),
+        keep_path=keep,
+    )
+
+    assert set(deleted) == set(sidecars)
+    assert list(backup_dir.iterdir()) == [keep]
 
 
 def test_database_backup_loop_checks_hourly(tmp_path: Path, monkeypatch):

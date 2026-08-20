@@ -19,7 +19,11 @@ def backup_database_if_due(
     backup_dir.mkdir(parents=True, exist_ok=True)
     destination = backup_dir / f"{db_path.stem}-{current_date.isoformat()}.sqlite3"
     if destination.exists():
-        prune_database_backups(backup_dir, today=current_date)
+        prune_database_backups(
+            backup_dir,
+            today=current_date,
+            keep_path=destination,
+        )
         return None
 
     temporary = backup_dir / f".{destination.name}.{uuid4().hex}.tmp"
@@ -35,32 +39,38 @@ def backup_database_if_due(
     finally:
         temporary.unlink(missing_ok=True)
 
-    prune_database_backups(backup_dir, today=current_date)
+    prune_database_backups(
+        backup_dir,
+        today=current_date,
+        keep_path=destination,
+    )
     return destination
 
 
-def prune_database_backups(backup_dir: Path, *, today: date) -> list[Path]:
-    dated_paths: list[tuple[int, Path]] = []
-    for path in backup_dir.glob("auto-reply-*.sqlite3"):
-        try:
-            backup_date = date.fromisoformat(
-                path.stem.removeprefix("auto-reply-")
-            )
-        except ValueError:
-            continue
-        dated_paths.append(((today - backup_date).days, path))
+def prune_database_backups(
+    backup_dir: Path,
+    *,
+    today: date,
+    keep_path: Path | None = None,
+) -> list[Path]:
+    """Keep exactly one database backup and remove stale SQLite sidecars."""
+    del today  # Retained for source compatibility with existing callers.
+    database_paths = sorted(backup_dir.glob("*.sqlite3"))
+    keep = keep_path
+    if keep is None and database_paths:
+        keep = max(
+            database_paths,
+            key=lambda path: (path.stat().st_mtime_ns, path.name),
+        )
 
-    keep: set[Path] = {
-        path for age, path in dated_paths if age < 0 or 0 <= age <= 3
-    }
-    for lower, upper in ((4, 7), (8, 14)):
-        candidates = [item for item in dated_paths if lower <= item[0] <= upper]
-        if candidates:
-            keep.add(max(candidates, key=lambda item: item[0])[1])
-
+    candidates = [
+        *database_paths,
+        *backup_dir.glob("*.sqlite3-wal"),
+        *backup_dir.glob("*.sqlite3-shm"),
+    ]
     deleted: list[Path] = []
-    for _, path in dated_paths:
-        if path in keep:
+    for path in sorted(set(candidates)):
+        if keep is not None and path == keep:
             continue
         path.unlink()
         deleted.append(path)
