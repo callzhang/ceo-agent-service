@@ -640,9 +640,10 @@ def test_task_memory_backfill_parent_is_work_project_not_summary_input(tmp_path:
 def test_weekly_okr_parent_matches_the_complete_natural_key(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "weekly-parent.sqlite3")
     digest = "a" * 64
-    job_id = store.begin_weekly_okr_analysis_job(
+    claim = store.begin_weekly_okr_analysis_job(
         week_end="2026-08-16", manager_user_id="manager-1", source_digest=digest
     )
+    assert claim.outcome == "claimed"
 
     attempt = store.claim_runtime_operation_attempt(
         "weekly_okr", f"2026-08-16:manager-1:{digest}", "codex_oauth",
@@ -650,12 +651,93 @@ def test_weekly_okr_parent_matches_the_complete_natural_key(tmp_path: Path):
     )
     assert attempt.workload_key.endswith(digest)
 
-    store.finish_weekly_okr_analysis_job(job_id, status="completed")
+    store.finish_weekly_okr_analysis_job(claim.job_id, status="completed")
     with pytest.raises(ValueError, match="parent does not exist or is not running"):
         store.claim_runtime_operation_attempt(
             "weekly_okr", f"2026-08-16:manager-1:{digest}", "codex_oauth",
             "codex_cli", "local_oauth", "gpt-5.5",
         )
+
+
+def test_weekly_okr_failed_job_reopens_and_completed_job_is_cache_hit(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "weekly-reopen.sqlite3")
+    values = {
+        "week_end": "2026-08-16",
+        "manager_user_id": "manager-1",
+        "source_digest": "b" * 64,
+    }
+    first = store.begin_weekly_okr_analysis_job(**values)
+    store.finish_weekly_okr_analysis_job(
+        first.job_id, status="failed", error="provider unavailable"
+    )
+
+    reopened = store.begin_weekly_okr_analysis_job(**values)
+    assert reopened.job_id == first.job_id
+    assert reopened.outcome == "claimed"
+    with store._connect() as db:
+        row = db.execute(
+            "select * from weekly_okr_analysis_jobs where id=?",
+            (reopened.job_id,),
+        ).fetchone()
+    assert row["status"] == "running"
+    assert row["error"] == ""
+    assert row["finished_at"] == ""
+
+    store.finish_weekly_okr_analysis_job(reopened.job_id, status="completed")
+    cache_hit = store.begin_weekly_okr_analysis_job(**values)
+    assert cache_hit.job_id == first.job_id
+    assert cache_hit.outcome == "cache_hit"
+
+
+def test_weekly_okr_manager_identity_is_canonicalized(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "weekly-manager-canonical.sqlite3")
+    digest = "c" * 64
+    claim = store.begin_weekly_okr_analysis_job(
+        week_end="2026-08-16",
+        manager_user_id="  manager-1  ",
+        source_digest=digest,
+    )
+    with store._connect() as db:
+        row = db.execute(
+            "select manager_user_id from weekly_okr_analysis_jobs where id=?",
+            (claim.job_id,),
+        ).fetchone()
+    assert row["manager_user_id"] == "manager-1"
+    with pytest.raises(ValueError, match="canonical"):
+        store.claim_runtime_operation_attempt(
+            "weekly_okr", f"2026-08-16: manager-1 :{digest}", "codex_oauth",
+            "codex_cli", "local_oauth", "gpt-5.5",
+        )
+
+
+def test_weekly_okr_failed_job_reopen_is_concurrency_safe(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "weekly-reopen-concurrent.sqlite3")
+    values = {
+        "week_end": "2026-08-16",
+        "manager_user_id": "manager-1",
+        "source_digest": "d" * 64,
+    }
+    original = store.begin_weekly_okr_analysis_job(**values)
+    store.finish_weekly_okr_analysis_job(
+        original.job_id, status="failed", error="retry"
+    )
+    barrier = Barrier(3)
+    claims = []
+
+    def reopen() -> None:
+        barrier.wait(timeout=5)
+        claims.append(store.begin_weekly_okr_analysis_job(**values))
+
+    threads = [Thread(target=reopen) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait(timeout=5)
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert len(claims) == 2
+    assert {claim.job_id for claim in claims} == {original.job_id}
+    assert sorted(claim.outcome for claim in claims) == ["claimed", "in_progress"]
 
 
 def test_task_agent_run_begin_is_concurrent_and_finish_is_idempotent(tmp_path: Path):
@@ -718,6 +800,48 @@ def test_meeting_run_begin_is_idempotent_and_finish_closes_running_parent(tmp_pa
         run_id, status="no_action", decision_json='{"action":"no_action"}'
     )
     assert store.get_meeting_alignment_run(run_id).status == "no_action"
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["", "running", " running ", "READY_TO_SEND", "ready-to-send", "typo"],
+)
+def test_meeting_run_finish_rejects_noncanonical_terminal_status(
+    tmp_path: Path, status: str
+):
+    store = AutoReplyStore(tmp_path / f"meeting-invalid-{len(status)}.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=f"meeting-invalid-{len(status)}", title="Meeting",
+        source_json="{}", participants_json="[]",
+        ended_at="2026-08-20T10:00:00+08:00",
+        eligible_at="2026-08-20T10:10:00+08:00", status="pending",
+    )
+    store.claim_meeting_alignment_jobs(1, now="2026-08-20T10:11:00+08:00")
+    run_id = store.begin_meeting_alignment_run(job_id)
+
+    with pytest.raises(ValueError, match="terminal status"):
+        store.finish_meeting_alignment_run(run_id, status=status)
+
+
+@pytest.mark.parametrize(
+    "status", ["failed", "retry", "no_action", "ready_to_send"]
+)
+def test_meeting_run_finish_accepts_production_terminal_statuses(
+    tmp_path: Path, status: str
+):
+    store = AutoReplyStore(tmp_path / f"meeting-valid-{status}.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=f"meeting-valid-{status}", title="Meeting",
+        source_json="{}", participants_json="[]",
+        ended_at="2026-08-20T10:00:00+08:00",
+        eligible_at="2026-08-20T10:10:00+08:00", status="pending",
+    )
+    store.claim_meeting_alignment_jobs(1, now="2026-08-20T10:11:00+08:00")
+    run_id = store.begin_meeting_alignment_run(job_id)
+
+    store.finish_meeting_alignment_run(run_id, status=status)
+
+    assert store.get_meeting_alignment_run(run_id).status == status
 
 
 def test_wechat_import_jobs_are_distinct_per_invocation(tmp_path: Path):
@@ -813,11 +937,13 @@ def test_current_schema_sentinel_migrates_complete_legacy_meeting_run_shape(
             "insert into meeting_alignment_jobs (id, meeting_id) "
             "values (1, 'legacy-meeting')"
         )
+        db.execute("drop index idx_meeting_alignment_runs_active_job")
         db.execute(
             "insert into meeting_alignment_runs "
-            "(id, job_id, status, error) values (7, 1, 'failed', 'legacy')"
+            "(id, job_id, status, error, created_at) values "
+            "(7, 1, 'running', '', '2026-08-20 09:00:00'), "
+            "(8, 1, 'running', '', '2026-08-20 09:00:00')"
         )
-        db.execute("drop index idx_meeting_alignment_runs_active_job")
         db.execute(
             "alter table meeting_alignment_runs rename to meeting_alignment_runs_current"
         )
@@ -845,10 +971,23 @@ def test_current_schema_sentinel_migrates_complete_legacy_meeting_run_shape(
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     upgraded = AutoReplyStore(db_path)
-    run = upgraded.get_meeting_alignment_run(7)
-    assert run is not None
-    assert run.finished_at == run.created_at
-    assert run.updated_at == run.created_at
+    older = upgraded.get_meeting_alignment_run(7)
+    newest = upgraded.get_meeting_alignment_run(8)
+    assert older is not None and newest is not None
+    assert older.status == "failed"
+    assert older.error == "schema_migration_duplicate_running_meeting_run"
+    assert older.finished_at == older.created_at
+    assert older.updated_at == older.created_at
+    assert newest.status == "running"
+    assert newest.finished_at == ""
+    with upgraded._connect() as db:
+        ids = [
+            row["id"]
+            for row in db.execute(
+                "select id from meeting_alignment_runs order by id"
+            ).fetchall()
+        ]
+    assert ids == [7, 8]
 
 
 def test_runtime_attempt_transitions_are_terminal_safe(tmp_path: Path):

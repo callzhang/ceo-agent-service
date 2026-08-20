@@ -130,6 +130,12 @@ RECONCILIATION_EVENT_LIMIT_ERROR = "agent run reconciliation event limit exceede
 RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
     {"structured", "meeting", "task", "weekly_okr", "memory"}
 )
+MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES = frozenset(
+    {"failed", "retry", "no_action", "ready_to_send"}
+)
+MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR = (
+    "schema_migration_duplicate_running_meeting_run"
+)
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
 
@@ -411,6 +417,18 @@ class AgentRole(StrEnum):
 class RuntimeAttemptSessionMode(StrEnum):
     FRESH = "fresh"
     RESUME = "resume"
+
+
+class WeeklyOkrAnalysisJobClaimOutcome(StrEnum):
+    CLAIMED = "claimed"
+    CACHE_HIT = "cache_hit"
+    IN_PROGRESS = "in_progress"
+
+
+@dataclass(frozen=True)
+class WeeklyOkrAnalysisJobClaim:
+    job_id: int
+    outcome: WeeklyOkrAnalysisJobClaimOutcome
 
 
 class AgentRuntimeAttemptStartConflictError(RuntimeError):
@@ -1369,8 +1387,6 @@ class AutoReplyStore:
                     on meeting_alignment_runs(job_id, id);
                 create index if not exists idx_meeting_alignment_runs_created
                     on meeting_alignment_runs(created_at, id);
-                create unique index if not exists idx_meeting_alignment_runs_active_job
-                    on meeting_alignment_runs(job_id) where status='running';
                 create table if not exists codex_session_search_index (
                     id integer primary key autoincrement,
                     session_id text not null unique,
@@ -2457,6 +2473,29 @@ class AutoReplyStore:
                 "update meeting_alignment_runs set finished_at=created_at "
                 "where status<>'running' and finished_at=''"
             )
+            running_rows = db.execute(
+                "select id, job_id from meeting_alignment_runs "
+                "where status='running' "
+                "order by job_id, datetime(created_at) desc, id desc"
+            ).fetchall()
+            newest_running_job_ids: set[int] = set()
+            for row in running_rows:
+                job_id = int(row["job_id"])
+                if job_id not in newest_running_job_ids:
+                    newest_running_job_ids.add(job_id)
+                    continue
+                db.execute(
+                    "update meeting_alignment_runs set status='failed', error=?, "
+                    "finished_at=case when created_at<>'' then created_at "
+                    "else current_timestamp end, "
+                    "updated_at=case when created_at<>'' then created_at "
+                    "else current_timestamp end "
+                    "where id=? and status='running'",
+                    (
+                        MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR,
+                        int(row["id"]),
+                    ),
+                )
             db.execute(
                 "create unique index if not exists "
                 "idx_meeting_alignment_runs_active_job "
@@ -4191,6 +4230,10 @@ class AutoReplyStore:
                     raise ValueError
             except ValueError as exc:
                 raise ValueError("weekly_okr workload key must start with week end") from exc
+            if manager_user_id != manager_user_id.strip():
+                raise ValueError(
+                    "weekly_okr manager_user_id must be canonical"
+                )
             if (
                 not separator
                 or not separator_2
@@ -10229,7 +10272,7 @@ class AutoReplyStore:
         audit_summary: str = "",
         error: str = "",
     ) -> None:
-        if status == "running" or not status.strip():
+        if status not in MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES:
             raise ValueError("meeting alignment run terminal status is invalid")
         values = (
             status,
@@ -15041,7 +15084,10 @@ class AutoReplyStore:
         week_end: str,
         manager_user_id: str,
         source_digest: str,
-    ) -> int:
+    ) -> WeeklyOkrAnalysisJobClaim:
+        manager_user_id = self._require_runtime_attempt_text(
+            manager_user_id, field="manager_user_id"
+        )
         _, workload_key = self._validate_runtime_operation_workload(
             "weekly_okr", f"{week_end}:{manager_user_id}:{source_digest}"
         )
@@ -15049,18 +15095,47 @@ class AutoReplyStore:
             workload_key.split(":", 2)
         )
         with self._agent_run_write_transaction(None) as (db, _):
-            db.execute(
+            inserted = db.execute(
                 "insert or ignore into weekly_okr_analysis_jobs "
                 "(week_end, manager_user_id, source_digest, status) "
                 "values (?, ?, ?, 'running')",
                 (normalized_week_end, normalized_manager, normalized_digest),
             )
             row = db.execute(
-                "select id from weekly_okr_analysis_jobs "
+                "select id, status from weekly_okr_analysis_jobs "
                 "where week_end=? and manager_user_id=? and source_digest=?",
                 (normalized_week_end, normalized_manager, normalized_digest),
             ).fetchone()
-            return int(row["id"])
+            job_id = int(row["id"])
+            if inserted.rowcount == 1:
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
+                )
+            if row["status"] == "failed":
+                changed = db.execute(
+                    "update weekly_okr_analysis_jobs set status='running', "
+                    "error='', finished_at='', updated_at=current_timestamp "
+                    "where id=? and status='failed'",
+                    (job_id,),
+                )
+                if changed.rowcount != 1:
+                    raise RuntimeError("weekly OKR analysis reopen claim lost")
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
+                )
+            if row["status"] == "completed":
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CACHE_HIT,
+                )
+            if row["status"] != "running":
+                raise RuntimeError("weekly OKR analysis job has invalid status")
+            return WeeklyOkrAnalysisJobClaim(
+                job_id=job_id,
+                outcome=WeeklyOkrAnalysisJobClaimOutcome.IN_PROGRESS,
+            )
 
     def finish_weekly_okr_analysis_job(
         self, job_id: int, *, status: str, error: str = ""

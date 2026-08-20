@@ -414,6 +414,21 @@ the result or failure is persisted. Meeting analysis always starts fresh: it
 does not consume or update a Consumer conversation-session slot. Weekly OKR,
 project-memory backfill, and WeChat import extraction also start fresh.
 
+Weekly OKR job claims return an explicit `claimed`, `in_progress`, or
+`cache_hit` outcome. Concurrent callers observe `in_progress` instead of
+duplicating the active analysis.
+Failed natural-key jobs are atomically reopened on the same row with their
+error and finish timestamp cleared; completed jobs are never presented as a
+runnable claim. Manager IDs are trimmed before the natural key is built, and a
+non-canonical padded runtime key is rejected.
+
+Meeting run completion accepts only the production terminal states `failed`,
+`retry`, `no_action`, and `ready_to_send`. When upgrading a legacy table that
+contains more than one running row for a job, migration preserves every row,
+keeps the newest by `(created_at, id)` descending, and closes older rows as
+`failed` with an explicit schema-migration error before adding the one-active
+unique index.
+
 Memory outbox and approved-candidate writers are effectful. They use the
 runtime-attempt ledger for evidence only and never receive automatic provider
 failover; interrupted writes remain on their existing reconciliation path.

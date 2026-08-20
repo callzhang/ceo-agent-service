@@ -918,6 +918,15 @@ the attempt ledger for durable route evidence, but do not permit automatic
 provider failover; ambiguous completion remains owned by their existing
 write/reconciliation lifecycle.
 
+The weekly job claim must distinguish `claimed`, `in_progress`, and `cache_hit`;
+concurrent callers must not both execute the active analysis. It atomically
+reopens a failed row but never returns a completed row as runnable. Canonicalize
+the manager ID before constructing its natural key. Meeting run completion uses
+the centralized production terminal-status set. Before adding its one-active
+index, migration preserves duplicate legacy running rows, keeps the newest by
+`created_at` then `id`, and closes the older rows with an auditable migration
+failure reason.
+
 - [ ] **Step 5: Run each affected suite**
 
 Run:
