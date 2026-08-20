@@ -716,10 +716,10 @@ def test_route_pause_open_close_is_independent_and_idempotent(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "route-pauses.sqlite3")
 
     assert store.open_runtime_route_pause(
-        "codex_oauth", "codex_login_required", retry_at="2026-08-20 10:30:00"
+        "codex_oauth", "codex_login_required", retry_at="2099-01-01 00:00:00"
     )
     assert not store.open_runtime_route_pause(
-        "codex_oauth", "codex_login_required", retry_at="2026-08-20 10:30:00"
+        "codex_oauth", "codex_login_required", retry_at="2099-01-01 00:00:00"
     )
     assert store.active_runtime_route_pause("codex_oauth", now="2026-08-20 10:00:00") == (
         "codex_login_required"

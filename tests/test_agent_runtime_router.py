@@ -124,10 +124,19 @@ def next_route(
     recovery_phase="",
     has_confirmed_receipt=False,
 ):
+    requested_failure = failure or failover_failure()
+    persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
+    if persisted_attempt.status in {"starting", "running"}:
+        persisted_attempt = store.fail_agent_runtime_attempt(
+            persisted_attempt.id,
+            requested_failure.failure_class.value,
+            requested_failure.code,
+            requested_failure.failover_permitted,
+        )
     return router.next_route(
         run=store.get_agent_run(attempt.agent_run_id),
-        failed_attempt=store.get_agent_runtime_attempt(attempt.id),
-        failure=failure or failover_failure(),
+        failed_attempt=persisted_attempt,
+        failure=requested_failure,
         required_capabilities=capabilities,
         recovery_phase=recovery_phase,
         has_confirmed_receipt=has_confirmed_receipt,
@@ -148,6 +157,245 @@ def test_oauth_failure_selects_api_once(router, store, running_attempt):
 
     assert decision.route.name == "codex_api"
     assert decision.fresh_session is False
+
+
+@pytest.mark.parametrize(
+    ("persisted_update", "reason"),
+    [
+        ({"status": "unknown"}, "run_not_eligible"),
+        ({"status": "completed"}, "run_not_eligible"),
+        ({"status": "failed"}, "run_not_eligible"),
+        ({"effect_started_count": 1}, "effect_started"),
+    ],
+)
+def test_router_uses_current_persisted_run_safety_evidence(
+    router, store, running_attempt, persisted_update, reason
+):
+    failure = failover_failure()
+    failed_attempt = store.fail_agent_runtime_attempt(
+        running_attempt.id,
+        failure.failure_class.value,
+        failure.code,
+        failure.failover_permitted,
+    )
+    stale_run = store.get_agent_run(running_attempt.agent_run_id)
+    with store._connect() as db:
+        assignments = ", ".join(f"{field}=?" for field in persisted_update)
+        db.execute(
+            f"update agent_runs set {assignments} where id=?",
+            (*persisted_update.values(), stale_run.id),
+        )
+
+    decision = router.next_route(
+        run=stale_run,
+        failed_attempt=failed_attempt,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="",
+    )
+
+    assert decision.route is None
+    assert decision.reason == reason
+
+
+def test_router_rejects_caller_run_with_forged_turn_identity(
+    router, store, running_attempt
+):
+    failure = failover_failure()
+    failed_attempt = store.fail_agent_runtime_attempt(
+        running_attempt.id,
+        failure.failure_class.value,
+        failure.code,
+        failure.failover_permitted,
+    )
+    forged_run = store.get_agent_run(running_attempt.agent_run_id).model_copy(
+        update={"execution_generation": "forged-generation"}
+    )
+
+    decision = router.next_route(
+        run=forged_run,
+        failed_attempt=failed_attempt,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="",
+    )
+
+    assert decision.route is None
+    assert decision.reason == "run_identity_mismatch"
+
+
+def test_router_rejects_a_missing_persisted_run(router, store, running_attempt):
+    failure = failover_failure()
+    failed_attempt = store.fail_agent_runtime_attempt(
+        running_attempt.id,
+        failure.failure_class.value,
+        failure.code,
+        failure.failover_permitted,
+    )
+    missing_run = store.get_agent_run(running_attempt.agent_run_id).model_copy(
+        update={"id": 999999}
+    )
+
+    decision = router.next_route(
+        run=missing_run,
+        failed_attempt=failed_attempt,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="",
+    )
+
+    assert decision.route is None
+    assert decision.reason == "run_not_found"
+
+
+@pytest.mark.parametrize("attempt_status", ["starting", "running", "completed", "superseded"])
+def test_router_requires_a_persisted_failed_attempt(
+    router, store, running_attempt, attempt_status
+):
+    failure = failover_failure()
+    if attempt_status == "completed":
+        attempt = store.complete_agent_runtime_attempt(running_attempt.id, "", "", 0, 0)
+    elif attempt_status == "superseded":
+        failed = store.fail_agent_runtime_attempt(
+            running_attempt.id,
+            failure.failure_class.value,
+            failure.code,
+            failure.failover_permitted,
+        )
+        store.claim_agent_runtime_attempt(
+            running_attempt.agent_run_id,
+            "codex_api",
+            "codex_cli",
+            "service_api",
+            "gpt-5.5",
+        )
+        attempt = store.mark_agent_runtime_attempt_superseded(failed.id)
+    else:
+        attempt = store.get_agent_runtime_attempt(running_attempt.id)
+
+    decision = router.next_route(
+        run=store.get_agent_run(running_attempt.agent_run_id),
+        failed_attempt=attempt,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="",
+    )
+
+    assert decision.route is None
+    assert decision.reason == "attempt_not_failed"
+
+
+def test_router_rejects_external_failure_that_conflicts_with_persisted_ledger(
+    router, store, running_attempt
+):
+    persisted_failure = RuntimeFailure(
+        failure_class=RuntimeFailureClass.PROCESS,
+        code="process_failed",
+        detail="persisted failure",
+        failover_permitted=False,
+    )
+    failed_attempt = store.fail_agent_runtime_attempt(
+        running_attempt.id,
+        persisted_failure.failure_class.value,
+        persisted_failure.code,
+        persisted_failure.failover_permitted,
+    )
+
+    decision = router.next_route(
+        run=store.get_agent_run(running_attempt.agent_run_id),
+        failed_attempt=failed_attempt,
+        failure=failover_failure(),
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="",
+    )
+
+    assert decision.route is None
+    assert decision.reason == "failure_mismatch"
+
+
+@pytest.mark.parametrize(
+    "external_failure",
+    [
+        RuntimeFailure(
+            failure_class=RuntimeFailureClass.CAPACITY,
+            code="codex_login_required",
+            detail="wrong class",
+            failover_permitted=True,
+        ),
+        RuntimeFailure(
+            failure_class=RuntimeFailureClass.AUTHENTICATION,
+            code="different_code",
+            detail="wrong code",
+            failover_permitted=True,
+        ),
+        RuntimeFailure(
+            failure_class=RuntimeFailureClass.AUTHENTICATION,
+            code="codex_login_required",
+            detail="wrong permission",
+            failover_permitted=False,
+        ),
+    ],
+)
+def test_router_requires_each_persisted_failure_authorization_field(
+    router, store, running_attempt, external_failure
+):
+    persisted_failure = failover_failure()
+    failed_attempt = store.fail_agent_runtime_attempt(
+        running_attempt.id,
+        persisted_failure.failure_class.value,
+        persisted_failure.code,
+        persisted_failure.failover_permitted,
+    )
+
+    decision = router.next_route(
+        run=store.get_agent_run(running_attempt.agent_run_id),
+        failed_attempt=failed_attempt,
+        failure=external_failure,
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="",
+    )
+
+    assert decision.route is None
+    assert decision.reason == "failure_mismatch"
+
+
+def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
+    store, running_attempt
+):
+    original_failure = failover_failure()
+    store.fail_agent_runtime_attempt(
+        running_attempt.id,
+        original_failure.failure_class.value,
+        original_failure.code,
+        original_failure.failover_permitted,
+    )
+    api = store.claim_agent_runtime_attempt(
+        running_attempt.agent_run_id,
+        "codex_api",
+        "codex_cli",
+        "service_api",
+        "gpt-5.5",
+        session_mode="resume",
+        source_session_id="oauth-session",
+    )
+    failed_api = store.fail_agent_runtime_attempt(
+        api.id,
+        original_failure.failure_class.value,
+        original_failure.code,
+        original_failure.failover_permitted,
+    )
+
+    decision = make_router(store).next_route(
+        run=store.get_agent_run(running_attempt.agent_run_id),
+        failed_attempt=failed_api,
+        failure=failover_failure("session_route_incompatible"),
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="",
+    )
+
+    assert decision.route is None
+    assert decision.fresh_session is False
+    assert decision.reason == "failure_mismatch"
 
 
 @pytest.mark.parametrize(

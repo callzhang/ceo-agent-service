@@ -73,19 +73,30 @@ class AgentRuntimeRouter:
         recovery_phase: str,
         has_confirmed_receipt: bool = False,
     ) -> RuntimeRouteDecision:
-        attempts = self._store.list_agent_runtime_attempts(run.id)
-        persisted_attempt = next(
-            (attempt for attempt in attempts if attempt.id == failed_attempt.id),
-            None,
-        )
+        persisted_run = self._store.get_agent_run(run.id)
+        if persisted_run is None:
+            return RuntimeRouteDecision(None, False, "run_not_found")
+        if not _run_identity_matches(run, persisted_run):
+            return RuntimeRouteDecision(None, False, "run_identity_mismatch")
+        if persisted_run.status != "running":
+            return RuntimeRouteDecision(None, False, "run_not_eligible")
+
+        persisted_attempt = self._store.get_agent_runtime_attempt(failed_attempt.id)
         if (
-            failed_attempt.agent_run_id != run.id
+            failed_attempt.agent_run_id != persisted_run.id
             or persisted_attempt is None
+            or persisted_attempt.agent_run_id != persisted_run.id
             or persisted_attempt != failed_attempt
         ):
             return RuntimeRouteDecision(None, False, "attempt_run_mismatch")
+        if persisted_attempt.status != "failed":
+            return RuntimeRouteDecision(None, False, "attempt_not_failed")
+        if not _failure_matches_persisted_attempt(failure, persisted_attempt):
+            return RuntimeRouteDecision(None, False, "failure_mismatch")
+
+        attempts = self._store.list_agent_runtime_attempts(persisted_run.id)
         safe, reason = failover_is_safe(
-            run=run,
+            run=persisted_run,
             attempt=persisted_attempt,
             failure=failure,
             has_confirmed_receipt=has_confirmed_receipt,
@@ -175,3 +186,42 @@ def _parse_timestamp(value: datetime | str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _run_identity_matches(caller: AgentRun, persisted: AgentRun) -> bool:
+    """Compare the immutable turn identity, but deliberately not mutable safety state."""
+    return (
+        caller.id,
+        caller.reply_task_id,
+        caller.execution_generation,
+        caller.role,
+        caller.proposal_revision,
+        caller.turn_attempt,
+        caller.parent_agent_run_id,
+        caller.operation_id,
+    ) == (
+        persisted.id,
+        persisted.reply_task_id,
+        persisted.execution_generation,
+        persisted.role,
+        persisted.proposal_revision,
+        persisted.turn_attempt,
+        persisted.parent_agent_run_id,
+        persisted.operation_id,
+    )
+
+
+def _failure_matches_persisted_attempt(
+    failure: RuntimeFailure, attempt: AgentRuntimeAttempt
+) -> bool:
+    """Accept only failure fields recorded in the attempt ledger.
+
+    The attempt ledger intentionally persists failure class, code, and failover
+    permission. RuntimeFailure's retry and pause hints are not persisted and do
+    not affect route selection at this layer.
+    """
+    return (
+        failure.failure_class.value == attempt.failure_class
+        and failure.code == attempt.failure_code
+        and failure.failover_permitted == attempt.failover_permitted
+    )
