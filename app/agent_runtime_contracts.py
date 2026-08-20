@@ -27,6 +27,16 @@ class RuntimeFailureClass(StrEnum):
     UNCLASSIFIED = "unclassified"
 
 
+class RuntimeEventType(StrEnum):
+    """Provider-neutral event names accepted by persisted runtime consumers."""
+
+    TURN_STARTED = "turn.started"
+    ITEM_STARTED = "item.started"
+    ITEM_COMPLETED = "item.completed"
+    ITEM_FAILED = "item.failed"
+    TURN_COMPLETED = "turn.completed"
+
+
 class RuntimeRoute(BaseModel):
     model_config = ConfigDict(frozen=True)
 
