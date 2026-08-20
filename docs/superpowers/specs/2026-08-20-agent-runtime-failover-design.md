@@ -335,11 +335,17 @@ shows only `configured`, `missing`, or `rejected`.
 
 ## Runtime Attempt Persistence
 
-Add `agent_runtime_attempts` as an append-only child of `agent_runs`:
+Add `agent_runtime_attempts` as an append-only runtime-attempt ledger. Consumer
+and Audit attempts retain a real foreign key to `agent_runs`; Codex-backed
+workloads that do not own an `agent_run` use their existing stable domain kind
+and identifier. The service must not create synthetic reply tasks merely to
+obtain an `agent_run` parent.
 
 ```text
 id
-agent_run_id
+agent_run_id              nullable only for non-reply workloads
+workload_kind             agent_run | structured | meeting | task | weekly_okr | memory
+workload_key              stable existing domain identifier
 attempt_number
 route_name
 runtime_kind             codex_cli | claude_cli
@@ -358,9 +364,13 @@ started_at
 finished_at
 ```
 
-The unique key is `(agent_run_id, attempt_number)`. Attempt numbers are claimed
-transactionally. A completed attempt cannot be superseded. A failed attempt is
-`superseded` only after the next attempt is durably claimed.
+The unique key is `(workload_kind, workload_key, attempt_number)`. For
+`workload_kind=agent_run`, `agent_run_id` is required and `workload_key` is the
+decimal Agent run ID. For every other kind, `agent_run_id` is null and
+`workload_key` must match an existing stable identifier already owned by that
+workload; free-form or random identifiers are rejected. Attempt numbers are
+claimed transactionally. A completed attempt cannot be superseded. A failed
+attempt is `superseded` only after the next attempt is durably claimed.
 
 Do not store:
 
