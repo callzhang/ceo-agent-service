@@ -1659,7 +1659,7 @@ class AutoReplyStore:
                     operation text not null check(operation in ('create', 'complete')),
                     evidence_json text not null default '{}',
                     status text not null default 'queued'
-                        check(status in ('queued', 'running', 'completed', 'failed', 'exhausted', 'unknown')),
+                        check(status in ('queued', 'running', 'completed', 'failed', 'unknown')),
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
                     receipt_json text not null default '{}',
@@ -15575,7 +15575,7 @@ class AutoReplyStore:
             )
             row = db.execute(
                 "select * from task_todo_sync_outbox where "
-                "(status='queued' or (status='failed' and next_attempt_at<=?)) "
+                "(status='queued' or (status='failed' and attempt_count<3 and next_attempt_at<=?)) "
                 "order by id limit 1",
                 (now,),
             ).fetchone()
@@ -15612,14 +15612,14 @@ class AutoReplyStore:
             if row is None:
                 raise ValueError("task todo sync outbox does not exist")
             attempts = int(row["attempt_count"])
-            status = "exhausted" if attempts >= 3 else "failed"
-            next_attempt_at = "" if status == "exhausted" else (
+            exhausted = attempts >= 3
+            next_attempt_at = "" if exhausted else (
                 datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=60 * attempts)
             ).strftime("%Y-%m-%d %H:%M:%S")
             changed = db.execute(
                 "update task_todo_sync_outbox set status=?, error=?, next_attempt_at=?, "
                 "lease_owner='', lease_expires_at='', updated_at=? where id=? and status='running' and lease_owner=?",
-                (status, error, next_attempt_at, now, outbox_id, owner),
+                ("failed", f"task_todo_sync_retry_exhausted:{error}" if exhausted else error, next_attempt_at, now, outbox_id, owner),
             )
             if changed.rowcount != 1:
                 raise ValueError("task todo sync receipt ownership lost")
