@@ -4613,6 +4613,7 @@ class AutoReplyStore:
         validation_result_schema_id: str = "",
         owner: str = "",
         lease_seconds: int = 0,
+        unknown_recovery_owner: str = "",
         now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         (
@@ -4650,6 +4651,12 @@ class AutoReplyStore:
             owner = self._require_runtime_attempt_text(owner, field="owner")
             if lease_seconds <= 0:
                 raise ValueError("lease_seconds must be positive")
+        elif unknown_recovery_owner:
+            unknown_recovery_owner = self._require_runtime_attempt_text(
+                unknown_recovery_owner, field="unknown_recovery_owner"
+            )
+            if session_mode != RuntimeAttemptSessionMode.FRESH.value:
+                raise ValueError("unknown recovery runtime attempt must be fresh")
         with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
             lease_expires_at = (
                 (now_value + timedelta(seconds=lease_seconds)).strftime(
@@ -4660,9 +4667,42 @@ class AutoReplyStore:
             )
             if agent_run_id is not None:
                 run = db.execute(
-                    "select status from agent_runs where id=?", (agent_run_id,)
+                    "select agent_runs.status, agent_runs.role, "
+                    "agent_runs.side_effect_state, "
+                    "agent_runs.effect_started_count, agent_runs.lease_owner, "
+                    "agent_runs.lease_expires_at, "
+                    "agent_runs.reconciliation_suspended, "
+                    "agent_runs.operation_id, reply_tasks.status as task_status, "
+                    "reply_tasks.execution_generation as task_execution_generation, "
+                    "agent_runs.execution_generation "
+                    "from agent_runs "
+                    "join reply_tasks on reply_tasks.id=agent_runs.reply_task_id "
+                    "where agent_runs.id=?",
+                    (agent_run_id,),
                 ).fetchone()
-                if run is None or run["status"] != "running":
+                if unknown_recovery_owner:
+                    if (
+                        run is None
+                        or run["status"] != "unknown"
+                        or run["role"] != AgentRole.AUDIT.value
+                        or not run["operation_id"]
+                        or run["task_status"] != "processing"
+                        or run["execution_generation"]
+                        != run["task_execution_generation"]
+                        or run["side_effect_state"]
+                        not in {
+                            SideEffectState.UNKNOWN.value,
+                            SideEffectState.CONFIRMED.value,
+                        }
+                        or int(run["effect_started_count"]) <= 0
+                        or run["lease_owner"] != unknown_recovery_owner
+                        or run["lease_expires_at"] <= now_text
+                        or int(run["reconciliation_suspended"]) != 0
+                    ):
+                        raise ValueError(
+                            "unknown recovery agent run is not safely claimed"
+                        )
+                elif run is None or run["status"] != "running":
                     raise ValueError("agent run does not exist or is not running")
             elif not self._runtime_operation_parent_exists(
                 db, workload_kind, workload_key
@@ -4792,6 +4832,32 @@ class AutoReplyStore:
             attempt_purpose=attempt_purpose,
             validation_retry_policy_id=validation_retry_policy_id,
             validation_result_schema_id=validation_result_schema_id,
+        )
+
+    def claim_unknown_recovery_agent_runtime_attempt(
+        self,
+        agent_run_id: int,
+        route_name: str,
+        runtime_kind: str,
+        credential_mode: str,
+        model: str,
+        *,
+        owner: str,
+    ) -> AgentRuntimeAttempt:
+        """Claim one fresh provider attempt for an owned unknown-effect Audit."""
+        if agent_run_id <= 0:
+            raise ValueError("agent_run_id must be positive")
+        return self._claim_runtime_attempt(
+            agent_run_id=agent_run_id,
+            workload_kind="agent_run",
+            workload_key=str(agent_run_id),
+            route_name=route_name,
+            runtime_kind=runtime_kind,
+            credential_mode=credential_mode,
+            model=model,
+            session_mode=RuntimeAttemptSessionMode.FRESH,
+            source_session_id="",
+            unknown_recovery_owner=owner,
         )
 
     def claim_runtime_operation_attempt(

@@ -618,6 +618,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         run,
                         route,
                         route_session_id,
+                        recovery_phase=recovery_phase,
                     )
                 attempt_transcript_start = (
                     count_codex_session_lines(
@@ -764,6 +765,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     run,
                     route,
                     route_session_id,
+                    recovery_phase=recovery_phase,
                 )
                 self.store.mark_agent_runtime_attempt_superseded(failed_attempt.id)
                 active_attempt = successor
@@ -1012,20 +1014,34 @@ class AgentTurnProcess(Generic[ResultT]):
         run: AgentRun,
         route: RuntimeRoute,
         source_session_id: str | None,
+        *,
+        recovery_phase: str,
     ) -> AgentRuntimeAttempt:
-        attempt = self.store.claim_agent_runtime_attempt(
-            run.id,
-            route.name,
-            route.runtime_kind.value,
-            route.credential_mode.value,
-            route.model,
-            session_mode=(
-                RuntimeAttemptSessionMode.RESUME
-                if source_session_id
-                else RuntimeAttemptSessionMode.FRESH
-            ),
-            source_session_id=source_session_id or "",
-        )
+        if recovery_phase:
+            if source_session_id:
+                raise ValueError("unknown recovery cannot resume a provider session")
+            attempt = self.store.claim_unknown_recovery_agent_runtime_attempt(
+                run.id,
+                route.name,
+                route.runtime_kind.value,
+                route.credential_mode.value,
+                route.model,
+                owner=self.owner,
+            )
+        else:
+            attempt = self.store.claim_agent_runtime_attempt(
+                run.id,
+                route.name,
+                route.runtime_kind.value,
+                route.credential_mode.value,
+                route.model,
+                session_mode=(
+                    RuntimeAttemptSessionMode.RESUME
+                    if source_session_id
+                    else RuntimeAttemptSessionMode.FRESH
+                ),
+                source_session_id=source_session_id or "",
+            )
         return self.store.mark_agent_runtime_attempt_running_once(attempt.id)
 
     def _fail_runtime_attempt_unclassified(

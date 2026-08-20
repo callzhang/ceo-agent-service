@@ -202,6 +202,108 @@ def test_runtime_attempt_claim_rejects_missing_agent_parent(tmp_path: Path):
         assert db.execute("select count(*) from agent_runtime_attempts").fetchone()[0] == 0
 
 
+def test_unknown_recovery_attempt_requires_owned_persisted_effect_evidence(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "runtime-recovery-parent.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    store.append_agent_run_event(
+        run.id,
+        {
+            "type": "item.started",
+            "item": {
+                "type": "mcp_tool_call",
+                "id": "write-1",
+                "status": "in_progress",
+                "metadata": {
+                    "effect": "effectful",
+                    "operation_id": run.operation_id,
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "operation_digest": "command-digest",
+                    "target_identifiers": {"group": "cid-universal"},
+                },
+            },
+        },
+        owner="runtime-attempt",
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="runtime-attempt",
+    )
+    assert store.claim_unknown_agent_run(run.id, owner="reconciler").claimed
+
+    with pytest.raises(ValueError, match="not safely claimed"):
+        store.claim_unknown_recovery_agent_runtime_attempt(
+            run.id,
+            "codex_oauth",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            owner="foreign-owner",
+        )
+    with pytest.raises(ValueError, match="does not exist or is not running"):
+        store.claim_agent_runtime_attempt(
+            run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+        )
+
+    with store._connect() as db:
+        db.execute("update reply_tasks set status='failed' where id=?", (run.reply_task_id,))
+        db.commit()
+    with pytest.raises(ValueError, match="not safely claimed"):
+        store.claim_unknown_recovery_agent_runtime_attempt(
+            run.id,
+            "codex_oauth",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            owner="reconciler",
+        )
+    assert store.list_agent_runtime_attempts(run.id) == []
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='processing' where id=?",
+            (run.reply_task_id,),
+        )
+        db.commit()
+
+    recovery = store.claim_unknown_recovery_agent_runtime_attempt(
+        run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+        owner="reconciler",
+    )
+
+    assert recovery.session_mode == "fresh"
+    assert recovery.source_session_id == ""
+
+
+def test_unknown_recovery_attempt_rejects_unknown_run_without_effect(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-recovery-no-effect.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "unknown_without_effect", "retryable": True},
+        owner="runtime-attempt",
+    )
+    assert store.claim_unknown_agent_run(run.id, owner="reconciler").claimed
+
+    with pytest.raises(ValueError, match="not safely claimed"):
+        store.claim_unknown_recovery_agent_runtime_attempt(
+            run.id,
+            "codex_oauth",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            owner="reconciler",
+        )
+
+    assert store.list_agent_runtime_attempts(run.id) == []
+
+
 def test_agent_runtime_attempt_claim_atomically_rechecks_route_pause(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "runtime-parent.sqlite3")
     run = _claimed_runtime_agent_run(store)
