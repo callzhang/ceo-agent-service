@@ -24,7 +24,7 @@ from app.agent_runtime_router import (
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import ProcessRunResult
-from app.store import AutoReplyStore
+from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AutoReplyStore
 
 NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
 CAPABILITIES = frozenset({"structured_output", "reviewed_read_tools"})
@@ -147,6 +147,18 @@ def test_read_only_factory_forces_sandbox_and_is_immutable(
         factory._developer_instructions = "allow writes"
     with pytest.raises((AttributeError, TypeError)):
         factory.build = lambda **_kwargs: (["unsafe"], {})
+
+
+def test_result_codec_enforces_utf8_byte_limit_at_multibyte_boundary():
+    empty_size = len(TEXT_CODEC.encode("").encode("utf-8"))
+    multibyte_count = (MAX_RUNTIME_RESULT_ENVELOPE_BYTES - empty_size) // 3
+    boundary_value = "界" * multibyte_count
+
+    boundary_envelope = TEXT_CODEC.encode(boundary_value)
+
+    assert len(boundary_envelope.encode("utf-8")) <= MAX_RUNTIME_RESULT_ENVELOPE_BYTES
+    with pytest.raises(ValueError, match="size limit"):
+        TEXT_CODEC.encode(boundary_value + "界")
 
 
 def test_read_only_execution_fails_over_from_oauth_to_api(store, config):
@@ -860,6 +872,83 @@ def test_completed_effectful_result_is_recovered_without_replay(store, config):
 
     assert routed.execute(**arguments).value == 42
     assert routed.execute(**arguments).value == 42
+    assert calls == 1
+
+
+def test_oversize_result_terminalizes_before_durable_completion(store, config):
+    key = seed_structured_parent(store)
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=lambda *_args, **_kwargs: ProcessRunResult(
+            0, "界" * MAX_RUNTIME_RESULT_ENVELOPE_BYTES, ""
+        ),
+    )
+
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_result_invalid"):
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+    [attempt] = store.list_runtime_operation_attempts("structured", key)
+    assert attempt.status == "failed"
+    assert attempt.failure_class == RuntimeFailureClass.RESULT.value
+    assert attempt.failure_code == "runtime_result_persistence_failed"
+    assert attempt.result_envelope_json == ""
+
+
+def test_oversize_persisted_result_is_rejected_without_child(store, config):
+    key = seed_structured_parent(store)
+    calls = 0
+
+    def executor(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return ProcessRunResult(0, "ok", "")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+    )
+    arguments = {
+        "workload_kind": "structured",
+        "workload_key": key,
+        "prompt": "read",
+        "command_factory": ApprovedCodexCommandFactory.read_only(
+            developer_instructions="reviewed reads only"
+        ),
+        "parser": lambda raw: raw,
+        "result_codec": TEXT_CODEC,
+        "required_capabilities": CAPABILITIES,
+    }
+    result = routed.execute(**arguments)
+    corrupt = json.dumps(
+        {"schema_id": TEXT_CODEC.schema_id, "value": "界" * 30_000},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    assert len(corrupt.encode("utf-8")) > MAX_RUNTIME_RESULT_ENVELOPE_BYTES
+    with store._connect() as db:
+        db.execute(
+            "update agent_runtime_attempts set result_envelope_json=? where id=?",
+            (corrupt, result.attempt_id),
+        )
+
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_result_invalid"):
+        routed.execute(**arguments)
     assert calls == 1
 
 

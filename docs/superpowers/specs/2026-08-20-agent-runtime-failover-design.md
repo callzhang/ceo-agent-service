@@ -330,6 +330,8 @@ session, and marks the attempt completed. The envelope excludes the prompt,
 raw transcript, environment, and credential-like or local-runtime data. A
 retry with the matching codec returns the prior completed result without
 starting another child; a missing, corrupt, or mismatched codec fails closed.
+The encoded UTF-8 envelope is capped at 64 KiB both before completion and when
+restored, so multi-byte text cannot bypass the durable-result bound.
 
 Failover is unsafe as soon as one effectful `item.started` event exists, even
 when the command later reports failure. The run becomes or remains `unknown`

@@ -135,6 +135,7 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_generalized_lease_update",
 )
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
+MAX_RUNTIME_RESULT_ENVELOPE_BYTES = 64 * 1024
 MAX_RECONCILIATION_EVENTS = 256
 RECONCILIATION_EVENT_LIMIT_ERROR = "agent run reconciliation event limit exceeded"
 RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
@@ -4779,6 +4780,11 @@ class AutoReplyStore:
                 raise ValueError("result envelope must be valid JSON") from exc
             if not isinstance(envelope, dict) or envelope.get("schema_id") != result_schema_id:
                 raise ValueError("result envelope schema mismatch")
+            if (
+                len(result_envelope_json.encode("utf-8"))
+                > MAX_RUNTIME_RESULT_ENVELOPE_BYTES
+            ):
+                raise ValueError("result envelope exceeds size limit")
         elif result_envelope_json:
             raise ValueError("result schema is required")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):

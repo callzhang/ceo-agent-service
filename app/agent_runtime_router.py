@@ -33,6 +33,7 @@ from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import (
+    MAX_RUNTIME_RESULT_ENVELOPE_BYTES,
     AgentRun,
     AgentRuntimeAttempt,
     AgentRuntimeAttemptStartConflictError,
@@ -46,6 +47,10 @@ StepT = TypeVar("StepT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 _APPROVED_COMMAND_FACTORY_SEAL = object()
 _ROUTED_RESULT_CODEC_SEAL = object()
+
+
+class RoutedResultEnvelopeTooLarge(ValueError):
+    """Raised when a durable result exceeds the reviewed byte budget."""
 
 
 class ExecutionEffectMode(StrEnum):
@@ -199,11 +204,17 @@ class RoutedResultCodec[ResultT]:
             ensure_ascii=False,
             separators=(",", ":"),
         )
+        if len(encoded.encode("utf-8")) > MAX_RUNTIME_RESULT_ENVELOPE_BYTES:
+            raise RoutedResultEnvelopeTooLarge("result envelope exceeds size limit")
         if contains_credential(encoded) or contains_local_runtime_leak(encoded):
             raise ValueError("result envelope contains sensitive runtime data")
         return encoded
 
     def decode(self, encoded: str) -> ResultT:
+        if len(encoded.encode("utf-8")) > MAX_RUNTIME_RESULT_ENVELOPE_BYTES:
+            raise RoutedResultEnvelopeTooLarge(
+                "persisted result envelope exceeds size limit"
+            )
         try:
             envelope = json.loads(encoded)
         except (json.JSONDecodeError, TypeError) as exc:
@@ -644,6 +655,8 @@ class RoutedCodexExecution:
             if latest.status == "completed":
                 try:
                     value = result_codec.decode(latest.result_envelope_json)
+                except RoutedResultEnvelopeTooLarge as exc:
+                    raise RoutedCodexExecutionError("runtime_result_invalid") from exc
                 except ValueError as exc:
                     raise RoutedCodexExecutionError(
                         "runtime_result_schema_mismatch"
@@ -1108,7 +1121,7 @@ class RoutedCodexExecution:
                 attempt,
                 failure_class=(
                     RuntimeFailureClass.RESULT
-                    if stage == "result_parse"
+                    if stage in {"result_parse", "result_persistence"}
                     else RuntimeFailureClass.PROCESS
                 ),
                 failure_code=failure_code,
@@ -1120,6 +1133,7 @@ class RoutedCodexExecution:
             error_code = {
                 "process_execution": "runtime_executor_failed",
                 "result_parse": "runtime_result_invalid",
+                "result_persistence": "runtime_result_invalid",
             }.get(stage, "runtime_post_start_failed")
             raise RoutedCodexExecutionError(error_code, stage) from exc
 
