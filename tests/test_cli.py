@@ -150,6 +150,32 @@ def test_probe_agent_runtimes_prints_safe_route_json(tmp_path, capsys):
     assert "secret-bearing" not in capsys.readouterr().out
 
 
+def test_probe_agent_runtimes_missing_api_secret_is_safe_json(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
+    monkeypatch.delenv("CEO_CODEX_API_KEY", raising=False)
+
+    result = cli.probe_agent_runtimes_command(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        route_names=("codex_api",),
+    )
+
+    assert result == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "routes": [
+            {
+                "route_name": "codex_api",
+                "healthy": False,
+                "capabilities": [],
+                "checked_at": "",
+                "expires_at": "",
+                "failure_code": "missing_secret",
+            }
+        ]
+    }
+
+
 def test_runtime_probe_loop_refreshes_after_each_interval():
     calls = []
 
@@ -169,6 +195,28 @@ def test_runtime_probe_loop_refreshes_after_each_interval():
         cli.run_runtime_probe_loop(Refresher(), 300, sleep=sleep)
 
     assert calls == [("sleep", 300), ("refresh",), ("sleep", 300)]
+
+
+def test_runtime_probe_loop_survives_unexpected_refresh_failure():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+            raise RuntimeError("must not stop service")
+
+    def sleep(_seconds):
+        calls.append("sleep")
+        if calls.count("sleep") == 2:
+            raise StopLoop
+
+    with pytest.raises(StopLoop):
+        cli.run_runtime_probe_loop(Refresher(), 300, sleep=sleep)
+
+    assert calls == ["sleep", "refresh", "sleep"]
 
 
 def test_run_service_probes_before_starting_shared_refresh_component(
@@ -206,6 +254,46 @@ def test_run_service_probes_before_starting_shared_refresh_component(
 
     assert calls[0] == ("refresh", True)
     assert ("start", "ceo-agent-service-runtime-probe", True) in calls
+    assert calls[-1] == ("wait",)
+
+
+def test_run_service_starts_components_when_initial_runtime_refresh_raises(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    class Refresher:
+        interval_seconds = 300
+
+        def refresh_expired(self, *, force=False):
+            calls.append(("refresh", force))
+            raise RuntimeError("isolated startup failure")
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            del target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+
+    monkeypatch.setattr(cli, "doctor_mcp_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_wechat_service_components", lambda _settings: ())
+
+    run_service(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        runtime_refresher=Refresher(),
+    )
+
+    assert ("refresh", True) in calls
+    assert any(call[:2] == ("start", "ceo-agent-service-runtime-probe") for call in calls)
     assert calls[-1] == ("wait",)
 
 

@@ -446,7 +446,11 @@ def _contains_sensitive_profile_evidence(text: str) -> bool:
     )
 
 
-def check_service_config(*, repo_root: Path) -> SetupStepStatus:
+def check_service_config(
+    *,
+    repo_root: Path,
+    runtime_snapshots: Mapping[str, RuntimeCapabilitySnapshot] | None = None,
+) -> SetupStepStatus:
     env_path = repo_root / ".env"
     if not env_path.exists():
         return _status(
@@ -499,12 +503,30 @@ def check_service_config(*, repo_root: Path) -> SetupStepStatus:
             summary="Dry-run is not enabled.",
             evidence={"env_exists": True, "dry_run_enabled": False},
         )
+    if runtime_snapshots is None:
+        from app.agent_runtime_production import PRODUCTION_RUNTIME_CAPABILITIES
+
+        runtime_snapshots = PRODUCTION_RUNTIME_CAPABILITIES
+
+    runtime_routes_json = json.dumps(
+        list(
+            runtime_route_setup_statuses(
+                env=values,
+                snapshots=runtime_snapshots,
+            )
+        ),
+        separators=(",", ":"),
+    )
     return _status(
         "service_config",
         title="Service Config",
         status="done",
         summary="Service config and runtime directories are ready.",
-        evidence={"env_exists": True, "dry_run_enabled": True},
+        evidence={
+            "env_exists": True,
+            "dry_run_enabled": True,
+            "runtime_routes_json": runtime_routes_json,
+        },
     )
 
 
@@ -1271,13 +1293,13 @@ def _setup_service_config(
                 [
                     {
                         "route_name": status["route_name"],
+                        "status": status["status"],
                         "secret_configured": status["secret_configured"],
                     }
                     for status in runtime_route_setup_statuses(
                         env=values,
                         snapshots={},
                     )
-                    if status["status"] != "disabled"
                 ],
                 separators=(",", ":"),
             ),

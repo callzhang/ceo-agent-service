@@ -69,6 +69,16 @@ def build_production_routed_codex_execution(
     """
 
     runtime_config = load_runtime_config(os.environ)
+    # Every production construction observes one shared, current registry. An
+    # already-current snapshot makes this a no-op, so maintenance loops do not
+    # issue a provider probe on every iteration.
+    build_production_runtime_refresher(
+        store=store,
+        codex_bin=codex_bin,
+        executor=executor,
+        capability_registry=capability_registry,
+        temporary_root=workspace,
+    ).refresh_expired()
     kwargs = {
         "store": store,
         "config": runtime_config,

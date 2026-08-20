@@ -2357,7 +2357,12 @@ def run_runtime_probe_loop(
 
     while True:
         sleep(interval_seconds)
-        runtime_refresher.refresh_expired()
+        try:
+            runtime_refresher.refresh_expired()
+        except Exception:  # noqa: BLE001, S112 - persistent health loop
+            # Probe failures are route health, never a reason to kill service
+            # threads. The next interval retries through the same refresher.
+            continue
 
 
 def _create_meeting_dws(settings: WorkerSettings) -> DwsClient:
@@ -2706,7 +2711,15 @@ def run_service(
     runtime_refresher=None,
 ) -> None:
     if runtime_refresher is not None:
-        runtime_refresher.refresh_expired(force=True)
+        try:
+            runtime_refresher.refresh_expired(force=True)
+        except Exception:  # noqa: BLE001 - startup must degrade, not abort service
+            AutoReplyStore(settings.db_path).record_error(
+                "",
+                "",
+                "agent_runtime_probe_startup_failed",
+                "Agent runtime startup probe failed; routes remain unavailable.",
+            )
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_orphaned_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
@@ -3115,9 +3128,38 @@ def probe_agent_runtimes_command(
     if refresher is None:
         from app.agent_runtime_production import build_production_runtime_refresher
 
-        refresher = build_production_runtime_refresher(
-            store=AutoReplyStore(settings.db_path),
-        )
+        try:
+            refresher = build_production_runtime_refresher(
+                store=AutoReplyStore(settings.db_path),
+            )
+        except ValueError:
+            configured = {
+                item.strip()
+                for item in os.getenv(
+                    "CEO_AGENT_RUNTIME_ROUTES", "codex_oauth"
+                ).split(",")
+                if item.strip()
+            }
+            selected = route_names or tuple(sorted(configured))
+            routes = [
+                {
+                    "route_name": route_name,
+                    "healthy": False,
+                    "capabilities": [],
+                    "checked_at": "",
+                    "expires_at": "",
+                    "failure_code": (
+                        "missing_secret"
+                        if route_name == "codex_api"
+                        and "codex_api" in configured
+                        and not os.getenv("CEO_CODEX_API_KEY", "").strip()
+                        else "runtime_configuration_invalid"
+                    ),
+                }
+                for route_name in selected
+            ]
+            print(json.dumps({"routes": routes}, ensure_ascii=False), flush=True)
+            return 1
     snapshots = refresher.refresh_expired(route_names=route_names, force=True)
     routes = [
         {

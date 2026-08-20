@@ -20,7 +20,6 @@ from app.agent_runtime_production import RuntimeCapabilityRegistry
 from app.agent_runtime_router import (
     ApprovedCodexCommandFactory,
     ProcessExecutor,
-    _configured_mcp_server_transport_names,
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import run_process_with_idle_timeout
@@ -45,9 +44,6 @@ _BASE_CAPABILITIES = frozenset(
         "structured_output",
         "local_schema_validation",
         "consumer_read_only_enforcement",
-        "audit_effect_visibility",
-        "reconciliation_read_only",
-        "image_input",
     }
 )
 
@@ -143,7 +139,7 @@ class AgentRuntimeProbe:
                         ),
                     )
                 capabilities = _route_capabilities(adapter=adapter, route=route)
-        except (OSError, RuntimeError, TypeError, ValueError):
+        except Exception:  # noqa: BLE001 - fail closed across provider/runtime code
             return _snapshot(
                 route=route,
                 checked_at=checked_at,
@@ -211,7 +207,21 @@ class RuntimeCapabilityRefresher:
                 current = snapshots.get(route_name)
                 if not force and current is not None and _snapshot_is_current(current, now):
                     continue
-                snapshot = self._probe.run(route_name=route_name)
+                try:
+                    snapshot = self._probe.run(route_name=route_name)
+                except Exception:  # noqa: BLE001 - isolate one route from all others
+                    route = next(
+                        route for route in self._config.routes if route.name == route_name
+                    )
+                    snapshot = _snapshot(
+                        route=route,
+                        checked_at=now,
+                        expires_at=now + self._config.probe_interval,
+                        failure=_probe_failure(
+                            "runtime_probe_failed",
+                            "Runtime probe could not be completed.",
+                        ),
+                    )
                 snapshots[route_name] = snapshot
                 if snapshot.healthy and snapshot.failure is None:
                     self._store.close_runtime_route_pause(route_name)
@@ -273,8 +283,20 @@ def _probe_stream_failure_code(raw: str) -> str | None:
     if not payloads or any(not isinstance(payload, dict) for payload in payloads):
         return "runtime_probe_incomplete"
     types = [payload.get("type") for payload in payloads]
-    if "item.started" in types:
+    allowed_types = {
+        "thread.started",
+        "turn.started",
+        "item.completed",
+        "turn.completed",
+    }
+    if any(payload_type not in allowed_types for payload_type in types):
         return "runtime_probe_policy_violation"
+    for payload in payloads:
+        if payload.get("type") != "item.completed":
+            continue
+        item = payload.get("item")
+        if not isinstance(item, dict) or item.get("type") != "agent_message":
+            return "runtime_probe_policy_violation"
     if types.count("thread.started") != 1:
         return "runtime_probe_incomplete"
     if types.count("turn.started") != 1 or types.count("turn.completed") != 1:
@@ -311,19 +333,7 @@ def _probe_stream_failure_code(raw: str) -> str | None:
 def _route_capabilities(
     *, adapter: CodexRuntimeAdapter, route: RuntimeRoute
 ) -> frozenset[str]:
-    transports = frozenset(
-        _configured_mcp_server_transport_names((), env=adapter.build_env(route))
-    )
-    capabilities = set(_BASE_CAPABILITIES)
-    if transports & {"agent_cli", "memory_connector"}:
-        capabilities.add("reviewed_read_tools")
-    if "agent_cli" in transports:
-        capabilities.add("reviewed_write_tools")
-    if "memory_connector" in transports:
-        capabilities.update(
-            {
-                "memory_connector_read",
-                "mcp:memory_connector:memory_write",
-            }
-        )
-    return frozenset(capabilities)
+    # This no-tools probe proves only the transport/schema/read-only boundary.
+    # Configured MCP transports are not evidence that any business tool works.
+    del adapter, route
+    return _BASE_CAPABILITIES

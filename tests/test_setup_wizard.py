@@ -468,8 +468,16 @@ def test_setup_service_config_accepts_runtime_secret_without_rendering_it(tmp_pa
     assert f"CEO_CODEX_API_KEY={secret}" in env_text
     assert secret not in event.model_dump_json()
     assert json.loads(event.evidence["runtime_routes_json"]) == [
-        {"route_name": "codex_oauth", "secret_configured": False},
-        {"route_name": "codex_api", "secret_configured": True},
+        {
+            "route_name": "codex_oauth",
+            "status": "probe_failed",
+            "secret_configured": False,
+        },
+        {
+            "route_name": "codex_api",
+            "status": "probe_failed",
+            "secret_configured": True,
+        },
     ]
 
 
@@ -603,11 +611,23 @@ def test_check_service_config_accepts_env_and_directories(tmp_path: Path):
         encoding="utf-8",
     )
 
-    result = check_service_config(repo_root=tmp_path)
+    result = check_service_config(repo_root=tmp_path, runtime_snapshots={})
 
     assert result.status == "done"
     assert result.summary == "Service config and runtime directories are ready."
     assert result.evidence["dry_run_enabled"] is True
+    assert json.loads(result.evidence["runtime_routes_json"]) == [
+        {
+            "route_name": "codex_oauth",
+            "status": "probe_failed",
+            "secret_configured": False,
+        },
+        {
+            "route_name": "codex_api",
+            "status": "disabled",
+            "secret_configured": False,
+        },
+    ]
 
 
 def test_check_service_config_expands_home_environment_value(

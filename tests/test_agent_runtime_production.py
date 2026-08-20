@@ -29,12 +29,25 @@ def test_production_registry_refreshes_existing_router_view(tmp_path, monkeypatc
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
     monkeypatch.setenv("CEO_CODEX_API_KEY", "test-secret")
     registry = RuntimeCapabilityRegistry()
+    stdout = "\n".join(
+        json.dumps(payload)
+        for payload in (
+            {"type": "thread.started", "thread_id": "probe-session"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": '{"ok":true}'},
+            },
+            {"type": "turn.completed"},
+        )
+    )
     routed = build_production_routed_codex_execution(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
         workspace=tmp_path,
         total_timeout_seconds=10,
         idle_timeout_seconds=5,
         capability_registry=registry,
+        executor=lambda *_args, **_kwargs: ProcessRunResult(0, stdout, ""),
     )
 
     initial = routed._router.first_route_decision(
@@ -43,7 +56,7 @@ def test_production_registry_refreshes_existing_router_view(tmp_path, monkeypatc
     )
     assert initial.route is not None
     assert initial.route.name == "codex_oauth"
-    assert initial.reason == "legacy_oauth_bootstrap"
+    assert initial.reason == "eligible_route"
 
     registry.refresh({"codex_api": _snapshot("codex_api")})
     refreshed = routed._router.first_route_decision(
@@ -53,23 +66,36 @@ def test_production_registry_refreshes_existing_router_view(tmp_path, monkeypatc
     assert refreshed.route.name == "codex_api"
 
 
-def test_production_bootstrap_never_admits_missing_api_snapshot(tmp_path, monkeypatch):
+def test_production_factory_probes_api_before_admitting_route(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_api")
     monkeypatch.setenv("CEO_CODEX_API_KEY", "test-secret")
+    stdout = "\n".join(
+        json.dumps(payload)
+        for payload in (
+            {"type": "thread.started", "thread_id": "probe-session"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": '{"ok":true}'},
+            },
+            {"type": "turn.completed"},
+        )
+    )
     routed = build_production_routed_codex_execution(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
         workspace=tmp_path,
         total_timeout_seconds=10,
         idle_timeout_seconds=5,
         capability_registry=RuntimeCapabilityRegistry(),
+        executor=lambda *_args, **_kwargs: ProcessRunResult(0, stdout, ""),
     )
 
     decision = routed._router.first_route_decision(
         required_capabilities=frozenset(),
         allow_legacy_oauth_bootstrap=routed._allow_legacy_oauth_bootstrap,
     )
-    assert decision.route is None
-    assert "codex_api=snapshot_missing" in decision.reason
+    assert decision.route is not None
+    assert decision.route.name == "codex_api"
 
 
 def test_capability_registry_rejects_mismatched_key():
@@ -102,4 +128,38 @@ def test_production_refresher_publishes_into_shared_registry(tmp_path, monkeypat
     snapshots = refresher.refresh_expired(force=True)
 
     assert snapshots["codex_oauth"].healthy is True
+    assert PRODUCTION_RUNTIME_CAPABILITIES["codex_oauth"].healthy is True
+
+
+def test_production_execution_factory_refreshes_empty_registry_once(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
+    PRODUCTION_RUNTIME_CAPABILITIES.refresh({})
+    stdout = "\n".join(
+        json.dumps(payload)
+        for payload in (
+            {"type": "thread.started", "thread_id": "probe-session"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": '{"ok":true}'},
+            },
+            {"type": "turn.completed"},
+        )
+    )
+    calls = []
+
+    build_production_routed_codex_execution(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        workspace=tmp_path,
+        total_timeout_seconds=30,
+        idle_timeout_seconds=10,
+        codex_bin="codex-test",
+        executor=lambda *_args, **_kwargs: (
+            calls.append("probe") or ProcessRunResult(0, stdout, "")
+        ),
+    )
+
+    assert calls == ["probe"]
     assert PRODUCTION_RUNTIME_CAPABILITIES["codex_oauth"].healthy is True
