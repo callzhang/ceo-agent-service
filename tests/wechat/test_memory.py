@@ -76,6 +76,16 @@ def built_factory_command(factory, tmp_path):
             return [
                 "codex",
                 "exec",
+                "--enable",
+                "plugins",
+                "--enable",
+                "apps",
+                "-c",
+                "features.chronicle=true",
+                "-c",
+                'tools.enabled_tools=["shell","web_search"]',
+                "-c",
+                'web_search="live"',
                 "-c",
                 'mcp_servers.foreign_route.command="foreign-route-mcp"',
                 "--cd",
@@ -93,6 +103,43 @@ def built_factory_command(factory, tmp_path):
         session_id=None,
     )
     return command
+
+
+def assert_dynamic_features_are_disabled(command):
+    protected = {
+        "plugins",
+        "apps",
+        "chronicle",
+        "computer_use",
+        "browser_use",
+        "in_app_browser",
+        "memories",
+        "skill_search",
+    }
+    enabled = {
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--enable"
+    }
+    disabled = {
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--disable"
+    }
+    assert enabled.isdisjoint(protected)
+    assert protected <= disabled
+    assert not any(
+        item.startswith(tuple(f"features.{name}=" for name in protected))
+        and item.endswith("=true")
+        for item in command
+    )
+    assert command.count("tools.enabled_tools=[]") == 1
+    assert not any(
+        item.startswith("tools.enabled_tools=")
+        and item != "tools.enabled_tools=[]"
+        for item in command
+    )
+    assert command.count('web_search="disabled"') == 1
 
 
 @pytest.fixture
@@ -838,6 +885,7 @@ def test_codex_extraction_creates_parent_before_routed_read_only_invocation(
     assert "mcp_servers.foreign_user.enabled=false" in command
     assert "mcp_servers.memory_connector.enabled=false" in command
     assert not any("memory_connector.enabled_tools" in item for item in command)
+    assert_dynamic_features_are_disabled(command)
     with store._connect() as db:
         job = db.execute("select status from wechat_memory_import_jobs").fetchone()
     assert job["status"] == "completed"
@@ -927,6 +975,7 @@ def test_recall_matcher_uses_one_exact_query_per_candidate(tmp_path):
     assert "mcp_servers.memory_connector.enabled=true" in command
     assert 'mcp_servers.memory_connector.enabled_tools=["memory_recall"]' in command
     assert 'mcp_servers.memory_connector.disabled_tools=["memory_write"]' in command
+    assert_dynamic_features_are_disabled(command)
     with matcher.store._connect() as db:
         jobs = db.execute(
             "select status from wechat_memory_import_jobs order by id"

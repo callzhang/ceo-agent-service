@@ -165,6 +165,18 @@ class _ReadOnlyCommandIsolation(StrEnum):
     MEMORY_RECALL_ONLY = "memory_recall_only"
 
 
+_READ_ONLY_DISABLED_DYNAMIC_FEATURES = (
+    "plugins",
+    "apps",
+    "chronicle",
+    "computer_use",
+    "browser_use",
+    "in_app_browser",
+    "memories",
+    "skill_search",
+)
+
+
 @dataclass(frozen=True, slots=True)
 class _ApprovedExecutionPolicy:
     effect_mode: ExecutionEffectMode
@@ -332,7 +344,13 @@ def _apply_read_only_command_isolation(
     isolation: _ReadOnlyCommandIsolation,
 ) -> None:
     server_names = _configured_mcp_server_names(command, env=env)
+    _remove_read_only_isolation_conflicts(command)
     options = [
+        *(
+            option
+            for feature in _READ_ONLY_DISABLED_DYNAMIC_FEATURES
+            for option in ("--disable", feature)
+        ),
         "-c",
         "tools.enabled_tools=[]",
         "-c",
@@ -364,6 +382,26 @@ def _apply_read_only_command_isolation(
     if command[1:3] == ["exec", "resume"]:
         insertion_index -= 1
     command[insertion_index:insertion_index] = options
+
+
+def _remove_read_only_isolation_conflicts(command: list[str]) -> None:
+    index = 0
+    feature_prefixes = tuple(
+        f"features.{feature}=" for feature in _READ_ONLY_DISABLED_DYNAMIC_FEATURES
+    )
+    while index + 1 < len(command):
+        if (
+            command[index] == "--enable"
+            and command[index + 1] in _READ_ONLY_DISABLED_DYNAMIC_FEATURES
+        ):
+            del command[index : index + 2]
+            continue
+        if command[index] == "-c" and command[index + 1].startswith(
+            ("tools.enabled_tools=", "web_search=", *feature_prefixes)
+        ):
+            del command[index : index + 2]
+            continue
+        index += 1
 
 
 def _configured_mcp_server_names(
