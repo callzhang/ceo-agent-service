@@ -1204,6 +1204,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(
     )
     assert 'web_search="disabled"' not in command
     assert any("## Pydantic Wire Contract" in option for option in command)
+    assert any("Do not reopen AGENT.md with shell" in option for option in command)
     assert any("AuditAgentWireResult" in option for option in command)
     assert any("agent_cli.read_skill" in option for option in command)
     assert "every write command remain forbidden for Consumer" not in " ".join(command)

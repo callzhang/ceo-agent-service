@@ -508,6 +508,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     assert "## Runtime Invariants" in executor.prompts[0]
     assert "## Installed CEO business Skill catalog" not in executor.prompts[0]
     assert any("## Installed CEO business Skill catalog" in option for option in command)
+    assert any("Do not reopen AGENT.md with shell" in option for option in command)
     assert any("PROTOCOL PRECONDITION" in option for option in command)
     assert any("ceo-message-triage" in option for option in command)
     assert any("ceo-work-tracking" in option for option in command)

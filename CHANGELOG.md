@@ -3,6 +3,8 @@
 - Isolate background Consumer and Audit Codex turns from desktop plugins,
   browser features, session memory, and unrelated user MCP servers while
   retaining the configured model provider and existing Codex login.
+- Treat the canonical shared rules embedded in role prompts as already read, so
+  background agents cannot fail by reopening `AGENT.md` through native shell.
 
 - Reconcile unknown direct follow-up sends with a complete, exact DingTalk
   conversation readback. A matching outbound message now finalizes delivery;

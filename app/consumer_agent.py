@@ -601,4 +601,10 @@ def _role_developer_instructions(
     if shared:
         quoted_shared = "\n".join(f"> {line}" for line in shared.splitlines())
         instructions += "\n\n## Shared Agent Rules\n" + quoted_shared
+        instructions += (
+            "\n\nThe complete canonical shared rules are embedded above and have already "
+            "been read for this turn. Do not reopen AGENT.md with shell, Python, "
+            "or a native command tool. Any additional permitted local file read "
+            "must use the matching controlled `agent_cli` read tool."
+        )
     return instructions + "\n\n## Role Boundary\n" + role_boundary
