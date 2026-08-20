@@ -94,6 +94,274 @@ def _enqueue_universal_reply_task(
     return store.claim_reply_tasks(limit=1)[0].id
 
 
+def _claimed_runtime_agent_run(store: AutoReplyStore):
+    task_id = _enqueue_universal_reply_task(store)
+    return _claim_audit_run(store, task_id, "initial", owner="runtime-attempt").run
+
+
+def test_runtime_attempt_claim_is_ordered_and_idempotent(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+
+    first = store.claim_agent_runtime_attempt(
+        run.id,
+        route_name="codex_oauth",
+        runtime_kind="codex_cli",
+        credential_mode="local_oauth",
+        model="gpt-5.5",
+    )
+    repeated = store.claim_agent_runtime_attempt(
+        run.id,
+        route_name="codex_oauth",
+        runtime_kind="codex_cli",
+        credential_mode="local_oauth",
+        model="gpt-5.5",
+    )
+
+    assert first.attempt_number == 1
+    assert repeated.id == first.id
+
+
+def test_runtime_attempt_claim_numbers_follow_terminal_attempts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    first = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+
+    store.fail_agent_runtime_attempt(
+        first.id,
+        failure_class="authentication",
+        failure_code="codex_login_required",
+        failover_permitted=True,
+    )
+    second = store.claim_agent_runtime_attempt(
+        run.id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
+    )
+
+    assert second.attempt_number == 2
+    assert [attempt.id for attempt in store.list_agent_runtime_attempts(run.id)] == [
+        first.id,
+        second.id,
+    ]
+    assert store.mark_agent_runtime_attempt_superseded(first.id).status == "superseded"
+
+
+@pytest.mark.parametrize(
+    ("workload_kind", "workload_key"),
+    [
+        ("structured", "12"),
+        ("meeting", "13"),
+        ("task", "14"),
+        ("task", "15:memory_backfill"),
+        ("weekly_okr", "2026-08-16:manager-1:source-digest"),
+        ("memory", "16"),
+    ],
+)
+def test_runtime_attempt_operation_accepts_approved_stable_workload_keys(
+    tmp_path: Path,
+    workload_kind: str,
+    workload_key: str,
+):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+
+    attempt = store.claim_runtime_operation_attempt(
+        workload_kind,
+        workload_key,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+    )
+
+    assert attempt.workload_kind == workload_kind
+    assert attempt.workload_key == workload_key
+    assert attempt.agent_run_id is None
+
+
+@pytest.mark.parametrize(
+    ("workload_kind", "workload_key"),
+    [
+        ("agent_run", "1"),
+        ("unknown", "1"),
+        ("structured", "request-12"),
+        ("meeting", "meeting-13"),
+        ("task", "not-a-persisted-id"),
+        ("weekly_okr", "not-a-stable-key"),
+        ("memory", "memory-16"),
+    ],
+)
+def test_runtime_attempt_operation_rejects_unapproved_or_freeform_workload_keys(
+    tmp_path: Path,
+    workload_kind: str,
+    workload_key: str,
+):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+
+    with pytest.raises(ValueError):
+        store.claim_runtime_operation_attempt(
+            workload_kind,
+            workload_key,
+            "codex_oauth",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+        )
+
+
+def test_runtime_attempt_transitions_are_terminal_safe(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+
+    running = store.mark_agent_runtime_attempt_running(attempt.id)
+    completed = store.complete_agent_runtime_attempt(
+        running.id,
+        session_id="session-1",
+        transcript_reference="run.jsonl",
+        transcript_start=4,
+        transcript_end=8,
+    )
+
+    assert running.status == "running"
+    assert completed.status == "completed"
+    with pytest.raises(ValueError, match="completed"):
+        store.fail_agent_runtime_attempt(
+            completed.id, "process", "codex_process_failed", False
+        )
+    with pytest.raises(ValueError, match="completed"):
+        store.mark_agent_runtime_attempt_superseded(completed.id)
+
+
+def test_runtime_attempt_completion_allows_missing_session_and_transcript(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+
+    completed = store.complete_agent_runtime_attempt(attempt.id, "", "", 0, 0)
+
+    assert completed.status == "completed"
+    assert completed.session_id == ""
+    assert completed.transcript_reference == ""
+
+
+def test_runtime_attempt_rejects_conflicting_terminal_rewrites(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+    failed = store.fail_agent_runtime_attempt(
+        attempt.id, "authentication", "codex_login_required", True
+    )
+
+    assert (
+        store.fail_agent_runtime_attempt(
+            attempt.id, "authentication", "codex_login_required", True
+        )
+        == failed
+    )
+    with pytest.raises(ValueError, match="conflicting terminal rewrite"):
+        store.fail_agent_runtime_attempt(
+            attempt.id, "process", "codex_process_failed", False
+        )
+
+
+def test_runtime_attempt_effect_started_timestamp_is_idempotent(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+
+    first = store.note_runtime_attempt_effect_started(
+        attempt.id, at="2026-08-20 10:00:00"
+    )
+    repeated = store.note_runtime_attempt_effect_started(
+        attempt.id, at="2026-08-20 10:01:00"
+    )
+
+    assert first.first_effect_started_at == "2026-08-20 10:00:00"
+    assert repeated.first_effect_started_at == first.first_effect_started_at
+
+
+def test_route_sessions_do_not_overwrite_other_routes(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "route-sessions.sqlite3")
+
+    store.upsert_conversation_runtime_session("cid", "codex_oauth", "oauth-session")
+    store.upsert_conversation_runtime_session("cid", "codex_api", "api-session")
+
+    assert (
+        store.get_conversation_runtime_session("cid", "codex_oauth")
+        == "oauth-session"
+    )
+    assert store.get_conversation_runtime_session("cid", "codex_api") == "api-session"
+
+
+def test_route_session_initialization_backfills_legacy_codex_session(tmp_path: Path):
+    db_path = tmp_path / "legacy-route-sessions.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """
+            create table conversations (
+                conversation_id text primary key,
+                title text not null,
+                single_chat integer not null,
+                codex_session_id text
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into conversations (
+                conversation_id, title, single_chat, codex_session_id
+            ) values ('legacy-cid', 'Legacy', 0, 'legacy-session')
+            """
+        )
+
+    store = AutoReplyStore(db_path)
+
+    assert store.get_codex_session_id("legacy-cid") == "legacy-session"
+    assert (
+        store.get_conversation_runtime_session("legacy-cid", "codex_oauth")
+        == "legacy-session"
+    )
+
+
+def test_route_pause_is_independent_and_expires(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "route-pauses.sqlite3")
+
+    assert store.open_runtime_route_pause(
+        "codex_oauth", "codex_login_required", retry_at="2026-08-20 10:30:00"
+    )
+    assert store.active_runtime_route_pause("codex_api", now="2026-08-20 10:00:00") is None
+    assert (
+        store.active_runtime_route_pause("codex_oauth", now="2026-08-20 10:31:00")
+        is None
+    )
+
+
+def test_route_pause_open_close_is_independent_and_idempotent(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "route-pauses.sqlite3")
+
+    assert store.open_runtime_route_pause(
+        "codex_oauth", "codex_login_required", retry_at="2026-08-20 10:30:00"
+    )
+    assert not store.open_runtime_route_pause(
+        "codex_oauth", "codex_login_required", retry_at="2026-08-20 10:30:00"
+    )
+    assert store.active_runtime_route_pause("codex_oauth", now="2026-08-20 10:00:00") == (
+        "codex_login_required"
+    )
+    assert store.close_runtime_route_pause("codex_oauth")
+    assert not store.close_runtime_route_pause("codex_oauth")
+    assert store.active_runtime_route_pause("codex_oauth", now="2026-08-20 10:00:00") is None
+
+
 def test_list_agent_run_summaries_for_terminal_runs_batches_without_events(
     tmp_path: Path,
 ):

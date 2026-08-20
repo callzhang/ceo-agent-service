@@ -15,9 +15,14 @@ from collections.abc import Callable, Iterator, Sequence
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from app.agent_result import SideEffectState
+from app.agent_runtime_contracts import (
+    CredentialMode,
+    RuntimeFailureClass,
+    RuntimeKind,
+)
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
     classify_codex_process_failure,
@@ -55,10 +60,13 @@ CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-18.1"
+STORE_SCHEMA_VERSION = "2026-08-20.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
+    "agent_runtime_attempts",
+    "conversation_runtime_sessions",
     "agent_run_events",
     "follow_up_send_attempts",
+    "runtime_route_pauses",
     "workbench_tasks",
     "workbench_turns",
     "workbench_events",
@@ -67,6 +75,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "workbench_confirmations",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
+    "idx_runtime_attempt_active_route",
     "idx_workbench_events_turn_id_id",
     "idx_workbench_artifacts_turn_created_id",
     "idx_workbench_turns_task_created_id",
@@ -87,6 +96,9 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
 RECONCILIATION_EVENT_LIMIT_ERROR = "agent run reconciliation event limit exceeded"
+RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
+    {"structured", "meeting", "task", "weekly_okr", "memory"}
+)
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
 
@@ -396,6 +408,43 @@ class AgentRun(BaseModel):
     started_at: str = ""
     completed_at: str = ""
     created_at: str
+    updated_at: str
+
+
+class AgentRuntimeAttempt(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    agent_run_id: int | None = None
+    workload_kind: str
+    workload_key: str
+    attempt_number: int
+    route_name: str
+    runtime_kind: str
+    credential_mode: str
+    model: str
+    session_id: str = ""
+    status: str
+    failure_class: str = ""
+    failure_code: str = ""
+    failover_permitted: bool = False
+    transcript_reference: str = ""
+    transcript_start: int = 0
+    transcript_end: int = 0
+    first_effect_started_at: str = ""
+    started_at: str
+    finished_at: str = ""
+    created_at: str
+    updated_at: str
+
+
+class RuntimeRoutePause(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    route_name: str
+    failure_code: str
+    retry_at: str
+    opened_at: str
     updated_at: str
 
 
@@ -1044,6 +1093,57 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_agent_runs_status
                     on agent_runs(status, updated_at);
+                create table if not exists agent_runtime_attempts (
+                    id integer primary key autoincrement,
+                    agent_run_id integer,
+                    workload_kind text not null,
+                    workload_key text not null,
+                    attempt_number integer not null check(attempt_number > 0),
+                    route_name text not null,
+                    runtime_kind text not null,
+                    credential_mode text not null,
+                    model text not null,
+                    session_id text not null default '',
+                    status text not null check(status in (
+                        'starting', 'running', 'completed', 'failed', 'superseded'
+                    )),
+                    failure_class text not null default '',
+                    failure_code text not null default '',
+                    failover_permitted integer not null default 0,
+                    transcript_reference text not null default '',
+                    transcript_start integer not null default 0,
+                    transcript_end integer not null default 0,
+                    first_effect_started_at text not null default '',
+                    started_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    check(
+                        (workload_kind='agent_run' and agent_run_id is not null
+                         and workload_key=cast(agent_run_id as text))
+                        or
+                        (workload_kind<>'agent_run' and agent_run_id is null)
+                    ),
+                    unique(workload_kind, workload_key, attempt_number),
+                    foreign key(agent_run_id) references agent_runs(id)
+                );
+                create unique index if not exists idx_runtime_attempt_active_route
+                    on agent_runtime_attempts(workload_kind, workload_key, route_name)
+                    where status in ('starting', 'running');
+                create table if not exists conversation_runtime_sessions (
+                    conversation_id text not null,
+                    route_name text not null,
+                    session_id text not null,
+                    updated_at text not null default current_timestamp,
+                    primary key(conversation_id, route_name)
+                );
+                create table if not exists runtime_route_pauses (
+                    route_name text primary key,
+                    failure_code text not null,
+                    retry_at text not null,
+                    opened_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
                 create table if not exists agent_run_events (
                     id integer primary key autoincrement,
                     agent_run_id integer not null,
@@ -2303,6 +2403,16 @@ class AutoReplyStore:
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
             self._backfill_agent_run_effect_counters(db)
+            db.execute(
+                """
+                insert or ignore into conversation_runtime_sessions (
+                    conversation_id, route_name, session_id
+                )
+                select conversation_id, 'codex_oauth', codex_session_id
+                from conversations
+                where codex_session_id is not null and codex_session_id <> ''
+                """
+            )
 
     @staticmethod
     def _reconcile_legacy_workbench_confirmations(db: sqlite3.Connection) -> None:
@@ -3085,6 +3195,10 @@ class AutoReplyStore:
         )
 
     @staticmethod
+    def _agent_runtime_attempt_from_row(row: sqlite3.Row) -> AgentRuntimeAttempt:
+        return AgentRuntimeAttempt.model_validate(dict(row))
+
+    @staticmethod
     def _okr_review_request_from_row(row: sqlite3.Row) -> OkrReviewRequest:
         return OkrReviewRequest.model_validate(dict(row))
 
@@ -3749,6 +3863,423 @@ class AutoReplyStore:
                 ):
                     raise
                 time.sleep(AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+
+    @staticmethod
+    def _require_runtime_attempt_text(value: str, *, field: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError(f"{field} must be non-empty")
+        return value
+
+    @staticmethod
+    def _validate_runtime_operation_workload(
+        workload_kind: str,
+        workload_key: str,
+    ) -> tuple[str, str]:
+        workload_kind = AutoReplyStore._require_runtime_attempt_text(
+            workload_kind, field="workload_kind"
+        )
+        workload_key = AutoReplyStore._require_runtime_attempt_text(
+            workload_key, field="workload_key"
+        )
+        if workload_kind not in RUNTIME_OPERATION_WORKLOAD_KINDS:
+            raise ValueError("unsupported runtime operation workload kind")
+        if workload_kind in {"structured", "meeting", "memory"}:
+            if not workload_key.isdecimal() or int(workload_key) <= 0:
+                raise ValueError("runtime operation workload key must be a persisted ID")
+        elif workload_kind == "task":
+            task_id, separator, suffix = workload_key.partition(":")
+            if not task_id.isdecimal() or int(task_id) <= 0:
+                raise ValueError("task workload key must start with a persisted ID")
+            if separator and suffix != "memory_backfill":
+                raise ValueError("task workload key has an unsupported suffix")
+        else:
+            week_end, separator, remaining = workload_key.partition(":")
+            manager_user_id, separator_2, source_digest = remaining.partition(":")
+            try:
+                if datetime.fromisoformat(week_end).strftime("%Y-%m-%d") != week_end:
+                    raise ValueError
+            except ValueError as exc:
+                raise ValueError("weekly_okr workload key must start with week end") from exc
+            if (
+                not separator
+                or not separator_2
+                or not manager_user_id.strip()
+                or not source_digest.strip()
+                or ":" in source_digest
+            ):
+                raise ValueError("weekly_okr workload key must be stable and complete")
+        return workload_kind, workload_key
+
+    @staticmethod
+    def _validate_runtime_attempt_details(
+        route_name: str,
+        runtime_kind: str,
+        credential_mode: str,
+        model: str,
+    ) -> tuple[str, str, str, str]:
+        route_name = AutoReplyStore._require_runtime_attempt_text(
+            route_name, field="route_name"
+        )
+        try:
+            runtime_kind = RuntimeKind(runtime_kind).value
+        except ValueError as exc:
+            raise ValueError("unsupported runtime_kind") from exc
+        try:
+            credential_mode = CredentialMode(credential_mode).value
+        except ValueError as exc:
+            raise ValueError("unsupported credential_mode") from exc
+        model = AutoReplyStore._require_runtime_attempt_text(model, field="model")
+        return route_name, runtime_kind, credential_mode, model
+
+    @staticmethod
+    def _validate_runtime_failure(
+        failure_class: str,
+        failure_code: str,
+        failover_permitted: bool,
+    ) -> tuple[str, str, int]:
+        try:
+            failure_class = RuntimeFailureClass(failure_class).value
+        except ValueError as exc:
+            raise ValueError("unsupported runtime failure class") from exc
+        failure_code = AutoReplyStore._require_runtime_attempt_text(
+            failure_code, field="failure_code"
+        )
+        if not failure_code.replace("_", "").isalnum():
+            raise ValueError("failure_code must be a typed code")
+        if not isinstance(failover_permitted, bool):
+            raise ValueError("failover_permitted must be a boolean")
+        return failure_class, failure_code, int(failover_permitted)
+
+    def _claim_runtime_attempt(
+        self,
+        *,
+        agent_run_id: int | None,
+        workload_kind: str,
+        workload_key: str,
+        route_name: str,
+        runtime_kind: str,
+        credential_mode: str,
+        model: str,
+    ) -> AgentRuntimeAttempt:
+        route_name, runtime_kind, credential_mode, model = (
+            self._validate_runtime_attempt_details(
+                route_name, runtime_kind, credential_mode, model
+            )
+        )
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            if agent_run_id is not None:
+                run = db.execute(
+                    "select 1 from agent_runs where id=?", (agent_run_id,)
+                ).fetchone()
+                if run is None:
+                    raise ValueError("agent run does not exist")
+            active = db.execute(
+                """
+                select * from agent_runtime_attempts
+                where workload_kind=? and workload_key=? and route_name=?
+                  and status in ('starting', 'running')
+                order by attempt_number
+                """,
+                (workload_kind, workload_key, route_name),
+            ).fetchone()
+            if active is not None:
+                return self._agent_runtime_attempt_from_row(active)
+            attempt_number = int(
+                db.execute(
+                    """
+                    select coalesce(max(attempt_number), 0) + 1 as attempt_number
+                    from agent_runtime_attempts
+                    where workload_kind=? and workload_key=?
+                    """,
+                    (workload_kind, workload_key),
+                ).fetchone()["attempt_number"]
+            )
+            cursor = db.execute(
+                """
+                insert into agent_runtime_attempts (
+                    agent_run_id, workload_kind, workload_key, attempt_number,
+                    route_name, runtime_kind, credential_mode, model, status,
+                    started_at, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)
+                """,
+                (
+                    agent_run_id,
+                    workload_kind,
+                    workload_key,
+                    attempt_number,
+                    route_name,
+                    runtime_kind,
+                    credential_mode,
+                    model,
+                    now_text,
+                    now_text,
+                    now_text,
+                ),
+            )
+            row = db.execute(
+                "select * from agent_runtime_attempts where id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            return self._agent_runtime_attempt_from_row(row)
+
+    def claim_agent_runtime_attempt(
+        self,
+        agent_run_id: int,
+        route_name: str,
+        runtime_kind: str,
+        credential_mode: str,
+        model: str,
+    ) -> AgentRuntimeAttempt:
+        if agent_run_id <= 0:
+            raise ValueError("agent_run_id must be positive")
+        return self._claim_runtime_attempt(
+            agent_run_id=agent_run_id,
+            workload_kind="agent_run",
+            workload_key=str(agent_run_id),
+            route_name=route_name,
+            runtime_kind=runtime_kind,
+            credential_mode=credential_mode,
+            model=model,
+        )
+
+    def claim_runtime_operation_attempt(
+        self,
+        workload_kind: str,
+        workload_key: str,
+        route_name: str,
+        runtime_kind: str,
+        credential_mode: str,
+        model: str,
+    ) -> AgentRuntimeAttempt:
+        workload_kind, workload_key = self._validate_runtime_operation_workload(
+            workload_kind, workload_key
+        )
+        return self._claim_runtime_attempt(
+            agent_run_id=None,
+            workload_kind=workload_kind,
+            workload_key=workload_key,
+            route_name=route_name,
+            runtime_kind=runtime_kind,
+            credential_mode=credential_mode,
+            model=model,
+        )
+
+    def _runtime_attempt_for_transition(
+        self,
+        db: sqlite3.Connection,
+        attempt_id: int,
+    ) -> sqlite3.Row:
+        row = db.execute(
+            "select * from agent_runtime_attempts where id=?", (attempt_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("agent runtime attempt does not exist")
+        return row
+
+    def mark_agent_runtime_attempt_running(
+        self,
+        attempt_id: int,
+    ) -> AgentRuntimeAttempt:
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["status"] == "running":
+                return self._agent_runtime_attempt_from_row(row)
+            if row["status"] == "completed":
+                raise ValueError("cannot transition from completed runtime attempt")
+            if row["status"] in {"failed", "superseded"}:
+                raise ValueError("cannot transition terminal runtime attempt to running")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='running', updated_at=?
+                where id=? and status='starting'
+                """,
+                (now_text, attempt_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("runtime attempt transition conflict")
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def complete_agent_runtime_attempt(
+        self,
+        attempt_id: int,
+        session_id: str,
+        transcript_reference: str,
+        transcript_start: int,
+        transcript_end: int,
+    ) -> AgentRuntimeAttempt:
+        if not isinstance(session_id, str) or not isinstance(transcript_reference, str):
+            raise TypeError("runtime attempt session and transcript reference must be strings")
+        if transcript_start < 0 or transcript_end < transcript_start:
+            raise ValueError("invalid runtime attempt transcript range")
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            expected = (session_id, transcript_reference, transcript_start, transcript_end)
+            actual = (
+                row["session_id"],
+                row["transcript_reference"],
+                row["transcript_start"],
+                row["transcript_end"],
+            )
+            if row["status"] == "completed":
+                if actual == expected:
+                    return self._agent_runtime_attempt_from_row(row)
+                raise ValueError("conflicting terminal rewrite")
+            if row["status"] in {"failed", "superseded"}:
+                raise ValueError("cannot complete terminal runtime attempt")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='completed', session_id=?, transcript_reference=?,
+                    transcript_start=?, transcript_end=?, finished_at=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                """,
+                (
+                    session_id,
+                    transcript_reference,
+                    transcript_start,
+                    transcript_end,
+                    now_text,
+                    now_text,
+                    attempt_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("runtime attempt transition conflict")
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def fail_agent_runtime_attempt(
+        self,
+        attempt_id: int,
+        failure_class: str,
+        failure_code: str,
+        failover_permitted: bool,
+    ) -> AgentRuntimeAttempt:
+        failure_class, failure_code, failover_permitted = self._validate_runtime_failure(
+            failure_class, failure_code, failover_permitted
+        )
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            expected = (failure_class, failure_code, failover_permitted)
+            actual = (
+                row["failure_class"],
+                row["failure_code"],
+                row["failover_permitted"],
+            )
+            if row["status"] == "failed":
+                if actual == expected:
+                    return self._agent_runtime_attempt_from_row(row)
+                raise ValueError("conflicting terminal rewrite")
+            if row["status"] == "completed":
+                raise ValueError("cannot transition from completed runtime attempt")
+            if row["status"] == "superseded":
+                raise ValueError("cannot fail terminal runtime attempt")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='failed', failure_class=?, failure_code=?,
+                    failover_permitted=?, finished_at=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                """,
+                (
+                    failure_class,
+                    failure_code,
+                    failover_permitted,
+                    now_text,
+                    now_text,
+                    attempt_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("runtime attempt transition conflict")
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def mark_agent_runtime_attempt_superseded(
+        self,
+        attempt_id: int,
+    ) -> AgentRuntimeAttempt:
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["status"] == "superseded":
+                return self._agent_runtime_attempt_from_row(row)
+            if row["status"] == "completed":
+                raise ValueError("cannot transition from completed runtime attempt")
+            if row["status"] != "failed":
+                raise ValueError("only failed runtime attempts can be superseded")
+            successor = db.execute(
+                """
+                select 1 from agent_runtime_attempts
+                where workload_kind=? and workload_key=? and attempt_number>?
+                limit 1
+                """,
+                (row["workload_kind"], row["workload_key"], row["attempt_number"]),
+            ).fetchone()
+            if successor is None:
+                raise ValueError("runtime attempt requires a durably claimed successor")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='superseded', updated_at=?
+                where id=? and status='failed'
+                """,
+                (now_text, attempt_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("runtime attempt transition conflict")
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def list_agent_runtime_attempts(
+        self,
+        agent_run_id: int,
+    ) -> list[AgentRuntimeAttempt]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from agent_runtime_attempts
+                where agent_run_id=?
+                order by attempt_number
+                """,
+                (agent_run_id,),
+            ).fetchall()
+            return [self._agent_runtime_attempt_from_row(row) for row in rows]
+
+    def note_runtime_attempt_effect_started(
+        self,
+        attempt_id: int,
+        at: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt:
+        _, effect_started_at = _utc_store_time(at)
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["status"] == "completed":
+                raise ValueError("cannot mutate completed runtime attempt")
+            if row["status"] in {"failed", "superseded"}:
+                raise ValueError("cannot mutate terminal runtime attempt")
+            if row["first_effect_started_at"]:
+                return self._agent_runtime_attempt_from_row(row)
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set first_effect_started_at=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                  and first_effect_started_at=''
+                """,
+                (effect_started_at, now_text, attempt_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("runtime attempt transition conflict")
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
 
     @staticmethod
     def _require_current_agent_run_write_access(
@@ -9579,6 +10110,102 @@ class AutoReplyStore:
                 (conversation_id,),
             ).fetchone()
             return None if row is None else row["codex_session_id"]
+
+    def upsert_conversation_runtime_session(
+        self,
+        conversation_id: str,
+        route_name: str,
+        session_id: str,
+    ) -> None:
+        conversation_id = self._require_runtime_attempt_text(
+            conversation_id, field="conversation_id"
+        )
+        route_name = self._require_runtime_attempt_text(route_name, field="route_name")
+        session_id = self._require_runtime_attempt_text(session_id, field="session_id")
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            db.execute(
+                """
+                insert into conversation_runtime_sessions (
+                    conversation_id, route_name, session_id, updated_at
+                ) values (?, ?, ?, ?)
+                on conflict(conversation_id, route_name) do update set
+                    session_id=excluded.session_id,
+                    updated_at=excluded.updated_at
+                """,
+                (conversation_id, route_name, session_id, now_text),
+            )
+
+    def get_conversation_runtime_session(
+        self,
+        conversation_id: str,
+        route_name: str,
+    ) -> str | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select session_id from conversation_runtime_sessions
+                where conversation_id=? and route_name=?
+                """,
+                (conversation_id, route_name),
+            ).fetchone()
+            return None if row is None else str(row["session_id"])
+
+    def open_runtime_route_pause(
+        self,
+        route_name: str,
+        failure_code: str,
+        retry_at: str | datetime,
+    ) -> bool:
+        route_name = self._require_runtime_attempt_text(route_name, field="route_name")
+        failure_code = self._require_runtime_attempt_text(
+            failure_code, field="failure_code"
+        )
+        if not failure_code.replace("_", "").isalnum():
+            raise ValueError("failure_code must be a typed code")
+        _, retry_at_text = _utc_store_time(retry_at)
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            cursor = db.execute(
+                """
+                insert or ignore into runtime_route_pauses (
+                    route_name, failure_code, retry_at, opened_at, updated_at
+                ) values (?, ?, ?, ?, ?)
+                """,
+                (route_name, failure_code, retry_at_text, now_text, now_text),
+            )
+            return cursor.rowcount == 1
+
+    def active_runtime_route_pause(
+        self,
+        route_name: str,
+        now: str | datetime | None = None,
+    ) -> str | None:
+        route_name = self._require_runtime_attempt_text(route_name, field="route_name")
+        _, now_text = _utc_store_time(now)
+        with self._agent_run_write_transaction(now) as (db, _):
+            row = db.execute(
+                """
+                select failure_code, retry_at from runtime_route_pauses
+                where route_name=?
+                """,
+                (route_name,),
+            ).fetchone()
+            if row is None:
+                return None
+            if str(row["retry_at"]) <= now_text:
+                db.execute(
+                    "delete from runtime_route_pauses where route_name=? and retry_at<=?",
+                    (route_name, now_text),
+                )
+                return None
+            return str(row["failure_code"])
+
+    def close_runtime_route_pause(self, route_name: str) -> bool:
+        route_name = self._require_runtime_attempt_text(route_name, field="route_name")
+        with self._agent_run_write_transaction(None) as (db, _):
+            cursor = db.execute(
+                "delete from runtime_route_pauses where route_name=?", (route_name,)
+            )
+            return cursor.rowcount == 1
 
     def get_codex_session_contract_hash(self, conversation_id: str) -> str:
         with self._connect() as db:
