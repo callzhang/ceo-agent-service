@@ -206,6 +206,19 @@ allowlist。安装用户配置中的 MCP 可能同时公开读写工具；servic
 重复保护绑定源 trigger、任务 generation 和候选 revision。完全相同的 revision 已有外部
 成功结果时不会再次执行；A 根据反馈产生的新 revision 不会被旧 revision 的结果阻止。
 
+OA pending 扫描会先读取当前审批记录。只有最新有效记录来自其他参与者时才生成 review
+任务；如果 Derek 已在该外部更新之后完成评论、审批或其他处理，扫描不再把同一审批重新入队。
+History 中的每条 attempt 始终显示自己的真实状态和错误，不以另一条 attempt 改写为“已恢复”
+或“已由后续处理”。
+
+### 无副作用 Consumer 恢复
+
+Consumer 失败不等于外部动作失败，因为 Consumer 只读取和提出候选。服务会自动重新入队每个
+当前 generation 中一次、可重试且无副作用的 Consumer 失败，不按任务年龄设截止窗口。恢复前
+要求最新 run 为 failed、没有发送回执，也不存在 running 或 unknown run；同一 generation 只自动
+恢复一次。Audit 失败不使用这条路径：只要 Audit 可能已写入外部系统，就必须先做只读回查，不能
+自动重放。
+
 ### 未知外部结果
 
 如果 B 已开始写操作但没有得到确定结果，run 进入 `unknown`：

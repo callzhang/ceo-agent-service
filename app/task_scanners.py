@@ -435,11 +435,13 @@ def scan_pending_oa_approvals(
                 records_payload = read_records(process_instance_id)
             except Exception:
                 pass
-        revision = _oa_approval_revision(
+        revision = _oa_pending_approval_revision(
             task_id,
             records_payload,
-            exclude_user_id=current_user_id,
+            current_user_id=current_user_id,
         )
+        if not revision:
+            continue
         process_revisions[process_instance_id] = revision
         if previous_revisions.get(process_instance_id) == revision:
             continue
@@ -576,6 +578,34 @@ def _oa_approval_revision(
         )
     )
     return hashlib.sha256(f"{task_id}|{marker}".encode()).hexdigest()[:16]
+
+
+def _oa_pending_approval_revision(
+    task_id: str,
+    records_payload: Any,
+    *,
+    current_user_id: str,
+) -> str:
+    """Return a revision only when the newest OA record still needs review."""
+    records = _oa_operation_records(records_payload)
+    latest_operation = max(
+        records,
+        key=lambda record: (
+            _oa_task_field(record, ("operationTime", "date", "time")),
+            _oa_task_field(record, ("operationType", "type")),
+            _oa_task_field(record, ("userId", "userid", "user_id")),
+        ),
+        default={},
+    )
+    if current_user_id and _oa_task_field(
+        latest_operation, ("userId", "userid", "user_id")
+    ) == current_user_id:
+        return ""
+    return _oa_approval_revision(
+        task_id,
+        records_payload,
+        exclude_user_id=current_user_id,
+    )
 
 
 def _oa_operation_records(value: Any) -> list[dict[str, Any]]:

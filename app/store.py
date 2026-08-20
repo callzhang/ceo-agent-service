@@ -6842,6 +6842,7 @@ class AutoReplyStore:
         run_id: int,
         *,
         reason: str,
+        recovery_code: str = "",
     ) -> ReplyTask:
         """Reopen a failed Consumer or Audit turn only when retry is effect-free."""
         reason = reason.strip()
@@ -6927,10 +6928,10 @@ class AutoReplyStore:
                 """
                 update reply_tasks
                 set status='pending', attempts=max(attempts - 1, 0),
-                    locked_at=null, available_at='', error=?, updated_at=?
+                    locked_at=null, available_at='', error=?, recovery_code=?, updated_at=?
                 where id=? and status='failed' and execution_generation=?
                 """,
-                (reason, now_text, task_id, row["execution_generation"]),
+                (reason, recovery_code.strip(), now_text, task_id, row["execution_generation"]),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
@@ -6940,6 +6941,61 @@ class AutoReplyStore:
             if updated is None:
                 raise RuntimeError("recovered reply task was not persisted")
             return self._reply_task_from_row(updated)
+
+    def recover_failed_effect_free_consumer_tasks(self, *, channel: str) -> list[int]:
+        """Retry each safely failed Consumer generation once, regardless of age."""
+        recovery_code = "automatic_effect_free_consumer_retry"
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select tasks.id, runs.id as run_id
+                from reply_tasks as tasks
+                join agent_runs as runs on runs.reply_task_id=tasks.id
+                where tasks.channel=?
+                  and tasks.status='failed'
+                  and tasks.recovery_code<>?
+                  and runs.execution_generation=tasks.execution_generation
+                  and runs.id=(
+                      select max(latest.id)
+                      from agent_runs as latest
+                      where latest.reply_task_id=tasks.id
+                        and latest.execution_generation=tasks.execution_generation
+                  )
+                  and runs.role='consumer'
+                  and runs.status='failed'
+                  and runs.side_effect_state='none'
+                  and json_valid(runs.structured_error_json)=1
+                  and json_extract(runs.structured_error_json, '$.retryable')=1
+                  and not exists (
+                      select 1
+                      from agent_runs as generation_runs
+                      where generation_runs.reply_task_id=tasks.id
+                        and generation_runs.execution_generation=tasks.execution_generation
+                        and generation_runs.status in ('running', 'unknown')
+                  )
+                  and not exists (
+                      select 1 from sent_replies as sent
+                      where sent.channel=tasks.channel
+                        and sent.conversation_id=tasks.conversation_id
+                        and sent.trigger_message_id=tasks.trigger_message_id
+                  )
+                order by tasks.id
+                """,
+                (channel, recovery_code),
+            ).fetchall()
+        recovered: list[int] = []
+        for row in rows:
+            try:
+                self.retry_failed_reply_task(
+                    int(row["id"]),
+                    int(row["run_id"]),
+                    reason=recovery_code,
+                    recovery_code=recovery_code,
+                )
+            except (AgentRunLeaseLostError, ValueError):
+                continue
+            recovered.append(int(row["id"]))
+        return recovered
 
     def retry_failed_pre_agent_reply_task(
         self,

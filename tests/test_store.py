@@ -3120,6 +3120,42 @@ def test_retry_failed_reply_task_creates_a_new_retryable_consumer_turn(
     assert store.get_agent_run(claim.run.id).status == "failed"
 
 
+def test_recover_failed_effect_free_consumer_task_requeues_once_without_age_limit(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    claim = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    )
+    store.fail_agent_run(
+        claim.run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="worker-1",
+    )
+    store.fail_reply_task(
+        task_id,
+        "codex_process_failed",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    assert store.recover_failed_effect_free_consumer_tasks(channel="dingtalk") == [task_id]
+    recovered = store.get_reply_task(task_id)
+    assert recovered is not None
+    assert recovered.status == "pending"
+    assert recovered.recovery_code == "automatic_effect_free_consumer_retry"
+    assert store.recover_failed_effect_free_consumer_tasks(channel="dingtalk") == []
+
+
 def test_recover_failed_native_codex_auth_task_requires_no_effect_or_delivery(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

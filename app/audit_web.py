@@ -3581,7 +3581,6 @@ def _history_chart_payload(
     bucket_values: dict[str, list[int]] = {}
     label_indexes = {label: index for index, label in enumerate(labels)}
     task_cache: dict[tuple[str, str, str], object | None] = {}
-    latest_attempt_cache: dict[tuple[str, str], ReplyAttempt | None] = {}
     for attempt in attempts:
         created_at = _parse_utc_timestamp(attempt.created_at)
         if created_at is None:
@@ -3597,18 +3596,7 @@ def _history_chart_payload(
             continue
         event_label = _history_event_label(attempt)
         if attempt.send_status in {"failed", "blocked", "needs_human"}:
-            trigger_key = (attempt.conversation_id, attempt.trigger_message_id)
-            latest_attempt = latest_attempt_cache.get(trigger_key)
-            if trigger_key not in latest_attempt_cache:
-                latest_attempt = store.get_latest_reply_attempt_for_trigger(*trigger_key)
-                latest_attempt_cache[trigger_key] = latest_attempt
-            if (
-                latest_attempt is not None
-                and latest_attempt.id != attempt.id
-                and latest_attempt.send_status in RECOVERED_REPLY_ATTEMPT_STATUSES
-            ):
-                event_label = "↻ Recovered"
-            elif created_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW:
+            if created_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW:
                 event_label = "◌ Historical"
         if attempt.send_status == "failed" and event_label == "💬 Failed":
             task_key = (
@@ -4430,7 +4418,6 @@ def _render_attempt_list(
     )
     reply_task_cache: dict[tuple[str, str, str], ReplyTask | None] = {}
     agent_runs_cache: dict[tuple[int, str], list[AgentRun]] = {}
-    latest_attempt_cache: dict[tuple[str, str, str], ReplyAttempt | None] = {}
     for history_item in history_items:
         if history_item.kind == "task":
             items.append(_task_history_card(history_item, store))
@@ -4480,56 +4467,43 @@ def _render_attempt_list(
                 approval_runs_by_attempt_id,
             )
         attention = None
-        later_attempt = None
         terminal_run = None
         attention_status = attempt.send_status.strip().lower()
         if attention_status in {"failed", "needs_human"}:
-            later_attempt = _later_problem_attempt_for_history(
-                store,
-                attempt,
-                latest_attempt_cache,
+            reply_task = (
+                _reply_task_for_attempt(store, attempt, reply_task_cache)
+                if attention_status == "failed"
+                else None
             )
-            if later_attempt is None:
-                reply_task = (
-                    _reply_task_for_attempt(store, attempt, reply_task_cache)
-                    if attention_status == "failed"
-                    else None
-                )
-                if not approval_history:
-                    agent_runs = _agent_runs_for_attempt(
-                        store,
-                        attempt,
-                        agent_runs_cache,
-                    )
-                terminal_run = next(
-                    (run for run in agent_runs if run.id == attempt.agent_run_id),
-                    None,
-                )
-                attention = reply_history_attention(
+            if not approval_history:
+                agent_runs = _agent_runs_for_attempt(
+                    store,
                     attempt,
-                    task=reply_task,
-                    decision_options=_needs_human_decision_options(attempt, agent_runs),
-                    side_effect_state=(
-                        terminal_run.side_effect_state
-                        if terminal_run is not None
-                        else "none"
-                    ),
-                    requires_reconciliation_resolution=(
-                        _is_suspended_unknown_reconciliation(terminal_run)
-                    ),
+                    agent_runs_cache,
                 )
-        attention_html = (
-            _superseded_history_attention_html(later_attempt)
-            if later_attempt is not None
-            else _history_attention_html(
-                attention,
-                actions_html=_reply_history_attention_actions(
-                    attempt,
-                    attention,
-                    return_to="/history",
-                    agent_run=terminal_run,
+            terminal_run = next(
+                (run for run in agent_runs if run.id == attempt.agent_run_id),
+                None,
+            )
+            attention = reply_history_attention(
+                attempt,
+                task=reply_task,
+                decision_options=_needs_human_decision_options(attempt, agent_runs),
+                side_effect_state=(
+                    terminal_run.side_effect_state if terminal_run is not None else "none"
+                ),
+                requires_reconciliation_resolution=(
+                    _is_suspended_unknown_reconciliation(terminal_run)
                 ),
             )
+        attention_html = _history_attention_html(
+            attention,
+            actions_html=_reply_history_attention_actions(
+                attempt,
+                attention,
+                return_to="/history",
+                agent_run=terminal_run,
+            ),
         )
         recovery_state = _attempt_recovery_display_state(
             store,
@@ -4540,13 +4514,11 @@ def _render_attempt_list(
             _history_approval_pills(
                 attempt,
                 approval_result or ApprovalHistoryResult.UNKNOWN,
-                later_attempt=later_attempt,
                 recovery_state=recovery_state,
             )
             if approval_history
             else _attempt_action_pills(
                 attempt,
-                later_attempt=later_attempt,
                 recovery_state=recovery_state,
             )
         )
@@ -4573,7 +4545,7 @@ def _render_attempt_list(
             "<div class=\"attempt-lines\">"
             f"{_attempt_text_line('问', attempt.trigger_text, 260)}"
             f"{_attempt_reply_line(attempt)}"
-            f"{'' if attention is not None or later_attempt is not None else _attempt_outcome_line(attempt)}"
+            f"{'' if attention is not None else _attempt_outcome_line(attempt)}"
             "</div>"
             f"{attention_html}"
             f"{_attempt_feedback_summary(feedback_events, sent_reply)}"
@@ -6546,7 +6518,6 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
     codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
         attempt.conversation_id
     )
-    later_attempt = _later_attempt_for_display(store, attempt)
     agent_runs = []
     terminal_run = None
     if attempt.agent_run_id:
@@ -6579,7 +6550,6 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             sent_reply,
             codex_session_id,
             feedback_events,
-            later_attempt,
             agent_runs,
             attention,
             reply_task,
@@ -6587,27 +6557,6 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
-
-
-def _later_attempt_for_display(
-    store: AutoReplyStore,
-    attempt: ReplyAttempt,
-) -> ReplyAttempt | None:
-    if attempt.oa_process_instance_id.strip():
-        for candidate in store.list_oa_attempt_history(
-            attempt.oa_process_instance_id,
-            limit=50,
-        ):
-            if (
-                candidate.id > attempt.id
-                and candidate.oa_action.strip()
-            ):
-                return candidate
-    latest = store.get_latest_reply_attempt_for_trigger(
-        attempt.conversation_id,
-        attempt.trigger_message_id,
-    )
-    return latest if latest is not None and latest.id > attempt.id else None
 
 
 def render_oa_approval_detail(
@@ -7159,17 +7108,6 @@ def _operation_log_field(label: str, value: str) -> str:
 def _operation_log_status(store: AutoReplyStore, log: OperationLog) -> str:
     occurred_at = _parse_utc_timestamp(log.occurred_at)
     if log.source_table == "reply_attempts":
-        if log.status in {"failed", "blocked", "needs_human"}:
-            latest = store.get_latest_reply_attempt_for_trigger(
-                log.conversation_id,
-                log.message_id,
-            )
-            if (
-                latest is not None
-                and latest.id != log.source_id
-                and latest.send_status in RECOVERED_REPLY_ATTEMPT_STATUSES
-            ):
-                return "recovered by later attempt"
         if (
             occurred_at is not None
             and occurred_at < datetime.now(timezone.utc) - ERROR_LOG_ACTIVE_WINDOW
@@ -8963,29 +8901,21 @@ def _attempt_detail_body(
     sent_reply: SentReply | None,
     codex_session_id: str | None,
     feedback_events: list[FeedbackEvent],
-    later_attempt: ReplyAttempt | None = None,
     agent_runs: list[AgentRun] | None = None,
     attention: HistoryAttention | None = None,
     reply_task: ReplyTask | None = None,
 ) -> str:
     agent_runs = agent_runs or []
-    resolved_by_later = later_attempt is not None and _attempt_is_terminal(
-        later_attempt
-    )
     closed_after_review = (
         attempt.permission_action.strip() == REPLY_ATTEMPT_CLOSED_AFTER_REVIEW
     )
     send_status = (
-        f"已完成（后续记录 #{later_attempt.id}）"
-        if resolved_by_later
-        else "已核验结案（未自动执行）"
+        "已核验结案（未自动执行）"
         if closed_after_review
         else attempt.send_status
     )
     send_error = (
-        "历史错误已由后续处理解决"
-        if resolved_by_later and attempt.send_error.strip()
-        else "受阻原因见下方“Codex reason”；该外部操作未执行。"
+        "受阻原因见下方“Codex reason”；该外部操作未执行。"
         if closed_after_review
         else attempt.send_error
     )
@@ -9017,11 +8947,9 @@ def _attempt_detail_body(
         actions_html=orchestration_links + _attempt_row_actions(
             attempt,
             sent_reply,
-            later_attempt=later_attempt,
         ),
         status_html=_attempt_status_card(
             attempt,
-            later_attempt,
             agent_runs,
             attention,
             closed_after_review=closed_after_review,
@@ -9029,7 +8957,6 @@ def _attempt_detail_body(
         fields=fields,
         pills_html=_attempt_action_pills(
             attempt,
-            later_attempt=later_attempt,
             closed_after_review=closed_after_review,
         ),
         trigger_title="Trigger",
@@ -9740,17 +9667,9 @@ def _calendar_metadata_card(attempt: ReplyAttempt) -> str:
 def _attempt_action_pills(
     attempt: ReplyAttempt,
     *,
-    later_attempt: ReplyAttempt | None = None,
     recovery_state: str = "",
     closed_after_review: bool = False,
 ) -> str:
-    if later_attempt is not None:
-        return (
-            f'<a class="pill status-action action-state-superseded" '
-            f'href="/attempts/{later_attempt.id}">'
-            f'🔁 已由 #{later_attempt.id} 后续处理</a>'
-            f'{_attempt_action_pills(later_attempt)}'
-        )
     calendar_only = (
         attempt.send_status.strip().lower() == "calendar"
         and attempt.calendar_response_status.strip()
@@ -9801,7 +9720,6 @@ def _history_approval_pills(
     attempt: ReplyAttempt,
     result: ApprovalHistoryResult,
     *,
-    later_attempt: ReplyAttempt | None,
     recovery_state: str,
 ) -> str:
     pills = [_history_approval_result_pill(result)]
@@ -9836,12 +9754,6 @@ def _history_approval_pills(
         pills.append(
             f'<span class="pill status-action {_action_state_class(state)}">'
             f"{escape(label)}</span>"
-        )
-    if later_attempt is not None:
-        pills.append(
-            f'<a class="pill status-action action-state-superseded" '
-            f'href="/attempts/{later_attempt.id}">'
-            f"🔁 已由 #{later_attempt.id} 后续处理</a>"
         )
     return "".join(pills)
 
@@ -9943,16 +9855,6 @@ def _history_attention_html(
     )
 
 
-def _superseded_history_attention_html(later_attempt: ReplyAttempt) -> str:
-    return (
-        '<section class="history-attention">'
-        '<div><strong>状态：</strong>无需操作</div>'
-        '<div><strong>原因：</strong>'
-        f'已由 <a href="/attempts/{later_attempt.id}">#{later_attempt.id}</a> 接管，无需操作。'
-        '</div></section>'
-    )
-
-
 def _reply_history_attention_actions(
     attempt: ReplyAttempt,
     attention: HistoryAttention | None,
@@ -10041,21 +9943,6 @@ def _reply_history_attention_actions(
         + "</div>"
         + help_html
     )
-
-
-def _later_problem_attempt_for_history(
-    store: AutoReplyStore,
-    attempt: ReplyAttempt,
-    cache: dict[tuple[str, str, str], ReplyAttempt | None],
-) -> ReplyAttempt | None:
-    key = (attempt.channel, attempt.conversation_id, attempt.trigger_message_id)
-    if key not in cache:
-        cache[key] = store.get_latest_reply_attempt_for_trigger(
-            attempt.conversation_id,
-            attempt.trigger_message_id,
-        )
-    latest = cache[key]
-    return latest if latest is not None and latest.id > attempt.id else None
 
 
 def _recovery_action(state: str) -> tuple[str, str]:
@@ -10274,7 +10161,6 @@ def _attempt_row_actions(
     sent_reply: SentReply | None,
     *,
     session_id: str = "",
-    later_attempt: ReplyAttempt | None = None,
 ) -> str:
     return_to = f"/codex/{quote(session_id, safe='')}" if session_id else f"/attempts/{attempt.id}"
     return_to_query = quote(return_to, safe="/")
@@ -10282,7 +10168,7 @@ def _attempt_row_actions(
         "/open-dingtalk-popup?"
         f"conversation_id={quote(attempt.conversation_id, safe='')}"
     )
-    terminal = later_attempt is not None or attempt.send_status.strip().lower() in {
+    terminal = attempt.send_status.strip().lower() in {
         "sent", "skipped", "completed", "commented", "calendar", "document", "reacted",
     }
     if terminal:
@@ -10322,13 +10208,12 @@ def _attempt_row_actions(
 
 def _attempt_status_card(
     attempt: ReplyAttempt,
-    later_attempt: ReplyAttempt | None,
     agent_runs: list[AgentRun] | None = None,
     attention: HistoryAttention | None = None,
     *,
     closed_after_review: bool = False,
 ) -> str:
-    active_attempt = later_attempt or attempt
+    active_attempt = attempt
     subject = next(
         (
             line.strip()
@@ -10348,39 +10233,14 @@ def _attempt_status_card(
             decision_detail = (
                 f"<br><strong>待决策问题：</strong>{escape(decision_summary)}"
             )
-    later_is_terminal = later_attempt is not None and _attempt_is_terminal(
-        later_attempt
-    )
-    original_failure = (
-        _agent_failure_reason_text(attempt, agent_runs or [])
-        if later_is_terminal
-        else ""
-    )
-    original_failure_detail = (
-        "<br><strong>原失败原因：</strong>"
-        + escape(original_failure).replace("\n", "<br>")
-        if original_failure
-        else ""
-    )
-    if later_is_terminal:
-        message = (
-            f'该历史记录已由 <a href="/attempts/{later_attempt.id}">'
-            f'Attempt #{later_attempt.id}</a> 后续处理，无需你操作。'
-        )
-    elif active_attempt.send_status == "sent":
+    if active_attempt.send_status == "sent":
         message = "这条回复已发送，无需你操作。"
     elif closed_after_review:
         message = "该事项已核验结案；外部动作未自动执行，具体原因见下方审计说明。"
     elif active_attempt.send_status == "skipped":
         message = "这条事项已判定无需回复，无需你操作。"
     elif active_attempt.send_status == "pending_reconciliation":
-        continuation = ""
-        if later_attempt is not None:
-            continuation = (
-                f'<a href="/attempts/{later_attempt.id}">Attempt #{later_attempt.id}</a> '
-                "正在继续核对同一事项。"
-            )
-        message = continuation + _pending_reconciliation_message(agent_runs or [])
+        message = _pending_reconciliation_message(agent_runs or [])
     elif attention is not None:
         return (
             '<section class="card compact-card attempt-status-card">'
@@ -10396,17 +10256,12 @@ def _attempt_status_card(
         message = "这次处理没有完成。可使用“重新处理”重新读取材料并执行当前规则。"
     else:
         return ""
-    result_detail = (
-        "<br><strong>处理结果：</strong>后续任务已完成，详细执行证据见后续记录。"
-        if later_is_terminal
-        else ""
-    )
     return (
         '<section class="card compact-card attempt-status-card">'
         f"<strong>事项：</strong>{escape(subject)}"
         f"<br><strong>当前状态：</strong>{message}"
         f"<br><strong>需要你决策：</strong>{'是' if decision_required else '否'}"
-        f"{original_failure_detail}{decision_detail}{result_detail}</section>"
+        f"{decision_detail}</section>"
     )
 
 

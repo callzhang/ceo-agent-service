@@ -859,10 +859,10 @@ def test_scan_pending_oa_approvals_does_not_requeue_for_own_remark(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     now = datetime.fromisoformat("2026-07-31T19:00:00+08:00")
 
-    assert scan_pending_oa_approvals(store, dws, now=now) == 1
+    # The current reviewer has already acted after the applicant's latest
+    # message. A pending-list hit is not new work and must not enter the queue.
     dws.latest_operation_time = 2
     dws.latest_operation_user_id = "principal-user-1"
-
     assert scan_pending_oa_approvals(store, dws, now=now) == 0
 
 

@@ -1026,7 +1026,7 @@ def test_history_recovered_approval_keeps_business_and_recovery_pills(
     assert "🧾 review" not in card
 
 
-def test_history_superseded_approval_keeps_system_pill_without_raw_actions(
+def test_history_approval_keeps_its_own_status_without_later_attempt_link(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1065,7 +1065,8 @@ def test_history_superseded_approval_keeps_system_pill_without_raw_actions(
     )
 
     assert failed_card.count("history-approval-result") == 1
-    assert f'href="/attempts/{later_id}">🔁 已由 #{later_id} 后续处理</a>' in failed_card
+    assert later_id
+    assert "已由 #" not in failed_card
     assert '<section class="history-attention">' in failed_card
     assert "💬 Completed" not in failed_card
     assert "💬 Skipped" not in failed_card
@@ -1932,7 +1933,7 @@ def test_history_chart_marks_failed_reply_recovered_after_task_completion(
     assert "💬 Failed" not in series_names
 
 
-def test_history_chart_marks_failed_attempt_recovered_by_later_attempt(tmp_path: Path):
+def test_history_chart_keeps_failed_attempt_visible_after_later_attempt(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     failed_id = store.record_reply_attempt(
         conversation_id="cid-recovered-later-attempt",
@@ -1959,8 +1960,8 @@ def test_history_chart_marks_failed_attempt_recovered_by_later_attempt(tmp_path:
     series_names = {series["name"] for series in payload["series"]}
 
     assert failed_id
-    assert "↻ Recovered" in series_names
-    assert "💬 Failed" not in series_names
+    assert "↻ Recovered" not in series_names
+    assert "💬 Failed" in series_names
 
 
 def test_history_chart_marks_failed_reply_processing_while_task_is_active(
@@ -5469,7 +5470,7 @@ def test_pending_reconciliation_names_objective_and_actions():
         updated_at="2026-08-10 12:00:00",
     )
 
-    html = audit_web_module._attempt_status_card(attempt, None, [consumer])
+    html = audit_web_module._attempt_status_card(attempt, [consumer])
 
     assert "事项：处理招聘需求审批" in html
     assert "同意招聘需求申请" in html
@@ -5479,7 +5480,7 @@ def test_pending_reconciliation_names_objective_and_actions():
     assert "。。" not in html
 
 
-def test_nonterminal_later_attempt_is_not_reported_as_completed(tmp_path: Path):
+def test_later_attempt_is_not_used_to_render_original_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     old_id = store.record_reply_attempt(
         conversation_id="cid-oa",
@@ -5505,12 +5506,13 @@ def test_nonterminal_later_attempt_is_not_reported_as_completed(tmp_path: Path):
     status, html = render_attempt_detail(store, old_id)
 
     assert status == 200
-    assert f"Attempt #{later_id}" in html
-    assert "继续核对同一事项" in html
-    assert "后续处理，无需你操作" not in html
+    assert later_id
+    assert f"Attempt #{later_id}" not in html
+    assert "继续核对同一事项" not in html
+    assert "pending_reconciliation" in html
 
 
-def test_terminal_later_attempt_replaces_stale_pending_detail_fields(tmp_path: Path):
+def test_terminal_later_attempt_does_not_replace_original_detail_fields(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     old_id = store.record_reply_attempt(
         conversation_id="cid-oa",
@@ -5540,13 +5542,13 @@ def test_terminal_later_attempt_replaces_stale_pending_detail_fields(tmp_path: P
     status, html = render_attempt_detail(store, old_id)
 
     assert status == 200
-    assert f"已完成（后续记录 #{later_id}）" in html
-    assert "历史错误已由后续处理解决" in html
+    assert f"已完成（后续记录 #{later_id}）" not in html
+    assert "历史错误已由后续处理解决" not in html
     assert "事项：</strong>请处理招聘需求审批" in html
     assert "需要你决策：</strong>否" in html
-    assert "处理结果：</strong>后续任务已完成" in html
+    assert "处理结果：</strong>后续任务已完成" not in html
     assert "审批已同意；已向实际申请人发送审批结果" not in html
-    assert "audit_recovery_failed" not in html
+    assert "audit_recovery_failed" in html
 
 
 def test_render_attempt_detail_marks_closed_blocked_work_as_historical(tmp_path: Path):
@@ -5591,7 +5593,7 @@ def test_render_attempt_detail_marks_closed_blocked_work_as_historical(tmp_path:
     assert "DINGTEAM_OKR_NOT_AUTHENTICATED" not in html
 
 
-def test_terminal_later_attempt_keeps_original_failure_reason_visible(tmp_path: Path):
+def test_later_terminal_attempt_does_not_change_original_failure_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     old_id = store.record_reply_attempt(
         conversation_id="cid-resolved-failure",
@@ -5621,8 +5623,9 @@ def test_terminal_later_attempt_keeps_original_failure_reason_visible(tmp_path: 
     status, html = render_attempt_detail(store, old_id)
 
     assert status == 200
-    assert f"Attempt #{later_id}" in html
-    assert "原失败原因：</strong>审批详情读取链路未完成，未执行外部动作。" in html
+    assert later_id
+    assert f"Attempt #{later_id}" not in html
+    assert "审批详情读取链路未完成，未执行外部动作。" in html
     assert "需要你决策：</strong>否" in html
 
 
@@ -5763,7 +5766,7 @@ def test_attempt_detail_renders_oa_comment_status(tmp_path: Path):
     assert 'class="pill status-action action-state-returned">🧾 退回</span>' in html
 
 
-def test_oa_attempt_detail_links_to_later_verified_action_for_same_process(
+def test_oa_attempt_detail_keeps_original_status_despite_later_action(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -5797,7 +5800,9 @@ def test_oa_attempt_detail_links_to_later_verified_action_for_same_process(
     status, html = render_attempt_detail(store, blocked_id)
 
     assert status == 200
-    assert f"已由 #{verified_id} 后续处理" in html
+    assert verified_id
+    assert "已由 #" not in html
+    assert "💬 Blocked" in html
 
 
 def test_attempt_history_and_detail_render_calendar_response_metadata(
@@ -5949,7 +5954,7 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
     assert '<span class="attempt-label">结果</span>' not in html
 
 
-def test_history_only_latest_failed_attempt_for_trigger_offers_actions(tmp_path: Path):
+def test_history_failed_attempts_do_not_hide_each_other(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     old_id = store.record_reply_attempt(
         conversation_id="cid-duplicate-failure",
@@ -5976,13 +5981,11 @@ def test_history_only_latest_failed_attempt_for_trigger_offers_actions(tmp_path:
 
     html = render_attempt_list(store, include_chart=False)
 
-    assert html.count(">重试当前任务</button>") == 1
-    assert html.count(">暂不处理</button>") == 1
+    assert html.count(">重试当前任务</button>") == 2
+    assert html.count(">暂不处理</button>") == 2
     assert f"#{old_id}" in html
-    assert (
-        f'已由 <a href="/attempts/{latest_id}">#{latest_id}</a> 接管，无需操作。'
-        in html
-    )
+    assert latest_id
+    assert "接管，无需操作" not in html
 
 
 def test_history_retrying_item_shows_persisted_plan_without_human_choices(
@@ -7508,7 +7511,7 @@ def test_render_attempt_detail_returns_404_when_missing(tmp_path: Path):
     assert "Attempt not found" in html
 
 
-def test_render_attempt_detail_shows_later_oa_result_instead_of_stale_blocked_pill(
+def test_render_attempt_detail_keeps_blocked_pill_despite_later_oa_result(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -7547,11 +7550,12 @@ def test_render_attempt_detail_shows_later_oa_result_instead_of_stale_blocked_pi
     reply_meta = html[
         html.index('<div class="reply-meta">') : html.index("</div><h2>Trigger")
     ]
-    assert "💬 Blocked" not in reply_meta
-    assert f'href="/attempts/{later_id}"' in reply_meta
-    assert f"已由 #{later_id} 后续处理" in reply_meta
-    assert "💬 Commented" in reply_meta
-    assert "🧾 comment" in reply_meta
+    assert later_id
+    assert "💬 Blocked" in reply_meta
+    assert f'href="/attempts/{later_id}"' not in reply_meta
+    assert "已由 #" not in reply_meta
+    assert "💬 Commented" not in reply_meta
+    assert "🧾 退回" in reply_meta
 
 
 def test_handle_feedback_post_updates_attempt_and_redirects(tmp_path: Path):
@@ -8845,7 +8849,7 @@ def test_render_log_list_marks_old_failed_attempt_historical(tmp_path: Path):
     assert '<span class="pill status-failed">failed</span>' not in html
 
 
-def test_render_log_list_marks_superseded_failed_attempt_recovered(tmp_path: Path):
+def test_render_log_list_keeps_failed_attempt_status_after_later_attempt(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     failed_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -8871,7 +8875,8 @@ def test_render_log_list_marks_superseded_failed_attempt_recovered(tmp_path: Pat
     html = render_log_list(store)
 
     assert failed_id
-    assert '<span class="pill status-resolved">recovered by later attempt</span>' in html
+    assert '<span class="pill status-resolved">recovered by later attempt</span>' not in html
+    assert '<span class="pill status-failed">failed</span>' in html
 
 
 def test_render_log_list_renders_non_error_terminal_states_without_red_status(tmp_path: Path):
