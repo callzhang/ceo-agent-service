@@ -176,6 +176,75 @@ confirmation instead of asking the user to run commands.
 3. Confirm continuity support later through a dry-run worker pass; the service
    uses Codex sessions through the local runtime, not a cloud-only worker.
 
+### Optional Codex API failover rollout
+
+The production route order is `codex_oauth,codex_api`: the existing local OAuth
+identity remains primary and the API credential is a bounded fallback. Configure
+the fallback only in the service environment:
+
+```sh
+CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api
+CEO_CODEX_API_KEY=<service-owned-secret>
+```
+
+Never put the API key in argv, a prompt, a repository file, SQLite, History, a
+diagnostic attachment, or a shell transcript. The runtime adapter injects it
+only as `OPENAI_API_KEY` in the `codex_api` child environment and removes the
+service variable; the OAuth child receives neither variable. Do not print the
+environment while diagnosing this route.
+
+Route probes are synthetic, schema-constrained, read-only turns with all tools,
+web access, plugins, apps, memories, browser features, and dynamic tool search
+disabled. Run the operator probe from the same service account and environment:
+
+```sh
+.venv/bin/ceo-agent probe-agent-runtimes \
+  --db "$CEO_WORKER_DB" --workspace "$CEO_WORKSPACE"
+```
+
+Read each route independently. A failed OAuth probe pauses only `codex_oauth`;
+a failed API probe pauses only `codex_api`. A healthy probe closes only its own
+pause. Authentication, capacity, transport, capability, session-evidence,
+result-validation, process, and effect-policy failures are stored as typed,
+credential-safe codes. Do not copy raw provider stderr into a ticket or History.
+
+Roll out in order:
+
+1. **Stage 1 — probe only.** Configure `codex_api` but leave business fallback
+   disabled. Run `probe-agent-runtimes`; require both routes to report
+   `healthy=true`, a current expiry, and only capabilities the synthetic probe
+   actually proves. Search command output, service logs, SQLite, and rendered
+   History for the configured secret without printing it. Any match blocks
+   rollout.
+2. **Stage 2 — read-only fallback.** Enable only synthetic and reviewed
+   read-only workloads. With `CEO_LIVE_RUNTIME_FAILOVER_E2E=1`, run
+   `tests/e2e/test_runtime_failover_live.py` from an isolated test database. It
+   verifies a real OAuth probe, an API probe with secret scans, and an injected
+   OAuth authentication failure followed by one successful API attempt under
+   the same `agent_run` and execution generation. Verify no business channel
+   tool was available and no failed, processing, or unknown backlog was added.
+3. **Stage 3 — Audit fallback.** Proceed only after retaining Stage 2 command,
+   attempt, History, and secret-scan evidence. Use a dedicated reversible test
+   target. Interrupt once before the first effect and require one API write with
+   exact readback; interrupt once after effect start and require no provider
+   switch or second write, only read-only reconciliation. Retain the receipt and
+   external readback in release evidence.
+
+Failover is allowed only when the persisted typed failure explicitly permits it,
+the selected route has a current matching capability snapshot, no effect has
+started, and the complete session range proves no write. Missing or ambiguous
+session evidence, an unreviewed dynamic item, a started effect, or an unknown
+write is terminal for provider selection. Unknown writes must be reconciled
+against their original operation identity; they must never be retried by
+switching credentials.
+
+Rollback is intentionally small: remove `codex_api` from
+`CEO_AGENT_RUNTIME_ROUTES`, reload the service environment, and restart and
+verify the service using the normal deployment procedure. Do not erase route
+pauses, attempt rows, receipts, or History: they are the evidence needed to
+distinguish a safe read-only retry from an unknown write. Rollback does not
+authorize a replay.
+
 ### Runtime Roles And Audit Rules
 
 Consumer Agent A represents the installation owner: it reads evidence, reuses one

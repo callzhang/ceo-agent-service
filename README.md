@@ -107,6 +107,35 @@ Agent 必须如实返回动作结果；只有诊断、没有完成用户要求�
 
 重复发送保护命中已有 `sent_replies` 时，新的发送 attempt 记为 `skipped`，不记为 `blocked`，也不写入 service error；这表示同一触发消息已处理完成，只是跳过了重复投递。对于唯一的受审私信动作，`sent_replies` 是服务的送达账本：已确认外部发送必须在同一事务记录账本；只要审计读回同一会话和消息标识，历史账本遗漏也会在不执行外部动作的前提下回填。未知结果但账本没有该 trigger 的送达记录时，服务终结旧 generation 并创建新的受审 generation；群消息、审批和其他外部动作仍必须依赖各自的精确读回，不能套用该规则。恢复执行以受控命令摘要、参数摘要和目标作为身份，命令显示名不是身份依据；候选声明的操作仍必须与受控命令分类一致。
 
+## Codex 双认证运行时与故障切换
+
+后台 Agent 的默认路由顺序是 `codex_oauth`（安装用户已有的 Codex OAuth
+登录）后接可选的 `codex_api`（service-owned API credential）。API 路由不是一套
+独立业务执行器；两条路由共用同一持久化 `agent_run`、能力快照、attempt ledger、
+结果 codec 和 effect fence。API key 只在生成 `codex_api` 子进程环境时以
+`OPENAI_API_KEY` 注入，不进入 argv、prompt、SQLite、History 或日志；OAuth 子进程
+不会收到该变量。
+
+运维人员可在不消费业务队列的情况下刷新两条路由的独立健康状态：
+
+```sh
+.venv/bin/ceo-agent probe-agent-runtimes \
+  --db "$CEO_WORKER_DB" --workspace "$CEO_WORKSPACE"
+```
+
+每条路由有各自的 capability snapshot 和 pause。认证、容量、传输、能力、session、
+结果协议和进程错误会以安全的 typed failure 持久化；只有明确允许 failover、尚未开始
+外部效果、session 证据完整且只读策略成立的失败，才能选择下一路由。写入已经开始、
+写入结果未知、session transcript 不完整或出现未审阅 action 时，服务进入只读
+reconciliation，绝不通过切换 provider 重放写入。
+
+部署按三阶段推进：Stage 1 只配置并探测两条路由；Stage 2 仅为 synthetic/read-only
+workload 启用 OAuth→API 故障切换并核对同一 run 的 attempt 与 secret 扫描；Stage 3
+只有在 Stage 2 留下完整证据后，才允许 Audit fallback，并必须用专用测试目标验证写入
+前中断可安全切换、写入后中断只核对不重放。紧急回滚只需从
+`CEO_AGENT_RUNTIME_ROUTES` 移除 `codex_api` 并重启服务；不要删除 attempt/History
+证据，也不要把未知写入改成新一轮 OAuth 执行。
+
 ## 消息如何被处理
 
 ### 快路径
