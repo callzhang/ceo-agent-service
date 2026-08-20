@@ -1442,6 +1442,19 @@ def test_follow_up_keep_open_requires_future_work_hours_schedule(
         )
 
 
+def test_task_agent_prompt_anchors_follow_up_schedule_to_execution_time():
+    prompt = build_task_agent_prompt(
+        _work_item(),
+        "候选上下文为空。",
+        current_time="2026-08-20T05:30:00+00:00",
+    )
+
+    normalized = " ".join(prompt.split())
+    assert "Current execution time: 2026-08-20T05:30:00+00:00" in normalized
+    assert "strictly later than this execution time" in normalized
+    assert "Do not reuse the source creation time" in normalized
+
+
 def test_follow_up_change_reassign_requires_owner_identity(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(

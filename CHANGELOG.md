@@ -5,6 +5,8 @@
   retaining the configured model provider and existing Codex login.
 - Treat the canonical shared rules embedded in role prompts as already read, so
   background agents cannot fail by reopening `AGENT.md` through native shell.
+- Anchor task-agent follow-up rescheduling to the current execution time so a
+  delayed or retried work-summary input cannot emit an already-expired due time.
 
 - Reconcile unknown direct follow-up sends with a complete, exact DingTalk
   conversation readback. A matching outbound message now finalizes delivery;

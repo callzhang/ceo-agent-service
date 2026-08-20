@@ -207,6 +207,7 @@ def build_task_agent_prompt(
     candidate_prompt: str,
     *,
     memory_issue: str = "",
+    current_time: str = "",
 ) -> str:
     skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
     work_item_json = json.dumps(
@@ -215,6 +216,9 @@ def build_task_agent_prompt(
         indent=2,
     )
     memory_status = _memory_connector_prompt_status(memory_issue)
+    effective_current_time = current_time.strip() or datetime.now(
+        timezone.utc
+    ).isoformat()
     decision_schema = json.dumps(
         TaskAgentDecision.model_json_schema(),
         ensure_ascii=False,
@@ -223,6 +227,11 @@ def build_task_agent_prompt(
     return f"""You are the CEO Agent task agent. Update tracked work only; do not
 reply to the current message. Follow the loaded Skill and return exactly one
 TaskAgentDecision JSON object that satisfies the supplied Pydantic schema.
+
+Current execution time: {effective_current_time}
+Any follow_up_change.next_due_at must be strictly later than this execution
+time and must satisfy the documented local work-hours constraint. Do not reuse
+the source creation time or an earlier scheduled time as a future deadline.
 
 {skill_text}
 
