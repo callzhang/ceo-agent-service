@@ -10,6 +10,15 @@ def test_observability_keeps_long_opaque_dingtalk_identifier():
     assert safe_observability_error(conversation_id) == conversation_id
 
 
+def test_observability_redacts_credentials_and_local_runtime_paths():
+    assert safe_observability_error(
+        "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz"
+    ) == "[redacted sensitive error]"
+    assert safe_observability_error(
+        "/tmp/private/runtime-transcript.jsonl"
+    ) == "[redacted sensitive error]"
+
+
 def _seed_meeting_run(store: AutoReplyStore, *, status: str = "sent") -> int:
     job_id = store.upsert_meeting_alignment_job(
         meeting_id="minutes-1",

@@ -5337,6 +5337,93 @@ def test_render_attempt_list_uses_attempt_codex_session_over_conversation(tmp_pa
     assert "agent 执行记录" in detail
 
 
+def test_runtime_attempt_history_renders_only_safe_allowlisted_evidence(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-runtime",
+        conversation_title="Runtime",
+        single_chat=False,
+        trigger_message_id="msg-runtime",
+        trigger_create_time="2026-08-07 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="检查 runtime fallback。",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+    run = _claim_audit_run(store, task).run
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-runtime",
+        conversation_title="Runtime",
+        trigger_message_id="msg-runtime",
+        trigger_sender="Mina",
+        trigger_text="检查 runtime fallback。",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="Runtime fallback evidence.",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set agent_run_id=? where id=?",
+            (run.id, attempt_id),
+        )
+        db.execute(
+            """insert into agent_runtime_attempts
+               (agent_run_id, workload_kind, workload_key, attempt_number,
+                route_name, runtime_kind, credential_mode, model, session_mode,
+                source_session_id, attempt_purpose, validation_retry_policy_id,
+                validation_result_schema_id, session_id, status, failure_class,
+                failure_code, failover_permitted, transcript_reference,
+                transcript_start, transcript_end, first_effect_started_at,
+                lease_owner, result_schema_id, result_envelope_json)
+               values (?, 'agent_run', ?, 1, 'codex_api', 'codex_cli',
+                       'service_api', 'gpt-5.5', 'resume', ?,
+                       'result_validation_correction', ?, ?,
+                       'safe-session-42', 'failed', 'authentication',
+                       'codex_provider_auth_failed', 1, ?, 12, 34,
+                       '2026-08-07 09:01:00', ?, ?, ?)""",
+            (
+                run.id,
+                str(run.id),
+                "prompt=do not expose this business prompt",
+                "stderr=provider-secret-error",
+                "env=OPENAI_API_KEY",
+                "/tmp/private/transcript.jsonl",
+                "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz",
+                "private-envelope-schema",
+                '{"prompt":"private business input","stderr":"raw provider stderr",'
+                '"env":{"OPENAI_API_KEY":"sk-proj-abcdefghijklmnopqrstuvwxyz"}}',
+            ),
+        )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    for visible in (
+        "codex_api",
+        "codex_cli",
+        "service_api",
+        "gpt-5.5",
+        "safe-session-42",
+        "failed",
+        "codex_provider_auth_failed",
+        "Failover permitted: yes",
+        "Transcript lines: 12-34",
+        "Effect started: 2026-08-07 09:01:00",
+    ):
+        assert visible in html
+    for hidden in (
+        "do not expose this business prompt",
+        "provider-secret-error",
+        "OPENAI_API_KEY",
+        "sk-proj-abcdefghijklmnopqrstuvwxyz",
+        "/tmp/private/transcript.jsonl",
+        "private-envelope-schema",
+        "private business input",
+        "raw provider stderr",
+    ):
+        assert hidden not in html
+
+
 def test_render_attempt_detail_shows_quality_warnings(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(

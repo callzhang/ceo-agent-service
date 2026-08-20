@@ -9060,15 +9060,52 @@ def _attempt_detail_body(
 def _runtime_attempt_evidence_card(attempts: list[object]) -> str:
     if not attempts:
         return ""
-    lines = []
+    rendered_attempts = []
     for attempt in attempts:
-        values = [
-            getattr(attempt, name, "")
-            for name in ("route_name", "runtime_kind", "credential_mode", "model", "session_id", "status", "failure_code", "transcript_reference", "first_effect_started_at")
-        ]
-        safe = [safe_observability_error(str(value), limit=180) for value in values]
-        lines.append(" | ".join(safe))
-    return _text_card("Runtime attempts", "\n".join(lines))
+        safe = {
+            name: safe_observability_error(
+                str(getattr(attempt, name, "") or ""), limit=180
+            )
+            for name in (
+                "route_name",
+                "runtime_kind",
+                "credential_mode",
+                "model",
+                "session_id",
+                "status",
+                "failure_code",
+                "first_effect_started_at",
+            )
+        }
+        session_id = safe["session_id"]
+        raw_session_id = str(getattr(attempt, "session_id", "") or "")
+        session = escape(session_id)
+        if session_id and session_id == raw_session_id:
+            session = (
+                f'<a href="/codex/{quote(raw_session_id, safe="")}">'
+                f"{escape(session_id)}</a>"
+            )
+        transcript_start = int(getattr(attempt, "transcript_start", 0) or 0)
+        transcript_end = int(getattr(attempt, "transcript_end", 0) or 0)
+        lines = (
+            f"Route: {escape(safe['route_name'])}",
+            f"Runtime: {escape(safe['runtime_kind'])}",
+            f"Credential mode: {escape(safe['credential_mode'])}",
+            f"Model: {escape(safe['model'])}",
+            f"Session: {session}",
+            f"Status: {escape(safe['status'])}",
+            f"Failure code: {escape(safe['failure_code'])}",
+            "Failover permitted: "
+            + ("yes" if bool(getattr(attempt, "failover_permitted", False)) else "no"),
+            f"Transcript lines: {transcript_start}-{transcript_end}",
+            f"Effect started: {escape(safe['first_effect_started_at'])}",
+        )
+        rendered_attempts.append("<pre>" + "\n".join(lines) + "</pre>")
+    return (
+        '<section class="card"><h2>Runtime attempts</h2>'
+        + "".join(rendered_attempts)
+        + "</section>"
+    )
 
 
 def _agent_failure_reason_card(

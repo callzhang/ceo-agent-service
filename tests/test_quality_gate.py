@@ -57,6 +57,107 @@ def test_quality_gate_runtime_attempt_invariants_use_persisted_rows(tmp_path):
             "unsafe_runtime_failover", "unknown_effect_with_fallback_attempt"} <= codes
 
 
+def test_quality_gate_covers_every_runtime_attempt_invariant_with_persisted_rows(tmp_path):
+    seeders = {
+        "runtime_attempt_without_parent": [
+            "pragma foreign_keys=off",
+            """insert into agent_runtime_attempts
+               (agent_run_id, workload_kind, workload_key, attempt_number, route_name,
+                runtime_kind, credential_mode, model, status)
+               values (999, 'agent_run', '999', 1, 'codex_oauth', 'codex_cli',
+                       'local_oauth', 'gpt-5.5', 'failed')""",
+        ],
+        "multiple_active_runtime_attempts": [
+            """insert into agent_runtime_attempts
+               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
+                credential_mode, model, status, lease_owner, lease_expires_at)
+               values ('task', 'active-pair', 1, 'codex_oauth', 'codex_cli',
+                       'local_oauth', 'gpt-5.5', 'running', 'worker-1',
+                       '2026-08-07 01:00:00')""",
+            """insert into agent_runtime_attempts
+               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
+                credential_mode, model, status, lease_owner, lease_expires_at)
+               values ('task', 'active-pair', 2, 'codex_api', 'codex_cli',
+                       'service_api', 'gpt-5.5', 'starting', 'worker-2',
+                       '2026-08-07 01:00:00')""",
+        ],
+        "completed_runtime_attempt_without_final_run": [
+            "pragma foreign_keys=off",
+            """insert into agent_runtime_attempts
+               (agent_run_id, workload_kind, workload_key, attempt_number,
+                route_name, runtime_kind, credential_mode, model, status)
+               values (998, 'agent_run', '998', 1, 'codex_oauth', 'codex_cli',
+                       'local_oauth', 'gpt-5.5', 'completed')""",
+        ],
+        "unsafe_runtime_failover": [
+            """insert into agent_runtime_attempts
+               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
+                credential_mode, model, status, first_effect_started_at)
+               values ('task', 'effectful-fallback', 1, 'codex_oauth', 'codex_cli',
+                       'local_oauth', 'gpt-5.5', 'failed', '2026-08-07 00:00:00')""",
+            """insert into agent_runtime_attempts
+               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
+                credential_mode, model, status)
+               values ('task', 'effectful-fallback', 2, 'codex_api', 'codex_cli',
+                       'service_api', 'gpt-5.5', 'completed')""",
+        ],
+        "unknown_effect_with_fallback_attempt": [
+            """insert into agent_runtime_attempts
+               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
+                credential_mode, model, status, first_effect_started_at)
+               values ('task', 'unknown-fallback', 1, 'codex_oauth', 'codex_cli',
+                       'local_oauth', 'gpt-5.5', 'failed', '2026-08-07 00:00:00')""",
+            """insert into agent_runtime_attempts
+               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
+                credential_mode, model, status)
+               values ('task', 'unknown-fallback', 2, 'codex_api', 'codex_cli',
+                       'service_api', 'gpt-5.5', 'completed')""",
+        ],
+        "runtime_secret_leak": [
+            """insert into agent_runtime_attempts
+               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
+                credential_mode, model, status)
+               values ('task', 'secret-row', 1,
+                       'sk-proj-abcdefghijklmnopqrstuvwxyz', 'codex_cli',
+                       'service_api', 'gpt-5.5', 'failed')""",
+        ],
+    }
+    for code, statements in seeders.items():
+        store = AutoReplyStore(tmp_path / f"{code}.sqlite3")
+        with store._connect() as db:
+            for statement in statements:
+                db.execute(statement)
+        codes = {issue.code for issue in scan_hourly_quality(store.path, now=NOW).violations}
+        assert code in codes
+
+
+def test_quality_gate_treats_route_pause_as_warning_with_healthy_alternative(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into runtime_route_pauses
+               (route_name, failure_code, retry_at, opened_at, updated_at)
+               values ('codex_oauth', 'codex_login_required',
+                       '2026-08-07 02:00:00', '2026-08-07 00:00:00',
+                       '2026-08-07 00:00:00')"""
+        )
+        db.execute(
+            """insert into agent_runtime_attempts
+               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
+                credential_mode, model, status, finished_at)
+               values ('task', 'healthy-alternative', 1, 'codex_api', 'codex_cli',
+                       'service_api', 'gpt-5.5', 'completed',
+                       '2026-08-07 00:01:00')"""
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert ("runtime_route_pauses", "route_paused_with_healthy_alternative", 1) in {
+        (issue.source, issue.code, issue.count) for issue in report.attention
+    }
+
+
 def test_required_live_channels_skips_unused_lark_but_includes_referenced_lark(
     tmp_path,
 ):

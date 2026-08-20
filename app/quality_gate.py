@@ -147,6 +147,7 @@ def scan_hourly_quality(
         _check_feedback(db, violations)
         _check_scan_health(db, violations, attention)
         _check_codex_capacity_pause(db, checked_now, attention)
+        _check_runtime_route_pauses(db, checked_now, attention)
         _check_recent_errors(db, checked_now, violations)
     return QualityGateReport(
         checked_at=now_text,
@@ -692,6 +693,35 @@ def _check_codex_capacity_pause(
         count=1,
         severity="info",
         detail="Codex workspace capacity is paused until the recorded retry time",
+    )
+
+
+def _check_runtime_route_pauses(
+    db: sqlite3.Connection,
+    now: datetime,
+    attention: list[QualityIssue],
+) -> None:
+    count = _count(
+        db,
+        """select count(*)
+           from runtime_route_pauses paused
+           where datetime(paused.retry_at) > datetime(?)
+             and exists (
+                select 1
+                from agent_runtime_attempts alternative
+                where alternative.route_name <> paused.route_name
+                  and alternative.status='completed'
+                  and datetime(alternative.finished_at) >= datetime(paused.opened_at)
+             )""",
+        (now.strftime("%Y-%m-%d %H:%M:%S"),),
+    )
+    _add(
+        attention,
+        source="runtime_route_pauses",
+        code="route_paused_with_healthy_alternative",
+        count=count,
+        severity="info",
+        detail="one runtime route is paused while another route has completed successfully",
     )
 
 
