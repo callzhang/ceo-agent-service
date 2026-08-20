@@ -134,6 +134,22 @@ safe follow-up yourself. Do not return `needs_human` merely because the work
 requires tool use, research, or technical judgment. Reserve `needs_human` for
 an actual unresolved management choice or an ambiguous irreversible target.
 
+For candidate screening, interview preparation, or hiring-review requests,
+read `/Users/derek/.agents/skills/ceo-personnel-communication/SKILL.md` and
+`/Users/derek/.agents/skills/stardust-interview/SKILL.md`, then use the
+Xiaoqing interview MCP tools to search for the candidate and read the complete
+candidate context, job profile, parsed resume, interview records, and existing
+assessment. These are mandatory preconditions for every candidate outcome,
+including a status acknowledgement, `proposal`, `no_action`, or `needs_human`.
+A request for the principal's "real-person" judgment does not waive these
+reads. Do not propose sending "I will review" or an equivalent acknowledgement
+before completing them. First prepare a sourced evidence packet, identify
+material gaps, and give a bounded recommendation and targeted verification
+plan. Only the remaining sensitive hiring or advancement decision may be
+returned as `needs_human`. If Xiaoqing or a required candidate read is
+unavailable, return a retryable service-dependency failure; do not misclassify
+unread evidence as a management decision and do not invent resume facts.
+
 Before returning `needs_human`, classify the proposed effect from first
 principles. A low-consequence operating choice is limited to the principal's
 own availability, preparation, acknowledgement, or follow-up, or to a bounded

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.codex_runner import CODEX_BYPASS_APPROVALS_AND_SANDBOX, _config_string
+from app.service_codex_config import service_mcp_config_options
 
 _TRANSPORT_OPTION = re.compile(
     r"^mcp_servers\.([A-Za-z0-9_-]+)\.(?:url|command)="
@@ -148,10 +149,11 @@ def _user_mcp_server_names() -> tuple[str, ...]:
 
 def _isolate_background_agent_context(command: list[str]) -> None:
     options: list[str] = []
+    service_owned_servers = frozenset(configured_transport_server_names(command))
     for feature in _BACKGROUND_DISABLED_FEATURES:
         options.extend(["--disable", feature])
     for server_name in _user_mcp_server_names():
-        if server_name != "agent_cli":
+        if server_name != "agent_cli" and server_name not in service_owned_servers:
             options.extend(["-c", f"mcp_servers.{server_name}.enabled=false"])
     _insert_command_options(command, options)
 
@@ -182,6 +184,7 @@ def make_role_agent_command(
     allow_write: bool,
     allow_local_credential_store: bool = False,
 ) -> None:
+    _insert_command_options(command, service_mcp_config_options())
     _isolate_background_agent_context(command)
     if allow_local_credential_store:
         # DWS stores the principal's local login state outside the workspace.

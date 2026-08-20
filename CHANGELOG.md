@@ -1,5 +1,11 @@
 # Changelog
 
+- Require candidate and hiring reviews to read Xiaoqing's authoritative job,
+  resume, interview, and assessment context before escalating the remaining
+  sensitive hiring decision to Derek.
+- Inject the validated service MCP manifest into Consumer and Audit Codex
+  commands while retaining the authenticated Codex OAuth session, and disable
+  only user-configured servers not owned by that manifest.
 - Keep Xiaoqing in the generated service MCP manifest through its stable OAuth
   endpoint, so candidate and resume requests can read the authoritative
   interview package instead of being escalated because an optional local

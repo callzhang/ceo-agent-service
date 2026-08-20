@@ -498,6 +498,12 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
         in command
     )
     assert "execute_reviewed_write" not in " ".join(command)
+    assert 'mcp_servers.exa.url="https://mcp.exa.ai/mcp"' in command
+    assert "mcp_servers.exa.enabled=false" not in command
+    assert not any(
+        command[index] == command[index + 1] == "-c"
+        for index in range(len(command) - 1)
+    )
     assert store.get_agent_run(result.run_id).role.value == "consumer"
     assert not any(
         "Output JSON Schema (validated locally):" in option for option in command
@@ -526,6 +532,13 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
     assert "referenced skill, document,\nconfiguration" in instructions
     assert "normal Agent work" in instructions
+    assert "Xiaoqing interview MCP tools" in instructions
+    assert "mandatory preconditions for every candidate outcome" in instructions
+    assert "real-person" in instructions
+    assert 'Do not propose sending "I will review"' in instructions
+    assert "First prepare a sourced evidence packet" in instructions
+    assert "Only the remaining sensitive hiring or advancement decision" in instructions
+    assert "return a retryable service-dependency failure" in instructions
     assert any(
         "Authoritative Consumer role boundary" in option
         and "valid ConsumerAgentResult JSON" in option
