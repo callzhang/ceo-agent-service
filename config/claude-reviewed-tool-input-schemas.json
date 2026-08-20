@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "tools": {
+    "mcp__memory_connector__memory_recall": {
+      "type": "object",
+      "properties": {
+        "query": {"type": "string"}
+      },
+      "required": ["query"],
+      "additionalProperties": false
+    }
+  }
+}

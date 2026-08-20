@@ -6,9 +6,7 @@ from app.native_cli_metadata import NativeCliMetadataClassifier
 
 def _broker():
     return ClaudePermissionBroker(
-        allowed_mcp_tools=frozenset(
-            {"mcp__memory_connector__memory_recall"}
-        ),
+        allowed_mcp_tools=frozenset({"mcp__memory_connector__memory_recall"}),
         allow_native_cli=True,
         effect_registry=McpToolEffectRegistry(
             {("memory_connector", "memory_recall"): EffectKind.READ_ONLY}
@@ -18,6 +16,7 @@ def _broker():
                 ("dws", "chat message send"): EffectKind.EFFECTFUL,
             }
         ),
+        grant_issuer=lambda _tool, _arguments: "one-time-grant",
     )
 
 
@@ -48,8 +47,39 @@ def test_broker_allows_only_exact_reviewed_mcp_name_and_arguments():
     )
 
     assert allowed["behavior"] == "allow"
-    assert allowed["updatedInput"] == {"query": "synthetic"}
+    assert allowed["updatedInput"] == {
+        "query": "synthetic",
+        "__ceo_runtime_grant": "one-time-grant",
+    }
     assert typo["behavior"] == "deny"
+
+
+def test_broker_rejects_unreviewed_input_shape_and_model_supplied_grant():
+    issued = []
+    broker = ClaudePermissionBroker(
+        allowed_mcp_tools=frozenset({"mcp__memory_connector__memory_recall"}),
+        allow_native_cli=False,
+        effect_registry=McpToolEffectRegistry(
+            {("memory_connector", "memory_recall"): EffectKind.READ_ONLY}
+        ),
+        grant_issuer=lambda tool, args: issued.append((tool, args)) or "grant",
+    )
+
+    assert (
+        broker.authorize(
+            "mcp__memory_connector__memory_recall",
+            {"query": "safe", "unexpected": "not reviewed"},
+        )["behavior"]
+        == "deny"
+    )
+    assert (
+        broker.authorize(
+            "mcp__memory_connector__memory_recall",
+            {"query": "safe", "__ceo_runtime_grant": "forged"},
+        )["behavior"]
+        == "deny"
+    )
+    assert issued == []
 
 
 def test_broker_classifies_native_cli_before_dispatch():

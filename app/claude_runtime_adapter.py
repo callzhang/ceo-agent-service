@@ -23,8 +23,8 @@ from app.agent_runtime_contracts import (
     RuntimeKind,
     RuntimeRoute,
 )
-from app.codex_runtime_adapter import _safe_child_environment
 from app.claude_mcp_proxy import ClaudeMcpCredentialProxyManager
+from app.codex_runtime_adapter import _safe_child_environment
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.service_codex_config import load_service_mcp_servers
 
@@ -33,11 +33,30 @@ _POLICY_SEAL = object()
 _PERMISSION_TOOL = "mcp__ceo_runtime_permission__permission_prompt"
 _BUILTIN_TOOLS = frozenset(
     {
-        "Agent", "AskUserQuestion", "Bash", "Edit", "EnterPlanMode",
-        "ExitPlanMode", "Glob", "Grep", "KillShell", "LS", "NotebookEdit",
-        "Read", "Skill", "Task", "TaskCreate", "TaskGet", "TaskList",
-        "TaskOutput", "TaskStop", "TaskUpdate", "TodoWrite", "WebFetch",
-        "WebSearch", "Write",
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "Edit",
+        "EnterPlanMode",
+        "ExitPlanMode",
+        "Glob",
+        "Grep",
+        "KillShell",
+        "LS",
+        "NotebookEdit",
+        "Read",
+        "Skill",
+        "Task",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "TodoWrite",
+        "WebFetch",
+        "WebSearch",
+        "Write",
     }
 )
 
@@ -125,11 +144,10 @@ class ClaudeRuntimeAdapter:
             root=Path(self._runtime_root.name)
         )
         self._lock = RLock()
-        self._pending_proofs: dict[
-            object, tuple[ClaudeTerminalProof, str]
-        ] = {}
+        self._pending_proofs: dict[object, tuple[ClaudeTerminalProof, str]] = {}
         self._invocations_by_mcp_path: dict[str, str] = {}
         self._invocations_by_owner: dict[object, str] = {}
+        self._artifact_paths: dict[str, tuple[Path, ...]] = {}
 
     @property
     def active_proxy_process_count(self) -> int:
@@ -146,7 +164,7 @@ class ClaudeRuntimeAdapter:
         configured = self._configured_route(route)
         selected_policy = policy or ClaudeCommandPolicy.no_tools()
         if not isinstance(selected_policy, ClaudeCommandPolicy):
-            raise ValueError("Claude command policy is invalid")
+            raise ValueError("Claude command policy is invalid")  # noqa: TRY004
         if (
             isinstance(max_turns, bool)
             or not isinstance(max_turns, int)
@@ -160,23 +178,42 @@ class ClaudeRuntimeAdapter:
         settings_path, mcp_path = self._write_invocation_boundary(selected_policy)
         exposed_builtins = "Bash" if selected_policy.allow_native_cli else ""
         denied_builtins = sorted(
-            _BUILTIN_TOOLS
-            - ({"Bash"} if selected_policy.allow_native_cli else set())
+            _BUILTIN_TOOLS - ({"Bash"} if selected_policy.allow_native_cli else set())
         )
         command = [
-            self.claude_bin, "-p", "--bare", "--setting-sources", "",
-            "--settings", str(settings_path), "--strict-mcp-config",
-            "--mcp-config", str(mcp_path), "--input-format", "text",
-            "--output-format", "stream-json", "--model", configured.model,
-            "--max-turns", str(max_turns), "--verbose", "--tools",
-            exposed_builtins, "--disallowedTools", *denied_builtins,
+            self.claude_bin,
+            "-p",
+            "--bare",
+            "--setting-sources",
+            "",
+            "--settings",
+            str(settings_path),
+            "--strict-mcp-config",
+            "--mcp-config",
+            str(mcp_path),
+            "--input-format",
+            "text",
+            "--output-format",
+            "stream-json",
+            "--model",
+            configured.model,
+            "--max-turns",
+            str(max_turns),
+            "--verbose",
+            "--tools",
+            exposed_builtins,
+            "--disallowedTools",
+            *denied_builtins,
         ]
         if selected_policy.mcp_tools or selected_policy.allow_native_cli:
             command.extend(
                 [
-                    "--allowedTools", _PERMISSION_TOOL,
-                    "--permission-mode", "default",
-                    "--permission-prompt-tool", _PERMISSION_TOOL,
+                    "--allowedTools",
+                    _PERMISSION_TOOL,
+                    "--permission-mode",
+                    "default",
+                    "--permission-prompt-tool",
+                    _PERMISSION_TOOL,
                 ]
             )
         if session_id is not None:
@@ -225,6 +262,7 @@ class ClaudeRuntimeAdapter:
             expected_session_id=expected_session_id,
             owner=owner,
             proof_issuer=self._issue_terminal_proof,
+            cleanup_owner=self._finish_owner,
         )
 
     def parse_final_result(
@@ -237,16 +275,10 @@ class ClaudeRuntimeAdapter:
         if not isinstance(normalizer, ClaudeEventNormalizer) or not isinstance(
             proof, ClaudeTerminalProof
         ):
-            raise ClaudeRuntimeResultError(
-                _result_failure("claude_result_incomplete")
-            )
+            raise ClaudeRuntimeResultError(_result_failure("claude_result_incomplete"))
         with self._lock:
             pending = self._pending_proofs.get(normalizer._owner)
-            if (
-                pending is None
-                or pending[0] is not proof
-                or pending[1] != proof.nonce
-            ):
+            if pending is None or pending[0] is not proof or pending[1] != proof.nonce:
                 raise ClaudeRuntimeResultError(
                     _result_failure("claude_result_incomplete")
                 )
@@ -260,7 +292,9 @@ class ClaudeRuntimeAdapter:
         finally:
             self._finish_owner(normalizer._owner)
 
-    def execute(self, command: list[str], executor: Callable[..., ResultT], **kwargs) -> ResultT:
+    def execute(
+        self, command: list[str], executor: Callable[..., ResultT], **kwargs
+    ) -> ResultT:
         """Run one Claude process and always close its credential proxies."""
 
         try:
@@ -272,6 +306,9 @@ class ClaudeRuntimeAdapter:
         invocation_id = self._invocation_id(command, required=False)
         if invocation_id is None:
             return
+        self._finish_invocation_id(invocation_id)
+
+    def _finish_invocation_id(self, invocation_id: str) -> None:
         self._mcp_proxy.close_invocation(invocation_id)
         with self._lock:
             stale_paths = [
@@ -281,12 +318,18 @@ class ClaudeRuntimeAdapter:
             ]
             for path in stale_paths:
                 del self._invocations_by_mcp_path[path]
+            artifacts = self._artifact_paths.pop(invocation_id, ())
+        for path in artifacts:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _finish_owner(self, owner: object) -> None:
         with self._lock:
             invocation_id = self._invocations_by_owner.pop(owner, None)
         if invocation_id is not None:
-            self._mcp_proxy.close_invocation(invocation_id)
+            self._finish_invocation_id(invocation_id)
 
     def _invocation_id(
         self, command: list[str], *, required: bool = True
@@ -336,7 +379,9 @@ class ClaudeRuntimeAdapter:
         if any(
             marker in failure_text
             for marker in (
-                "authentication_error", "invalid x-api-key", "invalid api key",
+                "authentication_error",
+                "invalid x-api-key",
+                "invalid api key",
                 "unauthorized",
             )
         ):
@@ -361,7 +406,9 @@ class ClaudeRuntimeAdapter:
         if any(
             marker in failure_text
             for marker in (
-                "connection reset", "connection refused", "network error",
+                "connection reset",
+                "connection refused",
+                "network error",
                 "stream disconnected",
             )
         ):
@@ -375,7 +422,10 @@ class ClaudeRuntimeAdapter:
                 code="claude_session_invalid",
                 detail="Claude session evidence is invalid or unavailable.",
             )
-        if "error_max_turns" in structured_subtypes or "error_max_turns" in failure_text:
+        if (
+            "error_max_turns" in structured_subtypes
+            or "error_max_turns" in failure_text
+        ):
             return _result_failure("claude_result_incomplete")
         return RuntimeFailure(
             failure_class=RuntimeFailureClass.UNCLASSIFIED,
@@ -395,71 +445,86 @@ class ClaudeRuntimeAdapter:
         policy_path = root / f"broker-{invocation_id}.json"
         settings_path = root / f"settings-{invocation_id}.json"
         mcp_path = root / f"mcp-{invocation_id}.json"
-        policy_path.write_text(
-            json.dumps(
-                {
-                    "allowed_mcp_tools": list(policy.mcp_tools),
-                    "allow_native_cli": policy.allow_native_cli,
-                }, sort_keys=True, separators=(",", ":"),
-            ), encoding="utf-8",
-        )
         denied_builtins = sorted(
-            _BUILTIN_TOOLS
-            - ({"Bash"} if policy.allow_native_cli else set())
+            _BUILTIN_TOOLS - ({"Bash"} if policy.allow_native_cli else set())
         )
         broker_enabled = bool(policy.mcp_tools or policy.allow_native_cli)
+        artifacts = (policy_path, settings_path, mcp_path)
         try:
             reviewed_transports = self._reviewed_mcp_transports(
                 policy,
                 invocation_id=invocation_id,
             )
+            grant_endpoints = {
+                server: self._mcp_proxy.grant_descriptor(invocation_id, server)
+                for server in reviewed_transports
+            }
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "allowed_mcp_tools": list(policy.mcp_tools),
+                        "allow_native_cli": policy.allow_native_cli,
+                        "grant_endpoints": grant_endpoints,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "permissions": {"allow": [], "deny": denied_builtins},
+                        "enableAllProjectMcpServers": False,
+                        "enabledMcpjsonServers": (
+                            [
+                                *(["ceo_runtime_permission"] if broker_enabled else []),
+                                *sorted(reviewed_transports),
+                            ]
+                        ),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
+            mcp_path.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            **(
+                                {
+                                    "ceo_runtime_permission": {
+                                        "type": "stdio",
+                                        "command": sys.executable,
+                                        "args": [
+                                            "-m",
+                                            "app.claude_permission_broker",
+                                            "--policy",
+                                            str(policy_path),
+                                        ],
+                                        "env": {},
+                                    }
+                                }
+                                if broker_enabled
+                                else {}
+                            ),
+                            **reviewed_transports,
+                        }
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
         except Exception:
             self._mcp_proxy.close_invocation(invocation_id)
+            for path in artifacts:
+                path.unlink(missing_ok=True)
             raise
-        settings_path.write_text(
-            json.dumps(
-                {
-                    "permissions": {"allow": [], "deny": denied_builtins},
-                    "enableAllProjectMcpServers": False,
-                    "enabledMcpjsonServers": (
-                        [
-                            *(["ceo_runtime_permission"] if broker_enabled else []),
-                            *sorted(reviewed_transports),
-                        ]
-                    ),
-                }, sort_keys=True, separators=(",", ":"),
-            ), encoding="utf-8",
-        )
-        mcp_path.write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        **(
-                            {
-                            "ceo_runtime_permission": {
-                                "type": "stdio",
-                                "command": sys.executable,
-                                "args": [
-                                    "-m",
-                                    "app.claude_permission_broker",
-                                    "--policy",
-                                    str(policy_path),
-                                ],
-                                "env": {},
-                            }
-                            }
-                            if broker_enabled
-                            else {}
-                        ),
-                        **reviewed_transports,
-                    }
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ), encoding="utf-8",
-        )
         with self._lock:
             self._invocations_by_mcp_path[str(mcp_path.resolve())] = invocation_id
+            self._artifact_paths[invocation_id] = artifacts
         return settings_path, mcp_path
 
     def _reviewed_mcp_transports(
@@ -507,7 +572,11 @@ class ClaudeRuntimeAdapter:
         ):
             raise ValueError("unsupported runtime route")
         configured = next(
-            (candidate for candidate in self.config.routes if candidate.name == route.name),
+            (
+                candidate
+                for candidate in self.config.routes
+                if candidate.name == route.name
+            ),
             None,
         )
         if configured != route:
@@ -526,14 +595,20 @@ class ClaudeEventNormalizer:
         expected_session_id: str | None,
         owner: object,
         proof_issuer: Callable[[object, str, str], ClaudeTerminalProof],
+        cleanup_owner: Callable[[object], None],
     ) -> None:
-        if expected_session_id is not None and _required_string(expected_session_id) is None:
+        if (
+            expected_session_id is not None
+            and _required_string(expected_session_id) is None
+        ):
             raise ValueError("expected_session_id must be normalized")
         self._effects = effect_registry
         self._native_cli = native_cli_classifier
         self._expected_session_id = expected_session_id
         self._owner = owner
         self._proof_issuer = proof_issuer
+        self._cleanup_owner = cleanup_owner
+        self._cleanup_done = False
         self._session_id: str | None = None
         self._init_seen = False
         self._final_seen = False
@@ -561,8 +636,10 @@ class ClaudeEventNormalizer:
         self, event: dict[str, object]
     ) -> tuple[dict[str, object], ...]:
         if self._failed:
+            self._cleanup()
             raise ClaudeEventPolicyError("claude_invocation_failed")
         if self._final_seen:
+            self._cleanup()
             raise ClaudeEventPolicyError("claude_event_after_result")
         snapshot = (
             self._session_id,
@@ -584,6 +661,7 @@ class ClaudeEventNormalizer:
                 self._terminal_proof,
             ) = snapshot
             self._failed = True
+            self._cleanup()
             if isinstance(exc, ClaudeRuntimeResultError):
                 raise ClaudeEventPolicyError(exc.failure.code) from exc
             raise
@@ -598,11 +676,16 @@ class ClaudeEventNormalizer:
                 raise ClaudeEventPolicyError("claude_init_duplicate")
             if session_id is None:
                 raise ClaudeEventPolicyError("claude_session_evidence_missing")
-            if self._expected_session_id is not None and session_id != self._expected_session_id:
+            if (
+                self._expected_session_id is not None
+                and session_id != self._expected_session_id
+            ):
                 raise ClaudeEventPolicyError("claude_session_mismatch")
             self._session_id = session_id
             self._init_seen = True
-            return ({"type": RuntimeEventType.TURN_STARTED.value, "session_id": session_id},)
+            return (
+                {"type": RuntimeEventType.TURN_STARTED.value, "session_id": session_id},
+            )
         self._require_active_session(session_id)
         if event_type in {"assistant", "user"}:
             message = event.get("message")
@@ -638,24 +721,37 @@ class ClaudeEventNormalizer:
                 raw,
                 self._session_id,
             )
-            return ({"type": RuntimeEventType.TURN_COMPLETED.value, "session_id": self._session_id, "result": raw},)
+            return (
+                {
+                    "type": RuntimeEventType.TURN_COMPLETED.value,
+                    "session_id": self._session_id,
+                    "result": raw,
+                },
+            )
         raise ClaudeEventPolicyError("claude_event_unrecognized")
 
     def finalize(self) -> None:
         if self._failed:
+            self._cleanup()
             raise ClaudeEventPolicyError("claude_invocation_failed")
         if not self._init_seen:
+            self._cleanup()
             raise ClaudeEventPolicyError("claude_session_evidence_missing")
         if self._started_items:
+            self._cleanup()
             raise ClaudeEventPolicyError("claude_open_tool_items")
         if not self._final_seen:
+            self._cleanup()
             raise ClaudeEventPolicyError("claude_result_incomplete")
+
+    def _cleanup(self) -> None:
+        if not self._cleanup_done:
+            self._cleanup_done = True
+            self._cleanup_owner(self._owner)
 
     def terminal_proof(self) -> ClaudeTerminalProof:
         if self._failed or not self._final_seen or self._terminal_proof is None:
-            raise ClaudeRuntimeResultError(
-                _result_failure("claude_result_incomplete")
-            )
+            raise ClaudeRuntimeResultError(_result_failure("claude_result_incomplete"))
         return self._terminal_proof
 
     def _require_active_session(self, session_id: str | None) -> None:
@@ -670,7 +766,10 @@ class ClaudeEventNormalizer:
         if not isinstance(block, dict):
             raise ClaudeEventPolicyError("claude_event_unrecognized")
         if block.get("type") == "text" and isinstance(block.get("text"), str):
-            return {"type": RuntimeEventType.ITEM_COMPLETED.value, "item": {"type": "agent_message", "text": block["text"]}}
+            return {
+                "type": RuntimeEventType.ITEM_COMPLETED.value,
+                "item": {"type": "agent_message", "text": block["text"]},
+            }
         if block.get("type") != "tool_use":
             raise ClaudeEventPolicyError("claude_event_unrecognized")
         call_id = _required_string(block.get("id"))
@@ -685,28 +784,57 @@ class ClaudeEventNormalizer:
         self._started_items[call_id] = item
         return {"type": RuntimeEventType.ITEM_STARTED.value, "item": item}
 
-    def _reviewed_tool_item(self, call_id: str, tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
+    def _reviewed_tool_item(
+        self, call_id: str, tool_name: str, arguments: dict[str, object]
+    ) -> dict[str, object]:
         mcp_identity = self._mcp_tool_names.get(tool_name)
         if mcp_identity is not None:
             server, tool = mcp_identity
-            call = self._effects.classify({"type": "mcp_tool_call", "server": server, "tool": tool, "arguments": arguments})
+            call = self._effects.classify(
+                {
+                    "type": "mcp_tool_call",
+                    "server": server,
+                    "tool": tool,
+                    "arguments": arguments,
+                }
+            )
             if call is None:
                 raise ClaudeEventPolicyError("claude_tool_unreviewed")
             return {
-                "type": "mcp_tool_call", "id": call_id, "status": "in_progress",
-                "server": server, "tool": tool,
-                "metadata": {"effect": call.effect.value, "capability": call.server, "operation": call.operation, "operation_digest": call.operation_digest, "target_identifiers": call.target_identifiers},
+                "type": "mcp_tool_call",
+                "id": call_id,
+                "status": "in_progress",
+                "server": server,
+                "tool": tool,
+                "metadata": {
+                    "effect": call.effect.value,
+                    "capability": call.server,
+                    "operation": call.operation,
+                    "operation_digest": call.operation_digest,
+                    "target_identifiers": call.target_identifiers,
+                },
             }
         if tool_name == "Bash":
             command = arguments.get("command")
             if not isinstance(command, str):
                 raise ClaudeEventPolicyError("claude_tool_unreviewed")
-            reviewed = self._native_cli.classify({"type": "command_execution", "command": command})
+            reviewed = self._native_cli.classify(
+                {"type": "command_execution", "command": command}
+            )
             if reviewed is None or reviewed.effect is None:
                 raise ClaudeEventPolicyError("claude_tool_unreviewed")
             return {
-                "type": "command_execution", "id": call_id, "status": "in_progress",
-                "metadata": {"effect": reviewed.effect.value, "capability": f"agent_cli.{reviewed.cli}", "operation": reviewed.command_path, "operation_digest": reviewed.command_digest, "target_identifiers": reviewed.target_identifiers, "native_cli": reviewed.cli},
+                "type": "command_execution",
+                "id": call_id,
+                "status": "in_progress",
+                "metadata": {
+                    "effect": reviewed.effect.value,
+                    "capability": f"agent_cli.{reviewed.cli}",
+                    "operation": reviewed.command_path,
+                    "operation_digest": reviewed.command_digest,
+                    "target_identifiers": reviewed.target_identifiers,
+                    "native_cli": reviewed.cli,
+                },
             }
         raise ClaudeEventPolicyError("claude_tool_unreviewed")
 
@@ -722,11 +850,18 @@ class ClaudeEventNormalizer:
             raise ClaudeEventPolicyError("claude_tool_result_without_start")
         item = dict(started)
         item["status"] = "failed" if is_error else "completed"
-        return {"type": RuntimeEventType.ITEM_FAILED.value if is_error else RuntimeEventType.ITEM_COMPLETED.value, "item": item}
+        return {
+            "type": RuntimeEventType.ITEM_FAILED.value
+            if is_error
+            else RuntimeEventType.ITEM_COMPLETED.value,
+            "item": item,
+        }
 
 
 def _required_string(value: object) -> str | None:
-    return value if isinstance(value, str) and value and value == value.strip() else None
+    return (
+        value if isinstance(value, str) and value and value == value.strip() else None
+    )
 
 
 def _validated_success_result(event: dict[str, object]) -> str:
@@ -760,14 +895,18 @@ def _trusted_error_subtypes(stdout: str) -> frozenset[str]:
 
 def _transport_failure(code: str) -> RuntimeFailure:
     return RuntimeFailure(
-        failure_class=RuntimeFailureClass.TRANSPORT, code=code,
+        failure_class=RuntimeFailureClass.TRANSPORT,
+        code=code,
         detail="Claude transport failed before a complete bounded result.",
-        retryable_on_same_route=True, failover_permitted=True, route_pause_required=True,
+        retryable_on_same_route=True,
+        failover_permitted=True,
+        route_pause_required=True,
     )
 
 
 def _result_failure(code: str) -> RuntimeFailure:
     return RuntimeFailure(
-        failure_class=RuntimeFailureClass.RESULT, code=code,
+        failure_class=RuntimeFailureClass.RESULT,
+        code=code,
         detail="Claude did not return a valid caller result.",
     )

@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_runtime_config import load_runtime_config
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_result import EffectKind
+from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.claude_runtime_adapter import (
     ClaudeCommandPolicy,
@@ -15,7 +15,6 @@ from app.claude_runtime_adapter import (
     ClaudeTerminalProof,
 )
 from app.native_cli_metadata import NativeCliMetadataClassifier
-
 
 SYSTEM_INIT = {
     "type": "system",
@@ -117,9 +116,7 @@ def normalizer(adapter):
     return adapter.new_event_normalizer()
 
 
-def test_claude_command_is_noninteractive_stream_json_and_prompt_free(
-    adapter, route
-):
+def test_claude_command_is_noninteractive_stream_json_and_prompt_free(adapter, route):
     prompt = "private business prompt"
 
     command = adapter.build_command(
@@ -147,9 +144,7 @@ def test_claude_command_is_noninteractive_stream_json_and_prompt_free(
         Path(command[command.index("--settings") + 1]).read_text(encoding="utf-8")
     )
     mcp_config = json.loads(
-        Path(command[command.index("--mcp-config") + 1]).read_text(
-            encoding="utf-8"
-        )
+        Path(command[command.index("--mcp-config") + 1]).read_text(encoding="utf-8")
     )
     assert settings["permissions"]["allow"] == []
     assert set(settings["permissions"]["deny"]) == set(
@@ -437,15 +432,11 @@ def test_unknown_documented_event_shape_fails_closed(normalizer):
 
 
 def test_normalizer_binds_resume_session_and_rejects_cross_session(adapter):
-    normalizer = adapter.new_event_normalizer(
-        expected_session_id="claude-session-1"
-    )
+    normalizer = adapter.new_event_normalizer(expected_session_id="claude-session-1")
     normalizer.normalize_event(SYSTEM_INIT)
 
     with pytest.raises(ClaudeEventPolicyError, match="claude_session_mismatch"):
-        normalizer.normalize_event(
-            ASSISTANT_TEXT | {"session_id": "different-session"}
-        )
+        normalizer.normalize_event(ASSISTANT_TEXT | {"session_id": "different-session"})
 
 
 def test_normalizer_rejects_duplicate_init_and_call_id(adapter, normalizer):
@@ -609,9 +600,7 @@ def test_reviewed_command_policy_uses_exact_tools_without_wildcards(
         Path(command[command.index("--settings") + 1]).read_text(encoding="utf-8")
     )
     mcp_config = json.loads(
-        Path(command[command.index("--mcp-config") + 1]).read_text(
-            encoding="utf-8"
-        )
+        Path(command[command.index("--mcp-config") + 1]).read_text(encoding="utf-8")
     )
     permission_server = mcp_config["mcpServers"]["ceo_runtime_permission"]
     policy_path = Path(permission_server["args"][-1])
@@ -630,23 +619,34 @@ def test_reviewed_command_policy_uses_exact_tools_without_wildcards(
     memory_transport = mcp_config["mcpServers"]["memory_connector"]
     assert memory_transport["type"] == "stdio"
     assert memory_transport["command"] != "/opt/service/memory-mcp"
-    assert memory_transport["args"] == [
+    wrapper_args = memory_transport["args"]
+    assert wrapper_args[:6] == [
         "-m",
         "app.claude_mcp_proxy",
         "--server",
         "memory_connector",
         "--allowed-tool",
         "mcp__memory_connector__memory_recall",
+    ]
+    assert wrapper_args[6] == "--grant-url"
+    assert wrapper_args[7].startswith("http://127.0.0.1:")
+    assert wrapper_args[8] == "--grant-token"
+    assert isinstance(wrapper_args[9], str) and wrapper_args[9]
+    assert wrapper_args[10:] == [
         "--exec",
         "/opt/service/memory-mcp",
         "serve",
         "--stdio",
     ]
     assert "foreign" not in mcp_config["mcpServers"]
-    assert broker_policy == {
-        "allowed_mcp_tools": ["mcp__memory_connector__memory_recall"],
-        "allow_native_cli": True,
-    }
+    assert broker_policy["allowed_mcp_tools"] == [
+        "mcp__memory_connector__memory_recall"
+    ]
+    assert broker_policy["allow_native_cli"] is True
+    endpoint = broker_policy["grant_endpoints"]["memory_connector"]
+    assert endpoint["url"].startswith("http://127.0.0.1:")
+    assert endpoint["url"].endswith("/grant")
+    assert isinstance(endpoint["token"], str) and endpoint["token"]
 
 
 def test_reviewed_mcp_policy_rejects_unreviewed_or_missing_transport(
@@ -654,9 +654,7 @@ def test_reviewed_mcp_policy_rejects_unreviewed_or_missing_transport(
 ):
     manifest = tmp_path / "service-mcp.json"
     manifest.write_text(
-        json.dumps(
-            {"servers": {"foreign": {"url": "https://foreign.invalid/mcp"}}}
-        ),
+        json.dumps({"servers": {"foreign": {"url": "https://foreign.invalid/mcp"}}}),
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
@@ -666,9 +664,7 @@ def test_reviewed_mcp_policy_rejects_unreviewed_or_missing_transport(
             route=route,
             session_id=None,
             max_turns=2,
-            policy=ClaudeCommandPolicy.reviewed(
-                mcp_tools=("mcp__foreign__write",)
-            ),
+            policy=ClaudeCommandPolicy.reviewed(mcp_tools=("mcp__foreign__write",)),
         )
     with pytest.raises(ValueError, match="transport"):
         adapter.build_command(
@@ -689,9 +685,7 @@ def test_reviewed_mcp_policy_exposes_only_local_service_proxy(
         json.dumps(
             {
                 "servers": {
-                    "memory_connector": {
-                        "url": "https://memory.example.test/mcp"
-                    },
+                    "memory_connector": {"url": "https://memory.example.test/mcp"},
                     "foreign": {"url": "https://foreign.invalid/mcp"},
                 }
             }
@@ -709,9 +703,7 @@ def test_reviewed_mcp_policy_exposes_only_local_service_proxy(
         ),
     )
     mcp_config = json.loads(
-        Path(command[command.index("--mcp-config") + 1]).read_text(
-            encoding="utf-8"
-        )
+        Path(command[command.index("--mcp-config") + 1]).read_text(encoding="utf-8")
     )
 
     memory_transport = mcp_config["mcpServers"]["memory_connector"]
@@ -719,9 +711,10 @@ def test_reviewed_mcp_policy_exposes_only_local_service_proxy(
     assert memory_transport["url"].startswith("http://127.0.0.1:")
     assert "memory.example.test" not in json.dumps(mcp_config)
     assert "foreign" not in mcp_config["mcpServers"]
-    assert "mcp__memory_connector__memory_recall" not in command[
-        command.index("--allowedTools") + 1 :
-    ]
+    assert (
+        "mcp__memory_connector__memory_recall"
+        not in command[command.index("--allowedTools") + 1 :]
+    )
 
 
 def test_multiblock_event_failure_is_atomic_and_terminal(normalizer):
@@ -794,11 +787,14 @@ def test_terminal_proof_is_owner_bound_unforgeable_and_single_consume(
             parser=lambda raw: raw,
         )
 
-    assert adapter.parse_final_result(
-        normalizer=first,
-        proof=proof,
-        parser=lambda raw: raw,
-    ) == '{"ok":true}'
+    assert (
+        adapter.parse_final_result(
+            normalizer=first,
+            proof=proof,
+            parser=lambda raw: raw,
+        )
+        == '{"ok":true}'
+    )
     with pytest.raises(ClaudeRuntimeResultError):
         adapter.parse_final_result(
             normalizer=first,
@@ -838,9 +834,7 @@ def test_reviewed_transport_env_is_exact_and_secrets_stay_out_of_files(
                     "memory_connector": {
                         "url": "https://memory.example.test/mcp",
                         "bearer_token_env_var": "CONNECTOR_API_KEY",
-                        "env_http_headers": {
-                            "X-Memory-Auth": "MEMORY_AUTH_TYPE"
-                        },
+                        "env_http_headers": {"X-Memory-Auth": "MEMORY_AUTH_TYPE"},
                     },
                     "foreign": {
                         "url": "https://foreign.invalid/mcp",
@@ -972,13 +966,7 @@ def test_proxy_lifecycle_finishes_and_executor_exception_cleans_up(
     manifest = tmp_path / "service-mcp.json"
     manifest.write_text(
         json.dumps(
-            {
-                "servers": {
-                    "memory_connector": {
-                        "url": "http://127.0.0.1:9/mcp"
-                    }
-                }
-            }
+            {"servers": {"memory_connector": {"url": "http://127.0.0.1:9/mcp"}}}
         ),
         encoding="utf-8",
     )
@@ -991,9 +979,15 @@ def test_proxy_lifecycle_finishes_and_executor_exception_cleans_up(
         command = adapter.build_command(
             route=route, session_id=None, max_turns=2, policy=policy
         )
+        settings_path = Path(command[command.index("--settings") + 1])
+        mcp_path = Path(command[command.index("--mcp-config") + 1])
+        mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
+        policy_path = Path(mcp["mcpServers"]["ceo_runtime_permission"]["args"][-1])
+        assert all(path.exists() for path in (settings_path, mcp_path, policy_path))
         assert adapter.active_proxy_process_count == 1
         adapter.finish_invocation(command)
         assert adapter.active_proxy_process_count == 0
+        assert not any(path.exists() for path in (settings_path, mcp_path, policy_path))
 
     command = adapter.build_command(
         route=route, session_id=None, max_turns=2, policy=policy
@@ -1006,9 +1000,42 @@ def test_proxy_lifecycle_finishes_and_executor_exception_cleans_up(
     assert adapter.active_proxy_process_count == 0
 
 
-def test_terminal_parse_closes_invocation_proxy(
+def test_invocation_build_failure_rolls_back_proxy_and_all_artifacts(
     adapter, route, tmp_path, monkeypatch
 ):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {"servers": {"memory_connector": {"url": "http://127.0.0.1:9/mcp"}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+    original_write_text = Path.write_text
+
+    def fail_mcp_write(path, *args, **kwargs):
+        if path.name.startswith("mcp-"):
+            raise OSError("synthetic config write failure")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_mcp_write)
+    with pytest.raises(OSError, match="synthetic config write failure"):
+        adapter.build_command(
+            route=route,
+            session_id=None,
+            max_turns=2,
+            policy=ClaudeCommandPolicy.reviewed(
+                mcp_tools=("mcp__memory_connector__memory_recall",)
+            ),
+        )
+
+    assert adapter.active_proxy_process_count == 0
+    assert list(Path(adapter._runtime_root.name).glob("broker-*.json")) == []
+    assert list(Path(adapter._runtime_root.name).glob("settings-*.json")) == []
+    assert list(Path(adapter._runtime_root.name).glob("mcp-*.json")) == []
+
+
+def test_terminal_parse_closes_invocation_proxy(adapter, route, tmp_path, monkeypatch):
     manifest = tmp_path / "service-mcp.json"
     manifest.write_text(
         json.dumps(
@@ -1029,9 +1056,47 @@ def test_terminal_parse_closes_invocation_proxy(
     normalizer.normalize_event(SYSTEM_INIT)
     normalizer.normalize_event(FINAL_RESULT)
 
-    assert adapter.parse_final_result(
-        normalizer=normalizer,
-        proof=normalizer.terminal_proof(),
-        parser=lambda raw: raw,
-    ) == '{"ok":true}'
+    assert (
+        adapter.parse_final_result(
+            normalizer=normalizer,
+            proof=normalizer.terminal_proof(),
+            parser=lambda raw: raw,
+        )
+        == '{"ok":true}'
+    )
     assert adapter.active_proxy_process_count == 0
+
+
+def test_terminal_policy_failure_closes_proxy_and_unlinks_artifacts(
+    adapter, route, tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {"servers": {"memory_connector": {"url": "http://127.0.0.1:9/mcp"}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+    command = adapter.build_command(
+        route=route,
+        session_id=None,
+        max_turns=2,
+        policy=ClaudeCommandPolicy.reviewed(
+            mcp_tools=("mcp__memory_connector__memory_recall",)
+        ),
+    )
+    settings_path = Path(command[command.index("--settings") + 1])
+    mcp_path = Path(command[command.index("--mcp-config") + 1])
+    policy_path = Path(
+        json.loads(mcp_path.read_text(encoding="utf-8"))["mcpServers"][
+            "ceo_runtime_permission"
+        ]["args"][-1]
+    )
+    normalizer = adapter.new_event_normalizer(command=command)
+
+    with pytest.raises(ClaudeEventPolicyError, match="claude_init_missing"):
+        normalizer.normalize_event(FINAL_RESULT)
+
+    assert adapter.active_proxy_process_count == 0
+    assert not any(path.exists() for path in (settings_path, mcp_path, policy_path))
