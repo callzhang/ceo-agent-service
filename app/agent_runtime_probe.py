@@ -11,6 +11,7 @@ from threading import RLock
 
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import (
+    PROBE_VERIFIED_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
     RuntimeFailure,
     RuntimeFailureClass,
@@ -39,13 +40,7 @@ _PROBE_SCHEMA = {
     "required": ["ok"],
     "additionalProperties": False,
 }
-_BASE_CAPABILITIES = frozenset(
-    {
-        "structured_output",
-        "local_schema_validation",
-        "consumer_read_only_enforcement",
-    }
-)
+_BASE_CAPABILITIES = PROBE_VERIFIED_RUNTIME_CAPABILITIES
 
 
 class AgentRuntimeProbe:

@@ -229,6 +229,13 @@ def main(argv=None) -> int:
     parser = build_parser()
 
     args = parser.parse_args(argv)
+    if args.cmd in {"consume-once", "import-memory"}:
+        from app.agent_runtime_production import build_production_runtime_refresher
+
+        build_production_runtime_refresher(
+            store=AutoReplyStore(Path(args.db)),
+            temporary_root=config.workspace_path(),
+        ).refresh_expired(force=True)
     return args.fn(args)
 
 

@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from threading import RLock
 
 from app.agent_runtime_config import load_runtime_config
-from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+from app.agent_runtime_contracts import (
+    RuntimeCapabilitySnapshot,
+    RuntimeRouteSurfaceManifest,
+)
 from app.agent_runtime_router import (
     AgentRuntimeRouter,
     ProcessExecutor,
     RoutedCodexExecution,
+    _configured_mcp_server_transport_names,
     local_codex_session_effect_probe,
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
@@ -25,6 +30,8 @@ class RuntimeCapabilityRegistry(Mapping[str, RuntimeCapabilitySnapshot]):
     ) -> None:
         self._lock = RLock()
         self._snapshots: dict[str, RuntimeCapabilitySnapshot] = {}
+        self._surface_manifests: dict[str, RuntimeRouteSurfaceManifest] = {}
+        self._surface_view = _RuntimeSurfaceManifestView(self)
         self.refresh(snapshots or {})
 
     def refresh(self, snapshots: Mapping[str, RuntimeCapabilitySnapshot]) -> None:
@@ -46,6 +53,43 @@ class RuntimeCapabilityRegistry(Mapping[str, RuntimeCapabilitySnapshot]):
     def __len__(self) -> int:
         with self._lock:
             return len(self._snapshots)
+
+    def refresh_surface_manifests(
+        self, manifests: Mapping[str, RuntimeRouteSurfaceManifest]
+    ) -> None:
+        replacement = dict(manifests)
+        for route_name, manifest in replacement.items():
+            if route_name != manifest.route_name:
+                raise ValueError("runtime surface manifest key mismatch")
+        with self._lock:
+            self._surface_manifests = replacement
+
+    def surface_manifest(self, route_name: str) -> RuntimeRouteSurfaceManifest | None:
+        with self._lock:
+            return self._surface_manifests.get(route_name)
+
+    @property
+    def surface_manifests(self) -> Mapping[str, RuntimeRouteSurfaceManifest]:
+        return self._surface_view
+
+
+class _RuntimeSurfaceManifestView(Mapping[str, RuntimeRouteSurfaceManifest]):
+    """Live read-only view so existing routers observe reviewed config refreshes."""
+
+    def __init__(self, registry: RuntimeCapabilityRegistry) -> None:
+        self._registry = registry
+
+    def __getitem__(self, key: str) -> RuntimeRouteSurfaceManifest:
+        with self._registry._lock:
+            return self._registry._surface_manifests[key]
+
+    def __iter__(self) -> Iterator[str]:
+        with self._registry._lock:
+            return iter(tuple(self._registry._surface_manifests))
+
+    def __len__(self) -> int:
+        with self._registry._lock:
+            return len(self._registry._surface_manifests)
 
 
 PRODUCTION_RUNTIME_CAPABILITIES = RuntimeCapabilityRegistry()
@@ -69,16 +113,6 @@ def build_production_routed_codex_execution(
     """
 
     runtime_config = load_runtime_config(os.environ)
-    # Every production construction observes one shared, current registry. An
-    # already-current snapshot makes this a no-op, so maintenance loops do not
-    # issue a provider probe on every iteration.
-    build_production_runtime_refresher(
-        store=store,
-        codex_bin=codex_bin,
-        executor=executor,
-        capability_registry=capability_registry,
-        temporary_root=workspace,
-    ).refresh_expired()
     kwargs = {
         "store": store,
         "config": runtime_config,
@@ -86,12 +120,13 @@ def build_production_routed_codex_execution(
             routes=runtime_config.routes,
             store=store,
             snapshots=capability_registry,
+            surface_manifests=capability_registry.surface_manifests,
         ),
         "adapter": CodexRuntimeAdapter(workspace, runtime_config, codex_bin=codex_bin),
         "session_effect_probe": local_codex_session_effect_probe(),
         "total_timeout_seconds": total_timeout_seconds,
         "idle_timeout_seconds": idle_timeout_seconds,
-        "allow_legacy_oauth_bootstrap": True,
+        "allow_legacy_oauth_bootstrap": False,
     }
     if executor is not None:
         kwargs["executor"] = executor
@@ -111,6 +146,9 @@ def build_production_runtime_refresher(
     from app.agent_runtime_probe import AgentRuntimeProbe, RuntimeCapabilityRefresher
 
     runtime_config = load_runtime_config(os.environ)
+    capability_registry.refresh_surface_manifests(
+        _reviewed_surface_manifests(runtime_config, codex_bin=codex_bin)
+    )
     probe_kwargs = {
         "config": runtime_config,
         "codex_bin": codex_bin,
@@ -124,3 +162,73 @@ def build_production_runtime_refresher(
         registry=capability_registry,
         probe=AgentRuntimeProbe(**probe_kwargs),
     )
+
+
+def _reviewed_surface_manifests(runtime_config, *, codex_bin: str):
+    adapter = CodexRuntimeAdapter(Path.cwd(), runtime_config, codex_bin=codex_bin)
+    reviewed_skills = _reviewed_skill_capabilities()
+    manifests = {}
+    for route in runtime_config.routes:
+        transports = frozenset(
+            _configured_mcp_server_transport_names(
+                (), env=adapter.build_env(route)
+            )
+        )
+        capabilities = {
+            "audit_effect_visibility",
+            "reconciliation_read_only",
+            "image_input",
+            "task_context",
+            "channel:dingtalk",
+            "channel:wechat",
+            "channel:lark",
+            "channel:feishu",
+            "native_cli:reviewed",
+            "native_cli:dws",
+            "native_cli:lark",
+            "reviewed_dws_read_instructions",
+        }
+        if "agent_cli" in transports:
+            capabilities.update(
+                {
+                    "reviewed_read_tools",
+                    "reviewed_write_tools",
+                    "mcp:agent_cli:reviewed_read",
+                    "mcp:agent_cli:reviewed_write",
+                    "dws_read",
+                    *reviewed_skills,
+                }
+            )
+        if "memory_connector" in transports:
+            capabilities.update(
+                {
+                    "memory_connector_read",
+                    "mcp:memory_connector:read",
+                    "mcp:memory_connector:memory_write",
+                }
+            )
+        manifests[route.name] = RuntimeRouteSurfaceManifest(
+            route_name=route.name,
+            capabilities=frozenset(capabilities),
+        )
+    return manifests
+
+
+def _reviewed_skill_capabilities() -> frozenset[str]:
+    roots = (
+        Path.home() / ".agents" / "skills",
+        Path(__file__).resolve().parents[1] / "skills",
+    )
+    capabilities = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for skill_path in root.rglob("SKILL.md"):
+            try:
+                digest = hashlib.sha256(skill_path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            capabilities.add(
+                f"reviewed_skill:{skill_path.parent.name}:{digest}"
+            )
+    return frozenset(capabilities)

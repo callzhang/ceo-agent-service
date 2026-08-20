@@ -297,7 +297,7 @@ def test_run_service_starts_components_when_initial_runtime_refresh_raises(
     assert calls[-1] == ("wait",)
 
 
-def test_worker_startup_refreshes_only_expired_shared_snapshots(tmp_path, monkeypatch):
+def test_worker_constructor_never_refreshes_or_spawns_runtime(tmp_path, monkeypatch):
     calls = []
 
     class Refresher:
@@ -320,7 +320,7 @@ def test_worker_startup_refreshes_only_expired_shared_snapshots(tmp_path, monkey
         runtime_refresher=Refresher(),
     )
 
-    assert calls == ["refresh"]
+    assert calls == []
     assert worker.store.path == tmp_path / "worker.sqlite3"
 
 
@@ -4626,6 +4626,10 @@ def test_run_loop_calls_run_once_and_sleeps_once():
         def run_once(self, max_batches=None):
             calls.append(max_batches)
 
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+
     def sleep(seconds):
         calls.append(f"sleep:{seconds}")
         raise StopLoop
@@ -4637,9 +4641,28 @@ def test_run_loop_calls_run_once_and_sleeps_once():
             max_batches=3,
             sleep=sleep,
             network_ready=lambda: True,
+            runtime_refresher=Refresher(),
         )
 
-    assert calls == [3, "sleep:7"]
+    assert calls == [3, "refresh", "sleep:7"]
+
+
+def test_explicit_runtime_startup_refreshes_once_and_returns_owner(tmp_path):
+    calls = []
+
+    class Refresher:
+        def refresh_expired(self, *, force=False):
+            calls.append(force)
+
+    refresher = Refresher()
+
+    returned = cli.initialize_agent_runtime_routes(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        refresher=refresher,
+    )
+
+    assert returned is refresher
+    assert calls == [True]
 
 
 def test_macos_wifi_connected_detects_not_associated(monkeypatch):
@@ -4728,6 +4751,10 @@ def test_producer_and_consumer_loops_call_separate_methods_once():
         def consume_once(self, max_tasks=None):
             calls.append(f"consume:{max_tasks}")
 
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+
     def sleep(seconds):
         calls.append(f"sleep:{seconds}")
         raise StopLoop
@@ -4747,12 +4774,14 @@ def test_producer_and_consumer_loops_call_separate_methods_once():
             max_tasks=5,
             sleep=sleep,
             network_ready=lambda: True,
+            runtime_refresher=Refresher(),
         )
 
     assert calls == [
         "produce:3",
         "sleep:7",
         "consume:5",
+        "refresh",
         "sleep:11",
     ]
 

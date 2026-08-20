@@ -10,6 +10,7 @@ from app.agent_runtime_contracts import (
     RuntimeFailureClass,
     RuntimeKind,
     RuntimeRoute,
+    RuntimeRouteSurfaceManifest,
 )
 from app.agent_runtime_router import AgentRuntimeRouter, failover_is_safe
 from app.store import AgentRole, AutoReplyStore
@@ -118,6 +119,7 @@ def make_router(
     *,
     routes: tuple[RuntimeRoute, ...] = (route("codex_oauth"), route("codex_api")),
     snapshots: dict[str, RuntimeCapabilitySnapshot] | None = None,
+    surface_manifests: dict[str, RuntimeRouteSurfaceManifest] | None = None,
 ) -> AgentRuntimeRouter:
     return AgentRuntimeRouter(
         routes=routes,
@@ -127,8 +129,74 @@ def make_router(
             if snapshots is not None
             else {item.name: snapshot(item.name) for item in routes}
         ),
+        surface_manifests=surface_manifests or {},
         now=lambda: NOW,
     )
+
+
+def test_static_reviewed_surface_satisfies_non_probe_capability(store):
+    router = make_router(
+        store,
+        routes=(route("codex_oauth"),),
+        snapshots={"codex_oauth": snapshot("codex_oauth")},
+        surface_manifests={
+            "codex_oauth": RuntimeRouteSurfaceManifest(
+                route_name="codex_oauth",
+                capabilities=frozenset({"reviewed_read_tools"}),
+            )
+        },
+    )
+
+    decision = router.first_route_decision(
+        required_capabilities=frozenset(
+            {"structured_output", "reviewed_read_tools"}
+        )
+    )
+
+    assert decision.route is not None
+    assert decision.reason == "eligible_route"
+
+
+def test_missing_reviewed_surface_is_distinct_from_probe_health(store):
+    router = make_router(
+        store,
+        routes=(route("codex_oauth"),),
+        snapshots={"codex_oauth": snapshot("codex_oauth")},
+    )
+
+    decision = router.first_route_decision(
+        required_capabilities=frozenset(
+            {"structured_output", "reviewed_read_tools"}
+        )
+    )
+
+    assert decision.route is None
+    assert decision.reason.endswith("surface_missing:reviewed_read_tools")
+
+
+def test_reviewed_skill_requires_exact_discovered_name_and_digest(store):
+    exact = "reviewed_skill:ceo-work-tracking:abc123"
+    router = make_router(
+        store,
+        routes=(route("codex_oauth"),),
+        snapshots={"codex_oauth": snapshot("codex_oauth")},
+        surface_manifests={
+            "codex_oauth": RuntimeRouteSurfaceManifest(
+                route_name="codex_oauth",
+                capabilities=frozenset({exact}),
+            )
+        },
+    )
+
+    assert router.first_eligible_route(required_capabilities=frozenset({exact}))
+    wrong = router.first_route_decision(
+        required_capabilities=frozenset(
+            {"reviewed_skill:ceo-work-tracking:different-sha"}
+        )
+    )
+
+    assert wrong.route is None
+    assert "surface_missing:reviewed_skill:ceo-work-tracking:different-sha" in wrong.reason
 
 
 def test_initial_route_honors_pause_health_freshness_and_capabilities(store):

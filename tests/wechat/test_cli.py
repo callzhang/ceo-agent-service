@@ -305,3 +305,24 @@ def test_automatic_once_commands_reject_ready_account_without_self_id(
 
     assert command(SimpleNamespace(db=str(db))) == 1
     assert "no single ready account" in capsys.readouterr().out
+
+
+def test_main_initializes_runtime_once_for_consumer(monkeypatch, tmp_path):
+    calls = []
+
+    class Refresher:
+        def refresh_expired(self, *, force=False):
+            calls.append(("refresh", force))
+
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_runtime_refresher",
+        lambda **_kwargs: Refresher(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "cmd_consume_once",
+        lambda _args: calls.append(("command",)) or 0,
+    )
+
+    assert cli.main(["consume-once", "--db", str(tmp_path / "worker.sqlite3")]) == 0
+    assert calls == [("refresh", True), ("command",)]

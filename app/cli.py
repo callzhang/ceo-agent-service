@@ -812,8 +812,10 @@ def create_worker(
         UnconfiguredOkrLiveSource,
     )
 
-    if runtime_refresher is not None:
-        runtime_refresher.refresh_expired()
+    # Runtime probing is owned by the CLI/service host, never by an ordinary
+    # worker constructor. Keep the compatibility argument inert for callers
+    # migrating to explicit ownership.
+    del runtime_refresher
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
@@ -856,9 +858,8 @@ def create_worker(
 
 
 def _create_service_worker(settings: WorkerSettings, runtime_refresher):
-    if runtime_refresher is None:
-        return create_worker(settings)
-    return create_worker(settings, runtime_refresher=runtime_refresher)
+    del runtime_refresher
+    return create_worker(settings)
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()
@@ -2292,12 +2293,18 @@ def run_loop(
     max_batches: int | None = None,
     sleep: Callable[[int], None] = time.sleep,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
+    runtime_refresher=None,
 ) -> None:
     while True:
         if not network_ready():
             sleep(poll_interval_seconds)
             continue
         worker.run_once(max_batches=max_batches)
+        if runtime_refresher is not None:
+            try:
+                runtime_refresher.refresh_expired()
+            except Exception:  # noqa: BLE001 - keep the sole long-lived owner alive
+                pass
         sleep(poll_interval_seconds)
 
 
@@ -2325,6 +2332,7 @@ def run_consumer_loop(
     max_tasks: int | None = None,
     sleep: Callable[[int], None] = time.sleep,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
+    runtime_refresher=None,
 ) -> None:
     while True:
         if not network_ready():
@@ -2334,6 +2342,11 @@ def run_consumer_loop(
             worker.consume_once(max_tasks=max_tasks)
         except Exception as exc:
             worker.store.record_error("", "", "consumer_loop_error", str(exc))
+        if runtime_refresher is not None:
+            try:
+                runtime_refresher.refresh_expired()
+            except Exception:  # noqa: BLE001 - keep the sole long-lived owner alive
+                pass
         sleep(poll_interval_seconds)
 
 
@@ -3176,6 +3189,20 @@ def probe_agent_runtimes_command(
     return 0 if routes and all(route["healthy"] for route in routes) else 1
 
 
+def initialize_agent_runtime_routes(settings: WorkerSettings, *, refresher=None):
+    """Publish static surfaces and run one explicit startup probe."""
+
+    if refresher is None:
+        from app.agent_runtime_production import build_production_runtime_refresher
+
+        refresher = build_production_runtime_refresher(
+            store=AutoReplyStore(settings.db_path),
+            temporary_root=settings.workspace,
+        )
+    refresher.refresh_expired(force=True)
+    return refresher
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -3189,13 +3216,16 @@ def main() -> None:
 
     if args.command == "run-once":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         run_once(settings)
     elif args.command == "run":
         ensure_live_send_allowed(settings)
+        runtime_refresher = initialize_agent_runtime_routes(settings)
         run_loop(
             create_worker(settings),
             settings.poll_interval_seconds,
             max_batches=settings.max_batches,
+            runtime_refresher=runtime_refresher,
         )
     elif args.command == "service":
         ensure_live_send_allowed(settings)
@@ -3222,19 +3252,24 @@ def main() -> None:
         )
     elif args.command == "consume-once":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         consume_once(settings)
     elif args.command == "consume":
         ensure_live_send_allowed(settings)
+        runtime_refresher = initialize_agent_runtime_routes(settings)
         run_consumer_loop(
             create_worker(settings),
             settings.poll_interval_seconds,
             max_tasks=settings.max_batches,
+            runtime_refresher=runtime_refresher,
         )
     elif args.command == "process-work-items":
+        initialize_agent_runtime_routes(settings)
         process_work_items_command(settings)
     elif args.command == "retry-work-summary-input":
         retry_work_summary_input_command(settings, input_id=args.input_id)
     elif args.command == "backfill-task-memory-context":
+        initialize_agent_runtime_routes(settings)
         backfill_task_memory_context_command(settings)
     elif args.command == "backfill-routine-process-todos":
         backfill_routine_process_todos_command(
@@ -3245,9 +3280,11 @@ def main() -> None:
         )
     elif args.command == "process-okr-reviews":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         process_okr_reviews_command(settings)
     elif args.command == "weekly-okr-report":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         weekly_okr_report_command(
             settings,
             force=args.force,
@@ -3272,6 +3309,7 @@ def main() -> None:
         check_follow_up_completions_command(settings, limit=1)
     elif args.command == "daily-task-maintenance":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         daily_task_maintenance_command(settings)
     elif args.command == "quality-check":
         raise SystemExit(

@@ -1,11 +1,13 @@
 import json
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import get_args
 
 import pytest
 from pydantic import ValidationError
 
+from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.service_codex_config import load_service_mcp_servers
 from app.setup_wizard import (
@@ -413,6 +415,7 @@ def test_runtime_route_setup_statuses_are_secret_safe():
             "CEO_CODEX_API_KEY": "top-secret-value",
         },
         snapshots={"codex_oauth": snapshot},
+        now=lambda: datetime(2026, 8, 21, 10, 0, tzinfo=timezone.utc),
     )
 
     assert statuses == (
@@ -448,6 +451,33 @@ def test_runtime_route_setup_statuses_distinguish_disabled_and_missing_secret():
             "secret_configured": False,
         },
     )
+
+
+@pytest.mark.parametrize(
+    "expires_at",
+    [
+        "2026-08-21T09:59:59+00:00",
+        "2026-08-21T10:05:00",
+        "not-a-timestamp",
+    ],
+)
+def test_runtime_route_setup_status_rejects_expired_naive_or_malformed_snapshot(
+    expires_at
+):
+    snapshot = RuntimeCapabilitySnapshot(
+        route_name="codex_oauth",
+        healthy=True,
+        checked_at="2026-08-21T09:55:00+00:00",
+        expires_at=expires_at,
+    )
+
+    statuses = runtime_route_setup_statuses(
+        env={"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth"},
+        snapshots={"codex_oauth": snapshot},
+        now=lambda: datetime(2026, 8, 21, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert statuses[0]["status"] == "probe_failed"
 
 
 def test_setup_service_config_accepts_runtime_secret_without_rendering_it(tmp_path: Path):

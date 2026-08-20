@@ -4,7 +4,7 @@ import re
 import shutil
 import subprocess
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
@@ -48,6 +48,7 @@ def runtime_route_setup_statuses(
     *,
     env: Mapping[str, str],
     snapshots: Mapping[str, RuntimeCapabilitySnapshot],
+    now=lambda: datetime.now(UTC),
 ) -> tuple[dict[str, object], ...]:
     """Return secret-free setup readiness for every supported runtime route."""
 
@@ -56,6 +57,7 @@ def runtime_route_setup_statuses(
         for item in env.get("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth").split(",")
         if item.strip()
     }
+    checked_now = now()
     statuses: list[dict[str, object]] = []
     for route_name in ("codex_oauth", "codex_api"):
         secret_configured = bool(
@@ -69,9 +71,7 @@ def runtime_route_setup_statuses(
             snapshot = snapshots.get(route_name)
             status = (
                 "ready"
-                if snapshot is not None
-                and snapshot.healthy
-                and snapshot.failure is None
+                if _runtime_snapshot_is_current(snapshot, checked_now)
                 else "probe_failed"
             )
         statuses.append(
@@ -82,6 +82,20 @@ def runtime_route_setup_statuses(
             }
         )
     return tuple(statuses)
+
+
+def _runtime_snapshot_is_current(
+    snapshot: RuntimeCapabilitySnapshot | None, now: datetime
+) -> bool:
+    if snapshot is None or not snapshot.healthy or snapshot.failure is not None:
+        return False
+    try:
+        expires_at = datetime.fromisoformat(snapshot.expires_at)
+    except (TypeError, ValueError):
+        return False
+    if expires_at.tzinfo is None or now.tzinfo is None:
+        return False
+    return expires_at.astimezone(UTC) > now.astimezone(UTC)
 
 
 SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (

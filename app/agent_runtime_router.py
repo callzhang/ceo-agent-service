@@ -24,10 +24,12 @@ from app.agent_effects import (
 from app.agent_result import EffectKind
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import (
+    PROBE_VERIFIED_RUNTIME_CAPABILITIES,
     RuntimeCapabilitySnapshot,
     RuntimeFailure,
     RuntimeFailureClass,
     RuntimeRoute,
+    RuntimeRouteSurfaceManifest,
 )
 from app.codex_decision import extract_codex_session_id
 from app.codex_history import count_codex_session_lines, find_codex_session_path
@@ -780,11 +782,13 @@ class AgentRuntimeRouter:
         routes: Sequence[RuntimeRoute],
         store: AutoReplyStore,
         snapshots: Mapping[str, RuntimeCapabilitySnapshot],
+        surface_manifests: Mapping[str, RuntimeRouteSurfaceManifest] | None = None,
         now: Callable[[], datetime | str] | None = None,
     ) -> None:
         self._routes = tuple(routes)
         self._store = store
         self._snapshots = snapshots
+        self._surface_manifests = surface_manifests or {}
         self._now = now or (lambda: datetime.now(UTC))
 
     def first_eligible_route(
@@ -848,8 +852,15 @@ class AgentRuntimeRouter:
                     elif expires_at <= now:
                         reason = "snapshot_expired"
                     else:
-                        missing = sorted(required_capabilities - snapshot.capabilities)
-                        reason = "missing_capabilities:" + ",".join(missing)
+                        missing_probe, missing_surface = self._missing_capabilities(
+                            route=route,
+                            snapshot=snapshot,
+                            required_capabilities=required_capabilities,
+                        )
+                        if missing_probe:
+                            reason = "missing_capabilities:" + ",".join(missing_probe)
+                        else:
+                            reason = "surface_missing:" + ",".join(missing_surface)
             ineligible.append(f"{route.name}={reason}")
         return RuntimeRouteDecision(
             None,
@@ -1046,7 +1057,39 @@ class AgentRuntimeRouter:
             return False
         if checked_at > now or expires_at <= now:
             return False
-        return required_capabilities.issubset(snapshot.capabilities)
+        missing_probe, missing_surface = self._missing_capabilities(
+            route=route,
+            snapshot=snapshot,
+            required_capabilities=required_capabilities,
+        )
+        return not missing_probe and not missing_surface
+
+    def _missing_capabilities(
+        self,
+        *,
+        route: RuntimeRoute,
+        snapshot: RuntimeCapabilitySnapshot,
+        required_capabilities: frozenset[str],
+    ) -> tuple[list[str], list[str]]:
+        # Test/future probe snapshots may carry additional directly verified
+        # capabilities. Production no-tools probes intentionally carry only the
+        # base set; reviewed local surfaces are a separate typed manifest.
+        unresolved = required_capabilities - snapshot.capabilities
+        missing_probe = sorted(
+            unresolved & PROBE_VERIFIED_RUNTIME_CAPABILITIES
+        )
+        manifest = self._surface_manifests.get(route.name)
+        manifest_capabilities = (
+            manifest.capabilities
+            if manifest is not None and manifest.route_name == route.name
+            else frozenset()
+        )
+        missing_surface = sorted(
+            unresolved
+            - PROBE_VERIFIED_RUNTIME_CAPABILITIES
+            - manifest_capabilities
+        )
+        return missing_probe, missing_surface
 
 
 class RoutedCodexExecution:
