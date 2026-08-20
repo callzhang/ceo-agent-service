@@ -91,6 +91,12 @@
 
 ### Audit visibility
 
+- Keep each approval History card anchored to its newest persisted Attempt,
+  ordered by creation time and ID, so filtering, pagination, attention, and
+  recovery reflect the current workflow state. Resolve the separate business
+  outcome from confirmed evidence across every Attempt in that OA process,
+  without N+1 reads or trusting generated action labels. Add a system dark-mode
+  palette for History text, approval pills, and filter controls.
 - Require both Consumer and Audit `needs_human` results to include two to four
   actionable choices. Persist those choices on the History item itself so
   post-completion conflicts and non-Agent recovery paths remain actionable even

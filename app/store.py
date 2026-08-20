@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -39,6 +39,7 @@ from app.task_models import (
 )
 from app.feedback_policy import FeedbackPressureStats
 from app.history import HistoryItem
+from app.legacy_receipt import legacy_receipt_has_explicit_failure
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
@@ -2668,7 +2669,7 @@ class AutoReplyStore:
             receipt = None
         if not isinstance(receipt, dict) or not receipt:
             return "failed", "migrated_missing_execution_receipt"
-        if AutoReplyStore._legacy_receipt_has_explicit_failure(receipt):
+        if legacy_receipt_has_explicit_failure(receipt):
             return "failed", "migrated_explicit_execution_failure"
         if receipt.get("outcome") == "blocked":
             return "blocked", "migrated_structured_execution_block"
@@ -2697,39 +2698,6 @@ class AutoReplyStore:
         if _persisted_agent_receipt_ids(receipt):
             return status, ""
         return "failed", "migrated_unverified_execution_receipt"
-
-    @staticmethod
-    def _legacy_receipt_has_explicit_failure(value: object) -> bool:
-        if isinstance(value, list):
-            return any(
-                AutoReplyStore._legacy_receipt_has_explicit_failure(item)
-                for item in value
-            )
-        if not isinstance(value, dict):
-            return False
-        if value.get("success") is False or value.get("ok") is False:
-            return True
-        error = value.get("error")
-        if error is not None and error is not False and error != "":
-            return True
-        for field in ("errcode", "code"):
-            code = value.get(field)
-            if isinstance(code, int) and not isinstance(code, bool) and code != 0:
-                return True
-            if isinstance(code, str) and code.strip().lstrip("-").isdigit():
-                if int(code.strip()) != 0:
-                    return True
-        if value.get("status") in {"failed", "blocked", "unknown"}:
-            return True
-        if value.get("state") in {"failed", "blocked", "unknown"}:
-            return True
-        if value.get("outcome") in {"failed", "unknown", "preflight_failed"}:
-            return True
-        return any(
-            AutoReplyStore._legacy_receipt_has_explicit_failure(item)
-            for item in value.values()
-            if isinstance(item, (dict, list))
-        )
 
     @staticmethod
     def _legacy_action_receipt_is_success(
@@ -3469,6 +3437,46 @@ class AutoReplyStore:
                 (reply_task_id, execution_generation),
             ).fetchall()
             return [self._agent_run_from_row(row, db=db) for row in rows]
+
+    def list_agent_run_summaries_for_terminal_runs(
+        self,
+        run_ids: list[int],
+    ) -> dict[int, list[AgentRun]]:
+        terminal_ids = list(
+            dict.fromkeys(
+                run_id for run_id in run_ids if type(run_id) is int and run_id > 0
+            )
+        )
+        if not terminal_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in terminal_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                with terminal_runs as (
+                    select id as terminal_id, reply_task_id, execution_generation
+                    from agent_runs
+                    where id in ({placeholders})
+                )
+                select terminal_runs.terminal_id, agent_runs.*
+                from terminal_runs
+                join agent_runs
+                  on agent_runs.reply_task_id=terminal_runs.reply_task_id
+                 and agent_runs.execution_generation=terminal_runs.execution_generation
+                order by terminal_runs.terminal_id,
+                         agent_runs.proposal_revision,
+                         case agent_runs.role when 'consumer' then 0 else 1 end,
+                         agent_runs.turn_attempt, agent_runs.id
+                """,
+                terminal_ids,
+            ).fetchall()
+            summaries: dict[int, list[AgentRun]] = {}
+            for row in rows:
+                terminal_id = int(row["terminal_id"])
+                summaries.setdefault(terminal_id, []).append(
+                    self._agent_run_from_row(row, db=db, load_events=False)
+                )
+            return summaries
 
     def agent_run_lease_is_active(
         self,
@@ -12217,14 +12225,7 @@ class AutoReplyStore:
                         from reply_attempts as process_attempts
                         where process_attempts.oa_process_instance_id = reply_attempts.oa_process_instance_id
                           and process_attempts.oa_process_instance_id <> ''
-                        order by
-                            case
-                                when process_attempts.send_status in (
-                                    'completed', 'commented', 'needs_human'
-                                ) then 0
-                                else 1
-                            end,
-                            process_attempts.created_at desc,
+                        order by process_attempts.created_at desc,
                             process_attempts.id desc
                         limit 1
                    )
@@ -12447,12 +12448,44 @@ class AutoReplyStore:
                 select *
                 from reply_attempts
                 where oa_process_instance_id=?
-                order by id desc
+                order by created_at desc, id desc
                 limit ?
                 """,
                 (process_id, max(1, limit)),
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
+
+    def list_oa_attempt_histories(
+        self, process_instance_ids: Sequence[str]
+    ) -> dict[str, list[ReplyAttempt]]:
+        """Load every attempt for several approval processes in one query."""
+        process_ids = list(
+            dict.fromkeys(
+                process_id.strip()
+                for process_id in process_instance_ids
+                if process_id.strip()
+            )
+        )
+        histories: dict[str, list[ReplyAttempt]] = {
+            process_id: [] for process_id in process_ids
+        }
+        if not process_ids:
+            return histories
+        placeholders = ", ".join("?" for _ in process_ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select *
+                from reply_attempts
+                where oa_process_instance_id in ({placeholders})
+                order by oa_process_instance_id, created_at desc, id desc
+                """,
+                process_ids,
+            ).fetchall()
+        for row in rows:
+            attempt = ReplyAttempt.model_validate(dict(row))
+            histories[attempt.oa_process_instance_id].append(attempt)
+        return histories
 
     def backfill_oa_audit_metadata(self) -> int:
         """Recover OA identity for historical agent attempts by exact task key."""

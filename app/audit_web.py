@@ -35,6 +35,10 @@ from app.agent_contracts import (
     ConsumerOutcome,
     DecisionOption,
 )
+from app.approval_history import (
+    ApprovalHistoryResult,
+    resolve_approval_history_group_result,
+)
 from app.audit_rules import (
     audit_rules_template_path,
     read_audit_rules_template,
@@ -287,10 +291,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .table-search-clear:hover{background:var(--surface-soft);color:var(--ink);text-decoration:none}
 .table-type-select,.table-page-size{height:32px;border:1px solid var(--hairline);border-radius:999px;background:var(--canvas);color:var(--ink);padding:0 10px;font-size:12px;font-weight:750}
 .table-type-select{width:116px}
-.history-object-type-filter{display:flex;align-items:center;gap:8px;margin:0;padding:0;border:0;color:var(--steel);font-size:12px;font-weight:700}
-.history-object-type-filter legend{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-.history-object-type-option{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
-.history-object-type-option input{margin:0}
+.history-object-type-select{width:132px}
 .table-page-links{display:flex;align-items:center;justify-content:center;gap:3px;width:204px;min-width:0;white-space:nowrap}
 .table-page-link,.table-page-arrow,.table-page-ellipsis{display:inline-flex;align-items:center;justify-content:center;height:32px;min-width:28px;padding:0 8px;border:1px solid transparent;border-radius:999px;color:var(--steel);font-size:12px;font-weight:800;line-height:1;background:transparent}
 .table-page-arrow{font-size:18px}
@@ -526,6 +527,8 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .status-action{background:var(--surface);color:var(--steel);border-color:var(--hairline)}
 .action-state-sent,.action-state-accepted,.action-state-approved,.action-state-resolved,.action-state-recovered{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .action-state-skipped{background:var(--surface);color:var(--stone);border-color:var(--hairline)}
+.action-state-unknown{background:var(--surface);color:var(--stone);border-color:var(--hairline)}
+.history-approval-result.action-state-skipped,.history-approval-result.action-state-unknown{background:var(--surface);color:var(--steel);border-color:var(--hairline)}
 .action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented{background:rgba(55,114,207,.10);color:#245aa5;border-color:rgba(55,114,207,.24)}
 .action-state-needs-human,.action-state-tentative,.action-state-returned{background:rgba(195,125,13,.12);color:#8a5a08;border-color:rgba(195,125,13,.24)}
 .action-state-failed,.action-state-blocked,.action-state-declined,.action-state-rejected{background:rgba(212,86,86,.12);color:#9a2f2f;border-color:rgba(212,86,86,.24)}
@@ -607,6 +610,18 @@ label{display:block;margin:14px 0 7px;color:var(--slate);font-size:13px;font-wei
 .review-link:hover{text-decoration:none;border-color:var(--ink);background:var(--surface-soft)}
 .danger{background:#9f1d1d}
 .muted{color:var(--steel)}
+@media (prefers-color-scheme:dark){
+:root{color-scheme:dark;--ink:#f5f7fa;--charcoal:#e5e9ef;--slate:#c6ced8;--steel:#aeb8c5;--stone:#929dab;--muted:#7f8996;--canvas:#11151b;--surface:#1a2029;--surface-soft:#151b23;--surface-code:#0b0f14;--hairline:#343d49;--hairline-soft:#28313c;--mint:#42dfbd;--mint-deep:#2bcaa8;--tag:#8db8ff;--error:#ff8f8f}
+body{background:var(--canvas);color:var(--ink)}
+header{background:rgba(17,21,27,.94)}
+.attempt-item[data-history-detail-href]:hover{background:#18212c}
+.history-approval-result{color:var(--ink)}
+.status-sent,.status-resolved,.action-state-sent,.action-state-accepted,.action-state-approved,.action-state-resolved,.action-state-recovered{color:#7ee8ca;border-color:rgba(66,223,189,.45)}
+.status-pending,.status-processing,.status-commented,.action-state-pending,.action-state-processing,.action-state-dry-run,.action-state-commented,.action-state-superseded{color:#a9c9ff;border-color:rgba(141,184,255,.42)}
+.status-needs-human,.action-state-needs-human,.action-state-tentative,.action-state-returned{color:#ffd28a;border-color:rgba(255,210,138,.42)}
+.status-failed,.status-blocked,.status-active,.action-state-failed,.action-state-blocked,.action-state-declined,.action-state-rejected{color:#ffadad;border-color:rgba(255,143,143,.42)}
+.table-type-select,.table-page-size,select option{background:var(--canvas);color:var(--ink)}
+}
 @media (max-width:900px){.attempt-head{align-items:flex-start;flex-direction:column}.attempt-title{flex-wrap:wrap}.attempt-side{align-items:flex-start;flex-direction:column;gap:6px}.attempt-main,.attempt-meta{white-space:normal}.attempt-time{text-align:left}.attempt-copy{-webkit-line-clamp:3}.review-grid{grid-template-columns:1fr}.attempt-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:960px){.sent-todos-toolbar{grid-template-columns:1fr 1fr}.sent-todos-toolbar-spacer{display:none}.sent-todos-toolbar .table-toolbar-search{width:100%}.section-head{align-items:flex-start;flex-direction:column}}
 @media (max-width:960px){.worker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -3393,17 +3408,16 @@ def _history_type_filters(values: str | Iterable[str]) -> tuple[str, ...]:
     return tuple(selected)
 
 
-def _history_search_object_types(values: str | Iterable[str]) -> tuple[str, ...]:
-    raw_values = [values] if isinstance(values, str) else list(values)
-    selected: list[str] = []
-    for raw_value in raw_values:
-        for part in str(raw_value).split(","):
-            cleaned = part.strip().lower()
-            if cleaned in HISTORY_SEARCH_OBJECT_TYPES and cleaned not in selected:
-                selected.append(cleaned)
+def _history_search_object_type(value: str) -> str:
+    cleaned = value.strip().lower()
+    return cleaned if cleaned in HISTORY_SEARCH_OBJECT_TYPES else ""
+
+
+def _history_search_object_types(value: str) -> tuple[str, ...]:
+    selected = _history_search_object_type(value)
     if not selected:
         return HISTORY_SEARCH_OBJECT_TYPES
-    return tuple(selected)
+    return (selected,)
 
 
 def _history_type_filter_label(type_filters: tuple[str, ...]) -> str:
@@ -3996,7 +4010,7 @@ def _history_table_header(
     total_count: int,
     type_filters: tuple[str, ...],
     query: str = "",
-    search_object_types: tuple[str, ...] = HISTORY_SEARCH_OBJECT_TYPES,
+    search_object_type: str = "",
 ) -> str:
     page_count = _page_count(total_count, limit)
     page = min(max(1, page), page_count)
@@ -4009,7 +4023,7 @@ def _history_table_header(
             limit=limit,
             query=query,
             type_filters=type_filters,
-            search_object_types=search_object_types,
+            search_object_type=search_object_type,
         ),
     )
     return _table_toolbar(
@@ -4020,7 +4034,7 @@ def _history_table_header(
         query=query,
         type_select_html=(
             _history_type_select(type_filters)
-            + _history_search_object_type_checkboxes(search_object_types)
+            + _history_search_object_type_select(search_object_type)
         ),
         page_links_html=page_links,
         page_size_select_html=_history_limit_select(limit),
@@ -4035,7 +4049,7 @@ def _history_page_href(
     limit: int | None,
     query: str,
     type_filters: tuple[str, ...],
-    search_object_types: tuple[str, ...] = HISTORY_SEARCH_OBJECT_TYPES,
+    search_object_type: str = "",
 ) -> str:
     params: dict[str, str | list[str]] = {}
     if page > 1:
@@ -4046,8 +4060,8 @@ def _history_page_href(
         params["q"] = query
     if type_filters:
         params["type"] = list(type_filters)
-    if search_object_types != HISTORY_SEARCH_OBJECT_TYPES:
-        params["object_type"] = list(search_object_types)
+    if search_object_type:
+        params["object_type"] = search_object_type
     if not params:
         return base_path
     return f"{base_path}?{urlencode(params, doseq=True)}"
@@ -4071,9 +4085,7 @@ def _history_type_select(type_filters: tuple[str, ...]) -> str:
     )
 
 
-def _history_search_object_type_checkboxes(
-    search_object_types: tuple[str, ...],
-) -> str:
+def _history_search_object_type_select(search_object_type: str) -> str:
     labels = {
         "replay": "replay",
         "wechat": "wechat",
@@ -4081,22 +4093,18 @@ def _history_search_object_type_checkboxes(
         "task": "task",
         "meeting": "meeting",
     }
-    inputs = []
-    selected = set(search_object_types)
-    for value in HISTORY_SEARCH_OBJECT_TYPES:
-        checked = " checked" if value in selected else ""
-        inputs.append(
-            "<label class=\"history-object-type-option\">"
-            f"<input type=\"checkbox\" name=\"object_type\" value=\"{escape(value)}\""
-            f"{checked} onchange=\"this.form.requestSubmit()\">"
-            f"<span>{escape(labels[value])}</span>"
-            "</label>"
-        )
+    options = [
+        f"<option value=\"\"{' selected' if not search_object_type else ''}>对象：全部</option>"
+    ]
+    options.extend(
+        f"<option value=\"{escape(value)}\"{' selected' if value == search_object_type else ''}>"
+        f"{escape(labels[value])}</option>"
+        for value in HISTORY_SEARCH_OBJECT_TYPES
+    )
     return (
-        "<fieldset class=\"history-object-type-filter\">"
-        "<legend>检索对象</legend>"
-        f"{''.join(inputs)}"
-        "</fieldset>"
+        '<select name="object_type" class="table-type-select history-object-type-select" '
+        'aria-label="History object filter" onchange="this.form.submit()">'
+        f"{''.join(options)}</select>"
     )
 
 
@@ -4291,7 +4299,7 @@ def render_attempt_list(
     type_filter: str | Iterable[str] = (),
     query: str = "",
     query_embedding: list[float] | None = None,
-    search_object_types: str | Iterable[str] = HISTORY_SEARCH_OBJECT_TYPES,
+    search_object_type: str = "",
     include_chart: bool = True,
     include_pending_tasks: bool = True,
     include_feedback_count: bool = True,
@@ -4304,7 +4312,7 @@ def render_attempt_list(
             type_filter=type_filter,
             query=query,
             query_embedding=query_embedding,
-            search_object_types=search_object_types,
+            search_object_type=search_object_type,
             include_chart=include_chart,
             include_pending_tasks=include_pending_tasks,
             include_feedback_count=include_feedback_count,
@@ -4318,14 +4326,15 @@ def _render_attempt_list(
     type_filter: str | Iterable[str] = (),
     query: str = "",
     query_embedding: list[float] | None = None,
-    search_object_types: str | Iterable[str] = HISTORY_SEARCH_OBJECT_TYPES,
+    search_object_type: str = "",
     include_chart: bool = True,
     include_pending_tasks: bool = True,
     include_feedback_count: bool = True,
 ) -> str:
     query = query.strip()
     type_filters = _history_type_filters(type_filter)
-    object_types = _history_search_object_types(search_object_types)
+    search_object_type = _history_search_object_type(search_object_type)
+    object_types = _history_search_object_types(search_object_type)
     search_history_items = bool(object_types)
     search_reply_tasks = "task" in object_types
     search_codex_sessions = "meeting" in object_types
@@ -4377,6 +4386,38 @@ def _render_attempt_list(
         [item.source_id for item in history_items if item.kind == "reply"]
     )
     attempts_by_id = {attempt.id: attempt for attempt in attempts}
+    approval_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.action.strip().lower() == "oa_approval"
+        or attempt.oa_process_instance_id.strip()
+    ]
+    approval_attempt_histories = store.list_oa_attempt_histories(
+        [
+            attempt.oa_process_instance_id
+            for attempt in approval_attempts
+            if attempt.oa_process_instance_id.strip()
+        ]
+    )
+    approval_evidence_attempts = {
+        evidence.id: evidence
+        for history in approval_attempt_histories.values()
+        for evidence in history
+    }
+    approval_evidence_attempts.update(
+        {attempt.id: attempt for attempt in approval_attempts}
+    )
+    approval_agent_run_summaries = store.list_agent_run_summaries_for_terminal_runs(
+        [
+            attempt.agent_run_id
+            for attempt in approval_evidence_attempts.values()
+            if attempt.agent_run_id
+        ]
+    )
+    approval_runs_by_attempt_id = {
+        attempt.id: approval_agent_run_summaries.get(attempt.agent_run_id, [])
+        for attempt in approval_evidence_attempts.values()
+    }
     wechat_ready_delivery_by_attempt = _wechat_ready_delivery_by_attempt(
         store, attempts
     )
@@ -4398,10 +4439,7 @@ def _render_attempt_list(
         attempt = attempts_by_id.get(history_item.source_id)
         if attempt is None:
             continue
-        if (attempt.channel or "").strip().lower() == "wechat":
-            attempt = attempt.model_copy(
-                update={"send_status": history_item.status}
-            )
+        attempt = attempt.model_copy(update={"send_status": history_item.status})
         sent_reply = sent_replies_by_attempt.get(
             (attempt.conversation_id, attempt.trigger_message_id)
         )
@@ -4421,6 +4459,24 @@ def _render_attempt_list(
         wechat_delivery_id = wechat_ready_delivery_by_attempt.get(attempt.id)
         detail_href = f"/attempts/{attempt.id}"
         history_type = _history_attempt_type(attempt)
+        approval_history = history_type[0] == "oa"
+        agent_runs = (
+            approval_runs_by_attempt_id.get(attempt.id, [])
+            if approval_history
+            else []
+        )
+        approval_result = None
+        if approval_history:
+            process_id = attempt.oa_process_instance_id.strip()
+            group_attempts = approval_attempt_histories.get(process_id, [attempt])
+            group_attempts = [
+                attempt if candidate.id == attempt.id else candidate
+                for candidate in group_attempts
+            ]
+            approval_result = resolve_approval_history_group_result(
+                group_attempts,
+                approval_runs_by_attempt_id,
+            )
         attention = None
         later_attempt = None
         terminal_run = None
@@ -4437,11 +4493,12 @@ def _render_attempt_list(
                     if attention_status == "failed"
                     else None
                 )
-                agent_runs = _agent_runs_for_attempt(
-                    store,
-                    attempt,
-                    agent_runs_cache,
-                )
+                if not approval_history:
+                    agent_runs = _agent_runs_for_attempt(
+                        store,
+                        attempt,
+                        agent_runs_cache,
+                    )
                 terminal_run = next(
                     (run for run in agent_runs if run.id == attempt.agent_run_id),
                     None,
@@ -4477,6 +4534,20 @@ def _render_attempt_list(
             attempt,
             reply_task_cache,
         )
+        action_pills = (
+            _history_approval_pills(
+                attempt,
+                approval_result or ApprovalHistoryResult.UNKNOWN,
+                later_attempt=later_attempt,
+                recovery_state=recovery_state,
+            )
+            if approval_history
+            else _attempt_action_pills(
+                attempt,
+                later_attempt=later_attempt,
+                recovery_state=recovery_state,
+            )
+        )
         items.append(
             f"<article class=\"attempt-item history-kind-{history_type[0]}\" role=\"link\" tabindex=\"0\" "
             f"data-history-detail-href=\"{escape(detail_href, quote=True)}\">"
@@ -4485,7 +4556,7 @@ def _render_attempt_list(
             f"<a class=\"attempt-id\" href=\"{escape(detail_href, quote=True)}\">#{attempt.id}</a>"
             f"{_history_type_badge(*history_type)}"
             f"{info_html}"
-            f"{_attempt_action_pills(attempt, later_attempt=later_attempt, recovery_state=recovery_state)}"
+            f"{action_pills}"
             f"<div class=\"attempt-main\">{_channel_badge(attempt.channel)}{escape(attempt.conversation_title)}</div>"
             f"<div class=\"attempt-meta\">{escape(attempt.trigger_sender)}</div>"
             "</div>"
@@ -4511,7 +4582,7 @@ def _render_attempt_list(
         chart_html = _render_history_chart(store) if include_chart else ""
         body = (
             f"{chart_html}"
-            f"{_history_table_header(base_path='/history', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query, search_object_types=object_types)}"
+            f"{_history_table_header(base_path='/history', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query, search_object_type=search_object_type)}"
             "<div data-live-search-region=\"history\">"
             f"{session_search_html}"
             "<section class=\"card\"><p class=\"muted\">No reply attempts recorded.</p>"
@@ -4529,7 +4600,7 @@ def _render_attempt_list(
             total_count=total_count,
             type_filters=type_filters,
             query=query,
-            search_object_types=object_types,
+            search_object_type=search_object_type,
         )
         body = (
             f"{chart_html}"
@@ -4634,7 +4705,7 @@ def _history_attempt_type(attempt: ReplyAttempt) -> tuple[str, str]:
     action = (attempt.action or "").strip().lower()
     status = (attempt.send_status or "").strip().lower()
     if action == "oa_approval" or attempt.oa_process_instance_id.strip():
-        return ("oa", "OA")
+        return ("oa", "审批")
     if action in {"calendar_response", "calendar"} or attempt.calendar_response_status.strip():
         return ("calendar", "Calendar")
     if action == "memory_write":
@@ -8113,7 +8184,7 @@ def create_audit_app(
             type_filter=(),
             query="",
             query_embedding=None,
-            search_object_types=HISTORY_SEARCH_OBJECT_TYPES,
+            search_object_type="",
             include_chart=True,
             include_pending_tasks=False,
             include_feedback_count=False,
@@ -8278,7 +8349,7 @@ def create_audit_app(
                 type_filter=request.query_params.getlist("type"),
                 query=query,
                 query_embedding=_history_query_embedding(query),
-                search_object_types=request.query_params.getlist("object_type"),
+                search_object_type=str(request.query_params.get("object_type", "")),
                 include_chart=True,
                 include_pending_tasks=bool(query or request.query_params),
                 include_feedback_count=False,
@@ -9704,6 +9775,73 @@ def _attempt_action_pills(
         f"{escape(label)}</span>"
         for label, state in actions
     )
+
+
+def _history_approval_result_pill(result: ApprovalHistoryResult) -> str:
+    label, state = {
+        ApprovalHistoryResult.APPROVED: ("✓ 已同意", "approved"),
+        ApprovalHistoryResult.RETURNED: ("↩ 已退回", "returned"),
+        ApprovalHistoryResult.REJECTED: ("× 已拒绝", "rejected"),
+        ApprovalHistoryResult.COMMENTED_PENDING: ("✎ 已留言，仍待审批", "commented"),
+        ApprovalHistoryResult.NO_ACTION: ("无需处理", "skipped"),
+        ApprovalHistoryResult.NEEDS_HUMAN: ("待你处理", "needs-human"),
+        ApprovalHistoryResult.PROCESSING: ("处理中", "processing"),
+        ApprovalHistoryResult.FAILED: ("处理失败", "failed"),
+        ApprovalHistoryResult.UNKNOWN: ("结果未知", "unknown"),
+    }[result]
+    return (
+        f'<span class="pill status-action history-approval-result '
+        f'action-state-{state}">{escape(label)}</span>'
+    )
+
+
+def _history_approval_pills(
+    attempt: ReplyAttempt,
+    result: ApprovalHistoryResult,
+    *,
+    later_attempt: ReplyAttempt | None,
+    recovery_state: str,
+) -> str:
+    pills = [_history_approval_result_pill(result)]
+    if recovery_state:
+        label, state = _recovery_action(recovery_state)
+        pills.append(
+            f'<span class="pill status-action {_action_state_class(state)}">'
+            f"{escape(label)}</span>"
+        )
+    elif (
+        result
+        in {
+            ApprovalHistoryResult.APPROVED,
+            ApprovalHistoryResult.RETURNED,
+            ApprovalHistoryResult.REJECTED,
+            ApprovalHistoryResult.COMMENTED_PENDING,
+            ApprovalHistoryResult.NO_ACTION,
+            ApprovalHistoryResult.UNKNOWN,
+        }
+        and attempt.send_status.strip().lower()
+        in {
+            "failed",
+            "blocked",
+            "needs_human",
+            "pending",
+            "processing",
+            "pending_reconciliation",
+            "dry_run",
+        }
+    ):
+        label, state = _send_status_action(attempt)
+        pills.append(
+            f'<span class="pill status-action {_action_state_class(state)}">'
+            f"{escape(label)}</span>"
+        )
+    if later_attempt is not None:
+        pills.append(
+            f'<a class="pill status-action action-state-superseded" '
+            f'href="/attempts/{later_attempt.id}">'
+            f"🔁 已由 #{later_attempt.id} 后续处理</a>"
+        )
+    return "".join(pills)
 
 
 def _attempt_recovery_display_state(

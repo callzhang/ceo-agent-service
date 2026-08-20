@@ -94,6 +94,86 @@ def _enqueue_universal_reply_task(
     return store.claim_reply_tasks(limit=1)[0].id
 
 
+def test_list_agent_run_summaries_for_terminal_runs_batches_without_events(
+    tmp_path: Path,
+):
+    statements: list[str] = []
+
+    class TracedStore(AutoReplyStore):
+        def _open_connection(self):
+            connection = super()._open_connection()
+            connection.set_trace_callback(statements.append)
+            return connection
+
+    store = TracedStore(tmp_path / "worker.sqlite3")
+
+    def seed_generation(label: str, generation: str):
+        store.enqueue_reply_task(
+            conversation_id=f"cid-summary-{label}",
+            conversation_title=f"Summary {label}",
+            single_chat=False,
+            trigger_message_id=f"msg-summary-{label}",
+            trigger_create_time="2026-08-18 10:00:00",
+            trigger_sender="Derek",
+            trigger_text="Summarize the agent runs.",
+            execution_generation=generation,
+        )
+        [task] = store.claim_reply_tasks(limit=1)
+        consumer = store.claim_agent_run(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner=f"consumer-{label}",
+        ).run
+        audit = _claim_audit_run(
+            store,
+            task.id,
+            task.execution_generation,
+            owner=f"audit-{label}",
+        ).run
+        store.append_agent_run_event(
+            audit.id,
+            {"type": "tool", "name": f"summary-{label}"},
+            owner=f"audit-{label}",
+        )
+        return consumer, audit
+
+    first_consumer, first_terminal = seed_generation("first", "generation-first")
+    second_consumer, second_terminal = seed_generation("second", "generation-second")
+    method = getattr(store, "list_agent_run_summaries_for_terminal_runs", None)
+    assert method is not None
+
+    statements.clear()
+    summaries = method(
+        [second_terminal.id, first_terminal.id, first_terminal.id, 0, -1, 999999]
+    )
+
+    assert set(summaries) == {first_terminal.id, second_terminal.id}
+    assert [run.id for run in summaries[first_terminal.id]] == [
+        first_consumer.id,
+        first_terminal.id,
+    ]
+    assert [run.id for run in summaries[second_terminal.id]] == [
+        second_consumer.id,
+        second_terminal.id,
+    ]
+    assert all(
+        run.tool_events == []
+        for summary_runs in summaries.values()
+        for run in summary_runs
+    )
+    normalized_statements = [statement.casefold() for statement in statements]
+    assert len(
+        [statement for statement in normalized_statements if "from agent_runs" in statement]
+    ) == 1
+    assert not any("agent_run_events" in statement for statement in normalized_statements)
+    assert method([]) == {}
+
+
 def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
     tmp_path: Path,
 ):
@@ -5807,7 +5887,9 @@ def test_history_treats_superseded_blocked_reply_as_skipped(tmp_path: Path):
     assert [item.source_id for item in skipped_items] == [blocked_id]
 
 
-def test_history_groups_approval_retries_under_latest_meaningful_review(tmp_path: Path):
+def test_history_groups_approval_retries_under_latest_attempt_for_filters_and_counts(
+    tmp_path: Path,
+):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     reviewed_id = store.record_reply_attempt(
         conversation_id="oa_pending_scan",
@@ -5835,12 +5917,88 @@ def test_history_groups_approval_retries_under_latest_meaningful_review(tmp_path
         oa_action="review",
         send_status="failed",
     )
+    completed_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-2:first",
+        trigger_sender="Derek OA",
+        trigger_text="合同申请",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-2",
+        oa_task_id="task-2",
+        oa_action="review",
+        send_status="completed",
+    )
+
+    items = store.list_history_items(object_types=("approval",))
+    failed_items = store.list_history_items(
+        object_types=("approval",), send_statuses=("failed",)
+    )
+    needs_human_items = store.list_history_items(
+        object_types=("approval",), send_statuses=("needs_human",)
+    )
+
+    assert len({reviewed_id, failed_retry_id, completed_id}) == 3
+    assert [item.source_id for item in items] == [completed_id, failed_retry_id]
+    assert [item.status for item in items] == ["completed", "failed"]
+    assert [item.source_id for item in failed_items] == [failed_retry_id]
+    assert needs_human_items == []
+    assert store.count_history_items(object_types=("approval",)) == 2
+    assert (
+        store.count_history_items(
+            object_types=("approval",), send_statuses=("failed",)
+        )
+        == 1
+    )
+    assert [
+        item.source_id
+        for item in store.list_history_items(
+            limit=1, offset=0, object_types=("approval",)
+        )
+    ] == [completed_id]
+    assert [
+        item.source_id
+        for item in store.list_history_items(
+            limit=1, offset=1, object_types=("approval",)
+        )
+    ] == [failed_retry_id]
+
+
+def test_history_approval_group_breaks_created_at_ties_with_larger_id(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    older_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-tie:first",
+        trigger_sender="Derek OA",
+        trigger_text="采购申请",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-tie",
+        send_status="commented",
+    )
+    newer_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-tie:retry",
+        trigger_sender="Derek OA",
+        trigger_text="采购申请",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-tie",
+        send_status="failed",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set created_at=? where id in (?, ?)",
+            ("2026-08-19 00:00:00", older_id, newer_id),
+        )
 
     items = store.list_history_items(object_types=("approval",))
 
-    assert failed_retry_id != reviewed_id
-    assert [item.source_id for item in items] == [reviewed_id]
-    assert items[0].status == "needs_human"
+    assert [item.source_id for item in items] == [newer_id]
+    assert items[0].status == "failed"
 
 
 def test_history_keeps_blocked_side_effects_visible_after_terminal_reply(
@@ -6463,9 +6621,20 @@ def test_list_oa_attempt_history_returns_newest_first(tmp_path: Path):
     )
 
     history = store.list_oa_attempt_history("proc-1")
+    histories = store.list_oa_attempt_histories(
+        ["proc-1", "proc-2", "proc-1", "missing", ""]
+    )
 
     assert [attempt.id for attempt in history] == [second_id, first_id]
     assert store.list_oa_attempt_history("") == []
+    assert {
+        process_id: [attempt.id for attempt in attempts]
+        for process_id, attempts in histories.items()
+    } == {
+        "proc-1": [second_id, first_id],
+        "proc-2": [second_id + 1],
+        "missing": [],
+    }
 
 
 def test_backfill_oa_audit_metadata_recovers_completed_agent_scan_attempt(
