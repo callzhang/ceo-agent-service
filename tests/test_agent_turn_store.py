@@ -282,16 +282,17 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     )
 
     class Executor:
-        def __init__(self):
+        def __init__(self, current_stream):
             self.commands = []
+            self.stream = current_stream
 
         def __call__(self, command, *, on_stdout_line, **kwargs):
             self.commands.append(command)
-            for line in stream.splitlines():
+            for line in self.stream.splitlines():
                 on_stdout_line(line)
-            return ProcessRunResult(0, stream, "")
+            return ProcessRunResult(0, self.stream, "")
 
-    executor = Executor()
+    executor = Executor(stream)
 
     def execute(current_task):
         run = _claim_consumer(store, current_task).run
@@ -315,6 +316,91 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
         )
 
     execute(task)
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
+    ) == session_id
+
+    def stream_for_result(result_text: str) -> str:
+        return "\n".join(
+            (
+                json.dumps(
+                    {"type": "system", "subtype": "init", "session_id": session_id}
+                ),
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "session_id": session_id,
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": result_text}],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                        "session_id": session_id,
+                        "result": result_text,
+                    }
+                ),
+            )
+        )
+
+    def next_task(message_id: str, generation: str):
+        assert store.enqueue_reply_task(
+            conversation_id=task.conversation_id,
+            conversation_title=task.conversation_title,
+            single_chat=task.single_chat,
+            trigger_message_id=message_id,
+            trigger_create_time="2026-08-06 10:02:00",
+            trigger_sender="Derek",
+            trigger_text="Handle another task",
+            execution_generation=generation,
+        )
+        pending = store.get_reply_task_for_message(task.conversation_id, message_id)
+        assert pending is not None
+        claimed = store.claim_reply_task(pending.id)
+        assert claimed is not None
+        return claimed
+
+    sensitive_result = json.dumps(
+        {
+            "outcome": "no_action",
+            "summary": "Bearer sk-secret-must-not-persist",
+            "proposal": None,
+            "decision_options": [],
+            "error_code": "",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        },
+        separators=(",", ":"),
+    )
+    executor.stream = stream_for_result(sensitive_result)
+    sensitive_task = next_task("msg-turns-secret", "generation-secret")
+    with pytest.raises(ValueError, match="agent_result_contains_sensitive_value"):
+        execute(sensitive_task)
+    [sensitive_attempt] = store.list_agent_runtime_attempts(
+        store.list_agent_runs_for_task_generation(
+            sensitive_task.id, sensitive_task.execution_generation
+        )[0].id
+    )
+    assert sensitive_attempt.session_id == ""
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
+    ) == session_id
+
+    executor.stream = stream_for_result('{"outcome":"no_action"}')
+    invalid_task = next_task("msg-turns-invalid", "generation-invalid")
+    with pytest.raises(RuntimeError, match="claude_result_validation_failed"):
+        execute(invalid_task)
+    [invalid_attempt] = store.list_agent_runtime_attempts(
+        store.list_agent_runs_for_task_generation(
+            invalid_task.id, invalid_task.execution_generation
+        )[0].id
+    )
+    assert invalid_attempt.session_id == ""
     assert store.get_conversation_runtime_session(
         task.conversation_id, "claude_api", required_contract_hash="contract-v1"
     ) == session_id
@@ -345,6 +431,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     assert second is not None
     second = store.claim_reply_task(second.id)
     assert second is not None
+    executor.stream = stream
     execute(second)
 
     assert "--resume" not in executor.commands[0]

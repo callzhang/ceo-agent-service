@@ -293,6 +293,7 @@ class AgentTurnProcess(Generic[ResultT]):
         replayed_effect_evidence = False
         session_transcript_end = 0
         claude_normalizer: ClaudeEventNormalizer | None = None
+        pending_claude_session_id = ""
         turn_event_start = len(run.tool_events)
         recovery_event_start = turn_event_start
         completed_before_recovery = (
@@ -737,17 +738,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         if not trusted_session_id:
                             raise RuntimeError("claude_session_evidence_missing")
                         observed_session_id = trusted_session_id
-                        if active_attempt is not None:
-                            active_attempt = self.store.set_agent_runtime_attempt_session(
-                                active_attempt.id, trusted_session_id
-                            )
-                        if run.role is AgentRole.CONSUMER and not recover_unknown:
-                            self.store.upsert_conversation_runtime_session(
-                                self.task.conversation_id,
-                                route.name,
-                                trusted_session_id,
-                                conversation_contract_hash,
-                            )
+                        pending_claude_session_id = trusted_session_id
                     else:
                         result = parse_result(process.stdout)
                     break
@@ -886,7 +877,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 if active_attempt is not None
                 else None
             )
-            if persisted_attempt is not None and persisted_attempt.status == "running":
+            if (
+                persisted_attempt is not None
+                and persisted_attempt.status == "running"
+                and route.runtime_kind is RuntimeKind.CODEX_CLI
+            ):
                 self.store.complete_agent_runtime_attempt(
                     persisted_attempt.id,
                     observed_session_id,
@@ -997,6 +992,32 @@ class AgentTurnProcess(Generic[ResultT]):
                 required_skill_receipts=required_skill_receipts,
                 turn_event_start=turn_event_start,
             )
+        if route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+            if not pending_claude_session_id:
+                raise RuntimeError("claude_session_evidence_missing")
+            persisted_attempt = (
+                self.store.get_agent_runtime_attempt(active_attempt.id)
+                if active_attempt is not None
+                else None
+            )
+            if persisted_attempt is None or persisted_attempt.status != "running":
+                raise AgentRuntimeAttemptStartConflictError(
+                    "Claude runtime attempt is not running at result commit"
+                )
+            self.store.complete_agent_runtime_attempt(
+                persisted_attempt.id,
+                pending_claude_session_id,
+                "",
+                attempt_transcript_start,
+                attempt_transcript_start + (line_count - attempt_line_start),
+            )
+            if run.role is AgentRole.CONSUMER and not recover_unknown:
+                self.store.upsert_conversation_runtime_session(
+                    self.task.conversation_id,
+                    route.name,
+                    pending_claude_session_id,
+                    conversation_contract_hash,
+                )
         if recovery_phase == "reconcile":
             self.store.persist_unknown_agent_run_result(
                 run.id,
@@ -1127,7 +1148,7 @@ class AgentTurnProcess(Generic[ResultT]):
         if recovery_phase:
             if source_session_id:
                 raise ValueError("unknown recovery cannot resume a provider session")
-            attempt = self.store.claim_unknown_recovery_agent_runtime_attempt(
+            start_claim = self.store.claim_unknown_recovery_agent_runtime_attempt(
                 run.id,
                 route.name,
                 route.runtime_kind.value,
@@ -1135,11 +1156,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 route.model,
                 owner=self.owner,
             )
-            if attempt.status != "running":
+            if not start_claim.start_acquired:
                 raise AgentRuntimeAttemptStartConflictError(
                     "unknown recovery runtime attempt was not atomically started"
                 )
-            return attempt
+            return start_claim.attempt
         else:
             attempt = self.store.claim_agent_runtime_attempt(
                 run.id,

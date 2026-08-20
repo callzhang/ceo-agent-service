@@ -2347,6 +2347,33 @@ def _seed_crashed_audit_write(setup):
     return store, task, audit_context, run
 
 
+def test_claude_session_collision_never_reads_codex_delivery_history(
+    setup, monkeypatch
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    [attempt] = store.list_agent_runtime_attempts(run.id)
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runtime_attempts set runtime_kind='claude_cli' where id=?",
+            (attempt.id,),
+        )
+    history_calls: list[str] = []
+    monkeypatch.setattr(
+        "app.audit_agent.extract_codex_mcp_tool_results_from_session",
+        lambda session_id: history_calls.append(session_id) or (),
+    )
+
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+    )._backfill_persisted_direct_delivery_receipt(task, audit_context, run)
+
+    assert history_calls == []
+    assert not store.has_sent_reply_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    )
+
+
 def test_recovery_reconciliation_without_skill_receipts_stays_strictly_read_only(
     setup,
 ):

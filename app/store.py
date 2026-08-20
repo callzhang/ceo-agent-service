@@ -567,6 +567,12 @@ class AgentRunClaim:
 
 
 @dataclass(frozen=True)
+class AgentRuntimeAttemptStartClaim:
+    attempt: AgentRuntimeAttempt
+    start_acquired: bool
+
+
+@dataclass(frozen=True)
 class ManualAgentRunResolution:
     run_id: int
     task_id: int
@@ -4665,6 +4671,17 @@ class AutoReplyStore:
                 if agent_run_id is None
                 else ""
             )
+            if unknown_recovery_owner:
+                active_recovery_conflict = db.execute(
+                    "select 1 from agent_runtime_attempts "
+                    "where workload_kind=? and workload_key=? "
+                    "and status in ('starting', 'running') limit 1",
+                    (workload_kind, workload_key),
+                ).fetchone()
+                if active_recovery_conflict is not None:
+                    raise AgentRuntimeAttemptStartConflictError(
+                        "unknown recovery runtime attempt start already claimed"
+                    )
             if agent_run_id is not None:
                 run = db.execute(
                     "select agent_runs.status, agent_runs.role, "
@@ -4753,20 +4770,6 @@ class AutoReplyStore:
                     strict=True,
                 )):
                     raise ValueError("conflicting active runtime attempt claim")
-                if unknown_recovery_owner and active["status"] == "starting":
-                    cursor = db.execute(
-                        "update agent_runtime_attempts set status='running', "
-                        "updated_at=? where id=? and status='starting'",
-                        (now_text, active["id"]),
-                    )
-                    if cursor.rowcount != 1:
-                        raise AgentRuntimeAttemptStartConflictError(
-                            "runtime attempt process start already claimed"
-                        )
-                    active = db.execute(
-                        "select * from agent_runtime_attempts where id=?",
-                        (active["id"],),
-                    ).fetchone()
                 return self._agent_runtime_attempt_from_row(active)
             attempt_number = int(
                 db.execute(
@@ -4858,11 +4861,11 @@ class AutoReplyStore:
         model: str,
         *,
         owner: str,
-    ) -> AgentRuntimeAttempt:
+    ) -> AgentRuntimeAttemptStartClaim:
         """Claim one fresh provider attempt for an owned unknown-effect Audit."""
         if agent_run_id <= 0:
             raise ValueError("agent_run_id must be positive")
-        return self._claim_runtime_attempt(
+        attempt = self._claim_runtime_attempt(
             agent_run_id=agent_run_id,
             workload_kind="agent_run",
             workload_key=str(agent_run_id),
@@ -4873,6 +4876,10 @@ class AutoReplyStore:
             session_mode=RuntimeAttemptSessionMode.FRESH,
             source_session_id="",
             unknown_recovery_owner=owner,
+        )
+        return AgentRuntimeAttemptStartClaim(
+            attempt=attempt,
+            start_acquired=attempt.status == "running",
         )
 
     def claim_runtime_operation_attempt(

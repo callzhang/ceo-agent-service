@@ -203,6 +203,25 @@ def test_runtime_attempt_claim_rejects_missing_agent_parent(tmp_path: Path):
         assert db.execute("select count(*) from agent_runtime_attempts").fetchone()[0] == 0
 
 
+def _runtime_effect_started_event(operation_id: str) -> dict[str, object]:
+    return {
+        "type": "item.started",
+        "item": {
+            "type": "mcp_tool_call",
+            "id": "write-1",
+            "status": "in_progress",
+            "metadata": {
+                "effect": "effectful",
+                "operation_id": operation_id,
+                "capability": "agent_cli.dws",
+                "operation": "chat message send",
+                "operation_digest": "command-digest",
+                "target_identifiers": {"group": "cid-universal"},
+            },
+        },
+    }
+
+
 def test_unknown_recovery_attempt_requires_owned_persisted_effect_evidence(
     tmp_path: Path,
 ):
@@ -210,22 +229,7 @@ def test_unknown_recovery_attempt_requires_owned_persisted_effect_evidence(
     run = _claimed_runtime_agent_run(store)
     store.append_agent_run_event(
         run.id,
-        {
-            "type": "item.started",
-            "item": {
-                "type": "mcp_tool_call",
-                "id": "write-1",
-                "status": "in_progress",
-                "metadata": {
-                    "effect": "effectful",
-                    "operation_id": run.operation_id,
-                    "capability": "agent_cli.dws",
-                    "operation": "chat message send",
-                    "operation_digest": "command-digest",
-                    "target_identifiers": {"group": "cid-universal"},
-                },
-            },
-        },
+        _runtime_effect_started_event(run.operation_id),
         owner="runtime-attempt",
     )
     store.mark_agent_run_unknown(
@@ -238,10 +242,10 @@ def test_unknown_recovery_attempt_requires_owned_persisted_effect_evidence(
     with pytest.raises(ValueError, match="not safely claimed"):
         store.claim_unknown_recovery_agent_runtime_attempt(
             run.id,
-            "codex_oauth",
-            "codex_cli",
-            "local_oauth",
-            "gpt-5.5",
+            "claude_api",
+            "claude_cli",
+            "service_api",
+            "claude-sonnet-4-5",
             owner="foreign-owner",
         )
     with pytest.raises(ValueError, match="does not exist or is not running"):
@@ -269,7 +273,7 @@ def test_unknown_recovery_attempt_requires_owned_persisted_effect_evidence(
         )
         db.commit()
 
-    recovery = store.claim_unknown_recovery_agent_runtime_attempt(
+    start_claim = store.claim_unknown_recovery_agent_runtime_attempt(
         run.id,
         "codex_oauth",
         "codex_cli",
@@ -277,12 +281,23 @@ def test_unknown_recovery_attempt_requires_owned_persisted_effect_evidence(
         "gpt-5.5",
         owner="reconciler",
     )
+    recovery = start_claim.attempt
 
+    assert start_claim.start_acquired is True
     assert recovery.session_mode == "fresh"
     assert recovery.source_session_id == ""
     assert recovery.status == "running"
     with pytest.raises(AgentRuntimeAttemptStartConflictError):
         store.mark_agent_runtime_attempt_running_once(recovery.id)
+    with pytest.raises(AgentRuntimeAttemptStartConflictError):
+        store.claim_unknown_recovery_agent_runtime_attempt(
+            run.id,
+            "codex_oauth",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            owner="reconciler",
+        )
 
 
 def test_unknown_recovery_attempt_rejects_unknown_run_without_effect(tmp_path: Path):
@@ -306,6 +321,102 @@ def test_unknown_recovery_attempt_rejects_unknown_run_without_effect(tmp_path: P
         )
 
     assert store.list_agent_runtime_attempts(run.id) == []
+
+
+@pytest.mark.parametrize("active_status", ["starting", "running"])
+def test_unknown_recovery_never_takes_over_an_active_ordinary_attempt(
+    tmp_path: Path, active_status: str
+):
+    store = AutoReplyStore(tmp_path / f"runtime-recovery-{active_status}.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    ordinary = store.claim_agent_runtime_attempt(
+        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+    if active_status == "running":
+        ordinary = store.mark_agent_runtime_attempt_running_once(ordinary.id)
+    store.append_agent_run_event(
+        run.id,
+        _runtime_effect_started_event(run.operation_id),
+        owner="runtime-attempt",
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="runtime-attempt",
+    )
+    assert store.claim_unknown_agent_run(run.id, owner="reconciler").claimed
+
+    with pytest.raises(AgentRuntimeAttemptStartConflictError):
+        store.claim_unknown_recovery_agent_runtime_attempt(
+            run.id,
+            "codex_oauth",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            owner="foreign-owner",
+        )
+    with pytest.raises(AgentRuntimeAttemptStartConflictError):
+        store.claim_unknown_recovery_agent_runtime_attempt(
+            run.id,
+            "claude_api",
+            "claude_cli",
+            "service_api",
+            "claude-sonnet-4-5",
+            owner="reconciler",
+        )
+
+    [persisted] = store.list_agent_runtime_attempts(run.id)
+    assert persisted.id == ordinary.id
+    assert persisted.status == active_status
+
+
+def test_concurrent_unknown_recovery_claims_grant_exactly_one_start(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-recovery-concurrent.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    store.append_agent_run_event(
+        run.id,
+        _runtime_effect_started_event(run.operation_id),
+        owner="runtime-attempt",
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="runtime-attempt",
+    )
+    assert store.claim_unknown_agent_run(run.id, owner="reconciler").claimed
+    barrier = Barrier(2)
+    starts: list[int] = []
+    conflicts: list[str] = []
+
+    def claim_and_spawn() -> None:
+        barrier.wait(timeout=10)
+        try:
+            claim = store.claim_unknown_recovery_agent_runtime_attempt(
+                run.id,
+                "codex_oauth",
+                "codex_cli",
+                "local_oauth",
+                "gpt-5.5",
+                owner="reconciler",
+            )
+        except AgentRuntimeAttemptStartConflictError as exc:
+            conflicts.append(str(exc))
+        else:
+            if claim.start_acquired:
+                starts.append(claim.attempt.id)
+
+    threads = [Thread(target=claim_and_spawn) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(starts) == 1
+    assert len(conflicts) == 1
+    [attempt] = store.list_agent_runtime_attempts(run.id)
+    assert attempt.id == starts[0]
+    assert attempt.status == "running"
 
 
 def test_agent_runtime_attempt_claim_atomically_rechecks_route_pause(tmp_path: Path):

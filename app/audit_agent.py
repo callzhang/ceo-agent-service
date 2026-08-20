@@ -19,6 +19,7 @@ from app.agent_contracts import (
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_result import AgentError, SideEffectState
 from app.agent_runtime_config import AgentRuntimeConfig
+from app.agent_runtime_contracts import RuntimeKind
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import (
     AgentTurnProcess,
@@ -250,19 +251,26 @@ class AuditAgentRunner:
         run: AgentRun,
     ) -> None:
         """Restore an omitted direct-delivery ledger only from its own receipt."""
-        runtime_session_id = next(
+        runtime_attempt = next(
             (
-                attempt.session_id
+                attempt
                 for attempt in reversed(
                     self.store.list_agent_runtime_attempts(run.id)
                 )
                 if attempt.session_id
+                and attempt.agent_run_id == run.id
+                and attempt.workload_kind == "agent_run"
+                and attempt.workload_key == str(run.id)
             ),
-            run.codex_session_id,
+            None,
         )
-        if not runtime_session_id or self.store.has_sent_reply_for_trigger(
-            task.conversation_id,
-            task.trigger_message_id,
+        if (
+            runtime_attempt is None
+            or runtime_attempt.runtime_kind != RuntimeKind.CODEX_CLI.value
+            or self.store.has_sent_reply_for_trigger(
+                task.conversation_id,
+                task.trigger_message_id,
+            )
         ):
             return
         expected_actions = tuple(
@@ -282,7 +290,7 @@ class AuditAgentRunner:
             mcp_effect_registry=self.effects,
         )
         for payload in extract_codex_mcp_tool_results_from_session(
-            runtime_session_id,
+            runtime_attempt.session_id,
         ):
             event = process._normalized_effect_event(
                 payload,
