@@ -12,7 +12,8 @@ dependencies = [
   "mcp[cli]==1.27.0",
   "Pillow>=11",
   "pypdf>=5.0",
-  "pydantic>=2.10",
+  "pydantic>=2.10,<2.13",
+  "pydantic-settings>=2.5.2,<2.14",
   "robust-json-parser>=0.1.6,<0.2",
   "uvicorn>=0.34"
 ]

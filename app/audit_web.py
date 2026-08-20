@@ -16,6 +16,7 @@ import stat
 import subprocess
 from typing import TypedDict
 from urllib.parse import parse_qs, quote, urlencode, urlparse
+from zoneinfo import ZoneInfo
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -166,6 +167,7 @@ from app.task_retrieval import (
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 AUDIT_WEB_SQLITE_BUSY_TIMEOUT_SECONDS = 2
 USER_FEEDBACK_SYNC_BATCH_LIMIT = 5
 USER_FEEDBACK_SYNC_TIMEOUT_SECONDS = 0.5
@@ -3454,7 +3456,7 @@ def _format_local_time(value: str, *, local_tz: tzinfo | None = None) -> str:
     raw = value.strip()
     if not raw:
         return ""
-    local_timezone = local_tz or datetime.now().astimezone().tzinfo
+    local_timezone = local_tz or LOCAL_DISPLAY_TIME_ZONE
     normalized = raw.replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(normalized)
@@ -3472,7 +3474,7 @@ def _follow_up_schedule_label(value: str) -> str:
     parsed = _parse_utc_timestamp(value)
     if parsed is None:
         return ""
-    local = parsed.astimezone(datetime.now().astimezone().tzinfo)
+    local = parsed.astimezone(LOCAL_DISPLAY_TIME_ZONE)
     hour = local.hour % 12 or 12
     meridiem = "AM" if local.hour < 12 else "PM"
     return (

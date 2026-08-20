@@ -207,6 +207,11 @@ def test_execute_reviewed_write_preserves_provider_error_instead_of_read_failure
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    classifier = NativeCliMetadataClassifier(
+        reviewed_effects={
+            ("dws", "chat message send"): EffectKind.EFFECTFUL,
+        }
+    )
 
     receipt = agent_cli.execute_reviewed_write(
         [
@@ -223,6 +228,7 @@ def test_execute_reviewed_write_preserves_provider_error_instead_of_read_failure
         process_runner=lambda argv, **_: subprocess.CompletedProcess(
             argv, 1, '{"code":"1001","message":"provider rejected request"}', ""
         ),
+        classifier=classifier,
     )
 
     assert receipt["error"] == {

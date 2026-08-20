@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -45,6 +46,7 @@ OKR_REVIEW_SKILL_PATH = (
 )
 LAST_SUCCESS_STATE_KEY = "weekly_okr_report:last_success_date"
 LAST_ATTEMPT_STATE_KEY = "weekly_okr_report:last_attempt_at"
+WORK_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 
 
 class KrScoreReview(BaseModel):
@@ -913,7 +915,7 @@ def run_weekly_okr_report(
     schedule_hour: int = DEFAULT_SCHEDULE_HOUR,
     retry_seconds: int = DEFAULT_RETRY_SECONDS,
 ) -> WeeklyOkrReportResult:
-    local_now = now.astimezone()
+    local_now = now.astimezone(WORK_TIME_ZONE)
     scheduled_report_date = _scheduled_report_date(
         local_now,
         schedule_hour=schedule_hour,
@@ -1104,7 +1106,7 @@ def weekly_okr_report_command(
 ) -> WeeklyOkrReportResult:
     from app.store import AutoReplyStore
 
-    current = now or datetime.now().astimezone()
+    current = now or datetime.now(WORK_TIME_ZONE)
     store = AutoReplyStore(settings.db_path)
     if not force and not _env_bool("CEO_WEEKLY_OKR_REPORT_ENABLED", True):
         result = WeeklyOkrReportResult(
@@ -1185,7 +1187,7 @@ def refresh_company_okr_archive_command(
     group_name: str = DEFAULT_GROUP_NAME,
     now: datetime | None = None,
 ) -> CompanyOkrArchiveResult:
-    current = now or datetime.now().astimezone()
+    current = now or datetime.now(WORK_TIME_ZONE)
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
         ding_robot_name=settings.ding_robot_name,
@@ -1485,7 +1487,7 @@ def _scheduled_run_is_due(
     schedule_hour: int,
     retry_seconds: int,
 ) -> bool:
-    local_now = now.astimezone()
+    local_now = now.astimezone(WORK_TIME_ZONE)
     if local_now.weekday() == 6 and local_now.hour < schedule_hour:
         return False
     report_date = _scheduled_report_date(
@@ -1511,7 +1513,7 @@ def _scheduled_run_is_due(
 def _scheduled_report_date(now: datetime, *, schedule_hour: int) -> date:
     if schedule_hour < 0 or schedule_hour > 23:
         raise ValueError("CEO_WEEKLY_OKR_REPORT_HOUR must be between 0 and 23")
-    local_now = now.astimezone()
+    local_now = now.astimezone(WORK_TIME_ZONE)
     days_since_sunday = (local_now.weekday() - 6) % 7
     report_date = local_now.date() - timedelta(days=days_since_sunday)
     if local_now.weekday() == 6 and local_now.hour < schedule_hour:
@@ -1521,7 +1523,7 @@ def _scheduled_report_date(now: datetime, *, schedule_hour: int) -> date:
 
 def weekly_okr_report_window_open(now: datetime, *, schedule_hour: int) -> bool:
     _scheduled_report_date(now, schedule_hour=schedule_hour)
-    local_now = now.astimezone()
+    local_now = now.astimezone(WORK_TIME_ZONE)
     return not (local_now.weekday() == 6 and local_now.hour < schedule_hour)
 
 
@@ -1742,7 +1744,7 @@ def refresh_company_okr_archive(
     group_name: str = DEFAULT_GROUP_NAME,
     period_label: str = "",
 ) -> CompanyOkrArchiveResult:
-    local_now = now.astimezone()
+    local_now = now.astimezone(WORK_TIME_ZONE)
     roster = gateway.resolve_group_roster(group_name)
     if not roster.managers:
         raise RuntimeError("CEO-2 manager roster is empty")

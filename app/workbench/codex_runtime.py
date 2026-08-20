@@ -622,7 +622,10 @@ def _terminate_owned_process_group(owned_pgid: int) -> None:
         os.killpg(owned_pgid, signal.SIGTERM)
     except (PermissionError, ProcessLookupError):
         return
-    deadline = time.monotonic() + 2
+    # A dead process group can remain observable briefly while the Linux
+    # parent reaps it. Keep a short graceful window, then force termination so
+    # total/idle timeouts stay bounded across platforms and under CI load.
+    deadline = time.monotonic() + 0.5
     while time.monotonic() < deadline:
         try:
             os.killpg(owned_pgid, 0)
