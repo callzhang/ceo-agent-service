@@ -31,7 +31,7 @@ def test_runtime_and_quality_contract_use_python_312_shared_conda():
     package = json.loads((REPO_ROOT / "package.json").read_text(encoding="utf-8"))
 
     assert project["project"]["requires-python"] == ">=3.12"
-    assert "mcp[cli]==1.27.0" in project["project"]["dependencies"]
+    assert "mcp[cli]==1.28.1" in project["project"]["dependencies"]
     assert "ruff>=0.15,<0.16" in project["project"]["optional-dependencies"]["dev"]
     assert "httpx2>=2.9,<3" in project["project"]["optional-dependencies"]["dev"]
     assert project["tool"]["ruff"]["target-version"] == "py312"
