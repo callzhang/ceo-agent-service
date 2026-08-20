@@ -732,6 +732,12 @@ codex_adapter: CodexRuntimeAdapter | None = None,
 
 Replace the single command/process block with a bounded route loop. Claim the attempt before process start, pass the existing `persist_line` callback unchanged, call `note_runtime_attempt_effect_started()` inside the existing normalized effect `item.started` branch, and complete/fail the attempt before choosing another route.
 
+Initial selection must use current injected capability snapshots and persisted
+route pauses, not configured route order alone. Configuration does not prove API
+health. Until Task 8 installs probe refresh, only the pre-existing local OAuth
+path may use the explicitly scoped trusted-legacy bootstrap when it has no
+snapshot; the bootstrap never applies to API failover.
+
 - [ ] **Step 4: Preserve unknown and recovery behavior exactly**
 
 Before consulting the router, run `_recovery_execution_result_from_receipts()`. If an effect started or a receipt exists, execute the existing `_defer_unknown()`/`mark_agent_run_unknown()` path and do not ask for another route. Reconciliation and authorized recovery executions pass `recovery_phase` to the router and remain pinned.
@@ -747,6 +753,10 @@ store.upsert_conversation_runtime_session(
 ```
 
 Continue writing the legacy Codex conversation field for `codex_oauth` during migration. For `codex_api`, do not overwrite `codex_oauth`.
+
+Only Consumer turns read or update conversation route sessions. Audit and Audit
+recovery turns are fresh route sessions and persist their session identifiers
+only on their runtime attempts/run evidence.
 
 - [ ] **Step 6: Run complete role-agent tests and commit**
 

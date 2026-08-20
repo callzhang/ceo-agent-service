@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_turn_runner import AgentTurnProcess
+from app.agent_turn_runner import AgentTurnProcess, _required_runtime_capabilities
 from app.native_cli_metadata import describe_native_command
 from app.store import (
     MAX_RECONCILIATION_EVENTS,
@@ -135,6 +135,40 @@ def test_runtime_attempt_process_start_is_claimed_exactly_once(tmp_path):
         match="process start already claimed",
     ):
         store.mark_agent_runtime_attempt_running_once(attempt.id)
+
+
+def test_role_runtime_capabilities_include_policy_and_exact_action_tools(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    consumer = _claim_consumer(store, task).run
+    audit = _claim_audit(store, task)
+
+    assert _required_runtime_capabilities(
+        run=consumer,
+        recovery_phase="",
+        expected_effect_actions=(),
+    ) == frozenset(
+        {
+            "structured_output",
+            "local_schema_validation",
+            "consumer_read_only_enforcement",
+            "reviewed_read_tools",
+        }
+    )
+    assert _required_runtime_capabilities(
+        run=audit,
+        recovery_phase="reconcile",
+        expected_effect_actions=({"capability": "agent_cli.dws"},),
+    ) == frozenset(
+        {
+            "structured_output",
+            "local_schema_validation",
+            "consumer_read_only_enforcement",
+            "reconciliation_read_only",
+            "reviewed_read_tools",
+            "agent_cli.dws",
+        }
+    )
 
 
 def test_turn_operation_identity_is_role_specific(tmp_path):

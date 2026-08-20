@@ -18,6 +18,8 @@ from app.agent_contracts import (
 )
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_result import AgentError, SideEffectState
+from app.agent_runtime_config import AgentRuntimeConfig
+from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
@@ -31,6 +33,7 @@ from app.agent_turn_runner import (
 from app.agent_wire_contracts import parse_audit_agent_wire_result
 from app.audit_rules import render_audit_rules
 from app.codex_history import extract_codex_mcp_tool_results_from_session
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import (
     describe_native_command,
@@ -59,6 +62,9 @@ class AuditAgentRunner:
         store: AutoReplyStore,
         workspace: Path,
         codex_bin: str = "codex",
+        runtime_config: AgentRuntimeConfig | None = None,
+        runtime_router: AgentRuntimeRouter | None = None,
+        codex_adapter: CodexRuntimeAdapter | None = None,
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
@@ -67,6 +73,9 @@ class AuditAgentRunner:
         self.store = store
         self.workspace = workspace
         self.codex_bin = codex_bin
+        self.runtime_config = runtime_config
+        self.runtime_router = runtime_router
+        self.codex_adapter = codex_adapter
         self.executor = executor
         self.owner = owner or f"audit-agent-{uuid4().hex}"
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
@@ -242,6 +251,9 @@ class AuditAgentRunner:
             owner=self.owner,
             executor=self.executor,
             codex_bin=self.codex_bin,
+            runtime_config=self.runtime_config,
+            runtime_router=self.runtime_router,
+            codex_adapter=self.codex_adapter,
             mcp_effect_registry=self.effects,
         )
         for payload in extract_codex_mcp_tool_results_from_session(
@@ -675,6 +687,9 @@ class AuditAgentRunner:
             owner=self.owner,
             executor=self.executor,
             codex_bin=self.codex_bin,
+            runtime_config=self.runtime_config,
+            runtime_router=self.runtime_router,
+            codex_adapter=self.codex_adapter,
             mcp_effect_registry=self.effects,
         )
         turn_prompt = (

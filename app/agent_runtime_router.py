@@ -64,6 +64,36 @@ class AgentRuntimeRouter:
         self._snapshots = snapshots
         self._now = now or (lambda: datetime.now(UTC))
 
+    def first_eligible_route(
+        self,
+        *,
+        required_capabilities: frozenset[str],
+        allow_legacy_oauth_bootstrap: bool = False,
+    ) -> RuntimeRoute | None:
+        """Select an initial route from current evidence.
+
+        The bootstrap exception preserves the pre-failover OAuth path only. It
+        never asserts probe health, never applies to service credentials, and
+        is disabled whenever an explicit OAuth snapshot exists.
+        """
+        now = _parse_timestamp(self._now())
+        for route in self._routes:
+            if self._store.active_runtime_route_pause(route.name, now=now) is not None:
+                continue
+            if self._snapshot_is_current_and_eligible(
+                route=route,
+                required_capabilities=required_capabilities,
+                now=now,
+            ):
+                return route
+            if (
+                allow_legacy_oauth_bootstrap
+                and route.name == "codex_oauth"
+                and route.name not in self._snapshots
+            ):
+                return route
+        return None
+
     def next_route(
         self,
         *,

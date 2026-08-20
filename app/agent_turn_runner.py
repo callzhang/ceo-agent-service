@@ -39,7 +39,6 @@ from app.agent_result import (
 )
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
-    RuntimeCapabilitySnapshot,
     RuntimeFailureClass,
     RuntimeRoute,
 )
@@ -87,23 +86,18 @@ ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS = 60
 UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS = 15 * 60
-
-
-def _configured_runtime_snapshots(
-    config: AgentRuntimeConfig,
-) -> dict[str, RuntimeCapabilitySnapshot]:
-    checked_at = datetime.now(timezone.utc)
-    expires_at = checked_at + config.probe_interval
-    return {
-        route.name: RuntimeCapabilitySnapshot(
-            route_name=route.name,
-            capabilities=frozenset(),
-            healthy=True,
-            checked_at=checked_at.strftime("%Y-%m-%d %H:%M:%S"),
-            expires_at=expires_at.strftime("%Y-%m-%d %H:%M:%S"),
-        )
-        for route in config.routes
-    }
+_COMMON_RUNTIME_CAPABILITIES = frozenset(
+    {"structured_output", "local_schema_validation"}
+)
+_CONSUMER_RUNTIME_CAPABILITIES = frozenset(
+    {"consumer_read_only_enforcement", "reviewed_read_tools"}
+)
+_AUDIT_RUNTIME_CAPABILITIES = frozenset(
+    {"audit_effect_visibility", "reviewed_read_tools", "reviewed_write_tools"}
+)
+_RECONCILIATION_RUNTIME_CAPABILITIES = frozenset(
+    {"consumer_read_only_enforcement", "reconciliation_read_only"}
+)
 
 
 def unknown_reconciliation_retry_at(
@@ -118,6 +112,27 @@ def unknown_reconciliation_retry_at(
     return (current.astimezone(timezone.utc) + timedelta(seconds=delay_seconds)).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
+
+
+def _required_runtime_capabilities(
+    *,
+    run: AgentRun,
+    recovery_phase: str,
+    expected_effect_actions: tuple[dict[str, object], ...],
+) -> frozenset[str]:
+    required = set(_COMMON_RUNTIME_CAPABILITIES)
+    if run.role is AgentRole.CONSUMER:
+        required.update(_CONSUMER_RUNTIME_CAPABILITIES)
+    elif recovery_phase == "reconcile":
+        required.update(_RECONCILIATION_RUNTIME_CAPABILITIES)
+        required.add("reviewed_read_tools")
+    else:
+        required.update(_AUDIT_RUNTIME_CAPABILITIES)
+    for action in expected_effect_actions:
+        capability = action.get("capability")
+        if isinstance(capability, str) and capability.strip():
+            required.add(capability.strip())
+    return frozenset(required)
 
 
 @dataclass(frozen=True)
@@ -201,10 +216,11 @@ class AgentTurnProcess(Generic[ResultT]):
         self.codex_adapter = codex_adapter or CodexRuntimeAdapter(
             workspace, self.runtime_config, codex_bin=codex_bin
         )
+        self._allow_legacy_oauth_bootstrap = runtime_router is None
         self.runtime_router = runtime_router or AgentRuntimeRouter(
             routes=self.runtime_config.routes,
             store=store,
-            snapshots=_configured_runtime_snapshots(self.runtime_config),
+            snapshots={},
         )
         self.executor = executor or run_process_with_idle_timeout
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
@@ -437,7 +453,11 @@ class AgentTurnProcess(Generic[ResultT]):
                             run.role is AgentRole.CONSUMER
                         ),
                     )
-                if not recover_unknown and active_route is not None:
+                if (
+                    run.role is AgentRole.CONSUMER
+                    and not recover_unknown
+                    and active_route is not None
+                ):
                     self.store.upsert_conversation_runtime_session(
                         self.task.conversation_id,
                         active_route.name,
@@ -445,6 +465,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
                 if (
                     persist_conversation_session
+                    and run.role is AgentRole.CONSUMER
                     and not recover_unknown
                     and active_route is not None
                     and active_route.name == "codex_oauth"
@@ -463,9 +484,20 @@ class AgentTurnProcess(Generic[ResultT]):
                 primary_turn_closed = True
 
         try:
-            route = self.runtime_config.routes[0]
+            required_capabilities = _required_runtime_capabilities(
+                run=run,
+                recovery_phase=recovery_phase,
+                expected_effect_actions=expected_effect_actions,
+            )
+            route = self.runtime_router.first_eligible_route(
+                required_capabilities=required_capabilities,
+                allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,
+            )
+            if route is None:
+                raise RuntimeError("runtime_route_unavailable")
             route_session_id = self._session_for_route(
                 route,
+                role=run.role,
                 requested_session_id=session_id,
                 recovery_phase=recovery_phase,
             )
@@ -550,7 +582,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     run=persisted,
                     failed_attempt=failed_attempt,
                     failure=failure,
-                    required_capabilities=frozenset(),
+                    required_capabilities=required_capabilities,
                     recovery_phase=recovery_phase,
                 )
                 if decision.route is None:
@@ -562,6 +594,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     if decision.fresh_session
                     else self._session_for_route(
                         route,
+                        role=run.role,
                         requested_session_id=session_id,
                         recovery_phase=recovery_phase,
                     )
@@ -818,10 +851,13 @@ class AgentTurnProcess(Generic[ResultT]):
         self,
         route: RuntimeRoute,
         *,
+        role: AgentRole,
         requested_session_id: str | None,
         recovery_phase: str,
     ) -> str | None:
         if recovery_phase:
+            return None
+        if role is AgentRole.AUDIT:
             return None
         persisted = self.store.get_conversation_runtime_session(
             self.task.conversation_id, route.name

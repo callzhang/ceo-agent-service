@@ -104,6 +104,15 @@ actually use: executable availability, model access, required MCP servers,
 required native CLIs, reviewed skills, output mode, and read/write policy. It
 is evidence from probes, not a declaration inferred from configuration.
 
+During migration, the existing local `codex_oauth` route alone may use a
+trusted-legacy bootstrap when no OAuth snapshot exists. This exception preserves
+the pre-failover execution path without claiming that a probe succeeded. It is
+never available to `codex_api` or another service-credential route, never
+overrides an explicit unhealthy/expired snapshot, and is not used for failover.
+An injected capability registry disables the exception and makes initial route
+selection use the same pause, freshness, health, and capability gates as later
+route selection.
+
 ## Existing Invariants That Must Remain
 
 The failover layer extends the current runtime without changing these rules:
@@ -407,6 +416,11 @@ updated_at
 Only one session per conversation and route is current. Codex and Claude
 session IDs never overwrite each other. Historical attempt rows remain the
 source for prior session references.
+
+Conversation runtime sessions belong only to continuing Consumer context.
+Audit turns always start fresh, retain their observed session on their own
+runtime attempt and run evidence, and never read or update a Consumer
+`conversation_runtime_sessions` slot.
 
 ## Failure Classification and Routing
 

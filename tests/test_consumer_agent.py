@@ -8,8 +8,12 @@ import app.consumer_agent as consumer_agent
 from app.agent_context import _CONSUMER_AGENT_RULES, AgentTaskContext
 from app.agent_contracts import ConsumerAgentResult
 from app.agent_result import EffectKind, ResultParseError
+from app.agent_runtime_config import load_runtime_config
+from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import _agent_cli_receipt
 from app.agent_wire_contracts import ConsumerAgentWireResult
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import (
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
@@ -198,6 +202,38 @@ class SequencedRuntimeExecutor(CapturingExecutor):
         self.environments.append(dict(kwargs["env"]))
         super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
         return result
+
+
+def _consumer_runtime_dependencies(store, workspace=Path("/workspace")):
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
+            "CEO_CODEX_API_KEY": "fallback-test-key",
+        }
+    )
+    capabilities = frozenset(
+        {
+            "structured_output",
+            "local_schema_validation",
+            "consumer_read_only_enforcement",
+            "reviewed_read_tools",
+        }
+    )
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=capabilities,
+            healthy=True,
+            checked_at="2026-08-20 00:00:00",
+            expires_at="2099-08-20 00:00:00",
+        )
+        for route in config.routes
+    }
+    return (
+        config,
+        AgentRuntimeRouter(routes=config.routes, store=store, snapshots=snapshots),
+        CodexRuntimeAdapter(workspace, config),
+    )
 
 
 def _wire_result(result: dict[str, object]) -> dict[str, object]:
@@ -737,11 +773,15 @@ def test_consumer_read_events_can_fail_over_within_same_run(
         ProcessRunResult(1, oauth_failure, ""),
         ProcessRunResult(0, _result_jsonl(session="session-api"), ""),
     )
+    config, router, adapter = _consumer_runtime_dependencies(store)
 
     result = ConsumerAgentRunner(
         store=store,
         workspace=Path("/workspace"),
         executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     attempts = store.list_agent_runtime_attempts(result.run_id)
@@ -769,6 +809,45 @@ def test_consumer_read_events_can_fail_over_within_same_run(
     assert persisted_run.codex_session_id == "session-a"
     assert "OPENAI_API_KEY" not in executor.environments[0]
     assert executor.environments[1]["OPENAI_API_KEY"] == "fallback-test-key"
+
+
+def test_consumer_does_not_start_unprobed_api_fallback(
+    store, task, context, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "fallback-test-key")
+    executor = SequencedRuntimeExecutor(
+        ProcessRunResult(
+            1,
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "Failed to refresh token: Your session has ended",
+                }
+            ),
+            "",
+        )
+    )
+
+    with pytest.raises(ResultParseError):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert [
+        attempt.route_name for attempt in store.list_agent_runtime_attempts(run.id)
+    ] == ["codex_oauth"]
+    assert len(executor.environments) == 1
 
 def test_consumer_rotates_damaged_session_after_missing_final_result(
     store, task, context

@@ -22,6 +22,9 @@ from app.agent_contracts import (
 )
 from app.agent_effects import EffectKind, McpToolEffectRegistry
 from app.agent_result import ResultParseError
+from app.agent_runtime_config import load_runtime_config
+from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import (
     _action_completion_accounting,
@@ -40,6 +43,7 @@ from app.audit_agent import (
     _recovery_authorizations,
     _recovery_prompt,
 )
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import AUDIT_DYNAMIC_SKILL_BODY, audit_developer_instructions
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
@@ -98,6 +102,45 @@ class SequencedExecutor(CapturingExecutor):
         return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
 
 
+def _audit_runtime_dependencies(
+    store,
+    *,
+    routes="codex_oauth,codex_api",
+    workspace=Path("/workspace"),
+):
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": routes,
+            "CEO_CODEX_API_KEY": "fallback-test-key",
+        }
+    )
+    capabilities = frozenset(
+        {
+            "structured_output",
+            "local_schema_validation",
+            "audit_effect_visibility",
+            "reviewed_read_tools",
+            "reviewed_write_tools",
+            "agent_cli.dws",
+        }
+    )
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=capabilities,
+            healthy=True,
+            checked_at="2026-08-20 00:00:00",
+            expires_at="2099-08-20 00:00:00",
+        )
+        for route in config.routes
+    }
+    return (
+        config,
+        AgentRuntimeRouter(routes=config.routes, store=store, snapshots=snapshots),
+        CodexRuntimeAdapter(workspace, config),
+    )
+
+
 def test_audit_effect_start_blocks_api_fallback(setup, monkeypatch):
     store, task, audit_context, parent = setup
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
@@ -129,12 +172,16 @@ def test_audit_effect_start_blocks_api_fallback(setup, monkeypatch):
         )
     )
     executor = CapturingExecutor(failure_stream, returncode=1)
+    config, router, adapter = _audit_runtime_dependencies(store)
 
     with pytest.raises(RuntimeError):
         AuditAgentRunner(
             store=store,
             workspace=Path("/workspace"),
             executor=executor,
+            runtime_config=config,
+            runtime_router=router,
+            codex_adapter=adapter,
         ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
 
     run = store.get_agent_run_for_turn(
@@ -152,6 +199,76 @@ def test_audit_effect_start_blocks_api_fallback(setup, monkeypatch):
     assert attempt.first_effect_started_at
     assert run.side_effect_state == "unknown"
     assert len(executor.commands) == 1
+
+
+def test_audit_never_resumes_or_overwrites_consumer_oauth_route_session(setup):
+    store, task, audit_context, parent = setup
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+        "consumer-oauth-session",
+    )
+    executor = CapturingExecutor(
+        _revision_required_jsonl("Keep the candidate read-only.")
+    )
+
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert executor.commands[0][:3] != ["codex", "exec", "resume"]
+    assert store.get_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+    ) == "consumer-oauth-session"
+
+
+def test_audit_never_reads_or_overwrites_consumer_api_route_session(setup):
+    store, task, audit_context, parent = setup
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_api",
+        "consumer-api-session",
+    )
+    config, router, adapter = _audit_runtime_dependencies(
+        store,
+        routes="codex_api",
+    )
+    executor = CapturingExecutor(
+        "\n".join(
+            (
+                json.dumps(
+                    {"type": "thread.started", "thread_id": "audit-api-session"}
+                ),
+                _revision_required_jsonl("Keep the candidate read-only."),
+            )
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert executor.commands[0][:3] != ["codex", "exec", "resume"]
+    assert store.get_conversation_runtime_session(
+        task.conversation_id,
+        "codex_api",
+    ) == "consumer-api-session"
+    run = store.get_agent_run(result.run_id)
+    assert run is not None and run.codex_session_id == ""
+    [attempt] = store.list_agent_runtime_attempts(result.run_id)
+    assert attempt.route_name == "codex_api"
+    assert attempt.session_mode == "fresh"
+    assert attempt.session_id
 
 
 class ExactReceiptExecutor(CapturingExecutor):

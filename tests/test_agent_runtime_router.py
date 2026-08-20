@@ -85,6 +85,71 @@ def make_router(
     )
 
 
+def test_initial_route_honors_pause_health_freshness_and_capabilities(store):
+    routes = (route("codex_oauth"), route("codex_api"))
+    required = frozenset({"structured_output", "consumer_read_only_enforcement"})
+    snapshots = {
+        "codex_oauth": snapshot(
+            "codex_oauth",
+            capabilities=required,
+            healthy=False,
+        ),
+        "codex_api": snapshot("codex_api", capabilities=required),
+    }
+    router = make_router(store, routes=routes, snapshots=snapshots)
+
+    assert router.first_eligible_route(required_capabilities=required) == routes[1]
+
+    store.open_runtime_route_pause(
+        "codex_api",
+        "codex_login_required",
+        retry_at="2026-08-20 10:30:00",
+    )
+    assert router.first_eligible_route(required_capabilities=required) is None
+
+
+def test_initial_route_rejects_expired_or_missing_capability_evidence(store):
+    required = frozenset({"structured_output", "audit_effect_visibility"})
+    routes = (route("codex_oauth"), route("codex_api"))
+    router = make_router(
+        store,
+        routes=routes,
+        snapshots={
+            "codex_oauth": snapshot(
+                "codex_oauth",
+                capabilities=required,
+                expires_at="2026-08-20 10:00:00",
+            ),
+            "codex_api": snapshot(
+                "codex_api",
+                capabilities=frozenset({"structured_output"}),
+            ),
+        },
+    )
+
+    assert router.first_eligible_route(required_capabilities=required) is None
+
+
+def test_legacy_oauth_bootstrap_never_trusts_unprobed_api(store):
+    routes = (route("codex_oauth"), route("codex_api"))
+    router = make_router(store, routes=routes, snapshots={})
+
+    assert router.first_eligible_route(
+        required_capabilities=frozenset({"structured_output"}),
+        allow_legacy_oauth_bootstrap=True,
+    ) == routes[0]
+    assert router.first_eligible_route(
+        required_capabilities=frozenset({"structured_output"}),
+        allow_legacy_oauth_bootstrap=False,
+    ) is None
+
+    api_only = make_router(store, routes=(routes[1],), snapshots={})
+    assert api_only.first_eligible_route(
+        required_capabilities=frozenset(),
+        allow_legacy_oauth_bootstrap=True,
+    ) is None
+
+
 @pytest.fixture
 def store(tmp_path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "agent-runtime-router.sqlite3")

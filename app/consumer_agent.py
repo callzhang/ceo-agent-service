@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import json
-from hashlib import sha256
 import sys
 from collections.abc import Callable
+from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import (
+    _CONSUMER_AGENT_RULES,
     IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY,
     AgentTaskContext,
-    _CONSUMER_AGENT_RULES,
 )
 from app.agent_contracts import (
     AuditAgentResult,
@@ -18,27 +18,29 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     ConsumerOutcome,
 )
+from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_result import ResultParseError
+from app.agent_runtime_config import AgentRuntimeConfig
+from app.agent_runtime_router import AgentRuntimeRouter
+from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
 from app.agent_wire_contracts import (
     AuditAgentWireResult,
     ConsumerAgentWireResult,
     parse_consumer_agent_wire_result,
 )
+from app.audit_rules import render_audit_rules, validate_audit_rules_text
 from app.business_skills import (
     installed_business_skill_catalog,
     render_business_skill_protocol,
 )
+from app.codex_history import find_codex_session_path
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.native_cli_metadata import (
     NativeCliMetadataClassifier,
     service_read_command_contract,
 )
-from app.audit_rules import render_audit_rules, validate_audit_rules_text
-from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
-from app.agent_turn_runner import AgentTurnProcess, AgentTurnRunResult, ProcessExecutor
-from app.codex_history import find_codex_session_path
 from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
-
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = SERVICE_ROOT / "app" / "schemas" / "consumer_agent_result.schema.json"
@@ -271,6 +273,9 @@ class ConsumerAgentRunner:
         store: AutoReplyStore,
         workspace: Path,
         codex_bin: str = "codex",
+        runtime_config: AgentRuntimeConfig | None = None,
+        runtime_router: AgentRuntimeRouter | None = None,
+        codex_adapter: CodexRuntimeAdapter | None = None,
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
@@ -280,6 +285,9 @@ class ConsumerAgentRunner:
         self.store = store
         self.workspace = workspace
         self.codex_bin = codex_bin
+        self.runtime_config = runtime_config
+        self.runtime_router = runtime_router
+        self.codex_adapter = codex_adapter
         self.executor = executor
         self.owner = owner or f"consumer-agent-{uuid4().hex}"
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
@@ -398,6 +406,9 @@ class ConsumerAgentRunner:
             owner=self.owner,
             executor=self.executor,
             codex_bin=self.codex_bin,
+            runtime_config=self.runtime_config,
+            runtime_router=self.runtime_router,
+            codex_adapter=self.codex_adapter,
             mcp_effect_registry=self.effects,
             native_cli_classifier=self.native_cli_classifier,
         )
