@@ -28,6 +28,16 @@ def _issue_grant(manager, invocation_id, server_name, tool, arguments):
         return json.loads(response.read())["grant"]
 
 
+def _post(url, payload, headers):
+    return urllib.request.urlopen(
+        urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json", **headers},
+        )
+    )
+
+
 def test_remote_proxy_injects_only_target_credentials(tmp_path):
     received = {}
 
@@ -306,6 +316,123 @@ def test_proxy_grant_is_bound_to_one_invocation(tmp_path):
         target.shutdown()
 
 
+def test_remote_proxy_separates_client_and_broker_tokens(tmp_path):
+    calls = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_POST(self):
+            calls.append(1)
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            return
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+    threading.Thread(target=target.serve_forever, daemon=True).start()
+    manager = ClaudeMcpCredentialProxyManager(root=tmp_path)
+    try:
+        transport = manager.prepare(
+            ServiceMcpServer(
+                name="memory_connector",
+                url=f"http://127.0.0.1:{target.server_port}/mcp",
+            ),
+            invocation_id="split-token",
+            allowed_tools=("mcp__memory_connector__memory_recall",),
+            source_env={},
+        )
+        broker = manager.grant_descriptor("split-token", "memory_connector")
+        assert broker["token"] != transport["headers"]["X-CEO-Runtime-Invocation"]
+        grant_request = {
+            "tool": "mcp__memory_connector__memory_recall",
+            "arguments": {"query": "safe"},
+        }
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _post(broker["url"], grant_request, transport["headers"])
+        assert exc.value.code == 401
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _post(
+                transport["url"],
+                {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                {"X-CEO-Runtime-Invocation": broker["token"]},
+            )
+        assert exc.value.code == 401
+        for invalid in (
+            {"jsonrpc": "2.0", "method": "notifications/foreign"},
+            [
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+                {"jsonrpc": "2.0", "id": 2, "method": "ping"},
+            ],
+        ):
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                _post(transport["url"], invalid, transport["headers"])
+            assert exc.value.code == 403
+        assert calls == []
+    finally:
+        manager.close()
+        target.shutdown()
+
+
+def test_remote_proxy_forwards_jsonrpc_notifications_without_json_response(tmp_path):
+    received = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_POST(self):
+            payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            received.append(payload)
+            if "id" not in payload:
+                self.send_response(204)
+                self.end_headers()
+                return
+            response = json.dumps(
+                {"jsonrpc": "2.0", "id": payload["id"], "result": {}}
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, *_args):
+            return
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+    threading.Thread(target=target.serve_forever, daemon=True).start()
+    manager = ClaudeMcpCredentialProxyManager(root=tmp_path)
+    try:
+        transport = manager.prepare(
+            ServiceMcpServer(
+                name="memory_connector",
+                url=f"http://127.0.0.1:{target.server_port}/mcp",
+            ),
+            invocation_id="notification-handshake",
+            allowed_tools=("mcp__memory_connector__memory_recall",),
+            source_env={},
+        )
+        for method in ("notifications/initialized", "notifications/cancelled"):
+            with _post(
+                transport["url"],
+                {"jsonrpc": "2.0", "method": method, "params": {}},
+                transport["headers"],
+            ) as response:
+                assert response.status == 204
+                assert response.read() == b""
+        with _post(
+            transport["url"],
+            {"jsonrpc": "2.0", "id": 7, "method": "initialize", "params": {}},
+            transport["headers"],
+        ) as response:
+            assert json.loads(response.read())["id"] == 7
+        assert [item["method"] for item in received] == [
+            "notifications/initialized",
+            "notifications/cancelled",
+            "initialize",
+        ]
+    finally:
+        manager.close()
+        target.shutdown()
+
+
 def test_proxy_filters_tools_list_schema_and_rejects_sse_response(tmp_path):
     schema = {
         "type": "object",
@@ -320,6 +447,9 @@ def test_proxy_filters_tools_list_schema_and_rejects_sse_response(tmp_path):
             if request["method"] == "initialize":
                 payload = b"event: message\ndata: {}\n\n"
                 content_type = "text/event-stream"
+            elif request["method"] == "ping":
+                payload = b'{"jsonrpc":"2.0","id":999,"result":{}}'
+                content_type = "application/json"
             else:
                 payload = json.dumps(
                     {
@@ -383,6 +513,13 @@ def test_proxy_filters_tools_list_schema_and_rejects_sse_response(tmp_path):
                 timeout=2,
             )
         assert exc.value.code == 502
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _post(
+                transport["url"],
+                {"jsonrpc": "2.0", "id": 3, "method": "ping"},
+                transport["headers"],
+            )
+        assert exc.value.code == 502
     finally:
         manager.close()
         target.shutdown()
@@ -434,7 +571,7 @@ def test_stdio_wrapper_strips_provider_and_ambient_credentials(monkeypatch):
                 "mcp__memory_connector__memory_recall",
                 "--grant-url",
                 "http://127.0.0.1:1/consume",
-                "--grant-token",
+                "--consume-token",
                 "invocation-token",
                 "--exec",
                 "/opt/service/memory-mcp",
@@ -489,3 +626,62 @@ def test_proxy_startup_error_terminates_waits_and_closes_pipes(monkeypatch):
     assert process.waited is True
     assert process.stdin.closed is True
     assert process.stdout.closed is True
+
+
+def test_stdio_forwards_notification_without_consuming_request_response(monkeypatch):
+    import io
+
+    class RetainedBytesIO(io.BytesIO):
+        def close(self):
+            self.snapshot = self.getvalue()
+            super().close()
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = RetainedBytesIO()
+            self.stdout = RetainedBytesIO(b'{"jsonrpc":"2.0","id":7,"result":{}}\n')
+            self.returncode = 0
+
+        def terminate(self):
+            return None
+
+        def wait(self, timeout):
+            del timeout
+            return 0
+
+    process = FakeProcess()
+    stdin_bytes = io.BytesIO(
+        b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n'
+        b'{"jsonrpc":"2.0","id":7,"method":"initialize"}\n'
+    )
+    output = io.BytesIO()
+
+    class BinaryFacade:
+        def __init__(self, buffer):
+            self.buffer = buffer
+
+    monkeypatch.setattr(
+        "app.claude_mcp_proxy.subprocess.Popen", lambda *_args, **_kwargs: process
+    )
+    monkeypatch.setattr("app.claude_mcp_proxy.sys.stdin", BinaryFacade(stdin_bytes))
+    monkeypatch.setattr("app.claude_mcp_proxy.sys.stdout", BinaryFacade(output))
+
+    assert (
+        main(
+            [
+                "--server",
+                "memory_connector",
+                "--allowed-tool",
+                "mcp__memory_connector__memory_recall",
+                "--grant-url",
+                "http://127.0.0.1:1/consume",
+                "--consume-token",
+                "client-token",
+                "--exec",
+                "/opt/service/memory-mcp",
+            ]
+        )
+        == 0
+    )
+    assert process.stdin.snapshot == stdin_bytes.getvalue()
+    assert output.getvalue().splitlines() == [b'{"jsonrpc":"2.0","id":7,"result":{}}']

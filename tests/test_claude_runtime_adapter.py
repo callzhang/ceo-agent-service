@@ -630,7 +630,7 @@ def test_reviewed_command_policy_uses_exact_tools_without_wildcards(
     ]
     assert wrapper_args[6] == "--grant-url"
     assert wrapper_args[7].startswith("http://127.0.0.1:")
-    assert wrapper_args[8] == "--grant-token"
+    assert wrapper_args[8] == "--consume-token"
     assert isinstance(wrapper_args[9], str) and wrapper_args[9]
     assert wrapper_args[10:] == [
         "--exec",
@@ -647,6 +647,7 @@ def test_reviewed_command_policy_uses_exact_tools_without_wildcards(
     assert endpoint["url"].startswith("http://127.0.0.1:")
     assert endpoint["url"].endswith("/grant")
     assert isinstance(endpoint["token"], str) and endpoint["token"]
+    assert wrapper_args[9] != endpoint["token"]
 
 
 def test_reviewed_mcp_policy_rejects_unreviewed_or_missing_transport(
@@ -665,6 +666,27 @@ def test_reviewed_mcp_policy_rejects_unreviewed_or_missing_transport(
             session_id=None,
             max_turns=2,
             policy=ClaudeCommandPolicy.reviewed(mcp_tools=("mcp__foreign__write",)),
+        )
+
+
+def test_effectful_mcp_policy_fails_closed_without_trusted_callback_origin(
+    adapter, route, tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps({"servers": {"agent_cli": {"url": "https://agent.invalid/mcp"}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+
+    with pytest.raises(ValueError, match="effectful MCP permission callback"):
+        adapter.build_command(
+            route=route,
+            session_id=None,
+            max_turns=2,
+            policy=ClaudeCommandPolicy.reviewed(
+                mcp_tools=("mcp__agent_cli__execute_reviewed_write",)
+            ),
         )
     with pytest.raises(ValueError, match="transport"):
         adapter.build_command(

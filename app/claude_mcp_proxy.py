@@ -43,12 +43,21 @@ _HOP_BY_HOP_HEADERS = frozenset(
 _CONTROL_METHODS = frozenset(
     {"initialize", "notifications/initialized", "ping", "tools/list"}
 )
+_CLIENT_NOTIFICATION_METHODS = frozenset(
+    {
+        "notifications/cancelled",
+        "notifications/initialized",
+        "notifications/progress",
+        "notifications/roots/list_changed",
+    }
+)
 
 
 @dataclass(slots=True)
 class _ProxyProcess:
     process: subprocess.Popen[bytes]
-    token: str
+    broker_token: str
+    client_token: str
     server_name: str
     url: str
 
@@ -86,12 +95,14 @@ class ClaudeMcpCredentialProxyManager:
                 not tool.startswith(f"mcp__{server.name}__") for tool in exact_tools
             ):
                 raise ValueError("Claude MCP proxy tools must be exact for one server")
-            token = secrets.token_urlsafe(32)
+            broker_token = secrets.token_urlsafe(32)
+            client_token = secrets.token_urlsafe(32)
             process, port = _spawn_proxy_process(
                 "grant",
                 {
                     "server_name": server.name,
-                    "token": token,
+                    "broker_token": broker_token,
+                    "client_token": client_token,
                     "allowed_tools": exact_tools,
                 },
             )
@@ -99,7 +110,8 @@ class ClaudeMcpCredentialProxyManager:
             self._processes.setdefault(invocation_id, []).append(
                 _ProxyProcess(
                     process=process,
-                    token=token,
+                    broker_token=broker_token,
+                    client_token=client_token,
                     server_name=server.name,
                     url=base_url,
                 )
@@ -119,8 +131,8 @@ class ClaudeMcpCredentialProxyManager:
                     ),
                     "--grant-url",
                     base_url + "/consume",
-                    "--grant-token",
-                    token,
+                    "--consume-token",
+                    client_token,
                     "--exec",
                     server.command,
                     *server.args,
@@ -140,21 +152,24 @@ class ClaudeMcpCredentialProxyManager:
             headers["Authorization"] = "Bearer " + _required_secret(
                 source_env, server.bearer_token_env_var
             )
-        token = secrets.token_urlsafe(32)
+        broker_token = secrets.token_urlsafe(32)
+        client_token = secrets.token_urlsafe(32)
         process, port = _spawn_proxy_process(
             "remote",
             {
                 "server_name": server.name,
                 "target_url": server.url,
                 "injected_headers": headers,
-                "token": token,
+                "broker_token": broker_token,
+                "client_token": client_token,
                 "allowed_tools": exact_tools,
             },
         )
         self._processes.setdefault(invocation_id, []).append(
             _ProxyProcess(
                 process=process,
-                token=token,
+                broker_token=broker_token,
+                client_token=client_token,
                 server_name=server.name,
                 url=f"http://127.0.0.1:{port}",
             )
@@ -162,7 +177,7 @@ class ClaudeMcpCredentialProxyManager:
         return {
             "type": "http",
             "url": f"http://127.0.0.1:{port}/mcp",
-            "headers": {_AUTH_HEADER: token},
+            "headers": {_AUTH_HEADER: client_token},
         }
 
     def grant_descriptor(self, invocation_id: str, server_name: str) -> dict[str, str]:
@@ -175,7 +190,7 @@ class ClaudeMcpCredentialProxyManager:
             raise ValueError("Claude MCP proxy grant endpoint is unavailable")
         return {
             "url": matches[0].url + "/grant",
-            "token": matches[0].token,
+            "token": matches[0].broker_token,
         }
 
     def close_invocation(self, invocation_id: str) -> None:
@@ -248,7 +263,8 @@ def _serve_remote_proxy(
     server_name: str,
     target_url: str,
     injected_headers: Mapping[str, str],
-    token: str,
+    broker_token: str,
+    client_token: str,
     allowed_tools: Sequence[str],
 ) -> None:
     safe_env = _safe_child_environment(dict(os.environ))
@@ -265,7 +281,8 @@ def _serve_remote_proxy(
             self.send_error(405, "Streaming MCP transport is not supported")
 
         def do_POST(self) -> None:
-            if not self._authenticated():
+            expected_token = broker_token if self.path == "/grant" else client_token
+            if not self._authenticated(expected_token):
                 return
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length) if length else b""
@@ -286,7 +303,13 @@ def _serve_remote_proxy(
             if forwarded is None:
                 self.send_error(403, "MCP operation denied")
                 return
-            self._forward(forwarded, request_method=_jsonrpc_method(forwarded))
+            kind = _jsonrpc_kind(forwarded)
+            assert kind is not None
+            self._forward(
+                forwarded,
+                request_method=kind[1],
+                notification=kind[0] == "notification",
+            )
 
         def do_DELETE(self) -> None:
             self.send_error(405, "Streaming MCP transport is not supported")
@@ -315,13 +338,21 @@ def _serve_remote_proxy(
             self.end_headers()
             self.wfile.write(response)
 
-        def _authenticated(self) -> bool:
-            if not secrets.compare_digest(self.headers.get(_AUTH_HEADER, ""), token):
+        def _authenticated(self, expected_token: str) -> bool:
+            if not secrets.compare_digest(
+                self.headers.get(_AUTH_HEADER, ""), expected_token
+            ):
                 self.send_error(401, "MCP invocation authentication required")
                 return False
             return True
 
-        def _forward(self, body: bytes | None, *, request_method: str | None) -> None:
+        def _forward(
+            self,
+            body: bytes | None,
+            *,
+            request_method: str | None,
+            notification: bool,
+        ) -> None:
             connection_type = (
                 http.client.HTTPSConnection
                 if parsed.scheme == "https"
@@ -347,9 +378,20 @@ def _serve_remote_proxy(
                 )
                 response = connection.getresponse()
                 payload = response.read()
+                if notification:
+                    if response.status not in {202, 204} or payload:
+                        self.send_error(502, "MCP notification response is invalid")
+                        return
+                    self.send_response(response.status)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 content_type = response.getheader("Content-Type", "")
                 if "application/json" not in content_type.casefold():
                     self.send_error(502, "MCP response is not safely reviewable JSON")
+                    return
+                if body is None or not _valid_jsonrpc_response(payload, body):
+                    self.send_error(502, "MCP response does not match request")
                     return
                 if request_method == "tools/list":
                     filtered = _filter_tools_list(payload, server_name, allowed)
@@ -385,7 +427,8 @@ def _serve_remote_proxy(
 def _serve_grant_authority(
     ready,
     server_name: str,
-    token: str,
+    broker_token: str,
+    client_token: str,
     allowed_tools: Sequence[str],
 ) -> None:
     safe_env = _safe_child_environment(dict(os.environ))
@@ -398,7 +441,10 @@ def _serve_grant_authority(
 
     class GrantHandler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            if not secrets.compare_digest(self.headers.get(_AUTH_HEADER, ""), token):
+            expected_token = broker_token if self.path == "/grant" else client_token
+            if not secrets.compare_digest(
+                self.headers.get(_AUTH_HEADER, ""), expected_token
+            ):
                 self.send_error(401, "MCP invocation authentication required")
                 return
             length = int(self.headers.get("Content-Length", "0"))
@@ -519,10 +565,13 @@ def _authorized_jsonrpc_request(
         payload = json.loads(body)
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
-    if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":
+    kind = _jsonrpc_payload_kind(payload)
+    if kind is None:
         return None
-    method = payload.get("method")
-    if method in _CONTROL_METHODS:
+    request_kind, method = kind
+    if request_kind == "notification":
+        return body
+    if method in _CONTROL_METHODS - {"notifications/initialized"}:
         return body
     if method != "tools/call":
         return None
@@ -577,11 +626,48 @@ def _arguments_digest(arguments: Mapping[str, object]) -> str:
 
 
 def _jsonrpc_method(body: bytes) -> str | None:
+    kind = _jsonrpc_kind(body)
+    return kind[1] if kind is not None else None
+
+
+def _jsonrpc_kind(body: bytes) -> tuple[str, str] | None:
     try:
         payload = json.loads(body)
     except (UnicodeDecodeError, json.JSONDecodeError):
         return None
-    return payload.get("method") if isinstance(payload, dict) else None
+    return _jsonrpc_payload_kind(payload)
+
+
+def _jsonrpc_payload_kind(payload: object) -> tuple[str, str] | None:
+    if not isinstance(payload, dict) or payload.get("jsonrpc") != "2.0":
+        return None
+    method = payload.get("method")
+    params = payload.get("params", {})
+    if not isinstance(method, str) or not method or not isinstance(params, dict):
+        return None
+    if "id" not in payload:
+        return (
+            ("notification", method) if method in _CLIENT_NOTIFICATION_METHODS else None
+        )
+    request_id = payload.get("id")
+    if isinstance(request_id, bool) or not isinstance(request_id, (int, str)):
+        return None
+    return "request", method
+
+
+def _valid_jsonrpc_response(response_body: bytes, request_body: bytes) -> bool:
+    try:
+        response = json.loads(response_body)
+        request = json.loads(request_body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(response, dict)
+        and isinstance(request, dict)
+        and response.get("jsonrpc") == "2.0"
+        and response.get("id") == request.get("id")
+        and (("result" in response) ^ ("error" in response))
+    )
 
 
 def _filter_tools_list(
@@ -622,14 +708,16 @@ def main(argv: list[str] | None = None) -> int:
                 _required_payload_string(payload, "server_name"),
                 _required_payload_string(payload, "target_url"),
                 _required_string_mapping(payload, "injected_headers"),
-                _required_payload_string(payload, "token"),
+                _required_payload_string(payload, "broker_token"),
+                _required_payload_string(payload, "client_token"),
                 _required_string_sequence(payload, "allowed_tools"),
             )
         else:
             _serve_grant_authority(
                 ready,
                 _required_payload_string(payload, "server_name"),
-                _required_payload_string(payload, "token"),
+                _required_payload_string(payload, "broker_token"),
+                _required_payload_string(payload, "client_token"),
                 _required_string_sequence(payload, "allowed_tools"),
             )
         return 0
@@ -637,7 +725,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--server", required=True)
     parser.add_argument("--allowed-tool", action="append", default=[])
     parser.add_argument("--grant-url", required=True)
-    parser.add_argument("--grant-token", required=True)
+    parser.add_argument("--consume-token", required=True)
     parser.add_argument("--exec", dest="target", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if not args.target:
@@ -663,7 +751,7 @@ def main(argv: list[str] | None = None) -> int:
                 allowed_tools=allowed,
                 registry=registry,
                 grant_url=args.grant_url,
-                grant_token=args.grant_token,
+                grant_token=args.consume_token,
             )
             if forwarded is None:
                 request_id = None
@@ -686,8 +774,13 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             process.stdin.write(forwarded)
             process.stdin.flush()
+            request_kind = _jsonrpc_kind(line)
+            if request_kind is not None and request_kind[0] == "notification":
+                continue
             response = process.stdout.readline()
             if not response:
+                return 1
+            if not _valid_jsonrpc_response(response, forwarded):
                 return 1
             if _jsonrpc_method(line) == "tools/list":
                 filtered = _filter_tools_list(response, args.server, allowed)
@@ -770,8 +863,13 @@ def _stdio_authorized_request(
     grant_url: str,
     grant_token: str,
 ) -> bytes | None:
-    method = _jsonrpc_method(body)
-    if method in _CONTROL_METHODS:
+    kind = _jsonrpc_kind(body)
+    if kind is None:
+        return None
+    request_kind, method = kind
+    if request_kind == "notification":
+        return body
+    if method in _CONTROL_METHODS - {"notifications/initialized"}:
         return body
     try:
         payload = json.loads(body)

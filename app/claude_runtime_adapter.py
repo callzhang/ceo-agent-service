@@ -14,6 +14,7 @@ from threading import RLock
 from typing import TypeVar
 
 from app.agent_effects import McpToolEffectRegistry
+from app.agent_result import EffectKind
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import (
     CredentialMode,
@@ -538,6 +539,21 @@ class ClaudeRuntimeAdapter:
             _, server, tool = exact_name.split("__", 2)
             if tool not in reviewed.get(server, ()):
                 raise ValueError("Claude policy requires a reviewed MCP tool")
+            reviewed_call = self.effects.classify(
+                {
+                    "type": "mcp_tool_call",
+                    "server": server,
+                    "tool": tool,
+                    "arguments": {},
+                }
+            )
+            if (
+                reviewed_call is not None
+                and reviewed_call.effect is EffectKind.EFFECTFUL
+            ):
+                raise ValueError(
+                    "Claude effectful MCP permission callback origin is not trusted"
+                )
             required_servers.add(server)
         configured = {
             server.name: server for server in load_service_mcp_servers(env=os.environ)
