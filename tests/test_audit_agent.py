@@ -1,5 +1,5 @@
-import json
 import hashlib
+import json
 import sqlite3
 import tomllib
 from dataclasses import replace
@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import (
+    _AUDIT_AGENT_RULES,
     AgentTaskContext,
     AuditTurnContext,
     MaterialReference,
-    _AUDIT_AGENT_RULES,
 )
 from app.agent_contracts import (
     AuditAgentResult,
@@ -22,17 +22,17 @@ from app.agent_contracts import (
 )
 from app.agent_effects import EffectKind, McpToolEffectRegistry
 from app.agent_result import ResultParseError
+from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import (
     _action_completion_accounting,
     _action_receipt_operation_id,
+    _actions_have_required_readbacks,
     _is_dingtalk_chat_send_argv,
     _json_digest,
     _metadata_matches_action,
-    _actions_have_required_readbacks,
     _read_matches_action,
     _validated_reconciliation,
 )
-from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_wire_contracts import AuditAgentWireResult
 from app.audit_agent import (
     AuditAgentRunner,
@@ -96,6 +96,62 @@ class SequencedExecutor(CapturingExecutor):
     def __call__(self, command, *, on_stdout_line, **kwargs):
         self.stdout = self.outputs.pop(0)
         return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+
+
+def test_audit_effect_start_blocks_api_fallback(setup, monkeypatch):
+    store, task, audit_context, parent = setup
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "fallback-test-key")
+    write_stream = _audit_result_jsonl(
+        "executed",
+        operation_id="operation-1",
+        session="oauth-session",
+        include_write=True,
+    ).splitlines()
+    started_write = next(
+        line
+        for line in write_stream
+        if (
+            (payload := json.loads(line)).get("type") == "item.started"
+            and payload.get("item", {}).get("tool") == "execute_reviewed_write"
+        )
+    )
+    failure_stream = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "oauth-session"}),
+            started_write,
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "stream disconnected before completion",
+                }
+            ),
+        )
+    )
+    executor = CapturingExecutor(failure_stream, returncode=1)
+
+    with pytest.raises(RuntimeError):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    [attempt] = store.list_agent_runtime_attempts(run.id)
+    assert attempt.route_name == "codex_oauth"
+    assert attempt.status == "failed"
+    assert attempt.failure_class == "transport"
+    assert attempt.first_effect_started_at
+    assert run.side_effect_state == "unknown"
+    assert len(executor.commands) == 1
 
 
 class ExactReceiptExecutor(CapturingExecutor):

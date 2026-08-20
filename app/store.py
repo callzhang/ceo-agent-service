@@ -1,17 +1,17 @@
 import errno
 import fcntl
-import json
 import hashlib
+import json
 import sqlite3
 import threading
 import time
-from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
-from collections.abc import Callable, Iterator, Sequence
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -27,7 +27,9 @@ from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
     classify_codex_process_failure,
 )
-from app.wechat.models import WechatReplyScope
+from app.feedback_policy import FeedbackPressureStats
+from app.history import HistoryItem
+from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
     MeetingAlignmentQueueStatus,
@@ -42,9 +44,7 @@ from app.task_models import (
     WorkTodoDingTalkLink,
     WorkUpdate,
 )
-from app.feedback_policy import FeedbackPressureStats
-from app.history import HistoryItem
-from app.legacy_receipt import legacy_receipt_has_explicit_failure
+from app.wechat.models import WechatReplyScope
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
@@ -385,6 +385,10 @@ class AgentRole(StrEnum):
 class RuntimeAttemptSessionMode(StrEnum):
     FRESH = "fresh"
     RESUME = "resume"
+
+
+class AgentRuntimeAttemptStartConflictError(RuntimeError):
+    """Raised when another executor already started a persisted attempt."""
 
 
 class AgentRun(BaseModel):
@@ -4321,6 +4325,33 @@ class AutoReplyStore:
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
 
+    def mark_agent_runtime_attempt_running_once(
+        self,
+        attempt_id: int,
+    ) -> AgentRuntimeAttempt:
+        """Acquire the one-shot process-start fence for a runtime attempt."""
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["status"] != "starting":
+                raise AgentRuntimeAttemptStartConflictError(
+                    "runtime attempt process start already claimed"
+                )
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='running', updated_at=?
+                where id=? and status='starting'
+                """,
+                (now_text, attempt_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRuntimeAttemptStartConflictError(
+                    "runtime attempt process start already claimed"
+                )
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
     def complete_agent_runtime_attempt(
         self,
         attempt_id: int,
@@ -4367,6 +4398,32 @@ class AutoReplyStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError("runtime attempt transition conflict")
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def set_agent_runtime_attempt_session(
+        self,
+        attempt_id: int,
+        session_id: str,
+    ) -> AgentRuntimeAttempt:
+        session_id = self._require_runtime_attempt_text(
+            session_id, field="session_id"
+        )
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["status"] not in {"starting", "running"}:
+                if row["session_id"] == session_id:
+                    return self._agent_runtime_attempt_from_row(row)
+                raise ValueError("cannot mutate terminal runtime attempt")
+            db.execute(
+                """
+                update agent_runtime_attempts
+                set session_id=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                """,
+                (session_id, now_text, attempt_id),
+            )
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
             )

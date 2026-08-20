@@ -5,9 +5,11 @@ from pathlib import Path
 import pytest
 
 import app.consumer_agent as consumer_agent
-from app.agent_context import AgentTaskContext, _CONSUMER_AGENT_RULES
+from app.agent_context import _CONSUMER_AGENT_RULES, AgentTaskContext
 from app.agent_contracts import ConsumerAgentResult
+from app.agent_result import EffectKind, ResultParseError
 from app.agent_turn_runner import _agent_cli_receipt
+from app.agent_wire_contracts import ConsumerAgentWireResult
 from app.consumer_agent import (
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
@@ -15,8 +17,6 @@ from app.consumer_agent import (
     consumer_developer_instructions,
     consumer_wire_contract_hash,
 )
-from app.agent_wire_contracts import ConsumerAgentWireResult
-from app.agent_result import EffectKind, ResultParseError
 from app.developer_prompt import DeveloperPromptTemplateError
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -184,6 +184,20 @@ class FailingExecutor(CapturingExecutor):
     def __call__(self, command, *, on_stdout_line, **kwargs):
         super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
         return ProcessRunResult(1, self.stdout, self.stderr)
+
+
+class SequencedRuntimeExecutor(CapturingExecutor):
+    def __init__(self, *results: ProcessRunResult) -> None:
+        super().__init__("")
+        self.results = list(results)
+        self.environments: list[dict[str, str]] = []
+
+    def __call__(self, command, *, on_stdout_line, **kwargs):
+        result = self.results.pop(0)
+        self.stdout = result.stdout
+        self.environments.append(dict(kwargs["env"]))
+        super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+        return result
 
 
 def _wire_result(result: dict[str, object]) -> dict[str, object]:
@@ -700,6 +714,61 @@ def test_consumer_retryable_failure_without_tool_progress_rotates_session(
     assert result.result.outcome.value == "failed"
     assert executor.commands[0][:3] == ["codex", "exec", "resume"]
     assert store.get_codex_session_id(task.conversation_id) is None
+
+
+def test_consumer_read_events_can_fail_over_within_same_run(
+    store, task, context, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "fallback-test-key")
+    read_lines = _failed_reviewed_read_jsonl().splitlines()[:3]
+    oauth_failure = "\n".join(
+        (
+            *read_lines,
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "Failed to refresh token: Your session has ended",
+                }
+            ),
+        )
+    )
+    executor = SequencedRuntimeExecutor(
+        ProcessRunResult(1, oauth_failure, ""),
+        ProcessRunResult(0, _result_jsonl(session="session-api"), ""),
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    attempts = store.list_agent_runtime_attempts(result.run_id)
+    persisted_task = store.get_reply_task(task.id)
+    assert result.run_id == attempts[0].agent_run_id
+    assert [attempt.route_name for attempt in attempts] == [
+        "codex_oauth",
+        "codex_api",
+    ]
+    assert [attempt.status for attempt in attempts] == ["superseded", "completed"]
+    assert attempts[0].failure_class == "authentication"
+    assert attempts[0].failure_code == "codex_login_required"
+    assert [attempt.session_id for attempt in attempts] == [
+        "session-a",
+        "session-api",
+    ]
+    assert persisted_task is not None
+    assert persisted_task.execution_generation == task.execution_generation
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_api"
+    ) == "session-api"
+    assert store.get_codex_session_id(task.conversation_id) == "session-a"
+    persisted_run = store.get_agent_run(result.run_id)
+    assert persisted_run is not None
+    assert persisted_run.codex_session_id == "session-a"
+    assert "OPENAI_API_KEY" not in executor.environments[0]
+    assert executor.environments[1]["OPENAI_API_KEY"] == "fallback-test-key"
 
 def test_consumer_rotates_damaged_session_after_missing_final_result(
     store, task, context

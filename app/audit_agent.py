@@ -16,10 +16,8 @@ from app.agent_contracts import (
     AuditFeedback,
     AuditOutcome,
 )
-from app.agent_result import AgentError, SideEffectState
-from app.agent_wire_contracts import parse_audit_agent_wire_result
-from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
+from app.agent_result import AgentError, SideEffectState
 from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
@@ -30,6 +28,8 @@ from app.agent_turn_runner import (
     _metadata_matches_action,
     unknown_reconciliation_retry_at,
 )
+from app.agent_wire_contracts import parse_audit_agent_wire_result
+from app.audit_rules import render_audit_rules
 from app.codex_history import extract_codex_mcp_tool_results_from_session
 from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import (
@@ -45,7 +45,6 @@ from app.store import (
     ReplyTask,
 )
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
-
 
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 
@@ -217,7 +216,17 @@ class AuditAgentRunner:
         run: AgentRun,
     ) -> None:
         """Restore an omitted direct-delivery ledger only from its own receipt."""
-        if not run.codex_session_id or self.store.has_sent_reply_for_trigger(
+        runtime_session_id = next(
+            (
+                attempt.session_id
+                for attempt in reversed(
+                    self.store.list_agent_runtime_attempts(run.id)
+                )
+                if attempt.session_id
+            ),
+            run.codex_session_id,
+        )
+        if not runtime_session_id or self.store.has_sent_reply_for_trigger(
             task.conversation_id,
             task.trigger_message_id,
         ):
@@ -236,7 +245,7 @@ class AuditAgentRunner:
             mcp_effect_registry=self.effects,
         )
         for payload in extract_codex_mcp_tool_results_from_session(
-            run.codex_session_id,
+            runtime_session_id,
         ):
             event = process._normalized_effect_event(
                 payload,

@@ -12,6 +12,7 @@ from app.store import (
     RECONCILIATION_EVENT_LIMIT_ERROR,
     AgentRole,
     AgentRunLeaseLostError,
+    AgentRuntimeAttemptStartConflictError,
     AutoReplyStore,
 )
 
@@ -112,6 +113,28 @@ def test_same_turn_identity_is_idempotent(tmp_path):
 
     assert first.run.id == second.run.id
     assert second.claimed is False
+
+
+def test_runtime_attempt_process_start_is_claimed_exactly_once(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_consumer(store, task).run
+    attempt = store.claim_agent_runtime_attempt(
+        run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+    )
+
+    running = store.mark_agent_runtime_attempt_running_once(attempt.id)
+
+    assert running.status == "running"
+    with pytest.raises(
+        AgentRuntimeAttemptStartConflictError,
+        match="process start already claimed",
+    ):
+        store.mark_agent_runtime_attempt_running_once(attempt.id)
 
 
 def test_turn_operation_identity_is_role_specific(tmp_path):

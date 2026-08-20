@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,21 +15,10 @@ from pydantic import ValidationError
 from app.agent_contracts import (
     AuditAgentResult,
     AuditExternalResult,
-    AuditReconciliation,
     AuditOutcome,
+    AuditReconciliation,
     ConsumerOutcome,
     ReconciliationDisposition,
-)
-from app.agent_result import (
-    AgentError,
-    EffectKind,
-    ResultParseError,
-    SideEffectState,
-)
-from app.agent_skill_usage import (
-    LoadedSkillReceipt,
-    loaded_skill_receipts,
-    normalized_read_skill_metadata,
 )
 from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
@@ -41,6 +31,29 @@ from app.agent_effects import (
     _mcp_call_completed,
     _normalized_key,
 )
+from app.agent_result import (
+    AgentError,
+    EffectKind,
+    ResultParseError,
+    SideEffectState,
+)
+from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
+from app.agent_runtime_contracts import (
+    RuntimeCapabilitySnapshot,
+    RuntimeFailureClass,
+    RuntimeRoute,
+)
+from app.agent_runtime_router import AgentRuntimeRouter
+from app.agent_skill_usage import (
+    LoadedSkillReceipt,
+    loaded_skill_receipts,
+    normalized_read_skill_metadata,
+)
+from app.codex_capacity import (
+    CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+    codex_provider_failure_code,
+    is_codex_capacity_exhausted,
+)
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
     CODEX_PROVIDER_UNAVAILABLE,
@@ -50,12 +63,8 @@ from app.codex_history import (
     count_codex_session_lines,
     extract_codex_mcp_tool_results_from_session,
 )
-from app.codex_runner import CodexRunner, _codex_home
-from app.codex_capacity import (
-    CODEX_PROVIDER_CAPACITY_EXHAUSTED,
-    codex_provider_failure_code,
-    is_codex_capacity_exhausted,
-)
+from app.codex_runner import _codex_home
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.leak_check import contains_credential
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -68,15 +77,33 @@ from app.store import (
     RECONCILIATION_EVENT_LIMIT_ERROR,
     AgentRole,
     AgentRun,
+    AgentRuntimeAttempt,
     AutoReplyStore,
     ReplyTask,
+    RuntimeAttemptSessionMode,
 )
-
 
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS = 60
 UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS = 15 * 60
+
+
+def _configured_runtime_snapshots(
+    config: AgentRuntimeConfig,
+) -> dict[str, RuntimeCapabilitySnapshot]:
+    checked_at = datetime.now(timezone.utc)
+    expires_at = checked_at + config.probe_interval
+    return {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=frozenset(),
+            healthy=True,
+            checked_at=checked_at.strftime("%Y-%m-%d %H:%M:%S"),
+            expires_at=expires_at.strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        for route in config.routes
+    }
 
 
 def unknown_reconciliation_retry_at(
@@ -161,13 +188,24 @@ class AgentTurnProcess(Generic[ResultT]):
         owner: str,
         executor: ProcessExecutor | None = None,
         codex_bin: str = "codex",
+        runtime_config: AgentRuntimeConfig | None = None,
+        runtime_router: AgentRuntimeRouter | None = None,
+        codex_adapter: CodexRuntimeAdapter | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
     ) -> None:
         self.store = store
         self.task = task
         self.owner = owner
-        self.codex = CodexRunner(workspace=workspace, codex_bin=codex_bin)
+        self.runtime_config = runtime_config or load_runtime_config(os.environ)
+        self.codex_adapter = codex_adapter or CodexRuntimeAdapter(
+            workspace, self.runtime_config, codex_bin=codex_bin
+        )
+        self.runtime_router = runtime_router or AgentRuntimeRouter(
+            routes=self.runtime_config.routes,
+            store=store,
+            snapshots=_configured_runtime_snapshots(self.runtime_config),
+        )
         self.executor = executor or run_process_with_idle_timeout
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
         self.native_cli = native_cli_classifier or NativeCliMetadataClassifier()
@@ -205,6 +243,8 @@ class AgentTurnProcess(Generic[ResultT]):
         completed_effect_call_ids: set[str] = set()
         suppressed_session_replay_call_ids: set[str] = set()
         observed_session_id = ""
+        active_attempt: AgentRuntimeAttempt | None = None
+        active_route: RuntimeRoute | None = None
         session_transcript_end = 0
         turn_event_start = len(run.tool_events)
         recovery_event_start = turn_event_start
@@ -242,6 +282,12 @@ class AgentTurnProcess(Generic[ResultT]):
             item = event.get("item")
             metadata = item.get("metadata") if isinstance(item, dict) else None
             effect = metadata.get("effect") if isinstance(metadata, dict) else None
+            if (
+                event.get("type") == "item.started"
+                and effect == EffectKind.EFFECTFUL.value
+                and active_attempt is not None
+            ):
+                self.store.note_runtime_attempt_effect_started(active_attempt.id)
             call_id = str(item.get("id") or item.get("call_id") or "") if isinstance(item, dict) else ""
             if (
                 event.get("type") == "item.started"
@@ -336,7 +382,7 @@ class AgentTurnProcess(Generic[ResultT]):
             self._record_direct_send_receipt(event, payload, run=run)
 
         def persist_line(line: str) -> None:
-            nonlocal line_count, saw_json, observed_session_id
+            nonlocal line_count, saw_json, observed_session_id, active_attempt
             nonlocal primary_turn_started, primary_turn_closed
             if not line.strip():
                 return
@@ -371,13 +417,17 @@ class AgentTurnProcess(Generic[ResultT]):
             new_session = _session_id(payload)
             if new_session:
                 observed_session_id = new_session
+                if active_attempt is not None:
+                    active_attempt = self.store.set_agent_runtime_attempt_session(
+                        active_attempt.id, new_session
+                    )
                 if recover_unknown:
                     # Reconciliation and the narrowly authorized follow-up write
                     # run as fresh sessions. Preserve the original session on the
                     # AgentRun as immutable execution history rather than replacing
                     # it with a recovery session identifier.
                     pass
-                else:
+                elif active_route is not None and active_route.name == "codex_oauth":
                     self.store.set_agent_run_session(
                         run.id,
                         new_session,
@@ -387,7 +437,18 @@ class AgentTurnProcess(Generic[ResultT]):
                             run.role is AgentRole.CONSUMER
                         ),
                     )
-                if persist_conversation_session and not recover_unknown:
+                if not recover_unknown and active_route is not None:
+                    self.store.upsert_conversation_runtime_session(
+                        self.task.conversation_id,
+                        active_route.name,
+                        new_session,
+                    )
+                if (
+                    persist_conversation_session
+                    and not recover_unknown
+                    and active_route is not None
+                    and active_route.name == "codex_oauth"
+                ):
                     self.store.upsert_conversation(
                         self.task.conversation_id,
                         self.task.conversation_title,
@@ -402,27 +463,123 @@ class AgentTurnProcess(Generic[ResultT]):
                 primary_turn_closed = True
 
         try:
-            command = self.codex.build_command(
-                prompt=prompt,
-                session_id=session_id,
-                use_output_schema=False,
-                approval_policy="untrusted" if allow_effectful_tools else "never",
-                developer_instructions=developer_instructions,
-                use_approval_bypass=allow_effectful_tools,
-                image_paths=image_paths,
+            route = self.runtime_config.routes[0]
+            route_session_id = self._session_for_route(
+                route,
+                requested_session_id=session_id,
+                recovery_phase=recovery_phase,
             )
-            configure_command(command)
-            process = self.executor(
-                command,
-                prompt=prompt,
-                env=self.codex.build_env(preserve_local_cli_auth=True),
-                total_timeout_seconds=TOTAL_TIMEOUT_SECONDS,
-                idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
-                on_stdout_line=persist_line,
+            attempt_is_preclaimed = False
+            while True:
+                saw_json = False
+                primary_turn_started = False
+                primary_turn_closed = False
+                observed_session_id = ""
+                active_route = route
+                if not attempt_is_preclaimed:
+                    active_attempt = self._claim_and_start_attempt(
+                        run,
+                        route,
+                        route_session_id,
+                    )
+                attempt_is_preclaimed = False
+                command = self.codex_adapter.build_command(
+                    route=route,
+                    prompt=prompt,
+                    session_id=route_session_id,
+                    image_paths=image_paths,
+                    output_schema_path=None,
+                    use_output_schema=False,
+                    approval_policy=(
+                        "untrusted" if allow_effectful_tools else "never"
+                    ),
+                    developer_instructions=developer_instructions,
+                    use_approval_bypass=allow_effectful_tools,
+                )
+                configure_command(command)
+                try:
+                    process = self.executor(
+                        command,
+                        prompt=prompt,
+                        env=self.codex_adapter.build_env(route),
+                        total_timeout_seconds=TOTAL_TIMEOUT_SECONDS,
+                        idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
+                        on_stdout_line=persist_line,
+                    )
+                except Exception:
+                    self._fail_runtime_attempt_unclassified(active_attempt)
+                    raise
+                if process.returncode == 0 and not process.timed_out:
+                    result = parse_result(process.stdout)
+                    break
+                failure = self.codex_adapter.classify_failure(
+                    process.stdout,
+                    process.stderr,
+                    process.returncode,
+                    timed_out=process.timed_out,
+                    timeout_kind=process.timeout_kind,
+                )
+                failed_attempt = self.store.fail_agent_runtime_attempt(
+                    active_attempt.id,
+                    failure.failure_class.value,
+                    failure.code,
+                    failure.failover_permitted,
+                )
+                persisted = self.store.get_agent_run(run.id)
+                assert persisted is not None
+                fallback = _recovery_execution_result_from_receipts(
+                    run=run,
+                    recovery_phase=recovery_phase,
+                    persisted=persisted,
+                    expected_effect_actions=expected_effect_actions,
+                    recovery_started_actions=recovery_started_actions,
+                    authorized_recovery_actions=authorized_recovery_actions,
+                    registry=self.effects,
+                    store=self.store,
+                )
+                if fallback is not None:
+                    result = cast(ResultT, fallback)
+                    break
+                self.store.renew_agent_run_lease(
+                    run.id,
+                    owner=self.owner,
+                    lease_seconds=LEASE_SECONDS,
+                    expected_status="unknown" if recover_unknown else "running",
+                )
+                decision = self.runtime_router.next_route(
+                    run=persisted,
+                    failed_attempt=failed_attempt,
+                    failure=failure,
+                    required_capabilities=frozenset(),
+                    recovery_phase=recovery_phase,
+                )
+                if decision.route is None:
+                    self._raise_for_process_failure(process, run=run)
+                    raise AssertionError("unreachable process failure")
+                route = decision.route
+                route_session_id = (
+                    None
+                    if decision.fresh_session
+                    else self._session_for_route(
+                        route,
+                        requested_session_id=session_id,
+                        recovery_phase=recovery_phase,
+                    )
+                )
+                successor = self._claim_and_start_attempt(
+                    run,
+                    route,
+                    route_session_id,
+                )
+                self.store.mark_agent_runtime_attempt_superseded(failed_attempt.id)
+                active_attempt = successor
+                # The successor is durably claimed and process-start fenced while
+                # this worker still owns the Agent run lease. The next iteration
+                # must execute that exact row rather than claiming it again.
+                attempt_is_preclaimed = True
+            session_for_receipts = (
+                observed_session_id or route_session_id or run.codex_session_id
             )
-            self._raise_for_process_failure(process, run=run)
-            result = parse_result(process.stdout)
-            session_for_receipts = observed_session_id or session_id or run.codex_session_id
             if session_for_receipts:
                 session_start = 0 if recover_unknown else transcript_start
                 # The CLI can flush local session events after the JSON stream has
@@ -493,7 +650,21 @@ class AgentTurnProcess(Generic[ResultT]):
                     persist_effect_event(completed_payload, from_session_replay=True)
             if _contains_sensitive_value(result.model_dump(mode="json")):
                 raise ValueError("agent_result_contains_sensitive_value")
+            persisted_attempt = (
+                self.store.get_agent_runtime_attempt(active_attempt.id)
+                if active_attempt is not None
+                else None
+            )
+            if persisted_attempt is not None and persisted_attempt.status == "running":
+                self.store.complete_agent_runtime_attempt(
+                    persisted_attempt.id,
+                    observed_session_id,
+                    "",
+                    transcript_start,
+                    max(transcript_start + line_count, session_transcript_end),
+                )
         except ResultParseError as exc:
+            self._fail_runtime_attempt_unclassified(active_attempt)
             fallback = _recovery_execution_result_from_receipts(
                 run=run,
                 recovery_phase=recovery_phase,
@@ -517,6 +688,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 raise
             result = cast(ResultT, fallback)
         except AgentReadOnlyViolationError as exc:
+            self._fail_runtime_attempt_unclassified(active_attempt)
             code = str(exc).strip() or "agent_read_only_violation"
             if recover_unknown:
                 self._defer_unknown(run, code)
@@ -524,6 +696,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 self._fail_running(run, code)
             raise
         except Exception as exc:
+            self._fail_runtime_attempt_unclassified(active_attempt)
             provider_recovery = _agent_process_error_code(exc)
             code = (
                 provider_recovery
@@ -639,6 +812,59 @@ class AgentTurnProcess(Generic[ResultT]):
             result=result,
             transcript_start_line=transcript_start,
             transcript_end_line=completed.transcript_end_line,
+        )
+
+    def _session_for_route(
+        self,
+        route: RuntimeRoute,
+        *,
+        requested_session_id: str | None,
+        recovery_phase: str,
+    ) -> str | None:
+        if recovery_phase:
+            return None
+        persisted = self.store.get_conversation_runtime_session(
+            self.task.conversation_id, route.name
+        )
+        if route.name == "codex_oauth":
+            return requested_session_id or persisted
+        return persisted
+
+    def _claim_and_start_attempt(
+        self,
+        run: AgentRun,
+        route: RuntimeRoute,
+        source_session_id: str | None,
+    ) -> AgentRuntimeAttempt:
+        attempt = self.store.claim_agent_runtime_attempt(
+            run.id,
+            route.name,
+            route.runtime_kind.value,
+            route.credential_mode.value,
+            route.model,
+            session_mode=(
+                RuntimeAttemptSessionMode.RESUME
+                if source_session_id
+                else RuntimeAttemptSessionMode.FRESH
+            ),
+            source_session_id=source_session_id or "",
+        )
+        return self.store.mark_agent_runtime_attempt_running_once(attempt.id)
+
+    def _fail_runtime_attempt_unclassified(
+        self,
+        attempt: AgentRuntimeAttempt | None,
+    ) -> None:
+        if attempt is None:
+            return
+        persisted = self.store.get_agent_runtime_attempt(attempt.id)
+        if persisted is None or persisted.status not in {"starting", "running"}:
+            return
+        self.store.fail_agent_runtime_attempt(
+            attempt.id,
+            RuntimeFailureClass.UNCLASSIFIED.value,
+            "runtime_unclassified",
+            False,
         )
 
     def _normalized_effect_event(
