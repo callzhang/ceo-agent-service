@@ -4663,25 +4663,24 @@ class AutoReplyStore:
             )
             if session_mode != RuntimeAttemptSessionMode.FRESH.value:
                 raise ValueError("unknown recovery runtime attempt must be fresh")
+            if lease_seconds <= 0:
+                raise ValueError("unknown recovery lease_seconds must be positive")
         with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
             lease_expires_at = (
                 (now_value + timedelta(seconds=lease_seconds)).strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
-                if agent_run_id is None
+                if agent_run_id is None or unknown_recovery_owner
                 else ""
             )
+            active_recovery_conflict = None
             if unknown_recovery_owner:
                 active_recovery_conflict = db.execute(
-                    "select 1 from agent_runtime_attempts "
+                    "select * from agent_runtime_attempts "
                     "where workload_kind=? and workload_key=? "
                     "and status in ('starting', 'running') limit 1",
                     (workload_kind, workload_key),
                 ).fetchone()
-                if active_recovery_conflict is not None:
-                    raise AgentRuntimeAttemptStartConflictError(
-                        "unknown recovery runtime attempt start already claimed"
-                    )
             if agent_run_id is not None:
                 run = db.execute(
                     "select agent_runs.status, agent_runs.role, "
@@ -4727,6 +4726,37 @@ class AutoReplyStore:
                 raise ValueError(
                     "runtime operation parent does not exist or is not running"
                 )
+            if active_recovery_conflict is not None:
+                if (
+                    active_recovery_conflict["lease_owner"]
+                    != unknown_recovery_owner
+                    or not active_recovery_conflict["lease_expires_at"]
+                    or active_recovery_conflict["lease_expires_at"] > now_text
+                    or active_recovery_conflict["first_effect_started_at"]
+                ):
+                    raise AgentRuntimeAttemptStartConflictError(
+                        "unknown recovery runtime attempt start already claimed"
+                    )
+                cursor = db.execute(
+                    "update agent_runtime_attempts set status='failed', "
+                    "failure_class='process', "
+                    "failure_code='runtime_recovery_lease_expired', "
+                    "failover_permitted=0, lease_owner='', lease_expires_at='', "
+                    "finished_at=?, updated_at=? "
+                    "where id=? and status='running' and lease_owner=? "
+                    "and lease_expires_at<=? and first_effect_started_at=''",
+                    (
+                        now_text,
+                        now_text,
+                        active_recovery_conflict["id"],
+                        unknown_recovery_owner,
+                        now_text,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise AgentRuntimeAttemptStartConflictError(
+                        "unknown recovery runtime attempt start already claimed"
+                    )
             if db.execute(
                 """
                 select 1 from runtime_route_pauses
@@ -4808,7 +4838,7 @@ class AutoReplyStore:
                     validation_retry_policy_id,
                     validation_result_schema_id,
                     "running" if unknown_recovery_owner else "starting",
-                    owner,
+                    unknown_recovery_owner or owner,
                     lease_expires_at,
                     now_text,
                     now_text,
@@ -4861,6 +4891,8 @@ class AutoReplyStore:
         model: str,
         *,
         owner: str,
+        lease_seconds: int = 1800,
+        now: str | datetime | None = None,
     ) -> AgentRuntimeAttemptStartClaim:
         """Claim one fresh provider attempt for an owned unknown-effect Audit."""
         if agent_run_id <= 0:
@@ -4876,6 +4908,8 @@ class AutoReplyStore:
             session_mode=RuntimeAttemptSessionMode.FRESH,
             source_session_id="",
             unknown_recovery_owner=owner,
+            lease_seconds=lease_seconds,
+            now=now,
         )
         return AgentRuntimeAttemptStartClaim(
             attempt=attempt,
@@ -5037,6 +5071,7 @@ class AutoReplyStore:
         result_envelope_json: str = "",
         conversation_id: str = "",
         route_name: str = "",
+        conversation_contract_hash: str = "",
         now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         if not isinstance(session_id, str) or not isinstance(transcript_reference, str):
@@ -5110,7 +5145,12 @@ class AutoReplyStore:
                 raise ValueError("runtime attempt transition conflict")
             if conversation_id and session_id:
                 self._upsert_conversation_runtime_session_in_connection(
-                    db, conversation_id, route_name, session_id, "", now_text
+                    db,
+                    conversation_id,
+                    route_name,
+                    session_id,
+                    conversation_contract_hash,
+                    now_text,
                 )
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)

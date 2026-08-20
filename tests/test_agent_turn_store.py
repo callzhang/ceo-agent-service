@@ -404,6 +404,66 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     assert store.get_conversation_runtime_session(
         task.conversation_id, "claude_api", required_contract_hash="contract-v1"
     ) == session_id
+
+    failed_result = json.dumps(
+        {
+            "outcome": "failed",
+            "summary": "The business decision failed.",
+            "proposal": None,
+            "decision_options": [],
+            "error_code": "business_decision_failed",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        },
+        separators=(",", ":"),
+    )
+    executor.stream = stream_for_result(failed_result)
+    failed_task = next_task("msg-turns-failed", "generation-failed")
+    execute(failed_task)
+    [failed_attempt] = store.list_agent_runtime_attempts(
+        store.list_agent_runs_for_task_generation(
+            failed_task.id, failed_task.execution_generation
+        )[0].id
+    )
+    assert failed_attempt.status == "failed"
+    assert failed_attempt.failure_code == "runtime_business_result_failed"
+    assert failed_attempt.session_id == ""
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
+    ) == session_id
+
+    executor.stream = stream
+    crash_task = next_task("msg-turns-crash", "generation-crash")
+    original_complete_agent_run = store.complete_agent_run
+    parent_writes = 0
+
+    def crash_before_parent_terminal(*args, **kwargs):
+        nonlocal parent_writes
+        parent_writes += 1
+        raise RuntimeError("injected_parent_terminal_failure")
+
+    monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
+    with pytest.raises(RuntimeError, match="injected_parent_terminal_failure"):
+        execute(crash_task)
+    executor_calls_after_crash = len(executor.commands)
+    [crash_run] = store.list_agent_runs_for_task_generation(
+        crash_task.id, crash_task.execution_generation
+    )
+    [crash_attempt] = store.list_agent_runtime_attempts(crash_run.id)
+    assert crash_run.status == "running"
+    assert crash_attempt.status == "completed"
+    assert crash_attempt.session_id == session_id
+    assert crash_attempt.result_envelope_json
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
+    ) == session_id
+
+    monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
+    execute(crash_task)
+    assert len(executor.commands) == executor_calls_after_crash
+    recovered_run = store.get_agent_run(crash_run.id)
+    assert recovered_run is not None and recovered_run.status == "completed"
+    assert parent_writes == 1
     assert store.get_conversation_runtime_session(
         task.conversation_id, "codex_oauth", required_contract_hash="contract-v1"
     ) == "oauth-session"

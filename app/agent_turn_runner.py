@@ -118,6 +118,10 @@ class RuntimeRouteUnavailableError(RuntimeError):
         super().__init__(self.code)
 
 
+class _RecoveredCompletedRuntimeResult(RuntimeError):
+    """Internal control flow for a validated durable provider result."""
+
+
 def unknown_reconciliation_retry_at(
     attempts: int, *, now: datetime | None = None
 ) -> str:
@@ -294,6 +298,8 @@ class AgentTurnProcess(Generic[ResultT]):
         session_transcript_end = 0
         claude_normalizer: ClaudeEventNormalizer | None = None
         pending_claude_session_id = ""
+        pending_claude_result_raw = ""
+        recovered_completed_attempt = False
         turn_event_start = len(run.tool_events)
         recovery_event_start = turn_event_start
         completed_before_recovery = (
@@ -615,7 +621,73 @@ class AgentTurnProcess(Generic[ResultT]):
                 persist_effect_event(completed_payload, from_session_replay=True)
             return stable_end
 
+        def parse_claude_result(raw: str) -> ResultT:
+            return parse_result(
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": raw},
+                    },
+                    separators=(",", ":"),
+                )
+            )
+
+        runtime_result_schema_id = hashlib.sha256(
+            (
+                "agent_turn_claude_result_v1\0"
+                + run.role.value
+                + "\0"
+                + (recovery_phase or "normal")
+                + "\0"
+                + conversation_contract_hash
+            ).encode("utf-8")
+        ).hexdigest()
+
         try:
+            completed_attempt = next(
+                (
+                    attempt
+                    for attempt in reversed(
+                        self.store.list_agent_runtime_attempts(run.id)
+                    )
+                    if attempt.status == "completed"
+                    and attempt.result_schema_id == runtime_result_schema_id
+                    and attempt.result_envelope_json
+                ),
+                None,
+            )
+            if completed_attempt is not None:
+                route = next(
+                    (
+                        candidate
+                        for candidate in self.runtime_config.routes
+                        if candidate.name == completed_attempt.route_name
+                        and candidate.runtime_kind is RuntimeKind.CLAUDE_CLI
+                    ),
+                    None,
+                )
+                if route is None:
+                    raise RuntimeError("completed runtime result route mismatch")
+                envelope = json.loads(completed_attempt.result_envelope_json)
+                raw_result = envelope.get("raw_result") if isinstance(envelope, dict) else None
+                if not isinstance(raw_result, str) or not raw_result:
+                    raise RuntimeError("completed runtime result envelope invalid")
+                result = parse_claude_result(raw_result)
+                if _contains_sensitive_value(result.model_dump(mode="json")):
+                    raise ValueError("agent_result_contains_sensitive_value")
+                active_attempt = completed_attempt
+                observed_session_id = completed_attempt.session_id
+                pending_claude_session_id = completed_attempt.session_id
+                pending_claude_result_raw = raw_result
+                attempt_transcript_start = completed_attempt.transcript_start
+                attempt_line_start = 0
+                line_count = (
+                    completed_attempt.transcript_end - completed_attempt.transcript_start
+                )
+                session_transcript_end = completed_attempt.transcript_end
+                turn_event_start = 0
+                recovered_completed_attempt = True
+                raise _RecoveredCompletedRuntimeResult
             required_capabilities = _required_runtime_capabilities(
                 run=run,
                 recovery_phase=recovery_phase,
@@ -718,27 +790,18 @@ class AgentTurnProcess(Generic[ResultT]):
                     if claude_adapter is not None:
                         assert claude_normalizer is not None
                         claude_normalizer.finalize()
+                        proof = claude_normalizer.terminal_proof()
                         result = claude_adapter.parse_final_result(
                             normalizer=claude_normalizer,
-                            proof=claude_normalizer.terminal_proof(),
-                            parser=lambda raw: parse_result(
-                                json.dumps(
-                                    {
-                                        "type": "item.completed",
-                                        "item": {
-                                            "type": "agent_message",
-                                            "text": raw,
-                                        },
-                                    },
-                                    separators=(",", ":"),
-                                )
-                            ),
+                            proof=proof,
+                            parser=parse_claude_result,
                         )
                         trusted_session_id = claude_normalizer.session_id
                         if not trusted_session_id:
                             raise RuntimeError("claude_session_evidence_missing")
                         observed_session_id = trusted_session_id
                         pending_claude_session_id = trusted_session_id
+                        pending_claude_result_raw = proof.result
                     else:
                         result = parse_result(process.stdout)
                     break
@@ -893,6 +956,8 @@ class AgentTurnProcess(Generic[ResultT]):
                         session_transcript_end,
                     ),
                 )
+        except _RecoveredCompletedRuntimeResult:
+            pass
         except RuntimeRouteUnavailableError:
             raise
         except ResultParseError as exc:
@@ -992,7 +1057,26 @@ class AgentTurnProcess(Generic[ResultT]):
                 required_skill_receipts=required_skill_receipts,
                 turn_event_start=turn_event_start,
             )
-        if route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+        claude_business_failure = (
+            outcome in {ConsumerOutcome.FAILED, AuditOutcome.FAILED, AuditOutcome.UNKNOWN}
+            or (recovery_phase == "execute" and outcome is not AuditOutcome.EXECUTED)
+        )
+        if (
+            route.runtime_kind is RuntimeKind.CLAUDE_CLI
+            and not recovered_completed_attempt
+            and claude_business_failure
+        ):
+            if active_attempt is None:
+                raise AgentRuntimeAttemptStartConflictError(
+                    "Claude runtime attempt is missing at business failure"
+                )
+            self.store.fail_agent_runtime_attempt(
+                active_attempt.id,
+                RuntimeFailureClass.RESULT.value,
+                "runtime_business_result_failed",
+                False,
+            )
+        elif route.runtime_kind is RuntimeKind.CLAUDE_CLI and not recovered_completed_attempt:
             if not pending_claude_session_id:
                 raise RuntimeError("claude_session_evidence_missing")
             persisted_attempt = (
@@ -1010,14 +1094,22 @@ class AgentTurnProcess(Generic[ResultT]):
                 "",
                 attempt_transcript_start,
                 attempt_transcript_start + (line_count - attempt_line_start),
+                result_schema_id=runtime_result_schema_id,
+                result_envelope_json=json.dumps(
+                    {
+                        "schema_id": runtime_result_schema_id,
+                        "raw_result": pending_claude_result_raw,
+                    },
+                    separators=(",", ":"),
+                ),
+                conversation_id=(
+                    self.task.conversation_id
+                    if run.role is AgentRole.CONSUMER and not recover_unknown
+                    else ""
+                ),
+                route_name=route.name,
+                conversation_contract_hash=conversation_contract_hash,
             )
-            if run.role is AgentRole.CONSUMER and not recover_unknown:
-                self.store.upsert_conversation_runtime_session(
-                    self.task.conversation_id,
-                    route.name,
-                    pending_claude_session_id,
-                    conversation_contract_hash,
-                )
         if recovery_phase == "reconcile":
             self.store.persist_unknown_agent_run_result(
                 run.id,

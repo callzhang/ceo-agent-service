@@ -353,7 +353,7 @@ def test_unknown_recovery_never_takes_over_an_active_ordinary_attempt(
             "codex_cli",
             "local_oauth",
             "gpt-5.5",
-            owner="foreign-owner",
+            owner="reconciler",
         )
     with pytest.raises(AgentRuntimeAttemptStartConflictError):
         store.claim_unknown_recovery_agent_runtime_attempt(
@@ -417,6 +417,186 @@ def test_concurrent_unknown_recovery_claims_grant_exactly_one_start(tmp_path: Pa
     [attempt] = store.list_agent_runtime_attempts(run.id)
     assert attempt.id == starts[0]
     assert attempt.status == "running"
+
+
+def test_expired_effect_free_recovery_lease_is_reclaimed_once(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-recovery-expired.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    store.append_agent_run_event(
+        run.id,
+        _runtime_effect_started_event(run.operation_id),
+        owner="runtime-attempt",
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="runtime-attempt",
+    )
+    started_at = datetime(2026, 8, 21, 1, 0, tzinfo=timezone.utc)
+    assert store.claim_unknown_agent_run(
+        run.id, owner="reconciler", lease_seconds=1800, now=started_at
+    ).claimed
+    first = store.claim_unknown_recovery_agent_runtime_attempt(
+        run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+        owner="reconciler",
+        lease_seconds=60,
+        now=started_at,
+    ).attempt
+
+    with pytest.raises(AgentRuntimeAttemptStartConflictError):
+        store.claim_unknown_recovery_agent_runtime_attempt(
+            run.id,
+            "codex_oauth",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            owner="reconciler",
+            lease_seconds=60,
+            now=started_at + timedelta(seconds=59),
+        )
+    with pytest.raises(ValueError, match="not safely claimed"):
+        store.claim_unknown_recovery_agent_runtime_attempt(
+            run.id,
+            "codex_oauth",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            owner="foreign-owner",
+            lease_seconds=60,
+            now=started_at + timedelta(seconds=61),
+        )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set execution_generation='foreign-generation' "
+            "where id=?",
+            (run.reply_task_id,),
+        )
+        db.commit()
+    with pytest.raises(ValueError, match="not safely claimed"):
+        store.claim_unknown_recovery_agent_runtime_attempt(
+            run.id,
+            "codex_oauth",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            owner="reconciler",
+            lease_seconds=60,
+            now=started_at + timedelta(seconds=61),
+        )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set execution_generation=? where id=?",
+            (run.execution_generation, run.reply_task_id),
+        )
+        db.commit()
+
+    reclaimed = store.claim_unknown_recovery_agent_runtime_attempt(
+        run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+        owner="reconciler",
+        lease_seconds=60,
+        now=started_at + timedelta(seconds=61),
+    )
+
+    attempts = store.list_agent_runtime_attempts(run.id)
+    assert [attempt.status for attempt in attempts] == ["failed", "running"]
+    assert attempts[0].id == first.id
+    assert attempts[0].failure_code == "runtime_recovery_lease_expired"
+    assert attempts[0].failover_permitted is False
+    assert reclaimed.start_acquired is True
+    assert reclaimed.attempt.id == attempts[1].id
+    assert reclaimed.attempt.lease_owner == "reconciler"
+
+    barrier = Barrier(2)
+    race_starts: list[int] = []
+    race_conflicts: list[str] = []
+
+    def reclaim_after_second_expiry() -> None:
+        barrier.wait(timeout=10)
+        try:
+            claim = store.claim_unknown_recovery_agent_runtime_attempt(
+                run.id,
+                "codex_oauth",
+                "codex_cli",
+                "local_oauth",
+                "gpt-5.5",
+                owner="reconciler",
+                lease_seconds=60,
+                now=started_at + timedelta(seconds=122),
+            )
+        except AgentRuntimeAttemptStartConflictError as exc:
+            race_conflicts.append(str(exc))
+        else:
+            race_starts.append(claim.attempt.id)
+
+    threads = [Thread(target=reclaim_after_second_expiry) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(race_starts) == 1
+    assert len(race_conflicts) == 1
+    attempts = store.list_agent_runtime_attempts(run.id)
+    assert [attempt.status for attempt in attempts] == ["failed", "failed", "running"]
+    assert attempts[-1].id == race_starts[0]
+
+
+def test_expired_recovery_with_effect_evidence_is_never_replayed(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "runtime-recovery-effect.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    store.append_agent_run_event(
+        run.id,
+        _runtime_effect_started_event(run.operation_id),
+        owner="runtime-attempt",
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="runtime-attempt",
+    )
+    started_at = datetime(2026, 8, 21, 2, 0, tzinfo=timezone.utc)
+    assert store.claim_unknown_agent_run(
+        run.id, owner="reconciler", lease_seconds=1800, now=started_at
+    ).claimed
+    attempt = store.claim_unknown_recovery_agent_runtime_attempt(
+        run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+        owner="reconciler",
+        lease_seconds=60,
+        now=started_at,
+    ).attempt
+    store.note_runtime_attempt_effect_started(
+        attempt.id, at=started_at + timedelta(seconds=1)
+    )
+
+    with pytest.raises(AgentRuntimeAttemptStartConflictError):
+        store.claim_unknown_recovery_agent_runtime_attempt(
+            run.id,
+            "codex_oauth",
+            "codex_cli",
+            "local_oauth",
+            "gpt-5.5",
+            owner="reconciler",
+            lease_seconds=60,
+            now=started_at + timedelta(seconds=61),
+        )
+
+    [persisted] = store.list_agent_runtime_attempts(run.id)
+    assert persisted.id == attempt.id
+    assert persisted.status == "running"
+    assert persisted.first_effect_started_at
 
 
 def test_agent_runtime_attempt_claim_atomically_rechecks_route_pause(tmp_path: Path):
@@ -1502,6 +1682,47 @@ def test_runtime_attempt_completion_allows_missing_session_and_transcript(tmp_pa
     assert completed.status == "completed"
     assert completed.session_id == ""
     assert completed.transcript_reference == ""
+
+
+def test_runtime_attempt_and_conversation_session_commit_atomically(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "runtime-attempt-session-atomic.sqlite3")
+    run = _claimed_runtime_agent_run(store)
+    attempt = store.claim_agent_runtime_attempt(
+        run.id, "claude_api", "claude_cli", "service_api", "claude-sonnet-4-5"
+    )
+    attempt = store.mark_agent_runtime_attempt_running_once(attempt.id)
+
+    def fail_slot(*args, **kwargs):
+        raise RuntimeError("injected_slot_failure")
+
+    monkeypatch.setattr(
+        store, "_upsert_conversation_runtime_session_in_connection", fail_slot
+    )
+    with pytest.raises(RuntimeError, match="injected_slot_failure"):
+        store.complete_agent_runtime_attempt(
+            attempt.id,
+            "claude-session",
+            "",
+            0,
+            3,
+            result_schema_id="schema-v1",
+            result_envelope_json=json.dumps(
+                {"schema_id": "schema-v1", "raw_result": "{}"}
+            ),
+            conversation_id="cid-runtime-atomic",
+            route_name="claude_api",
+            conversation_contract_hash="contract-v1",
+        )
+
+    persisted = store.get_agent_runtime_attempt(attempt.id)
+    assert persisted is not None and persisted.status == "running"
+    assert persisted.session_id == ""
+    assert persisted.result_envelope_json == ""
+    assert store.get_conversation_runtime_session(
+        "cid-runtime-atomic", "claude_api"
+    ) is None
 
 
 def test_runtime_attempt_rejects_conflicting_terminal_rewrites(tmp_path: Path):
