@@ -29,6 +29,7 @@ from app.codex_failure import (
 from app.codex_runner import (
     CODEX_MODEL_PROVIDER_ENV,
     CodexRunner,
+    resolved_codex_home,
 )
 
 _SAFE_ENV_KEYS = {
@@ -120,7 +121,9 @@ class CodexRuntimeAdapter:
         api_key: str | None = None,
     ) -> dict[str, str]:
         configured_route = self._configured_route(route)
-        env = _safe_child_environment(self.runner.build_env())
+        base_env = self.runner.build_env()
+        env = _safe_child_environment(base_env)
+        env["CODEX_HOME"] = str(resolved_codex_home(base_env))
         if configured_route.credential_mode == CredentialMode.SERVICE_API:
             env["OPENAI_API_KEY"] = self._api_key_for(configured_route, api_key)
         elif api_key is not None:

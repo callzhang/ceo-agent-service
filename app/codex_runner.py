@@ -94,7 +94,22 @@ def _config_value(value: object) -> str:
 
 
 def _codex_home() -> Path:
-    return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
+    return resolved_codex_home(os.environ)
+
+
+def resolved_codex_home(environment: Mapping[str, str]) -> Path:
+    """Resolve Codex home from the child base environment without creating it."""
+    home = Path(environment.get("HOME", str(Path.home())))
+    configured = environment.get("CODEX_HOME", "")
+    if configured.startswith("~/"):
+        candidate = home / configured[2:]
+    elif configured:
+        candidate = Path(configured)
+        if not candidate.is_absolute():
+            candidate = home / candidate
+    else:
+        candidate = home / ".codex"
+    return candidate.resolve()
 
 
 def selected_codex_model_provider() -> str:

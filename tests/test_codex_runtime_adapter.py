@@ -88,6 +88,32 @@ def test_api_environment_is_allowlisted_and_parent_environment_is_unchanged(
     assert "OPENAI_API_KEY" not in os.environ
 
 
+def test_child_environment_sets_default_codex_home_from_preserved_home(
+    adapter, config, tmp_path, monkeypatch
+):
+    home = tmp_path / "installing-user"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+
+    env = adapter.build_env(route(config, "codex_oauth"))
+
+    assert env["CODEX_HOME"] == str((home / ".codex").resolve())
+    assert "CODEX_HOME" not in os.environ
+
+
+def test_child_environment_resolves_explicit_codex_home_without_parent_mutation(
+    adapter, config, tmp_path, monkeypatch
+):
+    home = tmp_path / "installing-user"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", "runtime-codex-home")
+
+    env = adapter.build_env(route(config, "codex_oauth"))
+
+    assert env["CODEX_HOME"] == str((home / "runtime-codex-home").resolve())
+    assert os.environ["CODEX_HOME"] == "runtime-codex-home"
+
+
 def test_api_route_uses_configured_secret_when_no_override_is_supplied(adapter, config):
     env = adapter.build_env(route(config, "codex_api"))
 
