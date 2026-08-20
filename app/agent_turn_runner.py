@@ -100,6 +100,16 @@ _RECONCILIATION_RUNTIME_CAPABILITIES = frozenset(
 )
 
 
+class RuntimeRouteUnavailableError(RuntimeError):
+    """No configured route has current evidence for this exact turn."""
+
+    code = "runtime_route_unavailable"
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(self.code)
+
+
 def unknown_reconciliation_retry_at(
     attempts: int, *, now: datetime | None = None
 ) -> str:
@@ -119,6 +129,7 @@ def _required_runtime_capabilities(
     run: AgentRun,
     recovery_phase: str,
     expected_effect_actions: tuple[dict[str, object], ...],
+    explicit_capabilities: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
     required = set(_COMMON_RUNTIME_CAPABILITIES)
     if run.role is AgentRole.CONSUMER:
@@ -132,6 +143,11 @@ def _required_runtime_capabilities(
         capability = action.get("capability")
         if isinstance(capability, str) and capability.strip():
             required.add(capability.strip())
+    required.update(
+        capability.strip()
+        for capability in explicit_capabilities
+        if capability.strip()
+    )
     return frozenset(required)
 
 
@@ -244,6 +260,7 @@ class AgentTurnProcess(Generic[ResultT]):
         allow_effectful_tools: bool = False,
         image_paths: list[Path] | None = None,
         required_skill_receipts: tuple[LoadedSkillReceipt, ...] = (),
+        required_capabilities: frozenset[str] = frozenset(),
     ) -> AgentTurnRunResult[ResultT]:
         if recovery_phase not in {"", "reconcile", "execute"}:
             raise ValueError("invalid recovery phase")
@@ -488,13 +505,21 @@ class AgentTurnProcess(Generic[ResultT]):
                 run=run,
                 recovery_phase=recovery_phase,
                 expected_effect_actions=expected_effect_actions,
+                explicit_capabilities=required_capabilities,
             )
-            route = self.runtime_router.first_eligible_route(
+            decision = self.runtime_router.first_route_decision(
                 required_capabilities=required_capabilities,
                 allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,
             )
+            route = decision.route
             if route is None:
-                raise RuntimeError("runtime_route_unavailable")
+                if not recover_unknown:
+                    self._fail_running(
+                        run,
+                        RuntimeRouteUnavailableError.code,
+                        detail=decision.reason,
+                    )
+                raise RuntimeRouteUnavailableError(decision.reason)
             route_session_id = self._session_for_route(
                 route,
                 role=run.role,
@@ -696,6 +721,8 @@ class AgentTurnProcess(Generic[ResultT]):
                     transcript_start,
                     max(transcript_start + line_count, session_transcript_end),
                 )
+        except RuntimeRouteUnavailableError:
+            raise
         except ResultParseError as exc:
             self._fail_runtime_attempt_unclassified(active_attempt)
             fallback = _recovery_execution_result_from_receipts(

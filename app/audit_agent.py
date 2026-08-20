@@ -81,6 +81,31 @@ class AuditAgentRunner:
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
         self.dry_run = dry_run
 
+    @staticmethod
+    def _required_capabilities(
+        context: AuditTurnContext,
+        *,
+        recovery_phase: str,
+    ) -> frozenset[str]:
+        required = {
+            "task_context",
+            f"channel:{context.task.channel}",
+            "mcp:agent_cli:reviewed_read",
+            "native_cli:reviewed",
+            "mcp:memory_connector:read",
+        }
+        if context.task.channel == "dingtalk":
+            required.add("native_cli:dws")
+        elif context.task.channel in {"lark", "feishu"}:
+            required.add("native_cli:lark")
+        if context.task.image_paths:
+            required.add("image_input")
+        if recovery_phase != "reconcile":
+            required.add("mcp:agent_cli:reviewed_write")
+        for receipt in context.consumer_skills:
+            required.add(f"reviewed_skill:{receipt.name}:{receipt.sha256}")
+        return frozenset(required)
+
     def run(
         self,
         task: ReplyTask,
@@ -762,6 +787,10 @@ class AuditAgentRunner:
             ),
             image_paths=[Path(path) for path in context.task.image_paths],
             required_skill_receipts=context.consumer_skills,
+            required_capabilities=self._required_capabilities(
+                context,
+                recovery_phase=recovery_phase,
+            ),
         )
 
     def _image_dependency_failure(

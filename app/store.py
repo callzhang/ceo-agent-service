@@ -10432,6 +10432,54 @@ class AutoReplyStore:
             ).fetchone()
             return None if row is None else str(row["session_id"])
 
+    def clear_conversation_runtime_session_if_matches(
+        self,
+        conversation_id: str,
+        route_name: str,
+        expected_session_id: str,
+        *,
+        additional_expected_session_ids: tuple[str, ...] = (),
+    ) -> int:
+        """Clear one Consumer route slot without deleting attempt/Audit evidence.
+
+        The OAuth compatibility column is cleared in the same transaction when
+        it names the same session. Other route slots are never affected.
+        """
+        conversation_id = self._require_runtime_attempt_text(
+            conversation_id, field="conversation_id"
+        )
+        route_name = self._require_runtime_attempt_text(route_name, field="route_name")
+        expected_session_id = self._require_runtime_attempt_text(
+            expected_session_id, field="expected_session_id"
+        )
+        expected_session_ids = (expected_session_id,) + tuple(
+            self._require_runtime_attempt_text(value, field="expected_session_id")
+            for value in additional_expected_session_ids
+        )
+        placeholders = ",".join("?" for _ in expected_session_ids)
+        with self._agent_run_write_transaction(None) as (db, _):
+            cursor = db.execute(
+                f"""
+                delete from conversation_runtime_sessions
+                where conversation_id=? and route_name=?
+                  and session_id in ({placeholders})
+                """,
+                (conversation_id, route_name, *expected_session_ids),
+            )
+            cleared = cursor.rowcount
+            if route_name == "codex_oauth":
+                legacy = db.execute(
+                    f"""
+                    update conversations
+                    set codex_session_id=null, codex_session_contract_hash=''
+                    where conversation_id=?
+                      and codex_session_id in ({placeholders})
+                    """,
+                    (conversation_id, *expected_session_ids),
+                )
+                cleared = max(cleared, legacy.rowcount)
+            return cleared
+
     def open_runtime_route_pause(
         self,
         route_name: str,

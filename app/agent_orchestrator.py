@@ -16,11 +16,10 @@ from app.agent_contracts import (
     DecisionOption,
 )
 from app.agent_result import AgentError, ResultParseError, SideEffectState
-from app.codex_capacity import is_codex_provider_recovery_code
 from app.agent_skill_usage import LoadedSkillReceipt, loaded_skill_receipts
 from app.agent_turn_runner import AgentTurnRunResult
+from app.codex_capacity import is_codex_provider_recovery_code
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
-
 
 MAX_CONTENT_FEEDBACK_CYCLES = 2
 MAX_TURNS_PER_PROCESS = 32
@@ -618,6 +617,8 @@ class AgentOrchestrator:
                 authorization_required=True,
             )
         if run.status == "failed" and error.retryable:
+            if error.code == "runtime_route_unavailable":
+                return _Deferred(run, error.code, feedback_cycles)
             if is_codex_provider_recovery_code(error.code):
                 if task.error == error.code:
                     feedback = self._retry_feedback(run)
@@ -693,6 +694,8 @@ class AgentOrchestrator:
                 authorization_required=True,
             )
         if run.status == "failed" and error.retryable and run.side_effect_state == "none":
+            if error.code == "runtime_route_unavailable":
+                return _Deferred(run, error.code, feedback_cycles)
             if is_codex_provider_recovery_code(error.code):
                 if task.error == error.code:
                     return _NextAudit(

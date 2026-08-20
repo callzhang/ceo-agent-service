@@ -122,6 +122,14 @@ def _audit_runtime_dependencies(
             "reviewed_read_tools",
             "reviewed_write_tools",
             "agent_cli.dws",
+            "task_context",
+            "channel:dingtalk",
+            "mcp:agent_cli:reviewed_read",
+            "mcp:agent_cli:reviewed_write",
+            "native_cli:reviewed",
+            "native_cli:dws",
+            "mcp:memory_connector:read",
+            "reviewed_skill:business-review:ef1bf870671c6af5ad40d59f73d237cff5ae286f835936a7893a98988389ab8a",
         }
     )
     snapshots = {
@@ -269,6 +277,18 @@ def test_audit_never_reads_or_overwrites_consumer_api_route_session(setup):
     assert attempt.route_name == "codex_api"
     assert attempt.session_mode == "fresh"
     assert attempt.session_id
+
+
+def test_audit_requires_exact_reviewed_skill_and_write_capabilities(setup):
+    store, _, audit_context, _ = setup
+    runner = AuditAgentRunner(store=store, workspace=Path("/workspace"))
+
+    required = runner._required_capabilities(audit_context, recovery_phase="")
+
+    receipt = audit_context.consumer_skills[0]
+    assert f"reviewed_skill:{receipt.name}:{receipt.sha256}" in required
+    assert "mcp:agent_cli:reviewed_write" in required
+    assert "native_cli:dws" in required
 
 
 class ExactReceiptExecutor(CapturingExecutor):

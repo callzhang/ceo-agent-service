@@ -76,23 +76,65 @@ class AgentRuntimeRouter:
         never asserts probe health, never applies to service credentials, and
         is disabled whenever an explicit OAuth snapshot exists.
         """
+        return self.first_route_decision(
+            required_capabilities=required_capabilities,
+            allow_legacy_oauth_bootstrap=allow_legacy_oauth_bootstrap,
+        ).route
+
+    def first_route_decision(
+        self,
+        *,
+        required_capabilities: frozenset[str],
+        allow_legacy_oauth_bootstrap: bool = False,
+    ) -> RuntimeRouteDecision:
+        """Return the initial route plus a safe, persisted eligibility reason."""
         now = _parse_timestamp(self._now())
+        ineligible: list[str] = []
         for route in self._routes:
             if self._store.active_runtime_route_pause(route.name, now=now) is not None:
+                ineligible.append(f"{route.name}=paused")
                 continue
             if self._snapshot_is_current_and_eligible(
                 route=route,
                 required_capabilities=required_capabilities,
                 now=now,
             ):
-                return route
+                return RuntimeRouteDecision(route, False, "eligible_route")
             if (
                 allow_legacy_oauth_bootstrap
                 and route.name == "codex_oauth"
                 and route.name not in self._snapshots
             ):
-                return route
-        return None
+                return RuntimeRouteDecision(route, False, "legacy_oauth_bootstrap")
+            snapshot = self._snapshots.get(route.name)
+            if snapshot is None:
+                reason = "snapshot_missing"
+            elif snapshot.route_name != route.name:
+                reason = "snapshot_invalid"
+            elif not snapshot.healthy or snapshot.failure is not None:
+                reason = "snapshot_unhealthy"
+            else:
+                try:
+                    checked_at = _parse_timestamp(snapshot.checked_at)
+                    expires_at = _parse_timestamp(snapshot.expires_at)
+                except (TypeError, ValueError):
+                    reason = "snapshot_invalid"
+                else:
+                    if checked_at > now:
+                        reason = "snapshot_invalid"
+                    elif expires_at <= now:
+                        reason = "snapshot_expired"
+                    else:
+                        missing = sorted(
+                            required_capabilities - snapshot.capabilities
+                        )
+                        reason = "missing_capabilities:" + ",".join(missing)
+            ineligible.append(f"{route.name}={reason}")
+        return RuntimeRouteDecision(
+            None,
+            False,
+            "no_eligible_route:" + ";".join(ineligible),
+        )
 
     def next_route(
         self,

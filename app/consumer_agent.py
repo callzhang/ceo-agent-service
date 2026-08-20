@@ -296,6 +296,60 @@ class ConsumerAgentRunner:
             lambda session_id: find_codex_session_path(session_id) is not None
         )
 
+    def _configured_route_names(self) -> tuple[str, ...]:
+        config = self.runtime_config or (
+            self.codex_adapter.config if self.codex_adapter is not None else None
+        )
+        return tuple(route.name for route in config.routes) if config else ("codex_oauth",)
+
+    def _consumer_route_sessions(self, conversation_id: str) -> dict[str, str]:
+        sessions: dict[str, str] = {}
+        for route_name in self._configured_route_names():
+            session_id = (
+                self.store.get_codex_session_id(conversation_id)
+                if route_name == "codex_oauth"
+                else None
+            ) or self.store.get_conversation_runtime_session(
+                conversation_id, route_name
+            )
+            if session_id:
+                sessions[route_name] = session_id
+        return sessions
+
+    def _clear_route_session(
+        self,
+        conversation_id: str,
+        route_name: str,
+        session_id: str,
+        *additional_session_ids: str,
+    ) -> None:
+        self.store.clear_conversation_runtime_session_if_matches(
+            conversation_id,
+            route_name,
+            session_id,
+            additional_expected_session_ids=tuple(
+                value for value in additional_session_ids if value
+            ),
+        )
+
+    @staticmethod
+    def _required_capabilities(context: AgentTaskContext) -> frozenset[str]:
+        required = {
+            "task_context",
+            f"channel:{context.channel}",
+            "mcp:agent_cli:reviewed_read",
+            "native_cli:reviewed",
+            "mcp:memory_connector:read",
+            "reviewed_skill:named",
+        }
+        if context.channel == "dingtalk":
+            required.add("native_cli:dws")
+        elif context.channel in {"lark", "feishu"}:
+            required.add("native_cli:lark")
+        if context.image_paths:
+            required.add("image_input")
+        return frozenset(required)
+
     def run(
         self,
         task: ReplyTask,
@@ -337,40 +391,39 @@ class ConsumerAgentRunner:
         feedback: AuditFeedback | None,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
         contract_hash = consumer_wire_contract_hash()
-        conversation_session_id = (
-            self.store.get_codex_session_id(task.conversation_id) or None
-        )
-        if task.force_new_decision and conversation_session_id:
+        route_sessions = self._consumer_route_sessions(task.conversation_id)
+        conversation_session_id = route_sessions.get("codex_oauth")
+        if task.force_new_decision and route_sessions:
             # A forced rerun must reassess the task with the current tools and
             # instructions. Resuming the old conversation can replay a failed
             # tool path before the agent sees those changes.
-            self.store.clear_codex_session_if_matches(
-                task.conversation_id,
-                conversation_session_id,
-            )
+            for route_name, route_session_id in route_sessions.items():
+                self._clear_route_session(
+                    task.conversation_id, route_name, route_session_id
+                )
+            route_sessions = {}
             conversation_session_id = None
         if (
-            conversation_session_id
+            route_sessions
             and self.store.get_codex_session_contract_hash(task.conversation_id)
             != contract_hash
         ):
             # A resumed session retains its old output contract. Start a fresh
             # session when the strict wire schema changes instead of accepting
             # an incompatible result or treating it as a permanent task error.
-            self.store.clear_codex_session_if_matches(
-                task.conversation_id,
-                conversation_session_id,
-            )
+            for route_name, route_session_id in route_sessions.items():
+                self._clear_route_session(
+                    task.conversation_id, route_name, route_session_id
+                )
+            route_sessions = {}
             conversation_session_id = None
-        if (
-            conversation_session_id
-            and not self.codex_session_exists(conversation_session_id)
-        ):
-            self.store.clear_codex_session_if_matches(
-                task.conversation_id,
-                conversation_session_id,
-            )
-            conversation_session_id = None
+        for route_name, route_session_id in tuple(route_sessions.items()):
+            if not self.codex_session_exists(route_session_id):
+                self._clear_route_session(
+                    task.conversation_id, route_name, route_session_id
+                )
+                route_sessions.pop(route_name)
+        conversation_session_id = route_sessions.get("codex_oauth")
         if json.loads(SCHEMA_PATH.read_text(encoding="utf-8")) != (
             ConsumerAgentResult.model_json_schema()
         ):
@@ -465,6 +518,7 @@ class ConsumerAgentRunner:
                 persist_conversation_session=persist_conversation_session,
                 on_progress=renew_session_lock,
                 image_paths=[Path(path) for path in context.image_paths],
+                required_capabilities=self._required_capabilities(context),
             )
             self.store.set_codex_session_contract_hash(
                 task.conversation_id,
@@ -476,14 +530,24 @@ class ConsumerAgentRunner:
             ):
                 persisted = self.store.get_agent_run(claim.run.id)
                 if persisted is not None and not persisted.tool_events:
-                    failed_session_id = session_id or persisted.codex_session_id
-                    if failed_session_id:
+                    attempts = self.store.list_agent_runtime_attempts(claim.run.id)
+                    failed_attempt = attempts[-1] if attempts else None
+                    failed_session_id = (
+                        (failed_attempt.session_id or failed_attempt.source_session_id)
+                        if failed_attempt is not None
+                        else session_id or persisted.codex_session_id
+                    )
+                    if failed_session_id and failed_attempt is not None:
                         # A retryable result without any controlled tool event
                         # made no evidence progress. Retry with the current
                         # instructions instead of resuming that dead-end turn.
-                        self.store.clear_codex_session_if_matches(
+                        self._clear_route_session(
                             task.conversation_id,
+                            failed_attempt.route_name,
                             failed_session_id,
+                            failed_attempt.source_session_id,
+                            session_id or "",
+                            persisted.codex_session_id,
                         )
             return result
         except ResultParseError as exc:
@@ -493,11 +557,21 @@ class ConsumerAgentRunner:
                 and persisted is not None
                 and not persisted.tool_events
             ):
-                failed_session_id = session_id or persisted.codex_session_id
-                if failed_session_id:
-                    self.store.clear_codex_session_if_matches(
+                attempts = self.store.list_agent_runtime_attempts(claim.run.id)
+                failed_attempt = attempts[-1] if attempts else None
+                failed_session_id = (
+                    (failed_attempt.session_id or failed_attempt.source_session_id)
+                    if failed_attempt is not None
+                    else session_id or persisted.codex_session_id
+                )
+                if failed_session_id and failed_attempt is not None:
+                    self._clear_route_session(
                         task.conversation_id,
+                        failed_attempt.route_name,
                         failed_session_id,
+                        failed_attempt.source_session_id,
+                        session_id or "",
+                        persisted.codex_session_id,
                     )
             raise
 

@@ -738,6 +738,20 @@ health. Until Task 8 installs probe refresh, only the pre-existing local OAuth
 path may use the explicitly scoped trusted-legacy bootstrap when it has no
 snapshot; the bootstrap never applies to API failover.
 
+Consumer/Audit orchestration passes an explicit capability set for the actual
+turn into `AgentTurnProcess.execute(required_capabilities=...)`. It includes the
+task channel, reviewed MCP/native-CLI surfaces (DWS or Lark and Memory),
+`image_input` when images are attached, and exact name+sha256 capability names
+for reviewed Skill receipts. The process adds its role/recovery invariants; it
+does not infer tool needs from prompt text. A configured route missing any
+required concrete capability is ineligible.
+
+If initial selection has no eligible route, persist the AgentRun as a typed,
+retryable `runtime_route_unavailable` failure with a display-safe eligibility
+reason before returning a deferred orchestration result. No runtime attempt or
+child process may be started. The existing worker retry mapping requeues the
+ReplyTask with its normal backoff.
+
 - [ ] **Step 4: Preserve unknown and recovery behavior exactly**
 
 Before consulting the router, run `_recovery_execution_result_from_receipts()`. If an effect started or a receipt exists, execute the existing `_defer_unknown()`/`mark_agent_run_unknown()` path and do not ask for another route. Reconciliation and authorized recovery executions pass `recovery_phase` to the router and remain pinned.
@@ -757,6 +771,12 @@ Continue writing the legacy Codex conversation field for `codex_oauth` during mi
 Only Consumer turns read or update conversation route sessions. Audit and Audit
 recovery turns are fresh route sessions and persist their session identifiers
 only on their runtime attempts/run evidence.
+
+Consumer invalidation (forced decision, wire-contract mismatch, missing local
+session, or retry without evidence progress) clears only the matching route
+slot. For `codex_oauth`, clear the matching legacy compatibility value in the
+same Store transaction; API invalidation never clears the OAuth slot. Runtime
+attempt and Audit evidence remain immutable.
 
 - [ ] **Step 6: Run complete role-agent tests and commit**
 
