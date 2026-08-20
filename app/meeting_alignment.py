@@ -495,11 +495,11 @@ def _meeting_session_search_text(source: Any) -> str:
 
 
 def _meeting_fts_query(text: str) -> str:
-    import jieba
+    from app.jieba_loader import jieba_lcut
 
     terms = []
     seen = set()
-    for token in jieba.lcut(text):
+    for token in jieba_lcut(text):
         value = str(token).strip()
         if not value or value in seen:
             continue
@@ -511,9 +511,9 @@ def _meeting_fts_query(text: str) -> str:
 
 
 def _meeting_fts_text(text: str) -> str:
-    import jieba
+    from app.jieba_loader import jieba_lcut
 
-    tokens = [str(token).strip() for token in jieba.lcut(text)]
+    tokens = [str(token).strip() for token in jieba_lcut(text)]
     return " ".join(token for token in tokens if token)
 
 

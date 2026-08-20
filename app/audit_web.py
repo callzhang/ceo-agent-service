@@ -4124,9 +4124,9 @@ def _history_limit_select(limit: int | None) -> str:
 
 def _history_session_fts_query(text: str) -> str:
     try:
-        import jieba
+        from app.jieba_loader import jieba_lcut
 
-        tokens = jieba.lcut(text)
+        tokens = jieba_lcut(text)
     except Exception:
         tokens = text.split()
     terms = []

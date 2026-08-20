@@ -4,7 +4,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-import jieba.analyse
 from pydantic import BaseModel
 
 from app.config import (
@@ -12,6 +11,7 @@ from app.config import (
     document_extraction_ids,
     principal_name,
 )
+from app.jieba_loader import jieba_extract_tags
 
 SIGNATURE = assistant_signature()
 MIN_REPLY_INFORMATION_UNITS = 20
@@ -225,10 +225,9 @@ def extract_retrieval_keywords(text: str, limit: int = 30) -> dict[str, float]:
         return {}
     return {
         keyword: min(weight, 1.0)
-        for keyword, weight in jieba.analyse.extract_tags(
+        for keyword, weight in jieba_extract_tags(
             normalized,
-            topK=limit,
-            withWeight=True,
+            top_k=limit,
         )
     }
 

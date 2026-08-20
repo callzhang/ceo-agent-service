@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tomllib
 
 
@@ -41,3 +43,15 @@ def test_runtime_and_quality_contract_use_python_312_shared_conda():
     )
     assert package["scripts"]["test"].startswith("npm run lint:local &&")
     assert (REPO_ROOT / ".github" / "workflows" / "quality.yml").is_file()
+
+
+def test_cli_import_is_warning_free_on_python_312():
+    completed = subprocess.run(
+        [sys.executable, "-W", "error", "-m", "app.cli", "quality-check", "--help"],
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr

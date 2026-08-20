@@ -42,10 +42,6 @@ markers = [
   "browser: real browser integration tests (set WORKBENCH_BROWSER_TESTS=1)",
   "live: explicit opt-in tests that may call real dws, Codex, or DingTalk"
 ]
-filterwarnings = [
-  "ignore:pkg_resources is deprecated as an API.*:UserWarning:jieba._compat"
-]
-
 [tool.ruff]
 target-version = "py312"
 
