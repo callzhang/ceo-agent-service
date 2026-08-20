@@ -132,6 +132,43 @@ def test_provider_authentication_is_typed_and_allows_failover(adapter):
     assert failure.failover_permitted is True
 
 
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        (
+            "unexpected status 401 Unauthorized: Invalid API key, url: "
+            "https://api.openai.com/v1/responses"
+        ),
+        (
+            "unexpected status 403 Forbidden: blocked, url: "
+            "https://chatgpt.com/backend-api/codex/responses"
+        ),
+    ],
+)
+def test_existing_provider_auth_signatures_allow_failover(adapter, stderr):
+    failure = adapter.classify_failure(stderr=stderr, stdout="", returncode=1)
+
+    assert failure.failure_class.value == "authentication"
+    assert failure.code == "codex_provider_auth_failed"
+    assert failure.failover_permitted is True
+    assert failure.route_pause_required is True
+
+
+def test_near_miss_provider_auth_signature_is_fail_closed(adapter):
+    failure = adapter.classify_failure(
+        stderr=(
+            "unexpected status 401 Unauthorized: Invalid API key, url: "
+            "https://api.openai.com/v1/chat/completions"
+        ),
+        stdout="",
+        returncode=1,
+    )
+
+    assert failure.failure_class.value == "unclassified"
+    assert failure.code == "runtime_unclassified"
+    assert failure.failover_permitted is False
+
+
 def test_unknown_failure_is_fail_closed(adapter):
     failure = adapter.classify_failure(
         stderr="unexpected command result",

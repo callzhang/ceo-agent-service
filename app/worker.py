@@ -63,6 +63,7 @@ from app.codex_runner import (
     recover_native_codex_auth_failures,
     selected_codex_model_provider,
 )
+from app.codex_failure import is_codex_provider_auth_error
 from app.codex_capacity import (
     CODEX_CAPACITY_EXHAUSTED_MESSAGE,
     CODEX_PROVIDER_CAPACITY_EXHAUSTED,
@@ -232,20 +233,7 @@ def _is_codex_login_required_error(reason: str) -> bool:
 
 
 def _is_codex_provider_auth_error(reason: str) -> bool:
-    normalized = reason.lower()
-    responses_api_auth_failed = (
-        "unexpected status 401 unauthorized" in normalized
-        and (
-            "missing bearer or basic authentication" in normalized
-            or "invalid api key" in normalized
-        )
-        and "/v1/responses" in normalized
-    )
-    chatgpt_codex_forbidden = (
-        "unexpected status 403 forbidden" in normalized
-        and "chatgpt.com/backend-api/codex/responses" in normalized
-    )
-    return responses_api_auth_failed or chatgpt_codex_forbidden
+    return is_codex_provider_auth_error(reason)
 
 
 def _codex_provider_auth_error(reason: str) -> str:
