@@ -625,11 +625,17 @@ def test_reviewed_command_policy_uses_exact_tools_without_wildcards(
         "ceo_runtime_permission",
         "memory_connector",
     }
-    assert mcp_config["mcpServers"]["memory_connector"] == {
-        "type": "stdio",
-        "command": "/opt/service/memory-mcp",
-        "args": ["serve", "--stdio"],
-    }
+    memory_transport = mcp_config["mcpServers"]["memory_connector"]
+    assert memory_transport["type"] == "stdio"
+    assert memory_transport["command"] != "/opt/service/memory-mcp"
+    assert memory_transport["args"] == [
+        "-m",
+        "app.claude_mcp_proxy",
+        "--exec",
+        "/opt/service/memory-mcp",
+        "serve",
+        "--stdio",
+    ]
     assert "foreign" not in mcp_config["mcpServers"]
     assert broker_policy == {
         "allowed_mcp_tools": ["mcp__memory_connector__memory_recall"],
@@ -669,7 +675,7 @@ def test_reviewed_mcp_policy_rejects_unreviewed_or_missing_transport(
         )
 
 
-def test_reviewed_mcp_policy_copies_exact_service_url_transport(
+def test_reviewed_mcp_policy_exposes_only_local_service_proxy(
     adapter, route, tmp_path, monkeypatch
 ):
     manifest = tmp_path / "service-mcp.json"
@@ -702,10 +708,10 @@ def test_reviewed_mcp_policy_copies_exact_service_url_transport(
         )
     )
 
-    assert mcp_config["mcpServers"]["memory_connector"] == {
-        "type": "http",
-        "url": "https://memory.example.test/mcp",
-    }
+    memory_transport = mcp_config["mcpServers"]["memory_connector"]
+    assert memory_transport["type"] == "http"
+    assert memory_transport["url"].startswith("http://127.0.0.1:")
+    assert "memory.example.test" not in json.dumps(mcp_config)
     assert "foreign" not in mcp_config["mcpServers"]
     assert "mcp__memory_connector__memory_recall" not in command[
         command.index("--allowedTools") + 1 :
@@ -855,16 +861,68 @@ def test_reviewed_transport_env_is_exact_and_secrets_stay_out_of_files(
     child_env = adapter.build_env(route, command=command)
     mcp_path = Path(command[command.index("--mcp-config") + 1])
     settings_path = Path(command[command.index("--settings") + 1])
+    mcp_config = json.loads(mcp_path.read_text(encoding="utf-8"))
+    broker_policy_path = Path(
+        mcp_config["mcpServers"]["ceo_runtime_permission"]["args"][-1]
+    )
     serialized = "\n".join(
-        [*command, mcp_path.read_text(), settings_path.read_text()]
+        [
+            *command,
+            mcp_path.read_text(),
+            settings_path.read_text(),
+            broker_policy_path.read_text(),
+        ]
     )
 
-    assert child_env["CONNECTOR_API_KEY"] == "raw-memory-secret"
-    assert child_env["MEMORY_AUTH_TYPE"] == "raw-auth-secret"
+    assert "CONNECTOR_API_KEY" not in child_env
+    assert "MEMORY_AUTH_TYPE" not in child_env
     assert "FOREIGN_API_KEY" not in child_env
     assert "raw-memory-secret" not in serialized
     assert "raw-auth-secret" not in serialized
     assert "raw-foreign-secret" not in serialized
+    assert "CONNECTOR_API_KEY" not in serialized
+    assert "MEMORY_AUTH_TYPE" not in serialized
+
+
+def test_normalized_tool_events_never_retain_raw_arguments_or_results(normalizer):
+    secret = "runtime-event-secret"
+    normalizer.normalize_event(SYSTEM_INIT)
+    started = normalizer.normalize_event(
+        {
+            **MCP_TOOL_START,
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        **MCP_TOOL_START["message"]["content"][0],
+                        "input": {"query": secret},
+                    }
+                ],
+            },
+        }
+    )
+    completed = normalizer.normalize_event(
+        {
+            "type": "user",
+            "session_id": "claude-session-1",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_memory",
+                        "content": secret,
+                        "is_error": False,
+                    }
+                ],
+            },
+        }
+    )
+
+    assert secret not in repr(started)
+    assert secret not in repr(completed)
+    assert "arguments" not in started["item"]
+    assert "result" not in completed["item"]
 
 
 def test_environment_backed_mcp_args_fail_closed_before_serialization(

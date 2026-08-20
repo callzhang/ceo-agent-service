@@ -53,7 +53,7 @@ class ClaudePermissionBroker:
                 return {"behavior": "allow", "updatedInput": arguments}
         if self._allow_native_cli and tool_name == "Bash":
             command = arguments.get("command")
-            if isinstance(command, str):
+            if isinstance(command, str) and "$" not in command and "`" not in command:
                 reviewed = self._native_cli.classify(
                     {"type": "command_execution", "command": command}
                 )

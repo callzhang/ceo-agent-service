@@ -24,8 +24,9 @@ from app.agent_runtime_contracts import (
     RuntimeRoute,
 )
 from app.codex_runtime_adapter import _safe_child_environment
+from app.claude_mcp_proxy import ClaudeMcpCredentialProxyManager
 from app.native_cli_metadata import NativeCliMetadataClassifier
-from app.service_codex_config import ServiceMcpServer, load_service_mcp_servers
+from app.service_codex_config import load_service_mcp_servers
 
 ResultT = TypeVar("ResultT")
 _POLICY_SEAL = object()
@@ -120,6 +121,9 @@ class ClaudeRuntimeAdapter:
         self._runtime_root = tempfile.TemporaryDirectory(
             prefix="ceo-agent-claude-", dir=workspace
         )
+        self._mcp_proxy = ClaudeMcpCredentialProxyManager(
+            root=Path(self._runtime_root.name)
+        )
         self._lock = RLock()
         self._pending_proofs: dict[
             object, tuple[ClaudeTerminalProof, str]
@@ -195,11 +199,6 @@ class ClaudeRuntimeAdapter:
                 required_env_names = self._invocation_env_names.get(mcp_path)
             if required_env_names is None:
                 raise ValueError("Claude invocation MCP config is not adapter-owned")
-            for name in required_env_names:
-                value = os.environ.get(name)
-                if not isinstance(value, str) or not value:
-                    raise ValueError("Claude reviewed MCP environment is missing")
-                env[name] = value
         return env
 
     def new_event_normalizer(
@@ -350,9 +349,7 @@ class ClaudeRuntimeAdapter:
             - ({"Bash"} if policy.allow_native_cli else set())
         )
         broker_enabled = bool(policy.mcp_tools or policy.allow_native_cli)
-        reviewed_transports, required_env_names = self._reviewed_mcp_transports(
-            policy
-        )
+        reviewed_transports = self._reviewed_mcp_transports(policy)
         settings_path.write_text(
             json.dumps(
                 {
@@ -396,14 +393,14 @@ class ClaudeRuntimeAdapter:
             ), encoding="utf-8",
         )
         with self._lock:
-            self._invocation_env_names[str(mcp_path.resolve())] = required_env_names
+            self._invocation_env_names[str(mcp_path.resolve())] = frozenset()
         return settings_path, mcp_path
 
     def _reviewed_mcp_transports(
         self, policy: ClaudeCommandPolicy
-    ) -> tuple[dict[str, dict[str, object]], frozenset[str]]:
+    ) -> dict[str, dict[str, object]]:
         if not policy.mcp_tools:
-            return {}, frozenset()
+            return {}
         reviewed = self.effects.reviewed_tools()
         required_servers: set[str] = set()
         for exact_name in policy.mcp_tools:
@@ -418,20 +415,10 @@ class ClaudeRuntimeAdapter:
         if missing:
             raise ValueError("Claude reviewed MCP transport is missing")
         selected = [configured[name] for name in sorted(required_servers)]
-        if any(server.args_env is not None for server in selected):
-            raise ValueError("Claude reviewed MCP args_env is not safely supported")
-        required_env_names = frozenset(
-            name
+        return {
+            server.name: self._mcp_proxy.prepare(server, source_env=os.environ)
             for server in selected
-            for name in (
-                *((server.bearer_token_env_var,) if server.bearer_token_env_var else ()),
-                *(env_name for _, env_name in server.env_http_headers),
-            )
-        )
-        return (
-            {server.name: _claude_mcp_transport(server) for server in selected},
-            required_env_names,
-        )
+        }
 
     def _configured_route(self, route: RuntimeRoute) -> RuntimeRoute:
         if (
@@ -628,7 +615,7 @@ class ClaudeEventNormalizer:
                 raise ClaudeEventPolicyError("claude_tool_unreviewed")
             return {
                 "type": "mcp_tool_call", "id": call_id, "status": "in_progress",
-                "server": server, "tool": tool, "arguments": arguments,
+                "server": server, "tool": tool,
                 "metadata": {"effect": call.effect.value, "capability": call.server, "operation": call.operation, "operation_digest": call.operation_digest, "target_identifiers": call.target_identifiers},
             }
         if tool_name == "Bash":
@@ -639,7 +626,7 @@ class ClaudeEventNormalizer:
             if reviewed is None or reviewed.effect is None:
                 raise ClaudeEventPolicyError("claude_tool_unreviewed")
             return {
-                "type": "command_execution", "id": call_id, "status": "in_progress", "command": command,
+                "type": "command_execution", "id": call_id, "status": "in_progress",
                 "metadata": {"effect": reviewed.effect.value, "capability": f"agent_cli.{reviewed.cli}", "operation": reviewed.command_path, "operation_digest": reviewed.command_digest, "target_identifiers": reviewed.target_identifiers, "native_cli": reviewed.cli},
             }
         raise ClaudeEventPolicyError("claude_tool_unreviewed")
@@ -656,29 +643,7 @@ class ClaudeEventNormalizer:
             raise ClaudeEventPolicyError("claude_tool_result_without_start")
         item = dict(started)
         item["status"] = "failed" if is_error else "completed"
-        item["result"] = block.get("content")
         return {"type": RuntimeEventType.ITEM_FAILED.value if is_error else RuntimeEventType.ITEM_COMPLETED.value, "item": item}
-
-
-def _claude_mcp_transport(server: ServiceMcpServer) -> dict[str, object]:
-    if server.command is not None:
-        return {
-            "type": "stdio",
-            "command": server.command,
-            "args": list(server.args),
-        }
-    if server.url is None:
-        raise ValueError("Claude reviewed MCP transport is incomplete")
-    headers = dict(server.http_headers)
-    headers.update(
-        {name: f"${{{env_name}}}" for name, env_name in server.env_http_headers}
-    )
-    if server.bearer_token_env_var is not None:
-        headers["Authorization"] = f"Bearer ${{{server.bearer_token_env_var}}}"
-    transport: dict[str, object] = {"type": "http", "url": server.url}
-    if headers:
-        transport["headers"] = headers
-    return transport
 
 
 def _required_string(value: object) -> str | None:
