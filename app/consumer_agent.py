@@ -302,16 +302,23 @@ class ConsumerAgentRunner:
         )
         return tuple(route.name for route in config.routes) if config else ("codex_oauth",)
 
-    def _consumer_route_sessions(self, conversation_id: str) -> dict[str, str]:
+    def _consumer_route_sessions(
+        self, conversation_id: str, contract_hash: str
+    ) -> dict[str, str]:
         sessions: dict[str, str] = {}
         for route_name in self._configured_route_names():
-            session_id = (
-                self.store.get_codex_session_id(conversation_id)
-                if route_name == "codex_oauth"
-                else None
-            ) or self.store.get_conversation_runtime_session(
+            raw_session_id = self.store.get_conversation_runtime_session(
                 conversation_id, route_name
             )
+            session_id = self.store.get_conversation_runtime_session(
+                conversation_id,
+                route_name,
+                required_contract_hash=contract_hash,
+            )
+            if raw_session_id and session_id is None:
+                self._clear_route_session(
+                    conversation_id, route_name, raw_session_id
+                )
             if session_id:
                 sessions[route_name] = session_id
         return sessions
@@ -340,7 +347,6 @@ class ConsumerAgentRunner:
             "mcp:agent_cli:reviewed_read",
             "native_cli:reviewed",
             "mcp:memory_connector:read",
-            "reviewed_skill:named",
         }
         if context.channel == "dingtalk":
             required.add("native_cli:dws")
@@ -348,6 +354,10 @@ class ConsumerAgentRunner:
             required.add("native_cli:lark")
         if context.image_paths:
             required.add("image_input")
+        required.update(
+            f"reviewed_skill:{receipt.name}:{receipt.sha256}"
+            for receipt in context.required_reviewed_skills
+        )
         return frozenset(required)
 
     def run(
@@ -391,26 +401,14 @@ class ConsumerAgentRunner:
         feedback: AuditFeedback | None,
     ) -> AgentTurnRunResult[ConsumerAgentResult]:
         contract_hash = consumer_wire_contract_hash()
-        route_sessions = self._consumer_route_sessions(task.conversation_id)
+        route_sessions = self._consumer_route_sessions(
+            task.conversation_id, contract_hash
+        )
         conversation_session_id = route_sessions.get("codex_oauth")
         if task.force_new_decision and route_sessions:
             # A forced rerun must reassess the task with the current tools and
             # instructions. Resuming the old conversation can replay a failed
             # tool path before the agent sees those changes.
-            for route_name, route_session_id in route_sessions.items():
-                self._clear_route_session(
-                    task.conversation_id, route_name, route_session_id
-                )
-            route_sessions = {}
-            conversation_session_id = None
-        if (
-            route_sessions
-            and self.store.get_codex_session_contract_hash(task.conversation_id)
-            != contract_hash
-        ):
-            # A resumed session retains its old output contract. Start a fresh
-            # session when the strict wire schema changes instead of accepting
-            # an incompatible result or treating it as a permanent task error.
             for route_name, route_session_id in route_sessions.items():
                 self._clear_route_session(
                     task.conversation_id, route_name, route_session_id
@@ -519,10 +517,7 @@ class ConsumerAgentRunner:
                 on_progress=renew_session_lock,
                 image_paths=[Path(path) for path in context.image_paths],
                 required_capabilities=self._required_capabilities(context),
-            )
-            self.store.set_codex_session_contract_hash(
-                task.conversation_id,
-                contract_hash,
+                conversation_contract_hash=contract_hash,
             )
             if (
                 result.result.outcome.value == "failed"

@@ -261,6 +261,7 @@ class AgentTurnProcess(Generic[ResultT]):
         image_paths: list[Path] | None = None,
         required_skill_receipts: tuple[LoadedSkillReceipt, ...] = (),
         required_capabilities: frozenset[str] = frozenset(),
+        conversation_contract_hash: str = "",
     ) -> AgentTurnRunResult[ResultT]:
         if recovery_phase not in {"", "reconcile", "execute"}:
             raise ValueError("invalid recovery phase")
@@ -479,6 +480,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         self.task.conversation_id,
                         active_route.name,
                         new_session,
+                        conversation_contract_hash,
                     )
                 if (
                     persist_conversation_session
@@ -525,6 +527,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 role=run.role,
                 requested_session_id=session_id,
                 recovery_phase=recovery_phase,
+                conversation_contract_hash=conversation_contract_hash,
             )
             attempt_is_preclaimed = False
             while True:
@@ -622,6 +625,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         role=run.role,
                         requested_session_id=session_id,
                         recovery_phase=recovery_phase,
+                        conversation_contract_hash=conversation_contract_hash,
                     )
                 )
                 successor = self._claim_and_start_attempt(
@@ -881,16 +885,23 @@ class AgentTurnProcess(Generic[ResultT]):
         role: AgentRole,
         requested_session_id: str | None,
         recovery_phase: str,
+        conversation_contract_hash: str,
     ) -> str | None:
         if recovery_phase:
             return None
         if role is AgentRole.AUDIT:
             return None
         persisted = self.store.get_conversation_runtime_session(
-            self.task.conversation_id, route.name
+            self.task.conversation_id,
+            route.name,
+            required_contract_hash=conversation_contract_hash,
         )
         if route.name == "codex_oauth":
-            return requested_session_id or persisted
+            return (
+                requested_session_id
+                if requested_session_id and requested_session_id == persisted
+                else persisted
+            )
         return persisted
 
     def _claim_and_start_attempt(

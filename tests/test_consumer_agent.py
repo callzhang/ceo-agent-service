@@ -11,6 +11,7 @@ from app.agent_result import EffectKind, ResultParseError
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
+from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import RuntimeRouteUnavailableError, _agent_cli_receipt
 from app.agent_wire_contracts import ConsumerAgentWireResult
 from app.codex_runtime_adapter import CodexRuntimeAdapter
@@ -225,7 +226,6 @@ def _consumer_runtime_dependencies(
             "native_cli:reviewed",
             "native_cli:dws",
             "mcp:memory_connector:read",
-            "reviewed_skill:named",
         }
     )
     snapshots = {
@@ -1711,8 +1711,37 @@ def test_consumer_derives_concrete_turn_capabilities_for_images_and_channel(
         "native_cli:reviewed",
         "mcp:agent_cli:reviewed_read",
         "mcp:memory_connector:read",
-        "reviewed_skill:named",
     } <= required
+
+
+def test_consumer_requires_only_explicit_exact_reviewed_skills(store, context):
+    config, router, _ = _consumer_runtime_dependencies(store, routes="codex_api")
+    runner = ConsumerAgentRunner(store=store, workspace=Path("/workspace"))
+    assert not any(
+        capability.startswith("reviewed_skill:")
+        for capability in runner._required_capabilities(context)
+    )
+    receipt = LoadedSkillReceipt(
+        name="ceo-message-triage",
+        path="/reviewed/ceo-message-triage/SKILL.md",
+        sha256="a" * 64,
+    )
+    required = runner._required_capabilities(
+        replace(context, required_reviewed_skills=(receipt,))
+    )
+    exact = f"reviewed_skill:{receipt.name}:{receipt.sha256}"
+
+    assert exact in required
+    assert router.first_eligible_route(required_capabilities=required) is None
+    snapshot = router._snapshots["codex_api"].model_copy(
+        update={"capabilities": router._snapshots["codex_api"].capabilities | {exact}}
+    )
+    proven = AgentRuntimeRouter(
+        routes=config.routes,
+        store=store,
+        snapshots={"codex_api": snapshot},
+    )
+    assert proven.first_eligible_route(required_capabilities=required).name == "codex_api"
 
 
 def test_api_retry_without_progress_clears_only_api_consumer_session(
@@ -1720,10 +1749,16 @@ def test_api_retry_without_progress_clears_only_api_consumer_session(
 ):
     store.upsert_conversation(task.conversation_id, "Group", False, "oauth-keep")
     store.upsert_conversation_runtime_session(
-        task.conversation_id, "codex_oauth", "oauth-keep"
+        task.conversation_id,
+        "codex_oauth",
+        "oauth-keep",
+        consumer_wire_contract_hash(),
     )
     store.upsert_conversation_runtime_session(
-        task.conversation_id, "codex_api", "api-old"
+        task.conversation_id,
+        "codex_api",
+        "api-old",
+        consumer_wire_contract_hash(),
     )
     store.set_codex_session_contract_hash(
         task.conversation_id, consumer_wire_contract_hash()
@@ -1784,10 +1819,20 @@ def test_api_consumer_invalidation_starts_fresh_and_preserves_oauth(
 ):
     store.upsert_conversation(task.conversation_id, "Group", False, "oauth-keep")
     store.upsert_conversation_runtime_session(
-        task.conversation_id, "codex_oauth", "oauth-keep"
+        task.conversation_id,
+        "codex_oauth",
+        "oauth-keep",
+        consumer_wire_contract_hash(),
     )
     store.upsert_conversation_runtime_session(
-        task.conversation_id, "codex_api", "api-old"
+        task.conversation_id,
+        "codex_api",
+        "api-old",
+        (
+            "outdated-contract"
+            if invalidation == "wire_mismatch"
+            else consumer_wire_contract_hash()
+        ),
     )
     store.set_codex_session_contract_hash(
         task.conversation_id,
@@ -1826,3 +1871,86 @@ def test_api_consumer_invalidation_starts_fresh_and_preserves_oauth(
         task.conversation_id, "codex_oauth"
     ) == "oauth-keep"
     assert store.get_codex_session_id(task.conversation_id) == "oauth-keep"
+
+
+def test_api_contract_refresh_does_not_make_old_oauth_session_current(
+    store, task, context
+):
+    old_hash = "old-wire-contract"
+    current_hash = consumer_wire_contract_hash()
+    store.upsert_conversation(task.conversation_id, "Group", False, "oauth-old")
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_oauth", "oauth-old", old_hash
+    )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_api", "api-old", old_hash
+    )
+    api_config, api_router, api_adapter = _consumer_runtime_dependencies(
+        store, routes="codex_api"
+    )
+    api_executor = CapturingExecutor(_result_jsonl(session="api-new"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=api_executor,
+        runtime_config=api_config,
+        runtime_router=api_router,
+        codex_adapter=api_adapter,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert store.get_conversation_runtime_session_contract_hash(
+        task.conversation_id, "codex_api"
+    ) == current_hash
+    assert store.get_conversation_runtime_session_contract_hash(
+        task.conversation_id, "codex_oauth"
+    ) == old_hash
+    assert store.get_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+        required_contract_hash=current_hash,
+    ) is None
+
+    oauth_config, oauth_router, oauth_adapter = _consumer_runtime_dependencies(
+        store, routes="codex_oauth"
+    )
+    oauth_executor = CapturingExecutor(_result_jsonl(session="oauth-new"))
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=oauth_executor,
+        runtime_config=oauth_config,
+        runtime_router=oauth_router,
+        codex_adapter=oauth_adapter,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "resume" not in api_executor.commands[0]
+    assert "resume" not in oauth_executor.commands[0]
+    assert store.get_conversation_runtime_session_contract_hash(
+        task.conversation_id, "codex_oauth"
+    ) == current_hash
+
+
+def test_route_session_without_contract_hash_is_never_resumed(store, task, context):
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_api", "upgraded-row-without-hash"
+    )
+    config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_api")
+    executor = CapturingExecutor(_result_jsonl(session="api-new"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "resume" not in executor.commands[0]
+    assert store.get_conversation_runtime_session_contract_hash(
+        task.conversation_id, "codex_api"
+    ) == consumer_wire_contract_hash()

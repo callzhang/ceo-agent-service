@@ -746,6 +746,12 @@ for reviewed Skill receipts. The process adds its role/recovery invariants; it
 does not infer tool needs from prompt text. A configured route missing any
 required concrete capability is ineligible.
 
+Consumer receives any required reviewed Skills as explicit
+`required_reviewed_skills` metadata on `AgentTaskContext`. An empty tuple adds no
+Skill requirement. Each supplied receipt adds exactly
+`reviewed_skill:{name}:{sha256}`; there is no generic "named Skill" capability
+and prompts are never parsed to infer one.
+
 If initial selection has no eligible route, persist the AgentRun as a typed,
 retryable `runtime_route_unavailable` failure with a display-safe eligibility
 reason before returning a deferred orchestration result. No runtime attempt or
@@ -771,6 +777,13 @@ Continue writing the legacy Codex conversation field for `codex_oauth` during mi
 Only Consumer turns read or update conversation route sessions. Audit and Audit
 recovery turns are fresh route sessions and persist their session identifiers
 only on their runtime attempts/run evidence.
+
+Each `conversation_runtime_sessions` row also owns its `contract_hash`.
+Consumer resume lookup requires the selected route row to match the current
+wire contract, and a yielded Consumer session atomically updates that route's
+session ID and hash. Migrated rows default to an empty hash and therefore fail
+closed. The legacy OAuth column/hash may mirror only the `codex_oauth` route;
+refreshing an API session must not make an older OAuth session appear current.
 
 Consumer invalidation (forced decision, wire-contract mismatch, missing local
 session, or retry without evidence progress) clears only the matching route

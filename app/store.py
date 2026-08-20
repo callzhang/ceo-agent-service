@@ -1164,6 +1164,7 @@ class AutoReplyStore:
                     conversation_id text not null,
                     route_name text not null,
                     session_id text not null,
+                    contract_hash text not null default '',
                     updated_at text not null default current_timestamp,
                     primary key(conversation_id, route_name)
                 );
@@ -2434,12 +2435,24 @@ class AutoReplyStore:
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
             self._backfill_agent_run_effect_counters(db)
+            runtime_session_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(conversation_runtime_sessions)"
+                ).fetchall()
+            }
+            if "contract_hash" not in runtime_session_columns:
+                db.execute(
+                    "alter table conversation_runtime_sessions add column "
+                    "contract_hash text not null default ''"
+                )
             db.execute(
                 """
                 insert or ignore into conversation_runtime_sessions (
-                    conversation_id, route_name, session_id
+                    conversation_id, route_name, session_id, contract_hash
                 )
-                select conversation_id, 'codex_oauth', codex_session_id
+                select conversation_id, 'codex_oauth', codex_session_id,
+                       coalesce(codex_session_contract_hash, '')
                 from conversations
                 where codex_session_id is not null and codex_session_id <> ''
                 """
@@ -10398,26 +10411,64 @@ class AutoReplyStore:
         conversation_id: str,
         route_name: str,
         session_id: str,
+        contract_hash: str = "",
     ) -> None:
         conversation_id = self._require_runtime_attempt_text(
             conversation_id, field="conversation_id"
         )
         route_name = self._require_runtime_attempt_text(route_name, field="route_name")
         session_id = self._require_runtime_attempt_text(session_id, field="session_id")
+        contract_hash = contract_hash.strip()
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             db.execute(
                 """
                 insert into conversation_runtime_sessions (
-                    conversation_id, route_name, session_id, updated_at
-                ) values (?, ?, ?, ?)
+                    conversation_id, route_name, session_id, contract_hash, updated_at
+                ) values (?, ?, ?, ?, ?)
                 on conflict(conversation_id, route_name) do update set
                     session_id=excluded.session_id,
+                    contract_hash=excluded.contract_hash,
                     updated_at=excluded.updated_at
                 """,
-                (conversation_id, route_name, session_id, now_text),
+                (conversation_id, route_name, session_id, contract_hash, now_text),
             )
+            if route_name == "codex_oauth":
+                db.execute(
+                    """
+                    update conversations
+                    set codex_session_id=?, codex_session_contract_hash=?
+                    where conversation_id=?
+                    """,
+                    (session_id, contract_hash, conversation_id),
+                )
 
     def get_conversation_runtime_session(
+        self,
+        conversation_id: str,
+        route_name: str,
+        *,
+        required_contract_hash: str | None = None,
+    ) -> str | None:
+        with self._connect() as db:
+            if required_contract_hash is None:
+                row = db.execute(
+                    """
+                    select session_id from conversation_runtime_sessions
+                    where conversation_id=? and route_name=?
+                    """,
+                    (conversation_id, route_name),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    """
+                    select session_id from conversation_runtime_sessions
+                    where conversation_id=? and route_name=? and contract_hash=?
+                    """,
+                    (conversation_id, route_name, required_contract_hash.strip()),
+                ).fetchone()
+            return None if row is None else str(row["session_id"])
+
+    def get_conversation_runtime_session_contract_hash(
         self,
         conversation_id: str,
         route_name: str,
@@ -10425,12 +10476,12 @@ class AutoReplyStore:
         with self._connect() as db:
             row = db.execute(
                 """
-                select session_id from conversation_runtime_sessions
+                select contract_hash from conversation_runtime_sessions
                 where conversation_id=? and route_name=?
                 """,
                 (conversation_id, route_name),
             ).fetchone()
-            return None if row is None else str(row["session_id"])
+            return None if row is None else str(row["contract_hash"])
 
     def clear_conversation_runtime_session_if_matches(
         self,
@@ -10567,7 +10618,7 @@ class AutoReplyStore:
     ) -> int:
         if not contract_hash.strip():
             raise ValueError("contract_hash must be non-empty")
-        with self._connect() as db:
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             cursor = db.execute(
                 """
                 update conversations
@@ -10575,6 +10626,23 @@ class AutoReplyStore:
                 where conversation_id=?
                 """,
                 (contract_hash, conversation_id),
+            )
+            db.execute(
+                """
+                insert into conversation_runtime_sessions (
+                    conversation_id, route_name, session_id,
+                    contract_hash, updated_at
+                )
+                select conversation_id, 'codex_oauth', codex_session_id, ?, ?
+                from conversations
+                where conversation_id=? and codex_session_id is not null
+                  and codex_session_id<>''
+                on conflict(conversation_id, route_name) do update set
+                    session_id=excluded.session_id,
+                    contract_hash=excluded.contract_hash,
+                    updated_at=excluded.updated_at
+                """,
+                (contract_hash, now_text, conversation_id),
             )
             return cursor.rowcount
 

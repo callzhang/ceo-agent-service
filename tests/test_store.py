@@ -1,14 +1,14 @@
 import errno
-import json
 import importlib.util
+import json
+import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from multiprocessing import get_context
 from pathlib import Path
 from queue import Queue
-import sqlite3
 from threading import Barrier, Event, Thread
-import time
 
 import pytest
 
@@ -659,14 +659,24 @@ def test_runtime_attempt_effect_started_timestamp_is_idempotent(tmp_path: Path):
 def test_route_sessions_do_not_overwrite_other_routes(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "route-sessions.sqlite3")
 
-    store.upsert_conversation_runtime_session("cid", "codex_oauth", "oauth-session")
-    store.upsert_conversation_runtime_session("cid", "codex_api", "api-session")
+    store.upsert_conversation_runtime_session(
+        "cid", "codex_oauth", "oauth-session", "oauth-contract"
+    )
+    store.upsert_conversation_runtime_session(
+        "cid", "codex_api", "api-session", "api-contract"
+    )
 
     assert (
         store.get_conversation_runtime_session("cid", "codex_oauth")
         == "oauth-session"
     )
     assert store.get_conversation_runtime_session("cid", "codex_api") == "api-session"
+    assert store.get_conversation_runtime_session(
+        "cid", "codex_oauth", required_contract_hash="api-contract"
+    ) is None
+    assert store.get_conversation_runtime_session(
+        "cid", "codex_api", required_contract_hash="api-contract"
+    ) == "api-session"
 
 
 def test_route_session_initialization_backfills_legacy_codex_session(tmp_path: Path):
@@ -697,6 +707,46 @@ def test_route_session_initialization_backfills_legacy_codex_session(tmp_path: P
         store.get_conversation_runtime_session("legacy-cid", "codex_oauth")
         == "legacy-session"
     )
+    assert store.get_conversation_runtime_session_contract_hash(
+        "legacy-cid", "codex_oauth"
+    ) == ""
+    assert store.get_conversation_runtime_session(
+        "legacy-cid",
+        "codex_oauth",
+        required_contract_hash="current-wire-contract",
+    ) is None
+
+
+def test_route_session_migration_marks_existing_rows_contract_unknown(tmp_path: Path):
+    db_path = tmp_path / "old-route-session-schema.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """
+            create table conversation_runtime_sessions (
+                conversation_id text not null,
+                route_name text not null,
+                session_id text not null,
+                updated_at text not null default current_timestamp,
+                primary key(conversation_id, route_name)
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into conversation_runtime_sessions (
+                conversation_id, route_name, session_id
+            ) values ('cid', 'codex_api', 'old-api-session')
+            """
+        )
+
+    store = AutoReplyStore(db_path)
+
+    assert store.get_conversation_runtime_session_contract_hash(
+        "cid", "codex_api"
+    ) == ""
+    assert store.get_conversation_runtime_session(
+        "cid", "codex_api", required_contract_hash="current-contract"
+    ) is None
 
 
 def test_route_pause_is_independent_and_expires(tmp_path: Path):
