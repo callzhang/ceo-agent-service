@@ -164,6 +164,7 @@ class _ReadOnlyCommandIsolation(StrEnum):
     NO_TOOLS = "no_tools"
     MEMORY_RECALL_ONLY = "memory_recall_only"
     MEMORY_READS = "memory_reads"
+    AGENT_CLI_READS = "agent_cli_reads"
     REVIEWED_READS = "reviewed_reads"
 
 
@@ -204,6 +205,7 @@ class ApprovedCodexCommandFactory:
     _use_output_schema: bool
     _image_paths: tuple[Path, ...]
     _command_isolation: _ReadOnlyCommandIsolation
+    _required_reviewed_mcp_servers: frozenset[str]
 
     def __init__(
         self,
@@ -214,6 +216,7 @@ class ApprovedCodexCommandFactory:
         use_output_schema: bool,
         image_paths: tuple[Path, ...],
         command_isolation: _ReadOnlyCommandIsolation,
+        required_reviewed_mcp_servers: frozenset[str],
         seal: object,
     ) -> None:
         if seal is not _APPROVED_COMMAND_FACTORY_SEAL:
@@ -227,6 +230,11 @@ class ApprovedCodexCommandFactory:
         object.__setattr__(self, "_use_output_schema", use_output_schema)
         object.__setattr__(self, "_image_paths", image_paths)
         object.__setattr__(self, "_command_isolation", command_isolation)
+        object.__setattr__(
+            self,
+            "_required_reviewed_mcp_servers",
+            required_reviewed_mcp_servers,
+        )
 
     @classmethod
     def read_only(
@@ -244,6 +252,7 @@ class ApprovedCodexCommandFactory:
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
             command_isolation=_ReadOnlyCommandIsolation.NO_TOOLS,
+            required_reviewed_mcp_servers=frozenset(),
             seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
 
@@ -263,6 +272,7 @@ class ApprovedCodexCommandFactory:
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
             command_isolation=_ReadOnlyCommandIsolation.NO_TOOLS,
+            required_reviewed_mcp_servers=frozenset(),
             seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
 
@@ -282,6 +292,7 @@ class ApprovedCodexCommandFactory:
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
             command_isolation=_ReadOnlyCommandIsolation.MEMORY_RECALL_ONLY,
+            required_reviewed_mcp_servers=frozenset({"memory_connector"}),
             seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
 
@@ -289,13 +300,15 @@ class ApprovedCodexCommandFactory:
     def read_only_project_memory(cls, **kwargs) -> ApprovedCodexCommandFactory:
         return cls._reviewed_read_only(
             command_isolation=_ReadOnlyCommandIsolation.MEMORY_READS,
+            required_reviewed_mcp_servers=frozenset({"memory_connector"}),
             **kwargs,
         )
 
     @classmethod
     def read_only_structured(cls, **kwargs) -> ApprovedCodexCommandFactory:
         return cls._reviewed_read_only(
-            command_isolation=_ReadOnlyCommandIsolation.REVIEWED_READS,
+            command_isolation=_ReadOnlyCommandIsolation.AGENT_CLI_READS,
+            required_reviewed_mcp_servers=frozenset({"agent_cli"}),
             **kwargs,
         )
 
@@ -303,13 +316,15 @@ class ApprovedCodexCommandFactory:
     def read_only_task(cls, **kwargs) -> ApprovedCodexCommandFactory:
         return cls._reviewed_read_only(
             command_isolation=_ReadOnlyCommandIsolation.REVIEWED_READS,
+            required_reviewed_mcp_servers=frozenset({"agent_cli", "memory_connector"}),
             **kwargs,
         )
 
     @classmethod
     def read_only_meeting(cls, **kwargs) -> ApprovedCodexCommandFactory:
         return cls._reviewed_read_only(
-            command_isolation=_ReadOnlyCommandIsolation.REVIEWED_READS,
+            command_isolation=_ReadOnlyCommandIsolation.AGENT_CLI_READS,
+            required_reviewed_mcp_servers=frozenset({"agent_cli"}),
             **kwargs,
         )
 
@@ -317,6 +332,7 @@ class ApprovedCodexCommandFactory:
     def read_only_weekly_okr(cls, **kwargs) -> ApprovedCodexCommandFactory:
         return cls._reviewed_read_only(
             command_isolation=_ReadOnlyCommandIsolation.REVIEWED_READS,
+            required_reviewed_mcp_servers=frozenset({"agent_cli", "memory_connector"}),
             **kwargs,
         )
 
@@ -325,6 +341,7 @@ class ApprovedCodexCommandFactory:
         cls,
         *,
         command_isolation: _ReadOnlyCommandIsolation,
+        required_reviewed_mcp_servers: frozenset[str],
         developer_instructions: str,
         output_schema_path: Path | None = None,
         use_output_schema: bool = False,
@@ -337,6 +354,7 @@ class ApprovedCodexCommandFactory:
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
             command_isolation=command_isolation,
+            required_reviewed_mcp_servers=required_reviewed_mcp_servers,
             seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
 
@@ -356,12 +374,27 @@ class ApprovedCodexCommandFactory:
             use_output_schema=use_output_schema,
             image_paths=tuple(image_paths),
             command_isolation=_ReadOnlyCommandIsolation.STANDARD,
+            required_reviewed_mcp_servers=frozenset(),
             seal=_APPROVED_COMMAND_FACTORY_SEAL,
         )
 
     @property
     def _approved_policy(self) -> _ApprovedExecutionPolicy:
         return self._policy
+
+    @property
+    def required_reviewed_mcp_servers(self) -> frozenset[str]:
+        return self._required_reviewed_mcp_servers
+
+    def missing_reviewed_mcp_transports(
+        self, *, adapter: CodexRuntimeAdapter, route: RuntimeRoute
+    ) -> frozenset[str]:
+        if not self._required_reviewed_mcp_servers:
+            return frozenset()
+        available = frozenset(
+            _configured_mcp_server_transport_names((), env=adapter.build_env(route))
+        )
+        return self._required_reviewed_mcp_servers - available
 
     def build(
         self,
@@ -401,6 +434,9 @@ def _apply_read_only_command_isolation(
     isolation: _ReadOnlyCommandIsolation,
 ) -> None:
     server_names = _configured_mcp_server_names(command, env=env)
+    transport_names = frozenset(
+        _configured_mcp_server_transport_names(command, env=env)
+    )
     _remove_read_only_isolation_conflicts(command)
     options = [
         *(
@@ -423,21 +459,23 @@ def _apply_read_only_command_isolation(
             "timeline_get",
             "user_get",
         )
-    elif isolation is _ReadOnlyCommandIsolation.REVIEWED_READS:
-        allowed_tools = {
-            "agent_cli": (
-                "execute_reviewed_read",
-                "read_skill",
-                "read_text_file",
-                "read_spreadsheet",
-            ),
-            "memory_connector": (
+    elif isolation in {
+        _ReadOnlyCommandIsolation.AGENT_CLI_READS,
+        _ReadOnlyCommandIsolation.REVIEWED_READS,
+    }:
+        allowed_tools["agent_cli"] = (
+            "execute_reviewed_read",
+            "read_skill",
+            "read_text_file",
+            "read_spreadsheet",
+        )
+        if isolation is _ReadOnlyCommandIsolation.REVIEWED_READS:
+            allowed_tools["memory_connector"] = (
                 "memory_get",
                 "memory_recall",
                 "timeline_get",
                 "user_get",
-            ),
-        }
+            )
     for server_name in server_names:
         if server_name in allowed_tools:
             continue
@@ -446,6 +484,8 @@ def _apply_read_only_command_isolation(
         if known_server not in allowed_tools and known_server not in server_names:
             options.extend(["-c", f"mcp_servers.{known_server}.enabled=false"])
     for server_name, tools in allowed_tools.items():
+        if server_name not in transport_names:
+            continue
         options.extend(
             [
                 "-c",
@@ -514,6 +554,44 @@ def _configured_mcp_server_names(
             raise ValueError("Codex MCP configuration is not safely readable") from exc
         if isinstance(configured, dict):
             names.update(str(name) for name in configured if str(name).strip())
+    return tuple(sorted(names))
+
+
+def _configured_mcp_server_transport_names(
+    command: Sequence[str], *, env: Mapping[str, str]
+) -> tuple[str, ...]:
+    names: set[str] = set()
+    for index, value in enumerate(command[:-1]):
+        if value != "-c":
+            continue
+        option = command[index + 1]
+        if not option.startswith("mcp_servers."):
+            continue
+        parts = option.split(".", 2)
+        if len(parts) != 3 or not parts[1]:
+            continue
+        field, separator, raw_value = parts[2].partition("=")
+        if separator and field in {"command", "url"} and raw_value.strip(" '\""):
+            names.add(parts[1])
+    codex_home_text = env.get("CODEX_HOME", os.environ.get("CODEX_HOME", "")).strip()
+    config_path = Path(codex_home_text) / "config.toml" if codex_home_text else None
+    if config_path is not None and config_path.is_file():
+        try:
+            configured = tomllib.loads(config_path.read_text(encoding="utf-8")).get(
+                "mcp_servers", {}
+            )
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise ValueError("Codex MCP configuration is not safely readable") from exc
+        if not isinstance(configured, dict):
+            raise ValueError("Codex MCP configuration has invalid server registry")
+        for name, server in configured.items():
+            if not isinstance(server, dict):
+                continue
+            if any(
+                isinstance(server.get(field), str) and server[field].strip()
+                for field in ("command", "url")
+            ):
+                names.add(str(name))
     return tuple(sorted(names))
 
 
@@ -1170,6 +1248,24 @@ class RoutedCodexExecution:
                 ),
             )
         route = decision.route
+        try:
+            missing_reviewed_mcp = command_factory.missing_reviewed_mcp_transports(
+                adapter=self._adapter,
+                route=route,
+            )
+        except ValueError as exc:
+            raise RoutedCodexExecutionError(
+                "runtime_reviewed_mcp_registry_invalid",
+                failure_class=RuntimeFailureClass.CAPABILITY,
+                failure_code="runtime_reviewed_mcp_registry_invalid",
+            ) from exc
+        if missing_reviewed_mcp:
+            raise RoutedCodexExecutionError(
+                "runtime_reviewed_mcp_surface_unavailable",
+                ",".join(sorted(missing_reviewed_mcp)),
+                failure_class=RuntimeFailureClass.CAPABILITY,
+                failure_code="runtime_reviewed_mcp_surface_unavailable",
+            )
         route_session_id = (
             forced_retry_session_id
             if forced_retry_session_id is not None

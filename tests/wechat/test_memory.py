@@ -63,11 +63,16 @@ def recall_matcher(tmp_path, callback):
     )
 
 
-def built_factory_command(factory, tmp_path):
+def built_factory_command(factory, tmp_path, *, configure_memory_connector=False):
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir(exist_ok=True)
     (codex_home / "config.toml").write_text(
-        "[mcp_servers.foreign_user]\ncommand = 'foreign-mcp'\n",
+        "[mcp_servers.foreign_user]\ncommand = 'foreign-mcp'\n"
+        + (
+            "[mcp_servers.memory_connector]\nurl = 'https://memory.example/mcp/'\n"
+            if configure_memory_connector
+            else ""
+        ),
         encoding="utf-8",
     )
 
@@ -967,6 +972,7 @@ def test_recall_matcher_uses_one_exact_query_per_candidate(tmp_path):
     command = built_factory_command(
         matcher.routed_execution.calls[0]["command_factory"],
         tmp_path,
+        configure_memory_connector=True,
     )
     assert "tools.enabled_tools=[]" in command
     assert 'web_search="disabled"' in command

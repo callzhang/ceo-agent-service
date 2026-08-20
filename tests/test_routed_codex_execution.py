@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.agent_effects import McpToolEffectRegistry
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
@@ -23,12 +24,11 @@ from app.agent_runtime_router import (
     RoutedResultCodec,
     RoutedResultValidationError,
     RoutedResultValidationRetry,
-    local_codex_session_effect_probe,
     _line_violates_read_only_policy,
+    local_codex_session_effect_probe,
 )
-from app.agent_effects import McpToolEffectRegistry
-from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.process_runner import ProcessRunResult
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AutoReplyStore
 
@@ -208,7 +208,6 @@ def test_unknown_dynamic_started_item_fails_closed():
             "item": {"type": "future_dynamic_capability", "name": "ambient"},
         }
     )
-
     assert (
         _line_violates_read_only_policy(
             line,
@@ -219,17 +218,149 @@ def test_unknown_dynamic_started_item_fails_closed():
     )
 
 
+def test_reviewed_mcp_surface_mapping_is_exact_per_caller():
+    def required(builder):
+        return builder(
+            developer_instructions="reviewed reads only"
+        ).required_reviewed_mcp_servers
+
+    assert required(ApprovedCodexCommandFactory.read_only_without_tools) == frozenset()
+    assert required(ApprovedCodexCommandFactory.read_only_memory_recall) == frozenset(
+        {"memory_connector"}
+    )
+    assert required(ApprovedCodexCommandFactory.read_only_project_memory) == frozenset(
+        {"memory_connector"}
+    )
+    assert required(ApprovedCodexCommandFactory.read_only_structured) == frozenset(
+        {"agent_cli"}
+    )
+    assert required(ApprovedCodexCommandFactory.read_only_meeting) == frozenset(
+        {"agent_cli"}
+    )
+    assert required(ApprovedCodexCommandFactory.read_only_task) == frozenset(
+        {"agent_cli", "memory_connector"}
+    )
+    assert required(ApprovedCodexCommandFactory.read_only_weekly_okr) == frozenset(
+        {"agent_cli", "memory_connector"}
+    )
+
+
+def test_absent_reviewed_mcp_transport_is_never_synthesized(
+    config, tmp_path, monkeypatch
+):
+    codex_home = tmp_path / "empty-codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    command, _ = ApprovedCodexCommandFactory.read_only_structured(
+        developer_instructions="reviewed reads only"
+    ).build(
+        adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
+        route=config.routes[0],
+        prompt="read",
+        session_id=None,
+    )
+    argv = "\n".join(command)
+
+    assert "mcp_servers.agent_cli.enabled=true" not in argv
+    assert "mcp_servers.agent_cli.enabled_tools=" not in argv
+    assert "mcp_servers.memory_connector.enabled=true" not in argv
+
+
+def test_local_transport_registry_distinguishes_agent_cli_and_memory_connector(
+    config, tmp_path, monkeypatch
+):
+    codex_home = tmp_path / "memory-only-codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.memory_connector]\nurl='https://memory.example/mcp/'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    adapter = CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test")
+    route = config.routes[0]
+
+    assert ApprovedCodexCommandFactory.read_only_structured(
+        developer_instructions="reviewed reads only"
+    ).missing_reviewed_mcp_transports(adapter=adapter, route=route) == frozenset(
+        {"agent_cli"}
+    )
+    memory_factory = ApprovedCodexCommandFactory.read_only_memory_recall(
+        developer_instructions="memory recall only"
+    )
+    assert (
+        memory_factory.missing_reviewed_mcp_transports(adapter=adapter, route=route)
+        == frozenset()
+    )
+    command, _ = memory_factory.build(
+        adapter=adapter,
+        route=route,
+        prompt="recall",
+        session_id=None,
+    )
+    assert "mcp_servers.memory_connector.enabled=true" in command
+
+
+def test_missing_required_reviewed_mcp_surface_stops_before_attempt_or_spawn(
+    store, config, tmp_path, monkeypatch
+):
+    key = seed_structured_parent(store, 221)
+    codex_home = tmp_path / "empty-codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    calls = 0
+
+    def executor(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("missing reviewed MCP transport must not spawn")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=executor,
+    )
+    with pytest.raises(
+        RoutedCodexExecutionError,
+        match="runtime_reviewed_mcp_surface_unavailable",
+    ) as caught:
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only_structured(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+    assert caught.value.failure_class is RuntimeFailureClass.CAPABILITY
+    assert caught.value.failure_code == "runtime_reviewed_mcp_surface_unavailable"
+    assert calls == 0
+    assert store.list_runtime_operation_attempts("structured", key) == []
+
+
 @pytest.mark.parametrize(
-    "factory_builder",
+    ("factory_builder", "agent_cli_allowed", "memory_connector_allowed"),
     [
-        ApprovedCodexCommandFactory.read_only_structured,
-        ApprovedCodexCommandFactory.read_only_task,
-        ApprovedCodexCommandFactory.read_only_meeting,
-        ApprovedCodexCommandFactory.read_only_weekly_okr,
+        (ApprovedCodexCommandFactory.read_only_structured, True, False),
+        (ApprovedCodexCommandFactory.read_only_task, True, True),
+        (ApprovedCodexCommandFactory.read_only_meeting, True, False),
+        (ApprovedCodexCommandFactory.read_only_weekly_okr, True, True),
     ],
 )
 def test_reviewed_read_factories_pre_spawn_allow_only_exact_reviewed_tools(
-    config, tmp_path, monkeypatch, factory_builder
+    config,
+    tmp_path,
+    monkeypatch,
+    factory_builder,
+    agent_cli_allowed,
+    memory_connector_allowed,
 ):
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
@@ -249,12 +380,18 @@ def test_reviewed_read_factories_pre_spawn_allow_only_exact_reviewed_tools(
     argv = "\n".join(command)
 
     assert "mcp_servers.ambient_plugin.enabled=false" in argv
-    assert "mcp_servers.agent_cli.enabled=true" in argv
-    assert "mcp_servers.memory_connector.enabled=true" in argv
-    assert "execute_reviewed_read" in argv
-    assert "execute_reviewed_write" in argv  # explicitly disabled
-    assert "memory_recall" in argv
-    assert "memory_write" in argv  # explicitly disabled
+    assert ("mcp_servers.agent_cli.enabled=true" in argv) is agent_cli_allowed
+    assert ("execute_reviewed_read" in argv) is agent_cli_allowed
+    assert ("execute_reviewed_write" in argv) is agent_cli_allowed
+    assert (
+        "mcp_servers.memory_connector.enabled=true" in argv
+    ) is memory_connector_allowed
+    assert ("memory_recall" in argv) is memory_connector_allowed
+    assert ("memory_write" in argv) is memory_connector_allowed
+    if not agent_cli_allowed:
+        assert "mcp_servers.agent_cli.enabled=false" in argv
+    if not memory_connector_allowed:
+        assert "mcp_servers.memory_connector.enabled=false" in argv
     assert "tools.enabled_tools=[]" in argv
     assert 'web_search="disabled"' in argv
     for feature in (
