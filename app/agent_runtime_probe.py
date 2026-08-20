@@ -36,6 +36,7 @@ from app.store import AutoReplyStore
 PROBE_TOTAL_TIMEOUT_SECONDS = 60.0
 PROBE_IDLE_TIMEOUT_SECONDS = 30.0
 _PROBE_PROMPT = 'Return only the synthetic probe result {"ok":true}.'
+_PROBE_CANONICAL_RESULT = '{"ok":true}'
 _PROBE_DEVELOPER_INSTRUCTIONS = (
     "This is a synthetic runtime health probe. Do not call tools, read files, "
     'or access business data. Return exactly {"ok":true}.'
@@ -211,17 +212,14 @@ class AgentRuntimeProbe:
                     expires_at=expires_at,
                     failure=baseline_failure,
                 )
-            if any(
-                event.get("type") == RuntimeEventType.ITEM_STARTED.value
-                for event in baseline_events
-            ):
+            if not _claude_probe_grammar_valid(baseline_events, effect=False):
                 return _snapshot(
                     route=route,
                     checked_at=checked_at,
                     expires_at=expires_at,
                     failure=_probe_failure(
-                        "runtime_probe_policy_violation",
-                        "Runtime probe attempted an action.",
+                        "runtime_probe_grammar_invalid",
+                        "Runtime probe normalized grammar is invalid.",
                     ),
                 )
             effect_failure, effect_events = self._run_one_claude_probe(
@@ -282,6 +280,26 @@ class AgentRuntimeProbe:
                 }
             )
             assert expected_call is not None
+            if not starts:
+                return _snapshot(
+                    route=route,
+                    checked_at=checked_at,
+                    expires_at=expires_at,
+                    failure=_probe_failure(
+                        "runtime_probe_effect_visibility_missing",
+                        "Runtime probe effect-start evidence is missing.",
+                    ),
+                )
+            if not _claude_probe_grammar_valid(effect_events, effect=True):
+                return _snapshot(
+                    route=route,
+                    checked_at=checked_at,
+                    expires_at=expires_at,
+                    failure=_probe_failure(
+                        "runtime_probe_grammar_invalid",
+                        "Runtime probe normalized grammar is invalid.",
+                    ),
+                )
             exact_evidence = (
                 len(starts) == 1
                 and len(completions) == 1
@@ -569,6 +587,42 @@ def _matching_probe_tool_event(event: dict[str, object], event_type: str) -> boo
         and item.get("tool") == "record_effect_start"
         and isinstance(item.get("id"), str)
         and bool(item["id"])
+    )
+
+
+def _claude_probe_grammar_valid(
+    events: tuple[dict[str, object], ...], *, effect: bool
+) -> bool:
+    expected_types = (
+        (
+            RuntimeEventType.TURN_STARTED.value,
+            RuntimeEventType.ITEM_STARTED.value,
+            RuntimeEventType.ITEM_COMPLETED.value,
+            RuntimeEventType.ITEM_COMPLETED.value,
+            RuntimeEventType.TURN_COMPLETED.value,
+        )
+        if effect
+        else (
+            RuntimeEventType.TURN_STARTED.value,
+            RuntimeEventType.ITEM_COMPLETED.value,
+            RuntimeEventType.TURN_COMPLETED.value,
+        )
+    )
+    if tuple(event.get("type") for event in events) != expected_types:
+        return False
+    message = events[3 if effect else 1].get("item")
+    if not (
+        isinstance(message, dict)
+        and message.get("type") == "agent_message"
+        and message.get("text") == _PROBE_CANONICAL_RESULT
+    ):
+        return False
+    start_session = events[0].get("session_id")
+    end_session = events[-1].get("session_id")
+    return (
+        isinstance(start_session, str)
+        and bool(start_session)
+        and start_session == end_session
     )
 
 
