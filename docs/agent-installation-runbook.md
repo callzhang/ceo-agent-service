@@ -191,7 +191,9 @@ Never put the API key in argv, a prompt, a repository file, SQLite, History, a
 diagnostic attachment, or a shell transcript. The runtime adapter injects it
 only as `OPENAI_API_KEY` in the `codex_api` child environment and removes the
 service variable; the OAuth child receives neither variable. Do not print the
-environment while diagnosing this route.
+environment while diagnosing this route. Do not enter or `export` the secret in
+an interactive shell whose command history or transcript is retained; provision
+it directly in the service-owned environment using the approved secret channel.
 
 Route probes are synthetic, schema-constrained, read-only turns with all tools,
 web access, plugins, apps, memories, browser features, and dynamic tool search

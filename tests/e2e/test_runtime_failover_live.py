@@ -23,7 +23,7 @@ from app.agent_runtime_router import (
     count_codex_session_lines,
     local_codex_session_effect_probe,
 )
-from app.audit_web import render_attempt_list
+from app.audit_web import _runtime_attempt_evidence_card
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRole, AutoReplyStore
@@ -92,19 +92,20 @@ def _run_probe(config, route_name: str, tmp_path: Path, executor=None):
     return snapshot
 
 
-def _rendered_history(store: AutoReplyStore) -> str:
-    return render_attempt_list(
-        store,
-        limit=50,
-        page=1,
-        type_filter=(),
-        query="",
-        query_embedding=None,
-        search_object_type="",
-        include_chart=True,
-        include_pending_tasks=True,
-        include_feedback_count=False,
+def _runtime_database_paths(path: Path) -> tuple[Path, ...]:
+    return (
+        path,
+        path.with_name(f"{path.name}-wal"),
+        path.with_name(f"{path.name}-shm"),
     )
+
+
+def _recorded_surfaces(recorder: _RecordingExecutor) -> list[str]:
+    return [
+        *(result.stdout for result in recorder.results),
+        *(result.stderr for result in recorder.results),
+        *(" ".join(command) for command in recorder.commands),
+    ]
 
 
 def _assert_secret_absent(
@@ -112,15 +113,11 @@ def _assert_secret_absent(
     *,
     recorder: _RecordingExecutor,
     store: AutoReplyStore,
+    rendered_history: str,
 ) -> None:
-    captured = [
-        *(result.stdout for result in recorder.results),
-        *(result.stderr for result in recorder.results),
-        *(" ".join(command) for command in recorder.commands),
-        _rendered_history(store),
-    ]
+    captured = [*_recorded_surfaces(recorder), rendered_history]
     assert all(secret not in surface for surface in captured)
-    for path in (store.path, store.path.with_name(f"{store.path.name}-wal")):
+    for path in _runtime_database_paths(store.path):
         if path.exists():
             assert secret.encode() not in path.read_bytes()
 
@@ -186,13 +183,18 @@ def test_oauth_route_probe_from_service_environment(tmp_path):
 def test_api_route_probe_does_not_expose_secret(tmp_path):
     config = _live_config()
     recorder = _RecordingExecutor()
-    store = AutoReplyStore(tmp_path / "runtime-api-probe.sqlite3")
+    business_db = tmp_path / "runtime-api-probe.sqlite3"
+    assert not any(path.exists() for path in _runtime_database_paths(business_db))
 
     _run_probe(config, "codex_api", tmp_path, recorder)
 
     secret = config.secret_for("codex_api")
     assert secret is not None
-    _assert_secret_absent(secret.get_secret_value(), recorder=recorder, store=store)
+    assert all(
+        secret.get_secret_value() not in surface
+        for surface in _recorded_surfaces(recorder)
+    )
+    assert not any(path.exists() for path in _runtime_database_paths(business_db))
 
 
 def test_read_only_turn_fails_over_under_same_agent_run(tmp_path):
@@ -283,10 +285,19 @@ def test_read_only_turn_fails_over_under_same_agent_run(tmp_path):
     assert [attempt.route_name for attempt in attempts] == ["codex_oauth", "codex_api"]
     assert [attempt.status for attempt in attempts] == ["superseded", "completed"]
     assert attempts[0].failure_code == "codex_login_required"
+    rendered_history = _runtime_attempt_evidence_card(attempts)
+    assert "Runtime attempts" in rendered_history
+    assert "Route: codex_oauth" in rendered_history
+    assert "Route: codex_api" in rendered_history
     for command in recorder.commands:
         argv = "\n".join(command)
         assert "tools.enabled_tools=[]" in argv
         assert 'web_search="disabled"' in argv
     secret = config.secret_for("codex_api")
     assert secret is not None
-    _assert_secret_absent(secret.get_secret_value(), recorder=recorder, store=store)
+    _assert_secret_absent(
+        secret.get_secret_value(),
+        recorder=recorder,
+        store=store,
+        rendered_history=rendered_history,
+    )
