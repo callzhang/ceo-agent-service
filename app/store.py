@@ -1659,11 +1659,13 @@ class AutoReplyStore:
                     operation text not null check(operation in ('create', 'complete')),
                     evidence_json text not null default '{}',
                     status text not null default 'queued'
-                        check(status in ('queued', 'running', 'completed', 'failed', 'unknown')),
+                        check(status in ('queued', 'running', 'completed', 'failed', 'exhausted', 'unknown')),
                     lease_owner text not null default '',
                     lease_expires_at text not null default '',
                     receipt_json text not null default '{}',
                     error text not null default '',
+                    attempt_count integer not null default 0,
+                    next_attempt_at text not null default '',
                     created_at text not null default current_timestamp,
                     updated_at text not null default current_timestamp,
                     completed_at text not null default ''
@@ -2654,6 +2656,16 @@ class AutoReplyStore:
                         f"alter table weekly_okr_analysis_jobs add column {column} "
                         "text not null default ''"
                     )
+            outbox_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(task_todo_sync_outbox)").fetchall()
+            }
+            for column, definition in (
+                ("attempt_count", "integer not null default 0"),
+                ("next_attempt_at", "text not null default ''"),
+            ):
+                if column not in outbox_columns:
+                    db.execute(f"alter table task_todo_sync_outbox add column {column} {definition}")
             org_user_profile_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
@@ -15562,14 +15574,17 @@ class AutoReplyStore:
                 (now, now),
             )
             row = db.execute(
-                "select * from task_todo_sync_outbox "
-                "where status in ('queued', 'failed') order by id limit 1"
+                "select * from task_todo_sync_outbox where "
+                "(status='queued' or (status='failed' and next_attempt_at<=?)) "
+                "order by id limit 1",
+                (now,),
             ).fetchone()
             if row is None:
                 return None
             changed = db.execute(
                 "update task_todo_sync_outbox set status='running', lease_owner=?, "
-                "lease_expires_at=?, updated_at=? where id=? and status in ('queued', 'failed')",
+                "lease_expires_at=?, attempt_count=attempt_count+1, updated_at=? "
+                "where id=? and status in ('queued', 'failed')",
                 (owner, lease_until, now, row["id"]),
             )
             return row if changed.rowcount == 1 else None
@@ -15585,6 +15600,26 @@ class AutoReplyStore:
                 "lease_owner='', lease_expires_at='', completed_at=current_timestamp, "
                 "updated_at=current_timestamp where id=? and status='running' and lease_owner=?",
                 (status, receipt_json, error, outbox_id, owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("task todo sync receipt ownership lost")
+
+    def retry_task_todo_sync_outbox(
+        self, *, outbox_id: int, owner: str, error: str, now: str
+    ) -> None:
+        with self._connect() as db:
+            row = db.execute("select attempt_count from task_todo_sync_outbox where id=?", (outbox_id,)).fetchone()
+            if row is None:
+                raise ValueError("task todo sync outbox does not exist")
+            attempts = int(row["attempt_count"])
+            status = "exhausted" if attempts >= 3 else "failed"
+            next_attempt_at = "" if status == "exhausted" else (
+                datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=60 * attempts)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            changed = db.execute(
+                "update task_todo_sync_outbox set status=?, error=?, next_attempt_at=?, "
+                "lease_owner='', lease_expires_at='', updated_at=? where id=? and status='running' and lease_owner=?",
+                (status, error, next_attempt_at, now, outbox_id, owner),
             )
             if changed.rowcount != 1:
                 raise ValueError("task todo sync receipt ownership lost")

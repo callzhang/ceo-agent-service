@@ -689,12 +689,11 @@ def dispatch_task_todo_sync_outbox(
                 )
                 receipt = {"delivered": delivered_now}
             if not delivered_now:
-                store.finish_task_todo_sync_outbox(
-                    outbox_id=item["id"], owner=owner, status="failed",
-                    receipt_json=json.dumps(receipt, ensure_ascii=False),
-                    error="dingtalk_todo_effect_not_delivered",
+                store.retry_task_todo_sync_outbox(
+                    outbox_id=item["id"], owner=owner,
+                    error="dingtalk_todo_effect_not_delivered", now=now,
                 )
-                break
+                continue
             store.finish_task_todo_sync_outbox(
                 outbox_id=item["id"], owner=owner, status="completed",
                 receipt_json=json.dumps(receipt, ensure_ascii=False),
