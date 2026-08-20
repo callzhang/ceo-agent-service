@@ -704,6 +704,7 @@ class AutoReplyStore:
             with self._schema_initialize_lock():
                 if path_key in _INITIALIZED_STORE_PATHS:
                     return
+                self._ensure_wal_journal_mode()
                 if self._schema_is_current_after_lock_retry():
                     _INITIALIZED_STORE_PATHS.add(path_key)
                     return
@@ -711,6 +712,14 @@ class AutoReplyStore:
                 self.backfill_oa_audit_metadata()
                 self.set_service_state(STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION)
                 _INITIALIZED_STORE_PATHS.add(path_key)
+
+    def _ensure_wal_journal_mode(self) -> None:
+        with self._connect() as db:
+            journal_mode = str(db.execute("pragma journal_mode = wal").fetchone()[0])
+        if journal_mode.casefold() != "wal":
+            raise RuntimeError(
+                f"failed to enable SQLite WAL journal mode: {journal_mode}"
+            )
 
     def _schema_is_current_after_lock_retry(self) -> bool:
         for attempt in range(SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS):
@@ -825,7 +834,6 @@ class AutoReplyStore:
 
     def _initialize(self) -> None:
         with self._connect() as db:
-            db.execute("pragma journal_mode = wal")
             db.executescript(
                 """
                 create table if not exists conversations (

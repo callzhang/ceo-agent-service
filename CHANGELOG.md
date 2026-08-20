@@ -1,5 +1,9 @@
 # Changelog
 
+- Restore SQLite WAL mode on every service process startup even when the schema
+  is already current, preventing a database restored in rollback-journal mode
+  from serializing readers behind long-running writers.
+
 - Retry isolated SQLite lock contention in DingTalk reads, meeting consumption,
   and follow-up delivery; record an error only when the same loop remains locked
   for three consecutive attempts.

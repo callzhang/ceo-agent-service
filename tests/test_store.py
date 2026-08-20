@@ -400,6 +400,19 @@ def test_store_connections_enable_sqlite_concurrency_pragmas(tmp_path: Path):
     assert foreign_keys == 1
 
 
+def test_store_restores_wal_for_current_schema_database(tmp_path: Path):
+    db_path = tmp_path / "worker.sqlite3"
+    AutoReplyStore(db_path)
+    store_module._INITIALIZED_STORE_PATHS.clear()
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("pragma journal_mode = delete").fetchone()[0] == "delete"
+
+    AutoReplyStore(db_path)
+
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("pragma journal_mode").fetchone()[0] == "wal"
+
+
 def test_discard_unstarted_service_tasks_closes_only_no_effect_tasks(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     for message_id in ("service-1", "service-2"):
