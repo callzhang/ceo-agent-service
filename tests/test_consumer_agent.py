@@ -808,9 +808,11 @@ def test_consumer_read_events_can_fail_over_within_same_run(
         "session-api",
     ]
     assert attempts[0].transcript_start == 0
-    assert attempts[0].transcript_end > attempts[0].transcript_start
+    assert attempts[0].transcript_end == len(oauth_failure.splitlines())
     assert attempts[1].transcript_start == 0
-    assert attempts[1].transcript_end > attempts[1].transcript_start
+    assert attempts[1].transcript_end == len(
+        _result_jsonl(session="session-api").splitlines()
+    )
     assert store.active_runtime_route_pause(
         "codex_oauth", now="2026-08-20 00:00:00"
     ) == "codex_login_required"

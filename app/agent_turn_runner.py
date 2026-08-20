@@ -610,6 +610,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 observed_session_id = ""
                 replayed_effect_evidence = False
                 active_route = route
+                attempt_line_start = line_count
                 if not attempt_is_preclaimed:
                     active_attempt = self._claim_and_start_attempt(
                         run,
@@ -662,7 +663,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
                 failed_session_id = observed_session_id or route_session_id or ""
                 failed_transcript_end = max(
-                    attempt_transcript_start + line_count,
+                    attempt_transcript_start + (line_count - attempt_line_start),
                     attempt_transcript_start,
                 )
                 evidence_uncertain = bool(expected_effect_actions) and not failed_session_id
@@ -785,7 +786,8 @@ class AgentTurnProcess(Generic[ResultT]):
                     "",
                     attempt_transcript_start,
                     max(
-                        attempt_transcript_start + line_count,
+                        attempt_transcript_start
+                        + (line_count - attempt_line_start),
                         session_transcript_end,
                     ),
                 )
