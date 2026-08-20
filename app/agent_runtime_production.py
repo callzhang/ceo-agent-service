@@ -86,3 +86,31 @@ def build_production_routed_codex_execution(
     if executor is not None:
         kwargs["executor"] = executor
     return RoutedCodexExecution(**kwargs)
+
+
+def build_production_runtime_refresher(
+    *,
+    store: AutoReplyStore,
+    codex_bin: str = "codex",
+    executor: ProcessExecutor | None = None,
+    capability_registry: RuntimeCapabilityRegistry = PRODUCTION_RUNTIME_CAPABILITIES,
+    temporary_root: Path | None = None,
+):
+    """Build the route probe/refresher that owns the shared production view."""
+
+    from app.agent_runtime_probe import AgentRuntimeProbe, RuntimeCapabilityRefresher
+
+    runtime_config = load_runtime_config(os.environ)
+    probe_kwargs = {
+        "config": runtime_config,
+        "codex_bin": codex_bin,
+        "temporary_root": temporary_root,
+    }
+    if executor is not None:
+        probe_kwargs["executor"] = executor
+    return RuntimeCapabilityRefresher(
+        config=runtime_config,
+        store=store,
+        registry=capability_registry,
+        probe=AgentRuntimeProbe(**probe_kwargs),
+    )

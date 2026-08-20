@@ -262,6 +262,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command in (
         "probe-dws",
+        "probe-agent-runtimes",
         "run-once",
         "run",
         "service",
@@ -428,6 +429,14 @@ def build_parser() -> argparse.ArgumentParser:
         )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
+        if command == "probe-agent-runtimes":
+            subparser.add_argument(
+                "--route",
+                action="append",
+                choices=("codex_oauth", "codex_api"),
+                default=[],
+                help="probe only this configured route; repeat to select both",
+            )
         if command == "read-oa-approval-detail":
             subparser.add_argument("--instance-id", required=True)
         if command == "retry-work-summary-input":
@@ -792,13 +801,19 @@ def _expand_path_arg(value: str | Path) -> Path:
     return Path(value).expanduser()
 
 
-def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
+def create_worker(
+    settings: WorkerSettings,
+    *,
+    runtime_refresher=None,
+) -> DingTalkAutoReplyWorker:
     from app.okr_review import (
         DwsAgoalApiOkrSource,
         DwsLiveOkrSource,
         UnconfiguredOkrLiveSource,
     )
 
+    if runtime_refresher is not None:
+        runtime_refresher.refresh_expired()
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
@@ -838,6 +853,12 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
     else:
         worker.okr_live_source = UnconfiguredOkrLiveSource(OKR_SOURCE_KIND_ENV)
     return worker
+
+
+def _create_service_worker(settings: WorkerSettings, runtime_refresher):
+    if runtime_refresher is None:
+        return create_worker(settings)
+    return create_worker(settings, runtime_refresher=runtime_refresher)
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()
@@ -2326,6 +2347,19 @@ def run_database_backup_loop(
         sleep(BACKUP_CHECK_INTERVAL_SECONDS)
 
 
+def run_runtime_probe_loop(
+    runtime_refresher,
+    interval_seconds: float,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Refresh expired route snapshots on one shared service cadence."""
+
+    while True:
+        sleep(interval_seconds)
+        runtime_refresher.refresh_expired()
+
+
 def _create_meeting_dws(settings: WorkerSettings) -> DwsClient:
     return DwsClient(
         ding_robot_code=settings.ding_robot_code,
@@ -2669,7 +2703,10 @@ def run_service(
     thread_factory: Callable[..., threading.Thread] = threading.Thread,
     wait: Callable[[], None] | None = None,
     exit_process: Callable[[int], None] = os._exit,
+    runtime_refresher=None,
 ) -> None:
+    if runtime_refresher is not None:
+        runtime_refresher.refresh_expired(force=True)
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_orphaned_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
@@ -2691,7 +2728,7 @@ def run_service(
         (
             "producer",
             lambda: run_producer_loop(
-                create_worker(settings),
+                _create_service_worker(settings, runtime_refresher),
                 producer_interval_seconds,
                 max_tasks=settings.max_batches,
                 network_ready=dependency_gate.ready,
@@ -2737,7 +2774,7 @@ def run_service(
         (
             f"consumer-{index + 1}",
             lambda: run_consumer_loop(
-                create_worker(settings),
+                _create_service_worker(settings, runtime_refresher),
                 consumer_poll_interval_seconds,
                 max_tasks=settings.max_batches,
                 network_ready=dependency_gate.ready,
@@ -2746,6 +2783,17 @@ def run_service(
         for index in range(settings.consumer_workers)
     )
     components = components[:2] + consumer_components + components[2:]
+    if runtime_refresher is not None:
+        components = (
+            (
+                "runtime-probe",
+                lambda: run_runtime_probe_loop(
+                    runtime_refresher,
+                    runtime_refresher.interval_seconds,
+                ),
+            ),
+            *components,
+        )
     if settings.oa_pending_scan_enabled:
         components += (
             (
@@ -3056,6 +3104,36 @@ def probe_dws() -> int:
     return 1 if blocked else 0
 
 
+def probe_agent_runtimes_command(
+    settings: WorkerSettings,
+    *,
+    route_names: tuple[str, ...] = (),
+    refresher=None,
+) -> int:
+    """Force synthetic route probes and print only safe capability evidence."""
+
+    if refresher is None:
+        from app.agent_runtime_production import build_production_runtime_refresher
+
+        refresher = build_production_runtime_refresher(
+            store=AutoReplyStore(settings.db_path),
+        )
+    snapshots = refresher.refresh_expired(route_names=route_names, force=True)
+    routes = [
+        {
+            "route_name": snapshot.route_name,
+            "healthy": snapshot.healthy,
+            "capabilities": sorted(snapshot.capabilities),
+            "checked_at": snapshot.checked_at,
+            "expires_at": snapshot.expires_at,
+            "failure_code": snapshot.failure.code if snapshot.failure else "",
+        }
+        for snapshot in snapshots.values()
+    ]
+    print(json.dumps({"routes": routes}, ensure_ascii=False), flush=True)
+    return 0 if routes and all(route["healthy"] for route in routes) else 1
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -3079,12 +3157,18 @@ def main() -> None:
         )
     elif args.command == "service":
         ensure_live_send_allowed(settings)
+        from app.agent_runtime_production import build_production_runtime_refresher
+
+        runtime_refresher = build_production_runtime_refresher(
+            store=AutoReplyStore(settings.db_path),
+        )
         run_service(
             settings,
             host=args.host,
             port=args.port,
             producer_interval_seconds=args.producer_interval_seconds,
             consumer_poll_interval_seconds=args.consumer_poll_interval_seconds,
+            runtime_refresher=runtime_refresher,
         )
     elif args.command == "produce-once":
         produce_once(settings)
@@ -3185,6 +3269,10 @@ def main() -> None:
         )
     elif args.command == "probe-dws":
         raise SystemExit(probe_dws())
+    elif args.command == "probe-agent-runtimes":
+        raise SystemExit(
+            probe_agent_runtimes_command(settings, route_names=tuple(args.route))
+        )
     elif args.command == "refresh-org-cache":
         refresh_org_cache_command(settings, set(args.user_id))
     elif args.command == "feedback":

@@ -1,12 +1,16 @@
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_production import (
+    PRODUCTION_RUNTIME_CAPABILITIES,
     RuntimeCapabilityRegistry,
     build_production_routed_codex_execution,
+    build_production_runtime_refresher,
 )
+from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
 
 
@@ -71,3 +75,31 @@ def test_production_bootstrap_never_admits_missing_api_snapshot(tmp_path, monkey
 def test_capability_registry_rejects_mismatched_key():
     with pytest.raises(ValueError, match="key mismatch"):
         RuntimeCapabilityRegistry({"codex_api": _snapshot("codex_oauth")})
+
+
+def test_production_refresher_publishes_into_shared_registry(tmp_path, monkeypatch):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
+    PRODUCTION_RUNTIME_CAPABILITIES.refresh({})
+    stdout = "\n".join(
+        json.dumps(payload)
+        for payload in (
+            {"type": "thread.started", "thread_id": "probe-session"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": '{"ok":true}'},
+            },
+            {"type": "turn.completed"},
+        )
+    )
+    refresher = build_production_runtime_refresher(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        codex_bin="codex-test",
+        executor=lambda *_args, **_kwargs: ProcessRunResult(0, stdout, ""),
+        temporary_root=tmp_path,
+    )
+
+    snapshots = refresher.refresh_expired(force=True)
+
+    assert snapshots["codex_oauth"].healthy is True
+    assert PRODUCTION_RUNTIME_CAPABILITIES["codex_oauth"].healthy is True

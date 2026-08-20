@@ -91,6 +91,151 @@ def test_parser_supports_worker_commands():
     assert args.db == "/tmp/worker.sqlite3"
 
 
+def test_parser_supports_route_scoped_runtime_probe():
+    args = build_parser().parse_args(
+        ["probe-agent-runtimes", "--route", "codex_api", "--not-send-message"]
+    )
+
+    assert args.command == "probe-agent-runtimes"
+    assert args.route == ["codex_api"]
+
+
+def test_probe_agent_runtimes_prints_safe_route_json(tmp_path, capsys):
+    from app.agent_runtime_contracts import (
+        RuntimeCapabilitySnapshot,
+        RuntimeFailure,
+        RuntimeFailureClass,
+    )
+
+    failure = RuntimeFailure(
+        failure_class=RuntimeFailureClass.AUTHENTICATION,
+        code="codex_provider_auth_failed",
+        detail="secret-bearing provider detail must not render",
+    )
+
+    class FakeRefresher:
+        def refresh_expired(self, *, route_names, force):
+            assert route_names == ("codex_api",)
+            assert force is True
+            return {
+                "codex_api": RuntimeCapabilitySnapshot(
+                    route_name="codex_api",
+                    healthy=False,
+                    checked_at="2026-08-21T10:00:00+00:00",
+                    expires_at="2026-08-21T10:05:00+00:00",
+                    failure=failure,
+                )
+            }
+
+    result = cli.probe_agent_runtimes_command(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        route_names=("codex_api",),
+        refresher=FakeRefresher(),
+    )
+
+    assert result == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "routes": [
+            {
+                "route_name": "codex_api",
+                "healthy": False,
+                "capabilities": [],
+                "checked_at": "2026-08-21T10:00:00+00:00",
+                "expires_at": "2026-08-21T10:05:00+00:00",
+                "failure_code": "codex_provider_auth_failed",
+            }
+        ]
+    }
+    assert "secret-bearing" not in capsys.readouterr().out
+
+
+def test_runtime_probe_loop_refreshes_after_each_interval():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class Refresher:
+        def refresh_expired(self):
+            calls.append(("refresh",))
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        if len([call for call in calls if call[0] == "sleep"]) == 2:
+            raise StopLoop
+
+    with pytest.raises(StopLoop):
+        cli.run_runtime_probe_loop(Refresher(), 300, sleep=sleep)
+
+    assert calls == [("sleep", 300), ("refresh",), ("sleep", 300)]
+
+
+def test_run_service_probes_before_starting_shared_refresh_component(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    class Refresher:
+        def refresh_expired(self, *, force=False):
+            calls.append(("refresh", force))
+            return {}
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            del target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+
+    monkeypatch.setattr(cli, "doctor_mcp_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_wechat_service_components", lambda _settings: ())
+
+    run_service(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        runtime_refresher=Refresher(),
+    )
+
+    assert calls[0] == ("refresh", True)
+    assert ("start", "ceo-agent-service-runtime-probe", True) in calls
+    assert calls[-1] == ("wait",)
+
+
+def test_worker_startup_refreshes_only_expired_shared_snapshots(tmp_path, monkeypatch):
+    calls = []
+
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+            return {}
+
+    class FakeDwsClient:
+        def __init__(self, **_kwargs):
+            pass
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+    monkeypatch.setenv(
+        "CEO_OKR_LIVE_SOURCE_COMMAND",
+        "dws api --user-id {user_id} --period {period_label} --format json",
+    )
+
+    worker = create_worker(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        runtime_refresher=Refresher(),
+    )
+
+    assert calls == ["refresh"]
+    assert worker.store.path == tmp_path / "worker.sqlite3"
+
+
 def test_quality_check_help_names_the_default_live_channel_gates():
     help_text = build_parser()._subparsers._group_actions[0].choices[
         "quality-check"

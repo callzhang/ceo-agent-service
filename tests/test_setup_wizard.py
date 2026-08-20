@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.channel_gate import ChannelGateResult, ChannelGateState
+from app.service_codex_config import load_service_mcp_servers
 from app.setup_wizard import (
     SETUP_WIZARD_STEPS,
     build_wizard_status,
@@ -18,6 +19,7 @@ from app.setup_wizard import (
     get_step_definition,
     redact_setup_output,
     run_setup_action,
+    runtime_route_setup_statuses,
 )
 from app.setup_wizard_models import (
     SetupAction,
@@ -27,7 +29,6 @@ from app.setup_wizard_models import (
     SetupWizardStatus,
 )
 from app.store import AutoReplyStore
-from app.service_codex_config import load_service_mcp_servers
 
 
 def test_setup_wizard_steps_are_ordered_and_gated():
@@ -394,6 +395,82 @@ def test_check_service_config_detects_missing_env(tmp_path: Path):
     assert result.status == "needs_action"
     assert result.summary == ".env is missing."
     assert result.evidence["env_exists"] is False
+
+
+def test_runtime_route_setup_statuses_are_secret_safe():
+    from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+
+    snapshot = RuntimeCapabilitySnapshot(
+        route_name="codex_oauth",
+        capabilities=frozenset({"structured_output"}),
+        healthy=True,
+        checked_at="2026-08-21T10:00:00+00:00",
+        expires_at="2026-08-21T10:05:00+00:00",
+    )
+    statuses = runtime_route_setup_statuses(
+        env={
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
+            "CEO_CODEX_API_KEY": "top-secret-value",
+        },
+        snapshots={"codex_oauth": snapshot},
+    )
+
+    assert statuses == (
+        {
+            "route_name": "codex_oauth",
+            "status": "ready",
+            "secret_configured": False,
+        },
+        {
+            "route_name": "codex_api",
+            "status": "probe_failed",
+            "secret_configured": True,
+        },
+    )
+    assert "top-secret-value" not in json.dumps(statuses)
+
+
+def test_runtime_route_setup_statuses_distinguish_disabled_and_missing_secret():
+    statuses = runtime_route_setup_statuses(
+        env={"CEO_AGENT_RUNTIME_ROUTES": "codex_api"},
+        snapshots={},
+    )
+
+    assert statuses == (
+        {
+            "route_name": "codex_oauth",
+            "status": "disabled",
+            "secret_configured": False,
+        },
+        {
+            "route_name": "codex_api",
+            "status": "missing_secret",
+            "secret_configured": False,
+        },
+    )
+
+
+def test_setup_service_config_accepts_runtime_secret_without_rendering_it(tmp_path: Path):
+    secret = "setup-only-secret-value"
+
+    event = run_setup_action(
+        "setup_service_config",
+        repo_root=tmp_path,
+        env={
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
+            "CEO_CODEX_API_KEY": secret,
+        },
+    )
+
+    assert event.status == "done"
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api" in env_text
+    assert f"CEO_CODEX_API_KEY={secret}" in env_text
+    assert secret not in event.model_dump_json()
+    assert json.loads(event.evidence["runtime_routes_json"]) == [
+        {"route_name": "codex_oauth", "secret_configured": False},
+        {"route_name": "codex_api", "secret_configured": True},
+    ]
 
 
 def test_check_setup_step_dispatches_real_service_config_checker(tmp_path: Path):
