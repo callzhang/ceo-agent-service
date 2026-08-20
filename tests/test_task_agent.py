@@ -4102,3 +4102,44 @@ def test_task_agent_codex_runner_propagates_routed_failure():
 
     with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
         runner.decide(prompt="decide", workload_key="1")
+
+
+def test_task_agent_codex_runner_translates_exhausted_transport_for_outer_retry():
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+    from app.external_retry import ExternalDependencyError
+
+    class FailingRoutedExecution:
+        def execute(self, **kwargs):
+            raise RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                failure_class=RuntimeFailureClass.TRANSPORT,
+                failure_code="codex_total_timeout",
+                retryable_external_dependency=True,
+            )
+
+    runner = TaskAgentCodexRunner(routed_execution=FailingRoutedExecution())
+
+    with pytest.raises(ExternalDependencyError) as raised:
+        runner.decide(prompt="decide", workload_key="1")
+    assert raised.value.dependency == "codex"
+
+
+@pytest.mark.parametrize("failure_code", ["codex_login_required", "runtime_result_invalid"])
+def test_task_agent_codex_runner_keeps_nonretryable_routed_failures_terminal(
+    failure_code,
+):
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    class FailingRoutedExecution:
+        def execute(self, **kwargs):
+            raise RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                failure_code=failure_code,
+                retryable_external_dependency=False,
+            )
+
+    runner = TaskAgentCodexRunner(routed_execution=FailingRoutedExecution())
+    with pytest.raises(RoutedCodexExecutionError) as raised:
+        runner.decide(prompt="decide", workload_key="1")
+    assert raised.value.failure_code == failure_code

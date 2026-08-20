@@ -289,6 +289,66 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
     assert [attempt.session_mode for attempt in attempts] == ["fresh", "fresh"]
 
 
+def test_result_validation_retry_can_resume_same_persisted_session_once(store, config):
+    key = seed_structured_parent(store, 171)
+    adapter = FakeAdapter()
+    prompts = []
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        value = 0 if len(prompts) == 1 else 42
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "session-171"}),
+                    json.dumps({"type": "result", "value": value}),
+                ]
+            ),
+            "",
+        )
+
+    def parse(raw):
+        value = json.loads(raw.splitlines()[-1])["value"]
+        if value != 42:
+            raise RoutedResultValidationError("invalid", raw_output=raw)
+        return value
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=adapter,
+        executor=executor,
+        session_line_counter=lambda _session_id: 2,
+        session_effect_probe=lambda *_args: False,
+    )
+    result = routed.execute(
+        workload_kind="structured",
+        workload_key=key,
+        prompt="analyze",
+        command_factory=ApprovedCodexCommandFactory.read_only(
+            developer_instructions="reviewed reads only"
+        ),
+        parser=parse,
+        result_codec=INT_CODEC,
+        required_capabilities=CAPABILITIES,
+        result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
+            correction_prompt=lambda raw: f"repair exactly: {raw}"
+        ),
+    )
+
+    assert result.value == 42
+    assert adapter.commands == [
+        ("codex_oauth", None, "never", False),
+        ("codex_oauth", "session-171", "never", False),
+    ]
+    assert prompts[1].startswith("repair exactly:")
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.session_mode for attempt in attempts] == ["fresh", "resume"]
+    assert [attempt.source_session_id for attempt in attempts] == ["", "session-171"]
+
+
 def test_persisted_result_validation_failure_resumes_one_same_route_correction(
     store, config
 ):
@@ -360,6 +420,64 @@ def test_persisted_result_validation_failure_resumes_one_same_route_correction(
         "codex_oauth",
     ]
     assert attempts[0].failure_code == "runtime_result_validation_failed"
+
+
+def test_same_session_validation_retry_recovers_after_persisted_failure(store, config):
+    key = seed_structured_parent(store, 175)
+    route = config.routes[0]
+    owner = "same-session-result-recovery"
+    failed = store.claim_runtime_operation_attempt(
+        "structured", key, route.name, route.runtime_kind, route.credential_mode,
+        route.model, owner=owner, now=NOW,
+    )
+    store.mark_agent_runtime_attempt_running_once(failed.id, owner=owner, now=NOW)
+    store.fail_agent_runtime_attempt(
+        failed.id,
+        RuntimeFailureClass.RESULT.value,
+        "runtime_result_validation_failed",
+        False,
+        session_id="persisted-session-175",
+        transcript_reference="codex_session:persisted-session-175",
+        transcript_start=3,
+        transcript_end=7,
+        owner=owner,
+        now=NOW,
+    )
+    adapter = FakeAdapter()
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=adapter,
+        executor=lambda command, **kwargs: ProcessRunResult(
+            0, json.dumps({"value": 42}), ""
+        ),
+        session_line_counter=lambda _session_id: 7,
+        session_effect_probe=lambda *_args: False,
+        owner=owner,
+        now=lambda: NOW,
+    )
+    result = routed.execute(
+        workload_kind="structured",
+        workload_key=key,
+        prompt="analyze",
+        command_factory=ApprovedCodexCommandFactory.read_only(
+            developer_instructions="reviewed reads only"
+        ),
+        parser=lambda raw: json.loads(raw)["value"],
+        result_codec=INT_CODEC,
+        required_capabilities=CAPABILITIES,
+        result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
+            correction_prompt=lambda raw: f"repair persisted: {raw}"
+        ),
+    )
+
+    assert result.value == 42
+    assert adapter.commands == [
+        ("codex_oauth", "persisted-session-175", "never", False)
+    ]
+    attempts = store.list_runtime_operation_attempts("structured", key)
+    assert [attempt.session_mode for attempt in attempts] == ["fresh", "resume"]
 
 
 def test_result_validation_retry_is_consumed_after_exactly_one_repeat(store, config):
@@ -468,6 +586,75 @@ def test_process_failure_after_result_validation_retry_does_not_fail_over(
         ("codex_oauth", None, "never", False),
         ("codex_oauth", None, "never", False),
     ]
+
+
+def test_exhausted_transport_failure_exposes_structured_external_retry_metadata(
+    store, config
+):
+    key = seed_structured_parent(store, 173)
+
+    class TransportAdapter(FakeAdapter):
+        def classify_failure(self, stdout, stderr, returncode, **kwargs):
+            return RuntimeFailure(
+                failure_class=RuntimeFailureClass.TRANSPORT,
+                code="codex_transport_disconnected",
+                detail="redacted",
+                retryable_on_same_route=True,
+                failover_permitted=True,
+            )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=TransportAdapter(),
+        executor=lambda command, **kwargs: ProcessRunResult(1, "", "failed"),
+    )
+
+    with pytest.raises(RoutedCodexExecutionError) as raised:
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+    assert raised.value.failure_class is RuntimeFailureClass.TRANSPORT
+    assert raised.value.failure_code == "codex_transport_disconnected"
+    assert raised.value.retryable_external_dependency is True
+
+
+def test_exhausted_auth_failure_is_not_external_dependency_retryable(store, config):
+    key = seed_structured_parent(store, 174)
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=FakeAdapter(),
+        executor=lambda command, **kwargs: ProcessRunResult(1, "", "failed"),
+    )
+
+    with pytest.raises(RoutedCodexExecutionError) as raised:
+        routed.execute(
+            workload_kind="structured",
+            workload_key=key,
+            prompt="read",
+            command_factory=ApprovedCodexCommandFactory.read_only(
+                developer_instructions="reviewed reads only"
+            ),
+            parser=lambda raw: raw,
+            result_codec=TEXT_CODEC,
+            required_capabilities=CAPABILITIES,
+        )
+
+    assert raised.value.failure_class is RuntimeFailureClass.AUTHENTICATION
+    assert raised.value.failure_code == "codex_login_required"
+    assert raised.value.retryable_external_dependency is False
 
 
 def test_result_validation_retry_stops_when_session_effect_is_not_proven_absent(

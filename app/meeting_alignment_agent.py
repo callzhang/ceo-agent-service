@@ -7,9 +7,11 @@ from pydantic import ValidationError
 from app.agent_runtime_router import (
     ApprovedCodexCommandFactory,
     RoutedCodexExecution,
+    RoutedCodexExecutionError,
     RoutedResultCodec,
 )
 from app.config import work_profile_path
+from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
     DeliveryTarget,
     MeetingAlignmentDecision,
@@ -109,23 +111,30 @@ class MeetingAlignmentCodexRunner:
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
         self.last_audit_tool_events = []
-        result = self.routed_execution.execute(
-            workload_kind="meeting",
-            workload_key=str(run_id),
-            prompt=prompt,
-            command_factory=ApprovedCodexCommandFactory.read_only(
-                developer_instructions=(
-                    "Return exactly one MeetingAlignmentDecision JSON object. "
-                    "Use only reviewed read tools."
+        try:
+            result = self.routed_execution.execute(
+                workload_kind="meeting",
+                workload_key=str(run_id),
+                prompt=prompt,
+                command_factory=ApprovedCodexCommandFactory.read_only(
+                    developer_instructions=(
+                        "Return exactly one MeetingAlignmentDecision JSON object. "
+                        "Use only reviewed read tools."
+                    ),
+                    output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
+                    use_output_schema=True,
                 ),
-                output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
-                use_output_schema=True,
-            ),
-            parser=_encode_meeting_alignment_result,
-            result_codec=MEETING_RESULT_CODEC,
-            conversation_id=None,
-            required_capabilities=MEETING_RUNTIME_CAPABILITIES,
-        )
+                parser=_encode_meeting_alignment_result,
+                result_codec=MEETING_RESULT_CODEC,
+                conversation_id=None,
+                required_capabilities=MEETING_RUNTIME_CAPABILITIES,
+            )
+        except RoutedCodexExecutionError as exc:
+            if not exc.retryable_external_dependency:
+                raise
+            raise ExternalDependencyError(
+                "codex meeting alignment", exc, dependency="codex"
+            ) from exc
         payload = json.loads(result.value)
         self.last_session_id = result.session_id or None
         self.last_transcript_start_line = result.transcript_start

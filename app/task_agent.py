@@ -8,10 +8,12 @@ from pydantic import ValidationError
 from app.agent_runtime_router import (
     ApprovedCodexCommandFactory,
     RoutedCodexExecution,
+    RoutedCodexExecutionError,
     RoutedResultCodec,
 )
 from app.codex_runner import memory_connector_config_issue
 from app.config import repo_root
+from app.external_retry import ExternalDependencyError
 from app.store import AutoReplyStore, RecentFollowUpCandidate
 from app.structured_agent import load_skill_text
 from app.task_models import (
@@ -147,21 +149,28 @@ class TaskAgentCodexRunner:
         self.last_audit_tool_events = []
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
-        result = self.routed_execution.execute(
-            workload_kind="task",
-            workload_key=workload_key,
-            prompt=prompt,
-            command_factory=ApprovedCodexCommandFactory.read_only(
-                developer_instructions=(
-                    "Return exactly one TaskAgentDecision JSON object. "
-                    "Use only reviewed read tools."
+        try:
+            result = self.routed_execution.execute(
+                workload_kind="task",
+                workload_key=workload_key,
+                prompt=prompt,
+                command_factory=ApprovedCodexCommandFactory.read_only(
+                    developer_instructions=(
+                        "Return exactly one TaskAgentDecision JSON object. "
+                        "Use only reviewed read tools."
+                    ),
                 ),
-            ),
-            parser=_encode_task_agent_result,
-            result_codec=TASK_RESULT_CODEC,
-            conversation_id=session_scope_id,
-            required_capabilities=TASK_RUNTIME_CAPABILITIES,
-        )
+                parser=_encode_task_agent_result,
+                result_codec=TASK_RESULT_CODEC,
+                conversation_id=session_scope_id,
+                required_capabilities=TASK_RUNTIME_CAPABILITIES,
+            )
+        except RoutedCodexExecutionError as exc:
+            if not exc.retryable_external_dependency:
+                raise
+            raise ExternalDependencyError(
+                "codex task agent", exc, dependency="codex"
+            ) from exc
         payload = json.loads(result.value)
         decision = TaskAgentDecision.model_validate(payload["decision"])
         self.last_session_id = result.session_id or None

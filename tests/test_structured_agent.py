@@ -351,57 +351,62 @@ def test_structured_runner_resumes_session_to_repair_invalid_json(tmp_path):
     schema.write_text("{}", encoding="utf-8")
     skill = tmp_path / "skill.md"
     skill.write_text("# Skill", encoding="utf-8")
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", True, "session-1")
-    calls = []
-
-    def executor(command, prompt, env):
-        calls.append((command, prompt, env))
-        if len(calls) == 1:
-            return "\n".join(
-                [
-                    json.dumps({"type": "session", "id": "session-1"}),
-                    "not json",
-                ]
-            )
-        return "\n".join(
-            [
-                json.dumps({"type": "session", "id": "session-1"}),
-                json.dumps(
-                    {
-                        "kind": "reply",
-                        "user_response": {
-                            "mode": "send_reply",
-                            "text": "ok",
-                            "sensitivity_kind": "general",
-                        },
-                        "system_actions": [
-                            {
-                                "type": "send_dingtalk_reply",
-                                "reply_text_ref": "user_response.text",
-                            }
-                        ],
-                        "domain_payload": {},
-                        "audit": {
-                            "summary": "valid",
-                            "documents": [],
-                            "confidence": 0.8,
-                        },
-                    }
-                ),
-            ]
-        )
-
-    spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
-    runner = StructuredCodexRunner(
-        routed_execution=FakeRoutedExecution(executor([], "hello", {})),
-        spec=spec,
+    invalid = "not json"
+    valid = json.dumps(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "send_reply",
+                "text": "ok",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {
+                    "type": "send_dingtalk_reply",
+                    "reply_text_ref": "user_response.text",
+                }
+            ],
+            "domain_payload": {},
+            "audit": {"summary": "valid", "documents": [], "confidence": 0.8},
+        }
     )
 
-    with pytest.raises(ValueError):
-        runner.run(1, "cid-1", "Friday", True, "hello", owner="reply:msg-1")
+    class RepairingRoutedExecution:
+        def __init__(self):
+            self.calls = []
 
-    assert len(calls) == 1
+        def execute(self, **kwargs):
+            self.calls.append(kwargs)
+            retry = kwargs["result_validation_retry"]
+            assert retry.resume_same_session is True
+            with pytest.raises(Exception) as first:
+                kwargs["parser"](invalid)
+            repair_prompt = retry.corrected_prompt("hello", first.value)
+            assert repair_prompt.startswith(
+                "上一次输出不是合法 AgentEnvelope JSON。请基于同一个上下文"
+            )
+            assert invalid in repair_prompt
+            value = kwargs["parser"](valid)
+            return SimpleNamespace(
+                value=value,
+                route_name="codex_oauth",
+                attempt_id=2,
+                session_id="session-1",
+                transcript_start=2,
+                transcript_end=7,
+            )
+
+    spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
+    routed = RepairingRoutedExecution()
+    runner = StructuredCodexRunner(routed_execution=routed, spec=spec)
+
+    result = runner.run(
+        1, "cid-1", "Friday", True, "hello", owner="reply:msg-1"
+    )
+
+    assert result.envelope.user_response.text == "ok"
+    assert result.codex_session_id == "session-1"
+    assert len(routed.calls) == 1
 
 
 def test_structured_runner_can_skip_persisting_shared_conversation_session(tmp_path):

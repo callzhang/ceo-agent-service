@@ -6,6 +6,8 @@ from app.agent_runtime_router import (
     ApprovedCodexCommandFactory,
     RoutedCodexExecution,
     RoutedResultCodec,
+    RoutedResultValidationError,
+    RoutedResultValidationRetry,
 )
 from app.codex_decision import (
     extract_codex_audit_events,
@@ -118,6 +120,11 @@ class StructuredCodexRunner:
             result_codec=STRUCTURED_RESULT_CODEC,
             conversation_id=conversation_id,
             required_capabilities=STRUCTURED_RUNTIME_CAPABILITIES,
+            result_validation_retry=(
+                RoutedResultValidationRetry.same_session_exactly_once(
+                    correction_prompt=_agent_envelope_repair_prompt
+                )
+            ),
         )
         payload = json.loads(result.value)
         envelope = AgentEnvelope.model_validate(payload["envelope"])
@@ -155,7 +162,12 @@ class StructuredCodexRunner:
 
 
 def _encode_structured_result(raw: str) -> str:
-    envelope = parse_agent_envelope(raw)
+    try:
+        envelope = parse_agent_envelope(raw)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise RoutedResultValidationError(
+            "invalid AgentEnvelope JSON", raw_output=raw
+        ) from exc
     return json.dumps(
         {
             "envelope": envelope.model_dump(mode="json"),

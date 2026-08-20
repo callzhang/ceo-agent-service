@@ -57,15 +57,28 @@ class RoutedResultEnvelopeTooLarge(ValueError):
 class RoutedResultValidationError(ValueError):
     """A typed business-result validation failure eligible for one correction."""
 
+    def __init__(self, message: str, *, raw_output: str = "") -> None:
+        self.raw_output = raw_output
+        super().__init__(message)
+
 
 @dataclass(frozen=True, slots=True, init=False)
 class RoutedResultValidationRetry:
     """Sealed policy permitting exactly one fresh read-only correction turn."""
 
     correction_instructions: str
+    correction_prompt: Callable[[str], str] | None
+    resume_same_session: bool
     _seal: object
 
-    def __init__(self, *, correction_instructions: str, seal: object) -> None:
+    def __init__(
+        self,
+        *,
+        correction_instructions: str,
+        correction_prompt: Callable[[str], str] | None = None,
+        resume_same_session: bool = False,
+        seal: object,
+    ) -> None:
         if seal is not _RESULT_VALIDATION_RETRY_SEAL:
             raise ValueError("result validation retry policies use named constructors")
         correction_instructions = correction_instructions.strip()
@@ -76,6 +89,8 @@ class RoutedResultValidationRetry:
         ):
             raise ValueError("correction instructions contain sensitive runtime data")
         object.__setattr__(self, "correction_instructions", correction_instructions)
+        object.__setattr__(self, "correction_prompt", correction_prompt)
+        object.__setattr__(self, "resume_same_session", resume_same_session)
         object.__setattr__(self, "_seal", seal)
 
     @classmethod
@@ -87,9 +102,27 @@ class RoutedResultValidationRetry:
             seal=_RESULT_VALIDATION_RETRY_SEAL,
         )
 
+    @classmethod
+    def same_session_exactly_once(
+        cls, *, correction_prompt: Callable[[str], str]
+    ) -> RoutedResultValidationRetry:
+        if not callable(correction_prompt):
+            raise ValueError("correction_prompt must be callable")
+        return cls(
+            correction_instructions="Resume the same session and correct the result.",
+            correction_prompt=correction_prompt,
+            resume_same_session=True,
+            seal=_RESULT_VALIDATION_RETRY_SEAL,
+        )
+
     def corrected_prompt(
         self, original_prompt: str, failure: RoutedResultValidationError
     ) -> str:
+        if self.correction_prompt is not None:
+            prompt = self.correction_prompt(failure.raw_output).strip()
+            if not prompt:
+                raise ValueError("correction prompt must be non-empty")
+            return prompt
         detail = " ".join(str(failure).split())[:1000]
         if (
             not detail
@@ -297,10 +330,30 @@ class RoutedCodexExecutionResult[ResultT]:
 
 
 class RoutedCodexExecutionError(RuntimeError):
-    def __init__(self, code: str, reason: str = "") -> None:
+    def __init__(
+        self,
+        code: str,
+        reason: str = "",
+        *,
+        failure_class: RuntimeFailureClass | None = None,
+        failure_code: str = "",
+        retryable_external_dependency: bool = False,
+    ) -> None:
         self.code = code
         self.reason = reason
+        self.failure_class = failure_class
+        self.failure_code = failure_code
+        self.retryable_external_dependency = retryable_external_dependency
         super().__init__(code)
+
+
+def _is_retryable_external_runtime_failure(failure: RuntimeFailure) -> bool:
+    """Return whether an exhausted provider failure belongs in caller backoff."""
+
+    return failure.failure_class in {
+        RuntimeFailureClass.CAPACITY,
+        RuntimeFailureClass.TRANSPORT,
+    }
 
 
 class RoutedCodexPolicyAbort(RuntimeError):
@@ -698,6 +751,8 @@ class RoutedCodexExecution:
             raise ValueError("prompt must be non-empty")
         original_prompt = prompt
         result_validation_retries_used = 0
+        forced_retry_session_id: str | None = None
+        terminal_failure: RuntimeFailure | None = None
 
         self._store.recover_expired_runtime_operation_attempt(
             workload_kind, workload_key, now=self._now()
@@ -741,6 +796,18 @@ class RoutedCodexExecution:
                 and latest.failure_code == "runtime_result_validation_failed"
                 and validation_failures == 1
                 and not latest.first_effect_started_at
+                and (
+                    not result_validation_retry.resume_same_session
+                    or (
+                        bool(latest.session_id)
+                        and self._probe_session_effect(
+                            latest.session_id,
+                            latest.transcript_start,
+                            latest.transcript_end,
+                        )
+                        is False
+                    )
+                )
             )
             if can_resume_validation_retry:
                 eligible = self._router.first_route_decision(
@@ -752,9 +819,11 @@ class RoutedCodexExecution:
                 ):
                     decision = RuntimeRouteDecision(
                         route=eligible.route,
-                        fresh_session=True,
+                        fresh_session=not result_validation_retry.resume_same_session,
                         reason="persisted_result_validation_retry",
                     )
+                    if result_validation_retry.resume_same_session:
+                        forced_retry_session_id = latest.session_id
                     prompt = result_validation_retry.corrected_prompt(
                         original_prompt,
                         RoutedResultValidationError(
@@ -775,6 +844,7 @@ class RoutedCodexExecution:
                     detail="persisted runtime failure",
                     failover_permitted=latest.failover_permitted,
                 )
+                terminal_failure = persisted_failure
                 decision = self._router.next_operation_route(
                     workload_kind=workload_kind,
                     workload_key=workload_key,
@@ -789,13 +859,27 @@ class RoutedCodexExecution:
             )
         if decision.route is None:
             raise RoutedCodexExecutionError(
-                "runtime_route_unavailable", decision.reason
+                "runtime_route_unavailable",
+                decision.reason,
+                failure_class=(
+                    terminal_failure.failure_class if terminal_failure else None
+                ),
+                failure_code=terminal_failure.code if terminal_failure else "",
+                retryable_external_dependency=(
+                    _is_retryable_external_runtime_failure(terminal_failure)
+                    if terminal_failure
+                    else False
+                ),
             )
         route = decision.route
         route_session_id = (
-            None
-            if decision.fresh_session
-            else self._session_for_route(conversation_id, route.name)
+            forced_retry_session_id
+            if forced_retry_session_id is not None
+            else (
+                None
+                if decision.fresh_session
+                else self._session_for_route(conversation_id, route.name)
+            )
         )
         active_attempt = self._claim_and_start(
             workload_kind, workload_key, route, route_session_id, policy.effect_mode
@@ -976,6 +1060,10 @@ class RoutedCodexExecution:
                         result_validation_retry is not None
                         and result_validation_retries_used == 0
                         and policy.effect_mode is ExecutionEffectMode.READ_ONLY
+                        and (
+                            not result_validation_retry.resume_same_session
+                            or bool(observed_session_id)
+                        )
                     )
                     if (
                         can_retry_validation
@@ -1000,7 +1088,9 @@ class RoutedCodexExecution:
                             transcript_end=transcript_end,
                         )
                         raise RoutedCodexExecutionError(
-                            "runtime_effect_policy_violation"
+                            "runtime_effect_policy_violation",
+                            failure_class=RuntimeFailureClass.CAPABILITY,
+                            failure_code="runtime_effect_policy_violation",
                         ) from exc
                     self._terminalize_active_attempt(
                         active_attempt,
@@ -1016,19 +1106,35 @@ class RoutedCodexExecution:
                     )
                     if not can_retry_validation or failed_validation_attempt is None:
                         raise RoutedCodexExecutionError(
-                            "runtime_result_validation_failed"
+                            "runtime_result_validation_failed",
+                            failure_class=RuntimeFailureClass.RESULT,
+                            failure_code="runtime_result_validation_failed",
                         ) from exc
+                    successor_session_id = (
+                        observed_session_id
+                        if result_validation_retry.resume_same_session
+                        else None
+                    )
                     successor = self._claim_and_start(
                         workload_kind,
                         workload_key,
                         route,
-                        None,
+                        successor_session_id,
                         policy.effect_mode,
                     )
                     self._finalized_step(
                         successor,
                         stage="attempt_supersede",
-                        evidence=lambda: ("", "", 0, 0),
+                        evidence=lambda: (
+                            successor_session_id or "",
+                            (
+                                f"codex_session:{successor_session_id}"
+                                if successor_session_id
+                                else ""
+                            ),
+                            0,
+                            0,
+                        ),
                         action=lambda: (
                             self._store.mark_agent_runtime_attempt_superseded(
                                 failed_validation_attempt.id
@@ -1036,7 +1142,7 @@ class RoutedCodexExecution:
                         ),
                     )
                     active_attempt = successor
-                    route_session_id = None
+                    route_session_id = successor_session_id
                     prompt = result_validation_retry.corrected_prompt(
                         original_prompt, exc
                     )
@@ -1169,7 +1275,14 @@ class RoutedCodexExecution:
                 policy.effect_mode is ExecutionEffectMode.EFFECTFUL
                 or result_validation_retries_used > 0
             ):
-                raise RoutedCodexExecutionError("runtime_execution_failed")
+                raise RoutedCodexExecutionError(
+                    "runtime_execution_failed",
+                    failure_class=failure.failure_class,
+                    failure_code=failure.code,
+                    retryable_external_dependency=(
+                        _is_retryable_external_runtime_failure(failure)
+                    ),
+                )
 
             next_decision = self._router.next_operation_route(
                 workload_kind=workload_kind,
@@ -1181,7 +1294,13 @@ class RoutedCodexExecution:
             )
             if next_decision.route is None:
                 raise RoutedCodexExecutionError(
-                    "runtime_execution_failed", next_decision.reason
+                    "runtime_execution_failed",
+                    next_decision.reason,
+                    failure_class=failure.failure_class,
+                    failure_code=failure.code,
+                    retryable_external_dependency=(
+                        _is_retryable_external_runtime_failure(failure)
+                    ),
                 )
             route = next_decision.route
             route_session_id = (

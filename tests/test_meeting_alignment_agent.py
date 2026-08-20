@@ -36,6 +36,49 @@ class FakeRoutedMeetingExecution:
         )
 
 
+def test_meeting_runner_translates_exhausted_capacity_for_attempt_limit_retry():
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+    from app.external_retry import ExternalDependencyError
+
+    class FailingRoutedExecution:
+        def execute(self, **kwargs):
+            raise RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                failure_class=RuntimeFailureClass.CAPACITY,
+                failure_code="codex_provider_unavailable",
+                retryable_external_dependency=True,
+            )
+
+    runner = MeetingAlignmentCodexRunner(
+        routed_execution=FailingRoutedExecution()
+    )
+    with pytest.raises(ExternalDependencyError) as raised:
+        runner.decide(prompt="decide", run_id=9)
+    assert raised.value.dependency == "codex"
+
+
+def test_meeting_runner_keeps_auth_failure_terminal():
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    class FailingRoutedExecution:
+        def execute(self, **kwargs):
+            raise RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                failure_class=RuntimeFailureClass.AUTHENTICATION,
+                failure_code="codex_login_required",
+                retryable_external_dependency=False,
+            )
+
+    runner = MeetingAlignmentCodexRunner(
+        routed_execution=FailingRoutedExecution()
+    )
+    with pytest.raises(RoutedCodexExecutionError) as raised:
+        runner.decide(prompt="decide", run_id=9)
+    assert raised.value.failure_code == "codex_login_required"
+
+
 @pytest.fixture(autouse=True)
 def _use_canonical_developer_prompt(monkeypatch):
     monkeypatch.setenv(
