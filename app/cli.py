@@ -3,6 +3,7 @@ import errno
 import json
 import os
 import shlex
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -2560,6 +2561,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
         from app.wechat.accessibility import WechatSender
         wsender = WechatSender(store, _wx.build_sender())
     interval = max(1, _cfg.wechat_poll_interval_seconds())
+    consecutive_sqlite_lock_failures = 0
     while True:
         try:
             if role == "producer":
@@ -2574,6 +2576,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     reader=reader,
                     account=account,
                 )
+            consecutive_sqlite_lock_failures = 0
         except Exception as exc:  # keep the loop alive; surface via error log
             if isinstance(exc, OSError) and exc.errno in {errno.EACCES, errno.EPERM}:
                 store.record_error(
@@ -2606,7 +2609,17 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     f"wechat_{role}_loop_error",
                     str(exc),
                 )
+            elif isinstance(exc, sqlite3.OperationalError) and (
+                "database is locked" in str(exc).casefold()
+                or "database is busy" in str(exc).casefold()
+            ):
+                consecutive_sqlite_lock_failures += 1
+                if consecutive_sqlite_lock_failures >= 3:
+                    store.record_error(
+                        "wechat", "", f"wechat_{role}_loop_error", str(exc)
+                    )
             else:
+                consecutive_sqlite_lock_failures = 0
                 store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))
         time.sleep(interval)
 

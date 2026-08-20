@@ -6276,6 +6276,106 @@ def test_wechat_consumer_does_not_preflight_codex_authentication(
     assert consumed == [True]
 
 
+def test_wechat_loop_retries_one_sqlite_lock_without_recording_error(
+    monkeypatch,
+    tmp_path,
+):
+    import time
+
+    class StopLoop(Exception):
+        pass
+
+    db = tmp_path / "w.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a1",
+        account_dir="/a1",
+        db_dir="/a1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+    )
+    settings = SimpleNamespace(
+        db_path=db,
+        workspace=tmp_path,
+        codex_timeout_seconds=30,
+        codex_idle_timeout_seconds=30,
+    )
+    calls = 0
+
+    def consume_once(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return None
+
+    sleeps = 0
+
+    def sleep(_seconds):
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps == 2:
+            raise StopLoop
+
+    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
+    monkeypatch.setattr("app.wechat.service.run_consume_once", consume_once)
+    monkeypatch.setattr(time, "sleep", sleep)
+
+    with pytest.raises(StopLoop):
+        cli._run_wechat_loop(settings, "consumer")
+
+    assert store.list_errors(limit=10) == []
+
+
+def test_wechat_loop_records_persistent_sqlite_lock(monkeypatch, tmp_path):
+    import time
+
+    class StopLoop(Exception):
+        pass
+
+    db = tmp_path / "w.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a1",
+        account_dir="/a1",
+        db_dir="/a1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+    )
+    settings = SimpleNamespace(
+        db_path=db,
+        workspace=tmp_path,
+        codex_timeout_seconds=30,
+        codex_idle_timeout_seconds=30,
+    )
+    sleeps = 0
+
+    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
+    monkeypatch.setattr(
+        "app.wechat.service.run_consume_once",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            sqlite3.OperationalError("database is locked")
+        ),
+    )
+
+    def sleep(_seconds):
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps == 3:
+            raise StopLoop
+
+    monkeypatch.setattr(time, "sleep", sleep)
+
+    with pytest.raises(StopLoop):
+        cli._run_wechat_loop(settings, "consumer")
+
+    [error] = store.list_errors(limit=10)
+    assert error.kind == "wechat_consumer_loop_error"
+    assert error.detail == "database is locked"
+
+
 def test_wechat_loop_pauses_after_reader_reports_app_data_denial(
     monkeypatch,
     tmp_path,
