@@ -92,7 +92,7 @@ def route(config):
 
 @pytest.fixture
 def adapter(tmp_path, config):
-    return ClaudeRuntimeAdapter(
+    runtime_adapter = ClaudeRuntimeAdapter(
         workspace=tmp_path,
         config=config,
         claude_bin="claude-test",
@@ -108,6 +108,8 @@ def adapter(tmp_path, config):
             }
         ),
     )
+    yield runtime_adapter
+    runtime_adapter._mcp_proxy.close()
 
 
 @pytest.fixture
@@ -631,6 +633,10 @@ def test_reviewed_command_policy_uses_exact_tools_without_wildcards(
     assert memory_transport["args"] == [
         "-m",
         "app.claude_mcp_proxy",
+        "--server",
+        "memory_connector",
+        "--allowed-tool",
+        "mcp__memory_connector__memory_recall",
         "--exec",
         "/opt/service/memory-mcp",
         "serve",
@@ -958,3 +964,74 @@ def test_environment_backed_mcp_args_fail_closed_before_serialization(
         "raw-args-secret" in path.read_text(encoding="utf-8")
         for path in Path(adapter._runtime_root.name).iterdir()
     )
+
+
+def test_proxy_lifecycle_finishes_and_executor_exception_cleans_up(
+    adapter, route, tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "memory_connector": {
+                        "url": "http://127.0.0.1:9/mcp"
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+    policy = ClaudeCommandPolicy.reviewed(
+        mcp_tools=("mcp__memory_connector__memory_recall",)
+    )
+
+    for _ in range(2):
+        command = adapter.build_command(
+            route=route, session_id=None, max_turns=2, policy=policy
+        )
+        assert adapter.active_proxy_process_count == 1
+        adapter.finish_invocation(command)
+        assert adapter.active_proxy_process_count == 0
+
+    command = adapter.build_command(
+        route=route, session_id=None, max_turns=2, policy=policy
+    )
+    with pytest.raises(RuntimeError, match="executor failed"):
+        adapter.execute(
+            command,
+            lambda _command: (_ for _ in ()).throw(RuntimeError("executor failed")),
+        )
+    assert adapter.active_proxy_process_count == 0
+
+
+def test_terminal_parse_closes_invocation_proxy(
+    adapter, route, tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {"servers": {"memory_connector": {"url": "http://127.0.0.1:9/mcp"}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+    command = adapter.build_command(
+        route=route,
+        session_id=None,
+        max_turns=2,
+        policy=ClaudeCommandPolicy.reviewed(
+            mcp_tools=("mcp__memory_connector__memory_recall",)
+        ),
+    )
+    normalizer = adapter.new_event_normalizer(command=command)
+    normalizer.normalize_event(SYSTEM_INIT)
+    normalizer.normalize_event(FINAL_RESULT)
+
+    assert adapter.parse_final_result(
+        normalizer=normalizer,
+        proof=normalizer.terminal_proof(),
+        parser=lambda raw: raw,
+    ) == '{"ok":true}'
+    assert adapter.active_proxy_process_count == 0

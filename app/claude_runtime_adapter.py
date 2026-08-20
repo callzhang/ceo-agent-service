@@ -128,7 +128,12 @@ class ClaudeRuntimeAdapter:
         self._pending_proofs: dict[
             object, tuple[ClaudeTerminalProof, str]
         ] = {}
-        self._invocation_env_names: dict[str, frozenset[str]] = {}
+        self._invocations_by_mcp_path: dict[str, str] = {}
+        self._invocations_by_owner: dict[object, str] = {}
+
+    @property
+    def active_proxy_process_count(self) -> int:
+        return self._mcp_proxy.active_process_count
 
     def build_command(
         self,
@@ -148,6 +153,10 @@ class ClaudeRuntimeAdapter:
             or max_turns <= 0
         ):
             raise ValueError("max_turns must be a positive integer")
+        if session_id is not None and (
+            not session_id.strip() or session_id != session_id.strip()
+        ):
+            raise ValueError("session_id must be non-empty and normalized")
         settings_path, mcp_path = self._write_invocation_boundary(selected_policy)
         exposed_builtins = "Bash" if selected_policy.allow_native_cli else ""
         denied_builtins = sorted(
@@ -171,8 +180,6 @@ class ClaudeRuntimeAdapter:
                 ]
             )
         if session_id is not None:
-            if not session_id.strip() or session_id != session_id.strip():
-                raise ValueError("session_id must be non-empty and normalized")
             command.extend(["--resume", session_id])
         return command
 
@@ -196,15 +203,22 @@ class ClaudeRuntimeAdapter:
             except (ValueError, IndexError):
                 raise ValueError("Claude invocation MCP config is missing") from None
             with self._lock:
-                required_env_names = self._invocation_env_names.get(mcp_path)
-            if required_env_names is None:
+                invocation_id = self._invocations_by_mcp_path.get(mcp_path)
+            if invocation_id is None:
                 raise ValueError("Claude invocation MCP config is not adapter-owned")
         return env
 
     def new_event_normalizer(
-        self, *, expected_session_id: str | None = None
+        self,
+        *,
+        expected_session_id: str | None = None,
+        command: list[str] | None = None,
     ) -> ClaudeEventNormalizer:
         owner = object()
+        if command is not None:
+            invocation_id = self._invocation_id(command)
+            with self._lock:
+                self._invocations_by_owner[owner] = invocation_id
         return ClaudeEventNormalizer(
             effect_registry=self.effects,
             native_cli_classifier=self.native_cli,
@@ -243,6 +257,51 @@ class ClaudeRuntimeAdapter:
             raise ClaudeRuntimeResultError(
                 _result_failure("claude_result_validation_failed")
             ) from exc
+        finally:
+            self._finish_owner(normalizer._owner)
+
+    def execute(self, command: list[str], executor: Callable[..., ResultT], **kwargs) -> ResultT:
+        """Run one Claude process and always close its credential proxies."""
+
+        try:
+            return executor(command, **kwargs)
+        finally:
+            self.finish_invocation(command)
+
+    def finish_invocation(self, command: list[str]) -> None:
+        invocation_id = self._invocation_id(command, required=False)
+        if invocation_id is None:
+            return
+        self._mcp_proxy.close_invocation(invocation_id)
+        with self._lock:
+            stale_paths = [
+                path
+                for path, candidate in self._invocations_by_mcp_path.items()
+                if candidate == invocation_id
+            ]
+            for path in stale_paths:
+                del self._invocations_by_mcp_path[path]
+
+    def _finish_owner(self, owner: object) -> None:
+        with self._lock:
+            invocation_id = self._invocations_by_owner.pop(owner, None)
+        if invocation_id is not None:
+            self._mcp_proxy.close_invocation(invocation_id)
+
+    def _invocation_id(
+        self, command: list[str], *, required: bool = True
+    ) -> str | None:
+        try:
+            path = str(Path(command[command.index("--mcp-config") + 1]).resolve())
+        except (ValueError, IndexError):
+            if required:
+                raise ValueError("Claude invocation MCP config is missing") from None
+            return None
+        with self._lock:
+            invocation_id = self._invocations_by_mcp_path.get(path)
+        if invocation_id is None and required:
+            raise ValueError("Claude invocation MCP config is not adapter-owned")
+        return invocation_id
 
     def _issue_terminal_proof(
         self, owner: object, result: str, session_id: str
@@ -349,7 +408,14 @@ class ClaudeRuntimeAdapter:
             - ({"Bash"} if policy.allow_native_cli else set())
         )
         broker_enabled = bool(policy.mcp_tools or policy.allow_native_cli)
-        reviewed_transports = self._reviewed_mcp_transports(policy)
+        try:
+            reviewed_transports = self._reviewed_mcp_transports(
+                policy,
+                invocation_id=invocation_id,
+            )
+        except Exception:
+            self._mcp_proxy.close_invocation(invocation_id)
+            raise
         settings_path.write_text(
             json.dumps(
                 {
@@ -393,11 +459,11 @@ class ClaudeRuntimeAdapter:
             ), encoding="utf-8",
         )
         with self._lock:
-            self._invocation_env_names[str(mcp_path.resolve())] = frozenset()
+            self._invocations_by_mcp_path[str(mcp_path.resolve())] = invocation_id
         return settings_path, mcp_path
 
     def _reviewed_mcp_transports(
-        self, policy: ClaudeCommandPolicy
+        self, policy: ClaudeCommandPolicy, *, invocation_id: str
     ) -> dict[str, dict[str, object]]:
         if not policy.mcp_tools:
             return {}
@@ -415,8 +481,21 @@ class ClaudeRuntimeAdapter:
         if missing:
             raise ValueError("Claude reviewed MCP transport is missing")
         selected = [configured[name] for name in sorted(required_servers)]
+        tools_by_server = {
+            server.name: tuple(
+                tool
+                for tool in policy.mcp_tools
+                if tool.startswith(f"mcp__{server.name}__")
+            )
+            for server in selected
+        }
         return {
-            server.name: self._mcp_proxy.prepare(server, source_env=os.environ)
+            server.name: self._mcp_proxy.prepare(
+                server,
+                invocation_id=invocation_id,
+                allowed_tools=tools_by_server[server.name],
+                source_env=os.environ,
+            )
             for server in selected
         }
 
