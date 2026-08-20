@@ -2,6 +2,11 @@
   "version": 1,
   "tools": [
     {
+      "server": "runtime_probe",
+      "tool": "record_effect_start",
+      "effect": "read_only"
+    },
+    {
       "server": "agent_cli",
       "tool": "execute_reviewed_read",
       "effect": "read_only",

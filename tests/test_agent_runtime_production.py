@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.agent_result import EffectKind
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_production import (
     PRODUCTION_RUNTIME_CAPABILITIES,
@@ -10,7 +11,6 @@ from app.agent_runtime_production import (
     build_production_routed_codex_execution,
     build_production_runtime_refresher,
 )
-from app.agent_result import EffectKind
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
@@ -132,9 +132,7 @@ def test_production_refresher_publishes_into_shared_registry(tmp_path, monkeypat
     assert PRODUCTION_RUNTIME_CAPABILITIES["codex_oauth"].healthy is True
 
 
-def test_production_execution_factory_never_probes_or_spawns(
-    tmp_path, monkeypatch
-):
+def test_production_execution_factory_never_probes_or_spawns(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
     PRODUCTION_RUNTIME_CAPABILITIES.refresh({})
     stdout = "\n".join(
@@ -205,8 +203,7 @@ def test_production_refresher_publishes_reviewed_surfaces_from_exact_transports(
         "agent_cli.lark-cli",
     } <= manifest.capabilities
     assert any(
-        capability.startswith("reviewed_skill:")
-        for capability in manifest.capabilities
+        capability.startswith("reviewed_skill:") for capability in manifest.capabilities
     )
 
 
@@ -417,3 +414,32 @@ def test_unrelated_skill_file_is_not_implicitly_authorized(tmp_path, monkeypatch
     manifest = registry.surface_manifest("codex_oauth")
     assert manifest is not None
     assert not any("unreviewed" in item for item in manifest.capabilities)
+
+
+def test_claude_surface_does_not_claim_unprobed_business_tools(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    reviewed = home / ".agents" / "skills" / "dingtang-okr-review" / "SKILL.md"
+    reviewed.parent.mkdir(parents=True)
+    reviewed.write_text("# reviewed exact workload skill\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "claude_api")
+    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "test-anthropic-secret")
+    registry = RuntimeCapabilityRegistry()
+
+    build_production_runtime_refresher(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        capability_registry=registry,
+        temporary_root=tmp_path,
+        native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+    )
+
+    manifest = registry.surface_manifest("claude_api")
+    assert manifest is not None
+    assert any(
+        item.startswith("reviewed_skill:dingtang-okr-review:")
+        for item in manifest.capabilities
+    )
+    assert "reviewed_read_tools" not in manifest.capabilities
+    assert "reviewed_write_tools" not in manifest.capabilities
+    assert "dws_read" not in manifest.capabilities
+    assert "memory_connector_read" not in manifest.capabilities

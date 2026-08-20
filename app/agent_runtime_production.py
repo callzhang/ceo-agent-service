@@ -9,6 +9,7 @@ from threading import RLock
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
+    RuntimeKind,
     RuntimeRouteSurfaceManifest,
 )
 from app.agent_runtime_router import (
@@ -138,6 +139,7 @@ def build_production_runtime_refresher(
     *,
     store: AutoReplyStore,
     codex_bin: str = "codex",
+    claude_bin: str = "claude",
     executor: ProcessExecutor | None = None,
     capability_registry: RuntimeCapabilityRegistry = PRODUCTION_RUNTIME_CAPABILITIES,
     temporary_root: Path | None = None,
@@ -160,6 +162,7 @@ def build_production_runtime_refresher(
     probe_kwargs = {
         "config": runtime_config,
         "codex_bin": codex_bin,
+        "claude_bin": claude_bin,
         "temporary_root": temporary_root,
     }
     if executor is not None:
@@ -181,15 +184,18 @@ def _reviewed_surface_manifests(
     adapter = CodexRuntimeAdapter(Path.cwd(), runtime_config, codex_bin=codex_bin)
     reviewed_skills = _explicit_reviewed_skill_capabilities()
     reviewed_agent_cli_capabilities = frozenset(
-        f"agent_cli.{cli}"
-        for cli, _operation in native_cli_classifier.cache_keys
+        f"agent_cli.{cli}" for cli, _operation in native_cli_classifier.cache_keys
     )
     manifests = {}
     for route in runtime_config.routes:
-        transports = frozenset(
-            _configured_mcp_server_transport_names(
-                (), env=adapter.build_env(route)
+        if route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+            manifests[route.name] = RuntimeRouteSurfaceManifest(
+                route_name=route.name,
+                capabilities=reviewed_skills,
             )
+            continue
+        transports = frozenset(
+            _configured_mcp_server_transport_names((), env=adapter.build_env(route))
         )
         capabilities = {
             "audit_effect_visibility",
@@ -241,11 +247,7 @@ def _explicit_reviewed_skill_capabilities() -> frozenset[str]:
     reviewed_paths = (
         (
             "dingtang-okr-review",
-            Path.home()
-            / ".agents"
-            / "skills"
-            / "dingtang-okr-review"
-            / "SKILL.md",
+            Path.home() / ".agents" / "skills" / "dingtang-okr-review" / "SKILL.md",
         ),
     )
     capabilities = set()

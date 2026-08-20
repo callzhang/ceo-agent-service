@@ -82,6 +82,29 @@ def test_broker_rejects_unreviewed_input_shape_and_model_supplied_grant():
     assert issued == []
 
 
+def test_probe_tool_requires_exact_synthetic_marker():
+    broker = ClaudePermissionBroker(
+        allowed_mcp_tools=frozenset({"mcp__runtime_probe__record_effect_start"}),
+        allow_native_cli=False,
+        grant_issuer=lambda _tool, _arguments: "probe-grant",
+    )
+
+    assert (
+        broker.authorize(
+            "mcp__runtime_probe__record_effect_start",
+            {"marker": "ceo-agent-runtime-probe-v1"},
+        )["behavior"]
+        == "allow"
+    )
+    assert (
+        broker.authorize(
+            "mcp__runtime_probe__record_effect_start",
+            {"marker": "business-data"},
+        )["behavior"]
+        == "deny"
+    )
+
+
 def test_broker_classifies_native_cli_before_dispatch():
     calls = []
     broker = _broker()

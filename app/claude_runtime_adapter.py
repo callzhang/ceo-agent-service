@@ -27,7 +27,7 @@ from app.agent_runtime_contracts import (
 from app.claude_mcp_proxy import ClaudeMcpCredentialProxyManager
 from app.codex_runtime_adapter import _safe_child_environment
 from app.native_cli_metadata import NativeCliMetadataClassifier
-from app.service_codex_config import load_service_mcp_servers
+from app.service_codex_config import ServiceMcpServer, load_service_mcp_servers
 
 ResultT = TypeVar("ResultT")
 _POLICY_SEAL = object()
@@ -132,12 +132,14 @@ class ClaudeRuntimeAdapter:
         claude_bin: str = "claude",
         effect_registry: McpToolEffectRegistry | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
+        service_mcp_servers: tuple[ServiceMcpServer, ...] | None = None,
     ) -> None:
         self.workspace = workspace
         self.config = config
         self.claude_bin = claude_bin
         self.effects = effect_registry or McpToolEffectRegistry.default()
         self.native_cli = native_cli_classifier or NativeCliMetadataClassifier()
+        self._service_mcp_servers = service_mcp_servers
         self._runtime_root = tempfile.TemporaryDirectory(
             prefix="ceo-agent-claude-", dir=workspace
         )
@@ -556,7 +558,12 @@ class ClaudeRuntimeAdapter:
                 )
             required_servers.add(server)
         configured = {
-            server.name: server for server in load_service_mcp_servers(env=os.environ)
+            server.name: server
+            for server in (
+                self._service_mcp_servers
+                if self._service_mcp_servers is not None
+                else load_service_mcp_servers(env=os.environ)
+            )
         }
         missing = required_servers - configured.keys()
         if missing:

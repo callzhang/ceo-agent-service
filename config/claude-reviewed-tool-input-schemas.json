@@ -8,6 +8,17 @@
       },
       "required": ["query"],
       "additionalProperties": false
+    },
+    "mcp__runtime_probe__record_effect_start": {
+      "type": "object",
+      "properties": {
+        "marker": {
+          "type": "string",
+          "const": "ceo-agent-runtime-probe-v1"
+        }
+      },
+      "required": ["marker"],
+      "additionalProperties": false
     }
   }
 }

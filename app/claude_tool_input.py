@@ -45,6 +45,8 @@ def validate_claude_tool_input(tool_name: str, arguments: Mapping[str, object]) 
 def _matches_type(value: object, definition: object) -> bool:
     if not isinstance(definition, dict):
         return False
+    if "const" in definition and value != definition["const"]:
+        return False
     expected = definition.get("type")
     if expected == "string":
         return isinstance(value, str) and bool(value.strip())
