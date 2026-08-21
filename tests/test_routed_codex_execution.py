@@ -276,7 +276,7 @@ def test_reviewed_mcp_surface_mapping_is_exact_per_caller():
     ) == frozenset({"memory_connector"})
 
 
-def test_absent_reviewed_mcp_transport_is_never_synthesized(
+def test_service_owned_agent_cli_transport_is_injected_when_required(
     config, tmp_path, monkeypatch
 ):
     codex_home = tmp_path / "empty-codex-home"
@@ -293,8 +293,9 @@ def test_absent_reviewed_mcp_transport_is_never_synthesized(
     )
     argv = "\n".join(command)
 
-    assert "mcp_servers.agent_cli.enabled=true" not in argv
-    assert "mcp_servers.agent_cli.enabled_tools=" not in argv
+    assert "mcp_servers.agent_cli.command=" in argv
+    assert "mcp_servers.agent_cli.enabled=true" in argv
+    assert "mcp_servers.agent_cli.enabled_tools=" in argv
     assert "mcp_servers.memory_connector.enabled=true" not in argv
 
 
@@ -311,11 +312,12 @@ def test_local_transport_registry_distinguishes_agent_cli_and_memory_connector(
     adapter = CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test")
     route = config.routes[0]
 
-    assert ApprovedCodexCommandFactory.read_only_structured(
+    agent_factory = ApprovedCodexCommandFactory.read_only_structured(
         developer_instructions="reviewed reads only"
-    ).missing_reviewed_mcp_transports(adapter=adapter, route=route) == frozenset(
-        {"agent_cli"}
     )
+    assert agent_factory.missing_reviewed_mcp_transports(
+        adapter=adapter, route=route
+    ) == frozenset()
     memory_factory = ApprovedCodexCommandFactory.read_only_memory_recall(
         developer_instructions="memory recall only"
     )
@@ -323,6 +325,15 @@ def test_local_transport_registry_distinguishes_agent_cli_and_memory_connector(
         memory_factory.missing_reviewed_mcp_transports(adapter=adapter, route=route)
         == frozenset()
     )
+    command, _ = agent_factory.build(
+        adapter=adapter,
+        route=route,
+        prompt="read",
+        session_id=None,
+    )
+    assert "mcp_servers.agent_cli.command=" in "\n".join(command)
+    assert "mcp_servers.agent_cli.enabled=true" in command
+
     command, _ = memory_factory.build(
         adapter=adapter,
         route=route,
@@ -330,9 +341,10 @@ def test_local_transport_registry_distinguishes_agent_cli_and_memory_connector(
         session_id=None,
     )
     assert "mcp_servers.memory_connector.enabled=true" in command
+    assert "mcp_servers.agent_cli.enabled=false" not in command
 
 
-def test_missing_required_reviewed_mcp_surface_stops_before_attempt_or_spawn(
+def test_missing_non_service_reviewed_mcp_surface_stops_before_attempt_or_spawn(
     store, config, tmp_path, monkeypatch
 ):
     key = seed_structured_parent(store, 221)
@@ -362,7 +374,7 @@ def test_missing_required_reviewed_mcp_surface_stops_before_attempt_or_spawn(
             workload_kind="structured",
             workload_key=key,
             prompt="read",
-            command_factory=ApprovedCodexCommandFactory.read_only_structured(
+            command_factory=ApprovedCodexCommandFactory.read_only_task(
                 developer_instructions="reviewed reads only"
             ),
             parser=lambda raw: raw,

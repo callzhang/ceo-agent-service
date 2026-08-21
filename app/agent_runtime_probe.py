@@ -44,7 +44,7 @@ _PROBE_DEVELOPER_INSTRUCTIONS = (
 _PROBE_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
-    "properties": {"ok": {"const": True}},
+    "properties": {"ok": {"type": "boolean", "const": True}},
     "required": ["ok"],
     "additionalProperties": False,
 }
@@ -117,6 +117,7 @@ class AgentRuntimeProbe:
                     route=route,
                     prompt=_PROBE_PROMPT,
                     session_id=None,
+                    skip_git_repo_check=True,
                 )
                 completed = self._executor(
                     command,
@@ -540,7 +541,10 @@ def _probe_stream_failure_code(raw: str) -> str | None:
         if payload.get("type") != "item.completed":
             continue
         item = payload.get("item")
-        if not isinstance(item, dict) or item.get("type") != "agent_message":
+        if not isinstance(item, dict) or item.get("type") not in {
+            "agent_message",
+            "error",
+        }:
             return "runtime_probe_policy_violation"
     if types.count("thread.started") != 1:
         return "runtime_probe_incomplete"

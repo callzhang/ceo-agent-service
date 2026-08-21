@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import tomllib
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -416,7 +417,13 @@ class ApprovedCodexCommandFactory:
         available = frozenset(
             _configured_mcp_server_transport_names((), env=adapter.build_env(route))
         )
+        available |= self._service_owned_mcp_transports
         return self._required_reviewed_mcp_servers - available
+
+    @property
+    def _service_owned_mcp_transports(self) -> frozenset[str]:
+        """Transports installed by this approved command factory itself."""
+        return frozenset({"agent_cli"}) & self._required_reviewed_mcp_servers
 
     def build(
         self,
@@ -425,9 +432,10 @@ class ApprovedCodexCommandFactory:
         route: RuntimeRoute,
         prompt: str,
         session_id: str | None,
+        skip_git_repo_check: bool = False,
     ) -> tuple[list[str], dict[str, str]]:
         read_only = self._policy.effect_mode is ExecutionEffectMode.READ_ONLY
-        command = adapter.build_command(
+        build_options = dict(
             route=route,
             prompt=prompt,
             session_id=session_id,
@@ -439,7 +447,12 @@ class ApprovedCodexCommandFactory:
             use_approval_bypass=not read_only,
             sandbox_mode="read-only" if read_only else None,
         )
+        if skip_git_repo_check:
+            build_options["skip_git_repo_check"] = True
+        command = adapter.build_command(**build_options)
         env = adapter.build_env(route)
+        if "agent_cli" in self._service_owned_mcp_transports:
+            _inject_service_owned_agent_cli_transport(command)
         if read_only or self._command_isolation is not _ReadOnlyCommandIsolation.STANDARD:
             _apply_read_only_command_isolation(
                 command,
@@ -447,6 +460,22 @@ class ApprovedCodexCommandFactory:
                 isolation=self._command_isolation,
             )
         return command, env
+
+
+def _inject_service_owned_agent_cli_transport(command: list[str]) -> None:
+    """Install the reviewed local MCP only for approved factory workloads."""
+    service_root = Path(__file__).resolve().parent.parent
+    insertion_index = len(command) - 1
+    if command[1:3] == ["exec", "resume"]:
+        insertion_index -= 1
+    command[insertion_index:insertion_index] = [
+        "-c",
+        "mcp_servers.agent_cli.command=" + json.dumps(sys.executable),
+        "-c",
+        "mcp_servers.agent_cli.args=" + json.dumps(["-m", "app.agent_cli"]),
+        "-c",
+        "mcp_servers.agent_cli.cwd=" + json.dumps(str(service_root)),
+    ]
 
 
 def _apply_read_only_command_isolation(
@@ -504,9 +533,8 @@ def _apply_read_only_command_isolation(
         if server_name in allowed_tools:
             continue
         options.extend(["-c", f"mcp_servers.{server_name}.enabled=false"])
-    for known_server in ("agent_cli", "memory_connector"):
-        if known_server not in allowed_tools and known_server not in server_names:
-            options.extend(["-c", f"mcp_servers.{known_server}.enabled=false"])
+    if "memory_connector" not in allowed_tools and "memory_connector" not in server_names:
+        options.extend(["-c", "mcp_servers.memory_connector.enabled=false"])
     for server_name, tools in allowed_tools.items():
         if server_name not in transport_names:
             continue

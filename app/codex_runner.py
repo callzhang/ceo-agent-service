@@ -231,6 +231,7 @@ class CodexRunner:
         model_provider_settings: Mapping[str, str] | None = None,
         shell_environment_policy_core: bool = False,
         sandbox_mode: str | None = None,
+        skip_git_repo_check: bool = False,
     ) -> list[str]:
         if approval_policy not in {"untrusted", "never"}:
             raise ValueError("unsupported approval policy")
@@ -287,6 +288,7 @@ class CodexRunner:
         )
         common_options = [
             *(["--sandbox", sandbox_mode] if sandbox_mode else []),
+            *(["--skip-git-repo-check"] if skip_git_repo_check else []),
             "--json",
             *(["--ignore-user-config"] if ignore_user_config else []),
             *(

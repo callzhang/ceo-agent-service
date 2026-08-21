@@ -107,8 +107,13 @@ class AuditAgentRunner:
             required.add("image_input")
         if recovery_phase != "reconcile":
             required.add("mcp:agent_cli:reviewed_write")
-        for receipt in context.consumer_skills:
-            required.add(f"reviewed_skill:{receipt.name}:{receipt.sha256}")
+        # Reconciliation answers only whether an already-unknown effect
+        # happened.  It must be able to run with persisted operation context
+        # even when an old Consumer Skill receipt has since changed.  The
+        # recovery command remains strictly read-only.
+        if recovery_phase != "reconcile":
+            for receipt in context.consumer_skills:
+                required.add(f"reviewed_skill:{receipt.name}:{receipt.sha256}")
         return frozenset(required)
 
     def run(
@@ -801,7 +806,9 @@ class AuditAgentRunner:
                 not self.dry_run and recovery_phase != "reconcile"
             ),
             image_paths=[Path(path) for path in context.task.image_paths],
-            required_skill_receipts=context.consumer_skills,
+            required_skill_receipts=(
+                () if recovery_phase == "reconcile" else context.consumer_skills
+            ),
             required_capabilities=self._required_capabilities(
                 context,
                 recovery_phase=recovery_phase,

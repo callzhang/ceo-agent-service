@@ -360,6 +360,19 @@ def test_audit_requires_exact_reviewed_skill_and_write_capabilities(setup):
     assert "native_cli:dws" in required
 
 
+def test_audit_reconciliation_does_not_require_historical_skill_receipts(setup):
+    store, _, audit_context, _ = setup
+    runner = AuditAgentRunner(store=store, workspace=Path("/workspace"))
+
+    required = runner._required_capabilities(
+        audit_context, recovery_phase="reconcile"
+    )
+
+    assert "mcp:agent_cli:reviewed_write" not in required
+    assert "mcp:agent_cli:reviewed_read" in required
+    assert not any(item.startswith("reviewed_skill:") for item in required)
+
+
 class ExactReceiptExecutor(CapturingExecutor):
     def __init__(self, stdout, *, store, run, owner="audit-owner"):
         super().__init__(stdout)

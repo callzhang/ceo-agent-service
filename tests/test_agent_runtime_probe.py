@@ -4,12 +4,49 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.agent_runtime_config import load_runtime_config
-from app.agent_runtime_probe import AgentRuntimeProbe, RuntimeCapabilityRefresher
+from app.agent_runtime_probe import (
+    AgentRuntimeProbe,
+    RuntimeCapabilityRefresher,
+    _PROBE_SCHEMA,
+)
 from app.agent_runtime_production import RuntimeCapabilityRegistry
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
 
 NOW = datetime(2026, 8, 21, 10, 0, tzinfo=UTC)
+
+
+def test_probe_schema_types_its_constant_boolean() -> None:
+    assert _PROBE_SCHEMA["properties"]["ok"] == {
+        "type": "boolean",
+        "const": True,
+    }
+
+
+def test_probe_accepts_non_effectful_runtime_information_item() -> None:
+    from app.agent_runtime_probe import _probe_stream_failure_code
+
+    stream = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "probe"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "error", "message": "runtime information"},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": '{"ok":true}'},
+                }
+            ),
+            json.dumps({"type": "turn.completed"}),
+        )
+    )
+
+    assert _probe_stream_failure_code(stream) is None
 
 
 def _config(monkeypatch, *, routes: str = "codex_oauth,codex_api"):
@@ -563,6 +600,7 @@ def test_probe_uses_isolated_read_only_command_and_validates_complete_stream(
     }.issubset(snapshot.capabilities)
     [(command, kwargs)] = calls
     assert command[:2] == ["codex-test", "exec"]
+    assert "--skip-git-repo-check" in command
     assert "--json" in command
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert command[command.index("--cd") + 1].startswith(str(tmp_path))

@@ -364,7 +364,7 @@ def test_agent_cli_action_capabilities_come_from_exact_reviewed_metadata(
         assert f"surface_missing:{unknown}" in decision.reason
 
 
-def test_agent_cli_action_capabilities_require_agent_cli_transport(
+def test_agent_cli_action_capabilities_use_service_owned_transport(
     tmp_path, monkeypatch
 ):
     codex_home = tmp_path / "codex-home"
@@ -385,7 +385,9 @@ def test_agent_cli_action_capabilities_require_agent_cli_transport(
 
     manifest = registry.surface_manifest("codex_oauth")
     assert manifest is not None
-    assert "agent_cli.dws" not in manifest.capabilities
+    # The user-global Codex config is intentionally empty.  Production Agent
+    # turns add the reviewed local agent_cli transport themselves.
+    assert "agent_cli.dws" in manifest.capabilities
     registry.refresh({"codex_oauth": _snapshot("codex_oauth")})
     routed = build_production_routed_codex_execution(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
@@ -397,8 +399,7 @@ def test_agent_cli_action_capabilities_require_agent_cli_transport(
     decision = routed._router.first_route_decision(
         required_capabilities=frozenset({"agent_cli.dws"})
     )
-    assert decision.route is None
-    assert "surface_missing:agent_cli.dws" in decision.reason
+    assert decision.route is not None
 
 
 def test_unrelated_skill_file_is_not_implicitly_authorized(tmp_path, monkeypatch):

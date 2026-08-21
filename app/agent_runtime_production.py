@@ -308,8 +308,17 @@ def _reviewed_surface_manifests(
                 capabilities=frozenset(capabilities),
             )
             continue
+        # Consumer and Audit turns always install this local, service-owned
+        # transport with their command policy.  It must therefore be reflected
+        # in the surface manifest instead of depending on a user's global
+        # Codex configuration.  The command policy still controls its tools.
         transports = frozenset(
-            _configured_mcp_server_transport_names((), env=adapter.build_env(route))
+            {
+                "agent_cli",
+                *_configured_mcp_server_transport_names(
+                    (), env=adapter.build_env(route)
+                ),
+            }
         )
         capabilities = {
             "audit_effect_visibility",

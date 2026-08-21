@@ -2541,7 +2541,7 @@ def test_event_limited_unknown_run_is_suspended_before_pending_claim(tmp_path):
     assert store.peek_reply_tasks(limit=10) == []
 
 
-def test_attempt_limited_unknown_run_is_suspended_before_pending_claim(tmp_path):
+def test_attempt_limited_unknown_run_remains_due_for_read_only_reconciliation(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
@@ -2556,14 +2556,53 @@ def test_attempt_limited_unknown_run_is_suspended_before_pending_claim(tmp_path)
             (MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS, run.id),
         )
 
-    assert store.suspend_exhausted_unknown_agent_runs() == 1
+    assert store.suspend_exhausted_unknown_agent_runs() == 0
     persisted = store.get_agent_run(run.id)
-    closed_task = store.get_reply_task(task.id)
 
-    assert persisted is not None and persisted.reconciliation_suspended is True
-    assert closed_task is not None and closed_task.status == "failed"
-    assert closed_task.error == RECONCILIATION_ATTEMPT_LIMIT_ERROR
-    assert store.peek_reply_tasks(limit=10) == []
+    assert persisted is not None and persisted.reconciliation_suspended is False
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+
+
+def test_legacy_attempt_limited_unknown_run_is_resumed_for_read_only_reconciliation(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
+        owner="audit",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """
+            update agent_runs
+            set reconciliation_attempts=?, reconciliation_suspended=1,
+                structured_error_json=?, reconciliation_next_attempt_at=''
+            where id=?
+            """,
+            (
+                MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS,
+                json.dumps({"code": RECONCILIATION_ATTEMPT_LIMIT_ERROR}),
+                run.id,
+            ),
+        )
+        db.execute(
+            "update reply_tasks set status='failed', error=? where id=?",
+            (RECONCILIATION_ATTEMPT_LIMIT_ERROR, task.id),
+        )
+
+    assert store.resume_attempt_limited_unknown_agent_runs(
+        now="2026-08-21 14:10:00"
+    ) == 1
+    persisted = store.get_agent_run(run.id)
+
+    assert persisted is not None and persisted.reconciliation_suspended is False
+    assert persisted.reconciliation_next_attempt_at == "2026-08-21 14:10:00"
+    assert [item.id for item in store.list_unknown_agent_runs(
+        now="2026-08-21 14:10:00"
+    )] == [run.id]
 
 
 def test_suspended_unknown_run_closes_pending_task_once_for_human_resolution(
