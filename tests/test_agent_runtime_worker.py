@@ -423,6 +423,8 @@ class FailingRefreshDws(ContextOnlyDws):
 
 class NativeCodexFacade:
     def __init__(self, workspace: Path) -> None:
+        self.workspace = workspace
+        self.codex_bin = "codex"
         self.runner = type(
             "NativeRunnerConfig",
             (),

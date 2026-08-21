@@ -411,7 +411,11 @@ class TaskAgentRun(BaseModel):
     decision_json: str = "{}"
     audit_summary: str = ""
     memory_recall_used: bool = False
+    status: str = "completed"
+    error: str = ""
     created_at: str
+    finished_at: str = ""
+    updated_at: str = ""
 
 
 class FollowUpDraft(BaseModel):

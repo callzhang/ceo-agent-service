@@ -7,7 +7,6 @@ from app.store import AutoReplyStore
 from app.task_models import ProjectPriority, TodoStatus
 from app.todo_completion import close_todo_with_completion_evidence
 
-
 DINGTALK_TODO_TITLE_LIMIT = 80
 DINGTALK_TODO_CONTEXT_LIMIT = 42
 MAX_DINGTALK_TODO_CREATE_RETRIES = 1
@@ -654,6 +653,63 @@ def sync_completed_todo_to_dingtalk(
     except (DwsError, RuntimeError) as exc:
         store.update_work_todo_dingtalk_link(link.id, last_error=str(exc))
         return False
+
+
+def dispatch_task_todo_sync_outbox(
+    store: AutoReplyStore,
+    dws: Any,
+    *,
+    owner: str,
+    now: str,
+    limit: int = 100,
+) -> int:
+    """Deliver committed task Todo intents without holding the domain transaction."""
+    delivered = 0
+    for _ in range(limit):
+        item = store.claim_task_todo_sync_outbox(owner=owner, now=now)
+        if item is None:
+            break
+        try:
+            if item["operation"] == "create":
+                link = maybe_create_dingtalk_todo(
+                    store, dws, work_todo_id=item["work_todo_id"], now=now
+                )
+                receipt = {
+                    "link_id": link.id if link is not None else 0,
+                    "dingtalk_task_id": link.dingtalk_task_id if link is not None else "",
+                }
+                delivered_now = link is not None and link.status != "failed"
+            else:
+                delivered_now = sync_completed_todo_to_dingtalk(
+                    store,
+                    dws,
+                    work_todo_id=item["work_todo_id"],
+                    evidence=json.loads(item["evidence_json"]),
+                    now=now,
+                )
+                receipt = {"delivered": delivered_now}
+            if not delivered_now:
+                store.retry_task_todo_sync_outbox(
+                    outbox_id=item["id"], owner=owner,
+                    error="dingtalk_todo_effect_not_delivered", now=now,
+                )
+                continue
+            store.finish_task_todo_sync_outbox(
+                outbox_id=item["id"], owner=owner, status="completed",
+                receipt_json=json.dumps(receipt, ensure_ascii=False),
+            )
+            delivered += 1
+        except Exception as exc:
+            # The external outcome may already be visible but not durably receipted.
+            # Do not queue an automatic duplicate; reconciliation owns unknown effects.
+            try:
+                store.finish_task_todo_sync_outbox(
+                    outbox_id=item["id"], owner=owner, status="unknown", error=str(exc)
+                )
+            except Exception:
+                pass
+            raise
+    return delivered
 
 
 def _close_internal_todo_from_dingtalk(

@@ -45,6 +45,27 @@ _PHONE = re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)")
 _LONG_NUMBER = re.compile(r"(?<!\d)\d{8,}(?!\d)")
 
 
+def _build_routed_execution(
+    *,
+    workspace: Path,
+    store,
+    codex_bin: str,
+    timeout_seconds: int,
+    idle_timeout_seconds: int,
+):
+    from app.agent_runtime_production import (
+        build_production_routed_codex_execution,
+    )
+
+    return build_production_routed_codex_execution(
+        store=store,
+        workspace=workspace,
+        codex_bin=codex_bin,
+        total_timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+    )
+
+
 class ExtractedMemoryCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     statement: str
@@ -167,37 +188,83 @@ class CodexMemoryExtractionRunner:
     """Structured Codex runner. It has no Memory write permission in its prompt."""
 
     def __init__(self, workspace: Path, codex_bin: str = "codex", executor=None,
-                 timeout_seconds: int = 1200, idle_timeout_seconds: int = 900):
-        from app.codex_runner import CodexRunner
-        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
-        self.executor = executor
+                 timeout_seconds: int = 1200, idle_timeout_seconds: int = 900,
+                 *, store=None, routed_execution=None):
+        if store is None:
+            raise ValueError("store is required for WeChat Memory extraction")
+        if routed_execution is None:
+            routed_execution = _build_routed_execution(
+                workspace=workspace,
+                store=store,
+                codex_bin=codex_bin,
+                timeout_seconds=timeout_seconds,
+                idle_timeout_seconds=idle_timeout_seconds,
+            )
+        self.store = store
+        self.routed_execution = routed_execution
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
 
-    def extract(self, messages: list[WechatMessage]) -> list[ExtractedMemoryCandidate]:
+    def extract(
+        self,
+        messages: list[WechatMessage],
+        *,
+        import_run_id: str = "direct-extraction",
+        account_id: str = "direct-account",
+    ) -> list[ExtractedMemoryCandidate]:
+        from app.agent_runtime_router import (
+            ApprovedCodexCommandFactory,
+            RoutedResultCodec,
+        )
+
         prompt = self._prompt(messages)
-        command = self.runner.build_command(prompt, None, output_schema_path=SCHEMA_PATH)
-        from app.wechat.codex_safety import make_read_only_without_tools
-        make_read_only_without_tools(command)
-        if self.executor is not None:
-            raw = self.executor(command, prompt)
-        else:
-            from app.codex_decision import _subprocess_failure_reason
-            from app.process_runner import run_process_with_idle_timeout
-            completed = run_process_with_idle_timeout(
-                command, prompt=prompt, env=self.runner.build_env(),
-                total_timeout_seconds=self.timeout_seconds,
-                idle_timeout_seconds=self.idle_timeout_seconds,
+        job_id = self.store.begin_wechat_memory_import_job(
+            import_run_id=import_run_id,
+            account_id=account_id,
+        )
+
+        def parse_validated(raw: str) -> str:
+            from app.wechat.codex_safety import has_any_tool_event
+
+            if has_any_tool_event(raw):
+                raise RuntimeError("WeChat Memory extraction must not call tools")
+            candidates = _parse_output(raw)
+            return json.dumps(
+                {"candidates": [item.model_dump(mode="json") for item in candidates]},
+                ensure_ascii=False,
+                separators=(",", ":"),
             )
-            if completed.timed_out:
-                raise RuntimeError(completed.timeout_reason or "WeChat Memory extraction timed out")
-            if completed.returncode != 0:
-                raise RuntimeError(_subprocess_failure_reason(completed.stderr, completed.stdout))
-            raw = completed.stdout
-        from app.wechat.codex_safety import has_any_tool_event
-        if has_any_tool_event(raw):
-            raise RuntimeError("WeChat Memory extraction must not call tools")
-        return _parse_output(raw)
+
+        try:
+            routed = self.routed_execution.execute(
+                workload_kind="memory",
+                workload_key=f"wechat_memory_import_job:{job_id}",
+                prompt=prompt,
+                command_factory=ApprovedCodexCommandFactory.read_only_without_tools(
+                    developer_instructions=(
+                        "Extract only from the supplied bounded message batch. "
+                        "Do not call tools or perform any external action."
+                    ),
+                    output_schema_path=SCHEMA_PATH,
+                    use_output_schema=True,
+                ),
+                parser=parse_validated,
+                result_codec=RoutedResultCodec.text(
+                    schema_id="wechat_memory_candidates.v1"
+                ),
+                conversation_id=None,
+                required_capabilities=frozenset({"structured_output"}),
+            )
+            candidates = _parse_output(routed.value)
+            self.store.finish_wechat_memory_import_job(job_id, status="completed")
+            return candidates
+        except Exception as exc:
+            self.store.finish_wechat_memory_import_job(
+                job_id,
+                status="failed",
+                error=str(exc),
+            )
+            raise
 
     @staticmethod
     def _prompt(messages: list[WechatMessage]) -> str:
@@ -227,15 +294,29 @@ class CodexMemoryRecallMatcher:
     """Read-only durable Memory matcher, hard-limited to memory_recall."""
 
     def __init__(self, workspace: Path, codex_bin: str = "codex", executor=None,
-                 timeout_seconds: int = 1200, idle_timeout_seconds: int = 900):
-        from app.codex_runner import CodexRunner
-        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
-        self.executor = executor
+                 timeout_seconds: int = 1200, idle_timeout_seconds: int = 900,
+                 *, store=None, routed_execution=None):
+        if store is None:
+            raise ValueError("store is required for durable Memory matching")
+        if routed_execution is None:
+            routed_execution = _build_routed_execution(
+                workspace=workspace,
+                store=store,
+                codex_bin=codex_bin,
+                timeout_seconds=timeout_seconds,
+                idle_timeout_seconds=idle_timeout_seconds,
+            )
+        self.store = store
+        self.routed_execution = routed_execution
         self.timeout_seconds = timeout_seconds
         self.idle_timeout_seconds = idle_timeout_seconds
 
     def match(
-        self, candidates: list[ExtractedMemoryCandidate]
+        self,
+        candidates: list[ExtractedMemoryCandidate],
+        *,
+        import_run_id: str = "direct-recall",
+        account_id: str = "direct-account",
     ) -> dict[str, DurableMemoryMatch]:
         if len(candidates) > MAX_RECALL_CANDIDATES:
             raise ValueError(
@@ -246,10 +327,25 @@ class CodexMemoryRecallMatcher:
             raise ValueError("durable Memory matcher requires unique candidate statements")
         result: dict[str, DurableMemoryMatch] = {}
         for statement in statements:
-            result[statement] = self._match_statement(statement)
+            result[statement] = self._match_statement(
+                statement,
+                import_run_id=import_run_id,
+                account_id=account_id,
+            )
         return result
 
-    def _match_statement(self, statement: str) -> DurableMemoryMatch:
+    def _match_statement(
+        self,
+        statement: str,
+        *,
+        import_run_id: str,
+        account_id: str,
+    ) -> DurableMemoryMatch:
+        from app.agent_runtime_router import (
+            ApprovedCodexCommandFactory,
+            RoutedResultCodec,
+        )
+
         prompt = (
             "必须且只能调用一次 memory_recall，arguments 只能包含 query，且 query 必须逐字等于：\n"
             + statement
@@ -258,18 +354,60 @@ class CodexMemoryRecallMatcher:
             "relation=none 时 memory_id、evidence、merged_statement 必须全部为空字符串；"
             "compatible 还必须给非空 merged_statement。"
         )
-        command = self.runner.build_command(
-            prompt, None, output_schema_path=DEDUPE_SCHEMA_PATH,
+        job_id = self.store.begin_wechat_memory_import_job(
+            import_run_id=import_run_id,
+            account_id=account_id,
         )
-        from app.wechat.codex_safety import disable_configured_mcp_servers
-        disable_configured_mcp_servers(
-            command, except_names=frozenset({"memory_connector"}))
-        command[-1:-1] = [
-            "-c", 'mcp_servers.memory_connector.enabled_tools=["memory_recall"]',
-            "-c", 'mcp_servers.memory_connector.disabled_tools=["memory_write"]',
-        ]
-        raw = self._execute(command, prompt)
-        recalled_memories = self._validate_audit(raw, expected_query=statement)
+
+        def parse_validated(raw: str) -> str:
+            recalled_memories = self._validate_audit(raw, expected_query=statement)
+            item = self._validated_match(
+                raw,
+                statement=statement,
+                recalled_memories=recalled_memories,
+            )
+            return item.model_dump_json()
+
+        try:
+            routed = self.routed_execution.execute(
+                workload_kind="memory",
+                workload_key=f"wechat_memory_import_job:{job_id}",
+                prompt=prompt,
+                command_factory=ApprovedCodexCommandFactory.read_only_memory_recall(
+                    developer_instructions=(
+                        "Call only memory_recall exactly once with the supplied "
+                        "statement and return the structured deduplication result."
+                    ),
+                    output_schema_path=DEDUPE_SCHEMA_PATH,
+                    use_output_schema=True,
+                ),
+                parser=parse_validated,
+                result_codec=RoutedResultCodec.text(
+                    schema_id="wechat_memory_recall_match.v1"
+                ),
+                conversation_id=None,
+                required_capabilities=frozenset(
+                    {"structured_output", "memory_connector_read"}
+                ),
+            )
+            result = DurableMemoryMatch.model_validate_json(routed.value)
+            self.store.finish_wechat_memory_import_job(job_id, status="completed")
+            return result
+        except Exception as exc:
+            self.store.finish_wechat_memory_import_job(
+                job_id,
+                status="failed",
+                error=str(exc),
+            )
+            raise
+
+    def _validated_match(
+        self,
+        raw: str,
+        *,
+        statement: str,
+        recalled_memories: list[dict],
+    ) -> DurableMemoryMatch:
         payload = self._result_payload(raw)
         matches = []
         for raw_match in payload.get("matches", []):
@@ -311,25 +449,13 @@ class CodexMemoryRecallMatcher:
                 raise RuntimeError("only compatible match may provide merged statement")
         return result[statement]
 
-    def _execute(self, command: list[str], prompt: str) -> str:
-        if self.executor is not None:
-            return self.executor(command, prompt)
-        from app.codex_decision import _subprocess_failure_reason
-        from app.process_runner import run_process_with_idle_timeout
-        completed = run_process_with_idle_timeout(
-            command, prompt=prompt, env=self.runner.build_env(),
-            total_timeout_seconds=self.timeout_seconds,
-            idle_timeout_seconds=self.idle_timeout_seconds)
-        if completed.timed_out:
-            raise RuntimeError(completed.timeout_reason or "durable Memory matcher timed out")
-        if completed.returncode != 0:
-            raise RuntimeError(_subprocess_failure_reason(completed.stderr, completed.stdout))
-        return completed.stdout
-
     @staticmethod
     def _validate_audit(raw: str, *, expected_query: str) -> list[dict]:
         from app.store import AutoReplyStore
-        from app.wechat.codex_safety import completed_mcp_tool_calls, completed_tool_events
+        from app.wechat.codex_safety import (
+            completed_mcp_tool_calls,
+            completed_tool_events,
+        )
 
         calls = completed_mcp_tool_calls(raw)
         def is_recall(name: str) -> bool:
@@ -552,7 +678,11 @@ class WechatMemoryImporter:
         candidates: list[ExtractedMemoryCandidate] = []
         for start in range(0, len(messages), BATCH_SIZE):
             batch = messages[start:start + BATCH_SIZE]
-            raw = self.codex.extract(batch)
+            raw = self.codex.extract(
+                batch,
+                import_run_id=run_id,
+                account_id=resolved_account_id,
+            )
             parsed = [item if isinstance(item, ExtractedMemoryCandidate)
                       else ExtractedMemoryCandidate.model_validate(item) for item in raw]
             by_id = {message.message_id: message for message in batch}
@@ -593,7 +723,15 @@ class WechatMemoryImporter:
                 since=since, until=until,
             ))
         candidates = self.clean_candidates(candidates)
-        relations = self.matcher.match(candidates) if candidates else {}
+        relations = (
+            self.matcher.match(
+                candidates,
+                import_run_id=run_id,
+                account_id=resolved_account_id,
+            )
+            if candidates
+            else {}
+        )
         durable_duplicates = 0
         filtered = []
         for candidate in candidates:

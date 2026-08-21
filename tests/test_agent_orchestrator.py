@@ -15,7 +15,7 @@ from app.agent_contracts import (
     ConsumerOutcome,
 )
 from app.agent_orchestrator import AgentOrchestrator, _NextAudit
-from app.agent_result import ResultParseError, SideEffectState
+from app.agent_result import AgentError, ResultParseError, SideEffectState
 from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import AgentTurnRunResult
 from app.dws_client import DwsError
@@ -523,6 +523,27 @@ def _process(orchestrator, task, context=None, *, refresh_context=None):
         initial,
         refresh_context=refresh_context or (lambda: initial),
     )
+
+
+def test_runtime_route_unavailable_defers_without_same_process_retry(store):
+    task = _task(store)
+    failed = _consumer_result("failed", "No eligible route.").model_copy(
+        update={
+            "error": AgentError(code="runtime_route_unavailable", retryable=True)
+        }
+    )
+    consumer = ScriptedConsumer(store, failed)
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=consumer,
+        audit=ScriptedAudit(store),
+    )
+
+    result = _process(orchestrator, task)
+
+    assert result.status == "failed_retryable"
+    assert result.error.code == "runtime_route_unavailable"
+    assert len(consumer.calls) == 1
 
 
 def test_no_action_finishes_without_launching_audit(store):

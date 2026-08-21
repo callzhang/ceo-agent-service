@@ -91,6 +91,247 @@ def test_parser_supports_worker_commands():
     assert args.db == "/tmp/worker.sqlite3"
 
 
+def test_parser_supports_route_scoped_runtime_probe():
+    args = build_parser().parse_args(
+        ["probe-agent-runtimes", "--route", "codex_api", "--not-send-message"]
+    )
+
+    assert args.command == "probe-agent-runtimes"
+    assert args.route == ["codex_api"]
+
+
+def test_probe_agent_runtimes_prints_safe_route_json(tmp_path, capsys):
+    from app.agent_runtime_contracts import (
+        RuntimeCapabilitySnapshot,
+        RuntimeFailure,
+        RuntimeFailureClass,
+    )
+
+    failure = RuntimeFailure(
+        failure_class=RuntimeFailureClass.AUTHENTICATION,
+        code="codex_provider_auth_failed",
+        detail="secret-bearing provider detail must not render",
+    )
+
+    class FakeRefresher:
+        def refresh_expired(self, *, route_names, force):
+            assert route_names == ("codex_api",)
+            assert force is True
+            return {
+                "codex_api": RuntimeCapabilitySnapshot(
+                    route_name="codex_api",
+                    healthy=False,
+                    checked_at="2026-08-21T10:00:00+00:00",
+                    expires_at="2026-08-21T10:05:00+00:00",
+                    failure=failure,
+                )
+            }
+
+    result = cli.probe_agent_runtimes_command(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        route_names=("codex_api",),
+        refresher=FakeRefresher(),
+    )
+
+    assert result == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "routes": [
+            {
+                "route_name": "codex_api",
+                "healthy": False,
+                "capabilities": [],
+                "checked_at": "2026-08-21T10:00:00+00:00",
+                "expires_at": "2026-08-21T10:05:00+00:00",
+                "failure_code": "codex_provider_auth_failed",
+            }
+        ]
+    }
+    assert "secret-bearing" not in capsys.readouterr().out
+
+
+def test_probe_agent_runtimes_missing_api_secret_is_safe_json(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
+    monkeypatch.delenv("CEO_CODEX_API_KEY", raising=False)
+
+    result = cli.probe_agent_runtimes_command(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        route_names=("codex_api",),
+    )
+
+    assert result == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "routes": [
+            {
+                "route_name": "codex_api",
+                "healthy": False,
+                "capabilities": [],
+                "checked_at": "",
+                "expires_at": "",
+                "failure_code": "missing_secret",
+            }
+        ]
+    }
+
+
+def test_runtime_probe_loop_refreshes_after_each_interval():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class Refresher:
+        def refresh_expired(self):
+            calls.append(("refresh",))
+
+    def sleep(seconds):
+        calls.append(("sleep", seconds))
+        if len([call for call in calls if call[0] == "sleep"]) == 2:
+            raise StopLoop
+
+    with pytest.raises(StopLoop):
+        cli.run_runtime_probe_loop(Refresher(), 300, sleep=sleep)
+
+    assert calls == [("sleep", 300), ("refresh",), ("sleep", 300)]
+
+
+def test_runtime_probe_loop_survives_unexpected_refresh_failure():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+            raise RuntimeError("must not stop service")
+
+    def sleep(_seconds):
+        calls.append("sleep")
+        if calls.count("sleep") == 2:
+            raise StopLoop
+
+    with pytest.raises(StopLoop):
+        cli.run_runtime_probe_loop(Refresher(), 300, sleep=sleep)
+
+    assert calls == ["sleep", "refresh", "sleep"]
+
+
+def test_run_service_probes_before_starting_shared_refresh_component(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    class Refresher:
+        def refresh_expired(self, *, force=False):
+            calls.append(("refresh", force))
+            return {}
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            del target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+
+    monkeypatch.setattr(cli, "doctor_mcp_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_wechat_service_components", lambda _settings: ())
+
+    run_service(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        runtime_refresher=Refresher(),
+    )
+
+    assert calls[0] == ("refresh", True)
+    assert ("start", "ceo-agent-service-runtime-probe", True) in calls
+    assert calls[-1] == ("wait",)
+
+
+def test_run_service_starts_components_when_initial_runtime_refresh_raises(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    class Refresher:
+        interval_seconds = 300
+
+        def refresh_expired(self, *, force=False):
+            calls.append(("refresh", force))
+            raise RuntimeError("isolated startup failure")
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            del target
+            self.name = name
+            self.daemon = daemon
+
+        def start(self):
+            calls.append(("start", self.name, self.daemon))
+
+    monkeypatch.setattr(cli, "doctor_mcp_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_wechat_service_components", lambda _settings: ())
+
+    run_service(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        host="127.0.0.1",
+        port=8765,
+        producer_interval_seconds=60,
+        consumer_poll_interval_seconds=10,
+        thread_factory=FakeThread,
+        wait=lambda: calls.append(("wait",)),
+        runtime_refresher=Refresher(),
+    )
+
+    assert ("refresh", True) in calls
+    assert any(call[:2] == ("start", "ceo-agent-service-runtime-probe") for call in calls)
+    assert calls[-1] == ("wait",)
+
+
+def test_worker_constructor_never_refreshes_or_spawns_runtime(tmp_path, monkeypatch):
+    calls = []
+
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+            return {}
+
+    class FakeDwsClient:
+        def __init__(self, **_kwargs):
+            pass
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
+    monkeypatch.setenv(
+        "CEO_OKR_LIVE_SOURCE_COMMAND",
+        "dws api --user-id {user_id} --period {period_label} --format json",
+    )
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "claude_api")
+    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "test-anthropic-secret")
+
+    worker = create_worker(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        runtime_refresher=Refresher(),
+    )
+
+    assert calls == []
+    assert worker.store.path == tmp_path / "worker.sqlite3"
+    assert worker.agent_runtime is not None
+    assert worker.agent_runtime.claude_adapter is not None
+    assert worker.agent_runtime.claude_adapter.active_proxy_process_count == 0
+    orchestrator = worker._agent_orchestrator()
+    assert orchestrator.consumer.claude_adapter is worker.agent_runtime.claude_adapter
+    assert orchestrator.audit.claude_adapter is worker.agent_runtime.claude_adapter
+
+
 def test_quality_check_help_names_the_default_live_channel_gates():
     help_text = build_parser()._subparsers._group_actions[0].choices[
         "quality-check"
@@ -850,7 +1091,13 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
 
     class FakeStructuredRunner:
         def __init__(self, **kwargs):
-            calls.append(("runner", kwargs["workspace"], kwargs["spec"].name))
+            calls.append(
+                (
+                    "runner",
+                    type(kwargs["routed_execution"]).__name__,
+                    kwargs["spec"].name,
+                )
+            )
 
     class FakeDwsClient:
         def __init__(self, **kwargs):
@@ -932,7 +1179,7 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
     assert sent_reply.reply_text == "韩露 2026 Q2 OKR 审核结果"
     assert sent_reply.recall_key == "okr-recall-1"
     assert calls == [
-        ("runner", tmp_path, "okr_review"),
+        ("runner", "RoutedCodexExecution", "okr_review"),
         ("dws", 4),
         ("process", request_id, "帮我审核 OKR", "FakeStructuredRunner", True),
         (
@@ -1292,7 +1539,7 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
                     "action": "create_project",
@@ -1386,7 +1633,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
                     "action": "create_project",
@@ -1481,7 +1728,7 @@ def test_process_work_items_command_does_not_batch_claim_after_failure(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError("task agent unavailable")
 
     monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
@@ -1565,7 +1812,7 @@ def test_process_work_items_command_backoffs_transient_codex_failure(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "stream disconnected before completion: error sending request"
             )
@@ -1627,7 +1874,7 @@ def test_process_work_items_command_fails_native_codex_missing_auth_header(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "unexpected status 401 Unauthorized: Missing bearer or basic "
                 "authentication in header, url: "
@@ -1699,7 +1946,7 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "unexpected status 401 Unauthorized: Missing bearer or basic "
                 "authentication in header, url: "
@@ -1768,7 +2015,7 @@ def test_process_work_items_command_fails_codex_transport_failure_after_limit(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "stream disconnected before completion: error sending request "
                 "for url (https://api.openai.com/v1/responses)"
@@ -1836,7 +2083,7 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise ExternalDependencyError(
                 "codex task agent",
                 RuntimeError("Your workspace is out of credits."),
@@ -1902,7 +2149,7 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             type(self).calls += 1
             if type(self).calls == 1:
                 raise RuntimeError("Your workspace is out of credits.")
@@ -1972,7 +2219,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise ExternalDependencyError(
                 "codex task agent",
                 RuntimeError("remote context compaction unavailable"),
@@ -2036,7 +2283,7 @@ def test_process_work_items_command_backoffs_missing_memory_recall_tool_event(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "non-discard task decision requires memory_recall tool event"
             )
@@ -2098,7 +2345,7 @@ def test_process_work_items_command_discards_cross_project_follow_up_draft(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise RuntimeError(
                 "follow_up_draft.todo_id 2240 does not belong to project 435"
             )
@@ -2160,7 +2407,7 @@ def test_process_work_items_command_uses_task_agent_timeouts(
         def __init__(self, **kwargs):
             constructed.update(kwargs)
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
                     "action": "discard",
@@ -2203,8 +2450,9 @@ def test_process_work_items_command_uses_task_agent_timeouts(
 
     assert processed == 1
     assert capsys.readouterr().out == "process-work-items processed=1\n"
-    assert constructed["timeout_seconds"] == 1200
-    assert constructed["idle_timeout_seconds"] == 900
+    routed_execution = constructed["routed_execution"]
+    assert routed_execution._total_timeout_seconds == 300
+    assert routed_execution._idle_timeout_seconds == 180
 
 
 def test_process_work_items_command_passes_dws_client_to_task_agent(
@@ -2294,7 +2542,7 @@ def test_process_work_items_command_respects_zero_max_batches(
         def __init__(self, **kwargs):
             pass
 
-        def decide(self, *, prompt, session_id=None):
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             raise AssertionError("no inputs should be claimed")
 
     monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
@@ -3008,6 +3256,41 @@ def test_parser_supports_rerun_message_command():
     assert args.force_new_decision is True
 
 
+def test_main_initializes_runtime_routes_before_rerun_message(
+    monkeypatch, tmp_path
+):
+    calls = []
+    monkeypatch.setenv("CEO_DRY_RUN", "1")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ceo-agent",
+            "rerun-message",
+            "--db",
+            str(tmp_path / "worker.sqlite3"),
+            "--conversation-id",
+            "cid-1",
+            "--message-id",
+            "msg-1",
+        ],
+    )
+    monkeypatch.setattr(
+        cli,
+        "initialize_agent_runtime_routes",
+        lambda settings: calls.append("initialize"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "rerun_message_command",
+        lambda *args, **kwargs: calls.append("rerun"),
+    )
+
+    cli.main()
+
+    assert calls == ["initialize", "rerun"]
+
+
 def test_parser_supports_send_attempt_command():
     parser = build_parser()
 
@@ -3690,8 +3973,9 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
             constructed["cached_dws_args"] = (dws, org_directory)
 
     class FakeCodex:
-        def __init__(self, workspace, timeout_seconds, idle_timeout_seconds):
+        def __init__(self, workspace, store, timeout_seconds, idle_timeout_seconds):
             constructed["codex_workspace"] = workspace
+            constructed["codex_store"] = store
             constructed["codex_timeout_seconds"] = timeout_seconds
             constructed["codex_idle_timeout_seconds"] = idle_timeout_seconds
 
@@ -3704,11 +3988,13 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
             dry_run,
             style_profile="",
             style_records=None,
+            agent_runtime=None,
         ):
             constructed["worker"] = self
             constructed["worker_args"] = (store, dws, codex, dry_run)
             constructed["style_profile"] = style_profile
             constructed["style_records"] = style_records
+            constructed["agent_runtime"] = agent_runtime
 
     monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
@@ -3767,6 +4053,7 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     assert "先结论" in constructed["style_profile"]
     assert len(constructed["style_records"]) == 1
     assert constructed["style_records"][0].message_id == "style-msg-1"
+    assert constructed["agent_runtime"] is not None
     assert "memory_client" not in constructed
 
 
@@ -4385,6 +4672,10 @@ def test_run_loop_calls_run_once_and_sleeps_once():
         def run_once(self, max_batches=None):
             calls.append(max_batches)
 
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+
     def sleep(seconds):
         calls.append(f"sleep:{seconds}")
         raise StopLoop
@@ -4396,9 +4687,59 @@ def test_run_loop_calls_run_once_and_sleeps_once():
             max_batches=3,
             sleep=sleep,
             network_ready=lambda: True,
+            runtime_refresher=Refresher(),
         )
 
-    assert calls == [3, "sleep:7"]
+    assert calls == ["refresh", 3, "sleep:7"]
+
+
+def test_run_loop_does_not_claim_work_when_runtime_refresh_fails():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class FakeWorker:
+        def run_once(self, max_batches=None):
+            calls.append("run")
+
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+            raise RuntimeError("stale")
+
+    def sleep(seconds):
+        calls.append(f"sleep:{seconds}")
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_loop(
+            FakeWorker(),
+            poll_interval_seconds=7,
+            sleep=sleep,
+            network_ready=lambda: True,
+            runtime_refresher=Refresher(),
+        )
+
+    assert calls == ["refresh", "sleep:7"]
+
+
+def test_explicit_runtime_startup_refreshes_once_and_returns_owner(tmp_path):
+    calls = []
+
+    class Refresher:
+        def refresh_expired(self, *, force=False):
+            calls.append(force)
+
+    refresher = Refresher()
+
+    returned = cli.initialize_agent_runtime_routes(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        refresher=refresher,
+    )
+
+    assert returned is refresher
+    assert calls == [True]
 
 
 def test_macos_wifi_connected_detects_not_associated(monkeypatch):
@@ -4487,6 +4828,10 @@ def test_producer_and_consumer_loops_call_separate_methods_once():
         def consume_once(self, max_tasks=None):
             calls.append(f"consume:{max_tasks}")
 
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+
     def sleep(seconds):
         calls.append(f"sleep:{seconds}")
         raise StopLoop
@@ -4506,14 +4851,47 @@ def test_producer_and_consumer_loops_call_separate_methods_once():
             max_tasks=5,
             sleep=sleep,
             network_ready=lambda: True,
+            runtime_refresher=Refresher(),
         )
 
     assert calls == [
         "produce:3",
         "sleep:7",
+        "refresh",
         "consume:5",
         "sleep:11",
     ]
+
+
+def test_consumer_loop_does_not_claim_work_when_runtime_refresh_fails():
+    calls = []
+
+    class StopLoop(Exception):
+        pass
+
+    class FakeWorker:
+        def consume_once(self, max_tasks=None):
+            calls.append("consume")
+
+    class Refresher:
+        def refresh_expired(self):
+            calls.append("refresh")
+            raise RuntimeError("stale")
+
+    def sleep(seconds):
+        calls.append(f"sleep:{seconds}")
+        raise StopLoop
+
+    with pytest.raises(StopLoop):
+        run_consumer_loop(
+            FakeWorker(),
+            poll_interval_seconds=11,
+            sleep=sleep,
+            network_ready=lambda: True,
+            runtime_refresher=Refresher(),
+        )
+
+    assert calls == ["refresh", "sleep:11"]
 
 
 def test_producer_and_consumer_loops_skip_when_network_not_ready():
@@ -4685,14 +5063,11 @@ def test_meeting_loops_call_separate_workers_once(monkeypatch, tmp_path):
     assert calls[0][3].utcoffset() is not None
     assert calls[0][4] == 600
     assert calls[1] == ("sleep", 60)
-    assert calls[2] == (
-        "runner",
-        {
-            "workspace": tmp_path / "memory",
-            "timeout_seconds": 1200,
-            "idle_timeout_seconds": 900,
-        },
-    )
+    assert calls[2][0] == "runner"
+    assert set(calls[2][1]) == {"routed_execution"}
+    routed_execution = calls[2][1]["routed_execution"]
+    assert routed_execution._total_timeout_seconds == 1200
+    assert routed_execution._idle_timeout_seconds == 900
     assert calls[3][:4] == ("consume-meeting", store, dws, runner)
     assert calls[3][4].utcoffset() is not None
     assert calls[3][5:7] == (4, True)

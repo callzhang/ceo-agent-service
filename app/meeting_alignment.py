@@ -5,12 +5,14 @@ from typing import Any, Callable, Protocol
 
 from pydantic import ValidationError
 
-from app.config import codex_capacity_retry_duration, principal_display_name
+from app.agent_runtime_contracts import RuntimeFailureClass
+from app.agent_runtime_router import RoutedCodexExecutionError
 from app.codex_capacity import (
     CODEX_CAPACITY_EXHAUSTED_MESSAGE,
     is_codex_capacity_exhausted,
 )
 from app.codex_failure import CODEX_PROCESS_FAILED, classify_codex_process_failure
+from app.config import codex_capacity_retry_duration, principal_display_name
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.external_retry import is_external_dependency_error
 from app.meeting_alignment_agent import (
@@ -44,7 +46,6 @@ from app.notification import (
     send_macos_notification,
 )
 from app.store import AutoReplyStore
-
 
 DISCOVERY_PAGE_LIMIT = 100
 DISCOVERY_PAGE_SIZE = 50
@@ -639,13 +640,19 @@ def _analyze_meeting_job(
         isinstance(previous_error, dict)
         and previous_error.get("kind") == "codex_capacity_pause"
     )
+    run_id = store.begin_meeting_alignment_run(job.id)
     try:
-        decision = agent.decide(source, similar_sessions=similar_sessions)
+        decision = agent.decide(
+            source,
+            similar_sessions=similar_sessions,
+            run_id=run_id,
+        )
     except MeetingAlignmentTargetError as exc:
         error = _error_json("meeting_target", str(exc))
         _record_agent_run(
             store,
             runner,
+            run_id,
             job_id=job.id,
             decision=None,
             status="failed",
@@ -660,6 +667,7 @@ def _analyze_meeting_job(
         _record_agent_run(
             store,
             runner,
+            run_id,
             job_id=job.id,
             decision=None,
             status="failed",
@@ -670,6 +678,38 @@ def _analyze_meeting_job(
         )
         return
     except RuntimeError as exc:
+        if isinstance(exc, RoutedCodexExecutionError) and (
+            exc.failure_class
+            in {
+                RuntimeFailureClass.AUTHENTICATION,
+                RuntimeFailureClass.CAPABILITY,
+                RuntimeFailureClass.RESULT,
+                RuntimeFailureClass.SESSION,
+            }
+            or exc.code
+            in {
+                "runtime_effect_policy_violation",
+                "runtime_result_validation_failed",
+                "runtime_result_validation_retry_consumed",
+                "runtime_session_conflict",
+            }
+        ):
+            error = _error_json("meeting_agent", str(exc))
+            _record_agent_run(
+                store,
+                runner,
+                run_id,
+                job_id=job.id,
+                decision=None,
+                status="failed",
+                error=error,
+            )
+            store.update_meeting_alignment_job(
+                job.id,
+                status="failed",
+                error=error,
+            )
+            return
         capacity_exhausted = is_codex_capacity_exhausted(exc) or (
             capacity_recovery_active
             and classify_codex_process_failure("", str(exc)) == CODEX_PROCESS_FAILED
@@ -687,6 +727,7 @@ def _analyze_meeting_job(
             _record_agent_run(
                 store,
                 runner,
+                run_id,
                 job_id=job.id,
                 decision=None,
                 status="retry",
@@ -706,6 +747,7 @@ def _analyze_meeting_job(
         _record_agent_run(
             store,
             runner,
+            run_id,
             job_id=job.id,
             decision=None,
             status=(
@@ -734,6 +776,7 @@ def _analyze_meeting_job(
         _record_agent_run(
             store,
             runner,
+            run_id,
             job_id=job.id,
             decision=None,
             status="failed",
@@ -750,6 +793,7 @@ def _analyze_meeting_job(
         run_id = _record_agent_run(
             store,
             runner,
+            run_id,
             job_id=job.id,
             decision=decision,
             status="no_action",
@@ -783,6 +827,7 @@ def _analyze_meeting_job(
     run_id = _record_agent_run(
         store,
         runner,
+        run_id,
         job_id=job.id,
         decision=decision,
         status="ready_to_send",
@@ -1062,14 +1107,15 @@ def _schedule_ready_reconciliation_or_fail(
 def _record_agent_run(
     store: AutoReplyStore,
     runner: Any,
+    run_id: int,
     *,
     job_id: int,
     decision: MeetingAlignmentDecision | None,
     status: str,
     error: str,
 ) -> int:
-    return store.record_meeting_alignment_run(
-        job_id=job_id,
+    store.finish_meeting_alignment_run(
+        run_id,
         codex_session_id=str(getattr(runner, "last_session_id", "") or ""),
         codex_transcript_start_line=int(
             getattr(runner, "last_transcript_start_line", 0) or 0
@@ -1086,6 +1132,7 @@ def _record_agent_run(
         status=status,
         error=error,
     )
+    return run_id
 
 
 def _retry_or_fail(

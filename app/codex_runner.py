@@ -1,13 +1,13 @@
 import json
 import os
 import subprocess
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from collections.abc import Callable
 
-from app.dws_client import dws_noninteractive_environment
+from app.config import codex_model, codex_model_reasoning_effort
 from app.dingtalk_models import CodexDecision
+from app.dws_client import dws_noninteractive_environment
 from app.prompt import ceo_agent_thread_prompt
-
 
 CODEX_DECISION_SCHEMA_PATH = (
     Path(__file__).resolve().parent / "schemas" / "codex_decision.schema.json"
@@ -28,8 +28,6 @@ DWS_CLI_AUTH_ENV_KEYS = {
 CODEX_MODEL_ENV = "CEO_CODEX_MODEL"
 CODEX_MODEL_PROVIDER_ENV = "CEO_CODEX_MODEL_PROVIDER"
 CODEX_MODEL_REASONING_EFFORT_ENV = "CEO_CODEX_MODEL_REASONING_EFFORT"
-DEFAULT_CODEX_MODEL = "gpt-5.5"
-DEFAULT_CODEX_MODEL_REASONING_EFFORT = "medium"
 
 
 def native_codex_login_available(
@@ -85,7 +83,9 @@ def _config_value(value: object) -> str:
         items: list[str] = []
         for item_key, item_value in value.items():
             if not isinstance(item_key, str) or not isinstance(item_value, str):
-                raise TypeError("config inline table values must be string keyed strings")
+                raise TypeError(
+                    "config inline table values must be string keyed strings"
+                )
             items.append(
                 f"{json.dumps(item_key, ensure_ascii=False)} = "
                 f"{json.dumps(item_value, ensure_ascii=False)}"
@@ -95,7 +95,24 @@ def _config_value(value: object) -> str:
 
 
 def _codex_home() -> Path:
-    return Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser()
+    return resolved_codex_home(os.environ)
+
+
+def resolved_codex_home(environment: Mapping[str, str]) -> Path:
+    """Resolve Codex home from the child base environment without creating it."""
+    home = Path(environment.get("HOME", str(Path.home())))
+    configured = environment.get("CODEX_HOME", "")
+    if configured == "~":
+        candidate = home
+    elif configured.startswith("~/"):
+        candidate = home / configured[2:]
+    elif configured:
+        candidate = Path(configured)
+        if not candidate.is_absolute():
+            candidate = home / candidate
+    else:
+        candidate = home / ".codex"
+    return candidate.resolve()
 
 
 def selected_codex_model_provider() -> str:
@@ -103,25 +120,65 @@ def selected_codex_model_provider() -> str:
     return provider or "openai"
 
 
-def codex_model_config_options() -> list[str]:
-    model = os.environ.get(CODEX_MODEL_ENV, DEFAULT_CODEX_MODEL).strip()
-    provider = os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
-    reasoning_effort = os.environ.get(
-        CODEX_MODEL_REASONING_EFFORT_ENV,
-        DEFAULT_CODEX_MODEL_REASONING_EFFORT,
-    ).strip()
+def codex_model_config_options(
+    *,
+    model: str | None = None,
+    provider: str | None = None,
+    reasoning_effort: str | None = None,
+) -> list[str]:
+    selected_model = (
+        codex_model()
+        if model is None
+        else model.strip()
+    )
+    selected_provider = (
+        os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
+        if provider is None
+        else provider.strip()
+    )
+    selected_reasoning_effort = (
+        codex_model_reasoning_effort()
+        if reasoning_effort is None
+        else reasoning_effort.strip()
+    )
     options: list[str] = []
-    if model:
-        options.extend(["-m", model])
-        if provider:
-            options.extend(["-c", _config_string("model_provider", provider)])
-    if reasoning_effort:
+    if selected_model:
+        options.extend(["-m", selected_model])
+        if selected_provider:
+            options.extend(["-c", _config_string("model_provider", selected_provider)])
+    if selected_reasoning_effort:
         options.extend(
             [
                 "-c",
-                _config_string("model_reasoning_effort", reasoning_effort),
+                _config_string("model_reasoning_effort", selected_reasoning_effort),
             ]
         )
+    return options
+
+
+def codex_model_provider_settings_options(
+    provider: str | None,
+    settings: Mapping[str, str] | None,
+) -> list[str]:
+    if settings is None:
+        return []
+    if not provider or not provider.isidentifier():
+        raise ValueError("model provider settings require an identifier provider")
+    allowed = {"name", "base_url", "env_key", "wire_api"}
+    unknown = set(settings) - allowed
+    if unknown:
+        raise ValueError("unsupported model provider setting")
+    if any(not isinstance(value, str) for value in settings.values()):
+        raise TypeError("model provider settings must be strings")
+    options: list[str] = []
+    for key in ("name", "base_url", "env_key", "wire_api"):
+        if key in settings:
+            options.extend(
+                [
+                    "-c",
+                    _config_string(f"model_providers.{provider}.{key}", settings[key]),
+                ]
+            )
     return options
 
 
@@ -168,12 +225,23 @@ class CodexRunner:
         preserve_native_instructions: bool = False,
         preserve_native_approval_config: bool = False,
         ignore_user_config: bool = False,
+        model: str | None = None,
+        provider: str | None = None,
+        reasoning_effort: str | None = None,
+        model_provider_settings: Mapping[str, str] | None = None,
+        shell_environment_policy_core: bool = False,
+        sandbox_mode: str | None = None,
     ) -> list[str]:
         if approval_policy not in {"untrusted", "never"}:
             raise ValueError("unsupported approval policy")
-        effective_approval_bypass = (
-            use_approval_bypass and approval_policy != "never"
-        )
+        if sandbox_mode not in {
+            None,
+            "read-only",
+            "workspace-write",
+            "danger-full-access",
+        }:
+            raise ValueError("unsupported sandbox mode")
+        effective_approval_bypass = use_approval_bypass and approval_policy != "never"
         if preserve_native_instructions:
             effective_developer_instructions = ""
         else:
@@ -218,12 +286,31 @@ class CodexRunner:
             ]
         )
         common_options = [
+            *(["--sandbox", sandbox_mode] if sandbox_mode else []),
             "--json",
             *(["--ignore-user-config"] if ignore_user_config else []),
             *(
                 []
                 if preserve_native_model_config
-                else codex_model_config_options()
+                else codex_model_config_options(
+                    model=model,
+                    provider=provider,
+                    reasoning_effort=reasoning_effort,
+                )
+            ),
+            *codex_model_provider_settings_options(provider, model_provider_settings),
+            *(
+                [
+                    "-c",
+                    _config_string("shell_environment_policy.inherit", "core"),
+                    "-c",
+                    _config_string(
+                        "shell_environment_policy.ignore_default_excludes",
+                        False,
+                    ),
+                ]
+                if shell_environment_policy_core
+                else []
             ),
             *approval_options,
             *instruction_options,

@@ -1,10 +1,10 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from app.agent_envelope import AgentEnvelope
-from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
 from app.structured_agent import (
     AgentSpec,
@@ -13,6 +13,36 @@ from app.structured_agent import (
     load_skill_text,
     parse_agent_envelope,
 )
+
+
+class FakeRoutedExecution:
+    def __init__(
+        self,
+        raw,
+        *,
+        session_id="structured-session",
+        transcript_start=2,
+        transcript_end=7,
+    ):
+        self.raw = raw
+        self.session_id = session_id
+        self.transcript_start = transcript_start
+        self.transcript_end = transcript_end
+        self.calls = []
+
+    def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        raw = self.raw() if callable(self.raw) else self.raw
+        value = kwargs["parser"](raw)
+        value = kwargs["result_codec"].decode(kwargs["result_codec"].encode(value))
+        return SimpleNamespace(
+            value=value,
+            route_name="codex_oauth",
+            attempt_id=1,
+            session_id=self.session_id,
+            transcript_start=self.transcript_start,
+            transcript_end=self.transcript_end,
+        )
 
 
 def test_load_skill_text_reads_exact_paths(tmp_path: Path):
@@ -43,6 +73,50 @@ def test_agent_spec_developer_instructions_include_skills(tmp_path: Path):
 
     assert "# OKR Skill" in spec.developer_instructions()
     assert "Return only JSON." in spec.developer_instructions()
+
+
+def test_structured_runner_routes_processing_request_with_read_only_policy(tmp_path):
+    schema = tmp_path / "schema.json"
+    schema.write_text("{}", encoding="utf-8")
+    raw = json.dumps(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [],
+            "domain_payload": {},
+            "audit": {"summary": "ok", "documents": [], "confidence": 1},
+        }
+    )
+    routed = FakeRoutedExecution(raw)
+    runner = StructuredCodexRunner(routed_execution=routed, spec=AgentSpec("okr", schema))
+
+    result = runner.run(
+        41,
+        "cid-1",
+        "Friday",
+        True,
+        "inspect",
+        owner="okr_review:41",
+    )
+
+    call = routed.calls[0]
+    assert call["workload_kind"] == "structured"
+    assert call["workload_key"] == "41"
+    assert call["conversation_id"] == "cid-1"
+    assert call["command_factory"]._approved_policy.effect_mode == "read_only"
+    assert call["required_capabilities"] == frozenset(
+        {
+            "structured_output",
+            "local_schema_validation",
+            "consumer_read_only_enforcement",
+            "reviewed_read_tools",
+        }
+    )
+    assert result.codex_session_id == "structured-session"
 
 
 def test_parse_agent_envelope_accepts_legacy_okr_review_result():
@@ -189,15 +263,16 @@ def test_structured_runner_uses_conversation_session_lock_and_persists_session(
         )
 
     spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
+    routed = FakeRoutedExecution(
+        executor([], "hello", {}), session_id="session-2"
+    )
     runner = StructuredCodexRunner(
-        store=store,
-        workspace=tmp_path,
+        routed_execution=routed,
         spec=spec,
-        executor=executor,
-        session_exists=lambda _session_id: True,
     )
 
     result = runner.run(
+        1,
         conversation_id="cid-1",
         conversation_title="Friday",
         single_chat=True,
@@ -206,9 +281,8 @@ def test_structured_runner_uses_conversation_session_lock_and_persists_session(
     )
 
     assert isinstance(result.envelope, AgentEnvelope)
-    assert store.get_codex_session_id("cid-1") == "session-2"
-    assert calls[0][0][:3] == ["codex", "exec", "resume"]
-    assert "session-1" in calls[0][0]
+    assert store.get_codex_session_id("cid-1") == "session-1"
+    assert routed.calls[0]["conversation_id"] == "cid-1"
 
 
 def test_structured_runner_clears_missing_local_session_before_exec(tmp_path):
@@ -251,15 +325,16 @@ def test_structured_runner_clears_missing_local_session_before_exec(tmp_path):
         )
 
     spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
+    routed = FakeRoutedExecution(
+        executor([], "hello", {}), session_id="session-2"
+    )
     runner = StructuredCodexRunner(
-        store=store,
-        workspace=tmp_path,
+        routed_execution=routed,
         spec=spec,
-        executor=executor,
-        session_exists=lambda _session_id: False,
     )
 
     runner.run(
+        1,
         conversation_id="cid-1",
         conversation_title="Friday",
         single_chat=True,
@@ -267,10 +342,8 @@ def test_structured_runner_clears_missing_local_session_before_exec(tmp_path):
         owner="reply:msg-1",
     )
 
-    assert calls[0][0][:2] == ["codex", "exec"]
-    assert calls[0][0][2] != "resume"
-    assert "missing-session" not in calls[0][0]
-    assert store.get_codex_session_id("cid-1") == "session-2"
+    assert routed.calls[0]["conversation_id"] == "cid-1"
+    assert store.get_codex_session_id("cid-1") == "missing-session"
 
 
 def test_structured_runner_resumes_session_to_repair_invalid_json(tmp_path):
@@ -278,69 +351,62 @@ def test_structured_runner_resumes_session_to_repair_invalid_json(tmp_path):
     schema.write_text("{}", encoding="utf-8")
     skill = tmp_path / "skill.md"
     skill.write_text("# Skill", encoding="utf-8")
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", True, "session-1")
-    calls = []
-
-    def executor(command, prompt, env):
-        calls.append((command, prompt, env))
-        if len(calls) == 1:
-            return "\n".join(
-                [
-                    json.dumps({"type": "session", "id": "session-1"}),
-                    "not json",
-                ]
-            )
-        return "\n".join(
-            [
-                json.dumps({"type": "session", "id": "session-1"}),
-                json.dumps(
-                    {
-                        "kind": "reply",
-                        "user_response": {
-                            "mode": "send_reply",
-                            "text": "ok",
-                            "sensitivity_kind": "general",
-                        },
-                        "system_actions": [
-                            {
-                                "type": "send_dingtalk_reply",
-                                "reply_text_ref": "user_response.text",
-                            }
-                        ],
-                        "domain_payload": {},
-                        "audit": {
-                            "summary": "valid",
-                            "documents": [],
-                            "confidence": 0.8,
-                        },
-                    }
-                ),
-            ]
-        )
-
-    spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
-    runner = StructuredCodexRunner(
-        store=store,
-        workspace=tmp_path,
-        spec=spec,
-        executor=executor,
-        session_exists=lambda _session_id: True,
+    invalid = "not json"
+    valid = json.dumps(
+        {
+            "kind": "reply",
+            "user_response": {
+                "mode": "send_reply",
+                "text": "ok",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [
+                {
+                    "type": "send_dingtalk_reply",
+                    "reply_text_ref": "user_response.text",
+                }
+            ],
+            "domain_payload": {},
+            "audit": {"summary": "valid", "documents": [], "confidence": 0.8},
+        }
     )
 
+    class RepairingRoutedExecution:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, **kwargs):
+            self.calls.append(kwargs)
+            retry = kwargs["result_validation_retry"]
+            assert retry.resume_same_session is True
+            with pytest.raises(Exception) as first:
+                kwargs["parser"](invalid)
+            repair_prompt = retry.corrected_prompt("hello", first.value)
+            assert repair_prompt.startswith(
+                "上一次输出不是合法 AgentEnvelope JSON。请基于同一个上下文"
+            )
+            assert invalid in repair_prompt
+            value = kwargs["parser"](valid)
+            return SimpleNamespace(
+                value=value,
+                route_name="codex_oauth",
+                attempt_id=2,
+                session_id="session-1",
+                transcript_start=2,
+                transcript_end=7,
+            )
+
+    spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
+    routed = RepairingRoutedExecution()
+    runner = StructuredCodexRunner(routed_execution=routed, spec=spec)
+
     result = runner.run(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        single_chat=True,
-        prompt="hello",
-        owner="reply:msg-1",
+        1, "cid-1", "Friday", True, "hello", owner="reply:msg-1"
     )
 
     assert result.envelope.user_response.text == "ok"
-    assert len(calls) == 2
-    assert calls[1][0][:3] == ["codex", "exec", "resume"]
-    assert "session-1" in calls[1][0]
-    assert "重新输出合法 AgentEnvelope JSON" in calls[1][1]
+    assert result.codex_session_id == "session-1"
+    assert len(routed.calls) == 1
 
 
 def test_structured_runner_can_skip_persisting_shared_conversation_session(tmp_path):
@@ -382,15 +448,14 @@ def test_structured_runner_can_skip_persisting_shared_conversation_session(tmp_p
 
     spec = AgentSpec("okr_review", schema, [skill], [], "Return JSON.")
     runner = StructuredCodexRunner(
-        store=store,
-        workspace=tmp_path,
+        routed_execution=FakeRoutedExecution(
+            executor([], "hello", {}), session_id="structured-session"
+        ),
         spec=spec,
-        executor=executor,
-        session_exists=lambda _session_id: True,
-        persist_conversation_session=False,
     )
 
     result = runner.run(
+        1,
         conversation_id="cid-1",
         conversation_title="Friday",
         single_chat=True,
@@ -410,56 +475,18 @@ def test_structured_runner_retries_fresh_after_session_refresh_error(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_conversation("cid-1", "Friday", True, "expired-session")
     spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    class FailingRoutedExecution:
+        def execute(self, **kwargs):
+            raise RoutedCodexExecutionError("runtime_execution_failed")
+
     runner = StructuredCodexRunner(
-        store=store,
-        workspace=tmp_path,
-        spec=spec,
-        session_exists=lambda _session_id: True,
+        routed_execution=FailingRoutedExecution(), spec=spec
     )
-    calls = []
 
-    def fake_execute(command, prompt):
-        calls.append(command)
-        if "expired-session" in command:
-            raise RuntimeError(
-                "Failed to refresh token: 400 Bad Request: Your session has ended."
-            )
-        return "\n".join(
-            [
-                json.dumps({"type": "session", "id": "new-session"}),
-                json.dumps(
-                    {
-                        "kind": "reply",
-                        "user_response": {
-                            "mode": "send_reply",
-                            "text": "ok",
-                            "sensitivity_kind": "general",
-                        },
-                        "system_actions": [
-                            {
-                                "type": "send_dingtalk_reply",
-                                "reply_text_ref": "user_response.text",
-                            }
-                        ],
-                        "domain_payload": {},
-                        "audit": {
-                            "summary": "valid",
-                            "documents": [],
-                            "confidence": 0.8,
-                        },
-                    }
-                ),
-            ]
-        )
-
-    runner._execute = fake_execute
-
-    result = runner.run("cid-1", "Friday", True, "hello", owner="reply:msg-1")
-
-    assert result.codex_session_id == "new-session"
-    assert "expired-session" in calls[0]
-    assert "expired-session" not in calls[1]
-    assert store.get_codex_session_id("cid-1") == "new-session"
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
+        runner.run(1, "cid-1", "Friday", True, "hello", owner="reply:msg-1")
 
 
 def test_structured_runner_reads_audit_events_from_session_transcript(
@@ -469,7 +496,6 @@ def test_structured_runner_reads_audit_events_from_session_transcript(
     schema.write_text("{}", encoding="utf-8")
     skill = tmp_path / "skill.md"
     skill.write_text("# Skill", encoding="utf-8")
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
     session_id = "019eb102-dc3e-7620-b0e9-16bcc2cb7038"
     session_path = (
         tmp_path
@@ -535,14 +561,16 @@ def test_structured_runner_reads_audit_events_from_session_transcript(
 
     spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
     runner = StructuredCodexRunner(
-        store=store,
-        workspace=tmp_path,
+        routed_execution=FakeRoutedExecution(
+            executor([], "hello", {}),
+            session_id=session_id,
+            transcript_start=0,
+            transcript_end=2,
+        ),
         spec=spec,
-        executor=executor,
-        session_exists=lambda _session_id: True,
     )
 
-    result = runner.run("cid-1", "Friday", True, "hello", owner="reply:msg-1")
+    result = runner.run(1, "cid-1", "Friday", True, "hello", owner="reply:msg-1")
 
     assert result.transcript_end_line == 2
     assert result.audit_tool_events == [
@@ -556,70 +584,14 @@ def test_structured_runner_reads_audit_events_from_session_transcript(
     ]
 
 
-def test_structured_runner_default_executor_uses_process_runner_signature(tmp_path):
+def test_structured_runner_requires_injected_execution(tmp_path):
     schema = tmp_path / "schema.json"
     schema.write_text("{}", encoding="utf-8")
     skill = tmp_path / "skill.md"
     skill.write_text("# Skill", encoding="utf-8")
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    calls = []
-
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return ProcessRunResult(
-            returncode=0,
-            stdout="\n".join(
-                [
-                    json.dumps({"type": "session", "id": "session-structured"}),
-                    json.dumps(
-                        {
-                            "kind": "reply",
-                            "user_response": {
-                                "mode": "send_reply",
-                                "text": "ok",
-                                "sensitivity_kind": "general",
-                            },
-                            "system_actions": [
-                                {
-                                    "type": "send_dingtalk_reply",
-                                    "reply_text_ref": "user_response.text",
-                                }
-                            ],
-                            "domain_payload": {},
-                            "audit": {
-                                "summary": "valid",
-                                "documents": [],
-                                "confidence": 0.8,
-                            },
-                        }
-                    ),
-                ]
-            ),
-            stderr="",
-        )
-
     spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
-    runner = StructuredCodexRunner(
-        store=store,
-        workspace=tmp_path,
-        spec=spec,
-        timeout_seconds=7,
-        idle_timeout_seconds=3,
-    )
-    runner._run_process_with_idle_timeout = fake_run
-
-    result = runner.run("cid-1", "Friday", True, "hello", owner="reply:msg-1")
-
-    assert result.codex_session_id == "session-structured"
-    command, kwargs = calls[0]
-    assert kwargs["prompt"] == "hello"
-    assert kwargs["env"] == runner.runner.build_env()
-    assert kwargs["total_timeout_seconds"] == 7
-    assert kwargs["idle_timeout_seconds"] == 3
-    assert "--ignore-user-config" not in command
-    assert "--ignore-rules" not in command
-    assert "--disable" not in command
-    assert "--output-schema" not in command
+    with pytest.raises(TypeError):
+        StructuredCodexRunner(spec=spec)
 
 
 def test_structured_runner_uses_explicit_output_schema_when_configured(tmp_path):
@@ -629,12 +601,8 @@ def test_structured_runner_uses_explicit_output_schema_when_configured(tmp_path)
     output_schema.write_text("{}", encoding="utf-8")
     skill = tmp_path / "skill.md"
     skill.write_text("# Skill", encoding="utf-8")
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    calls = []
-
     def executor(command, prompt, env):
-        del prompt, env
-        calls.append(command)
+        del command, prompt, env
         return "\n".join(
             [
                 json.dumps({"type": "session", "id": "session-output-schema"}),
@@ -671,28 +639,34 @@ def test_structured_runner_uses_explicit_output_schema_when_configured(tmp_path)
         "Return JSON.",
         output_schema_path=output_schema,
     )
+    routed = FakeRoutedExecution(executor([], "hello", {}))
     runner = StructuredCodexRunner(
-        store=store,
-        workspace=tmp_path,
+        routed_execution=routed,
         spec=spec,
-        executor=executor,
     )
 
-    runner.run("cid-1", "Friday", True, "hello", owner="reply:msg-1")
+    runner.run(1, "cid-1", "Friday", True, "hello", owner="reply:msg-1")
 
-    schema_index = calls[0].index("--output-schema") + 1
-    assert calls[0][schema_index] == str(output_schema)
+    assert routed.calls[0]["command_factory"]._output_schema_path == output_schema
 
 
-def test_structured_runner_fails_fast_when_lock_is_held(tmp_path):
+def test_structured_runner_rejects_effectful_mode(tmp_path):
     schema = tmp_path / "schema.json"
     schema.write_text("{}", encoding="utf-8")
     skill = tmp_path / "skill.md"
     skill.write_text("# Skill", encoding="utf-8")
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    assert store.acquire_codex_session_lock("cid-1", "other") is True
     spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
-    runner = StructuredCodexRunner(store=store, workspace=tmp_path, spec=spec)
+    runner = StructuredCodexRunner(
+        routed_execution=FakeRoutedExecution("{}"), spec=spec
+    )
 
-    with pytest.raises(RuntimeError, match="codex session locked"):
-        runner.run("cid-1", "Friday", True, "hello", owner="reply:msg-1")
+    with pytest.raises(ValueError, match="read-only"):
+        runner.run(
+            1,
+            "cid-1",
+            "Friday",
+            True,
+            "hello",
+            owner="reply:msg-1",
+            allow_side_effects=True,
+        )

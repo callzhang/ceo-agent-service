@@ -6,7 +6,6 @@ from app.agent_contracts import AuditFeedback, ConsumerProposal
 from app.agent_result import AgentError
 from app.agent_skill_usage import LoadedSkillReceipt
 
-
 IMAGE_DEPENDENCY_UNAVAILABLE_CODE = "image_dependency_unavailable"
 IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY = (
     "Referenced image content could not be supplied to the agent."
@@ -65,6 +64,7 @@ class AgentTaskContext:
     trigger_raw_payload: dict[str, object] = field(default_factory=dict)
     image_paths: tuple[str, ...] = ()
     image_sha256s: tuple[str, ...] = ()
+    required_reviewed_skills: tuple[LoadedSkillReceipt, ...] = ()
 
     @property
     def unresolved_image_count(self) -> int:

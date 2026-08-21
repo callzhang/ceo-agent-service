@@ -1,28 +1,35 @@
 import errno
 import fcntl
-import json
 import hashlib
+import json
 import sqlite3
 import threading
 import time
-from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from pathlib import Path
-from collections.abc import Callable, Iterator, Sequence
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from app.agent_result import SideEffectState
+from app.agent_runtime_contracts import (
+    CredentialMode,
+    RuntimeFailureClass,
+    RuntimeKind,
+)
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
     classify_codex_process_failure,
 )
-from app.wechat.models import WechatReplyScope
+from app.feedback_policy import FeedbackPressureStats
+from app.history import HistoryItem
+from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
     MeetingAlignmentQueueStatus,
@@ -37,9 +44,7 @@ from app.task_models import (
     WorkTodoDingTalkLink,
     WorkUpdate,
 )
-from app.feedback_policy import FeedbackPressureStats
-from app.history import HistoryItem
-from app.legacy_receipt import legacy_receipt_has_explicit_failure
+from app.wechat.models import WechatReplyScope
 
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
@@ -55,10 +60,16 @@ CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-18.1"
+STORE_SCHEMA_VERSION = "2026-08-20.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
+    "task_todo_sync_outbox",
+    "agent_runtime_attempts",
+    "conversation_runtime_sessions",
+    "weekly_okr_analysis_jobs",
+    "wechat_memory_import_jobs",
     "agent_run_events",
     "follow_up_send_attempts",
+    "runtime_route_pauses",
     "workbench_tasks",
     "workbench_turns",
     "workbench_events",
@@ -67,6 +78,12 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "workbench_confirmations",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
+    "idx_runtime_attempt_active_route",
+    "idx_runtime_attempt_active_lease",
+    "idx_task_agent_runs_active_input",
+    "idx_meeting_alignment_runs_active_job",
+    "idx_weekly_okr_analysis_jobs_identity",
+    "idx_wechat_memory_import_jobs_status",
     "idx_workbench_events_turn_id_id",
     "idx_workbench_artifacts_turn_created_id",
     "idx_workbench_turns_task_created_id",
@@ -83,12 +100,64 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "reply_attempts": ("human_decision_options_json",),
+    "agent_runtime_attempts": (
+        "session_mode",
+        "source_session_id",
+        "attempt_purpose",
+        "validation_retry_policy_id",
+        "validation_result_schema_id",
+        "lease_owner",
+        "lease_expires_at",
+        "result_schema_id",
+        "result_envelope_json",
+    ),
+    "conversation_runtime_sessions": ("contract_hash",),
+    "task_agent_runs": ("status", "error", "finished_at", "updated_at"),
+    "meeting_alignment_runs": ("finished_at", "updated_at"),
+    "weekly_okr_analysis_jobs": (
+        "week_end",
+        "manager_user_id",
+        "source_digest",
+        "status",
+        "lease_owner",
+        "lease_expires_at",
+        "error",
+        "finished_at",
+        "updated_at",
+    ),
+    "wechat_memory_import_jobs": (
+        "import_run_id",
+        "account_id",
+        "status",
+        "error",
+        "finished_at",
+        "updated_at",
+    ),
 }
+STORE_SCHEMA_REQUIRED_TRIGGERS = (
+    "trg_runtime_attempt_session_evidence_trim_insert",
+    "trg_runtime_attempt_session_evidence_trim_update",
+    "trg_runtime_attempt_generalized_lease_insert",
+    "trg_runtime_attempt_generalized_lease_update",
+    "trg_runtime_attempt_lineage_insert",
+    "trg_runtime_attempt_lineage_update",
+    "trg_runtime_attempt_lineage_immutable",
+)
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
+MAX_RUNTIME_RESULT_ENVELOPE_BYTES = 64 * 1024
 MAX_RECONCILIATION_EVENTS = 256
 MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS = 16
 RECONCILIATION_EVENT_LIMIT_ERROR = "agent run reconciliation event limit exceeded"
 RECONCILIATION_ATTEMPT_LIMIT_ERROR = "agent run reconciliation attempt limit exceeded"
+RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
+    {"structured", "meeting", "task", "weekly_okr", "memory"}
+)
+MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES = frozenset(
+    {"failed", "retry", "no_action", "ready_to_send"}
+)
+MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR = (
+    "schema_migration_duplicate_running_meeting_run"
+)
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
 
@@ -367,6 +436,36 @@ class AgentRole(StrEnum):
     AUDIT = "audit"
 
 
+class RuntimeAttemptSessionMode(StrEnum):
+    FRESH = "fresh"
+    RESUME = "resume"
+
+
+class WeeklyOkrAnalysisJobClaimOutcome(StrEnum):
+    CLAIMED = "claimed"
+    CACHE_HIT = "cache_hit"
+    IN_PROGRESS = "in_progress"
+
+
+@dataclass(frozen=True)
+class WeeklyOkrAnalysisJobClaim:
+    job_id: int
+    outcome: WeeklyOkrAnalysisJobClaimOutcome
+    reclaimed_stale: bool = False
+
+
+class AgentRuntimeAttemptStartConflictError(RuntimeError):
+    """Raised when another executor already started a persisted attempt."""
+
+
+class AgentRuntimeAttemptLeaseLostError(RuntimeError):
+    """Raised when a generalized attempt write has lost its owner lease."""
+
+
+class RuntimeRoutePausedError(RuntimeError):
+    """Raised when a route pause races with generalized attempt selection."""
+
+
 class AgentRun(BaseModel):
     id: int
     reply_task_id: int
@@ -401,6 +500,52 @@ class AgentRun(BaseModel):
     updated_at: str
 
 
+class AgentRuntimeAttempt(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    agent_run_id: int | None = None
+    workload_kind: str
+    workload_key: str
+    attempt_number: int
+    route_name: str
+    runtime_kind: str
+    credential_mode: str
+    model: str
+    session_mode: RuntimeAttemptSessionMode = RuntimeAttemptSessionMode.FRESH
+    source_session_id: str = ""
+    attempt_purpose: str = "normal"
+    validation_retry_policy_id: str = ""
+    validation_result_schema_id: str = ""
+    session_id: str = ""
+    status: str
+    failure_class: str = ""
+    failure_code: str = ""
+    failover_permitted: bool = False
+    transcript_reference: str = ""
+    transcript_start: int = 0
+    transcript_end: int = 0
+    first_effect_started_at: str = ""
+    lease_owner: str = ""
+    lease_expires_at: str = ""
+    result_schema_id: str = ""
+    result_envelope_json: str = ""
+    started_at: str
+    finished_at: str = ""
+    created_at: str
+    updated_at: str
+
+
+class RuntimeRoutePause(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    route_name: str
+    failure_code: str
+    retry_at: str
+    opened_at: str
+    updated_at: str
+
+
 class AgentExecutionReceipt(BaseModel):
     id: int
     agent_run_id: int
@@ -421,6 +566,17 @@ class AgentExecutionReceipt(BaseModel):
 class AgentRunClaim:
     run: AgentRun
     claimed: bool
+
+
+@dataclass(frozen=True)
+class AgentRuntimeAttemptStartClaim:
+    attempt: AgentRuntimeAttempt
+    start_acquired: bool
+
+
+@dataclass(frozen=True)
+class ClaudeEffectDispatchClaim:
+    dispatch_acquired: bool
 
 
 @dataclass(frozen=True)
@@ -675,6 +831,12 @@ def _json_object_text(value: object, *, field: str) -> str:
     return text
 
 
+def _canonical_json_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _is_sqlite_lock_error(exc: sqlite3.OperationalError) -> bool:
     message = str(exc).lower()
     return "locked" in message or "busy" in message
@@ -767,6 +929,12 @@ class AutoReplyStore:
                         "select name from sqlite_master where type='index'"
                     )
                 }
+                present_triggers = {
+                    str(item["name"])
+                    for item in db.execute(
+                        "select name from sqlite_master where type='trigger'"
+                    )
+                }
                 required_columns_present = all(
                     set(required_columns).issubset(
                         {
@@ -787,6 +955,7 @@ class AutoReplyStore:
         return (
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
             and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
+            and set(STORE_SCHEMA_REQUIRED_TRIGGERS).issubset(present_triggers)
             and required_columns_present
             and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
         )
@@ -803,6 +972,16 @@ class AutoReplyStore:
                 yield connection
         finally:
             connection.close()
+
+    @contextmanager
+    def _optional_connection(
+        self, connection: sqlite3.Connection | None
+    ) -> Iterator[sqlite3.Connection]:
+        if connection is not None:
+            yield connection
+            return
+        with self._connect() as db:
+            yield db
 
     def _open_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
@@ -1054,6 +1233,75 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_agent_runs_status
                     on agent_runs(status, updated_at);
+                create table if not exists agent_runtime_attempts (
+                    id integer primary key autoincrement,
+                    agent_run_id integer,
+                    workload_kind text not null,
+                    workload_key text not null,
+                    attempt_number integer not null check(attempt_number > 0),
+                    route_name text not null,
+                    runtime_kind text not null,
+                    credential_mode text not null,
+                    model text not null,
+                    session_mode text not null default 'fresh'
+                        check(session_mode in ('fresh', 'resume')),
+                    source_session_id text not null default '',
+                    attempt_purpose text not null default 'normal'
+                        check(attempt_purpose in (
+                            'normal', 'result_validation_correction'
+                        )),
+                    validation_retry_policy_id text not null default '',
+                    validation_result_schema_id text not null default '',
+                    session_id text not null default '',
+                    status text not null check(status in (
+                        'starting', 'running', 'completed', 'failed', 'superseded'
+                    )),
+                    failure_class text not null default '',
+                    failure_code text not null default '',
+                    failover_permitted integer not null default 0,
+                    transcript_reference text not null default '',
+                    transcript_start integer not null default 0,
+                    transcript_end integer not null default 0,
+                    first_effect_started_at text not null default '',
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    result_schema_id text not null default '',
+                    result_envelope_json text not null default '',
+                    started_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    check(
+                        (workload_kind='agent_run' and agent_run_id is not null
+                         and workload_key=cast(agent_run_id as text))
+                        or
+                        (workload_kind<>'agent_run' and agent_run_id is null)
+                    ),
+                    check(
+                        (session_mode='fresh' and source_session_id='')
+                        or (session_mode='resume' and trim(source_session_id)<>'')
+                    ),
+                    unique(workload_kind, workload_key, attempt_number),
+                    foreign key(agent_run_id) references agent_runs(id)
+                );
+                create unique index if not exists idx_runtime_attempt_active_route
+                    on agent_runtime_attempts(workload_kind, workload_key, route_name)
+                    where status in ('starting', 'running');
+                create table if not exists conversation_runtime_sessions (
+                    conversation_id text not null,
+                    route_name text not null,
+                    session_id text not null,
+                    contract_hash text not null default '',
+                    updated_at text not null default current_timestamp,
+                    primary key(conversation_id, route_name)
+                );
+                create table if not exists runtime_route_pauses (
+                    route_name text primary key,
+                    failure_code text not null,
+                    retry_at text not null,
+                    opened_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
                 create table if not exists agent_run_events (
                     id integer primary key autoincrement,
                     agent_run_id integer not null,
@@ -1139,6 +1387,19 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_wechat_deliveries_status
                     on wechat_deliveries(status, id);
+                create table if not exists wechat_memory_import_jobs (
+                    id integer primary key autoincrement,
+                    import_run_id text not null,
+                    account_id text not null,
+                    status text not null default 'running'
+                        check(status in ('running', 'completed', 'failed')),
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
+                );
+                create index if not exists idx_wechat_memory_import_jobs_status
+                    on wechat_memory_import_jobs(status, id);
                 create table if not exists wechat_memory_candidates (
                     id integer primary key autoincrement,
                     import_run_id text not null,
@@ -1201,6 +1462,8 @@ class AutoReplyStore:
                     status text not null,
                     error text not null default '',
                     created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp,
                     foreign key(job_id) references meeting_alignment_jobs(id)
                 );
                 create index if not exists idx_meeting_alignment_runs_job
@@ -1416,6 +1679,26 @@ class AutoReplyStore:
                 create unique index if not exists idx_work_todo_dingtalk_links_active_todo
                     on work_todo_dingtalk_links(work_todo_id)
                     where status in ('creating', 'active');
+                create table if not exists task_todo_sync_outbox (
+                    id integer primary key autoincrement,
+                    operation_key text not null unique,
+                    work_todo_id integer not null,
+                    operation text not null check(operation in ('create', 'complete')),
+                    evidence_json text not null default '{}',
+                    status text not null default 'queued'
+                        check(status in ('queued', 'running', 'completed', 'failed', 'unknown')),
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    receipt_json text not null default '{}',
+                    error text not null default '',
+                    attempt_count integer not null default 0,
+                    next_attempt_at text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    completed_at text not null default ''
+                );
+                create index if not exists idx_task_todo_sync_outbox_due
+                    on task_todo_sync_outbox(status, lease_expires_at, id);
                 create table if not exists work_updates (
                     id integer primary key autoincrement,
                     project_id integer not null,
@@ -1453,10 +1736,33 @@ class AutoReplyStore:
                     decision_json text not null default '{}',
                     audit_summary text not null default '',
                     memory_recall_used integer not null default 0,
-                    created_at text not null default current_timestamp
+                    status text not null default 'completed'
+                        check(status in ('running', 'completed', 'failed')),
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
                 );
                 create index if not exists idx_task_agent_runs_input
                     on task_agent_runs(summary_input_id, id);
+                create table if not exists weekly_okr_analysis_jobs (
+                    id integer primary key autoincrement,
+                    week_end text not null,
+                    manager_user_id text not null,
+                    source_digest text not null,
+                    status text not null default 'running'
+                        check(status in ('running', 'completed', 'failed')),
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
+                );
+                create unique index if not exists idx_weekly_okr_analysis_jobs_identity
+                    on weekly_okr_analysis_jobs(
+                        week_end, manager_user_id, source_digest
+                    );
                 create table if not exists follow_up_drafts (
                     id integer primary key autoincrement,
                     project_id integer not null,
@@ -1861,6 +2167,8 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table agent_runs add column {column} {definition}"
                     )
+            self._migrate_runtime_attempt_session_evidence(db)
+            self._migrate_runtime_attempt_execution_state(db)
             self._migrate_agent_run_turn_identity(db)
             agent_run_columns = {
                 row["name"]
@@ -2248,6 +2556,57 @@ class AutoReplyStore:
                     on meeting_alignment_runs(created_at, id)
                 """
             )
+            meeting_run_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(meeting_alignment_runs)"
+                ).fetchall()
+            }
+            for column, definition in (
+                ("finished_at", "text not null default ''"),
+                ("updated_at", "text not null default ''"),
+            ):
+                if column not in meeting_run_columns:
+                    db.execute(
+                        "alter table meeting_alignment_runs "
+                        f"add column {column} {definition}"
+                    )
+            db.execute(
+                "update meeting_alignment_runs set updated_at=created_at "
+                "where updated_at=''"
+            )
+            db.execute(
+                "update meeting_alignment_runs set finished_at=created_at "
+                "where status<>'running' and finished_at=''"
+            )
+            running_rows = db.execute(
+                "select id, job_id from meeting_alignment_runs "
+                "where status='running' "
+                "order by job_id, datetime(created_at) desc, id desc"
+            ).fetchall()
+            newest_running_job_ids: set[int] = set()
+            for row in running_rows:
+                job_id = int(row["job_id"])
+                if job_id not in newest_running_job_ids:
+                    newest_running_job_ids.add(job_id)
+                    continue
+                db.execute(
+                    "update meeting_alignment_runs set status='failed', error=?, "
+                    "finished_at=case when created_at<>'' then created_at "
+                    "else current_timestamp end, "
+                    "updated_at=case when created_at<>'' then created_at "
+                    "else current_timestamp end "
+                    "where id=? and status='running'",
+                    (
+                        MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR,
+                        int(row["id"]),
+                    ),
+                )
+            db.execute(
+                "create unique index if not exists "
+                "idx_meeting_alignment_runs_active_job "
+                "on meeting_alignment_runs(job_id) where status='running'"
+            )
             db.execute(
                 """
                 create index if not exists idx_work_updates_created
@@ -2260,6 +2619,80 @@ class AutoReplyStore:
                     on work_summary_inputs(updated_at desc, id desc)
                 """
             )
+            task_run_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(task_agent_runs)").fetchall()
+            }
+            for column, definition in (
+                ("status", "text not null default 'completed'"),
+                ("error", "text not null default ''"),
+                ("finished_at", "text not null default ''"),
+                ("updated_at", "text not null default ''"),
+            ):
+                if column not in task_run_columns:
+                    db.execute(
+                        f"alter table task_agent_runs add column {column} {definition}"
+                    )
+            db.execute(
+                "update task_agent_runs set status='completed' "
+                "where status is null or status=''"
+            )
+            db.execute(
+                "update task_agent_runs set finished_at=created_at "
+                "where status<>'running' and finished_at=''"
+            )
+            db.execute(
+                "update task_agent_runs set updated_at=created_at where updated_at=''"
+            )
+            db.execute(
+                "create unique index if not exists idx_task_agent_runs_active_input "
+                "on task_agent_runs(summary_input_id) where status='running'"
+            )
+            db.execute(
+                """
+                create table if not exists weekly_okr_analysis_jobs (
+                    id integer primary key autoincrement,
+                    week_end text not null,
+                    manager_user_id text not null,
+                    source_digest text not null,
+                    status text not null default 'running'
+                        check(status in ('running', 'completed', 'failed')),
+                    lease_owner text not null default '',
+                    lease_expires_at text not null default '',
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
+                )
+                """
+            )
+            db.execute(
+                "create unique index if not exists "
+                "idx_weekly_okr_analysis_jobs_identity "
+                "on weekly_okr_analysis_jobs(week_end, manager_user_id, source_digest)"
+            )
+            weekly_job_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(weekly_okr_analysis_jobs)"
+                ).fetchall()
+            }
+            for column in ("lease_owner", "lease_expires_at"):
+                if column not in weekly_job_columns:
+                    db.execute(
+                        f"alter table weekly_okr_analysis_jobs add column {column} "
+                        "text not null default ''"
+                    )
+            outbox_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(task_todo_sync_outbox)").fetchall()
+            }
+            for column, definition in (
+                ("attempt_count", "integer not null default 0"),
+                ("next_attempt_at", "text not null default ''"),
+            ):
+                if column not in outbox_columns:
+                    db.execute(f"alter table task_todo_sync_outbox add column {column} {definition}")
             org_user_profile_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(org_user_profiles)").fetchall()
@@ -2285,6 +2718,25 @@ class AutoReplyStore:
                     "alter table wechat_memory_candidates add column "
                     "memory_write_error text not null default ''"
                 )
+            db.execute(
+                """
+                create table if not exists wechat_memory_import_jobs (
+                    id integer primary key autoincrement,
+                    import_run_id text not null,
+                    account_id text not null,
+                    status text not null default 'running'
+                        check(status in ('running', 'completed', 'failed')),
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    finished_at text not null default '',
+                    updated_at text not null default current_timestamp
+                )
+                """
+            )
+            db.execute(
+                "create index if not exists idx_wechat_memory_import_jobs_status "
+                "on wechat_memory_import_jobs(status, id)"
+            )
             wechat_delivery_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(wechat_deliveries)").fetchall()
@@ -2313,6 +2765,219 @@ class AutoReplyStore:
             self._migrate_removed_runtime(db)
             self._migrate_agent_run_events(db)
             self._backfill_agent_run_effect_counters(db)
+            runtime_session_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(conversation_runtime_sessions)"
+                ).fetchall()
+            }
+            if "contract_hash" not in runtime_session_columns:
+                db.execute(
+                    "alter table conversation_runtime_sessions add column "
+                    "contract_hash text not null default ''"
+                )
+            db.execute(
+                """
+                insert or ignore into conversation_runtime_sessions (
+                    conversation_id, route_name, session_id, contract_hash
+                )
+                select conversation_id, 'codex_oauth', codex_session_id,
+                       coalesce(codex_session_contract_hash, '')
+                from conversations
+                where codex_session_id is not null and codex_session_id <> ''
+                """
+            )
+
+    @staticmethod
+    def _migrate_runtime_attempt_session_evidence(db: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in db.execute(
+                "pragma table_info(agent_runtime_attempts)"
+            ).fetchall()
+        }
+        if "session_mode" not in columns:
+            db.execute(
+                "alter table agent_runtime_attempts add column "
+                "session_mode text not null default 'fresh' "
+                "check(session_mode in ('fresh', 'resume'))"
+            )
+        if "source_session_id" not in columns:
+            db.execute(
+                "alter table agent_runtime_attempts add column "
+                "source_session_id text not null default ''"
+            )
+        db.execute(
+            "update agent_runtime_attempts set session_mode='fresh', "
+            "source_session_id='' where session_mode is null "
+            "or source_session_id is null "
+            "or session_mode not in ('fresh', 'resume') "
+            "or (session_mode='fresh' and source_session_id<>'') "
+            "or (session_mode='resume' and trim(source_session_id)='')"
+        )
+        db.execute(
+            "drop trigger if exists trg_runtime_attempt_session_evidence_insert"
+        )
+        db.execute(
+            "drop trigger if exists trg_runtime_attempt_session_evidence_update"
+        )
+        db.execute(
+            "drop trigger if exists trg_runtime_attempt_session_evidence_trim_insert"
+        )
+        db.execute(
+            "drop trigger if exists trg_runtime_attempt_session_evidence_trim_update"
+        )
+        db.execute(
+            """
+            create trigger trg_runtime_attempt_session_evidence_trim_insert
+            before insert on agent_runtime_attempts
+            when new.session_mode is null or new.source_session_id is null or not (
+                (new.session_mode='fresh' and new.source_session_id='')
+                or (new.session_mode='resume' and trim(new.source_session_id)<>'')
+            )
+            begin
+                select raise(abort, 'invalid runtime attempt session evidence');
+            end
+            """
+        )
+
+        db.execute(
+            """
+            create trigger trg_runtime_attempt_session_evidence_trim_update
+            before update of session_mode, source_session_id on agent_runtime_attempts
+            when new.session_mode is null or new.source_session_id is null or not (
+                (new.session_mode='fresh' and new.source_session_id='')
+                or (new.session_mode='resume' and trim(new.source_session_id)<>'')
+            )
+            begin
+                select raise(abort, 'invalid runtime attempt session evidence');
+            end
+            """
+        )
+
+    @staticmethod
+    def _migrate_runtime_attempt_execution_state(db: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in db.execute(
+                "pragma table_info(agent_runtime_attempts)"
+            ).fetchall()
+        }
+        for column in (
+            "lease_owner",
+            "lease_expires_at",
+            "result_schema_id",
+            "result_envelope_json",
+        ):
+            if column not in columns:
+                db.execute(
+                    f"alter table agent_runtime_attempts add column "
+                    f"{column} text not null default ''"
+                )
+        lineage_columns = {
+            "attempt_purpose": "text not null default 'normal'",
+            "validation_retry_policy_id": "text not null default ''",
+            "validation_result_schema_id": "text not null default ''",
+        }
+        for column, definition in lineage_columns.items():
+            if column not in columns:
+                db.execute(
+                    f"alter table agent_runtime_attempts add column "
+                    f"{column} {definition}"
+                )
+        db.execute(
+            "update agent_runtime_attempts set attempt_purpose='normal', "
+            "validation_retry_policy_id='', validation_result_schema_id='' "
+            "where attempt_purpose not in "
+            "('normal', 'result_validation_correction') "
+            "or (attempt_purpose='normal' and "
+            "(validation_retry_policy_id<>'' or validation_result_schema_id<>'')) "
+            "or (attempt_purpose='result_validation_correction' and "
+            "(trim(validation_retry_policy_id)='' "
+            "or trim(validation_result_schema_id)=''))"
+        )
+        db.execute("drop trigger if exists trg_runtime_attempt_lineage_insert")
+        db.execute("drop trigger if exists trg_runtime_attempt_lineage_update")
+        db.execute("drop trigger if exists trg_runtime_attempt_lineage_immutable")
+        lineage_invalid = """
+            new.attempt_purpose not in ('normal', 'result_validation_correction')
+            or (new.attempt_purpose='normal' and
+                (new.validation_retry_policy_id<>''
+                 or new.validation_result_schema_id<>''))
+            or (new.attempt_purpose='result_validation_correction' and
+                (trim(new.validation_retry_policy_id)=''
+                 or trim(new.validation_result_schema_id)=''))
+        """
+        db.execute(
+            f"""
+            create trigger trg_runtime_attempt_lineage_insert
+            before insert on agent_runtime_attempts
+            when {lineage_invalid}
+            begin
+                select raise(abort, 'invalid runtime attempt correction lineage');
+            end
+            """
+        )
+        db.execute(
+            f"""
+            create trigger trg_runtime_attempt_lineage_update
+            before update of attempt_purpose, validation_retry_policy_id,
+                             validation_result_schema_id
+            on agent_runtime_attempts
+            when {lineage_invalid}
+            begin
+                select raise(abort, 'invalid runtime attempt correction lineage');
+            end
+            """
+        )
+        db.execute(
+            """
+            create trigger trg_runtime_attempt_lineage_immutable
+            before update of attempt_purpose, validation_retry_policy_id,
+                             validation_result_schema_id
+            on agent_runtime_attempts
+            when new.attempt_purpose<>old.attempt_purpose
+              or new.validation_retry_policy_id<>old.validation_retry_policy_id
+              or new.validation_result_schema_id<>old.validation_result_schema_id
+            begin
+                select raise(abort, 'runtime attempt correction lineage is immutable');
+            end
+            """
+        )
+        db.execute(
+            """
+            create index if not exists idx_runtime_attempt_active_lease
+            on agent_runtime_attempts(status, lease_expires_at)
+            where agent_run_id is null and status in ('starting', 'running')
+            """
+        )
+        db.execute("drop trigger if exists trg_runtime_attempt_generalized_lease_insert")
+        db.execute("drop trigger if exists trg_runtime_attempt_generalized_lease_update")
+        db.execute(
+            """
+            create trigger trg_runtime_attempt_generalized_lease_insert
+            before insert on agent_runtime_attempts
+            when new.agent_run_id is null
+              and new.status in ('starting', 'running')
+              and (trim(new.lease_owner)='' or trim(new.lease_expires_at)='')
+            begin
+                select raise(abort, 'active generalized attempt requires lease');
+            end
+            """
+        )
+        db.execute(
+            """
+            create trigger trg_runtime_attempt_generalized_lease_update
+            before update of status, lease_owner, lease_expires_at
+            on agent_runtime_attempts
+            when new.agent_run_id is null
+              and new.status in ('starting', 'running')
+              and (trim(new.lease_owner)='' or trim(new.lease_expires_at)='')
+            begin
+                select raise(abort, 'active generalized attempt requires lease');
+            end
+            """
+        )
 
     @staticmethod
     def _reconcile_legacy_workbench_confirmations(db: sqlite3.Connection) -> None:
@@ -3095,6 +3760,10 @@ class AutoReplyStore:
         )
 
     @staticmethod
+    def _agent_runtime_attempt_from_row(row: sqlite3.Row) -> AgentRuntimeAttempt:
+        return AgentRuntimeAttempt.model_validate(dict(row))
+
+    @staticmethod
     def _okr_review_request_from_row(row: sqlite3.Row) -> OkrReviewRequest:
         return OkrReviewRequest.model_validate(dict(row))
 
@@ -3747,11 +4416,9 @@ class AutoReplyStore:
         now: str | datetime | None,
     ) -> Iterator[tuple[sqlite3.Connection, tuple[datetime, str]]]:
         for attempt in range(AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS):
+            connection = self._connect()
             try:
-                with self._connect() as db:
-                    db.execute("begin immediate")
-                    yield db, _utc_store_time(now)
-                    return
+                db = connection.__enter__()
             except sqlite3.OperationalError as exc:
                 if (
                     not _is_sqlite_lock_error(exc)
@@ -3759,6 +4426,1352 @@ class AutoReplyStore:
                 ):
                     raise
                 time.sleep(AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+                continue
+            try:
+                db.execute("begin immediate")
+            except sqlite3.OperationalError as exc:
+                connection.__exit__(type(exc), exc, exc.__traceback__)
+                if (
+                    not _is_sqlite_lock_error(exc)
+                    or attempt + 1 >= AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS
+                ):
+                    raise
+                time.sleep(AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+                continue
+            else:
+                try:
+                    yield db, _utc_store_time(now)
+                except BaseException as exc:
+                    connection.__exit__(type(exc), exc, exc.__traceback__)
+                    raise
+                else:
+                    connection.__exit__(None, None, None)
+                return
+
+    @staticmethod
+    def _require_runtime_attempt_text(value: str, *, field: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError(f"{field} must be non-empty")
+        return value
+
+    @staticmethod
+    def _validate_runtime_operation_workload(
+        workload_kind: str,
+        workload_key: str,
+    ) -> tuple[str, str]:
+        workload_kind = AutoReplyStore._require_runtime_attempt_text(
+            workload_kind, field="workload_kind"
+        )
+        workload_key = AutoReplyStore._require_runtime_attempt_text(
+            workload_key, field="workload_key"
+        )
+        if workload_kind not in RUNTIME_OPERATION_WORKLOAD_KINDS:
+            raise ValueError("unsupported runtime operation workload kind")
+        if workload_kind in {"structured", "meeting"}:
+            if not workload_key.isdecimal() or int(workload_key) <= 0:
+                raise ValueError("runtime operation workload key must be a persisted ID")
+        elif workload_kind == "task":
+            task_id, separator, suffix = workload_key.partition(":")
+            if not task_id.isdecimal() or int(task_id) <= 0:
+                raise ValueError("task workload key must start with a persisted ID")
+            if separator and suffix != "memory_backfill":
+                raise ValueError("task workload key has an unsupported suffix")
+        elif workload_kind == "weekly_okr":
+            week_end, separator, remaining = workload_key.partition(":")
+            manager_user_id, separator_2, source_digest = remaining.partition(":")
+            try:
+                if datetime.fromisoformat(week_end).strftime("%Y-%m-%d") != week_end:
+                    raise ValueError
+            except ValueError as exc:
+                raise ValueError("weekly_okr workload key must start with week end") from exc
+            if manager_user_id != manager_user_id.strip():
+                raise ValueError(
+                    "weekly_okr manager_user_id must be canonical"
+                )
+            if (
+                not separator
+                or not separator_2
+                or not manager_user_id.strip()
+                or not source_digest.strip()
+                or len(source_digest) != 64
+                or any(char not in "0123456789abcdef" for char in source_digest)
+            ):
+                raise ValueError("weekly_okr workload key must be stable and complete")
+        else:
+            source, separator, source_id = workload_key.partition(":")
+            if (
+                source not in {
+                    "memory_write_event",
+                    "wechat_memory_candidate",
+                    "wechat_memory_import_job",
+                }
+                or not separator
+                or not source_id.isdecimal()
+                or int(source_id) <= 0
+            ):
+                raise ValueError("memory workload key must name a persisted source row")
+        return workload_kind, workload_key
+
+    @staticmethod
+    def _runtime_operation_parent_exists(
+        db: sqlite3.Connection, workload_kind: str, workload_key: str
+    ) -> bool:
+        if workload_kind == "weekly_okr":
+            week_end, manager_user_id, source_digest = workload_key.split(":", 2)
+            return db.execute(
+                "select 1 from weekly_okr_analysis_jobs "
+                "where week_end=? and manager_user_id=? and source_digest=? "
+                "and status='running'",
+                (week_end, manager_user_id, source_digest),
+            ).fetchone() is not None
+        if workload_kind == "structured":
+            query = "select 1 from okr_review_requests where id=? and status='processing'"
+            args = (int(workload_key),)
+        elif workload_kind == "meeting":
+            query = "select 1 from meeting_alignment_runs where id=? and status='running'"
+            args = (int(workload_key),)
+        elif workload_kind == "task":
+            row_id, separator, _ = workload_key.partition(":")
+            if separator:
+                query = (
+                    "select 1 from work_projects where id=? "
+                    "and status in ('active', 'waiting', 'done', 'archived')"
+                )
+            else:
+                query = "select 1 from task_agent_runs where id=? and status='running'"
+            args = (int(row_id),)
+        else:
+            source, _, row_id = workload_key.partition(":")
+            query = {
+                "memory_write_event": (
+                    "select 1 from memory_write_events where id=? "
+                    "and status in ('pending', 'failed')"
+                ),
+                "wechat_memory_candidate": (
+                    "select 1 from wechat_memory_candidates where id=? "
+                    "and status='approved' and memory_write_status='writing'"
+                ),
+                "wechat_memory_import_job": (
+                    "select 1 from wechat_memory_import_jobs "
+                    "where id=? and status='running'"
+                ),
+            }[source]
+            args = (int(row_id),)
+        return db.execute(query, args).fetchone() is not None
+
+    @staticmethod
+    def _validate_runtime_attempt_details(
+        route_name: str,
+        runtime_kind: str,
+        credential_mode: str,
+        model: str,
+        session_mode: str | RuntimeAttemptSessionMode,
+        source_session_id: str,
+    ) -> tuple[str, str, str, str, str, str]:
+        route_name = AutoReplyStore._require_runtime_attempt_text(
+            route_name, field="route_name"
+        )
+        try:
+            runtime_kind = RuntimeKind(runtime_kind).value
+        except ValueError as exc:
+            raise ValueError("unsupported runtime_kind") from exc
+        try:
+            credential_mode = CredentialMode(credential_mode).value
+        except ValueError as exc:
+            raise ValueError("unsupported credential_mode") from exc
+        model = AutoReplyStore._require_runtime_attempt_text(model, field="model")
+        try:
+            session_mode = RuntimeAttemptSessionMode(session_mode).value
+        except (TypeError, ValueError) as exc:
+            raise ValueError("unsupported runtime attempt session_mode") from exc
+        if not isinstance(source_session_id, str):
+            raise TypeError("source_session_id must be a string")
+        source_session_id = source_session_id.strip()
+        if session_mode == RuntimeAttemptSessionMode.FRESH.value and source_session_id:
+            raise ValueError("fresh session evidence requires empty source_session_id")
+        if (
+            session_mode == RuntimeAttemptSessionMode.RESUME.value
+            and not source_session_id
+        ):
+            raise ValueError("resume session evidence requires source_session_id")
+        return (
+            route_name,
+            runtime_kind,
+            credential_mode,
+            model,
+            session_mode,
+            source_session_id,
+        )
+
+    @staticmethod
+    def _validate_runtime_failure(
+        failure_class: str,
+        failure_code: str,
+        failover_permitted: bool,
+    ) -> tuple[str, str, int]:
+        try:
+            failure_class = RuntimeFailureClass(failure_class).value
+        except ValueError as exc:
+            raise ValueError("unsupported runtime failure class") from exc
+        failure_code = AutoReplyStore._require_runtime_attempt_text(
+            failure_code, field="failure_code"
+        )
+        if not failure_code.replace("_", "").isalnum():
+            raise ValueError("failure_code must be a typed code")
+        if not isinstance(failover_permitted, bool):
+            raise ValueError("failover_permitted must be a boolean")
+        return failure_class, failure_code, int(failover_permitted)
+
+    def _claim_runtime_attempt(
+        self,
+        *,
+        agent_run_id: int | None,
+        workload_kind: str,
+        workload_key: str,
+        route_name: str,
+        runtime_kind: str,
+        credential_mode: str,
+        model: str,
+        session_mode: str | RuntimeAttemptSessionMode,
+        source_session_id: str,
+        attempt_purpose: str = "normal",
+        validation_retry_policy_id: str = "",
+        validation_result_schema_id: str = "",
+        owner: str = "",
+        lease_seconds: int = 0,
+        unknown_recovery_owner: str = "",
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt:
+        (
+            route_name,
+            runtime_kind,
+            credential_mode,
+            model,
+            session_mode,
+            source_session_id,
+        ) = (
+            self._validate_runtime_attempt_details(
+                route_name,
+                runtime_kind,
+                credential_mode,
+                model,
+                session_mode,
+                source_session_id,
+            )
+        )
+        if attempt_purpose not in {"normal", "result_validation_correction"}:
+            raise ValueError("unsupported runtime attempt purpose")
+        if attempt_purpose == "normal":
+            if validation_retry_policy_id or validation_result_schema_id:
+                raise ValueError("normal runtime attempt cannot carry correction lineage")
+        else:
+            validation_retry_policy_id = self._require_runtime_attempt_text(
+                validation_retry_policy_id,
+                field="validation_retry_policy_id",
+            )
+            validation_result_schema_id = self._require_runtime_attempt_text(
+                validation_result_schema_id,
+                field="validation_result_schema_id",
+            )
+        if agent_run_id is None:
+            owner = self._require_runtime_attempt_text(owner, field="owner")
+            if lease_seconds <= 0:
+                raise ValueError("lease_seconds must be positive")
+        elif unknown_recovery_owner:
+            unknown_recovery_owner = self._require_runtime_attempt_text(
+                unknown_recovery_owner, field="unknown_recovery_owner"
+            )
+            if session_mode != RuntimeAttemptSessionMode.FRESH.value:
+                raise ValueError("unknown recovery runtime attempt must be fresh")
+            if lease_seconds <= 0:
+                raise ValueError("unknown recovery lease_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
+            lease_expires_at = (
+                (now_value + timedelta(seconds=lease_seconds)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                if agent_run_id is None or unknown_recovery_owner
+                else ""
+            )
+            active_recovery_conflict = None
+            if unknown_recovery_owner:
+                active_recovery_conflict = db.execute(
+                    "select * from agent_runtime_attempts "
+                    "where workload_kind=? and workload_key=? "
+                    "and status in ('starting', 'running') limit 1",
+                    (workload_kind, workload_key),
+                ).fetchone()
+            if agent_run_id is not None:
+                run = db.execute(
+                    "select agent_runs.status, agent_runs.role, "
+                    "agent_runs.side_effect_state, "
+                    "agent_runs.effect_started_count, agent_runs.lease_owner, "
+                    "agent_runs.lease_expires_at, "
+                    "agent_runs.reconciliation_suspended, "
+                    "agent_runs.operation_id, reply_tasks.status as task_status, "
+                    "reply_tasks.execution_generation as task_execution_generation, "
+                    "agent_runs.execution_generation "
+                    "from agent_runs "
+                    "join reply_tasks on reply_tasks.id=agent_runs.reply_task_id "
+                    "where agent_runs.id=?",
+                    (agent_run_id,),
+                ).fetchone()
+                if unknown_recovery_owner:
+                    if (
+                        run is None
+                        or run["status"] != "unknown"
+                        or run["role"] != AgentRole.AUDIT.value
+                        or not run["operation_id"]
+                        or run["task_status"] != "processing"
+                        or run["execution_generation"]
+                        != run["task_execution_generation"]
+                        or run["side_effect_state"]
+                        not in {
+                            SideEffectState.UNKNOWN.value,
+                            SideEffectState.CONFIRMED.value,
+                        }
+                        or int(run["effect_started_count"]) <= 0
+                        or run["lease_owner"] != unknown_recovery_owner
+                        or run["lease_expires_at"] <= now_text
+                        or int(run["reconciliation_suspended"]) != 0
+                    ):
+                        raise ValueError(
+                            "unknown recovery agent run is not safely claimed"
+                        )
+                elif run is None or run["status"] != "running":
+                    raise ValueError("agent run does not exist or is not running")
+            elif not self._runtime_operation_parent_exists(
+                db, workload_kind, workload_key
+            ):
+                raise ValueError(
+                    "runtime operation parent does not exist or is not running"
+                )
+            if active_recovery_conflict is not None:
+                if (
+                    not active_recovery_conflict["lease_owner"]
+                    or not active_recovery_conflict["lease_expires_at"]
+                    or active_recovery_conflict["lease_expires_at"] > now_text
+                    or active_recovery_conflict["first_effect_started_at"]
+                ):
+                    raise AgentRuntimeAttemptStartConflictError(
+                        "unknown recovery runtime attempt start already claimed"
+                    )
+                cursor = db.execute(
+                    "update agent_runtime_attempts set status='failed', "
+                    "failure_class='process', "
+                    "failure_code='runtime_recovery_lease_expired', "
+                    "failover_permitted=0, lease_owner='', lease_expires_at='', "
+                    "finished_at=?, updated_at=? "
+                    "where id=? and status='running' and lease_owner=? "
+                    "and lease_expires_at<=? and first_effect_started_at=''",
+                    (
+                        now_text,
+                        now_text,
+                        active_recovery_conflict["id"],
+                        active_recovery_conflict["lease_owner"],
+                        now_text,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise AgentRuntimeAttemptStartConflictError(
+                        "unknown recovery runtime attempt start already claimed"
+                    )
+            if db.execute(
+                """
+                select 1 from runtime_route_pauses
+                where route_name=? and retry_at>?
+                """,
+                (route_name, now_text),
+            ).fetchone() is not None:
+                raise RuntimeRoutePausedError("runtime route is paused")
+            active = db.execute(
+                """
+                select * from agent_runtime_attempts
+                where workload_kind=? and workload_key=? and route_name=?
+                  and status in ('starting', 'running')
+                order by attempt_number
+                """,
+                (workload_kind, workload_key, route_name),
+            ).fetchone()
+            if active is not None:
+                immutable = (
+                    "runtime_kind",
+                    "credential_mode",
+                    "model",
+                    "session_mode",
+                    "source_session_id",
+                    "attempt_purpose",
+                    "validation_retry_policy_id",
+                    "validation_result_schema_id",
+                )
+                if any(active[field] != value for field, value in zip(
+                    immutable,
+                    (
+                        runtime_kind,
+                        credential_mode,
+                        model,
+                        session_mode,
+                        source_session_id,
+                        attempt_purpose,
+                        validation_retry_policy_id,
+                        validation_result_schema_id,
+                    ),
+                    strict=True,
+                )):
+                    raise ValueError("conflicting active runtime attempt claim")
+                return self._agent_runtime_attempt_from_row(active)
+            attempt_number = int(
+                db.execute(
+                    """
+                    select coalesce(max(attempt_number), 0) + 1 as attempt_number
+                    from agent_runtime_attempts
+                    where workload_kind=? and workload_key=?
+                    """,
+                    (workload_kind, workload_key),
+                ).fetchone()["attempt_number"]
+            )
+            cursor = db.execute(
+                """
+                insert into agent_runtime_attempts (
+                    agent_run_id, workload_kind, workload_key, attempt_number,
+                    route_name, runtime_kind, credential_mode, model, session_mode,
+                    source_session_id, attempt_purpose,
+                    validation_retry_policy_id, validation_result_schema_id, status,
+                    lease_owner, lease_expires_at,
+                    started_at, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          ?, ?, ?, ?, ?)
+                """,
+                (
+                    agent_run_id,
+                    workload_kind,
+                    workload_key,
+                    attempt_number,
+                    route_name,
+                    runtime_kind,
+                    credential_mode,
+                    model,
+                    session_mode,
+                    source_session_id,
+                    attempt_purpose,
+                    validation_retry_policy_id,
+                    validation_result_schema_id,
+                    "running" if unknown_recovery_owner else "starting",
+                    unknown_recovery_owner or owner,
+                    lease_expires_at,
+                    now_text,
+                    now_text,
+                    now_text,
+                ),
+            )
+            row = db.execute(
+                "select * from agent_runtime_attempts where id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            return self._agent_runtime_attempt_from_row(row)
+
+    def claim_agent_runtime_attempt(
+        self,
+        agent_run_id: int,
+        route_name: str,
+        runtime_kind: str,
+        credential_mode: str,
+        model: str,
+        *,
+        session_mode: str | RuntimeAttemptSessionMode = RuntimeAttemptSessionMode.FRESH,
+        source_session_id: str = "",
+        attempt_purpose: str = "normal",
+        validation_retry_policy_id: str = "",
+        validation_result_schema_id: str = "",
+    ) -> AgentRuntimeAttempt:
+        if agent_run_id <= 0:
+            raise ValueError("agent_run_id must be positive")
+        return self._claim_runtime_attempt(
+            agent_run_id=agent_run_id,
+            workload_kind="agent_run",
+            workload_key=str(agent_run_id),
+            route_name=route_name,
+            runtime_kind=runtime_kind,
+            credential_mode=credential_mode,
+            model=model,
+            session_mode=session_mode,
+            source_session_id=source_session_id,
+            attempt_purpose=attempt_purpose,
+            validation_retry_policy_id=validation_retry_policy_id,
+            validation_result_schema_id=validation_result_schema_id,
+        )
+
+    def claim_unknown_recovery_agent_runtime_attempt(
+        self,
+        agent_run_id: int,
+        route_name: str,
+        runtime_kind: str,
+        credential_mode: str,
+        model: str,
+        *,
+        owner: str,
+        lease_seconds: int = 1800,
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttemptStartClaim:
+        """Claim one fresh provider attempt for an owned unknown-effect Audit."""
+        if agent_run_id <= 0:
+            raise ValueError("agent_run_id must be positive")
+        attempt = self._claim_runtime_attempt(
+            agent_run_id=agent_run_id,
+            workload_kind="agent_run",
+            workload_key=str(agent_run_id),
+            route_name=route_name,
+            runtime_kind=runtime_kind,
+            credential_mode=credential_mode,
+            model=model,
+            session_mode=RuntimeAttemptSessionMode.FRESH,
+            source_session_id="",
+            unknown_recovery_owner=owner,
+            lease_seconds=lease_seconds,
+            now=now,
+        )
+        return AgentRuntimeAttemptStartClaim(
+            attempt=attempt,
+            start_acquired=attempt.status == "running",
+        )
+
+    def claim_runtime_operation_attempt(
+        self,
+        workload_kind: str,
+        workload_key: str,
+        route_name: str,
+        runtime_kind: str,
+        credential_mode: str,
+        model: str,
+        *,
+        session_mode: str | RuntimeAttemptSessionMode = RuntimeAttemptSessionMode.FRESH,
+        source_session_id: str = "",
+        attempt_purpose: str = "normal",
+        validation_retry_policy_id: str = "",
+        validation_result_schema_id: str = "",
+        owner: str = "legacy-runtime-owner",
+        lease_seconds: int = 1800,
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt:
+        workload_kind, workload_key = self._validate_runtime_operation_workload(
+            workload_kind, workload_key
+        )
+        return self._claim_runtime_attempt(
+            agent_run_id=None,
+            workload_kind=workload_kind,
+            workload_key=workload_key,
+            route_name=route_name,
+            runtime_kind=runtime_kind,
+            credential_mode=credential_mode,
+            model=model,
+            session_mode=session_mode,
+            source_session_id=source_session_id,
+            attempt_purpose=attempt_purpose,
+            validation_retry_policy_id=validation_retry_policy_id,
+            validation_result_schema_id=validation_result_schema_id,
+            owner=owner,
+            lease_seconds=lease_seconds,
+            now=now,
+        )
+
+    def _runtime_attempt_for_transition(
+        self,
+        db: sqlite3.Connection,
+        attempt_id: int,
+    ) -> sqlite3.Row:
+        row = db.execute(
+            "select * from agent_runtime_attempts where id=?", (attempt_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("agent runtime attempt does not exist")
+        return row
+
+    @staticmethod
+    def _require_runtime_attempt_owner(
+        row: sqlite3.Row, *, owner: str, now_text: str
+    ) -> None:
+        if row["agent_run_id"] is not None:
+            return
+        if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
+            raise AgentRuntimeAttemptLeaseLostError(
+                f"runtime attempt lease lost: {row['id']}"
+            )
+
+    def mark_agent_runtime_attempt_running(
+        self,
+        attempt_id: int,
+    ) -> AgentRuntimeAttempt:
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["status"] == "running":
+                return self._agent_runtime_attempt_from_row(row)
+            if row["status"] == "completed":
+                raise ValueError("cannot transition from completed runtime attempt")
+            if row["status"] in {"failed", "superseded"}:
+                raise ValueError("cannot transition terminal runtime attempt to running")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='running', updated_at=?
+                where id=? and status='starting'
+                """,
+                (now_text, attempt_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("runtime attempt transition conflict")
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def mark_agent_runtime_attempt_running_once(
+        self,
+        attempt_id: int,
+        *,
+        owner: str = "legacy-runtime-owner",
+        lease_seconds: int = 1800,
+        effectful: bool = False,
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt:
+        """Acquire the one-shot process-start fence for a runtime attempt."""
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        if not isinstance(effectful, bool):
+            raise TypeError("effectful must be a boolean")
+        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["status"] != "starting":
+                raise AgentRuntimeAttemptStartConflictError(
+                    "runtime attempt process start already claimed"
+                )
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='running',
+                    lease_expires_at=case when agent_run_id is null then ?
+                                          else lease_expires_at end,
+                    first_effect_started_at=case
+                        when agent_run_id is null and ? then ?
+                        else first_effect_started_at end,
+                    updated_at=?
+                where id=? and status='starting'
+                  and (agent_run_id is not null
+                       or (lease_owner=? and lease_expires_at>?))
+                """,
+                (
+                    (now_value + timedelta(seconds=lease_seconds)).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    ),
+                    int(effectful),
+                    now_text,
+                    now_text,
+                    attempt_id,
+                    owner,
+                    now_text,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRuntimeAttemptStartConflictError(
+                    "runtime attempt process start already claimed"
+                )
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def complete_agent_runtime_attempt(
+        self,
+        attempt_id: int,
+        session_id: str,
+        transcript_reference: str,
+        transcript_start: int,
+        transcript_end: int,
+        *,
+        owner: str = "legacy-runtime-owner",
+        result_schema_id: str = "",
+        result_envelope_json: str = "",
+        conversation_id: str = "",
+        route_name: str = "",
+        conversation_contract_hash: str = "",
+        agent_run_final_result: dict[str, object] | None = None,
+        agent_run_final_side_effect_state: str = "none",
+        agent_run_transcript_end: int | None = None,
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt:
+        if not isinstance(session_id, str) or not isinstance(transcript_reference, str):
+            raise TypeError("runtime attempt session and transcript reference must be strings")
+        if transcript_start < 0 or transcript_end < transcript_start:
+            raise ValueError("invalid runtime attempt transcript range")
+        if result_schema_id:
+            result_schema_id = self._require_runtime_attempt_text(
+                result_schema_id, field="result_schema_id"
+            )
+            try:
+                envelope = json.loads(result_envelope_json)
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise ValueError("result envelope must be valid JSON") from exc
+            if not isinstance(envelope, dict) or envelope.get("schema_id") != result_schema_id:
+                raise ValueError("result envelope schema mismatch")
+            if (
+                len(result_envelope_json.encode("utf-8"))
+                > MAX_RUNTIME_RESULT_ENVELOPE_BYTES
+            ):
+                raise ValueError("result envelope exceeds size limit")
+        elif result_envelope_json:
+            raise ValueError("result schema is required")
+        if agent_run_final_result is not None:
+            if not result_schema_id:
+                raise ValueError("agent run result reference requires result schema")
+            if agent_run_final_side_effect_state != SideEffectState.NONE.value:
+                raise ValueError("Consumer Agent cannot persist side effects")
+            if agent_run_transcript_end is None or agent_run_transcript_end < 0:
+                raise ValueError("agent run transcript end is required")
+            agent_run_final_result_json = _json_object_text(
+                agent_run_final_result, field="agent_run_final_result"
+            )
+        else:
+            agent_run_final_result_json = ""
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            expected = (
+                session_id, transcript_reference, transcript_start, transcript_end,
+                result_schema_id, result_envelope_json,
+            )
+            actual = (
+                row["session_id"],
+                row["transcript_reference"],
+                row["transcript_start"],
+                row["transcript_end"],
+                row["result_schema_id"],
+                row["result_envelope_json"],
+            )
+            if row["status"] == "completed":
+                if actual == expected:
+                    return self._agent_runtime_attempt_from_row(row)
+                raise ValueError("conflicting terminal rewrite")
+            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
+            if row["status"] in {"failed", "superseded"}:
+                raise ValueError("cannot complete terminal runtime attempt")
+            if result_envelope_json and row["agent_run_id"] is not None:
+                evidence = envelope.get("evidence")
+                if isinstance(evidence, dict):
+                    self._validate_runtime_result_evidence_snapshot(
+                        db,
+                        int(row["agent_run_id"]),
+                        evidence,
+                    )
+            if agent_run_final_result is not None:
+                if row["agent_run_id"] is None:
+                    raise ValueError("agent run result reference requires agent run")
+                reference = envelope.get("result_ref")
+                if (
+                    not isinstance(reference, dict)
+                    or set(reference) != {"agent_run_id", "result_sha256"}
+                    or reference.get("agent_run_id") != row["agent_run_id"]
+                    or reference.get("result_sha256")
+                    != hashlib.sha256(
+                        agent_run_final_result_json.encode("utf-8")
+                    ).hexdigest()
+                ):
+                    raise ValueError("agent run result reference mismatch")
+                run_row = self._require_current_agent_run_write_access(
+                    db,
+                    int(row["agent_run_id"]),
+                    owner=owner,
+                    now_text=now_text,
+                    expected_status="running",
+                )
+                if run_row["role"] != AgentRole.CONSUMER.value:
+                    raise ValueError("agent run result reference requires Consumer")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='completed', session_id=?, transcript_reference=?,
+                    transcript_start=?, transcript_end=?, result_schema_id=?,
+                    result_envelope_json=?, lease_owner='', lease_expires_at='',
+                    finished_at=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                  and (agent_run_id is not null
+                       or (lease_owner=? and lease_expires_at>?))
+                """,
+                (
+                    session_id,
+                    transcript_reference,
+                    transcript_start,
+                    transcript_end,
+                    result_schema_id,
+                    result_envelope_json,
+                    now_text,
+                    now_text,
+                    attempt_id,
+                    owner,
+                    now_text,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("runtime attempt transition conflict")
+            if conversation_id and session_id:
+                self._upsert_conversation_runtime_session_in_connection(
+                    db,
+                    conversation_id,
+                    route_name,
+                    session_id,
+                    conversation_contract_hash,
+                    now_text,
+                )
+            if agent_run_final_result is not None:
+                run_cursor = db.execute(
+                    """
+                    update agent_runs
+                    set status='completed', final_result_json=?,
+                        structured_error_json='', side_effect_state='none',
+                        transcript_end_line=?, lease_owner='', lease_expires_at='',
+                        completed_at=?, updated_at=?
+                    where id=? and status='running' and lease_owner=?
+                      and lease_expires_at>?
+                    """,
+                    (
+                        agent_run_final_result_json,
+                        agent_run_transcript_end,
+                        now_text,
+                        now_text,
+                        row["agent_run_id"],
+                        owner,
+                        now_text,
+                    ),
+                )
+                if run_cursor.rowcount != 1:
+                    raise AgentRunLeaseLostError(
+                        f"agent run lease lost: {row['agent_run_id']}"
+                    )
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    @staticmethod
+    def _validate_runtime_result_evidence_snapshot(
+        db: sqlite3.Connection,
+        run_id: int,
+        evidence: dict[str, object],
+    ) -> None:
+        event_start = evidence.get("event_start")
+        event_end = evidence.get("event_end")
+        if (
+            type(event_start) is not int
+            or type(event_end) is not int
+            or event_start < 0
+            or event_end < event_start
+        ):
+            raise ValueError("runtime result evidence bounds invalid")
+        event_rows = db.execute(
+            "select event_json from agent_run_events "
+            "where agent_run_id=? order by sequence",
+            (run_id,),
+        ).fetchall()
+        events = [json.loads(row["event_json"]) for row in event_rows]
+        receipt_rows = db.execute(
+            "select * from agent_execution_receipts "
+            "where agent_run_id=? order by id",
+            (run_id,),
+        ).fetchall()
+        receipts = [
+            {
+                "receipt_id": str(receipt["receipt_id"]),
+                "operation_id": str(receipt["operation_id"]),
+                "cli": str(receipt["cli"]),
+                "command_path": str(receipt["command_path"]),
+                "command_digest": str(receipt["command_digest"]),
+                "exit_code": int(receipt["exit_code"]),
+                "completed": bool(receipt["completed"]),
+                "persisted": bool(receipt["persisted"]),
+                "safe_to_confirm": bool(receipt["safe_to_confirm"]),
+                "effect_counted": bool(receipt["effect_counted"]),
+            }
+            for receipt in receipt_rows
+        ]
+        if (
+            event_end != len(events)
+            or evidence.get("events_sha256")
+            != _canonical_json_sha256(events[event_start:event_end])
+            or evidence.get("receipts_sha256") != _canonical_json_sha256(receipts)
+        ):
+            raise ValueError("runtime result evidence changed before completion")
+
+    def renew_runtime_operation_attempt_lease(
+        self,
+        attempt_id: int,
+        *,
+        owner: str,
+        lease_seconds: int,
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["agent_run_id"] is not None:
+                raise ValueError("operation lease requires generalized workload")
+            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
+            expires_at = (
+                now_value + timedelta(seconds=lease_seconds)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set lease_expires_at=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                  and lease_owner=? and lease_expires_at>?
+                """,
+                (expires_at, now_text, attempt_id, owner, now_text),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRuntimeAttemptLeaseLostError(
+                    f"runtime attempt lease lost: {attempt_id}"
+                )
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def recover_expired_runtime_operation_attempt(
+        self,
+        workload_kind: str,
+        workload_key: str,
+        *,
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt | None:
+        workload_kind, workload_key = self._validate_runtime_operation_workload(
+            workload_kind, workload_key
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select * from agent_runtime_attempts
+                where agent_run_id is null and workload_kind=? and workload_key=?
+                  and status in ('starting', 'running')
+                order by attempt_number desc limit 1
+                """,
+                (workload_kind, workload_key),
+            ).fetchone()
+            if row is None or row["lease_expires_at"] > now_text:
+                return None
+            if row["first_effect_started_at"]:
+                return self._agent_runtime_attempt_from_row(row)
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='failed', failure_class='process',
+                    failure_code='runtime_lease_expired', failover_permitted=1,
+                    lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                  and first_effect_started_at='' and lease_expires_at<=?
+                """,
+                (now_text, now_text, row["id"], now_text),
+            )
+            if cursor.rowcount != 1:
+                return None
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, row["id"])
+            )
+
+    def set_agent_runtime_attempt_session(
+        self,
+        attempt_id: int,
+        session_id: str,
+        transcript_reference: str | None = None,
+        *,
+        owner: str = "legacy-runtime-owner",
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt:
+        session_id = self._require_runtime_attempt_text(
+            session_id, field="session_id"
+        )
+        if transcript_reference is not None and not isinstance(
+            transcript_reference, str
+        ):
+            raise TypeError("transcript_reference must be a string")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            selected_reference = (
+                row["transcript_reference"]
+                if transcript_reference is None
+                else transcript_reference
+            )
+            if row["status"] not in {"starting", "running"}:
+                if (
+                    row["session_id"] == session_id
+                    and row["transcript_reference"] == selected_reference
+                ):
+                    return self._agent_runtime_attempt_from_row(row)
+                raise ValueError("cannot mutate terminal runtime attempt")
+            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
+            db.execute(
+                """
+                update agent_runtime_attempts
+                set session_id=?, transcript_reference=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                  and (agent_run_id is not null
+                       or (lease_owner=? and lease_expires_at>?))
+                """,
+                (
+                    session_id, selected_reference, now_text, attempt_id,
+                    owner, now_text,
+                ),
+            )
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def fail_agent_runtime_attempt(
+        self,
+        attempt_id: int,
+        failure_class: str,
+        failure_code: str,
+        failover_permitted: bool,
+        *,
+        session_id: str | None = None,
+        transcript_reference: str | None = None,
+        transcript_start: int | None = None,
+        transcript_end: int | None = None,
+        owner: str = "legacy-runtime-owner",
+        now: str | datetime | None = None,
+    ) -> AgentRuntimeAttempt:
+        failure_class, failure_code, failover_permitted = self._validate_runtime_failure(
+            failure_class, failure_code, failover_permitted
+        )
+        if session_id is not None and not isinstance(session_id, str):
+            raise TypeError("runtime attempt session and transcript reference must be strings")
+        if transcript_reference is not None and not isinstance(transcript_reference, str):
+            raise TypeError("runtime attempt session and transcript reference must be strings")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            session_id = row["session_id"] if session_id is None else session_id
+            transcript_reference = (
+                row["transcript_reference"]
+                if transcript_reference is None
+                else transcript_reference
+            )
+            transcript_start = (
+                row["transcript_start"]
+                if transcript_start is None
+                else transcript_start
+            )
+            transcript_end = (
+                row["transcript_end"] if transcript_end is None else transcript_end
+            )
+            if transcript_start < 0 or transcript_end < transcript_start:
+                raise ValueError("invalid runtime attempt transcript range")
+            expected = (
+                failure_class,
+                failure_code,
+                failover_permitted,
+                session_id,
+                transcript_reference,
+                transcript_start,
+                transcript_end,
+            )
+            actual = (
+                row["failure_class"],
+                row["failure_code"],
+                row["failover_permitted"],
+                row["session_id"],
+                row["transcript_reference"],
+                row["transcript_start"],
+                row["transcript_end"],
+            )
+            if row["status"] == "failed":
+                if actual == expected:
+                    return self._agent_runtime_attempt_from_row(row)
+                raise ValueError("conflicting terminal rewrite")
+            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
+            if row["status"] == "completed":
+                raise ValueError("cannot transition from completed runtime attempt")
+            if row["status"] == "superseded":
+                raise ValueError("cannot fail terminal runtime attempt")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='failed', failure_class=?, failure_code=?,
+                    failover_permitted=?, session_id=?, transcript_reference=?,
+                    transcript_start=?, transcript_end=?, lease_owner='',
+                    lease_expires_at='', finished_at=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                  and (agent_run_id is not null
+                       or (lease_owner=? and lease_expires_at>?))
+                """,
+                (
+                    failure_class,
+                    failure_code,
+                    failover_permitted,
+                    session_id,
+                    transcript_reference,
+                    transcript_start,
+                    transcript_end,
+                    now_text,
+                    now_text,
+                    attempt_id,
+                    owner,
+                    now_text,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("runtime attempt transition conflict")
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def mark_agent_runtime_attempt_superseded(
+        self,
+        attempt_id: int,
+    ) -> AgentRuntimeAttempt:
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["status"] == "superseded":
+                return self._agent_runtime_attempt_from_row(row)
+            if row["status"] == "completed":
+                raise ValueError("cannot transition from completed runtime attempt")
+            if row["status"] != "failed":
+                raise ValueError("only failed runtime attempts can be superseded")
+            successor = db.execute(
+                """
+                select 1 from agent_runtime_attempts
+                where workload_kind=? and workload_key=? and attempt_number>?
+                limit 1
+                """,
+                (row["workload_kind"], row["workload_key"], row["attempt_number"]),
+            ).fetchone()
+            if successor is None:
+                raise ValueError("runtime attempt requires a durably claimed successor")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set status='superseded', updated_at=?
+                where id=? and status='failed'
+                """,
+                (now_text, attempt_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("runtime attempt transition conflict")
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def list_agent_runtime_attempts(
+        self,
+        agent_run_id: int,
+    ) -> list[AgentRuntimeAttempt]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from agent_runtime_attempts
+                where agent_run_id=?
+                order by attempt_number
+                """,
+                (agent_run_id,),
+            ).fetchall()
+            return [self._agent_runtime_attempt_from_row(row) for row in rows]
+
+    def list_runtime_operation_attempts(
+        self,
+        workload_kind: str,
+        workload_key: str,
+    ) -> list[AgentRuntimeAttempt]:
+        workload_kind, workload_key = self._validate_runtime_operation_workload(
+            workload_kind, workload_key
+        )
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from agent_runtime_attempts
+                where agent_run_id is null
+                  and workload_kind=? and workload_key=?
+                order by attempt_number
+                """,
+                (workload_kind, workload_key),
+            ).fetchall()
+            return [self._agent_runtime_attempt_from_row(row) for row in rows]
+
+    def runtime_operation_parent_is_runnable(
+        self,
+        workload_kind: str,
+        workload_key: str,
+    ) -> bool:
+        workload_kind, workload_key = self._validate_runtime_operation_workload(
+            workload_kind, workload_key
+        )
+        with self._connect() as db:
+            return self._runtime_operation_parent_exists(
+                db, workload_kind, workload_key
+            )
+
+    def get_agent_runtime_attempt(self, attempt_id: int) -> AgentRuntimeAttempt | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from agent_runtime_attempts where id=?", (attempt_id,)
+            ).fetchone()
+            return None if row is None else self._agent_runtime_attempt_from_row(row)
+
+    def note_runtime_attempt_effect_started(
+        self,
+        attempt_id: int,
+        at: str | datetime | None = None,
+        *,
+        owner: str = "legacy-runtime-owner",
+    ) -> AgentRuntimeAttempt:
+        _, effect_started_at = _utc_store_time(at)
+        with self._agent_run_write_transaction(at) as (db, (_, now_text)):
+            row = self._runtime_attempt_for_transition(db, attempt_id)
+            if row["status"] == "completed":
+                raise ValueError("cannot mutate completed runtime attempt")
+            if row["status"] in {"failed", "superseded"}:
+                raise ValueError("cannot mutate terminal runtime attempt")
+            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
+            if row["first_effect_started_at"]:
+                return self._agent_runtime_attempt_from_row(row)
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set first_effect_started_at=?, updated_at=?
+                where id=? and status in ('starting', 'running')
+                  and first_effect_started_at=''
+                  and (agent_run_id is not null
+                       or (lease_owner=? and lease_expires_at>?))
+                """,
+                (effect_started_at, now_text, attempt_id, owner, now_text),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("runtime attempt transition conflict")
+            return self._agent_runtime_attempt_from_row(
+                self._runtime_attempt_for_transition(db, attempt_id)
+            )
+
+    def authorize_claude_effect_dispatch(
+        self,
+        *,
+        run_id: int,
+        attempt_id: int,
+        owner: str,
+        event: dict[str, object],
+        expected_action: dict[str, object],
+        required_skill_receipts: tuple[tuple[str, str, str], ...] = (),
+        now: str | datetime | None = None,
+    ) -> ClaudeEffectDispatchClaim:
+        """Persist one exact Claude effect start before allowing target dispatch."""
+        if not owner.strip():
+            raise ValueError("owner must be non-empty")
+        event_text = _json_object_text(event, field="event")
+        if len(event_text.encode("utf-8")) > MAX_AGENT_RUN_EVENT_BYTES:
+            raise ValueError("agent run event exceeds size limit")
+        normalized_event = json.loads(event_text)
+        event_type, call_id, effect_kind, receipt_operation_id = (
+            _agent_event_columns(normalized_event)
+        )
+        item = normalized_event.get("item")
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        if (
+            event_type != "item.started"
+            or effect_kind != "effectful"
+            or receipt_operation_id
+            or not call_id
+            or not isinstance(metadata, dict)
+            or any(metadata.get(key) != value for key, value in expected_action.items())
+        ):
+            raise ValueError("Claude effect dispatch identity mismatch")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            run_row = self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                status_error="Claude effect dispatch requires running Audit",
+            )
+            if run_row["role"] != AgentRole.AUDIT.value:
+                raise ValueError("Claude effect dispatch requires Audit")
+            if metadata.get("operation_id") != run_row["operation_id"]:
+                raise ValueError("effect operation identity mismatch")
+            attempt_row = self._runtime_attempt_for_transition(db, attempt_id)
+            if (
+                attempt_row["agent_run_id"] != run_id
+                or attempt_row["route_name"] != "claude_api"
+                or attempt_row["runtime_kind"] != "claude_cli"
+                or attempt_row["status"] != "running"
+            ):
+                raise ValueError("Claude effect dispatch attempt is not active")
+            if required_skill_receipts:
+                rows = db.execute(
+                    "select event_json from agent_run_events "
+                    "where agent_run_id=? and event_type='item.completed'",
+                    (run_id,),
+                ).fetchall()
+                observed: set[tuple[str, str, str]] = set()
+                for row in rows:
+                    try:
+                        persisted_event = json.loads(row["event_json"])
+                    except json.JSONDecodeError:
+                        continue
+                    persisted_item = persisted_event.get("item")
+                    persisted_metadata = (
+                        persisted_item.get("metadata")
+                        if isinstance(persisted_item, dict)
+                        else None
+                    )
+                    if isinstance(persisted_metadata, dict):
+                        identity = tuple(
+                            str(persisted_metadata.get(key) or "")
+                            for key in ("skill_name", "skill_path", "skill_sha256")
+                        )
+                        if all(identity):
+                            observed.add(identity)
+                if not set(required_skill_receipts).issubset(observed):
+                    raise ValueError("Claude effect dispatch skill receipt missing")
+            prior = db.execute(
+                "select event_json from agent_run_events "
+                "where agent_run_id=? and call_id=? and event_type='item.started' "
+                "order by sequence",
+                (run_id, call_id),
+            ).fetchall()
+            if prior:
+                if len(prior) == 1 and prior[0]["event_json"] == event_text:
+                    return ClaudeEffectDispatchClaim(dispatch_acquired=False)
+                raise ValueError("Claude effect dispatch call identity conflict")
+            sequence = db.execute(
+                "select coalesce(max(sequence), 0) + 1 from agent_run_events "
+                "where agent_run_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            db.execute(
+                """
+                insert into agent_run_events (
+                    agent_run_id, sequence, event_json, event_type,
+                    call_id, effect_kind, receipt_operation_id, event_scope, created_at
+                ) values (?, ?, ?, 'item.started', ?, 'effectful', '', 'direct', ?)
+                """,
+                (run_id, sequence, event_text, call_id, now_text),
+            )
+            attempt_cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set first_effect_started_at=?, updated_at=?
+                where id=? and agent_run_id=? and status='running'
+                  and first_effect_started_at=''
+                """,
+                (now_text, now_text, attempt_id, run_id),
+            )
+            if attempt_cursor.rowcount != 1:
+                raise ValueError("Claude effect dispatch attempt conflict")
+            run_cursor = db.execute(
+                """
+                update agent_runs
+                set effect_started_count=effect_started_count+1,
+                    side_effect_state='unknown',
+                    transcript_end_line=transcript_end_line+1,
+                    updated_at=?
+                where id=? and status='running' and lease_owner=?
+                  and lease_expires_at>?
+                """,
+                (now_text, run_id, owner, now_text),
+            )
+            if run_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            return ClaudeEffectDispatchClaim(dispatch_acquired=True)
 
     @staticmethod
     def _require_current_agent_run_write_access(
@@ -4778,6 +6791,80 @@ class AutoReplyStore:
             transcript_end_line=transcript_end_line,
             now=now,
         )
+
+    def block_consumer_agent_run_for_completed_result_recovery(
+        self,
+        run_id: int,
+        *,
+        owner: str,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        """Suspend a corrupt durable Consumer result for explicit recovery."""
+        code = "completed_runtime_result_invalid"
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                expected_status="running",
+            )
+            if (
+                row["role"] != AgentRole.CONSUMER.value
+                or int(row["effect_started_count"]) != 0
+                or row["side_effect_state"] != SideEffectState.NONE.value
+            ):
+                raise ValueError("completed result block requires effect-free Consumer")
+            error_json = json.dumps(
+                {
+                    "authorization_required": False,
+                    "code": code,
+                    "retryable": False,
+                    "reason": (
+                        "The durable runtime result failed integrity validation; "
+                        "manual recovery is required."
+                    ),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            run_cursor = db.execute(
+                """
+                update agent_runs
+                set status='unknown', final_result_json='',
+                    structured_error_json=?, side_effect_state='none',
+                    reconciliation_suspended=1,
+                    reconciliation_next_attempt_at='',
+                    lease_owner='', lease_expires_at='', updated_at=?
+                where id=? and status='running' and lease_owner=?
+                  and lease_expires_at>?
+                """,
+                (error_json, now_text, run_id, owner, now_text),
+            )
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status='failed', locked_at=null, available_at='',
+                    error=?, recovery_code=?, updated_at=?
+                where id=? and status='processing'
+                  and execution_generation=?
+                """,
+                (
+                    code,
+                    code,
+                    now_text,
+                    row["reply_task_id"],
+                    row["execution_generation"],
+                ),
+            )
+            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"completed runtime result block is stale: {run_id}"
+                )
+            updated = db.execute(
+                "select * from agent_runs where id=?", (run_id,)
+            ).fetchone()
+            return self._agent_run_from_row(updated, db=db)
 
     def finalize_closed_failed_audit_run(
         self,
@@ -9212,6 +11299,89 @@ class AutoReplyStore:
                 return None
             return self._meeting_alignment_job_from_row(row)
 
+    def begin_meeting_alignment_run(self, job_id: int) -> int:
+        if job_id <= 0:
+            raise ValueError("meeting alignment job id must be positive")
+        with self._agent_run_write_transaction(None) as (db, _):
+            parent = db.execute(
+                "select 1 from meeting_alignment_jobs "
+                "where id=? and status='processing'",
+                (job_id,),
+            ).fetchone()
+            if parent is None:
+                raise ValueError("meeting alignment job is not processing")
+            active = db.execute(
+                "select id from meeting_alignment_runs "
+                "where job_id=? and status='running'",
+                (job_id,),
+            ).fetchone()
+            if active is not None:
+                return int(active["id"])
+            cursor = db.execute(
+                "insert into meeting_alignment_runs "
+                "(job_id, status, finished_at, updated_at) "
+                "values (?, 'running', '', current_timestamp)",
+                (job_id,),
+            )
+            return int(cursor.lastrowid)
+
+    def finish_meeting_alignment_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        codex_session_id: str = "",
+        codex_transcript_start_line: int = 0,
+        codex_transcript_end_line: int = 0,
+        decision_json: str = "{}",
+        audit_tool_events_json: str = "[]",
+        audit_summary: str = "",
+        error: str = "",
+    ) -> None:
+        if status not in MEETING_ALIGNMENT_RUN_TERMINAL_STATUSES:
+            raise ValueError("meeting alignment run terminal status is invalid")
+        values = (
+            status,
+            codex_session_id,
+            codex_transcript_start_line,
+            codex_transcript_end_line,
+            decision_json,
+            audit_tool_events_json,
+            audit_summary,
+            error,
+        )
+        with self._agent_run_write_transaction(None) as (db, _):
+            row = db.execute(
+                "select * from meeting_alignment_runs where id=?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("meeting alignment run does not exist")
+            if row["status"] != "running":
+                actual = tuple(
+                    row[field]
+                    for field in (
+                        "status",
+                        "codex_session_id",
+                        "codex_transcript_start_line",
+                        "codex_transcript_end_line",
+                        "decision_json",
+                        "audit_tool_events_json",
+                        "audit_summary",
+                        "error",
+                    )
+                )
+                if actual == values:
+                    return
+                raise ValueError("conflicting meeting alignment run terminal rewrite")
+            db.execute(
+                "update meeting_alignment_runs set status=?, codex_session_id=?, "
+                "codex_transcript_start_line=?, codex_transcript_end_line=?, "
+                "decision_json=?, audit_tool_events_json=?, audit_summary=?, error=?, "
+                "finished_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and status='running'",
+                (*values, run_id),
+            )
+
     def record_meeting_alignment_run(
         self,
         *,
@@ -9237,9 +11407,13 @@ class AutoReplyStore:
                     audit_tool_events_json,
                     audit_summary,
                     status,
-                    error
+                    error,
+                    finished_at,
+                    updated_at
                 )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        case when ?='running' then '' else current_timestamp end,
+                        current_timestamp)
                 """,
                 (
                     job_id,
@@ -9251,6 +11425,7 @@ class AutoReplyStore:
                     audit_summary,
                     status,
                     error,
+                    status,
                 ),
             )
             return int(cursor.lastrowid)
@@ -9661,6 +11836,212 @@ class AutoReplyStore:
             ).fetchone()
             return None if row is None else row["codex_session_id"]
 
+    def upsert_conversation_runtime_session(
+        self,
+        conversation_id: str,
+        route_name: str,
+        session_id: str,
+        contract_hash: str = "",
+    ) -> None:
+        conversation_id = self._require_runtime_attempt_text(
+            conversation_id, field="conversation_id"
+        )
+        route_name = self._require_runtime_attempt_text(route_name, field="route_name")
+        session_id = self._require_runtime_attempt_text(session_id, field="session_id")
+        contract_hash = contract_hash.strip()
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            self._upsert_conversation_runtime_session_in_connection(
+                db, conversation_id, route_name, session_id, contract_hash, now_text
+            )
+
+    @staticmethod
+    def _upsert_conversation_runtime_session_in_connection(
+        db: sqlite3.Connection,
+        conversation_id: str,
+        route_name: str,
+        session_id: str,
+        contract_hash: str,
+        now_text: str,
+    ) -> None:
+        db.execute(
+                """
+                insert into conversation_runtime_sessions (
+                    conversation_id, route_name, session_id, contract_hash, updated_at
+                ) values (?, ?, ?, ?, ?)
+                on conflict(conversation_id, route_name) do update set
+                    session_id=excluded.session_id,
+                    contract_hash=excluded.contract_hash,
+                    updated_at=excluded.updated_at
+                """,
+                (conversation_id, route_name, session_id, contract_hash, now_text),
+        )
+        if route_name == "codex_oauth":
+            db.execute(
+                    """
+                    update conversations
+                    set codex_session_id=?, codex_session_contract_hash=?
+                    where conversation_id=?
+                    """,
+                    (session_id, contract_hash, conversation_id),
+            )
+
+    def get_conversation_runtime_session(
+        self,
+        conversation_id: str,
+        route_name: str,
+        *,
+        required_contract_hash: str | None = None,
+    ) -> str | None:
+        with self._connect() as db:
+            if required_contract_hash is None:
+                row = db.execute(
+                    """
+                    select session_id from conversation_runtime_sessions
+                    where conversation_id=? and route_name=?
+                    """,
+                    (conversation_id, route_name),
+                ).fetchone()
+            else:
+                row = db.execute(
+                    """
+                    select session_id from conversation_runtime_sessions
+                    where conversation_id=? and route_name=? and contract_hash=?
+                    """,
+                    (conversation_id, route_name, required_contract_hash.strip()),
+                ).fetchone()
+            return None if row is None else str(row["session_id"])
+
+    def get_conversation_runtime_session_contract_hash(
+        self,
+        conversation_id: str,
+        route_name: str,
+    ) -> str | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select contract_hash from conversation_runtime_sessions
+                where conversation_id=? and route_name=?
+                """,
+                (conversation_id, route_name),
+            ).fetchone()
+            return None if row is None else str(row["contract_hash"])
+
+    def clear_conversation_runtime_session_if_matches(
+        self,
+        conversation_id: str,
+        route_name: str,
+        expected_session_id: str,
+        *,
+        additional_expected_session_ids: tuple[str, ...] = (),
+    ) -> int:
+        """Clear one Consumer route slot without deleting attempt/Audit evidence.
+
+        The OAuth compatibility column is cleared in the same transaction when
+        it names the same session. Other route slots are never affected.
+        """
+        conversation_id = self._require_runtime_attempt_text(
+            conversation_id, field="conversation_id"
+        )
+        route_name = self._require_runtime_attempt_text(route_name, field="route_name")
+        expected_session_id = self._require_runtime_attempt_text(
+            expected_session_id, field="expected_session_id"
+        )
+        expected_session_ids = (expected_session_id,) + tuple(
+            self._require_runtime_attempt_text(value, field="expected_session_id")
+            for value in additional_expected_session_ids
+        )
+        placeholders = ",".join("?" for _ in expected_session_ids)
+        with self._agent_run_write_transaction(None) as (db, _):
+            cursor = db.execute(
+                f"""
+                delete from conversation_runtime_sessions
+                where conversation_id=? and route_name=?
+                  and session_id in ({placeholders})
+                """,
+                (conversation_id, route_name, *expected_session_ids),
+            )
+            cleared = cursor.rowcount
+            if route_name == "codex_oauth":
+                legacy = db.execute(
+                    f"""
+                    update conversations
+                    set codex_session_id=null, codex_session_contract_hash=''
+                    where conversation_id=?
+                      and codex_session_id in ({placeholders})
+                    """,
+                    (conversation_id, *expected_session_ids),
+                )
+                cleared = max(cleared, legacy.rowcount)
+            return cleared
+
+    def open_runtime_route_pause(
+        self,
+        route_name: str,
+        failure_code: str,
+        retry_at: str | datetime,
+    ) -> bool:
+        route_name = self._require_runtime_attempt_text(route_name, field="route_name")
+        failure_code = self._require_runtime_attempt_text(
+            failure_code, field="failure_code"
+        )
+        if not failure_code.replace("_", "").isalnum():
+            raise ValueError("failure_code must be a typed code")
+        _, retry_at_text = _utc_store_time(retry_at)
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            existing = db.execute(
+                "select retry_at from runtime_route_pauses where route_name=?",
+                (route_name,),
+            ).fetchone()
+            if existing is not None and str(existing["retry_at"]) > now_text:
+                return False
+            if existing is not None:
+                db.execute(
+                    "delete from runtime_route_pauses where route_name=? and retry_at<=?",
+                    (route_name, now_text),
+                )
+            cursor = db.execute(
+                """
+                insert into runtime_route_pauses (
+                    route_name, failure_code, retry_at, opened_at, updated_at
+                ) values (?, ?, ?, ?, ?)
+                """,
+                (route_name, failure_code, retry_at_text, now_text, now_text),
+            )
+            return cursor.rowcount == 1
+
+    def active_runtime_route_pause(
+        self,
+        route_name: str,
+        now: str | datetime | None = None,
+    ) -> str | None:
+        route_name = self._require_runtime_attempt_text(route_name, field="route_name")
+        _, now_text = _utc_store_time(now)
+        with self._agent_run_write_transaction(now) as (db, _):
+            row = db.execute(
+                """
+                select failure_code, retry_at from runtime_route_pauses
+                where route_name=?
+                """,
+                (route_name,),
+            ).fetchone()
+            if row is None:
+                return None
+            if str(row["retry_at"]) <= now_text:
+                db.execute(
+                    "delete from runtime_route_pauses where route_name=? and retry_at<=?",
+                    (route_name, now_text),
+                )
+                return None
+            return str(row["failure_code"])
+
+    def close_runtime_route_pause(self, route_name: str) -> bool:
+        route_name = self._require_runtime_attempt_text(route_name, field="route_name")
+        with self._agent_run_write_transaction(None) as (db, _):
+            cursor = db.execute(
+                "delete from runtime_route_pauses where route_name=?", (route_name,)
+            )
+            return cursor.rowcount == 1
+
     def get_codex_session_contract_hash(self, conversation_id: str) -> str:
         with self._connect() as db:
             row = db.execute(
@@ -9680,7 +12061,7 @@ class AutoReplyStore:
     ) -> int:
         if not contract_hash.strip():
             raise ValueError("contract_hash must be non-empty")
-        with self._connect() as db:
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             cursor = db.execute(
                 """
                 update conversations
@@ -9688,6 +12069,23 @@ class AutoReplyStore:
                 where conversation_id=?
                 """,
                 (contract_hash, conversation_id),
+            )
+            db.execute(
+                """
+                insert into conversation_runtime_sessions (
+                    conversation_id, route_name, session_id,
+                    contract_hash, updated_at
+                )
+                select conversation_id, 'codex_oauth', codex_session_id, ?, ?
+                from conversations
+                where conversation_id=? and codex_session_id is not null
+                  and codex_session_id<>''
+                on conflict(conversation_id, route_name) do update set
+                    session_id=excluded.session_id,
+                    contract_hash=excluded.contract_hash,
+                    updated_at=excluded.updated_at
+                """,
+                (contract_hash, now_text, conversation_id),
             )
             return cursor.rowcount
 
@@ -13045,8 +15443,10 @@ class AutoReplyStore:
             )
             return [WorkSummaryInput.model_validate(dict(row)) for row in rows]
 
-    def mark_work_summary_input_done(self, input_id: int) -> None:
-        with self._connect() as db:
+    def mark_work_summary_input_done(
+        self, input_id: int, *, _db: sqlite3.Connection | None = None
+    ) -> None:
+        with self._optional_connection(_db) as db:
             db.execute(
                 """
                 update work_summary_inputs
@@ -13056,8 +15456,14 @@ class AutoReplyStore:
                 (input_id,),
             )
 
-    def mark_work_summary_input_discarded(self, input_id: int, reason: str) -> None:
-        with self._connect() as db:
+    def mark_work_summary_input_discarded(
+        self,
+        input_id: int,
+        reason: str,
+        *,
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        with self._optional_connection(_db) as db:
             db.execute(
                 """
                 update work_summary_inputs
@@ -13156,7 +15562,9 @@ class AutoReplyStore:
             raise ValueError(f"Unsupported column(s): {unknown}")
         return dict(values)
 
-    def create_work_project(self, **values) -> int:
+    def create_work_project(
+        self, *, _db: sqlite3.Connection | None = None, **values
+    ) -> int:
         allowed_columns = {
             "title",
             "category",
@@ -13188,14 +15596,16 @@ class AutoReplyStore:
         keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             cursor = db.execute(
                 f"insert into work_projects ({columns}) values ({placeholders})",
                 [filtered[key] for key in keys],
             )
             return int(cursor.lastrowid)
 
-    def update_work_project(self, project_id: int, **values) -> None:
+    def update_work_project(
+        self, project_id: int, *, _db: sqlite3.Connection | None = None, **values
+    ) -> None:
         if not values:
             return
         allowed_columns = {
@@ -13227,7 +15637,7 @@ class AutoReplyStore:
                 bool(filtered["needs_derek_attention"])
             )
         assignments = ", ".join(f"{key}=?" for key in filtered)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             db.execute(
                 f"""
                 update work_projects
@@ -13255,8 +15665,10 @@ class AutoReplyStore:
                 (memory_context_json, project_id),
             )
 
-    def get_work_project(self, project_id: int) -> WorkProject | None:
-        with self._connect() as db:
+    def get_work_project(
+        self, project_id: int, *, _db: sqlite3.Connection | None = None
+    ) -> WorkProject | None:
+        with self._optional_connection(_db) as db:
             row = db.execute(
                 "select * from work_projects where id=?",
                 (project_id,),
@@ -13302,7 +15714,9 @@ class AutoReplyStore:
                 WorkProject.model_validate(dict(row)) for row in db.execute(query, args)
             ]
 
-    def create_work_todo(self, **values) -> int:
+    def create_work_todo(
+        self, *, _db: sqlite3.Connection | None = None, **values
+    ) -> int:
         allowed_columns = {
             "project_id",
             "title",
@@ -13323,14 +15737,16 @@ class AutoReplyStore:
         keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             cursor = db.execute(
                 f"insert into work_todos ({columns}) values ({placeholders})",
                 [filtered[key] for key in keys],
             )
             return int(cursor.lastrowid)
 
-    def update_work_todo(self, todo_id: int, **values) -> None:
+    def update_work_todo(
+        self, todo_id: int, *, _db: sqlite3.Connection | None = None, **values
+    ) -> None:
         if not values:
             return
         allowed_columns = {
@@ -13361,7 +15777,7 @@ class AutoReplyStore:
                 continue
             assignments.append(f"{key}=?")
             parameters.append(value)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             db.execute(
                 f"""
                 update work_todos
@@ -13371,8 +15787,10 @@ class AutoReplyStore:
                 [*parameters, todo_id],
             )
 
-    def get_work_todo(self, todo_id: int) -> WorkTodo | None:
-        with self._connect() as db:
+    def get_work_todo(
+        self, todo_id: int, *, _db: sqlite3.Connection | None = None
+    ) -> WorkTodo | None:
+        with self._optional_connection(_db) as db:
             row = db.execute(
                 "select * from work_todos where id=?",
                 (todo_id,),
@@ -13661,7 +16079,103 @@ class AutoReplyStore:
             result.setdefault(link.work_todo_id, []).append(link)
         return result
 
-    def create_work_update(self, **values) -> int:
+    def enqueue_task_todo_sync_outbox(
+        self,
+        *,
+        operation_key: str,
+        work_todo_id: int,
+        operation: str,
+        evidence_json: str = "{}",
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        if operation not in {"create", "complete"}:
+            raise ValueError("task todo sync operation is invalid")
+        with self._optional_connection(_db) as db:
+            db.execute(
+                "insert or ignore into task_todo_sync_outbox "
+                "(operation_key, work_todo_id, operation, evidence_json) values (?, ?, ?, ?)",
+                (operation_key, work_todo_id, operation, evidence_json),
+            )
+
+    def list_task_todo_sync_outbox(
+        self, *, statuses: tuple[str, ...] | None = None
+    ) -> list[sqlite3.Row]:
+        query = "select * from task_todo_sync_outbox"
+        args: list[str] = []
+        if statuses:
+            query += f" where status in ({','.join('?' for _ in statuses)})"
+            args.extend(statuses)
+        with self._connect() as db:
+            return list(db.execute(f"{query} order by id", args).fetchall())
+
+    def claim_task_todo_sync_outbox(
+        self, *, owner: str, now: str, lease_seconds: int = 300
+    ) -> sqlite3.Row | None:
+        lease_until = (
+            datetime.strptime(now, "%Y-%m-%d %H:%M:%S")
+            + timedelta(seconds=lease_seconds)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        with self._agent_run_write_transaction(now) as (db, _):
+            db.execute(
+                "update task_todo_sync_outbox set status='unknown', lease_owner='', "
+                "lease_expires_at='', error='receipt_reconciliation_required', updated_at=? "
+                "where status='running' and lease_expires_at<=?",
+                (now, now),
+            )
+            row = db.execute(
+                "select * from task_todo_sync_outbox where "
+                "(status='queued' or (status='failed' and attempt_count<3 and next_attempt_at<=?)) "
+                "order by id limit 1",
+                (now,),
+            ).fetchone()
+            if row is None:
+                return None
+            changed = db.execute(
+                "update task_todo_sync_outbox set status='running', lease_owner=?, "
+                "lease_expires_at=?, attempt_count=attempt_count+1, updated_at=? "
+                "where id=? and status in ('queued', 'failed')",
+                (owner, lease_until, now, row["id"]),
+            )
+            return row if changed.rowcount == 1 else None
+
+    def finish_task_todo_sync_outbox(
+        self, *, outbox_id: int, owner: str, status: str, receipt_json: str = "{}", error: str = ""
+    ) -> None:
+        if status not in {"completed", "failed", "unknown"}:
+            raise ValueError("task todo sync terminal status is invalid")
+        with self._connect() as db:
+            changed = db.execute(
+                "update task_todo_sync_outbox set status=?, receipt_json=?, error=?, "
+                "lease_owner='', lease_expires_at='', completed_at=current_timestamp, "
+                "updated_at=current_timestamp where id=? and status='running' and lease_owner=?",
+                (status, receipt_json, error, outbox_id, owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("task todo sync receipt ownership lost")
+
+    def retry_task_todo_sync_outbox(
+        self, *, outbox_id: int, owner: str, error: str, now: str
+    ) -> None:
+        with self._connect() as db:
+            row = db.execute("select attempt_count from task_todo_sync_outbox where id=?", (outbox_id,)).fetchone()
+            if row is None:
+                raise ValueError("task todo sync outbox does not exist")
+            attempts = int(row["attempt_count"])
+            exhausted = attempts >= 3
+            next_attempt_at = "" if exhausted else (
+                datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=60 * attempts)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            changed = db.execute(
+                "update task_todo_sync_outbox set status=?, error=?, next_attempt_at=?, "
+                "lease_owner='', lease_expires_at='', updated_at=? where id=? and status='running' and lease_owner=?",
+                ("failed", f"task_todo_sync_retry_exhausted:{error}" if exhausted else error, next_attempt_at, now, outbox_id, owner),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("task todo sync receipt ownership lost")
+
+    def create_work_update(
+        self, *, _db: sqlite3.Connection | None = None, **values
+    ) -> int:
         allowed_columns = {
             "project_id",
             "source_type",
@@ -13675,7 +16189,7 @@ class AutoReplyStore:
         keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             cursor = db.execute(
                 f"insert into work_updates ({columns}) values ({placeholders})",
                 [filtered[key] for key in keys],
@@ -13742,9 +16256,12 @@ class AutoReplyStore:
                     codex_session_id,
                     decision_json,
                     audit_summary,
-                    memory_recall_used
+                    memory_recall_used,
+                    status,
+                    finished_at,
+                    updated_at
                 )
-                values (?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?, 'completed', current_timestamp, current_timestamp)
                 """,
                 (
                     summary_input_id,
@@ -13756,7 +16273,337 @@ class AutoReplyStore:
             )
             return int(cursor.lastrowid)
 
-    def create_follow_up_draft(self, **values) -> int:
+    def begin_weekly_okr_analysis_job(
+        self,
+        *,
+        week_end: str,
+        manager_user_id: str,
+        source_digest: str,
+        owner: str = "legacy-weekly-owner",
+        lease_seconds: int = 1860,
+        now: str | datetime | None = None,
+    ) -> WeeklyOkrAnalysisJobClaim:
+        manager_user_id = self._require_runtime_attempt_text(
+            manager_user_id, field="manager_user_id"
+        )
+        _, workload_key = self._validate_runtime_operation_workload(
+            "weekly_okr", f"{week_end}:{manager_user_id}:{source_digest}"
+        )
+        normalized_week_end, normalized_manager, normalized_digest = workload_key.split(
+            ":", 2
+        )
+        owner = self._require_runtime_attempt_text(owner, field="owner")
+        if lease_seconds <= 0:
+            raise ValueError("weekly OKR lease_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (db, clock):
+            now_value, now_text = clock
+            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            inserted = db.execute(
+                "insert or ignore into weekly_okr_analysis_jobs "
+                "(week_end, manager_user_id, source_digest, status, lease_owner, "
+                "lease_expires_at, updated_at) values (?, ?, ?, 'running', ?, ?, ?)",
+                (
+                    normalized_week_end,
+                    normalized_manager,
+                    normalized_digest,
+                    owner,
+                    lease_expires_at,
+                    now_text,
+                ),
+            )
+            row = db.execute(
+                "select id, status, lease_expires_at from weekly_okr_analysis_jobs "
+                "where week_end=? and manager_user_id=? and source_digest=?",
+                (normalized_week_end, normalized_manager, normalized_digest),
+            ).fetchone()
+            job_id = int(row["id"])
+            if inserted.rowcount == 1:
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
+                )
+            if row["status"] == "failed":
+                changed = db.execute(
+                    "update weekly_okr_analysis_jobs set status='running', "
+                    "error='', finished_at='', lease_owner=?, lease_expires_at=?, "
+                    "updated_at=? "
+                    "where id=? and status='failed'",
+                    (owner, lease_expires_at, now_text, job_id),
+                )
+                if changed.rowcount != 1:
+                    raise RuntimeError("weekly OKR analysis reopen claim lost")
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
+                )
+            if row["status"] == "completed":
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CACHE_HIT,
+                )
+            if row["status"] != "running":
+                raise RuntimeError("weekly OKR analysis job has invalid status")
+            if not row["lease_expires_at"] or row["lease_expires_at"] <= now_text:
+                changed = db.execute(
+                    "update weekly_okr_analysis_jobs set lease_owner=?, "
+                    "lease_expires_at=?, error='', finished_at='', updated_at=? "
+                    "where id=? and status='running' and "
+                    "(lease_expires_at='' or lease_expires_at<=?)",
+                    (owner, lease_expires_at, now_text, job_id, now_text),
+                )
+                if changed.rowcount != 1:
+                    raise RuntimeError("weekly OKR stale lease reclaim lost")
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
+                    reclaimed_stale=True,
+                )
+            return WeeklyOkrAnalysisJobClaim(
+                job_id=job_id,
+                outcome=WeeklyOkrAnalysisJobClaimOutcome.IN_PROGRESS,
+            )
+
+    def finish_weekly_okr_analysis_job(
+        self,
+        job_id: int,
+        *,
+        status: str,
+        error: str = "",
+        owner: str = "legacy-weekly-owner",
+        now: str | datetime | None = None,
+    ) -> None:
+        if status not in {"completed", "failed"}:
+            raise ValueError("weekly OKR analysis terminal status is invalid")
+        owner = self._require_runtime_attempt_text(owner, field="owner")
+        with self._agent_run_write_transaction(now) as (db, clock):
+            _, now_text = clock
+            row = db.execute(
+                "select status, error, lease_owner, lease_expires_at "
+                "from weekly_okr_analysis_jobs where id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("weekly OKR analysis job does not exist")
+            if row["status"] != "running":
+                if (row["status"], row["error"]) == (status, error):
+                    return
+                raise ValueError("conflicting weekly OKR analysis terminal rewrite")
+            if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
+                raise ValueError("weekly OKR analysis lease ownership lost")
+            changed = db.execute(
+                "update weekly_okr_analysis_jobs set status=?, error=?, "
+                "lease_owner='', lease_expires_at='', finished_at=?, updated_at=? "
+                "where id=? and status='running' and lease_owner=? "
+                "and lease_expires_at>?",
+                (status, error, now_text, now_text, job_id, owner, now_text),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("weekly OKR analysis lease ownership lost")
+
+    def reclaim_weekly_okr_analysis_job_cache_miss(
+        self,
+        job_id: int,
+        *,
+        week_end: str,
+        manager_user_id: str,
+        source_digest: str,
+        owner: str = "legacy-weekly-owner",
+        lease_seconds: int = 1860,
+        now: str | datetime | None = None,
+    ) -> WeeklyOkrAnalysisJobClaim:
+        if job_id <= 0:
+            raise ValueError("weekly OKR analysis job id must be positive")
+        manager_user_id = self._require_runtime_attempt_text(
+            manager_user_id, field="manager_user_id"
+        )
+        _, workload_key = self._validate_runtime_operation_workload(
+            "weekly_okr", f"{week_end}:{manager_user_id}:{source_digest}"
+        )
+        expected_key = tuple(workload_key.split(":", 2))
+        owner = self._require_runtime_attempt_text(owner, field="owner")
+        if lease_seconds <= 0:
+            raise ValueError("weekly OKR lease_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (db, clock):
+            now_value, now_text = clock
+            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            row = db.execute(
+                "select week_end, manager_user_id, source_digest, status "
+                "from weekly_okr_analysis_jobs where id=?",
+                (job_id,),
+            ).fetchone()
+            if (
+                row is None
+                or tuple(
+                    row[field]
+                    for field in ("week_end", "manager_user_id", "source_digest")
+                )
+                != expected_key
+            ):
+                raise ValueError("weekly OKR analysis job natural key mismatch")
+            if row["status"] == "completed":
+                changed = db.execute(
+                    "update weekly_okr_analysis_jobs set status='running', "
+                    "error='', finished_at='', lease_owner=?, lease_expires_at=?, "
+                    "updated_at=? "
+                    "where id=? and status='completed'",
+                    (owner, lease_expires_at, now_text, job_id),
+                )
+                if changed.rowcount != 1:
+                    raise RuntimeError("weekly OKR cache-miss reclaim lost")
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
+                )
+            if row["status"] == "running":
+                return WeeklyOkrAnalysisJobClaim(
+                    job_id=job_id,
+                    outcome=WeeklyOkrAnalysisJobClaimOutcome.IN_PROGRESS,
+                )
+            raise ValueError(
+                "weekly OKR cache-miss reclaim requires completed or running job"
+            )
+
+    def begin_wechat_memory_import_job(
+        self, *, import_run_id: str, account_id: str
+    ) -> int:
+        import_run_id = self._require_runtime_attempt_text(
+            import_run_id, field="import_run_id"
+        )
+        account_id = self._require_runtime_attempt_text(
+            account_id, field="account_id"
+        )
+        with self._agent_run_write_transaction(None) as (db, _):
+            cursor = db.execute(
+                "insert into wechat_memory_import_jobs "
+                "(import_run_id, account_id, status) values (?, ?, 'running')",
+                (import_run_id, account_id),
+            )
+            return int(cursor.lastrowid)
+
+    def finish_wechat_memory_import_job(
+        self, job_id: int, *, status: str, error: str = ""
+    ) -> None:
+        if status not in {"completed", "failed"}:
+            raise ValueError("WeChat Memory import terminal status is invalid")
+        with self._agent_run_write_transaction(None) as (db, _):
+            row = db.execute(
+                "select status, error from wechat_memory_import_jobs where id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("WeChat Memory import job does not exist")
+            if row["status"] != "running":
+                if (row["status"], row["error"]) == (status, error):
+                    return
+                raise ValueError("conflicting WeChat Memory import terminal rewrite")
+            db.execute(
+                "update wechat_memory_import_jobs set status=?, error=?, "
+                "finished_at=current_timestamp, updated_at=current_timestamp "
+                "where id=? and status='running'",
+                (status, error, job_id),
+            )
+
+    def begin_task_agent_run(self, summary_input_id: int) -> int:
+        if summary_input_id <= 0:
+            raise ValueError("summary_input_id must be positive")
+        with self._agent_run_write_transaction(None) as (db, _):
+            parent = db.execute(
+                "select 1 from work_summary_inputs "
+                "where id=? and status='processing'",
+                (summary_input_id,),
+            ).fetchone()
+            if parent is None:
+                raise ValueError("task agent run parent is not processing")
+            active = db.execute(
+                "select id from task_agent_runs "
+                "where summary_input_id=? and status='running'",
+                (summary_input_id,),
+            ).fetchone()
+            if active is not None:
+                return int(active["id"])
+            cursor = db.execute(
+                "insert into task_agent_runs "
+                "(summary_input_id, status, finished_at, updated_at) "
+                "values (?, 'running', '', current_timestamp)",
+                (summary_input_id,),
+            )
+            return int(cursor.lastrowid)
+
+    def finish_task_agent_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        codex_session_id: str = "",
+        decision_json: str = "{}",
+        audit_summary: str = "",
+        memory_recall_used: bool = False,
+        error: str = "",
+        _db: sqlite3.Connection | None = None,
+    ) -> None:
+        if status not in {"completed", "failed"}:
+            raise ValueError("task agent run terminal status is invalid")
+        expected = (
+            status,
+            codex_session_id,
+            decision_json,
+            audit_summary,
+            int(memory_recall_used),
+            error,
+        )
+        if _db is not None:
+            self._finish_task_agent_run_in_connection(_db, run_id, expected)
+            return
+        with self._agent_run_write_transaction(None) as (db, _):
+            self._finish_task_agent_run_in_connection(db, run_id, expected)
+
+    @staticmethod
+    def _finish_task_agent_run_in_connection(
+        db: sqlite3.Connection,
+        run_id: int,
+        expected: tuple[str, str, str, str, int, str],
+    ) -> None:
+        row = db.execute(
+            "select * from task_agent_runs where id=?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("task agent run does not exist")
+        if row["status"] != "running":
+            actual = tuple(
+                row[field]
+                for field in (
+                    "status",
+                    "codex_session_id",
+                    "decision_json",
+                    "audit_summary",
+                    "memory_recall_used",
+                    "error",
+                )
+            )
+            if actual == expected:
+                return
+            raise ValueError("conflicting task agent run terminal rewrite")
+        db.execute(
+            "update task_agent_runs set status=?, codex_session_id=?, "
+            "decision_json=?, audit_summary=?, memory_recall_used=?, error=?, "
+            "finished_at=current_timestamp, updated_at=current_timestamp "
+            "where id=? and status='running'",
+            (*expected, run_id),
+        )
+
+    @contextmanager
+    def task_agent_domain_apply_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Make local task-domain changes and terminal run state one commit."""
+        with self._agent_run_write_transaction(None) as (db, _):
+            yield db
+
+    def create_follow_up_draft(
+        self, *, _db: sqlite3.Connection | None = None, **values
+    ) -> int:
         allowed_columns = {
             "project_id",
             "todo_id",
@@ -13788,7 +16635,7 @@ class AutoReplyStore:
         keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             dedupe_key = str(filtered.get("dedupe_key") or "").strip()
             if dedupe_key:
                 existing = db.execute(
@@ -13810,7 +16657,9 @@ class AutoReplyStore:
             )
             return int(cursor.lastrowid)
 
-    def update_follow_up_draft(self, draft_id: int, **values) -> None:
+    def update_follow_up_draft(
+        self, draft_id: int, *, _db: sqlite3.Connection | None = None, **values
+    ) -> None:
         if not values:
             return
         allowed_columns = {
@@ -13850,7 +16699,7 @@ class AutoReplyStore:
                 continue
             assignments.append(f"{key}=?")
             parameters.append(value)
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             cursor = db.execute(
                 f"""
                 update follow_up_drafts
@@ -15108,10 +17957,12 @@ class AutoReplyStore:
             ).fetchone()
             return dict(row) if row is not None else None
 
-    def get_follow_up_draft(self, draft_id: int) -> FollowUpDraft | None:
+    def get_follow_up_draft(
+        self, draft_id: int, *, _db: sqlite3.Connection | None = None
+    ) -> FollowUpDraft | None:
         if draft_id <= 0:
             return None
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             row = db.execute(
                 "select * from follow_up_drafts where id=?",
                 (draft_id,),
@@ -15157,6 +18008,7 @@ class AutoReplyStore:
         todo_id: int,
         *,
         statuses: tuple[str, ...] = ("draft", "approved"),
+        _db: sqlite3.Connection | None = None,
     ) -> list[FollowUpDraft]:
         query = "select * from follow_up_drafts where todo_id=?"
         args: list[str | int] = [todo_id]
@@ -15164,7 +18016,7 @@ class AutoReplyStore:
             query = f"{query} and status in ({','.join('?' for _ in statuses)})"
             args.extend(statuses)
         query = f"{query} order by scheduled_at, id"
-        with self._connect() as db:
+        with self._optional_connection(_db) as db:
             return [
                 FollowUpDraft.model_validate(dict(row))
                 for row in db.execute(query, args)

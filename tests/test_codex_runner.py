@@ -4,14 +4,15 @@ from pathlib import Path
 import pytest
 
 import app.codex_runner as codex_runner_module
+from app.codex_decision import CodexDecisionRunner
 from app.codex_runner import (
     AGENT_ENVELOPE_SCHEMA_PATH,
     CODEX_DECISION_SCHEMA_PATH,
     CodexRunner,
     codex_developer_instructions,
+    codex_model_config_options,
     memory_connector_config_issue,
 )
-from app.codex_decision import CodexDecisionRunner
 from app.consumer_agent import CORE_DYNAMIC_SKILL_BODY
 from app.dingtalk_models import CodexAction, CodexDecision
 from app.dws_client import DWS_AGENT_CODE_ENV
@@ -167,6 +168,73 @@ def test_codex_command_can_preserve_native_model_config(tmp_path: Path, monkeypa
     assert "MiniMax" not in command_text
     assert "minimax" not in command_text
     assert "model_provider" not in command_text
+
+
+def test_codex_model_options_accept_explicit_route_overrides(tmp_path: Path):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    options = codex_model_config_options(
+        model="gpt-5.5-api",
+        provider="openai",
+        reasoning_effort="high",
+    )
+    command = runner.build_command(
+        prompt="hello",
+        session_id=None,
+        model="gpt-5.5-api",
+        provider="openai",
+        reasoning_effort="high",
+    )
+
+    assert options == [
+        "-m",
+        "gpt-5.5-api",
+        "-c",
+        'model_provider="openai"',
+        "-c",
+        'model_reasoning_effort="high"',
+    ]
+    assert command[command.index("-m") + 1] == "gpt-5.5-api"
+    assert 'model_provider="openai"' in command
+    assert 'model_reasoning_effort="high"' in command
+
+
+def test_codex_command_accepts_explicit_provider_settings_and_shell_policy(
+    tmp_path: Path,
+):
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="hello",
+        session_id=None,
+        model="gpt-5.5",
+        provider="ceo_openai_api",
+        model_provider_settings={
+            "name": "CEO OpenAI API fallback",
+            "base_url": "https://api.openai.com/v1",
+            "env_key": "OPENAI_API_KEY",
+            "wire_api": "responses",
+        },
+        shell_environment_policy_core=True,
+    )
+
+    assert 'model_provider="ceo_openai_api"' in command
+    assert 'model_providers.ceo_openai_api.env_key="OPENAI_API_KEY"' in command
+    assert 'shell_environment_policy.inherit="core"' in command
+    assert "shell_environment_policy.ignore_default_excludes=false" in command
+
+
+def test_codex_model_options_without_arguments_keep_environment_defaults(monkeypatch):
+    monkeypatch.setenv("CEO_CODEX_MODEL", "gpt-5.5-default")
+    monkeypatch.setenv("CEO_CODEX_MODEL_PROVIDER", "default-provider")
+    monkeypatch.setenv("CEO_CODEX_MODEL_REASONING_EFFORT", "low")
+
+    assert codex_model_config_options() == [
+        "-m",
+        "gpt-5.5-default",
+        "-c",
+        'model_provider="default-provider"',
+        "-c",
+        'model_reasoning_effort="low"',
+    ]
 
 
 def test_preserving_native_instructions_does_not_read_workbench_prompt(

@@ -3,15 +3,21 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
+from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+from app.audit_rules import SEED_AUDIT_RULES_TEMPLATE
 from app.channel_gate import ChannelGateState, default_channel_gates
+from app.config import (
+    DEFAULT_CEO_CODEX_MODEL,
+    DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT,
+)
 from app.developer_prompt import (
     SEED_DEVELOPER_PROMPT_TEMPLATE,
     SEED_USER_PROMPT_TEMPLATE,
 )
-from app.audit_rules import SEED_AUDIT_RULES_TEMPLATE
 from app.mcp_doctor import check_mcp_statuses
 from app.prompt import DEFAULT_WORK_PROFILE_TEXT
 from app.runtime_environment import MINIMUM_PYTHON, central_python
@@ -31,7 +37,6 @@ from app.setup_wizard_models import (
 )
 from app.store import AutoReplyStore
 
-
 BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+")
 TOKEN_RE = re.compile(
     r"(?i)([\"']?(?:token|api[_-]?key|apikey|secret)[\"']?\s*[:=]\s*)"
@@ -41,6 +46,60 @@ SESSION_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4,}(?:-[0-9a-f]{4,})+\b")
 SESSION_KEY_RE = re.compile(r"(?i)session[_-]?id=\S+")
 LOCAL_PATH_RE = re.compile(r"(?:/Users|/private/tmp|/private/var|/tmp)/[^\s'\"<>]+")
 SETUP_STATUS_VALUES = set(SetupStatus.__args__)
+
+
+def runtime_route_setup_statuses(
+    *,
+    env: Mapping[str, str],
+    snapshots: Mapping[str, RuntimeCapabilitySnapshot],
+    now=lambda: datetime.now(UTC),
+) -> tuple[dict[str, object], ...]:
+    """Return secret-free setup readiness for every supported runtime route."""
+
+    configured = {
+        item.strip()
+        for item in env.get("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth").split(",")
+        if item.strip()
+    }
+    checked_now = now()
+    statuses: list[dict[str, object]] = []
+    for route_name in ("codex_oauth", "codex_api"):
+        secret_configured = bool(
+            route_name == "codex_api" and env.get("CEO_CODEX_API_KEY", "").strip()
+        )
+        if route_name not in configured:
+            status = "disabled"
+        elif route_name == "codex_api" and not secret_configured:
+            status = "missing_secret"
+        else:
+            snapshot = snapshots.get(route_name)
+            status = (
+                "ready"
+                if _runtime_snapshot_is_current(snapshot, checked_now)
+                else "probe_failed"
+            )
+        statuses.append(
+            {
+                "route_name": route_name,
+                "status": status,
+                "secret_configured": secret_configured,
+            }
+        )
+    return tuple(statuses)
+
+
+def _runtime_snapshot_is_current(
+    snapshot: RuntimeCapabilitySnapshot | None, now: datetime
+) -> bool:
+    if snapshot is None or not snapshot.healthy or snapshot.failure is not None:
+        return False
+    try:
+        expires_at = datetime.fromisoformat(snapshot.expires_at)
+    except (TypeError, ValueError):
+        return False
+    if expires_at.tzinfo is None or now.tzinfo is None:
+        return False
+    return expires_at.astimezone(UTC) > now.astimezone(UTC)
 
 
 SETUP_WIZARD_STEPS: tuple[SetupStepDefinition, ...] = (
@@ -405,7 +464,11 @@ def _contains_sensitive_profile_evidence(text: str) -> bool:
     )
 
 
-def check_service_config(*, repo_root: Path) -> SetupStepStatus:
+def check_service_config(
+    *,
+    repo_root: Path,
+    runtime_snapshots: Mapping[str, RuntimeCapabilitySnapshot] | None = None,
+) -> SetupStepStatus:
     env_path = repo_root / ".env"
     if not env_path.exists():
         return _status(
@@ -458,12 +521,30 @@ def check_service_config(*, repo_root: Path) -> SetupStepStatus:
             summary="Dry-run is not enabled.",
             evidence={"env_exists": True, "dry_run_enabled": False},
         )
+    if runtime_snapshots is None:
+        from app.agent_runtime_production import PRODUCTION_RUNTIME_CAPABILITIES
+
+        runtime_snapshots = PRODUCTION_RUNTIME_CAPABILITIES
+
+    runtime_routes_json = json.dumps(
+        list(
+            runtime_route_setup_statuses(
+                env=values,
+                snapshots=runtime_snapshots,
+            )
+        ),
+        separators=(",", ":"),
+    )
     return _status(
         "service_config",
         title="Service Config",
         status="done",
         summary="Service config and runtime directories are ready.",
-        evidence={"env_exists": True, "dry_run_enabled": True},
+        evidence={
+            "env_exists": True,
+            "dry_run_enabled": True,
+            "runtime_routes_json": runtime_routes_json,
+        },
     )
 
 
@@ -1139,9 +1220,19 @@ def _setup_service_config(
         "CEO_AUDIT_RULES_TEMPLATE_PATH": "data/prompts/audit_rules.md",
         "CEO_SERVICE_MCP_CONFIG_PATH": "data/config/service-mcp.json",
         "CEO_NOT_SEND_MESSAGE": "1",
+        "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
+        "CEO_CODEX_MODEL": DEFAULT_CEO_CODEX_MODEL,
+        "CEO_CODEX_MODEL_REASONING_EFFORT": DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT,
+        "CEO_CODEX_API_MODEL": DEFAULT_CEO_CODEX_MODEL,
+        "CEO_RUNTIME_PROBE_INTERVAL": "5m",
+        "CEO_RUNTIME_ROUTE_RETRY_DELAY": "30m",
     }
     for key, default in defaults.items():
         values[key] = env.get(key, values.get(key) or default)
+    if env.get("CEO_CODEX_API_KEY", values.get("CEO_CODEX_API_KEY", "")).strip():
+        values["CEO_CODEX_API_KEY"] = env.get(
+            "CEO_CODEX_API_KEY", values.get("CEO_CODEX_API_KEY", "")
+        ).strip()
 
     env_path.write_text(
         "".join(f"{key}={values[key]}\n" for key in sorted(values)),
@@ -1217,6 +1308,20 @@ def _setup_service_config(
             "user_prompt": _redact_evidence_path(user_prompt),
             "audit_rules": _redact_evidence_path(audit_rules),
             "service_mcp_config": _redact_evidence_path(service_mcp_config),
+            "runtime_routes_json": json.dumps(
+                [
+                    {
+                        "route_name": status["route_name"],
+                        "status": status["status"],
+                        "secret_configured": status["secret_configured"],
+                    }
+                    for status in runtime_route_setup_statuses(
+                        env=values,
+                        snapshots={},
+                    )
+                ],
+                separators=(",", ":"),
+            ),
         },
     )
 

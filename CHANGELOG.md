@@ -21,6 +21,14 @@
 
 - Retry transient SQLite contention in WeChat loops and report it only when the lock persists for three consecutive iterations.
 - Keep valid unread DingTalk messages when DWS returns an unsupported row in the same unread window, without promoting older read-overlap rows.
+
+- Add an opt-in, synthetic-only live verification suite and staged operator
+  runbook for Codex OAuth-to-API failover. Runtime probes and pauses are
+  route-scoped; the API credential is process-environment-only and is checked
+  against captured output, SQLite, and rendered History. Failover remains
+  bounded to proven read-only attempts, while unknown or started writes stop
+  for reconciliation instead of switching providers.
+
 - Add a guarded failed-task settlement path for stale or superseded replies. It records an explicit skipped attempt and refuses to close tasks with active runs, delivery receipts, or external side effects, preventing unsafe replay without hiding the audit trail.
 
 - Isolate background Consumer and Audit Codex turns from desktop plugins,

@@ -5,9 +5,16 @@ from pathlib import Path
 import pytest
 
 import app.consumer_agent as consumer_agent
-from app.agent_context import AgentTaskContext, _CONSUMER_AGENT_RULES
+from app.agent_context import _CONSUMER_AGENT_RULES, AgentTaskContext
 from app.agent_contracts import ConsumerAgentResult
-from app.agent_turn_runner import _agent_cli_receipt
+from app.agent_result import EffectKind, ResultParseError
+from app.agent_runtime_config import load_runtime_config
+from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+from app.agent_runtime_router import AgentRuntimeRouter
+from app.agent_skill_usage import LoadedSkillReceipt
+from app.agent_turn_runner import RuntimeRouteUnavailableError, _agent_cli_receipt
+from app.agent_wire_contracts import ConsumerAgentWireResult
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import (
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
@@ -15,8 +22,6 @@ from app.consumer_agent import (
     consumer_developer_instructions,
     consumer_wire_contract_hash,
 )
-from app.agent_wire_contracts import ConsumerAgentWireResult
-from app.agent_result import EffectKind, ResultParseError
 from app.developer_prompt import DeveloperPromptTemplateError
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -184,6 +189,60 @@ class FailingExecutor(CapturingExecutor):
     def __call__(self, command, *, on_stdout_line, **kwargs):
         super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
         return ProcessRunResult(1, self.stdout, self.stderr)
+
+
+class SequencedRuntimeExecutor(CapturingExecutor):
+    def __init__(self, *results: ProcessRunResult) -> None:
+        super().__init__("")
+        self.results = list(results)
+        self.environments: list[dict[str, str]] = []
+
+    def __call__(self, command, *, on_stdout_line, **kwargs):
+        result = self.results.pop(0)
+        self.stdout = result.stdout
+        self.environments.append(dict(kwargs["env"]))
+        super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+        return result
+
+
+def _consumer_runtime_dependencies(
+    store, workspace=Path("/workspace"), *, routes="codex_oauth,codex_api"
+):
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": routes,
+            "CEO_CODEX_API_KEY": "fallback-test-key",
+        }
+    )
+    capabilities = frozenset(
+        {
+            "structured_output",
+            "local_schema_validation",
+            "consumer_read_only_enforcement",
+            "reviewed_read_tools",
+            "task_context",
+            "channel:dingtalk",
+            "mcp:agent_cli:reviewed_read",
+            "native_cli:reviewed",
+            "native_cli:dws",
+            "mcp:memory_connector:read",
+        }
+    )
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=capabilities,
+            healthy=True,
+            checked_at="2026-08-20 00:00:00",
+            expires_at="2099-08-20 00:00:00",
+        )
+        for route in config.routes
+    }
+    return (
+        config,
+        AgentRuntimeRouter(routes=config.routes, store=store, snapshots=snapshots),
+        CodexRuntimeAdapter(workspace, config),
+    )
 
 
 def _wire_result(result: dict[str, object]) -> dict[str, object]:
@@ -824,6 +883,154 @@ def test_consumer_retryable_failure_without_tool_progress_rotates_session(
     assert executor.commands[0][:3] == ["codex", "exec", "resume"]
     assert store.get_codex_session_id(task.conversation_id) is None
 
+
+def test_consumer_read_events_can_fail_over_within_same_run(
+    store, task, context, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "fallback-test-key")
+    read_lines = _failed_reviewed_read_jsonl().splitlines()[:3]
+    oauth_failure = "\n".join(
+        (
+            *read_lines,
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "Failed to refresh token: Your session has ended",
+                }
+            ),
+        )
+    )
+    executor = SequencedRuntimeExecutor(
+        ProcessRunResult(1, oauth_failure, ""),
+        ProcessRunResult(0, _result_jsonl(session="session-api"), ""),
+    )
+    config, router, adapter = _consumer_runtime_dependencies(store)
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    attempts = store.list_agent_runtime_attempts(result.run_id)
+    persisted_task = store.get_reply_task(task.id)
+    assert result.run_id == attempts[0].agent_run_id
+    assert [attempt.route_name for attempt in attempts] == [
+        "codex_oauth",
+        "codex_api",
+    ]
+    assert [attempt.status for attempt in attempts] == ["superseded", "completed"]
+    assert attempts[0].failure_class == "authentication"
+    assert attempts[0].failure_code == "codex_login_required"
+    assert [attempt.session_id for attempt in attempts] == [
+        "session-a",
+        "session-api",
+    ]
+    assert attempts[0].transcript_start == 0
+    assert attempts[0].transcript_end == len(oauth_failure.splitlines())
+    assert attempts[1].transcript_start == 0
+    assert attempts[1].transcript_end == len(
+        _result_jsonl(session="session-api").splitlines()
+    )
+    assert store.active_runtime_route_pause(
+        "codex_oauth", now="2026-08-20 00:00:00"
+    ) == "codex_login_required"
+    assert persisted_task is not None
+    assert persisted_task.execution_generation == task.execution_generation
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_api"
+    ) == "session-api"
+    assert store.get_codex_session_id(task.conversation_id) == "session-a"
+    persisted_run = store.get_agent_run(result.run_id)
+    assert persisted_run is not None
+    assert persisted_run.codex_session_id == "session-a"
+    assert "OPENAI_API_KEY" not in executor.environments[0]
+    assert executor.environments[1]["OPENAI_API_KEY"] == "fallback-test-key"
+
+
+def test_transport_failure_opens_route_pause_before_api_successor(
+    store, task, context
+):
+    executor = SequencedRuntimeExecutor(
+        ProcessRunResult(
+            1,
+            "\n".join(
+                (
+                    json.dumps(
+                        {"type": "thread.started", "thread_id": "oauth-transport"}
+                    ),
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": "stream disconnected before completion",
+                        }
+                    ),
+                )
+            ),
+            "",
+        ),
+        ProcessRunResult(0, _result_jsonl(session="api-success"), ""),
+    )
+    config, router, adapter = _consumer_runtime_dependencies(store)
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.outcome.value == "no_action"
+    assert len(executor.commands) == 2
+    assert store.active_runtime_route_pause(
+        "codex_oauth", now="2026-08-20 00:00:00"
+    ) == "codex_transport_disconnected"
+
+
+def test_consumer_does_not_start_unprobed_api_fallback(
+    store, task, context, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "fallback-test-key")
+    executor = SequencedRuntimeExecutor(
+        ProcessRunResult(
+            1,
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "Failed to refresh token: Your session has ended",
+                }
+            ),
+            "",
+        )
+    )
+
+    with pytest.raises(ResultParseError):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    assert [
+        attempt.route_name for attempt in store.list_agent_runtime_attempts(run.id)
+    ] == ["codex_oauth"]
+    assert len(executor.environments) == 1
+
 def test_consumer_rotates_damaged_session_after_missing_final_result(
     store, task, context
 ):
@@ -928,7 +1135,6 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
             workspace=Path("/workspace"),
             executor=FailingExecutor(stdout),
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
     run = store.get_agent_run_for_turn(
         task.id,
         task.execution_generation,
@@ -939,6 +1145,9 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
     assert run is not None
     assert '"code":"codex_provider_capacity_exhausted"' in run.structured_error_json
     assert '"retryable":true' in run.structured_error_json
+    assert store.active_runtime_route_pause(
+        "codex_oauth", now="2026-08-20 00:00:00"
+    ) == "codex_provider_capacity_exhausted"
 
 
 def test_retryable_consumer_turn_uses_the_current_conversation_session(
@@ -963,6 +1172,7 @@ def test_retryable_consumer_turn_uses_the_current_conversation_session(
             executor=FailingExecutor(provider_failure),
             codex_session_exists=lambda _: True,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    store.close_runtime_route_pause("codex_oauth")
     store.upsert_conversation(
         task.conversation_id,
         task.conversation_title,
@@ -1024,6 +1234,7 @@ def test_retry_turn_parse_failure_clears_only_its_current_conversation_session(
             executor=FailingExecutor(provider_failure),
             codex_session_exists=lambda _: True,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    store.close_runtime_route_pause("codex_oauth")
     store.upsert_conversation(
         task.conversation_id,
         task.conversation_title,
@@ -1604,3 +1815,346 @@ def test_consumer_rejects_direct_generic_local_read_command(store, task, context
             workspace=Path("/workspace"),
             executor=CapturingExecutor(shell + "\n" + _result_jsonl()),
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+
+@pytest.mark.parametrize("eligibility", ["unprobed", "paused", "missing_capability"])
+def test_api_only_ineligible_route_is_typed_and_starts_no_process(
+    store, task, context, eligibility
+):
+    config, healthy_router, adapter = _consumer_runtime_dependencies(
+        store, routes="codex_api"
+    )
+    snapshots = dict(healthy_router._snapshots)
+    if eligibility == "unprobed":
+        snapshots = {}
+    elif eligibility == "missing_capability":
+        snapshots["codex_api"] = snapshots["codex_api"].model_copy(
+            update={"capabilities": frozenset({"structured_output"})}
+        )
+    else:
+        store.open_runtime_route_pause(
+            "codex_api", "provider_unavailable", "2099-08-20 00:00:00"
+        )
+    router = AgentRuntimeRouter(
+        routes=config.routes,
+        store=store,
+        snapshots=snapshots,
+    )
+    executor = CapturingExecutor(_result_jsonl(session="must-not-start"))
+
+    with pytest.raises(RuntimeRouteUnavailableError):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+            runtime_config=config,
+            runtime_router=router,
+            codex_adapter=adapter,
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.status == "failed"
+    error = json.loads(run.structured_error_json)
+    assert error["code"] == (
+        "runtime_capability_missing"
+        if eligibility == "missing_capability"
+        else "runtime_route_unavailable"
+    )
+    assert error["retryable"] is True
+    expected_reason = {
+        "unprobed": "snapshot_missing",
+        "paused": "paused",
+        "missing_capability": "missing_capabilities",
+    }[eligibility]
+    assert expected_reason in error["detail"]
+    assert store.list_agent_runtime_attempts(run.id) == []
+    assert executor.commands == []
+
+
+def test_consumer_derives_concrete_turn_capabilities_for_images_and_channel(
+    store, context
+):
+    runner = ConsumerAgentRunner(store=store, workspace=Path("/workspace"))
+    required = runner._required_capabilities(
+        replace(context, image_paths=("/tmp/evidence.png",))
+    )
+
+    assert {
+        "image_input",
+        "channel:dingtalk",
+        "native_cli:dws",
+        "native_cli:reviewed",
+        "mcp:agent_cli:reviewed_read",
+        "mcp:memory_connector:read",
+    } <= required
+
+
+def test_consumer_requires_only_explicit_exact_reviewed_skills(store, context):
+    config, router, _ = _consumer_runtime_dependencies(store, routes="codex_api")
+    runner = ConsumerAgentRunner(store=store, workspace=Path("/workspace"))
+    assert not any(
+        capability.startswith("reviewed_skill:")
+        for capability in runner._required_capabilities(context)
+    )
+    receipt = LoadedSkillReceipt(
+        name="ceo-message-triage",
+        path="/reviewed/ceo-message-triage/SKILL.md",
+        sha256="a" * 64,
+    )
+    required = runner._required_capabilities(
+        replace(context, required_reviewed_skills=(receipt,))
+    )
+    exact = f"reviewed_skill:{receipt.name}:{receipt.sha256}"
+
+    assert exact in required
+    assert router.first_eligible_route(required_capabilities=required) is None
+    snapshot = router._snapshots["codex_api"].model_copy(
+        update={"capabilities": router._snapshots["codex_api"].capabilities | {exact}}
+    )
+    proven = AgentRuntimeRouter(
+        routes=config.routes,
+        store=store,
+        snapshots={"codex_api": snapshot},
+    )
+    assert proven.first_eligible_route(required_capabilities=required).name == "codex_api"
+
+
+def test_api_retry_without_progress_clears_only_api_consumer_session(
+    store, task, context
+):
+    store.upsert_conversation(task.conversation_id, "Group", False, "oauth-keep")
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+        "oauth-keep",
+        consumer_wire_contract_hash(),
+    )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_api",
+        "api-old",
+        consumer_wire_contract_hash(),
+    )
+    store.set_codex_session_contract_hash(
+        task.conversation_id, consumer_wire_contract_hash()
+    )
+    config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_api")
+    failed = {
+        "outcome": "failed",
+        "summary": "No progress.",
+        "proposal": None,
+        "error": {
+            "code": "read_unavailable",
+            "retryable": True,
+            "authorization_required": False,
+        },
+    }
+    executor = CapturingExecutor(
+        "\n".join(
+            (
+                json.dumps({"type": "thread.started", "thread_id": "api-failed"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": json.dumps(_wire_result(failed)),
+                        },
+                    }
+                ),
+            )
+        )
+    )
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert (
+        store.get_conversation_runtime_session(task.conversation_id, "codex_api")
+        is None
+    )
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_oauth"
+    ) == "oauth-keep"
+    assert store.get_codex_session_id(task.conversation_id) == "oauth-keep"
+
+
+@pytest.mark.parametrize(
+    "invalidation", ["force_new_decision", "wire_mismatch", "missing_session"]
+)
+def test_api_consumer_invalidation_starts_fresh_and_preserves_oauth(
+    store, task, context, invalidation
+):
+    store.upsert_conversation(task.conversation_id, "Group", False, "oauth-keep")
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+        "oauth-keep",
+        consumer_wire_contract_hash(),
+    )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_api",
+        "api-old",
+        (
+            "outdated-contract"
+            if invalidation == "wire_mismatch"
+            else consumer_wire_contract_hash()
+        ),
+    )
+    store.set_codex_session_contract_hash(
+        task.conversation_id,
+        "outdated-contract"
+        if invalidation == "wire_mismatch"
+        else consumer_wire_contract_hash(),
+    )
+    config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_api")
+    executor = CapturingExecutor(_result_jsonl(session="api-new"))
+    selected_task = (
+        task.model_copy(update={"force_new_decision": True})
+        if invalidation == "force_new_decision"
+        else task
+    )
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+        codex_session_exists=(
+            (lambda _: False)
+            if invalidation == "missing_session"
+            else (lambda _: True)
+        ),
+    ).run(selected_task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert "resume" not in executor.commands[0]
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_api"
+    ) == "api-new"
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_oauth"
+    ) == "oauth-keep"
+    assert store.get_codex_session_id(task.conversation_id) == "oauth-keep"
+
+
+def test_api_contract_refresh_does_not_make_old_oauth_session_current(
+    store, task, context
+):
+    old_hash = "old-wire-contract"
+    current_hash = consumer_wire_contract_hash()
+    store.upsert_conversation(task.conversation_id, "Group", False, "oauth-old")
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_oauth", "oauth-old", old_hash
+    )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_api", "api-old", old_hash
+    )
+    api_config, api_router, api_adapter = _consumer_runtime_dependencies(
+        store, routes="codex_api"
+    )
+    api_executor = CapturingExecutor(_result_jsonl(session="api-new"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=api_executor,
+        runtime_config=api_config,
+        runtime_router=api_router,
+        codex_adapter=api_adapter,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert store.get_conversation_runtime_session_contract_hash(
+        task.conversation_id, "codex_api"
+    ) == current_hash
+    assert store.get_conversation_runtime_session_contract_hash(
+        task.conversation_id, "codex_oauth"
+    ) == old_hash
+    assert store.get_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+        required_contract_hash=current_hash,
+    ) is None
+
+    oauth_config, oauth_router, oauth_adapter = _consumer_runtime_dependencies(
+        store, routes="codex_oauth"
+    )
+    oauth_executor = CapturingExecutor(_result_jsonl(session="oauth-new"))
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=oauth_executor,
+        runtime_config=oauth_config,
+        runtime_router=oauth_router,
+        codex_adapter=oauth_adapter,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "resume" not in api_executor.commands[0]
+    assert "resume" not in oauth_executor.commands[0]
+    assert store.get_conversation_runtime_session_contract_hash(
+        task.conversation_id, "codex_oauth"
+    ) == current_hash
+
+
+def test_route_session_without_contract_hash_is_never_resumed(store, task, context):
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_api", "upgraded-row-without-hash"
+    )
+    config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_api")
+    executor = CapturingExecutor(_result_jsonl(session="api-new"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "resume" not in executor.commands[0]
+    assert store.get_conversation_runtime_session_contract_hash(
+        task.conversation_id, "codex_api"
+    ) == consumer_wire_contract_hash()
+
+
+def test_claude_route_session_is_not_checked_as_local_codex_history(store, task):
+    contract_hash = consumer_wire_contract_hash()
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "claude_api", "claude-session", contract_hash
+    )
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+            "CEO_CLAUDE_API_KEY": "test-claude-secret",
+        }
+    )
+    checked: list[str] = []
+    runner = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        runtime_config=config,
+        codex_session_exists=lambda session_id: checked.append(session_id) or False,
+    )
+
+    assert runner._route_session_exists("claude_api", "claude-session") is True
+    assert checked == []

@@ -18,7 +18,9 @@ from app import config
 from app.store import AutoReplyStore
 from app.wechat import service
 from app.wechat.memory import (
-    CodexMemoryExtractionRunner, CodexMemoryRecallMatcher, WechatMemoryImporter,
+    CodexMemoryExtractionRunner,
+    CodexMemoryRecallMatcher,
+    WechatMemoryImporter,
 )
 
 DEFAULT_DB = "data/auto-reply.sqlite3"
@@ -57,9 +59,12 @@ def cmd_consume_once(args) -> int:
         print("no single ready account; run status first")
         return 1
     account = service.account_from_state(state)
-    from app.codex_decision import CodexDecisionRunner
+    from app.wechat.decision_runner import WechatDecisionRunner
 
-    runner = CodexDecisionRunner(workspace=config.workspace_path())
+    runner = WechatDecisionRunner(
+        workspace=config.workspace_path(),
+        store=store,
+    )
     n = service.run_consume_once(
         store, runner, _reader(), account
     )
@@ -158,8 +163,8 @@ def cmd_import_memory(args) -> int:
     account = service.account_from_state(state)
     importer = WechatMemoryImporter(
         store, _reader(),
-        CodexMemoryExtractionRunner(config.workspace_path()),
-        CodexMemoryRecallMatcher(config.workspace_path()),
+        CodexMemoryExtractionRunner(config.workspace_path(), store=store),
+        CodexMemoryRecallMatcher(config.workspace_path(), store=store),
     )
     try:
         result = importer.run(
@@ -224,6 +229,13 @@ def main(argv=None) -> int:
     parser = build_parser()
 
     args = parser.parse_args(argv)
+    if args.cmd in {"consume-once", "import-memory"}:
+        from app.agent_runtime_production import build_production_runtime_refresher
+
+        build_production_runtime_refresher(
+            store=AutoReplyStore(Path(args.db)),
+            temporary_root=config.workspace_path(),
+        ).refresh_expired(force=True)
     return args.fn(args)
 
 

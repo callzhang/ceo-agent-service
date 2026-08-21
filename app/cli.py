@@ -91,7 +91,11 @@ from app.task_noise_backfill import (
     backfill_routine_process_todos,
 )
 from app.todo_completion import enqueue_follow_up_completion_checks
-from app.todo_sync import pull_dingtalk_todo_statuses, retry_failed_dingtalk_todo_links
+from app.todo_sync import (
+    dispatch_task_todo_sync_outbox,
+    pull_dingtalk_todo_statuses,
+    retry_failed_dingtalk_todo_links,
+)
 from app.work_profile import (
     build_initial_profile,
     collect_dingtalk_kb_evidence,
@@ -259,6 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for command in (
         "probe-dws",
+        "probe-agent-runtimes",
         "run-once",
         "run",
         "service",
@@ -425,6 +430,14 @@ def build_parser() -> argparse.ArgumentParser:
         )
         if command == "refresh-org-cache":
             subparser.add_argument("--user-id", action="append", default=[])
+        if command == "probe-agent-runtimes":
+            subparser.add_argument(
+                "--route",
+                action="append",
+                choices=("codex_oauth", "codex_api"),
+                default=[],
+                help="probe only this configured route; repeat to select both",
+            )
         if command == "read-oa-approval-detail":
             subparser.add_argument("--instance-id", required=True)
         if command == "retry-work-summary-input":
@@ -789,13 +802,21 @@ def _expand_path_arg(value: str | Path) -> Path:
     return Path(value).expanduser()
 
 
-def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
+def create_worker(
+    settings: WorkerSettings,
+    *,
+    runtime_refresher=None,
+) -> DingTalkAutoReplyWorker:
     from app.okr_review import (
         DwsAgoalApiOkrSource,
         DwsLiveOkrSource,
         UnconfiguredOkrLiveSource,
     )
 
+    # Runtime probing is owned by the CLI/service host, never by an ordinary
+    # worker constructor. Keep the compatibility argument inert for callers
+    # migrating to explicit ownership.
+    del runtime_refresher
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
@@ -805,8 +826,15 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
     )
     cached_dws = CachedDwsClient(dws=dws, org_directory=CachedOrgDirectory(store))
+    from app.agent_runtime_production import build_production_agent_runtime
+
+    agent_runtime = build_production_agent_runtime(
+        store=store,
+        workspace=settings.workspace,
+    )
     codex = CodexDecisionRunner(
         workspace=settings.workspace,
+        store=store,
         timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
     )
@@ -819,6 +847,7 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
         dry_run=settings.dry_run,
         style_profile=style_profile,
         style_records=style_records,
+        agent_runtime=agent_runtime,
     )
     okr_source_kind = _okr_source_kind()
     if okr_source_kind == "agoal":
@@ -834,6 +863,11 @@ def create_worker(settings: WorkerSettings) -> DingTalkAutoReplyWorker:
     else:
         worker.okr_live_source = UnconfiguredOkrLiveSource(OKR_SOURCE_KIND_ENV)
     return worker
+
+
+def _create_service_worker(settings: WorkerSettings, runtime_refresher):
+    del runtime_refresher
+    return create_worker(settings)
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()
@@ -966,6 +1000,14 @@ def consume_once(settings: WorkerSettings) -> int:
 
 
 def process_work_items_command(settings: WorkerSettings) -> int:
+    from app.agent_runtime_production import (
+        build_production_routed_codex_execution,
+    )
+    from app.task_agent import (
+        TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+        TASK_AGENT_MAX_TIMEOUT_SECONDS,
+    )
+
     store = AutoReplyStore(settings.db_path)
     limit = 20 if settings.max_batches is None else settings.max_batches
     if limit <= 0:
@@ -974,12 +1016,20 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     store.reset_stale_processing_work_summary_inputs(
         _work_summary_processing_stale_seconds(settings)
     )
+    routed_execution = build_production_routed_codex_execution(
+        store=store,
+        workspace=settings.workspace,
+        total_timeout_seconds=min(
+            settings.task_codex_timeout_seconds,
+            TASK_AGENT_MAX_TIMEOUT_SECONDS,
+        ),
+        idle_timeout_seconds=min(
+            settings.task_codex_idle_timeout_seconds,
+            TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
+        ),
+    )
     runner = TaskAgentRunner(
-        TaskAgentCodexRunner(
-            workspace=settings.workspace,
-            timeout_seconds=settings.task_codex_timeout_seconds,
-            idle_timeout_seconds=settings.task_codex_idle_timeout_seconds,
-        )
+        TaskAgentCodexRunner(routed_execution=routed_execution)
     )
     dws = None
     if not settings.dry_run:
@@ -989,6 +1039,13 @@ def process_work_items_command(settings: WorkerSettings) -> int:
             ding_receiver_user_id=settings.ding_receiver_user_id,
             transient_retry_attempts=settings.dws_transient_retry_attempts,
             transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
+        )
+        dispatch_task_todo_sync_outbox(
+            store,
+            dws,
+            owner="process-work-items-recovery",
+            now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            limit=min(limit, 20),
         )
     processed = 0
     for _ in range(limit):
@@ -1124,6 +1181,7 @@ def backfill_task_memory_context_command(settings: WorkerSettings) -> int:
         workspace=settings.workspace,
         timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        store=store,
     )
     updated = 0
     failed = 0
@@ -1203,6 +1261,9 @@ def backfill_routine_process_todos_command(
 
 
 def process_okr_reviews_command(settings: WorkerSettings) -> int:
+    from app.agent_runtime_production import (
+        build_production_routed_codex_execution,
+    )
     from app.okr_review import process_okr_review_request
     from app.structured_agent import AgentSpec, StructuredCodexRunner
 
@@ -1236,18 +1297,20 @@ def process_okr_reviews_command(settings: WorkerSettings) -> int:
             "Return only AgentEnvelope JSON."
         ),
     )
-    runner = StructuredCodexRunner(
+    routed_execution = build_production_routed_codex_execution(
         store=store,
         workspace=settings.workspace,
-        spec=spec,
-        timeout_seconds=max(
+        total_timeout_seconds=max(
             settings.codex_timeout_seconds, OKR_REVIEW_CODEX_TIMEOUT_SECONDS
         ),
         idle_timeout_seconds=max(
             settings.codex_idle_timeout_seconds,
             OKR_REVIEW_CODEX_IDLE_TIMEOUT_SECONDS,
         ),
-        persist_conversation_session=False,
+    )
+    runner = StructuredCodexRunner(
+        routed_execution=routed_execution,
+        spec=spec,
     )
     dws = None
     if not settings.dry_run:
@@ -2238,11 +2301,18 @@ def run_loop(
     max_batches: int | None = None,
     sleep: Callable[[int], None] = time.sleep,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
+    runtime_refresher=None,
 ) -> None:
     while True:
         if not network_ready():
             sleep(poll_interval_seconds)
             continue
+        if runtime_refresher is not None:
+            try:
+                runtime_refresher.refresh_expired()
+            except Exception:  # noqa: BLE001 - keep the sole long-lived owner alive
+                sleep(poll_interval_seconds)
+                continue
         worker.run_once(max_batches=max_batches)
         sleep(poll_interval_seconds)
 
@@ -2271,11 +2341,18 @@ def run_consumer_loop(
     max_tasks: int | None = None,
     sleep: Callable[[int], None] = time.sleep,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
+    runtime_refresher=None,
 ) -> None:
     while True:
         if not network_ready():
             sleep(poll_interval_seconds)
             continue
+        if runtime_refresher is not None:
+            try:
+                runtime_refresher.refresh_expired()
+            except Exception:  # noqa: BLE001 - keep the sole long-lived owner alive
+                sleep(poll_interval_seconds)
+                continue
         try:
             worker.consume_once(max_tasks=max_tasks)
         except Exception as exc:
@@ -2291,6 +2368,24 @@ def run_database_backup_loop(
     while True:
         backup_database_if_due(db_path)
         sleep(BACKUP_CHECK_INTERVAL_SECONDS)
+
+
+def run_runtime_probe_loop(
+    runtime_refresher,
+    interval_seconds: float,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Refresh expired route snapshots on one shared service cadence."""
+
+    while True:
+        sleep(interval_seconds)
+        try:
+            runtime_refresher.refresh_expired()
+        except Exception:  # noqa: BLE001, S112 - persistent health loop
+            # Probe failures are route health, never a reason to kill service
+            # threads. The next interval retries through the same refresher.
+            continue
 
 
 def _create_meeting_dws(settings: WorkerSettings) -> DwsClient:
@@ -2341,12 +2436,20 @@ def run_meeting_consumer_loop(
     sleep: Callable[[int], None] = time.sleep,
     network_ready: Callable[[], bool] = _macos_wifi_connected,
 ) -> None:
+    from app.agent_runtime_production import (
+        build_production_routed_codex_execution,
+    )
+
     store = AutoReplyStore(settings.db_path)
     dws = _create_meeting_dws(settings)
-    runner = MeetingAlignmentCodexRunner(
+    routed_execution = build_production_routed_codex_execution(
+        store=store,
         workspace=settings.workspace,
-        timeout_seconds=settings.codex_timeout_seconds,
+        total_timeout_seconds=settings.codex_timeout_seconds,
         idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+    )
+    runner = MeetingAlignmentCodexRunner(
+        routed_execution=routed_execution,
     )
     embedding_client = (
         EmbeddingClient(
@@ -2576,6 +2679,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
 
         runner = WechatDecisionRunner(
             workspace=settings.workspace,
+            store=store,
             timeout_seconds=settings.codex_timeout_seconds,
             idle_timeout_seconds=settings.codex_idle_timeout_seconds,
         )
@@ -2662,7 +2766,18 @@ def run_service(
     thread_factory: Callable[..., threading.Thread] = threading.Thread,
     wait: Callable[[], None] | None = None,
     exit_process: Callable[[int], None] = os._exit,
+    runtime_refresher=None,
 ) -> None:
+    if runtime_refresher is not None:
+        try:
+            runtime_refresher.refresh_expired(force=True)
+        except Exception:  # noqa: BLE001 - startup must degrade, not abort service
+            AutoReplyStore(settings.db_path).record_error(
+                "",
+                "",
+                "agent_runtime_probe_startup_failed",
+                "Agent runtime startup probe failed; routes remain unavailable.",
+            )
     _initialize_meeting_discovery_on_service_start(settings)
     _recover_orphaned_reply_tasks_on_service_start(settings)
     _recover_processing_work_summary_inputs_on_service_start(settings)
@@ -2684,7 +2799,7 @@ def run_service(
         (
             "producer",
             lambda: run_producer_loop(
-                create_worker(settings),
+                _create_service_worker(settings, runtime_refresher),
                 producer_interval_seconds,
                 max_tasks=settings.max_batches,
                 network_ready=dependency_gate.ready,
@@ -2730,7 +2845,7 @@ def run_service(
         (
             f"consumer-{index + 1}",
             lambda: run_consumer_loop(
-                create_worker(settings),
+                _create_service_worker(settings, runtime_refresher),
                 consumer_poll_interval_seconds,
                 max_tasks=settings.max_batches,
                 network_ready=dependency_gate.ready,
@@ -2739,6 +2854,17 @@ def run_service(
         for index in range(settings.consumer_workers)
     )
     components = components[:2] + consumer_components + components[2:]
+    if runtime_refresher is not None:
+        components = (
+            (
+                "runtime-probe",
+                lambda: run_runtime_probe_loop(
+                    runtime_refresher,
+                    runtime_refresher.interval_seconds,
+                ),
+            ),
+            *components,
+        )
     if settings.oa_pending_scan_enabled:
         components += (
             (
@@ -3049,6 +3175,79 @@ def probe_dws() -> int:
     return 1 if blocked else 0
 
 
+def probe_agent_runtimes_command(
+    settings: WorkerSettings,
+    *,
+    route_names: tuple[str, ...] = (),
+    refresher=None,
+) -> int:
+    """Force synthetic route probes and print only safe capability evidence."""
+
+    if refresher is None:
+        from app.agent_runtime_production import build_production_runtime_refresher
+
+        try:
+            refresher = build_production_runtime_refresher(
+                store=AutoReplyStore(settings.db_path),
+            )
+        except ValueError:
+            configured = {
+                item.strip()
+                for item in os.getenv(
+                    "CEO_AGENT_RUNTIME_ROUTES", "codex_oauth"
+                ).split(",")
+                if item.strip()
+            }
+            selected = route_names or tuple(sorted(configured))
+            routes = [
+                {
+                    "route_name": route_name,
+                    "healthy": False,
+                    "capabilities": [],
+                    "checked_at": "",
+                    "expires_at": "",
+                    "failure_code": (
+                        "missing_secret"
+                        if route_name == "codex_api"
+                        and "codex_api" in configured
+                        and not os.getenv("CEO_CODEX_API_KEY", "").strip()
+                        else "runtime_configuration_invalid"
+                    ),
+                }
+                for route_name in selected
+            ]
+            print(json.dumps({"routes": routes}, ensure_ascii=False), flush=True)
+            return 1
+    snapshots = refresher.refresh_expired(route_names=route_names, force=True)
+    routes = [
+        {
+            "route_name": snapshot.route_name,
+            "healthy": snapshot.healthy,
+            "capabilities": sorted(snapshot.capabilities),
+            "checked_at": snapshot.checked_at,
+            "expires_at": snapshot.expires_at,
+            "failure_code": snapshot.failure.code if snapshot.failure else "",
+        }
+        for snapshot in snapshots.values()
+    ]
+    print(json.dumps({"routes": routes}, ensure_ascii=False), flush=True)
+    return 0 if routes and all(route["healthy"] for route in routes) else 1
+
+
+def initialize_agent_runtime_routes(settings: WorkerSettings, *, refresher=None):
+    """Publish static surfaces and run one explicit startup probe."""
+
+    if refresher is None:
+        from app.agent_runtime_production import build_production_runtime_refresher
+
+        refresher = build_production_runtime_refresher(
+            store=AutoReplyStore(settings.db_path),
+            temporary_root=settings.workspace,
+        )
+    refresher.refresh_expired(force=True)
+    return refresher
+
+
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
@@ -3062,22 +3261,31 @@ def main() -> None:
 
     if args.command == "run-once":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         run_once(settings)
     elif args.command == "run":
         ensure_live_send_allowed(settings)
+        runtime_refresher = initialize_agent_runtime_routes(settings)
         run_loop(
             create_worker(settings),
             settings.poll_interval_seconds,
             max_batches=settings.max_batches,
+            runtime_refresher=runtime_refresher,
         )
     elif args.command == "service":
         ensure_live_send_allowed(settings)
+        from app.agent_runtime_production import build_production_runtime_refresher
+
+        runtime_refresher = build_production_runtime_refresher(
+            store=AutoReplyStore(settings.db_path),
+        )
         run_service(
             settings,
             host=args.host,
             port=args.port,
             producer_interval_seconds=args.producer_interval_seconds,
             consumer_poll_interval_seconds=args.consumer_poll_interval_seconds,
+            runtime_refresher=runtime_refresher,
         )
     elif args.command == "produce-once":
         produce_once(settings)
@@ -3089,19 +3297,24 @@ def main() -> None:
         )
     elif args.command == "consume-once":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         consume_once(settings)
     elif args.command == "consume":
         ensure_live_send_allowed(settings)
+        runtime_refresher = initialize_agent_runtime_routes(settings)
         run_consumer_loop(
             create_worker(settings),
             settings.poll_interval_seconds,
             max_tasks=settings.max_batches,
+            runtime_refresher=runtime_refresher,
         )
     elif args.command == "process-work-items":
+        initialize_agent_runtime_routes(settings)
         process_work_items_command(settings)
     elif args.command == "retry-work-summary-input":
         retry_work_summary_input_command(settings, input_id=args.input_id)
     elif args.command == "backfill-task-memory-context":
+        initialize_agent_runtime_routes(settings)
         backfill_task_memory_context_command(settings)
     elif args.command == "backfill-routine-process-todos":
         backfill_routine_process_todos_command(
@@ -3112,9 +3325,11 @@ def main() -> None:
         )
     elif args.command == "process-okr-reviews":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         process_okr_reviews_command(settings)
     elif args.command == "weekly-okr-report":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         weekly_okr_report_command(
             settings,
             force=args.force,
@@ -3139,6 +3354,7 @@ def main() -> None:
         check_follow_up_completions_command(settings, limit=1)
     elif args.command == "daily-task-maintenance":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         daily_task_maintenance_command(settings)
     elif args.command == "quality-check":
         raise SystemExit(
@@ -3178,6 +3394,10 @@ def main() -> None:
         )
     elif args.command == "probe-dws":
         raise SystemExit(probe_dws())
+    elif args.command == "probe-agent-runtimes":
+        raise SystemExit(
+            probe_agent_runtimes_command(settings, route_names=tuple(args.route))
+        )
     elif args.command == "refresh-org-cache":
         refresh_org_cache_command(settings, set(args.user_id))
     elif args.command == "feedback":
@@ -3207,6 +3427,7 @@ def main() -> None:
         test_ding_command(settings)
     elif args.command == "rerun-message":
         ensure_live_send_allowed(settings)
+        initialize_agent_runtime_routes(settings)
         rerun_message_command(
             settings,
             conversation_id=args.conversation_id,

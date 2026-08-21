@@ -16,10 +16,11 @@ from app.agent_contracts import (
     AuditFeedback,
     AuditOutcome,
 )
-from app.agent_result import AgentError, SideEffectState
-from app.agent_wire_contracts import parse_audit_agent_wire_result
-from app.audit_rules import render_audit_rules
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
+from app.agent_result import AgentError, ResultParseError, SideEffectState
+from app.agent_runtime_config import AgentRuntimeConfig
+from app.agent_runtime_contracts import RuntimeKind
+from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
@@ -28,9 +29,14 @@ from app.agent_turn_runner import (
     _actions_have_required_readbacks,
     _agent_process_error_code,
     _metadata_matches_action,
+    _result_parse_error_detail,
     unknown_reconciliation_retry_at,
 )
+from app.agent_wire_contracts import parse_audit_agent_wire_result
+from app.audit_rules import render_audit_rules
+from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import extract_codex_mcp_tool_results_from_session
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import (
     describe_native_command,
@@ -46,7 +52,6 @@ from app.store import (
 )
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
-
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 
 
@@ -60,6 +65,10 @@ class AuditAgentRunner:
         store: AutoReplyStore,
         workspace: Path,
         codex_bin: str = "codex",
+        runtime_config: AgentRuntimeConfig | None = None,
+        runtime_router: AgentRuntimeRouter | None = None,
+        codex_adapter: CodexRuntimeAdapter | None = None,
+        claude_adapter: ClaudeRuntimeAdapter | None = None,
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
@@ -68,10 +77,39 @@ class AuditAgentRunner:
         self.store = store
         self.workspace = workspace
         self.codex_bin = codex_bin
+        self.runtime_config = runtime_config
+        self.runtime_router = runtime_router
+        self.codex_adapter = codex_adapter
+        self.claude_adapter = claude_adapter
         self.executor = executor
         self.owner = owner or f"audit-agent-{uuid4().hex}"
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
         self.dry_run = dry_run
+
+    @staticmethod
+    def _required_capabilities(
+        context: AuditTurnContext,
+        *,
+        recovery_phase: str,
+    ) -> frozenset[str]:
+        required = {
+            "task_context",
+            f"channel:{context.task.channel}",
+            "mcp:agent_cli:reviewed_read",
+            "native_cli:reviewed",
+            "mcp:memory_connector:read",
+        }
+        if context.task.channel == "dingtalk":
+            required.add("native_cli:dws")
+        elif context.task.channel in {"lark", "feishu"}:
+            required.add("native_cli:lark")
+        if context.task.image_paths:
+            required.add("image_input")
+        if recovery_phase != "reconcile":
+            required.add("mcp:agent_cli:reviewed_write")
+        for receipt in context.consumer_skills:
+            required.add(f"reviewed_skill:{receipt.name}:{receipt.sha256}")
+        return frozenset(required)
 
     def run(
         self,
@@ -217,9 +255,26 @@ class AuditAgentRunner:
         run: AgentRun,
     ) -> None:
         """Restore an omitted direct-delivery ledger only from its own receipt."""
-        if not run.codex_session_id or self.store.has_sent_reply_for_trigger(
-            task.conversation_id,
-            task.trigger_message_id,
+        runtime_attempt = next(
+            (
+                attempt
+                for attempt in reversed(
+                    self.store.list_agent_runtime_attempts(run.id)
+                )
+                if attempt.session_id
+                and attempt.agent_run_id == run.id
+                and attempt.workload_kind == "agent_run"
+                and attempt.workload_key == str(run.id)
+            ),
+            None,
+        )
+        if (
+            runtime_attempt is None
+            or runtime_attempt.runtime_kind != RuntimeKind.CODEX_CLI.value
+            or self.store.has_sent_reply_for_trigger(
+                task.conversation_id,
+                task.trigger_message_id,
+            )
         ):
             return
         expected_actions = tuple(
@@ -233,10 +288,14 @@ class AuditAgentRunner:
             owner=self.owner,
             executor=self.executor,
             codex_bin=self.codex_bin,
+            runtime_config=self.runtime_config,
+            runtime_router=self.runtime_router,
+            codex_adapter=self.codex_adapter,
+            claude_adapter=self.claude_adapter,
             mcp_effect_registry=self.effects,
         )
         for payload in extract_codex_mcp_tool_results_from_session(
-            run.codex_session_id,
+            runtime_attempt.session_id,
         ):
             event = process._normalized_effect_event(
                 payload,
@@ -666,6 +725,10 @@ class AuditAgentRunner:
             owner=self.owner,
             executor=self.executor,
             codex_bin=self.codex_bin,
+            runtime_config=self.runtime_config,
+            runtime_router=self.runtime_router,
+            codex_adapter=self.codex_adapter,
+            claude_adapter=self.claude_adapter,
             mcp_effect_registry=self.effects,
         )
         turn_prompt = (
@@ -739,6 +802,10 @@ class AuditAgentRunner:
             ),
             image_paths=[Path(path) for path in context.task.image_paths],
             required_skill_receipts=context.consumer_skills,
+            required_capabilities=self._required_capabilities(
+                context,
+                recovery_phase=recovery_phase,
+            ),
         )
 
     def _image_dependency_failure(
@@ -790,6 +857,8 @@ class AuditAgentRunner:
             "code": _audit_recovery_error_code(exc),
             "retryable": not event_limit_reached,
         }
+        if detail := _audit_recovery_error_detail(exc):
+            structured_error["detail"] = detail
         if event_limit_reached:
             structured_error["reason"] = (
                 "Controlled reconciliation evidence reached its bounded event limit; "
@@ -808,6 +877,9 @@ class AuditAgentRunner:
 
 
 def _audit_recovery_error_code(exc: Exception) -> str:
+    runtime_code = getattr(exc, "code", "")
+    if isinstance(runtime_code, str) and runtime_code.startswith("runtime_"):
+        return runtime_code
     code = _agent_process_error_code(exc)
     if code != "codex_process_failed":
         return code
@@ -817,6 +889,16 @@ def _audit_recovery_error_code(exc: Exception) -> str:
     if detail.startswith("audit_"):
         return detail
     return "audit_recovery_result_invalid"
+
+
+def _audit_recovery_error_detail(exc: Exception) -> str:
+    """Persist only stable recovery diagnostics, never provider output."""
+    if isinstance(exc, ResultParseError):
+        return _result_parse_error_detail(exc)
+    reason = getattr(exc, "reason", "")
+    if isinstance(reason, str) and reason.startswith("no_eligible_route:"):
+        return reason[:512]
+    return ""
 
 
 def _json_digest(value: object) -> str:

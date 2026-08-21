@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import os
 import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Generic, TypeVar, cast
 
 from pydantic import ValidationError
@@ -15,21 +17,11 @@ from pydantic import ValidationError
 from app.agent_contracts import (
     AuditAgentResult,
     AuditExternalResult,
-    AuditReconciliation,
     AuditOutcome,
+    AuditReconciliation,
+    ConsumerAgentResult,
     ConsumerOutcome,
     ReconciliationDisposition,
-)
-from app.agent_result import (
-    AgentError,
-    EffectKind,
-    ResultParseError,
-    SideEffectState,
-)
-from app.agent_skill_usage import (
-    LoadedSkillReceipt,
-    loaded_skill_receipts,
-    normalized_read_skill_metadata,
 )
 from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
@@ -42,6 +34,35 @@ from app.agent_effects import (
     _mcp_call_completed,
     _normalized_key,
 )
+from app.agent_result import (
+    AgentError,
+    EffectKind,
+    ResultParseError,
+    SideEffectState,
+)
+from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
+from app.agent_runtime_contracts import (
+    RuntimeFailureClass,
+    RuntimeKind,
+    RuntimeRoute,
+)
+from app.agent_runtime_router import AgentRuntimeRouter
+from app.agent_skill_usage import (
+    LoadedSkillReceipt,
+    loaded_skill_receipts,
+    normalized_read_skill_metadata,
+)
+from app.claude_runtime_adapter import (
+    ClaudeCommandPolicy,
+    ClaudeEventNormalizer,
+    ClaudeRuntimeAdapter,
+    require_claude_session_id,
+)
+from app.codex_capacity import (
+    CODEX_PROVIDER_CAPACITY_EXHAUSTED,
+    codex_provider_failure_code,
+    is_codex_capacity_exhausted,
+)
 from app.codex_failure import (
     CODEX_PROVIDER_AUTH_FAILED,
     CODEX_PROVIDER_UNAVAILABLE,
@@ -51,13 +72,9 @@ from app.codex_history import (
     count_codex_session_lines,
     extract_codex_mcp_tool_results_from_session,
 )
-from app.codex_runner import CodexRunner, _codex_home
-from app.codex_capacity import (
-    CODEX_PROVIDER_CAPACITY_EXHAUSTED,
-    codex_provider_failure_code,
-    is_codex_capacity_exhausted,
-)
-from app.leak_check import contains_credential
+from app.codex_runner import _codex_home
+from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
@@ -69,15 +86,472 @@ from app.store import (
     RECONCILIATION_EVENT_LIMIT_ERROR,
     AgentRole,
     AgentRun,
+    AgentRuntimeAttempt,
+    AgentRuntimeAttemptStartConflictError,
     AutoReplyStore,
     ReplyTask,
+    RuntimeAttemptSessionMode,
 )
-
 
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS = 60
 UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS = 15 * 60
+CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
+_COMMON_RUNTIME_CAPABILITIES = frozenset(
+    {"structured_output", "local_schema_validation"}
+)
+_CONSUMER_RUNTIME_CAPABILITIES = frozenset(
+    {"consumer_read_only_enforcement", "reviewed_read_tools"}
+)
+_AUDIT_RUNTIME_CAPABILITIES = frozenset(
+    {"audit_effect_visibility", "reviewed_read_tools", "reviewed_write_tools"}
+)
+_RECONCILIATION_RUNTIME_CAPABILITIES = frozenset(
+    {"consumer_read_only_enforcement", "reconciliation_read_only"}
+)
+_RUNTIME_DOMAIN_RESULT_CODEC_VERSION = 1
+_RUNTIME_RESULT_EVIDENCE_VERSION = 1
+_RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 32 * 1024
+_RUNTIME_RESULT_SUMMARY_MAX_CHARS = 2048
+_RUNTIME_RESULT_REFERENCE_KEYS = frozenset(
+    {
+        "action",
+        "conversation_id",
+        "evidence",
+        "id",
+        "message_id",
+        "operation_id",
+        "process_instance_id",
+        "receipt_id",
+        "recovery_action_indexes",
+        "remark",
+        "send_status",
+        "status",
+        "task_id",
+    }
+)
+_RUNTIME_RESULT_FORBIDDEN_DOCUMENT_FIELDS = frozenset(
+    {
+        "documentbody",
+        "documentcontent",
+        "fulltext",
+        "rawoutput",
+        "rawresult",
+        "responsebody",
+        "stderr",
+        "stdout",
+        "transcript",
+    }
+)
+
+
+class RuntimeRouteUnavailableError(RuntimeError):
+    """No configured route has current evidence for this exact turn."""
+
+    code = "runtime_route_unavailable"
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        if "missing_capabilities:" in reason or "surface_missing:" in reason:
+            self.code = "runtime_capability_missing"
+        super().__init__(self.code)
+
+
+class _RecoveredCompletedRuntimeResult(RuntimeError):
+    """Internal control flow for a validated durable provider result."""
+
+
+class CompletedRuntimeResultBlockedError(ValueError):
+    """A durable result cannot be trusted and must not trigger provider replay."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+@dataclass(frozen=True)
+class _DecodedRuntimeDomainResult:
+    result: ConsumerAgentResult | AuditAgentResult
+    evidence: dict[str, object]
+
+
+def _runtime_evidence_digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _runtime_authorizations_digest(
+    recovery_authorizations: dict[str, int],
+) -> str:
+    canonical: list[tuple[str, int]] = []
+    for authorization_id, action_index in recovery_authorizations.items():
+        if (
+            not isinstance(authorization_id, str)
+            or not authorization_id
+            or type(action_index) is not int
+            or action_index < 0
+        ):
+            raise ValueError("runtime_recovery_authorization_invalid")
+        canonical.append((authorization_id, action_index))
+    return _runtime_evidence_digest(sorted(canonical))
+
+
+def _runtime_result_evidence(
+    *,
+    run: AgentRun,
+    event_start: int,
+    receipts: list[object],
+    recovery_started_actions: set[int],
+    completed_before_recovery: set[int],
+    recovery_authorizations: dict[str, int] | None = None,
+) -> dict[str, object]:
+    recovery_authorizations = recovery_authorizations or {}
+    event_end = len(run.tool_events)
+    if event_start < 0 or event_start > event_end:
+        raise ValueError("runtime_result_evidence_event_bounds_invalid")
+    receipt_projection = [
+        {
+            "receipt_id": str(getattr(receipt, "receipt_id", "")),
+            "operation_id": str(getattr(receipt, "operation_id", "")),
+            "cli": str(getattr(receipt, "cli", "")),
+            "command_path": str(getattr(receipt, "command_path", "")),
+            "command_digest": str(getattr(receipt, "command_digest", "")),
+            "exit_code": int(getattr(receipt, "exit_code", -1)),
+            "completed": bool(getattr(receipt, "completed", False)),
+            "persisted": bool(getattr(receipt, "persisted", False)),
+            "safe_to_confirm": bool(getattr(receipt, "safe_to_confirm", False)),
+            "effect_counted": bool(getattr(receipt, "effect_counted", False)),
+        }
+        for receipt in receipts
+    ]
+    return {
+        "version": _RUNTIME_RESULT_EVIDENCE_VERSION,
+        "event_start": event_start,
+        "event_end": event_end,
+        "events_sha256": _runtime_evidence_digest(
+            run.tool_events[event_start:event_end]
+        ),
+        "receipts_sha256": _runtime_evidence_digest(receipt_projection),
+        "recovery_started_actions": sorted(recovery_started_actions),
+        "completed_before_recovery": sorted(completed_before_recovery),
+        "recovery_authorizations_sha256": _runtime_authorizations_digest(
+            recovery_authorizations
+        ),
+    }
+
+
+def _validate_runtime_result_evidence_shape(
+    evidence: object,
+) -> dict[str, object]:
+    if not isinstance(evidence, dict) or set(evidence) != {
+        "version",
+        "event_start",
+        "event_end",
+        "events_sha256",
+        "receipts_sha256",
+        "recovery_started_actions",
+        "completed_before_recovery",
+        "recovery_authorizations_sha256",
+    }:
+        raise ValueError("runtime_result_evidence_invalid")
+    if (
+        type(evidence.get("version")) is not int
+        or evidence["version"] != _RUNTIME_RESULT_EVIDENCE_VERSION
+        or type(evidence.get("event_start")) is not int
+        or type(evidence.get("event_end")) is not int
+        or evidence["event_start"] < 0
+        or evidence["event_end"] < evidence["event_start"]
+        or not isinstance(evidence.get("events_sha256"), str)
+        or len(evidence["events_sha256"]) != 64
+        or not isinstance(evidence.get("receipts_sha256"), str)
+        or len(evidence["receipts_sha256"]) != 64
+        or not isinstance(evidence.get("recovery_authorizations_sha256"), str)
+        or len(evidence["recovery_authorizations_sha256"]) != 64
+    ):
+        raise ValueError("runtime_result_evidence_invalid")
+    for key in ("recovery_started_actions", "completed_before_recovery"):
+        indexes = evidence.get(key)
+        if (
+            not isinstance(indexes, list)
+            or any(type(index) is not int or index < 0 for index in indexes)
+            or indexes != sorted(set(indexes))
+        ):
+            raise ValueError("runtime_result_evidence_invalid")
+    return evidence
+
+
+def _bounded_runtime_result_text(value: str, *, field: str, limit: int) -> str:
+    if not isinstance(value, str) or not value or len(value) > limit:
+        raise ValueError(f"runtime_result_envelope_{field}_invalid")
+    return value
+
+
+def _project_runtime_external_reference(
+    reference: dict[str, object],
+) -> dict[str, object]:
+    if not set(reference).issubset(_RUNTIME_RESULT_REFERENCE_KEYS):
+        raise ValueError("runtime_result_envelope_external_reference_invalid")
+    projected: dict[str, object] = {}
+    for key, value in reference.items():
+        if key == "recovery_action_indexes":
+            if (
+                not isinstance(value, list)
+                or any(type(index) is not int or index < 0 for index in value)
+                or len(value) > 128
+            ):
+                raise ValueError(
+                    "runtime_result_envelope_external_reference_invalid"
+                )
+            projected[key] = list(value)
+            continue
+        if not isinstance(value, (str, int, bool)) or isinstance(value, float):
+            raise ValueError("runtime_result_envelope_external_reference_invalid")
+        if isinstance(value, str) and (
+            not value
+            or len(value) > 512
+            or "://" in value
+            or contains_local_runtime_leak(value)
+        ):
+            raise ValueError("runtime_result_envelope_external_reference_invalid")
+        projected[key] = value
+    return projected
+
+
+def _project_runtime_domain_result(
+    result: ConsumerAgentResult | AuditAgentResult,
+) -> dict[str, object]:
+    summary = _bounded_runtime_result_text(
+        result.summary,
+        field="summary",
+        limit=_RUNTIME_RESULT_SUMMARY_MAX_CHARS,
+    )
+    if isinstance(result, ConsumerAgentResult):
+        # Consumer proposals are already strict typed business values. Project
+        # fields explicitly so future model additions cannot silently enter the
+        # durable recovery envelope.
+        proposal = None
+        if result.proposal is not None:
+            proposal = {
+                "objective": result.proposal.objective,
+                "actions": [
+                    {
+                        "description": action.description,
+                        "capability": action.capability,
+                        "operation": action.operation,
+                        "target": action.target,
+                        "payload": action.payload,
+                        "expected_verification": action.expected_verification,
+                    }
+                    for action in result.proposal.actions
+                ],
+                "sourced_facts": [
+                    {
+                        "assertion": fact.assertion,
+                        "references": list(fact.references),
+                    }
+                    for fact in result.proposal.sourced_facts
+                ],
+                "authored_judgment": result.proposal.authored_judgment,
+            }
+        return {
+            "outcome": result.outcome.value,
+            "summary": summary,
+            "proposal": proposal,
+            "decision_options": [
+                option.model_dump(mode="json") for option in result.decision_options
+            ],
+            "error": result.error.model_dump(mode="json"),
+        }
+    external_result = None
+    if result.external_result is not None:
+        external_result = {
+            "operation_id": _bounded_runtime_result_text(
+                result.external_result.operation_id,
+                field="operation_id",
+                limit=512,
+            ),
+            "verification_summary": _bounded_runtime_result_text(
+                result.external_result.verification_summary,
+                field="verification_summary",
+                limit=2048,
+            ),
+            "live_result_reference": _project_runtime_external_reference(
+                result.external_result.live_result_reference
+            ),
+        }
+    return {
+        "outcome": result.outcome.value,
+        "summary": summary,
+        "proposal_revision": result.proposal_revision,
+        "side_effect_state": result.side_effect_state.value,
+        "feedback": (
+            result.feedback.model_dump(mode="json")
+            if result.feedback is not None
+            else None
+        ),
+        "external_result": external_result,
+        "reconciliation": [
+            entry.model_dump(mode="json") for entry in result.reconciliation
+        ],
+        "decision_options": [
+            option.model_dump(mode="json") for option in result.decision_options
+        ],
+        "error": result.error.model_dump(mode="json"),
+    }
+
+
+def _reject_runtime_document_fields(value: object) -> None:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if _normalized_key(str(key)) in _RUNTIME_RESULT_FORBIDDEN_DOCUMENT_FIELDS:
+                raise ValueError("runtime_result_envelope_document_field_invalid")
+            _reject_runtime_document_fields(nested)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            _reject_runtime_document_fields(nested)
+
+
+def _encode_runtime_domain_result(
+    *,
+    schema_id: str,
+    role: AgentRole,
+    recovery_phase: str,
+    result: ConsumerAgentResult | AuditAgentResult,
+    evidence: dict[str, object] | None = None,
+    result_reference_run_id: int | None = None,
+) -> str:
+    if evidence is None:
+        empty_digest = _runtime_evidence_digest([])
+        evidence = {
+            "version": _RUNTIME_RESULT_EVIDENCE_VERSION,
+            "event_start": 0,
+            "event_end": 0,
+            "events_sha256": empty_digest,
+            "receipts_sha256": empty_digest,
+            "recovery_started_actions": [],
+            "completed_before_recovery": [],
+            "recovery_authorizations_sha256": _runtime_authorizations_digest({}),
+        }
+    evidence = _validate_runtime_result_evidence_shape(evidence)
+    envelope = {
+        "schema_id": schema_id,
+        "version": _RUNTIME_DOMAIN_RESULT_CODEC_VERSION,
+        "role": role.value,
+        "recovery_phase": recovery_phase,
+        "evidence": evidence,
+    }
+    if result_reference_run_id is None:
+        projected_result = _project_runtime_domain_result(result)
+        _reject_runtime_document_fields(projected_result)
+        envelope["result"] = projected_result
+    else:
+        if (
+            role is not AgentRole.CONSUMER
+            or result.outcome is ConsumerOutcome.FAILED
+            or type(result_reference_run_id) is not int
+            or result_reference_run_id <= 0
+        ):
+            raise ValueError("runtime_result_reference_invalid")
+        domain_text = json.dumps(
+            result.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        envelope["result_ref"] = {
+            "agent_run_id": result_reference_run_id,
+            "result_sha256": hashlib.sha256(domain_text.encode("utf-8")).hexdigest(),
+        }
+    if _contains_sensitive_value(envelope):
+        raise ValueError("runtime_result_envelope_contains_sensitive_value")
+    encoded = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
+    try:
+        encoded_size = len(encoded.encode("utf-8"))
+    except (UnicodeError, MemoryError) as exc:
+        raise ValueError("runtime_result_envelope_invalid_utf8") from exc
+    if encoded_size > _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES:
+        raise ValueError("runtime_result_envelope_too_large")
+    if contains_local_runtime_leak(encoded):
+        raise ValueError("runtime_result_envelope_contains_local_path")
+    return encoded
+
+
+def _decode_runtime_domain_result(
+    encoded: str,
+    *,
+    schema_id: str,
+    role: AgentRole,
+    recovery_phase: str,
+    referenced_agent_run_id: int | None = None,
+    referenced_result_json: str = "",
+) -> _DecodedRuntimeDomainResult:
+    try:
+        if len(encoded.encode("utf-8")) > _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES:
+            raise ValueError("runtime_result_envelope_too_large")
+        envelope = json.loads(encoded)
+    except (json.JSONDecodeError, UnicodeError, MemoryError) as exc:
+        raise ValueError("runtime_result_envelope_invalid") from exc
+    expected_keys = {
+        "schema_id",
+        "version",
+        "role",
+        "recovery_phase",
+        "result",
+        "evidence",
+    }
+    reference_keys = expected_keys - {"result"} | {"result_ref"}
+    if (
+        not isinstance(envelope, dict)
+        or frozenset(envelope)
+        not in {frozenset(expected_keys), frozenset(reference_keys)}
+        or envelope.get("schema_id") != schema_id
+        or type(envelope.get("version")) is not int
+        or envelope.get("version") != _RUNTIME_DOMAIN_RESULT_CODEC_VERSION
+        or envelope.get("role") != role.value
+        or envelope.get("recovery_phase") != recovery_phase
+        or _contains_sensitive_value(envelope)
+        or contains_local_runtime_leak(encoded)
+    ):
+        raise ValueError("runtime_result_envelope_invalid")
+    result_value = envelope.get("result")
+    if "result_ref" in envelope:
+        reference = envelope.get("result_ref")
+        if (
+            role is not AgentRole.CONSUMER
+            or not isinstance(reference, dict)
+            or set(reference) != {"agent_run_id", "result_sha256"}
+            or type(reference.get("agent_run_id")) is not int
+            or reference["agent_run_id"] <= 0
+            or reference["agent_run_id"] != referenced_agent_run_id
+            or not isinstance(reference.get("result_sha256"), str)
+            or len(reference["result_sha256"]) != 64
+            or not referenced_result_json
+            or hashlib.sha256(referenced_result_json.encode("utf-8")).hexdigest()
+            != reference["result_sha256"]
+        ):
+            raise ValueError("runtime_result_envelope_invalid")
+        try:
+            result_value = json.loads(referenced_result_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("runtime_result_envelope_invalid") from exc
+    if not isinstance(result_value, dict):
+        raise ValueError("runtime_result_envelope_invalid")
+    model = ConsumerAgentResult if role is AgentRole.CONSUMER else AuditAgentResult
+    try:
+        result = model.model_validate(result_value)
+        if "result" in envelope:
+            projected_result = _project_runtime_domain_result(result)
+            _reject_runtime_document_fields(projected_result)
+            if projected_result != envelope["result"]:
+                raise ValueError("runtime_result_envelope_projection_mismatch")
+        elif result.outcome is ConsumerOutcome.FAILED:
+            raise ValueError("runtime_result_reference_invalid")
+        evidence = _validate_runtime_result_evidence_shape(envelope["evidence"])
+        return _DecodedRuntimeDomainResult(result=result, evidence=evidence)
+    except (ValidationError, ValueError) as exc:
+        raise ValueError("runtime_result_envelope_invalid") from exc
 
 
 def unknown_reconciliation_retry_at(
@@ -92,6 +566,34 @@ def unknown_reconciliation_retry_at(
     return (current.astimezone(timezone.utc) + timedelta(seconds=delay_seconds)).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
+
+
+def _required_runtime_capabilities(
+    *,
+    run: AgentRun,
+    recovery_phase: str,
+    expected_effect_actions: tuple[dict[str, object], ...],
+    explicit_capabilities: frozenset[str] = frozenset(),
+) -> frozenset[str]:
+    required = set(_COMMON_RUNTIME_CAPABILITIES)
+    if run.role is AgentRole.CONSUMER:
+        required.update(_CONSUMER_RUNTIME_CAPABILITIES)
+    elif recovery_phase == "reconcile":
+        required.update(_RECONCILIATION_RUNTIME_CAPABILITIES)
+        required.add("reviewed_read_tools")
+    else:
+        required.update(_AUDIT_RUNTIME_CAPABILITIES)
+    if recovery_phase != "reconcile":
+        for action in expected_effect_actions:
+            capability = action.get("capability")
+            if isinstance(capability, str) and capability.strip():
+                required.add(capability.strip())
+    required.update(
+        capability.strip()
+        for capability in explicit_capabilities
+        if capability.strip()
+    )
+    return frozenset(required)
 
 
 @dataclass(frozen=True)
@@ -152,6 +654,20 @@ def _is_terminal_codex_auth_failure(code: str) -> bool:
     return code.startswith(CODEX_PROVIDER_AUTH_FAILED)
 
 
+def _claude_input_contract(*, prompt: str, developer_instructions: str) -> str:
+    payload = (
+        "<developer-instructions>\n"
+        f"{developer_instructions}\n"
+        "</developer-instructions>\n"
+        "<task>\n"
+        f"{prompt}\n"
+        "</task>"
+    )
+    if len(payload.encode("utf-8")) > CLAUDE_INPUT_MAX_BYTES:
+        raise RuntimeRouteUnavailableError("claude_input_contract_too_large")
+    return payload
+
+
 class AgentTurnProcess(Generic[ResultT]):
     def __init__(
         self,
@@ -162,13 +678,28 @@ class AgentTurnProcess(Generic[ResultT]):
         owner: str,
         executor: ProcessExecutor | None = None,
         codex_bin: str = "codex",
+        runtime_config: AgentRuntimeConfig | None = None,
+        runtime_router: AgentRuntimeRouter | None = None,
+        codex_adapter: CodexRuntimeAdapter | None = None,
+        claude_adapter: ClaudeRuntimeAdapter | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
     ) -> None:
         self.store = store
         self.task = task
         self.owner = owner
-        self.codex = CodexRunner(workspace=workspace, codex_bin=codex_bin)
+        self.runtime_config = runtime_config or load_runtime_config(os.environ)
+        self.codex_adapter = codex_adapter or CodexRuntimeAdapter(
+            workspace, self.runtime_config, codex_bin=codex_bin
+        )
+        self.workspace = workspace
+        self.claude_adapter = claude_adapter
+        self._allow_legacy_oauth_bootstrap = runtime_router is None
+        self.runtime_router = runtime_router or AgentRuntimeRouter(
+            routes=self.runtime_config.routes,
+            store=store,
+            snapshots={},
+        )
         self.executor = executor or run_process_with_idle_timeout
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
         self.native_cli = native_cli_classifier or NativeCliMetadataClassifier()
@@ -191,6 +722,8 @@ class AgentTurnProcess(Generic[ResultT]):
         allow_effectful_tools: bool = False,
         image_paths: list[Path] | None = None,
         required_skill_receipts: tuple[LoadedSkillReceipt, ...] = (),
+        required_capabilities: frozenset[str] = frozenset(),
+        conversation_contract_hash: str = "",
     ) -> AgentTurnRunResult[ResultT]:
         if recovery_phase not in {"", "reconcile", "execute"}:
             raise ValueError("invalid recovery phase")
@@ -205,7 +738,13 @@ class AgentTurnProcess(Generic[ResultT]):
         effect_action_by_call_id: dict[str, int] = {}
         suppressed_session_replay_call_ids: set[str] = set()
         observed_session_id = ""
+        active_attempt: AgentRuntimeAttempt | None = None
+        active_route: RuntimeRoute | None = None
+        replayed_effect_evidence = False
         session_transcript_end = 0
+        claude_normalizer: ClaudeEventNormalizer | None = None
+        pending_claude_session_id = ""
+        recovered_completed_attempt = False
         turn_event_start = len(run.tool_events)
         recovery_event_start = turn_event_start
         completed_before_recovery = (
@@ -222,27 +761,145 @@ class AgentTurnProcess(Generic[ResultT]):
         transcript_start = (
             run.transcript_end_line if recover_unknown else run.transcript_start_line
         )
+        effect_fence_lock = RLock()
+
+        def authorize_claude_effect_dispatch(request: dict[str, object]) -> bool:
+            if active_attempt is None or active_route is None:
+                return False
+            required_request_keys = {
+                "dispatch_id",
+                "reviewed_server",
+                "reviewed_tool",
+                "capability",
+                "operation",
+                "operation_digest",
+                "arguments_digest",
+                "target_identifiers",
+            }
+            if (
+                set(request) != required_request_keys
+                or active_route.runtime_kind is not RuntimeKind.CLAUDE_CLI
+                or run.role is not AgentRole.AUDIT
+                or recovery_phase
+                or not isinstance(request.get("dispatch_id"), str)
+                or not request["dispatch_id"].startswith("claude-dispatch:")
+            ):
+                return False
+            with effect_fence_lock:
+                candidates = [
+                    index
+                    for index, action in enumerate(expected_effect_actions)
+                    if request.get("reviewed_server")
+                    == action.get("reviewed_server")
+                    and request.get("reviewed_tool") == action.get("reviewed_tool")
+                    and _metadata_matches_action(request, action)
+                ]
+                if not candidates:
+                    return False
+                action_index = min(candidates, key=effect_action_counts.__getitem__)
+                metadata = {
+                    "effect": EffectKind.EFFECTFUL.value,
+                    **request,
+                    "operation_id": run.operation_id,
+                    "action_index": action_index,
+                }
+                dispatch_id = str(metadata.pop("dispatch_id"))
+                event = {
+                    "type": "item.started",
+                    "item": {
+                        "type": "mcp_tool_call",
+                        "id": dispatch_id,
+                        "status": "in_progress",
+                        "metadata": metadata,
+                    },
+                }
+                claim = self.store.authorize_claude_effect_dispatch(
+                    run_id=run.id,
+                    attempt_id=active_attempt.id,
+                    owner=self.owner,
+                    event=event,
+                    expected_action=expected_effect_actions[action_index],
+                    required_skill_receipts=tuple(
+                        (receipt.name, receipt.path, receipt.sha256)
+                        for receipt in required_skill_receipts
+                    ),
+                )
+                if claim.dispatch_acquired:
+                    effect_action_counts[action_index] += 1
+                    effect_action_by_call_id[dispatch_id] = action_index
+                return claim.dispatch_acquired
 
         def persist_effect_event(
-            payload: dict[str, object], *, from_session_replay: bool = False
+            payload: dict[str, object],
+            *,
+            from_session_replay: bool = False,
+            from_claude_normalizer: bool = False,
         ) -> None:
             nonlocal line_count, saw_json
             nonlocal primary_turn_started, primary_turn_closed
-            event = self._normalized_effect_event(
-                payload,
-                read_only=(
-                    run.role is AgentRole.CONSUMER
-                    or recovery_phase == "reconcile"
-                ),
-                operation_id=run.operation_id,
-                require_recovery_authorization=recovery_phase == "execute",
+            read_only = (
+                run.role is AgentRole.CONSUMER
+                or recovery_phase == "reconcile"
+            )
+            event = (
+                _trusted_claude_effect_event(payload, read_only=read_only)
+                if from_claude_normalizer
+                else self._normalized_effect_event(
+                    payload,
+                    read_only=read_only,
+                    operation_id=run.operation_id,
+                    require_recovery_authorization=recovery_phase == "execute",
+                )
             )
             if event is None:
                 return
             item = event.get("item")
             metadata = item.get("metadata") if isinstance(item, dict) else None
             effect = metadata.get("effect") if isinstance(metadata, dict) else None
-            call_id = str(item.get("id") or item.get("call_id") or "") if isinstance(item, dict) else ""
+            call_id = (
+                str(item.get("id") or item.get("call_id") or "")
+                if isinstance(item, dict)
+                else ""
+            )
+            if from_claude_normalizer and effect == EffectKind.EFFECTFUL.value:
+                persisted = self.store.get_agent_run(run.id)
+                persisted_start = (
+                    _matching_effect_metadata(
+                        persisted.tool_events if persisted is not None else [],
+                        event_type="item.started",
+                        operation_id=run.operation_id,
+                        action_index=effect_action_by_call_id.get(call_id, -1),
+                        expected_action=(
+                            expected_effect_actions[
+                                effect_action_by_call_id.get(call_id, -1)
+                            ]
+                            if effect_action_by_call_id.get(call_id, -1) >= 0
+                            else {}
+                        ),
+                    )
+                    if call_id
+                    else None
+                )
+                if persisted_start is None:
+                    raise AgentReadOnlyViolationError(
+                        "claude_effect_fence_evidence_missing"
+                    )
+                if event.get("type") == "item.started":
+                    return
+                assert isinstance(metadata, dict)
+                metadata.update(
+                    {
+                        key: value
+                        for key, value in persisted_start.items()
+                        if key not in {"result_digest"}
+                    }
+                )
+            if (
+                event.get("type") == "item.started"
+                and effect == EffectKind.EFFECTFUL.value
+                and active_attempt is not None
+            ):
+                self.store.note_runtime_attempt_effect_started(active_attempt.id)
             if (
                 event.get("type") == "item.started"
                 and effect == EffectKind.EFFECTFUL.value
@@ -333,9 +990,82 @@ class AgentTurnProcess(Generic[ResultT]):
                 self.store.append_agent_run_event(run.id, event, owner=self.owner)
             self._record_direct_send_receipt(event, payload, run=run)
 
-        def persist_line(line: str) -> None:
-            nonlocal line_count, saw_json, observed_session_id
+        def persist_payload(
+            payload: dict[str, object],
+            *,
+            trusted_claude_session_id: str = "",
+            from_claude_normalizer: bool = False,
+        ) -> None:
+            nonlocal observed_session_id, active_attempt
             nonlocal primary_turn_started, primary_turn_closed
+            payload_type = payload.get("type")
+            if primary_turn_closed:
+                return
+            if payload_type == "turn.started":
+                primary_turn_started = True
+            new_session = trusted_claude_session_id or _session_id(payload)
+            if new_session:
+                observed_session_id = new_session
+                is_claude = (
+                    active_route is not None
+                    and active_route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                )
+                if active_attempt is not None and not is_claude:
+                    active_attempt = self.store.set_agent_runtime_attempt_session(
+                        active_attempt.id, new_session
+                    )
+                if recover_unknown:
+                    # Reconciliation and the narrowly authorized follow-up write
+                    # run as fresh sessions. Preserve the original session on the
+                    # AgentRun as immutable execution history rather than replacing
+                    # it with a recovery session identifier.
+                    pass
+                elif active_route is not None and active_route.name == "codex_oauth":
+                    self.store.set_agent_run_session(
+                        run.id,
+                        new_session,
+                        owner=self.owner,
+                        transcript_start_line=run.transcript_start_line,
+                        allow_consumer_session_handoff=(
+                            run.role is AgentRole.CONSUMER
+                        ),
+                    )
+                if not is_claude and (
+                    run.role is AgentRole.CONSUMER
+                    and not recover_unknown
+                    and active_route is not None
+                ):
+                    self.store.upsert_conversation_runtime_session(
+                        self.task.conversation_id,
+                        active_route.name,
+                        new_session,
+                        conversation_contract_hash,
+                    )
+                if not is_claude and (
+                    persist_conversation_session
+                    and run.role is AgentRole.CONSUMER
+                    and not recover_unknown
+                    and active_route is not None
+                    and active_route.name == "codex_oauth"
+                ):
+                    self.store.upsert_conversation(
+                        self.task.conversation_id,
+                        self.task.conversation_title,
+                        self.task.single_chat,
+                        new_session,
+                    )
+            persist_effect_event(
+                payload,
+                from_claude_normalizer=from_claude_normalizer,
+            )
+            if primary_turn_started and payload_type in {
+                "turn.completed",
+                "turn.failed",
+            }:
+                primary_turn_closed = True
+
+        def persist_line(line: str) -> None:
+            nonlocal line_count, saw_json
             if not line.strip():
                 return
             try:
@@ -347,11 +1077,6 @@ class AgentTurnProcess(Generic[ResultT]):
             saw_json = True
             if not isinstance(payload, dict):
                 raise RuntimeError("codex_stream_invalid")
-            payload_type = payload.get("type")
-            if primary_turn_closed:
-                return
-            if payload_type == "turn.started":
-                primary_turn_started = True
             line_count += 1
             if recover_unknown:
                 self.store.renew_agent_run_lease(
@@ -366,184 +1091,625 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             if on_progress is not None:
                 on_progress()
-            new_session = _session_id(payload)
-            if new_session:
-                observed_session_id = new_session
-                if recover_unknown:
-                    # Reconciliation and the narrowly authorized follow-up write
-                    # run as fresh sessions. Preserve the original session on the
-                    # AgentRun as immutable execution history rather than replacing
-                    # it with a recovery session identifier.
-                    pass
-                else:
-                    self.store.set_agent_run_session(
-                        run.id,
-                        new_session,
-                        owner=self.owner,
-                        transcript_start_line=run.transcript_start_line,
-                        allow_consumer_session_handoff=(
-                            run.role is AgentRole.CONSUMER
+            if (
+                active_route is not None
+                and active_route.runtime_kind is RuntimeKind.CLAUDE_CLI
+            ):
+                if claude_normalizer is None:
+                    raise RuntimeError("claude_event_normalizer_missing")
+                normalized_events = claude_normalizer.normalize_events(payload)
+                for event in normalized_events:
+                    persist_payload(
+                        event,
+                        trusted_claude_session_id=(
+                            claude_normalizer.session_id or ""
+                            if event.get("type") == "turn.started"
+                            else ""
                         ),
+                        from_claude_normalizer=True,
                     )
-                if persist_conversation_session and not recover_unknown:
-                    self.store.upsert_conversation(
-                        self.task.conversation_id,
-                        self.task.conversation_title,
-                        self.task.single_chat,
-                        new_session,
+                return
+            persist_payload(payload)
+
+        def stabilize_and_replay_session(
+            session_for_receipts: str,
+            *,
+            session_start: int,
+        ) -> int:
+            """Stabilize local evidence and replay it through normal validation."""
+            nonlocal active_attempt, replayed_effect_evidence
+            previous_count = -1
+            for _ in range(4):
+                session_end = count_codex_session_lines(
+                    session_for_receipts, codex_home=_codex_home()
+                )
+                if session_end == previous_count:
+                    break
+                previous_count = session_end
+                time.sleep(0.05)
+            stable_end = max(previous_count, 0)
+            persisted_for_replay = self.store.get_agent_run(run.id)
+            persisted_completed_call_ids = {
+                str(item.get("id") or item.get("call_id") or "")
+                for event in (
+                    persisted_for_replay.tool_events
+                    if persisted_for_replay is not None
+                    else ()
+                )
+                if event.get("type") == "item.completed"
+                for item in [event.get("item")]
+                if isinstance(item, dict)
+            }
+            persisted_read_counts = Counter(
+                (
+                    str(metadata.get("reviewed_server") or ""),
+                    str(metadata.get("reviewed_tool") or ""),
+                    str(metadata.get("arguments_digest") or ""),
+                )
+                for event in (
+                    persisted_for_replay.tool_events
+                    if persisted_for_replay is not None
+                    else ()
+                )
+                if event.get("type") == "item.completed"
+                for item in [event.get("item")]
+                if isinstance(item, dict)
+                for metadata in [item.get("metadata")]
+                if isinstance(metadata, dict)
+                and metadata.get("effect") == EffectKind.READ_ONLY.value
+            )
+            for completed_payload in extract_codex_mcp_tool_results_from_session(
+                session_for_receipts,
+                codex_home=_codex_home(),
+                start_line=session_start,
+                end_line=stable_end,
+            ):
+                completed_item = completed_payload.get("item")
+                call_id = (
+                    str(completed_item.get("id") or "")
+                    if isinstance(completed_item, dict)
+                    else ""
+                )
+                if not call_id or call_id in persisted_completed_call_ids:
+                    continue
+                call = self.effects.classify(completed_item)
+                if call is None:
+                    continue
+                if call.server == "agent_cli" and (
+                    run.role is AgentRole.CONSUMER
+                    or call.effect is EffectKind.READ_ONLY
+                ):
+                    continue
+                if (
+                    recovery_phase != "reconcile"
+                    and run.role is not AgentRole.CONSUMER
+                    and call.effect is EffectKind.READ_ONLY
+                ):
+                    continue
+                if call.effect is EffectKind.EFFECTFUL:
+                    replayed_effect_evidence = True
+                try:
+                    normalized_completion = self._normalized_effect_event(
+                        completed_payload,
+                        read_only=(recovery_phase == "reconcile"),
+                        operation_id=run.operation_id,
+                        require_recovery_authorization=(recovery_phase == "execute"),
                     )
-            persist_effect_event(payload)
-            if primary_turn_started and payload_type in {
-                "turn.completed",
-                "turn.failed",
-            }:
-                primary_turn_closed = True
+                except AgentReadOnlyViolationError as exc:
+                    if str(exc) != "agent_cli_receipt_invalid":
+                        raise
+                    continue
+                if call.effect is EffectKind.READ_ONLY:
+                    normalized_item = (
+                        normalized_completion.get("item")
+                        if isinstance(normalized_completion, dict)
+                        else None
+                    )
+                    normalized_metadata = (
+                        normalized_item.get("metadata")
+                        if isinstance(normalized_item, dict)
+                        else None
+                    )
+                    if isinstance(normalized_metadata, dict):
+                        read_key = (
+                            str(normalized_metadata.get("reviewed_server") or ""),
+                            str(normalized_metadata.get("reviewed_tool") or ""),
+                            str(normalized_metadata.get("arguments_digest") or ""),
+                        )
+                        if persisted_read_counts[read_key] > 0:
+                            persisted_read_counts[read_key] -= 1
+                            continue
+                start_payload = {
+                    "type": "item.started",
+                    "item": {
+                        key: value
+                        for key, value in completed_item.items()
+                        if key not in {"status", "result"}
+                    }
+                    | {"status": "in_progress"},
+                }
+                persist_effect_event(start_payload, from_session_replay=True)
+                persist_effect_event(completed_payload, from_session_replay=True)
+            return stable_end
+
+        def parse_claude_result(raw: str) -> ResultT:
+            return parse_result(
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "text": raw},
+                    },
+                    separators=(",", ":"),
+                )
+            )
+
+        required_capabilities = _required_runtime_capabilities(
+            run=run,
+            recovery_phase=recovery_phase,
+            expected_effect_actions=expected_effect_actions,
+            explicit_capabilities=required_capabilities,
+        )
+        execution_contract = {
+            "version": 1,
+            "role": run.role.value,
+            "recovery_phase": recovery_phase,
+            "operation_id": run.operation_id,
+            "conversation_contract_hash": conversation_contract_hash,
+            "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "developer_instructions_sha256": hashlib.sha256(
+                developer_instructions.encode("utf-8")
+            ).hexdigest(),
+            "required_capabilities": sorted(required_capabilities),
+            "expected_actions_sha256": hashlib.sha256(
+                json.dumps(
+                    expected_effect_actions,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            "reviewed_skills": sorted(
+                (receipt.name, receipt.sha256) for receipt in required_skill_receipts
+            ),
+            "recovery_authorizations_sha256": _runtime_authorizations_digest(
+                recovery_authorizations
+            ),
+        }
+        execution_contract_digest = hashlib.sha256(
+            json.dumps(
+                execution_contract, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+        runtime_result_schema_id = hashlib.sha256(
+            (
+                "agent_turn_claude_result_v1\0" + execution_contract_digest
+            ).encode("utf-8")
+        ).hexdigest()
 
         try:
-            command = self.codex.build_command(
-                prompt=prompt,
-                session_id=session_id,
-                use_output_schema=False,
-                approval_policy="untrusted" if allow_effectful_tools else "never",
-                developer_instructions=developer_instructions,
-                use_approval_bypass=allow_effectful_tools,
-                image_paths=image_paths,
+            runtime_attempts = self.store.list_agent_runtime_attempts(run.id)
+            completed_attempt = next(
+                (
+                    attempt
+                    for attempt in reversed(runtime_attempts)
+                    if attempt.status == "completed"
+                    and attempt.result_schema_id == runtime_result_schema_id
+                    and attempt.result_envelope_json
+                ),
+                None,
             )
-            configure_command(command)
-            process = self.executor(
-                command,
-                prompt=prompt,
-                env=self.codex.build_env(preserve_local_cli_auth=True),
-                total_timeout_seconds=TOTAL_TIMEOUT_SECONDS,
-                idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
-                on_stdout_line=persist_line,
-            )
-            self._raise_for_process_failure(process, run=run)
-            result = parse_result(process.stdout)
-            session_for_receipts = observed_session_id or session_id or run.codex_session_id
-            if session_for_receipts:
-                session_start = 0 if recover_unknown else transcript_start
-                # The CLI can flush local session events after the JSON stream has
-                # ended. Wait briefly for a stable line count, then replay only
-                # previously unseen completed calls through the normal validator.
-                previous_count = -1
-                for _ in range(4):
-                    session_end = count_codex_session_lines(
-                        session_for_receipts, codex_home=_codex_home()
-                    )
-                    if session_end == previous_count:
-                        break
-                    previous_count = session_end
-                    time.sleep(0.05)
-                session_transcript_end = max(previous_count, 0)
-                persisted_for_replay = self.store.get_agent_run(run.id)
-                persisted_completed_call_ids = {
-                    str(item.get("id") or item.get("call_id") or "")
-                    for event in (
-                        persisted_for_replay.tool_events
-                        if persisted_for_replay is not None
-                        else ()
-                    )
-                    if event.get("type") == "item.completed"
-                    for item in [event.get("item")]
-                    if isinstance(item, dict)
-                }
-                persisted_read_counts = Counter(
-                    (
-                        str(metadata.get("reviewed_server") or ""),
-                        str(metadata.get("reviewed_tool") or ""),
-                        str(metadata.get("arguments_digest") or ""),
-                    )
-                    for event in (
-                        persisted_for_replay.tool_events
-                        if persisted_for_replay is not None
-                        else ()
-                    )
-                    if event.get("type") == "item.completed"
-                    for item in [event.get("item")]
-                    if isinstance(item, dict)
-                    for metadata in [item.get("metadata")]
-                    if isinstance(metadata, dict)
-                    and metadata.get("effect") == EffectKind.READ_ONLY.value
+            if (
+                completed_attempt is None
+                and run.role is AgentRole.CONSUMER
+                and run.status == "completed"
+                and any(
+                    attempt.status == "completed"
+                    and attempt.result_envelope_json
+                    and attempt.runtime_kind == RuntimeKind.CLAUDE_CLI.value
+                    for attempt in runtime_attempts
                 )
-                for completed_payload in extract_codex_mcp_tool_results_from_session(
-                    session_for_receipts,
-                    codex_home=_codex_home(),
-                    start_line=session_start,
-                    end_line=max(previous_count, 0),
-                ):
-                    completed_item = completed_payload.get("item")
-                    call_id = (
-                        str(completed_item.get("id") or "")
-                        if isinstance(completed_item, dict)
-                        else ""
+            ):
+                raise CompletedRuntimeResultBlockedError(
+                    "completed_runtime_result_contract_mismatch"
+                )
+            if (
+                completed_attempt is None
+                and run.effect_started_count > 0
+                and any(
+                    attempt.status == "completed"
+                    and attempt.result_envelope_json
+                    and attempt.runtime_kind == RuntimeKind.CLAUDE_CLI.value
+                    for attempt in runtime_attempts
+                )
+            ):
+                mismatch_code = "completed_runtime_result_contract_mismatch"
+                if recover_unknown:
+                    self._defer_unknown(run, mismatch_code)
+                else:
+                    self.store.mark_agent_run_unknown(
+                        run.id,
+                        {"code": mismatch_code, "retryable": True},
+                        owner=self.owner,
                     )
-                    if not call_id or call_id in persisted_completed_call_ids:
-                        continue
-                    # Session history contains every MCP call, including
-                    # read-only integrations owned outside this effect registry.
-                    # They are useful audit context but cannot create execution
-                    # evidence here; only a reviewed call may be replayed into
-                    # the durable effect ledger.
-                    call = self.effects.classify(completed_item)
-                    if call is None:
-                        continue
-                    if call.server == "agent_cli" and (
+                raise CompletedRuntimeResultBlockedError(
+                    mismatch_code
+                )
+            if completed_attempt is not None:
+                route = next(
+                    (
+                        candidate
+                        for candidate in self.runtime_config.routes
+                        if candidate.name == completed_attempt.route_name
+                        and candidate.runtime_kind is RuntimeKind.CLAUDE_CLI
+                    ),
+                    None,
+                )
+                if route is None:
+                    raise RuntimeError("completed runtime result route mismatch")
+                try:
+                    decoded = _decode_runtime_domain_result(
+                        completed_attempt.result_envelope_json,
+                        schema_id=runtime_result_schema_id,
+                        role=run.role,
+                        recovery_phase=recovery_phase,
+                        referenced_agent_run_id=run.id,
+                        referenced_result_json=run.final_result_json,
+                    )
+                    evidence = decoded.evidence
+                    evidence_started = set(
+                        cast(list[int], evidence["recovery_started_actions"])
+                    )
+                    evidence_completed_before = set(
+                        cast(list[int], evidence["completed_before_recovery"])
+                    )
+                    persisted_for_evidence = self.store.get_agent_run(run.id)
+                    if persisted_for_evidence is None:
+                        raise ValueError("runtime_result_evidence_parent_missing")
+                    current_evidence = _runtime_result_evidence(
+                        run=persisted_for_evidence,
+                        event_start=cast(int, evidence["event_start"]),
+                        receipts=self.store.list_agent_execution_receipts(run.id),
+                        recovery_started_actions=evidence_started,
+                        completed_before_recovery=evidence_completed_before,
+                        recovery_authorizations=recovery_authorizations,
+                    )
+                    if current_evidence != evidence:
+                        raise ValueError("runtime_result_evidence_mismatch")
+                    result = cast(ResultT, decoded.result)
+                    turn_event_start = cast(int, evidence["event_start"])
+                    recovery_event_start = turn_event_start
+                    recovery_started_actions = evidence_started
+                    completed_before_recovery = evidence_completed_before
+                except ValueError as exc:
+                    if recover_unknown:
+                        self._defer_unknown(
+                            run, "completed_runtime_result_envelope_invalid"
+                        )
+                    elif (
                         run.role is AgentRole.CONSUMER
-                        or call.effect is EffectKind.READ_ONLY
+                        and run.effect_started_count == 0
                     ):
-                        continue
-                    # Read-only native MCP calls are valid audit evidence even
-                    # when Codex records them only in the session JSONL. They
-                    # still pass through the reviewed registry and the normal
-                    # sanitizer below; raw arguments and results are not stored.
+                        self.store.block_consumer_agent_run_for_completed_result_recovery(
+                            run.id,
+                            owner=self.owner,
+                        )
+                    raise CompletedRuntimeResultBlockedError(
+                        "completed_runtime_result_invalid"
+                    ) from exc
+                if _contains_sensitive_value(result.model_dump(mode="json")):
+                    raise ValueError("agent_result_contains_sensitive_value")
+                if (
+                    run.role is AgentRole.CONSUMER
+                    and result.outcome is not ConsumerOutcome.FAILED
+                ):
+                    _validate_runtime_reference_domain_result(result)
+                active_attempt = completed_attempt
+                observed_session_id = completed_attempt.session_id
+                pending_claude_session_id = completed_attempt.session_id
+                attempt_transcript_start = completed_attempt.transcript_start
+                attempt_line_start = 0
+                line_count = (
+                    completed_attempt.transcript_end - completed_attempt.transcript_start
+                )
+                session_transcript_end = completed_attempt.transcript_end
+                turn_event_start = 0
+                recovered_completed_attempt = True
+                raise _RecoveredCompletedRuntimeResult
+            decision = self.runtime_router.first_route_decision(
+                required_capabilities=required_capabilities,
+                allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,
+            )
+            route = decision.route
+            if route is None:
+                unavailable = RuntimeRouteUnavailableError(decision.reason)
+                if not recover_unknown:
+                    self._fail_running(
+                        run,
+                        unavailable.code,
+                        detail=decision.reason,
+                    )
+                raise unavailable
+            self._validate_route_workload_boundary(
+                route, run=run, recovery_phase=recovery_phase
+            )
+            route_session_id = self._session_for_route(
+                route,
+                role=run.role,
+                requested_session_id=session_id,
+                recovery_phase=recovery_phase,
+                conversation_contract_hash=conversation_contract_hash,
+            )
+            attempt_is_preclaimed = False
+            while True:
+                saw_json = False
+                primary_turn_started = False
+                primary_turn_closed = False
+                observed_session_id = ""
+                replayed_effect_evidence = False
+                active_route = route
+                route_uses_codex_history = (
+                    route.runtime_kind is RuntimeKind.CODEX_CLI
+                )
+                executor_prompt = (
+                    _claude_input_contract(
+                        prompt=prompt,
+                        developer_instructions=developer_instructions,
+                    )
+                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                    else prompt
+                )
+                attempt_line_start = line_count
+                if not attempt_is_preclaimed:
+                    active_attempt = self._claim_and_start_attempt(
+                        run,
+                        route,
+                        route_session_id,
+                        recovery_phase=recovery_phase,
+                    )
+                attempt_transcript_start = (
+                    count_codex_session_lines(
+                        route_session_id, codex_home=_codex_home()
+                    )
+                    if route_session_id and route_uses_codex_history
+                    else 0
+                )
+                attempt_is_preclaimed = False
+                if route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+                    claude_adapter = self._claude_adapter()
+                    command = claude_adapter.build_command(
+                        route=route,
+                        session_id=route_session_id,
+                        max_turns=1,
+                        policy=self._claude_read_only_policy(),
+                    )
+                    claude_normalizer = claude_adapter.new_event_normalizer(
+                        expected_session_id=route_session_id,
+                        command=command,
+                    )
+                    command_env = claude_adapter.build_env(route, command=command)
+                else:
+                    claude_adapter = None
+                    claude_normalizer = None
+                    command = self.codex_adapter.build_command(
+                        route=route,
+                        prompt=prompt,
+                        session_id=route_session_id,
+                        image_paths=image_paths,
+                        output_schema_path=None,
+                        use_output_schema=False,
+                        approval_policy=(
+                            "untrusted" if allow_effectful_tools else "never"
+                        ),
+                        developer_instructions=developer_instructions,
+                        use_approval_bypass=allow_effectful_tools,
+                    )
+                    configure_command(command)
+                    command_env = self.codex_adapter.build_env(route)
+                try:
+                    process = self.executor(
+                        command,
+                        prompt=executor_prompt,
+                        env=command_env,
+                        total_timeout_seconds=TOTAL_TIMEOUT_SECONDS,
+                        idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
+                        on_stdout_line=persist_line,
+                    )
+                except Exception:
+                    if claude_adapter is not None:
+                        claude_adapter.finish_invocation(command)
+                    self._fail_runtime_attempt_unclassified(active_attempt)
+                    raise
+                if process.returncode == 0 and not process.timed_out:
+                    if claude_adapter is not None:
+                        assert claude_normalizer is not None
+                        claude_normalizer.finalize()
+                        proof = claude_normalizer.terminal_proof()
+                        result = claude_adapter.parse_final_result(
+                            normalizer=claude_normalizer,
+                            proof=proof,
+                            parser=parse_claude_result,
+                        )
+                        trusted_session_id = claude_normalizer.session_id
+                        if not trusted_session_id:
+                            raise RuntimeError("claude_session_evidence_missing")
+                        observed_session_id = trusted_session_id
+                        pending_claude_session_id = trusted_session_id
+                    else:
+                        result = parse_result(process.stdout)
+                    break
+                if claude_adapter is not None:
+                    claude_adapter.finish_invocation(command)
+                failure_adapter = claude_adapter or self.codex_adapter
+                failure = failure_adapter.classify_failure(
+                    process.stdout,
+                    process.stderr,
+                    process.returncode,
+                    timed_out=process.timed_out,
+                    timeout_kind=process.timeout_kind,
+                )
+                failed_session_id = observed_session_id or route_session_id or ""
+                failed_transcript_end = max(
+                    attempt_transcript_start + (line_count - attempt_line_start),
+                    attempt_transcript_start,
+                )
+                evidence_uncertain = (
+                    recovery_phase != "reconcile"
+                    and bool(expected_effect_actions)
+                    and not failed_session_id
+                )
+                if failed_session_id and route_uses_codex_history:
                     try:
-                        normalized_completion = self._normalized_effect_event(
-                            completed_payload,
-                            read_only=(recovery_phase == "reconcile"),
-                            operation_id=run.operation_id,
-                            require_recovery_authorization=(
-                                recovery_phase == "execute"
+                        failed_transcript_end = max(
+                            failed_transcript_end,
+                            stabilize_and_replay_session(
+                                failed_session_id,
+                                session_start=attempt_transcript_start,
                             ),
                         )
-                    except AgentReadOnlyViolationError as exc:
-                        if str(exc) != "agent_cli_receipt_invalid":
-                            raise
-                        continue
-                    if call.effect is EffectKind.READ_ONLY:
-                        normalized_item = (
-                            normalized_completion.get("item")
-                            if isinstance(normalized_completion, dict)
-                            else None
+                    except Exception:
+                        evidence_uncertain = True
+                if evidence_uncertain and active_attempt is not None:
+                    active_attempt = self.store.note_runtime_attempt_effect_started(
+                        active_attempt.id
+                    )
+                failed_attempt = self.store.fail_agent_runtime_attempt(
+                    active_attempt.id,
+                    failure.failure_class.value,
+                    failure.code,
+                    failure.failover_permitted,
+                    session_id=failed_session_id,
+                    transcript_start=attempt_transcript_start,
+                    transcript_end=failed_transcript_end,
+                )
+                if failure.route_pause_required:
+                    self.store.open_runtime_route_pause(
+                        route.name,
+                        failure.code,
+                        datetime.now(timezone.utc) + self.runtime_config.retry_delay,
+                    )
+                persisted = self.store.get_agent_run(run.id)
+                assert persisted is not None
+                if evidence_uncertain or replayed_effect_evidence:
+                    code = "runtime_failed_route_effect_requires_reconciliation"
+                    if recover_unknown:
+                        self._defer_unknown(run, code)
+                    else:
+                        self.store.mark_agent_run_unknown(
+                            run.id,
+                            {"code": code, "retryable": True},
+                            owner=self.owner,
                         )
-                        normalized_metadata = (
-                            normalized_item.get("metadata")
-                            if isinstance(normalized_item, dict)
-                            else None
-                        )
-                        if isinstance(normalized_metadata, dict):
-                            read_key = (
-                                str(normalized_metadata.get("reviewed_server") or ""),
-                                str(normalized_metadata.get("reviewed_tool") or ""),
-                                str(normalized_metadata.get("arguments_digest") or ""),
-                            )
-                            if persisted_read_counts[read_key] > 0:
-                                persisted_read_counts[read_key] -= 1
-                                continue
-                    start_payload = {
-                        "type": "item.started",
-                        "item": {
-                            key: value
-                            for key, value in completed_item.items()
-                            if key not in {"status", "result"}
-                        }
-                        | {"status": "in_progress"},
-                    }
-                    persist_effect_event(start_payload, from_session_replay=True)
-                    persist_effect_event(completed_payload, from_session_replay=True)
+                    self._raise_for_process_failure(process, run=run)
+                    raise AssertionError("unreachable process failure")
+                fallback = _recovery_execution_result_from_receipts(
+                    run=run,
+                    recovery_phase=recovery_phase,
+                    persisted=persisted,
+                    expected_effect_actions=expected_effect_actions,
+                    recovery_started_actions=recovery_started_actions,
+                    authorized_recovery_actions=authorized_recovery_actions,
+                    registry=self.effects,
+                    store=self.store,
+                )
+                if fallback is not None:
+                    result = cast(ResultT, fallback)
+                    break
+                self.store.renew_agent_run_lease(
+                    run.id,
+                    owner=self.owner,
+                    lease_seconds=LEASE_SECONDS,
+                    expected_status="unknown" if recover_unknown else "running",
+                )
+                decision = self.runtime_router.next_route(
+                    run=persisted,
+                    failed_attempt=failed_attempt,
+                    failure=failure,
+                    required_capabilities=required_capabilities,
+                    recovery_phase=recovery_phase,
+                )
+                if decision.route is None:
+                    self._raise_for_process_failure(process, run=run)
+                    raise AssertionError("unreachable process failure")
+                route = decision.route
+                self._validate_route_workload_boundary(
+                    route, run=run, recovery_phase=recovery_phase
+                )
+                if decision.fresh_session:
+                    self._clear_incompatible_route_session_for_fresh_retry(
+                        run=run,
+                        route=route,
+                        failed_attempt=failed_attempt,
+                    )
+                route_session_id = (
+                    None
+                    if decision.fresh_session
+                    else self._session_for_route(
+                        route,
+                        role=run.role,
+                        requested_session_id=session_id,
+                        recovery_phase=recovery_phase,
+                        conversation_contract_hash=conversation_contract_hash,
+                    )
+                )
+                successor = self._claim_and_start_attempt(
+                    run,
+                    route,
+                    route_session_id,
+                    recovery_phase=recovery_phase,
+                )
+                self.store.mark_agent_runtime_attempt_superseded(failed_attempt.id)
+                active_attempt = successor
+                # The successor is durably claimed and process-start fenced while
+                # this worker still owns the Agent run lease. The next iteration
+                # must execute that exact row rather than claiming it again.
+                attempt_is_preclaimed = True
+            session_for_receipts = (
+                observed_session_id or route_session_id or run.codex_session_id
+            )
+            if session_for_receipts and route.runtime_kind is RuntimeKind.CODEX_CLI:
+                session_start = attempt_transcript_start
+                session_transcript_end = stabilize_and_replay_session(
+                    session_for_receipts,
+                    session_start=session_start,
+                )
             if _contains_sensitive_value(result.model_dump(mode="json")):
                 raise ValueError("agent_result_contains_sensitive_value")
+            if (
+                route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                and run.role is AgentRole.CONSUMER
+                and result.outcome is not ConsumerOutcome.FAILED
+            ):
+                _validate_runtime_reference_domain_result(result)
+            persisted_attempt = (
+                self.store.get_agent_runtime_attempt(active_attempt.id)
+                if active_attempt is not None
+                else None
+            )
+            if (
+                persisted_attempt is not None
+                and persisted_attempt.status == "running"
+                and route.runtime_kind is RuntimeKind.CODEX_CLI
+            ):
+                self.store.complete_agent_runtime_attempt(
+                    persisted_attempt.id,
+                    observed_session_id,
+                    "",
+                    attempt_transcript_start,
+                    max(
+                        attempt_transcript_start
+                        + (line_count - attempt_line_start),
+                        session_transcript_end,
+                    ),
+                )
+        except _RecoveredCompletedRuntimeResult:
+            pass
+        except CompletedRuntimeResultBlockedError:
+            raise
+        except RuntimeRouteUnavailableError as exc:
+            if not recover_unknown:
+                self._fail_running(run, exc.code, detail=exc.reason)
+            raise
         except ResultParseError as exc:
+            self._fail_runtime_attempt_unclassified(active_attempt)
             fallback = _recovery_execution_result_from_receipts(
                 run=run,
                 recovery_phase=recovery_phase,
@@ -567,6 +1733,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 raise
             result = cast(ResultT, fallback)
         except AgentReadOnlyViolationError as exc:
+            self._fail_runtime_attempt_unclassified(active_attempt)
             code = str(exc).strip() or "agent_read_only_violation"
             if recover_unknown:
                 self._defer_unknown(run, code)
@@ -574,6 +1741,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 self._fail_running(run, code)
             raise
         except Exception as exc:
+            self._fail_runtime_attempt_unclassified(active_attempt)
             provider_recovery = _agent_process_error_code(exc)
             code = (
                 provider_recovery
@@ -620,6 +1788,15 @@ class AgentTurnProcess(Generic[ResultT]):
                     "audit_recovery_evidence_missing",
                 }:
                     raise
+                # A model that explicitly claims reconciliation must provide a
+                # structured disposition for every unresolved action. Durable
+                # reads may repair an invalid result, but may not turn an empty
+                # reconciliation claim into implicit confirmation.
+                if (
+                    getattr(result, "outcome") is AuditOutcome.RECONCILED
+                    and not getattr(result, "reconciliation")
+                ):
+                    raise
                 fallback = _conservative_reconciliation_result_from_readbacks(
                     run=run,
                     persisted=persisted,
@@ -663,6 +1840,93 @@ class AgentTurnProcess(Generic[ResultT]):
                 expected_effect_actions=expected_effect_actions,
                 required_skill_receipts=required_skill_receipts,
                 turn_event_start=turn_event_start,
+            )
+        claude_business_failure = (
+            outcome in {ConsumerOutcome.FAILED, AuditOutcome.FAILED, AuditOutcome.UNKNOWN}
+            or (recovery_phase == "execute" and outcome is not AuditOutcome.EXECUTED)
+        )
+        if (
+            route.runtime_kind is RuntimeKind.CLAUDE_CLI
+            and not recovered_completed_attempt
+            and claude_business_failure
+        ):
+            if active_attempt is None:
+                raise AgentRuntimeAttemptStartConflictError(
+                    "Claude runtime attempt is missing at business failure"
+                )
+            self.store.fail_agent_runtime_attempt(
+                active_attempt.id,
+                RuntimeFailureClass.RESULT.value,
+                "runtime_business_result_failed",
+                False,
+            )
+        elif route.runtime_kind is RuntimeKind.CLAUDE_CLI and not recovered_completed_attempt:
+            if not pending_claude_session_id:
+                raise RuntimeError("claude_session_evidence_missing")
+            persisted_attempt = (
+                self.store.get_agent_runtime_attempt(active_attempt.id)
+                if active_attempt is not None
+                else None
+            )
+            if persisted_attempt is None or persisted_attempt.status != "running":
+                raise AgentRuntimeAttemptStartConflictError(
+                    "Claude runtime attempt is not running at result commit"
+                )
+            domain_result = cast(
+                ConsumerAgentResult | AuditAgentResult, result
+            ).model_dump(mode="json")
+            durable_consumer_result = (
+                run.role is AgentRole.CONSUMER
+                and outcome is not ConsumerOutcome.FAILED
+            )
+            self.store.complete_agent_runtime_attempt(
+                persisted_attempt.id,
+                pending_claude_session_id,
+                "",
+                attempt_transcript_start,
+                attempt_transcript_start + (line_count - attempt_line_start),
+                owner=self.owner,
+                result_schema_id=runtime_result_schema_id,
+                result_envelope_json=_encode_runtime_domain_result(
+                    schema_id=runtime_result_schema_id,
+                    role=run.role,
+                    recovery_phase=recovery_phase,
+                    result=cast(ConsumerAgentResult | AuditAgentResult, result),
+                    result_reference_run_id=(
+                        run.id if durable_consumer_result else None
+                    ),
+                    evidence=_runtime_result_evidence(
+                        run=cast(
+                            AgentRun,
+                            self.store.get_agent_run(run.id),
+                        ),
+                        event_start=(
+                            recovery_event_start
+                            if recover_unknown
+                            else turn_event_start
+                        ),
+                        receipts=self.store.list_agent_execution_receipts(run.id),
+                        recovery_started_actions=recovery_started_actions,
+                        completed_before_recovery=completed_before_recovery,
+                        recovery_authorizations=recovery_authorizations,
+                    ),
+                ),
+                conversation_id=(
+                    self.task.conversation_id
+                    if run.role is AgentRole.CONSUMER and not recover_unknown
+                    else ""
+                ),
+                route_name=route.name,
+                conversation_contract_hash=conversation_contract_hash,
+                agent_run_final_result=(
+                    domain_result if durable_consumer_result else None
+                ),
+                agent_run_final_side_effect_state=(
+                    side_effect_state.value if durable_consumer_result else "none"
+                ),
+                agent_run_transcript_end=(
+                    transcript_end if durable_consumer_result else None
+                ),
             )
         if recovery_phase == "reconcile":
             self.store.persist_unknown_agent_run_result(
@@ -716,6 +1980,159 @@ class AgentTurnProcess(Generic[ResultT]):
             result=result,
             transcript_start_line=transcript_start,
             transcript_end_line=completed.transcript_end_line,
+        )
+
+    def _session_for_route(
+        self,
+        route: RuntimeRoute,
+        *,
+        role: AgentRole,
+        requested_session_id: str | None,
+        recovery_phase: str,
+        conversation_contract_hash: str,
+    ) -> str | None:
+        if recovery_phase:
+            return None
+        if role is AgentRole.AUDIT:
+            return None
+        persisted = self.store.get_conversation_runtime_session(
+            self.task.conversation_id,
+            route.name,
+            required_contract_hash=conversation_contract_hash,
+        )
+        if persisted is not None and route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+            require_claude_session_id(persisted)
+        if route.name == "codex_oauth":
+            return (
+                requested_session_id
+                if requested_session_id and requested_session_id == persisted
+                else persisted
+            )
+        return persisted
+
+    def _claude_adapter(self) -> ClaudeRuntimeAdapter:
+        if self.claude_adapter is None:
+            self.claude_adapter = ClaudeRuntimeAdapter(
+                workspace=self.workspace,
+                config=self.runtime_config,
+                effect_registry=self.effects,
+                native_cli_classifier=self.native_cli,
+            )
+        return self.claude_adapter
+
+    def _claude_read_only_policy(self) -> ClaudeCommandPolicy:
+        reviewed = self.effects.reviewed_read_tools()
+        exact_tools = tuple(
+            sorted(
+                f"mcp__{server}__{tool}"
+                for server in ("agent_cli", "memory_connector")
+                for tool in reviewed.get(server, ())
+            )
+        )
+        if not exact_tools:
+            raise RuntimeRouteUnavailableError("claude_reviewed_read_surface_missing")
+        return ClaudeCommandPolicy.reviewed(
+            mcp_tools=exact_tools,
+            allow_native_cli=True,
+        )
+
+    @staticmethod
+    def _validate_route_workload_boundary(
+        route: RuntimeRoute,
+        *,
+        run: AgentRun,
+        recovery_phase: str,
+    ) -> None:
+        if (
+            route.runtime_kind is RuntimeKind.CLAUDE_CLI
+            and run.role is AgentRole.AUDIT
+            and recovery_phase != "reconcile"
+        ):
+            raise RuntimeRouteUnavailableError(
+                "claude_effectful_audit_ineligible"
+            )
+
+    def _clear_incompatible_route_session_for_fresh_retry(
+        self,
+        *,
+        run: AgentRun,
+        route: RuntimeRoute,
+        failed_attempt: AgentRuntimeAttempt,
+    ) -> None:
+        persisted_attempt = self.store.get_agent_runtime_attempt(failed_attempt.id)
+        if (
+            run.role is not AgentRole.CONSUMER
+            or persisted_attempt is None
+            or persisted_attempt != failed_attempt
+            or persisted_attempt.agent_run_id != run.id
+            or persisted_attempt.route_name != route.name
+            or persisted_attempt.status != "failed"
+            or persisted_attempt.session_mode != RuntimeAttemptSessionMode.RESUME
+            or persisted_attempt.failure_class != RuntimeFailureClass.SESSION.value
+            or persisted_attempt.failure_code != "session_route_incompatible"
+            or not persisted_attempt.source_session_id
+        ):
+            raise ValueError("fresh session retry lacks persisted resume evidence")
+        self.store.clear_conversation_runtime_session_if_matches(
+            self.task.conversation_id,
+            route.name,
+            persisted_attempt.source_session_id,
+        )
+
+    def _claim_and_start_attempt(
+        self,
+        run: AgentRun,
+        route: RuntimeRoute,
+        source_session_id: str | None,
+        *,
+        recovery_phase: str,
+    ) -> AgentRuntimeAttempt:
+        if recovery_phase:
+            if source_session_id:
+                raise ValueError("unknown recovery cannot resume a provider session")
+            start_claim = self.store.claim_unknown_recovery_agent_runtime_attempt(
+                run.id,
+                route.name,
+                route.runtime_kind.value,
+                route.credential_mode.value,
+                route.model,
+                owner=self.owner,
+            )
+            if not start_claim.start_acquired:
+                raise AgentRuntimeAttemptStartConflictError(
+                    "unknown recovery runtime attempt was not atomically started"
+                )
+            return start_claim.attempt
+        else:
+            attempt = self.store.claim_agent_runtime_attempt(
+                run.id,
+                route.name,
+                route.runtime_kind.value,
+                route.credential_mode.value,
+                route.model,
+                session_mode=(
+                    RuntimeAttemptSessionMode.RESUME
+                    if source_session_id
+                    else RuntimeAttemptSessionMode.FRESH
+                ),
+                source_session_id=source_session_id or "",
+            )
+        return self.store.mark_agent_runtime_attempt_running_once(attempt.id)
+
+    def _fail_runtime_attempt_unclassified(
+        self,
+        attempt: AgentRuntimeAttempt | None,
+    ) -> None:
+        if attempt is None:
+            return
+        persisted = self.store.get_agent_runtime_attempt(attempt.id)
+        if persisted is None or persisted.status not in {"starting", "running"}:
+            return
+        self.store.fail_agent_runtime_attempt(
+            attempt.id,
+            RuntimeFailureClass.UNCLASSIFIED.value,
+            "runtime_unclassified",
+            False,
         )
 
     def _normalized_effect_event(
@@ -2193,6 +3610,87 @@ def _json_digest(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _trusted_claude_effect_event(
+    payload: dict[str, object], *, read_only: bool
+) -> dict[str, object] | None:
+    event_type = payload.get("type")
+    if event_type not in {"item.started", "item.completed", "item.failed"}:
+        return None
+    item = payload.get("item")
+    if isinstance(item, dict) and item.get("type") == "agent_message":
+        return None
+    if not isinstance(item, dict) or item.get("type") not in {
+        "mcp_tool_call",
+        "command_execution",
+    }:
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    expected_status = {
+        "item.started": "in_progress",
+        "item.completed": "completed",
+        "item.failed": "failed",
+    }[str(event_type)]
+    if item.get("status") != expected_status:
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict) or not set(metadata).issubset(
+        {
+            "effect",
+            "capability",
+            "reviewed_server",
+            "reviewed_tool",
+            "operation",
+            "operation_digest",
+            "arguments_digest",
+            "target_identifiers",
+            "native_cli",
+            "result_digest",
+        }
+    ):
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    effect = metadata.get("effect")
+    if effect not in {EffectKind.READ_ONLY.value, EffectKind.EFFECTFUL.value}:
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    if read_only and effect != EffectKind.READ_ONLY.value:
+        raise AgentReadOnlyViolationError("agent_write_forbidden")
+    for key in ("capability", "operation", "operation_digest"):
+        if not isinstance(metadata.get(key), str) or not metadata[key]:
+            raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    arguments_digest = metadata.get("arguments_digest")
+    if (
+        not isinstance(arguments_digest, str)
+        or len(arguments_digest) != 64
+        or any(character not in "0123456789abcdef" for character in arguments_digest)
+    ):
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    if not isinstance(metadata.get("target_identifiers"), dict):
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    result_digest = metadata.get("result_digest")
+    if event_type == "item.completed" and (
+        not isinstance(result_digest, str)
+        or len(result_digest) != 64
+        or any(character not in "0123456789abcdef" for character in result_digest)
+    ):
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    normalized_item = {
+        "type": item["type"],
+        "id": str(item.get("id") or ""),
+        "status": expected_status,
+        "metadata": dict(metadata),
+    }
+    if item["type"] == "mcp_tool_call":
+        server = item.get("server")
+        tool = item.get("tool")
+        if (
+            not isinstance(server, str)
+            or not server
+            or not isinstance(tool, str)
+            or not tool
+        ):
+            raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+        normalized_item.update({"server": server, "tool": tool})
+    return {"type": event_type, "item": normalized_item}
+
+
 def _requested_skill_path(arguments: object) -> str:
     if not isinstance(arguments, dict) or set(arguments) != {"path"}:
         return ""
@@ -2252,6 +3750,88 @@ def _contains_sensitive_value(value: object, *, depth: int = 0) -> bool:
     except json.JSONDecodeError:
         return False
     return _contains_sensitive_value(decoded, depth=depth + 1)
+
+
+def _contains_local_runtime_value(value: object, *, depth: int = 0) -> bool:
+    if depth > 12:
+        return True
+    if isinstance(value, dict):
+        return any(
+            contains_local_runtime_leak(str(key))
+            or _contains_local_runtime_value(item, depth=depth + 1)
+            for key, item in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return any(
+            _contains_local_runtime_value(item, depth=depth + 1) for item in value
+        )
+    if not isinstance(value, str):
+        return False
+    if contains_local_runtime_leak(value):
+        return True
+    stripped = value.lstrip()
+    if not stripped.startswith(("{", "[")) or len(value) > 64 * 1024:
+        return False
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return False
+    return _contains_local_runtime_value(decoded, depth=depth + 1)
+
+
+_RUNTIME_REFERENCE_TEXT_LIMITS = {
+    "assertion": 2048,
+    "authoredjudgment": 2048,
+    "capability": 512,
+    "consequence": 2048,
+    "description": 2048,
+    "expectedverification": 2048,
+    "instruction": 2048,
+    "key": 128,
+    "label": 512,
+    "objective": 2048,
+    "operation": 512,
+    "reason": 2048,
+    "reference": 512,
+    "summary": _RUNTIME_RESULT_SUMMARY_MAX_CHARS,
+}
+
+
+def _validate_runtime_reference_text_bounds(value: object, *, depth: int = 0) -> None:
+    if depth > 12:
+        raise ValueError("runtime_result_reference_depth_invalid")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = _normalized_key(str(key))
+            limit = _RUNTIME_REFERENCE_TEXT_LIMITS.get(normalized)
+            if limit is not None and isinstance(item, str) and len(item) > limit:
+                raise ValueError("runtime_result_reference_text_too_large")
+            _validate_runtime_reference_text_bounds(item, depth=depth + 1)
+    elif isinstance(value, list | tuple):
+        for item in value:
+            _validate_runtime_reference_text_bounds(item, depth=depth + 1)
+
+
+def _validate_runtime_reference_domain_result(
+    result: ConsumerAgentResult | AuditAgentResult,
+) -> None:
+    domain_result = result.model_dump(mode="json")
+    _project_runtime_domain_result(result)
+    _validate_runtime_reference_text_bounds(domain_result)
+    if _contains_sensitive_value(domain_result):
+        raise ValueError("agent_result_contains_sensitive_value")
+    if _contains_local_runtime_value(domain_result):
+        raise AgentReadOnlyViolationError(
+            "runtime_result_contains_local_runtime_leak"
+        )
+    encoded = json.dumps(
+        domain_result,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    if len(encoded.encode("utf-8")) > _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES:
+        raise ValueError("runtime_result_reference_too_large")
 
 
 def _contains_sensitive_argv(value: dict[object, object]) -> bool:

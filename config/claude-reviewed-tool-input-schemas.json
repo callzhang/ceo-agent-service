@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "tools": {
+    "mcp__memory_connector__memory_recall": {
+      "type": "object",
+      "properties": {
+        "query": {"type": "string"}
+      },
+      "required": ["query"],
+      "additionalProperties": false
+    },
+    "mcp__agent_cli__execute_reviewed_write": {
+      "type": "object",
+      "properties": {
+        "argv": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "authorization_id": {"type": "string"}
+      },
+      "required": ["argv"],
+      "additionalProperties": false
+    },
+    "mcp__runtime_probe__record_effect_start": {
+      "type": "object",
+      "properties": {
+        "marker": {
+          "type": "string",
+          "const": "ceo-agent-runtime-probe-v1"
+        }
+      },
+      "required": ["marker"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,14 +1,21 @@
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
+from app.agent_runtime_router import (
+    ApprovedCodexCommandFactory,
+    RoutedCodexExecution,
+    RoutedCodexExecutionError,
+    RoutedResultCodec,
+)
 from app.codex_runner import memory_connector_config_issue
 from app.config import repo_root
 from app.external_retry import ExternalDependencyError
+from app.routed_result_privacy import audit_references_from_full_events
 from app.store import AutoReplyStore, RecentFollowUpCandidate
 from app.structured_agent import load_skill_text
 from app.task_models import (
@@ -25,9 +32,12 @@ from app.task_retrieval import (
     render_candidate_prompt,
     retrieve_project_candidates,
 )
-from app.todo_sync import maybe_create_dingtalk_todo, sync_completed_todo_to_dingtalk
 from app.todo_completion import complete_follow_ups_for_todo
-
+from app.todo_sync import (
+    dispatch_task_todo_sync_outbox,
+    maybe_create_dingtalk_todo,
+    sync_completed_todo_to_dingtalk,
+)
 
 TASK_AGENT_AUDIT_EVENT_LIMIT = 200
 TASK_AGENT_MAX_TIMEOUT_SECONDS = 300
@@ -40,6 +50,15 @@ FOLLOW_UP_WORK_START_HOUR = 9
 FOLLOW_UP_WORK_END_HOUR = 18
 FOLLOW_UP_WORK_TZ = ZoneInfo("Asia/Shanghai")
 WORK_TRACKING_SKILL_PATH = repo_root() / "skills" / "ceo-work-tracking" / "SKILL.md"
+TASK_RUNTIME_CAPABILITIES = frozenset(
+    {
+        "structured_output",
+        "local_schema_validation",
+        "consumer_read_only_enforcement",
+        "reviewed_read_tools",
+    }
+)
+TASK_RESULT_CODEC = RoutedResultCodec.text(schema_id="task_agent.decision.v1")
 
 
 class TaskCodex(Protocol):
@@ -51,7 +70,8 @@ class TaskCodex(Protocol):
         self,
         *,
         prompt: str,
-        session_id: str | None = None,
+        workload_key: str,
+        session_scope_id: str | None = None,
     ) -> TaskAgentDecision: ...
 
 
@@ -65,6 +85,8 @@ class TaskAgentRunner:
         candidate_prompt: str,
         *,
         memory_issue: str = "",
+        run_id: int,
+        session_scope_id: str,
     ) -> TaskAgentDecision:
         return self.codex.decide(
             prompt=build_task_agent_prompt(
@@ -72,7 +94,8 @@ class TaskAgentRunner:
                 candidate_prompt,
                 memory_issue=memory_issue,
             ),
-            session_id=None,
+            workload_key=str(run_id),
+            session_scope_id=session_scope_id,
         )
 
     def repair_owner_assignment(
@@ -83,6 +106,8 @@ class TaskAgentRunner:
         *,
         validation_error: str,
         memory_issue: str = "",
+        run_id: int,
+        session_scope_id: str,
     ) -> TaskAgentDecision:
         return self.codex.decide(
             prompt=build_owner_resolution_prompt(
@@ -92,47 +117,27 @@ class TaskAgentRunner:
                 validation_error=validation_error,
                 memory_issue=memory_issue,
             ),
-            session_id=getattr(self.codex, "last_session_id", None),
+            workload_key=str(run_id),
+            session_scope_id=session_scope_id,
         )
 
 
 class TaskAgentCodexRunner:
     def __init__(
         self,
-        workspace: Path,
-        codex_bin: str = "codex",
-        executor=None,
-        timeout_seconds: int = 1200,
-        idle_timeout_seconds: int = 900,
+        *,
+        routed_execution: RoutedCodexExecution,
     ):
-        from app.codex_decision import (
-            _subprocess_failure_reason,
-            extract_codex_audit_events,
-            extract_codex_session_id,
-        )
+        from app.codex_decision import extract_codex_audit_events
         from app.codex_history import (
-            count_codex_session_lines,
             extract_codex_audit_events_from_session,
         )
-        from app.codex_runner import CodexRunner
-        from app.process_runner import run_process_with_idle_timeout
 
-        self.workspace = workspace
-        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
-        self.executor = executor
-        self.timeout_seconds = min(timeout_seconds, TASK_AGENT_MAX_TIMEOUT_SECONDS)
-        self.idle_timeout_seconds = min(
-            idle_timeout_seconds,
-            TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS,
-        )
-        self._run_process_with_idle_timeout = run_process_with_idle_timeout
-        self._extract_codex_session_id = extract_codex_session_id
+        self.routed_execution = routed_execution
         self._extract_codex_audit_events = extract_codex_audit_events
         self._extract_codex_audit_events_from_session = (
             extract_codex_audit_events_from_session
         )
-        self._session_line_count = count_codex_session_lines
-        self._subprocess_failure_reason = _subprocess_failure_reason
         self.last_session_id: str | None = None
         self.last_audit_tool_events: list[dict[str, str]] = []
         self.last_transcript_start_line = 0
@@ -142,12 +147,40 @@ class TaskAgentCodexRunner:
         self,
         *,
         prompt: str,
-        session_id: str | None = None,
+        workload_key: str,
+        session_scope_id: str | None = None,
     ) -> TaskAgentDecision:
-        self.last_transcript_start_line = self._session_line_count(session_id)
-        raw = self._execute(prompt=prompt, session_id=session_id)
-        self.last_session_id = self._extract_codex_session_id(raw) or session_id
-        self.last_transcript_end_line = self._session_line_count(self.last_session_id)
+        self.last_session_id = None
+        self.last_audit_tool_events = []
+        self.last_transcript_start_line = 0
+        self.last_transcript_end_line = 0
+        try:
+            result = self.routed_execution.execute(
+                workload_kind="task",
+                workload_key=workload_key,
+                prompt=prompt,
+                command_factory=ApprovedCodexCommandFactory.read_only_task(
+                    developer_instructions=(
+                        "Return exactly one TaskAgentDecision JSON object. "
+                        "Use only reviewed read tools."
+                    ),
+                ),
+                parser=_encode_task_agent_result,
+                result_codec=TASK_RESULT_CODEC,
+                conversation_id=session_scope_id,
+                required_capabilities=TASK_RUNTIME_CAPABILITIES,
+            )
+        except RoutedCodexExecutionError as exc:
+            if not exc.retryable_external_dependency:
+                raise
+            raise ExternalDependencyError(
+                "codex task agent", exc, dependency="codex"
+            ) from exc
+        payload = json.loads(result.value)
+        decision = TaskAgentDecision.model_validate(payload["decision"])
+        self.last_session_id = result.session_id or None
+        self.last_transcript_start_line = result.transcript_start
+        self.last_transcript_end_line = result.transcript_end
         session_events = []
         if self.last_session_id:
             session_events = self._extract_codex_audit_events_from_session(
@@ -156,50 +189,25 @@ class TaskAgentCodexRunner:
                 end_line=self.last_transcript_end_line,
                 limit=TASK_AGENT_AUDIT_EVENT_LIMIT,
             )
-        self.last_audit_tool_events = (
-            session_events or self._extract_codex_audit_events(raw)
-        )
-        return _parse_task_agent_decision(raw)
+        self.last_audit_tool_events = session_events or payload["audit_tool_events"]
+        return decision
 
-    def _execute(self, *, prompt: str, session_id: str | None) -> str:
-        command = self.runner.build_command(
-            prompt,
-            session_id,
-            image_paths=None,
-            use_output_schema=False,
-            # The task prompt carries its own TaskAgentDecision schema. The
-            # consumer AgentEnvelope developer contract is incompatible here.
-            preserve_native_instructions=True,
-        )
-        if self.executor is not None:
-            return self.executor(command, prompt)
-        completed = self._run_process_with_idle_timeout(
-            command,
-            prompt=prompt,
-            env=self.runner.build_env(),
-            total_timeout_seconds=self.timeout_seconds,
-            idle_timeout_seconds=self.idle_timeout_seconds,
-        )
-        if completed.timed_out:
-            raise ExternalDependencyError(
-                "codex task agent",
-                RuntimeError(
-                    completed.timeout_reason or "task agent codex timed out"
-                ),
-                dependency="codex",
-            )
-        if completed.returncode != 0:
-            raise ExternalDependencyError(
-                "codex task agent",
-                RuntimeError(
-                    self._subprocess_failure_reason(
-                        completed.stderr,
-                        completed.stdout,
-                    )
-                ),
-                dependency="codex",
-            )
-        return completed.stdout
+
+def _encode_task_agent_result(raw: str) -> str:
+    from app.codex_decision import extract_codex_audit_events
+
+    decision = _parse_task_agent_decision(raw)
+    return json.dumps(
+        {
+            "decision": decision.model_dump(mode="json"),
+            "audit_tool_events": audit_references_from_full_events(
+                extract_codex_audit_events(raw, limit=TASK_AGENT_AUDIT_EVENT_LIMIT),
+                limit=TASK_AGENT_AUDIT_EVENT_LIMIT,
+            ),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def build_task_agent_prompt(
@@ -443,6 +451,7 @@ def process_work_item(
     dws=None,
     now: str = "",
 ) -> None:
+    active_run_id: int | None = None
     try:
         memory_issue = memory_connector_config_issue()
         work_item = WorkItem.model_validate_json(work_input.payload_json)
@@ -463,10 +472,14 @@ def process_work_item(
                 follow_up_candidates
             ),
         )
+        active_run_id = store.begin_task_agent_run(work_input.id)
+        session_scope_id = f"task:{active_run_id}"
         decision = runner.decide(
             work_item,
             candidate_prompt,
             memory_issue=memory_issue,
+            run_id=active_run_id,
+            session_scope_id=session_scope_id,
         )
         codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
         audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
@@ -490,22 +503,27 @@ def process_work_item(
             memory_runtime_unavailable=memory_runtime_unavailable,
             now=now,
         )
-        store.record_task_agent_run(
-            summary_input_id=work_input.id,
-            codex_session_id=codex_session_id,
-            decision_json=_json_dumps(decision.model_dump(mode="json")),
-            audit_summary=decision.update_summary,
-            memory_recall_used=decision.memory_recall_used,
-        )
         try:
             _validate_owner_changes(store, decision)
         except OwnerResolutionRequired as exc:
+            store.finish_task_agent_run(
+                active_run_id,
+                status="failed",
+                codex_session_id=codex_session_id,
+                decision_json=_json_dumps(decision.model_dump(mode="json")),
+                audit_summary=decision.update_summary,
+                memory_recall_used=decision.memory_recall_used,
+                error=str(exc),
+            )
+            active_run_id = store.begin_task_agent_run(work_input.id)
             decision = runner.repair_owner_assignment(
                 work_item,
                 candidate_prompt,
                 decision,
                 validation_error=str(exc),
                 memory_issue=memory_issue,
+                run_id=active_run_id,
+                session_scope_id=session_scope_id,
             )
             codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
             audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
@@ -533,35 +551,54 @@ def process_work_item(
                 memory_runtime_unavailable=memory_runtime_unavailable,
                 now=now,
             )
-            store.record_task_agent_run(
+            _validate_owner_changes(store, decision)
+        with store.task_agent_domain_apply_transaction() as db:
+            apply_task_agent_decision(
+                store,
                 summary_input_id=work_input.id,
+                work_item=work_item,
+                decision=decision,
+                codex_session_id=codex_session_id,
+                memory_issue=memory_issue,
+                memory_recall_attempted=memory_recall_attempted,
+                memory_runtime_unavailable=memory_runtime_unavailable,
+                record_run=False,
+                dws=dws,
+                now=now,
+                _db=db,
+            )
+            if decision.action == "discard":
+                store.mark_work_summary_input_discarded(
+                    work_input.id,
+                    decision.discard_reason or decision.update_summary,
+                    _db=db,
+                )
+            else:
+                store.mark_work_summary_input_done(work_input.id, _db=db)
+            store.finish_task_agent_run(
+                active_run_id,
+                status="completed",
                 codex_session_id=codex_session_id,
                 decision_json=_json_dumps(decision.model_dump(mode="json")),
                 audit_summary=decision.update_summary,
                 memory_recall_used=decision.memory_recall_used,
+                _db=db,
             )
-            _validate_owner_changes(store, decision)
-        apply_task_agent_decision(
-            store,
-            summary_input_id=work_input.id,
-            work_item=work_item,
-            decision=decision,
-            codex_session_id=codex_session_id,
-            memory_issue=memory_issue,
-            memory_recall_attempted=memory_recall_attempted,
-            memory_runtime_unavailable=memory_runtime_unavailable,
-            record_run=False,
-            dws=dws,
-            now=now,
-        )
-        if decision.action == "discard":
-            store.mark_work_summary_input_discarded(
-                work_input.id,
-                decision.discard_reason or decision.update_summary,
+        active_run_id = None
+        if dws is not None:
+            dispatch_task_todo_sync_outbox(
+                store,
+                dws,
+                owner=f"task-agent-outbox:{work_input.id}",
+                now=now or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
-        else:
-            store.mark_work_summary_input_done(work_input.id)
     except Exception as exc:
+        if active_run_id is not None:
+            store.finish_task_agent_run(
+                active_run_id,
+                status="failed",
+                error=str(exc),
+            )
         store.mark_work_summary_input_failed(work_input.id, str(exc))
         raise
 
@@ -579,6 +616,7 @@ def apply_task_agent_decision(
     record_run: bool = True,
     dws=None,
     now: str = "",
+    _db: sqlite3.Connection | None = None,
 ) -> int | None:
     _validate_task_agent_decision(
         decision,
@@ -606,7 +644,7 @@ def apply_task_agent_decision(
     if decision.project is None:
         raise ValueError(f"{decision.action} requires project")
 
-    project_id = _apply_project(store, decision)
+    project_id = _apply_project(store, decision, _db=_db)
     update_id = store.create_work_update(
         project_id=project_id,
         source_type=work_item.source.type.value,
@@ -631,6 +669,7 @@ def apply_task_agent_decision(
         ),
         merge_reason=decision.merge_reason,
         confidence=decision.confidence,
+        _db=_db,
     )
     todo_refs: dict[str, int] = {}
     create_sync_todo_ids: list[int] = []
@@ -641,6 +680,7 @@ def apply_task_agent_decision(
             project_id=project_id,
             update_id=update_id,
             change=todo_change,
+            _db=_db,
         )
         if (
             dws is not None
@@ -648,13 +688,21 @@ def apply_task_agent_decision(
             and bool(todo_change.completion_evidence)
         ):
             sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            sync_completed_todo_to_dingtalk(
-                store,
-                dws,
-                work_todo_id=todo_id,
-                evidence=todo_change.completion_evidence,
-                now=sync_now,
-            )
+            if _db is not None:
+                store.enqueue_task_todo_sync_outbox(
+                    operation_key=(
+                        f"task-agent:{summary_input_id}:todo:{todo_id}:complete"
+                    ),
+                    work_todo_id=todo_id,
+                    operation="complete",
+                    evidence_json=_json_dumps(todo_change.completion_evidence),
+                    _db=_db,
+                )
+            else:
+                sync_completed_todo_to_dingtalk(
+                    store, dws, work_todo_id=todo_id,
+                    evidence=todo_change.completion_evidence, now=sync_now,
+                )
         if todo_change.action in {"create", "update"}:
             create_sync_todo_ids.append(todo_id)
         if todo_change.action == "create" and todo_change.todo_ref.strip():
@@ -665,18 +713,24 @@ def apply_task_agent_decision(
             project_id=project_id,
             draft=draft,
             todo_refs=todo_refs,
+            _db=_db,
         )
     for change in decision.follow_up_changes:
-        _apply_follow_up_change(store, change)
+        _apply_follow_up_change(store, change, _db=_db)
     if dws is not None:
         sync_now = sync_now or now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for todo_id in create_sync_todo_ids:
-            maybe_create_dingtalk_todo(
-                store,
-                dws,
-                work_todo_id=todo_id,
-                now=sync_now,
-            )
+            if _db is not None:
+                store.enqueue_task_todo_sync_outbox(
+                    operation_key=f"task-agent:{summary_input_id}:todo:{todo_id}:create",
+                    work_todo_id=todo_id,
+                    operation="create",
+                    _db=_db,
+                )
+            else:
+                maybe_create_dingtalk_todo(
+                    store, dws, work_todo_id=todo_id, now=sync_now
+                )
     return project_id
 
 
@@ -1038,15 +1092,20 @@ def _decision_reports_memory_runtime_unavailable(
     )
 
 
-def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:
+def _apply_project(
+    store: AutoReplyStore,
+    decision: TaskAgentDecision,
+    *,
+    _db: sqlite3.Connection | None = None,
+) -> int:
     project = decision.project
     if project is None:
         raise ValueError(f"{decision.action} requires project")
     if decision.action == "create_project":
-        return store.create_work_project(**_project_values(project))
+        return store.create_work_project(_db=_db, **_project_values(project))
     if project.id is None:
         raise ValueError("update_project requires project.id")
-    current_project = store.get_work_project(project.id)
+    current_project = store.get_work_project(project.id, _db=_db)
     fields = project.model_fields_set - {"id"}
     if current_project is not None:
         final_owner = {
@@ -1067,7 +1126,7 @@ def _apply_project(store: AutoReplyStore, decision: TaskAgentDecision) -> int:
         }:
             fields -= {"owner_user_id", "owner_name", "owner_evidence"}
     values = _project_values(project, only_fields=fields)
-    store.update_work_project(project.id, **values)
+    store.update_work_project(project.id, _db=_db, **values)
     return project.id
 
 
@@ -1122,17 +1181,19 @@ def _apply_todo_change(
     project_id: int,
     update_id: int,
     change: TodoChange,
+    _db: sqlite3.Connection | None = None,
 ) -> int:
     if change.action == "create":
         values = _todo_values(change)
         return store.create_work_todo(
+            _db=_db,
             project_id=project_id,
             created_from_update_id=update_id,
             **values,
         )
     if change.todo_id is None:
         raise ValueError(f"{change.action} requires todo_id")
-    current_todo = store.get_work_todo(change.todo_id)
+    current_todo = store.get_work_todo(change.todo_id, _db=_db)
     fields = change.model_fields_set - {"action", "todo_id"}
     if current_todo is not None:
         final_owner = {
@@ -1160,13 +1221,14 @@ def _apply_todo_change(
         values["status"] = "done"
     elif change.action == "cancel":
         values["status"] = "cancelled"
-    store.update_work_todo(change.todo_id, **values)
+    store.update_work_todo(change.todo_id, _db=_db, **values)
     if change.action == "close" and change.completion_evidence:
         complete_follow_ups_for_todo(
             store,
             todo_id=change.todo_id,
             evidence=change.completion_evidence,
             now=str(change.completion_evidence.get("completed_at") or ""),
+            _db=_db,
         )
     return change.todo_id
 
@@ -1237,20 +1299,23 @@ def _create_follow_up_draft(
     project_id: int,
     draft: FollowUpDraftDecision,
     todo_refs: dict[str, int],
+    _db: sqlite3.Connection | None = None,
 ) -> int:
     todo_id = _resolve_follow_up_todo_id(
         store,
         project_id=project_id,
         draft=draft,
         todo_refs=todo_refs,
+        _db=_db,
     )
-    todo = store.get_work_todo(todo_id)
+    todo = store.get_work_todo(todo_id, _db=_db)
     if todo is not None and (
         todo.status in {TodoStatus.DONE, TodoStatus.CANCELLED}
         or _has_json_content(todo.completion_evidence_json)
     ):
         return 0
     return store.create_follow_up_draft(
+        _db=_db,
         project_id=project_id,
         todo_id=todo_id,
         title=draft.title,
@@ -1274,8 +1339,10 @@ def _create_follow_up_draft(
 def _apply_follow_up_change(
     store: AutoReplyStore,
     change: FollowUpDraftChange,
+    *,
+    _db: sqlite3.Connection | None = None,
 ) -> None:
-    current = store.get_follow_up_draft(change.follow_up_id)
+    current = store.get_follow_up_draft(change.follow_up_id, _db=_db)
     if current is None:
         raise ValueError(
             f"follow_up_change.follow_up_id not found: {change.follow_up_id}"
@@ -1324,11 +1391,11 @@ def _apply_follow_up_change(
         values["scheduled_at"] = change.next_due_at or ""
         values["reaction_summary"] = change.reason
         if change.todo_id is not None:
-            todo = store.get_work_todo(change.todo_id)
+            todo = store.get_work_todo(change.todo_id, _db=_db)
             if todo is not None and todo.follow_up_question.strip():
                 values["question_text"] = todo.follow_up_question.strip()
 
-    store.update_follow_up_draft(change.follow_up_id, **values)
+    store.update_follow_up_draft(change.follow_up_id, _db=_db, **values)
 
 
 def _validate_follow_up_change_targets(
@@ -1348,6 +1415,7 @@ def _resolve_follow_up_todo_id(
     project_id: int,
     draft: FollowUpDraftDecision,
     todo_refs: dict[str, int],
+    _db: sqlite3.Connection | None = None,
 ) -> int:
     todo_id = draft.todo_id
     if todo_id is None and draft.todo_ref.strip():
@@ -1356,7 +1424,7 @@ def _resolve_follow_up_todo_id(
             raise ValueError(f"unknown follow_up_draft.todo_ref: {draft.todo_ref}")
     if todo_id is None or todo_id <= 0:
         raise ValueError("follow_up_draft requires todo_id or todo_ref")
-    todo = store.get_work_todo(todo_id)
+    todo = store.get_work_todo(todo_id, _db=_db)
     if todo is None:
         raise ValueError(f"follow_up_draft.todo_id not found: {todo_id}")
     if todo.project_id != project_id:

@@ -6208,6 +6208,15 @@ def test_explicit_codex_provider_missing_auth_header_is_terminal_auth_failure(
     assert normalized.startswith("codex_provider_auth_failed:")
 
 
+def test_embeddings_invalid_api_key_is_not_codex_provider_auth_failure():
+    reason = (
+        "Incorrect API key provided; code=invalid_api_key, url: "
+        "https://api.openai.com/v1/embeddings"
+    )
+
+    assert worker_module._normalize_codex_stop_error_reason(reason) == reason
+
+
 def test_consume_once_chatgpt_codex_forbidden_fails_without_auth_recovery(
     tmp_path: Path, monkeypatch
 ):

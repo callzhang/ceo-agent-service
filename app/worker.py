@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit, urlunsplit
 
 from app.agent_context import (
@@ -64,6 +64,7 @@ from app.codex_runner import (
     recover_native_codex_auth_failures,
     selected_codex_model_provider,
 )
+from app.codex_failure import is_codex_provider_auth_error
 from app.codex_capacity import (
     CODEX_CAPACITY_EXHAUSTED_MESSAGE,
     CODEX_PROVIDER_CAPACITY_EXHAUSTED,
@@ -96,6 +97,9 @@ from app.store import (
 )
 from app.work_profile import safe_excerpt
 from PIL import Image, UnidentifiedImageError
+
+if TYPE_CHECKING:
+    from app.agent_runtime_production import ProductionAgentRuntime
 
 
 ORCHESTRATION_ATTEMPT_STATUS = {
@@ -233,20 +237,7 @@ def _is_codex_login_required_error(reason: str) -> bool:
 
 
 def _is_codex_provider_auth_error(reason: str) -> bool:
-    normalized = reason.lower()
-    responses_api_auth_failed = (
-        "unexpected status 401 unauthorized" in normalized
-        and (
-            "missing bearer or basic authentication" in normalized
-            or "invalid api key" in normalized
-        )
-        and "/v1/responses" in normalized
-    )
-    chatgpt_codex_forbidden = (
-        "unexpected status 403 forbidden" in normalized
-        and "chatgpt.com/backend-api/codex/responses" in normalized
-    )
-    return responses_api_auth_failed or chatgpt_codex_forbidden
+    return is_codex_provider_auth_error(reason)
 
 
 def _codex_provider_auth_error(reason: str) -> str:
@@ -443,6 +434,7 @@ class DingTalkAutoReplyWorker:
         channel_gates: dict[str, ChannelGate] | None = None,
         login_coordinator: LoginCoordinator | None = None,
         agent_orchestrator: AgentOrchestrator | None = None,
+        agent_runtime: "ProductionAgentRuntime | None" = None,
     ):
         self.store = store
         self.dws = dws
@@ -472,26 +464,43 @@ class DingTalkAutoReplyWorker:
         self._task_image_paths: dict[int, set[Path]] = {}
         self._sqlite_lock_failures: dict[str, int] = {}
         self.agent_orchestrator = agent_orchestrator
+        self.agent_runtime = agent_runtime
 
     def _agent_orchestrator(self) -> AgentOrchestrator:
         if self.agent_orchestrator is not None:
             return self.agent_orchestrator
-        runner = getattr(self.codex, "runner", None)
-        workspace = getattr(runner, "workspace", None)
+        workspace = getattr(self.codex, "workspace", None)
         if workspace is None:
             raise RuntimeError("native Codex runner workspace is unavailable")
-        codex_bin = str(getattr(runner, "codex_bin", "codex"))
+        codex_bin = str(getattr(self.codex, "codex_bin", "codex"))
+        runtime = self.agent_runtime
         self.agent_orchestrator = AgentOrchestrator(
             store=self.store,
             consumer=ConsumerAgentRunner(
                 store=self.store,
                 workspace=Path(workspace),
                 codex_bin=codex_bin,
+                runtime_config=(runtime.config if runtime is not None else None),
+                runtime_router=(runtime.router if runtime is not None else None),
+                codex_adapter=(
+                    runtime.codex_adapter if runtime is not None else None
+                ),
+                claude_adapter=(
+                    runtime.claude_adapter if runtime is not None else None
+                ),
             ),
             audit=AuditAgentRunner(
                 store=self.store,
                 workspace=Path(workspace),
                 codex_bin=codex_bin,
+                runtime_config=(runtime.config if runtime is not None else None),
+                runtime_router=(runtime.router if runtime is not None else None),
+                codex_adapter=(
+                    runtime.codex_adapter if runtime is not None else None
+                ),
+                claude_adapter=(
+                    runtime.claude_adapter if runtime is not None else None
+                ),
                 dry_run=self.dry_run,
             ),
         )

@@ -1,27 +1,33 @@
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
-
-from pydantic import ValidationError
 
 from app.agent_envelope import AgentEnvelope
+from app.agent_runtime_router import (
+    ApprovedCodexCommandFactory,
+    RoutedCodexExecution,
+    RoutedResultCodec,
+    RoutedResultValidationError,
+    RoutedResultValidationRetry,
+)
 from app.codex_decision import (
-    _subprocess_failure_reason,
     extract_codex_audit_events,
     extract_codex_audit_events_from_session,
-    extract_codex_session_id,
 )
-from app.codex_history import find_codex_session_path
-from app.codex_runner import (
-    CODEX_BYPASS_APPROVALS_AND_SANDBOX,
-    CodexRunner,
-    _codex_home,
-    _config_string,
-    codex_model_config_options,
+from app.codex_runner import _codex_home
+from app.routed_result_privacy import audit_references_from_full_events
+
+STRUCTURED_RUNTIME_CAPABILITIES = frozenset(
+    {
+        "structured_output",
+        "local_schema_validation",
+        "consumer_read_only_enforcement",
+        "reviewed_read_tools",
+    }
 )
-from app.external_retry import ExternalDependencyError, run_external
-from app.process_runner import run_process_with_idle_timeout
+STRUCTURED_RESULT_CODEC = RoutedResultCodec.text(
+    schema_id="structured_agent.result.v1"
+)
 
 
 class SkillLoadError(RuntimeError):
@@ -79,123 +85,68 @@ class StructuredCodexRunner:
     def __init__(
         self,
         *,
-        store,
-        workspace: Path,
+        routed_execution: RoutedCodexExecution,
         spec: AgentSpec,
-        codex_bin: str = "codex",
-        executor: Callable[[list[str], str, dict[str, str]], str] | None = None,
-        session_exists: Callable[[str], bool] | None = None,
-        timeout_seconds: int = 1200,
-        idle_timeout_seconds: int = 900,
-        persist_conversation_session: bool = True,
     ):
-        self.store = store
-        self.workspace = workspace
+        self.routed_execution = routed_execution
         self.spec = spec
-        self.codex_bin = codex_bin
-        self.executor = executor
-        self.session_exists = session_exists or self._local_session_exists
-        self.timeout_seconds = timeout_seconds
-        self.idle_timeout_seconds = idle_timeout_seconds
-        self.persist_conversation_session = persist_conversation_session
-        self.runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
-        self._run_process_with_idle_timeout = run_process_with_idle_timeout
 
     def run(
         self,
+        request_id: int,
         conversation_id: str,
         conversation_title: str,
         single_chat: bool,
         prompt: str,
         *,
         owner: str,
-        allow_side_effects: bool = True,
+        allow_side_effects: bool = False,
     ) -> StructuredAgentRun:
-        with self.store.codex_session_lock(conversation_id, owner):
-            session_id = self._usable_session_id(conversation_id)
-            transcript_start_line = self._session_line_count(session_id)
-            command = self._build_command(
-                prompt,
-                session_id,
-                allow_side_effects=allow_side_effects,
-            )
-            try:
-                raw = self._execute(command, prompt)
-            except RuntimeError as exc:
-                if not session_id or not _is_codex_session_refresh_error(str(exc)):
-                    raise
-                self.store.clear_codex_session(conversation_id)
-                session_id = None
-                transcript_start_line = 0
-                command = self._build_command(
-                    prompt,
-                    session_id,
-                    allow_side_effects=allow_side_effects,
+        if request_id <= 0:
+            raise ValueError("request_id must be positive")
+        if allow_side_effects:
+            raise ValueError("structured routed execution is read-only")
+        result = self.routed_execution.execute(
+            workload_kind="structured",
+            workload_key=str(request_id),
+            prompt=prompt,
+            command_factory=ApprovedCodexCommandFactory.read_only_structured(
+                developer_instructions=self.spec.developer_instructions(),
+                output_schema_path=(
+                    self.spec.output_schema_path or self.spec.schema_path
+                ),
+                use_output_schema=True,
+            ),
+            parser=_encode_structured_result,
+            result_codec=STRUCTURED_RESULT_CODEC,
+            conversation_id=conversation_id,
+            required_capabilities=STRUCTURED_RUNTIME_CAPABILITIES,
+            result_validation_retry=(
+                RoutedResultValidationRetry.same_session_exactly_once(
+                    correction_prompt=_agent_envelope_repair_prompt
                 )
-                raw = self._execute(command, prompt)
-            parsed_session_id = extract_codex_session_id(raw) or session_id or ""
-            try:
-                envelope = parse_agent_envelope(raw)
-            except (json.JSONDecodeError, ValueError, ValidationError):
-                if not parsed_session_id:
-                    raise
-                repair_prompt = _agent_envelope_repair_prompt(raw)
-                repair_command = self._build_command(
-                    repair_prompt,
-                    parsed_session_id,
-                    allow_side_effects=False,
-                )
-                raw = self._execute(repair_command, repair_prompt)
-                parsed_session_id = extract_codex_session_id(raw) or parsed_session_id
-                envelope = parse_agent_envelope(raw)
-            transcript_end_line = self._session_line_count(parsed_session_id)
-            audit_tool_events = self._audit_tool_events(
-                raw=raw,
-                session_id=parsed_session_id,
-                start_line=transcript_start_line,
-                end_line=transcript_end_line,
-            )
-            if parsed_session_id and self.persist_conversation_session:
-                self.store.upsert_conversation(
-                    conversation_id,
-                    conversation_title,
-                    single_chat,
-                    parsed_session_id,
-                )
-            return StructuredAgentRun(
-                envelope=envelope,
-                codex_session_id=parsed_session_id,
-                transcript_start_line=transcript_start_line,
-                transcript_end_line=transcript_end_line,
-                audit_tool_events=audit_tool_events,
-            )
-
-    def _usable_session_id(self, conversation_id: str) -> str | None:
-        session_id = self.store.get_codex_session_id(conversation_id)
-        if not session_id:
-            return None
-        if self.session_exists(session_id):
-            return session_id
-        self.store.clear_codex_session(conversation_id)
-        return None
-
-    @staticmethod
-    def _local_session_exists(session_id: str) -> bool:
-        return find_codex_session_path(session_id, codex_home=_codex_home()) is not None
-
-    @staticmethod
-    def _session_line_count(session_id: str | None) -> int:
-        if not session_id:
-            return 0
-        path = find_codex_session_path(session_id, codex_home=_codex_home())
-        if path is None:
-            return 0
-        return len(path.read_text(encoding="utf-8").splitlines())
+            ),
+        )
+        payload = json.loads(result.value)
+        envelope = AgentEnvelope.model_validate(payload["envelope"])
+        audit_tool_events = self._audit_tool_events(
+            raw_events=payload["audit_tool_events"],
+            session_id=result.session_id,
+            start_line=result.transcript_start,
+            end_line=result.transcript_end,
+        )
+        return StructuredAgentRun(
+            envelope=envelope,
+            codex_session_id=result.session_id,
+            transcript_start_line=result.transcript_start,
+            transcript_end_line=result.transcript_end,
+            audit_tool_events=audit_tool_events,
+        )
 
     @staticmethod
     def _audit_tool_events(
         *,
-        raw: str,
+        raw_events: list[dict[str, str]],
         session_id: str,
         start_line: int,
         end_line: int,
@@ -208,103 +159,29 @@ class StructuredCodexRunner:
                 start_line=start_line,
                 end_line=end_line,
             )
-        return session_events or extract_codex_audit_events(raw)
+        return session_events or raw_events
 
-    def _execute(self, command: list[str], prompt: str) -> str:
-        env = self.runner.build_env()
-        if self.executor is not None:
-            return run_external(
-                "codex exec",
-                lambda: self.executor(command, prompt, env),
-                max_attempts=3,
-                dependency="codex",
-            )
-        completed = run_external(
-            "codex exec",
-            lambda: self._run_process_with_idle_timeout(
-                command,
-                prompt=prompt,
-                env=env,
-                total_timeout_seconds=self.timeout_seconds,
-                idle_timeout_seconds=self.idle_timeout_seconds,
+
+def _encode_structured_result(raw: str) -> str:
+    try:
+        envelope = parse_agent_envelope(raw)
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise RoutedResultValidationError(
+            "invalid AgentEnvelope JSON", raw_output=raw
+        ) from exc
+    envelope_payload = envelope.model_dump(mode="json")
+    envelope_payload["audit"]["documents"] = []
+    return json.dumps(
+        {
+            "envelope": envelope_payload,
+            "audit_tool_events": audit_references_from_full_events(
+                extract_codex_audit_events(raw),
+                limit=40,
             ),
-            max_attempts=3,
-            dependency="codex",
-        )
-        if completed.timed_out:
-            raise ExternalDependencyError(
-                "codex structured agent",
-                RuntimeError(completed.timeout_reason or "codex exec timed out"),
-                dependency="codex",
-            )
-        if completed.returncode != 0:
-            raise ExternalDependencyError(
-                "codex structured agent",
-                RuntimeError(
-                    _subprocess_failure_reason(completed.stderr, completed.stdout)
-                ),
-                dependency="codex",
-            )
-        return completed.stdout
-
-    def _build_command(
-        self,
-        prompt: str,
-        session_id: str | None,
-        *,
-        allow_side_effects: bool = True,
-    ) -> list[str]:
-        safety_options = (
-            [
-                "-c",
-                'approval_policy="untrusted"',
-                "-c",
-                'approvals_reviewer="auto_review"',
-            ]
-            if allow_side_effects
-            else [
-                "-c",
-                'approval_policy="never"',
-            ]
-        )
-        common = [
-            "--json",
-            *codex_model_config_options(),
-            *safety_options,
-            "-c",
-            _config_string("developer_instructions", self.spec.developer_instructions()),
-            "-c",
-            'model_reasoning_summary="concise"',
-            "-c",
-            "include_permissions_instructions=false",
-            "-c",
-        ]
-        schema_options = (
-            ["--output-schema", str(self.spec.output_schema_path)]
-            if self.spec.output_schema_path is not None
-            else []
-        )
-        if session_id:
-            return [
-                self.codex_bin,
-                "exec",
-                "resume",
-                *common,
-                CODEX_BYPASS_APPROVALS_AND_SANDBOX,
-                *schema_options,
-                session_id,
-                "-",
-            ]
-        return [
-            self.codex_bin,
-            "exec",
-            *common,
-            CODEX_BYPASS_APPROVALS_AND_SANDBOX,
-            *schema_options,
-            "--cd",
-            str(self.workspace),
-            "-",
-        ]
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def parse_agent_envelope(raw: str) -> AgentEnvelope:

@@ -1,5 +1,8 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 import app.codex_decision as codex_decision
 from app.codex_decision import (
@@ -39,13 +42,73 @@ def make_runner(
     timeout_seconds: int = 120,
     idle_timeout_seconds: int = 180,
 ) -> CodexDecisionRunner:
-    return CodexDecisionRunner(
+    runner = CodexDecisionRunner(
         workspace=tmp_path,
-        executor=executor,
+        executor=executor or (lambda _command, _prompt: ""),
         timeout_seconds=timeout_seconds,
         idle_timeout_seconds=idle_timeout_seconds,
         codex_home=tmp_path,
     )
+    if executor is None:
+        runner.executor = runner._subprocess_executor
+    return runner
+
+
+def test_routed_decision_requires_and_uses_persisted_agent_run(tmp_path: Path):
+    calls = []
+
+    class Routed:
+        def execute(self, **kwargs):
+            calls.append(kwargs)
+            value = kwargs["parser"](
+                _agent_envelope_json(
+                    kind="no_action", mode="no_reply", summary="无需回复。"
+                )
+            )
+            return SimpleNamespace(
+                value=value,
+                session_id="decision-session",
+                transcript_start=2,
+                transcript_end=4,
+            )
+
+    runner = CodexDecisionRunner(
+        workspace=tmp_path,
+        routed_execution=Routed(),
+        codex_home=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="persisted agent run"):
+        runner.decide("decide", None)
+    decision = runner.decide("decide", None, run_id=41)
+
+    assert decision.action == CodexAction.NO_REPLY
+    assert calls[0]["workload_kind"] == "agent_run"
+    assert calls[0]["workload_key"] == "41"
+    assert runner.last_session_id == "decision-session"
+
+
+def test_routed_decision_propagates_runtime_failure_instead_of_business_stop(
+    tmp_path: Path,
+):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    class Routed:
+        def execute(self, **_kwargs):
+            raise RoutedCodexExecutionError(
+                "runtime_route_unavailable",
+                "provider detail with secret material",
+                failure_class=RuntimeFailureClass.AUTHENTICATION,
+                failure_code="codex_provider_auth_failed",
+            )
+
+    runner = CodexDecisionRunner(workspace=tmp_path, routed_execution=Routed())
+
+    with pytest.raises(RoutedCodexExecutionError) as raised:
+        runner.decide("decide", None, run_id=41)
+
+    assert raised.value.code == "runtime_route_unavailable"
 
 
 def _agent_envelope_json(

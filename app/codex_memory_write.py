@@ -5,9 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from app.codex_decision import _subprocess_failure_reason
-from app.codex_runner import CodexRunner, _config_string
-from app.process_runner import run_process_with_idle_timeout
+from app.agent_runtime_production import build_production_routed_codex_execution
+from app.agent_runtime_router import (
+    ApprovedCodexCommandFactory,
+    RoutedCodexExecution,
+    RoutedCodexExecutionError,
+    RoutedResultCodec,
+)
 from app.store import AutoReplyStore
 from app.wechat.codex_safety import completed_mcp_tool_calls, completed_tool_events
 
@@ -15,6 +19,12 @@ WRITE_SCHEMA_PATH = (
     Path(__file__).resolve().parent
     / "schemas"
     / "wechat_memory_write_result.schema.json"
+)
+MEMORY_WRITE_RESULT_CODEC = RoutedResultCodec.text(
+    schema_id="memory_write.episode_uuid.v1"
+)
+MEMORY_WRITE_CAPABILITIES = frozenset(
+    {"structured_output", "mcp:memory_connector:memory_write"}
 )
 
 
@@ -40,17 +50,25 @@ class CodexMemoryWriteToolFailed(RuntimeError):
 def run_codex_memory_write(
     *,
     workspace: Path,
+    store: AutoReplyStore,
+    event_id: int,
     data: str,
     type: Literal["text", "message"],
     created_at: str,
     source_description: str,
     codex_bin: str = "codex",
-    executor=None,
+    routed_execution: RoutedCodexExecution | None = None,
     timeout_seconds: int = 1200,
     idle_timeout_seconds: int = 900,
 ) -> MemoryWriteResult:
     del source_description
-    runner = CodexRunner(workspace=workspace, codex_bin=codex_bin)
+    routed_execution = routed_execution or build_production_routed_codex_execution(
+        store=store,
+        workspace=workspace,
+        codex_bin=codex_bin,
+        total_timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+    )
     prompt = (
         "如果 memory_write 未直接可用，先调用 tool_search 查询并加载 "
         "memory_connector memory_write；tool_search 只能用于这次工具发现。"
@@ -64,76 +82,45 @@ def run_codex_memory_write(
             ensure_ascii=False,
         )
     )
-    command = runner.build_command(
-        prompt,
-        None,
-        output_schema_path=WRITE_SCHEMA_PATH,
-    )
-    _remove_config_option(command, "developer_instructions=")
-    command[-1:-1] = [
-        "-c",
-        _config_string(
-            "developer_instructions",
-            (
-                "You are executing a service-owned Memory write. "
-                "If memory_write is deferred or not directly available, use "
-                "tool_search only to discover and load "
-                "memory_connector.memory_write. "
-                "Call exactly one memory_connector.memory_write tool with "
-                "the exact user-provided data, type, and created_at fields. "
-                "Do not call any tool other than tool_search for discovery "
-                "and that one memory_write. Do not add user_id, graph_id, "
-                "graph_ids, source_description, evidence, or any extra field. "
-                "Do not report attempted unless memory_write completed. "
-                'After the tool call, output exactly {"status":"attempted"}.'
+    try:
+        routed_result = routed_execution.execute(
+            workload_kind="memory",
+            workload_key=f"memory_write_event:{event_id}",
+            prompt=prompt,
+            command_factory=ApprovedCodexCommandFactory.effectful_memory_write(
+                developer_instructions=(
+                    "Execute exactly one memory_connector.memory_write with the exact "
+                    "data, type, and created_at fields. Do not call any other tool or "
+                    "add identity, graph, source, or evidence fields."
+                ),
+                output_schema_path=WRITE_SCHEMA_PATH,
             ),
-        ),
-        "-c",
-        'mcp_servers.memory_connector.enabled_tools=["memory_write"]',
-        "-c",
-        'mcp_servers.memory_connector.disabled_tools=["memory_recall"]',
-    ]
-    last_error: CodexMemoryWriteOutcomeUnknown | None = None
-    max_attempts = 1 if executor is not None else 3
-    for _attempt in range(max_attempts):
-        if executor is not None:
-            raw = executor(command, prompt)
-        else:
-            completed = run_process_with_idle_timeout(
-                command,
-                prompt=prompt,
-                env=runner.build_env(),
-                total_timeout_seconds=timeout_seconds,
-                idle_timeout_seconds=idle_timeout_seconds,
-            )
-            if completed.timed_out:
-                raise CodexMemoryWriteOutcomeUnknown(
-                    completed.timeout_reason or "memory write outcome unknown"
-                )
-            if completed.returncode != 0:
-                reason = _subprocess_failure_reason(
-                    completed.stderr,
-                    completed.stdout,
-                )
-                if _looks_like_memory_authorization_error(reason):
-                    raise CodexMemoryWriteAuthorizationRequired(reason)
-                raise CodexMemoryWriteOutcomeUnknown(
-                    f"memory write outcome unknown: {reason}"
-                )
-            raw = completed.stdout
-        try:
-            return memory_result_from_codex_audit(
-                raw,
-                data=data,
-                type=type,
-                created_at=created_at,
-            )
-        except CodexMemoryWriteOutcomeUnknown as exc:
-            last_error = exc
-            continue
-    if last_error is not None:
-        raise last_error
-    raise CodexMemoryWriteOutcomeUnknown("memory write outcome unknown")
+            parser=lambda raw: memory_result_from_codex_audit(
+                raw, data=data, type=type, created_at=created_at
+            ).episode_uuid,
+            result_codec=MEMORY_WRITE_RESULT_CODEC,
+            required_capabilities=MEMORY_WRITE_CAPABILITIES,
+        )
+    except RoutedCodexExecutionError as exc:
+        raise CodexMemoryWriteOutcomeUnknown("memory write outcome unknown") from exc
+    result = MemoryWriteResult(
+        episode_uuid=routed_result.value,
+        processing_status="completed",
+        duplicate=False,
+    )
+    with store._connect() as db:
+        cursor = db.execute(
+            """
+            update memory_write_events
+            set status='written', memory_episode_id=?, last_error='',
+                updated_at=current_timestamp
+            where id=? and status in ('pending', 'failed', 'written')
+            """,
+            (result.episode_uuid, event_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("memory write event is not eligible")
+    return result
 
 
 def memory_result_from_codex_audit(
@@ -259,12 +246,3 @@ def _looks_like_memory_authorization_error(reason: str) -> bool:
             "login",
         )
     )
-
-
-def _remove_config_option(command: list[str], prefix: str) -> None:
-    index = 0
-    while index < len(command) - 1:
-        if command[index] == "-c" and command[index + 1].startswith(prefix):
-            del command[index : index + 2]
-            continue
-        index += 1

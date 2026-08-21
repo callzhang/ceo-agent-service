@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -61,12 +62,14 @@ def complete_follow_ups_for_todo(
     todo_id: int,
     evidence: dict[str, Any],
     now: str,
+    _db: sqlite3.Connection | None = None,
 ) -> int:
     normalized_evidence = _completion_evidence(evidence, now=now)
     completed = 0
     for draft in store.list_follow_up_drafts_for_todo(
         todo_id,
         statuses=("draft", "approved", "sent"),
+        _db=_db,
     ):
         payload = {
             "completed": True,
@@ -80,6 +83,7 @@ def complete_follow_ups_for_todo(
             status="completed",
             evidence_check_json=json.dumps(payload, ensure_ascii=False),
             suppressed_reason=normalized_evidence["reason"],
+            _db=_db,
         )
         completed += 1
     return completed

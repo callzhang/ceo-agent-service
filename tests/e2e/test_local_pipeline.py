@@ -123,7 +123,8 @@ class FakeMeetingRunner:
     last_transcript_end_line = 10
     last_audit_tool_events = []
 
-    def decide(self, *, prompt):
+    def decide(self, *, prompt, run_id):
+        assert run_id > 0
         return MeetingAlignmentDecision.model_validate(
             {
                 "action": "send",

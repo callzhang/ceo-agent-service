@@ -183,8 +183,12 @@ def test_import_memory_uses_unique_ready_account_and_explicit_bounds(tmp_path, m
             captured.update(kwargs)
             return {"import_run_id":"run", "messages":3, "candidates":1}
     monkeypatch.setattr(cli, "WechatMemoryImporter", Importer)
-    monkeypatch.setattr(cli, "CodexMemoryExtractionRunner", lambda workspace: "runner")
-    monkeypatch.setattr(cli, "CodexMemoryRecallMatcher", lambda workspace: "matcher")
+    monkeypatch.setattr(
+        cli, "CodexMemoryExtractionRunner", lambda workspace, **_kwargs: "runner"
+    )
+    monkeypatch.setattr(
+        cli, "CodexMemoryRecallMatcher", lambda workspace, **_kwargs: "matcher"
+    )
     monkeypatch.setattr(cli, "_reader", lambda **kwargs: "reader")
     args = SimpleNamespace(db=str(db), account_id="acct-1", target_id=["u1", "g@chatroom"],
                            since="2026-07-01", until="2026-07-20", limit=50)
@@ -255,7 +259,7 @@ def test_produce_once_builds_direction_aware_reader(tmp_path, monkeypatch):
 
 
 def test_consume_once_builds_direction_aware_reader(tmp_path, monkeypatch):
-    from app import codex_decision
+    from app.wechat import decision_runner
 
     db = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db)
@@ -266,7 +270,9 @@ def test_consume_once_builds_direction_aware_reader(tmp_path, monkeypatch):
     reader = object()
     built_with = []
     captured = []
-    monkeypatch.setattr(codex_decision, "CodexDecisionRunner", lambda **kwargs: object())
+    monkeypatch.setattr(
+        decision_runner, "WechatDecisionRunner", lambda **kwargs: object()
+    )
     monkeypatch.setattr(
         cli, "_reader",
         lambda: built_with.append(True) or reader,
@@ -299,3 +305,24 @@ def test_automatic_once_commands_reject_ready_account_without_self_id(
 
     assert command(SimpleNamespace(db=str(db))) == 1
     assert "no single ready account" in capsys.readouterr().out
+
+
+def test_main_initializes_runtime_once_for_consumer(monkeypatch, tmp_path):
+    calls = []
+
+    class Refresher:
+        def refresh_expired(self, *, force=False):
+            calls.append(("refresh", force))
+
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_runtime_refresher",
+        lambda **_kwargs: Refresher(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "cmd_consume_once",
+        lambda _args: calls.append(("command",)) or 0,
+    )
+
+    assert cli.main(["consume-once", "--db", str(tmp_path / "worker.sqlite3")]) == 0
+    assert calls == [("refresh", True), ("command",)]

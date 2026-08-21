@@ -1,5 +1,5 @@
-import json
 import hashlib
+import json
 import sqlite3
 import tomllib
 from dataclasses import replace
@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from app.agent_context import (
+    _AUDIT_AGENT_RULES,
     AgentTaskContext,
     AuditTurnContext,
     MaterialReference,
-    _AUDIT_AGENT_RULES,
 )
 from app.agent_contracts import (
     AuditAgentResult,
@@ -22,17 +22,20 @@ from app.agent_contracts import (
 )
 from app.agent_effects import EffectKind, McpToolEffectRegistry
 from app.agent_result import ResultParseError
+from app.agent_runtime_config import load_runtime_config
+from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+from app.agent_runtime_router import AgentRuntimeRouter
+from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import (
     _action_completion_accounting,
     _action_receipt_operation_id,
+    _actions_have_required_readbacks,
     _is_dingtalk_chat_send_argv,
     _json_digest,
     _metadata_matches_action,
-    _actions_have_required_readbacks,
     _read_matches_action,
     _validated_reconciliation,
 )
-from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_wire_contracts import AuditAgentWireResult
 from app.audit_agent import (
     AuditAgentRunner,
@@ -40,6 +43,7 @@ from app.audit_agent import (
     _recovery_authorizations,
     _recovery_prompt,
 )
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import AUDIT_DYNAMIC_SKILL_BODY, audit_developer_instructions
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
@@ -96,6 +100,263 @@ class SequencedExecutor(CapturingExecutor):
     def __call__(self, command, *, on_stdout_line, **kwargs):
         self.stdout = self.outputs.pop(0)
         return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+
+
+def _audit_runtime_dependencies(
+    store,
+    *,
+    routes="codex_oauth,codex_api",
+    workspace=Path("/workspace"),
+):
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": routes,
+            "CEO_CODEX_API_KEY": "fallback-test-key",
+        }
+    )
+    capabilities = frozenset(
+        {
+            "structured_output",
+            "local_schema_validation",
+            "audit_effect_visibility",
+            "reviewed_read_tools",
+            "reviewed_write_tools",
+            "agent_cli.dws",
+            "task_context",
+            "channel:dingtalk",
+            "mcp:agent_cli:reviewed_read",
+            "mcp:agent_cli:reviewed_write",
+            "native_cli:reviewed",
+            "native_cli:dws",
+            "mcp:memory_connector:read",
+            "reviewed_skill:business-review:ef1bf870671c6af5ad40d59f73d237cff5ae286f835936a7893a98988389ab8a",
+        }
+    )
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=capabilities,
+            healthy=True,
+            checked_at="2026-08-20 00:00:00",
+            expires_at="2099-08-20 00:00:00",
+        )
+        for route in config.routes
+    }
+    return (
+        config,
+        AgentRuntimeRouter(routes=config.routes, store=store, snapshots=snapshots),
+        CodexRuntimeAdapter(workspace, config),
+    )
+
+
+def test_audit_effect_start_blocks_api_fallback(setup, monkeypatch):
+    store, task, audit_context, parent = setup
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "fallback-test-key")
+    write_stream = _audit_result_jsonl(
+        "executed",
+        operation_id="operation-1",
+        session="oauth-session",
+        include_write=True,
+    ).splitlines()
+    started_write = next(
+        line
+        for line in write_stream
+        if (
+            (payload := json.loads(line)).get("type") == "item.started"
+            and payload.get("item", {}).get("tool") == "execute_reviewed_write"
+        )
+    )
+    failure_stream = "\n".join(
+        (
+            json.dumps({"type": "thread.started", "thread_id": "oauth-session"}),
+            started_write,
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "stream disconnected before completion",
+                }
+            ),
+        )
+    )
+    executor = CapturingExecutor(failure_stream, returncode=1)
+    config, router, adapter = _audit_runtime_dependencies(store)
+
+    with pytest.raises(RuntimeError):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+            runtime_config=config,
+            runtime_router=router,
+            codex_adapter=adapter,
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None
+    [attempt] = store.list_agent_runtime_attempts(run.id)
+    assert attempt.route_name == "codex_oauth"
+    assert attempt.status == "failed"
+    assert attempt.failure_class == "transport"
+    assert attempt.first_effect_started_at
+    assert run.side_effect_state == "unknown"
+    assert len(executor.commands) == 1
+
+
+def test_failed_route_replays_hidden_completed_write_before_failover(
+    setup, monkeypatch
+):
+    store, task, audit_context, parent = setup
+    completed_write = next(
+        payload
+        for line in _audit_result_jsonl(
+            "executed",
+            operation_id="operation-1",
+            session="oauth-hidden-write",
+            include_write=True,
+        ).splitlines()
+        if (payload := json.loads(line)).get("type") == "item.completed"
+        and payload.get("item", {}).get("tool") == "execute_reviewed_write"
+    )
+    skill_path = Path(audit_context.consumer_skills[0].path)
+    skill_event, _ = _skill_read_jsonl(
+        skill_path, skill_path.read_text(encoding="utf-8")
+    )
+    failure_stream = "\n".join(
+        (
+            json.dumps(
+                {"type": "thread.started", "thread_id": "oauth-hidden-write"}
+            ),
+            skill_event,
+            json.dumps(
+                {"type": "error", "message": "stream disconnected before completion"}
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "app.agent_turn_runner.count_codex_session_lines", lambda *args, **kwargs: 5
+    )
+    monkeypatch.setattr(
+        "app.agent_turn_runner.extract_codex_mcp_tool_results_from_session",
+        lambda *args, **kwargs: [completed_write],
+    )
+    config, router, adapter = _audit_runtime_dependencies(store)
+    executor = CapturingExecutor(failure_stream, returncode=1)
+
+    with pytest.raises(RuntimeError, match="codex_process_failed"):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+            runtime_config=config,
+            runtime_router=router,
+            codex_adapter=adapter,
+        ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    run = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+    )
+    assert run is not None and run.status == "unknown"
+    [attempt] = store.list_agent_runtime_attempts(run.id)
+    assert attempt.route_name == "codex_oauth"
+    assert attempt.status == "failed"
+    assert attempt.session_id == "oauth-hidden-write"
+    assert attempt.transcript_start == 0
+    assert attempt.transcript_end == 5
+    assert attempt.first_effect_started_at
+    assert len(executor.commands) == 1
+
+
+def test_audit_never_resumes_or_overwrites_consumer_oauth_route_session(setup):
+    store, task, audit_context, parent = setup
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+        "consumer-oauth-session",
+    )
+    executor = CapturingExecutor(
+        _revision_required_jsonl("Keep the candidate read-only.")
+    )
+
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert executor.commands[0][:3] != ["codex", "exec", "resume"]
+    assert store.get_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+    ) == "consumer-oauth-session"
+
+
+def test_audit_never_reads_or_overwrites_consumer_api_route_session(setup):
+    store, task, audit_context, parent = setup
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_api",
+        "consumer-api-session",
+    )
+    config, router, adapter = _audit_runtime_dependencies(
+        store,
+        routes="codex_api",
+    )
+    executor = CapturingExecutor(
+        "\n".join(
+            (
+                json.dumps(
+                    {"type": "thread.started", "thread_id": "audit-api-session"}
+                ),
+                _revision_required_jsonl("Keep the candidate read-only."),
+            )
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+    ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert executor.commands[0][:2] == ["codex", "exec"]
+    assert executor.commands[0][:3] != ["codex", "exec", "resume"]
+    assert store.get_conversation_runtime_session(
+        task.conversation_id,
+        "codex_api",
+    ) == "consumer-api-session"
+    run = store.get_agent_run(result.run_id)
+    assert run is not None and run.codex_session_id == ""
+    [attempt] = store.list_agent_runtime_attempts(result.run_id)
+    assert attempt.route_name == "codex_api"
+    assert attempt.session_mode == "fresh"
+    assert attempt.session_id
+
+
+def test_audit_requires_exact_reviewed_skill_and_write_capabilities(setup):
+    store, _, audit_context, _ = setup
+    runner = AuditAgentRunner(store=store, workspace=Path("/workspace"))
+
+    required = runner._required_capabilities(audit_context, recovery_phase="")
+
+    receipt = audit_context.consumer_skills[0]
+    assert f"reviewed_skill:{receipt.name}:{receipt.sha256}" in required
+    assert "mcp:agent_cli:reviewed_write" in required
+    assert "native_cli:dws" in required
 
 
 class ExactReceiptExecutor(CapturingExecutor):
@@ -2084,6 +2345,33 @@ def _seed_crashed_audit_write(setup):
         "group": "cid-agent"
     }
     return store, task, audit_context, run
+
+
+def test_claude_session_collision_never_reads_codex_delivery_history(
+    setup, monkeypatch
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    [attempt] = store.list_agent_runtime_attempts(run.id)
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runtime_attempts set runtime_kind='claude_cli' where id=?",
+            (attempt.id,),
+        )
+    history_calls: list[str] = []
+    monkeypatch.setattr(
+        "app.audit_agent.extract_codex_mcp_tool_results_from_session",
+        lambda session_id: history_calls.append(session_id) or (),
+    )
+
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+    )._backfill_persisted_direct_delivery_receipt(task, audit_context, run)
+
+    assert history_calls == []
+    assert not store.has_sent_reply_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    )
 
 
 def test_recovery_reconciliation_without_skill_receipts_stays_strictly_read_only(

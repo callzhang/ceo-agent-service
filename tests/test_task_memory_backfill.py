@@ -1,11 +1,21 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
-from app.task_models import ProjectMemoryContext
 from app.task_memory_backfill import (
+    ProjectMemoryContextCodexRunner,
     parse_project_memory_context,
     validate_project_memory_context,
+)
+from app.task_models import (
+    FollowUpMode,
+    ProjectCategory,
+    ProjectMemoryContext,
+    ProjectPriority,
+    ProjectStatus,
+    RiskLevel,
+    WorkProject,
 )
 
 
@@ -63,3 +73,68 @@ def test_validate_project_memory_context_rejects_memory_auth_failure():
                 }
             ],
         )
+
+
+def test_project_memory_backfill_uses_persisted_project_identity_and_read_only_route(
+    tmp_path,
+):
+    calls = []
+
+    class Routed:
+        def execute(self, **kwargs):
+            calls.append(kwargs)
+            value = kwargs["parser"](
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "item.completed",
+                                "item": {
+                                    "type": "mcp_tool_call",
+                                    "tool": "memory_recall",
+                                    "arguments": {"query": "项目历史"},
+                                    "result": {"memories": []},
+                                },
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            {
+                                "query": "项目历史",
+                                "summary": "已查询 memory_recall。",
+                                "memories": [],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+            )
+            return SimpleNamespace(value=value, session_id="session-1")
+
+    project = WorkProject(
+        id=41,
+        title="项目",
+        category=ProjectCategory.PROJECTS,
+        status=ProjectStatus.ACTIVE,
+        priority=ProjectPriority.P1,
+        risk_level=RiskLevel.LOW,
+        follow_up_mode=FollowUpMode.NONE,
+        created_at="2026-08-20 10:00:00",
+        updated_at="2026-08-20 10:00:00",
+    )
+    runner = ProjectMemoryContextCodexRunner(
+        tmp_path,
+        routed_execution=Routed(),
+    )
+
+    result = runner.build(project=project, todos=[], updates=[])
+
+    assert result.query == "项目历史"
+    assert runner.last_session_id == "session-1"
+    assert calls[0]["workload_kind"] == "task"
+    assert calls[0]["workload_key"] == "41:memory_backfill"
+    assert calls[0]["conversation_id"] is None
+    assert calls[0]["required_capabilities"] == frozenset(
+        {"structured_output", "memory_connector_read"}
+    )
+    assert calls[0]["command_factory"]._approved_policy.effect_mode == "read_only"

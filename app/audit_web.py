@@ -60,6 +60,8 @@ from app.config import (
     broadcast_mention_aliases,
     consumer_poll_interval_seconds,
     consumer_worker_count,
+    codex_model,
+    codex_model_reasoning_effort,
     corpus_dir,
     document_extraction_ids,
     embedding_api_key,
@@ -3046,6 +3048,16 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "单个 launchd 服务内并发的 reply consumer 线程数；同一会话仍由 SQLite 会话锁串行执行。",
         ),
         (
+            "CEO_CODEX_MODEL",
+            codex_model(),
+            "Codex 执行模型；保存后写入 .env，后续启动的 agent 使用此模型。",
+        ),
+        (
+            "CEO_CODEX_MODEL_REASONING_EFFORT",
+            codex_model_reasoning_effort(),
+            "Codex thinking 强度；保存后写入 .env，后续启动的 agent 使用此强度。",
+        ),
+        (
             "CEO_MEETING_PRODUCER_INTERVAL_SECONDS",
             str(meeting_producer_interval_seconds()),
             "meeting producer 扫描 dws minutes 的间隔秒数。",
@@ -3220,6 +3232,8 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_PRODUCER_INTERVAL_SECONDS",
         "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
         "CEO_CONSUMER_WORKERS",
+        "CEO_CODEX_MODEL",
+        "CEO_CODEX_MODEL_REASONING_EFFORT",
         "CEO_MEETING_PRODUCER_INTERVAL_SECONDS",
         "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS",
         "CEO_MEETING_SETTLE_SECONDS",
@@ -6553,6 +6567,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             agent_runs,
             attention,
             reply_task,
+            [item for run in agent_runs for item in store.list_agent_runtime_attempts(run.id)],
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
@@ -8262,7 +8277,7 @@ def create_audit_app(
         from app import config as _config
         from app.wechat.memory import CodexMemoryWriteBackend, WechatMemoryWriter
         return WechatMemoryWriter(
-            store, CodexMemoryWriteBackend(_config.workspace_path())
+            store, CodexMemoryWriteBackend(_config.workspace_path(), store)
         )
 
     register_wechat_memory_review_routes(
@@ -8904,6 +8919,7 @@ def _attempt_detail_body(
     agent_runs: list[AgentRun] | None = None,
     attention: HistoryAttention | None = None,
     reply_task: ReplyTask | None = None,
+    runtime_attempts: list[object] | None = None,
 ) -> str:
     agent_runs = agent_runs or []
     closed_after_review = (
@@ -8979,7 +8995,59 @@ def _attempt_detail_body(
             f"{_text_card('Audit summary', attempt.audit_summary)}"
             f"{'' if agent_runs else _audit_tool_uses_card(attempt)}"
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
+            f"{_runtime_attempt_evidence_card(runtime_attempts or [])}"
         ),
+    )
+
+
+def _runtime_attempt_evidence_card(attempts: list[object]) -> str:
+    if not attempts:
+        return ""
+    rendered_attempts = []
+    for attempt in attempts:
+        safe = {
+            name: safe_observability_error(
+                str(getattr(attempt, name, "") or ""), limit=180
+            )
+            for name in (
+                "route_name",
+                "runtime_kind",
+                "credential_mode",
+                "model",
+                "session_id",
+                "status",
+                "failure_code",
+                "first_effect_started_at",
+            )
+        }
+        session_id = safe["session_id"]
+        raw_session_id = str(getattr(attempt, "session_id", "") or "")
+        session = escape(session_id)
+        if session_id and session_id == raw_session_id:
+            session = (
+                f'<a href="/codex/{quote(raw_session_id, safe="")}">'
+                f"{escape(session_id)}</a>"
+            )
+        transcript_start = int(getattr(attempt, "transcript_start", 0) or 0)
+        transcript_end = int(getattr(attempt, "transcript_end", 0) or 0)
+        lines = (
+            f"Route: {escape(safe['route_name'])}",
+            f"Runtime: {escape(safe['runtime_kind'])}",
+            f"Credential mode: {escape(safe['credential_mode'])}",
+            f"Model: {escape(safe['model'])}",
+            f"Session: {session}",
+            f"Status: {escape(safe['status'])}",
+            f"Failure code: {escape(safe['failure_code'])}",
+            "Failover permitted: "
+            + ("yes" if bool(getattr(attempt, "failover_permitted", False)) else "no"),
+            f"Transcript lines: {transcript_start}-{transcript_end}",
+            f"Effect started: {escape(safe['first_effect_started_at'])}",
+        )
+        rendered_attempts.append("<pre>" + "\n".join(lines) + "</pre>")
+    return (
+        '<section class="card"><h2>Runtime attempts</h2>'
+        + "".join(rendered_attempts)
+        + "</section>"
     )
 
 
