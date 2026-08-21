@@ -3937,6 +3937,27 @@ def test_effect_registry_accepts_registered_direct_message_readback():
     )
 
 
+@pytest.mark.parametrize("operation", ["chat +chat-messages", "chat +search-msg"])
+def test_effect_registry_accepts_registered_group_send_readback(operation):
+    registry = McpToolEffectRegistry.default()
+
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": operation,
+            "target_identifiers": {"group": "group-1"},
+        },
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_write",
+            "operation": "chat +send-to-group",
+            "target_identifiers": {"group": "group-1"},
+        },
+        registry,
+    )
+
+
 def test_effect_registry_accepts_document_move_info_readback():
     registry = McpToolEffectRegistry.default()
 

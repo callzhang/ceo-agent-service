@@ -19,6 +19,8 @@
             {"read": "chat +chat-messages", "write": "chat +messages-send"},
             {"read": "chat +chat-messages", "write": "chat +messages-reply"},
             {"read": "chat +chat-messages", "write": "chat message reply"},
+            {"read": "chat +chat-messages", "write": "chat +send-to-group"},
+            {"read": "chat +search-msg", "write": "chat +send-to-group"},
             {"read": "chat message reaction list", "write": "chat message reaction add"},
             {"read": "doc info", "write": "doc +move"},
             {

@@ -98,7 +98,9 @@ Service 只接受 completed `agent_cli.read_skill` events 形成的 receipt。B 
 执行并读回；需要改变业务含义时，B 通过反馈消息让 A 产生新 revision，不自行偷偷改写。
 
 完全相同的 trigger/generation/revision 外部效果只执行一次。反馈后正文或参数变化形成新 revision，
-可以继续执行。结果未知时，原 B session 只读 reconciliation；没有证据不得重放。
+可以继续执行。结果未知时，原 B session 只读 reconciliation；没有证据不得重放。受控群消息发送的
+reconciliation 只接受同一群的 `chat +chat-messages` 或 `chat +search-msg` 读回；这只能保留
+`unknown` 或标记明确结果，不能凭群级读取确认发送成功。
 
 ## Task extraction 与 follow-up
 
