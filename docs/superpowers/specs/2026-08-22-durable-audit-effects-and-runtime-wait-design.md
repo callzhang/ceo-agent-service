@@ -54,6 +54,10 @@ database path and parent Audit run ID. It validates the actual canonical argv
 against the authorization, changes exactly that intent from `prepared` to
 `dispatched` in SQLite, then launches the external command. A second call with
 the same authorization fails locally before an external command begins.
+Initial and recovery turns derive the same authorization for the same logical
+action, and the database additionally enforces uniqueness on
+`(agent_run_id, receipt_operation_id)`, so a changed token cannot bypass the
+fence after lease ownership changes.
 
 On a successful controlled command, the MCP tool stores the result digest and
 a normal execution receipt in the same SQLite transaction, then changes the
@@ -80,6 +84,12 @@ approved Audit action may notify another party.
 later reconciliation deferral. It is diagnostic history only; the current
 `agent_runs` state remains the source of operational scheduling.
 
+Dispatch atomically changes the parent side-effect state to `unknown`. Event
+accounting cannot downgrade that state while the intent is unacknowledged, and
+neither explicit settlement nor expired-lease cleanup may terminally fail such
+a run. A dispatched token is never re-armed; only a token that remained
+`prepared` can be consumed by a later, approved recovery turn.
+
 ### Runtime route unavailability
 
 `runtime_route_unavailable` has two meanings that must remain distinct:
@@ -97,14 +107,15 @@ second runtime turn in the same worker pass.
 
 ## Data and safety invariants
 
-- One `(agent_run_id, authorization_id)` can move only `prepared → dispatched
-  → acknowledged`.
+- One logical `(agent_run_id, receipt_operation_id)` has one stable
+  authorization and can move only `prepared → dispatched → acknowledged`.
 - Dispatch requires a live, running parent run; acknowledgement requires a
   previously dispatched matching intent and a successful nonempty result
   digest.
 - A terminal parent run cannot dispatch an unconsumed intent.
-- Recovery remains read-only unless a newly approved and prepared
-  authorization is explicitly supplied for an allowed recovery write.
+- Recovery remains read-only for every previously dispatched action. It may
+  consume the same still-prepared authorization only when reconciliation has
+  proved that the original runtime never crossed the local dispatch boundary.
 - Runtime waiting does not mark the effect known, does not increase external
   dispatch count, and never bypasses capability checks.
 

@@ -121,7 +121,9 @@ Audit writes.
    contract before starting Audit runtime. Prose is never dispatch authority.
 2. Derive an exact, action-indexed, one-shot authorization for every approved
    write. Persist it in `agent_effect_intents` as `prepared` before the runtime
-   can call a write tool.
+   can call a write tool. Initial and recovery turns reuse the same stable
+   authorization, and a unique `(agent_run_id, receipt_operation_id)` index
+   fences the logical external action even if a different token is presented.
 3. At the local `agent_cli` boundary, validate the complete command identity,
    atomically transition the intent to `dispatched`, and only then launch the
    external process. A consumed authorization cannot be reused, including by
@@ -131,10 +133,17 @@ Audit writes.
    This acknowledgement remains writable if the supervising run has meanwhile
    become `unknown`, so a service/CLI disconnect cannot discard it.
 5. Reject dispatch when the parent run is terminal or has no live lease.
-6. Accept both `--text` and `--content` for reviewed DingTalk delivery ledger
+   Dispatch immediately marks the parent effect state unknown; a dispatched
+   intent without acknowledgement forces both explicit terminal settlement and
+   expired-lease recovery through `unknown`, never terminal `failed`.
+6. Bump and validate the store schema so deployed databases create the intent,
+   state-history, and logical-operation uniqueness objects before workers run.
+7. Validate native proposal commands with reviewed effect metadata. Read-only
+   and unclassified CLI commands do not pass the write-contract gate.
+8. Accept both `--text` and `--content` for reviewed DingTalk delivery ledger
    recording, including an explicit `chat +dm --to` recipient that is separate
    from the trigger sender.
-7. Append the first unknown cause and every reconciliation deferral to
+9. Append the first unknown cause, including lease-expiry transitions, and every reconciliation deferral to
    `agent_run_state_events`; later route failures no longer destroy the original
    diagnosis.
 
@@ -151,7 +160,9 @@ accept the local authorization as an idempotency key or return a stable external
 operation/message ID that can be queried. DWS operations that do not expose
 either property cannot be retried safely. The implemented one-shot intent
 minimizes the window and prevents local duplicate dispatch; it does not pretend
-that an unconfirmed third-party write is known.
+that an unconfirmed third-party write is known. Reconciliation may consume a
+still-`prepared` token after proving absence, but a token that reached
+`dispatched` is never locally re-armed; it remains read-only reconciled.
 
 ## Runtime-route retry-budget correction
 

@@ -6093,6 +6093,10 @@ class AutoReplyStore:
                 updated_at=?
             where reply_task_id=? and execution_generation=? and status='running'
               and side_effect_state='none'
+              and not exists (
+                  select 1 from agent_effect_intents
+                  where agent_run_id=agent_runs.id and state='dispatched'
+              )
             """,
             (error_json, now_text, now_text, task_id, current_generation),
         )
@@ -6109,6 +6113,16 @@ class AutoReplyStore:
             {"code": "generation_rotation_requires_reconciliation"},
             separators=(",", ":"),
         )
+        transitioned_run_ids = [
+            int(row["id"])
+            for row in db.execute(
+                "select id from agent_runs "
+                "where reply_task_id=? and execution_generation=? "
+                "and status='running' and role='audit' "
+                "and side_effect_state<>'none'",
+                (task_id, execution_generation),
+            ).fetchall()
+        ]
         db.execute(
             """
             update agent_runs
@@ -6120,6 +6134,15 @@ class AutoReplyStore:
               and side_effect_state<>'none'
             """,
             (error_json, now_text, task_id, execution_generation),
+        )
+        db.executemany(
+            "insert into agent_run_state_events ("
+            "agent_run_id, phase, structured_error_json, created_at"
+            ") values (?, 'initial_unknown', ?, ?)",
+            (
+                (run_id, error_json, now_text)
+                for run_id in transitioned_run_ids
+            ),
         )
         row = db.execute(
             """
@@ -6295,7 +6318,11 @@ class AutoReplyStore:
                     or has_completed_receipt
                 )
             ):
-                db.execute(
+                error_json = json.dumps(
+                    {"code": "confirmed_effect_requires_reconciliation"},
+                    separators=(",", ":"),
+                )
+                transitioned = db.execute(
                     """
                     update agent_runs
                     set status='unknown', side_effect_state='unknown',
@@ -6304,15 +6331,19 @@ class AutoReplyStore:
                     where id=? and status='running' and lease_expires_at<=?
                     """,
                     (
-                        json.dumps(
-                            {"code": "confirmed_effect_requires_reconciliation"},
-                            separators=(",", ":"),
-                        ),
+                        error_json,
                         now_text,
                         row["id"],
                         now_text,
                     ),
                 )
+                if transitioned.rowcount == 1:
+                    db.execute(
+                        "insert into agent_run_state_events ("
+                        "agent_run_id, phase, structured_error_json, created_at"
+                        ") values (?, 'initial_unknown', ?, ?)",
+                        (row["id"], error_json, now_text),
+                    )
                 row = db.execute(
                     "select * from agent_runs where id=?",
                     (row["id"],),
@@ -7206,6 +7237,14 @@ class AutoReplyStore:
             ).fetchone()
             if row is None:
                 raise ValueError("agent run does not exist")
+            if db.execute(
+                "select 1 from agent_effect_intents "
+                "where agent_run_id=? and state='dispatched' limit 1",
+                (run_id,),
+            ).fetchone() is not None:
+                raise ValueError(
+                    "agent run has a dispatched effect intent awaiting reconciliation"
+                )
             if (
                 row["role"] != AgentRole.AUDIT.value
                 or row["status"] not in {"unknown", "completed"}
@@ -7403,6 +7442,10 @@ class AutoReplyStore:
                 where id=? and status='running'
                   and execution_generation=?
                   and side_effect_state='none'
+                  and not exists (
+                      select 1 from agent_effect_intents
+                      where agent_run_id=agent_runs.id and state='dispatched'
+                  )
                   and lease_expires_at<=?
                   and exists (
                       select 1 from reply_tasks
@@ -8809,6 +8852,16 @@ class AutoReplyStore:
             for row in rows:
                 task_id = int(row["id"])
                 generation = str(row["execution_generation"])
+                transitioned_run_ids = [
+                    int(run["id"])
+                    for run in db.execute(
+                        "select id from agent_runs "
+                        "where reply_task_id=? and execution_generation=? "
+                        "and role='audit' and status='running' "
+                        "and side_effect_state<>'none'",
+                        (task_id, generation),
+                    ).fetchall()
+                ]
                 db.execute(
                     """
                     update agent_runs
@@ -8820,6 +8873,15 @@ class AutoReplyStore:
                       and side_effect_state<>'none'
                     """,
                     (error_json, task_id, generation),
+                )
+                db.executemany(
+                    "insert into agent_run_state_events ("
+                    "agent_run_id, phase, structured_error_json"
+                    ") values (?, 'initial_unknown', ?)",
+                    (
+                        (run_id, error_json)
+                        for run_id in transitioned_run_ids
+                    ),
                 )
                 cursor = db.execute(
                     """

@@ -4388,6 +4388,16 @@ def test_expired_agent_run_with_confirmed_receipt_enters_reconciliation_without_
 
     assert reclaim.claimed is False
     assert reclaim.run.status == "unknown"
+    with store._connect() as db:
+        [state_event] = db.execute(
+            "select phase, structured_error_json from agent_run_state_events "
+            "where agent_run_id=? order by id",
+            (first.run.id,),
+        ).fetchall()
+    assert state_event["phase"] == "initial_unknown"
+    assert json.loads(state_event["structured_error_json"])["code"] == (
+        "confirmed_effect_requires_reconciliation"
+    )
     assert reclaim.run.side_effect_state == "unknown"
     assert reclaim.run.lease_owner == ""
     assert store.list_agent_execution_receipts(first.run.id)[0].operation_id == "write-1"
@@ -4964,6 +4974,12 @@ def test_expired_run_with_dispatched_intent_enters_reconciliation(tmp_path: Path
     assert json.loads(state_event["structured_error_json"])["code"] == (
         "agent_run_lease_expired"
     )
+    with pytest.raises(ValueError, match="dispatched effect intent"):
+        store.finalize_closed_failed_audit_run(
+            run.id,
+            reason="The local tool reported failure after dispatch.",
+            now="2026-08-22 00:01:02",
+        )
 
 
 def _effect_intent_authorization(authorization_id: str) -> dict[str, object]:
@@ -9985,6 +10001,16 @@ def test_service_restart_requeues_running_effectful_audit_for_reconciliation(
     assert recovered_run is not None and recovered_run.status == "unknown"
     assert recovered_run.side_effect_state == "unknown"
     assert json.loads(recovered_run.structured_error_json)["code"] == (
+        "service_restart_effect_requires_reconciliation"
+    )
+    with store._connect() as db:
+        [state_event] = db.execute(
+            "select phase, structured_error_json from agent_run_state_events "
+            "where agent_run_id=? order by id",
+            (run.id,),
+        ).fetchall()
+    assert state_event["phase"] == "initial_unknown"
+    assert json.loads(state_event["structured_error_json"])["code"] == (
         "service_restart_effect_requires_reconciliation"
     )
 
