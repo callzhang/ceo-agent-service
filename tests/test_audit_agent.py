@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import app.audit_agent as audit_agent_module
 from app.agent_context import (
     _AUDIT_AGENT_RULES,
     AgentTaskContext,
@@ -49,7 +50,11 @@ from app.audit_agent import (
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import AUDIT_DYNAMIC_SKILL_BODY, audit_developer_instructions
-from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
+from app.native_cli_metadata import (
+    AgentReadOnlyViolationError,
+    NativeCliMetadataClassifier,
+    describe_native_command,
+)
 from app.process_runner import ProcessRunResult
 from app.runtime_environment import central_python
 from app.store import AgentRole, AutoReplyStore
@@ -3745,6 +3750,63 @@ def test_native_read_command_is_not_a_valid_write_operation_contract():
             "target": {"scope": "schema"},
             "payload": {"argv": ["dws", "schema", "--yes"]},
             "expected_verification": "Schema was inspected",
+        }
+    )
+
+    assert not _proposed_operation_contract_valid(
+        action, McpToolEffectRegistry.default()
+    )
+
+
+def test_native_lark_read_command_is_not_a_valid_write_operation_contract(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        audit_agent_module,
+        "_OPERATION_CONTRACT_CLASSIFIER",
+        NativeCliMetadataClassifier(
+            reviewed_effects={
+                ("lark-cli", "drive list"): EffectKind.READ_ONLY,
+            }
+        ),
+    )
+    action = ProposedAction.model_validate(
+        {
+            "description": "List drive files",
+            "capability": "lark-cli",
+            "operation": "drive list",
+            "target": {"folder": "root"},
+            "payload": {"argv": ["lark-cli", "drive", "list"]},
+            "expected_verification": "Files were listed",
+        }
+    )
+
+    assert not _proposed_operation_contract_valid(
+        action, McpToolEffectRegistry.default()
+    )
+
+
+def test_unclassified_native_command_is_not_a_valid_write_operation_contract(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class Unclassified:
+        @staticmethod
+        def classify(_item):
+            return None
+
+    monkeypatch.setattr(
+        audit_agent_module,
+        "_OPERATION_CONTRACT_CLASSIFIER",
+        Unclassified(),
+    )
+    action = ProposedAction.model_validate(
+        {
+            "description": "Run an unknown command",
+            "capability": "dws",
+            "operation": "unknown command",
+            "target": {"scope": "unknown"},
+            "payload": {"argv": ["dws", "unknown", "command", "--yes"]},
+            "expected_verification": "Command completed",
         }
     )
 
