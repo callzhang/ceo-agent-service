@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -846,6 +847,8 @@ class ClaudeEventNormalizer:
                 "metadata": {
                     "effect": call.effect.value,
                     "capability": call.server,
+                    "reviewed_server": server,
+                    "reviewed_tool": tool,
                     "operation": call.operation,
                     "operation_digest": call.operation_digest,
                     "target_identifiers": call.target_identifiers,
@@ -887,6 +890,16 @@ class ClaudeEventNormalizer:
             raise ClaudeEventPolicyError("claude_tool_result_without_start")
         item = dict(started)
         item["status"] = "failed" if is_error else "completed"
+        if not is_error:
+            item["metadata"] = dict(item["metadata"])
+            item["metadata"]["result_digest"] = hashlib.sha256(
+                json.dumps(
+                    block.get("content"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
         return {
             "type": RuntimeEventType.ITEM_FAILED.value
             if is_error

@@ -581,10 +581,11 @@ def _required_runtime_capabilities(
         required.add("reviewed_read_tools")
     else:
         required.update(_AUDIT_RUNTIME_CAPABILITIES)
-    for action in expected_effect_actions:
-        capability = action.get("capability")
-        if isinstance(capability, str) and capability.strip():
-            required.add(capability.strip())
+    if recovery_phase != "reconcile":
+        for action in expected_effect_actions:
+            capability = action.get("capability")
+            if isinstance(capability, str) and capability.strip():
+                required.add(capability.strip())
     required.update(
         capability.strip()
         for capability in explicit_capabilities
@@ -761,18 +762,26 @@ class AgentTurnProcess(Generic[ResultT]):
         )
 
         def persist_effect_event(
-            payload: dict[str, object], *, from_session_replay: bool = False
+            payload: dict[str, object],
+            *,
+            from_session_replay: bool = False,
+            from_claude_normalizer: bool = False,
         ) -> None:
             nonlocal line_count, saw_json
             nonlocal primary_turn_started, primary_turn_closed
-            event = self._normalized_effect_event(
-                payload,
-                read_only=(
-                    run.role is AgentRole.CONSUMER
-                    or recovery_phase == "reconcile"
-                ),
-                operation_id=run.operation_id,
-                require_recovery_authorization=recovery_phase == "execute",
+            read_only = (
+                run.role is AgentRole.CONSUMER
+                or recovery_phase == "reconcile"
+            )
+            event = (
+                _trusted_claude_effect_event(payload, read_only=read_only)
+                if from_claude_normalizer
+                else self._normalized_effect_event(
+                    payload,
+                    read_only=read_only,
+                    operation_id=run.operation_id,
+                    require_recovery_authorization=recovery_phase == "execute",
+                )
             )
             if event is None:
                 return
@@ -879,7 +888,10 @@ class AgentTurnProcess(Generic[ResultT]):
             self._record_direct_send_receipt(event, payload, run=run)
 
         def persist_payload(
-            payload: dict[str, object], *, trusted_claude_session_id: str = ""
+            payload: dict[str, object],
+            *,
+            trusted_claude_session_id: str = "",
+            from_claude_normalizer: bool = False,
         ) -> None:
             nonlocal observed_session_id, active_attempt
             nonlocal primary_turn_started, primary_turn_closed
@@ -939,7 +951,10 @@ class AgentTurnProcess(Generic[ResultT]):
                         self.task.single_chat,
                         new_session,
                     )
-            persist_effect_event(payload)
+            persist_effect_event(
+                payload,
+                from_claude_normalizer=from_claude_normalizer,
+            )
             if primary_turn_started and payload_type in {
                 "turn.completed",
                 "turn.failed",
@@ -988,6 +1003,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             if event.get("type") == "turn.started"
                             else ""
                         ),
+                        from_claude_normalizer=True,
                     )
                 return
             persist_payload(payload)
@@ -1383,7 +1399,11 @@ class AgentTurnProcess(Generic[ResultT]):
                     attempt_transcript_start + (line_count - attempt_line_start),
                     attempt_transcript_start,
                 )
-                evidence_uncertain = bool(expected_effect_actions) and not failed_session_id
+                evidence_uncertain = (
+                    recovery_phase != "reconcile"
+                    and bool(expected_effect_actions)
+                    and not failed_session_id
+                )
                 if failed_session_id and route_uses_codex_history:
                     try:
                         failed_transcript_end = max(
@@ -3350,6 +3370,79 @@ def _json_digest(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _trusted_claude_effect_event(
+    payload: dict[str, object], *, read_only: bool
+) -> dict[str, object] | None:
+    event_type = payload.get("type")
+    if event_type not in {"item.started", "item.completed", "item.failed"}:
+        return None
+    item = payload.get("item")
+    if isinstance(item, dict) and item.get("type") == "agent_message":
+        return None
+    if not isinstance(item, dict) or item.get("type") not in {
+        "mcp_tool_call",
+        "command_execution",
+    }:
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    expected_status = {
+        "item.started": "in_progress",
+        "item.completed": "completed",
+        "item.failed": "failed",
+    }[str(event_type)]
+    if item.get("status") != expected_status:
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict) or not set(metadata).issubset(
+        {
+            "effect",
+            "capability",
+            "reviewed_server",
+            "reviewed_tool",
+            "operation",
+            "operation_digest",
+            "target_identifiers",
+            "native_cli",
+            "result_digest",
+        }
+    ):
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    effect = metadata.get("effect")
+    if effect not in {EffectKind.READ_ONLY.value, EffectKind.EFFECTFUL.value}:
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    if read_only and effect != EffectKind.READ_ONLY.value:
+        raise AgentReadOnlyViolationError("agent_write_forbidden")
+    for key in ("capability", "operation", "operation_digest"):
+        if not isinstance(metadata.get(key), str) or not metadata[key]:
+            raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    if not isinstance(metadata.get("target_identifiers"), dict):
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    result_digest = metadata.get("result_digest")
+    if event_type == "item.completed" and (
+        not isinstance(result_digest, str)
+        or len(result_digest) != 64
+        or any(character not in "0123456789abcdef" for character in result_digest)
+    ):
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    normalized_item = {
+        "type": item["type"],
+        "id": str(item.get("id") or ""),
+        "status": expected_status,
+        "metadata": dict(metadata),
+    }
+    if item["type"] == "mcp_tool_call":
+        server = item.get("server")
+        tool = item.get("tool")
+        if (
+            not isinstance(server, str)
+            or not server
+            or not isinstance(tool, str)
+            or not tool
+        ):
+            raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+        normalized_item.update({"server": server, "tool": tool})
+    return {"type": event_type, "item": normalized_item}
 
 
 def _requested_skill_path(arguments: object) -> str:

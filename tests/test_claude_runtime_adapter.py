@@ -272,7 +272,10 @@ def test_reviewed_mcp_tool_start_and_completion_share_identity(normalizer):
     assert started["item"]["metadata"]["effect"] == "read_only"
     assert completed["type"] == "item.completed"
     assert completed["item"]["id"] == started["item"]["id"]
+    result_digest = completed["item"]["metadata"].pop("result_digest")
     assert completed["item"]["metadata"] == started["item"]["metadata"]
+    assert len(result_digest) == 64
+    assert "synthetic result" not in repr(completed)
 
 
 def test_tool_failure_uses_item_failed_contract(normalizer):

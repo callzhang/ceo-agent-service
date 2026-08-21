@@ -760,10 +760,16 @@ def failover_is_safe(
     has_confirmed_receipt: bool,
     recovery_phase: str,
 ) -> tuple[bool, str]:
-    if recovery_phase:
+    if recovery_phase and recovery_phase != "reconcile":
         return False, "recovery_pinned"
     if has_confirmed_receipt:
         return False, "confirmed_receipt"
+    if recovery_phase == "reconcile":
+        if attempt.first_effect_started_at:
+            return False, "effect_started"
+        if not failure.failover_permitted:
+            return False, "failure_not_eligible"
+        return True, "safe_read_only_reconciliation"
     if run.side_effect_state != "none":
         return False, "side_effect_state"
     if run.effect_started_count or attempt.first_effect_started_at:
@@ -883,7 +889,8 @@ class AgentRuntimeRouter:
             return RuntimeRouteDecision(None, False, "run_not_found")
         if not _run_identity_matches(run, persisted_run):
             return RuntimeRouteDecision(None, False, "run_identity_mismatch")
-        if persisted_run.status != "running":
+        expected_status = "unknown" if recovery_phase == "reconcile" else "running"
+        if persisted_run.status != expected_status:
             return RuntimeRouteDecision(None, False, "run_not_eligible")
 
         persisted_attempt = self._store.get_agent_runtime_attempt(failed_attempt.id)
