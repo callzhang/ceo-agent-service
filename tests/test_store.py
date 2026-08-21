@@ -9481,6 +9481,14 @@ def test_service_restart_recovers_running_no_effect_consumer_turn(
         owner="stopped-worker",
         lease_seconds=3600,
     ).run
+    runtime_attempt = store.claim_agent_runtime_attempt(
+        run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+    )
+    store.mark_agent_runtime_attempt_running_once(runtime_attempt.id)
 
     recovered = store.recover_no_effect_agent_runs_after_service_restart()
 
@@ -9494,6 +9502,12 @@ def test_service_restart_recovers_running_no_effect_consumer_turn(
     assert json.loads(recovered_run.structured_error_json)["code"] == (
         "service_restart_before_effect"
     )
+    recovered_attempt = store.get_agent_runtime_attempt(runtime_attempt.id)
+    assert recovered_attempt is not None
+    assert recovered_attempt.status == "failed"
+    assert recovered_attempt.failure_class == "process"
+    assert recovered_attempt.failure_code == "service_restart_before_effect"
+    assert recovered_attempt.failover_permitted is True
     assert store.get_codex_session_id(task.conversation_id) == "session-a"
     assert store.acquire_codex_session_lock(task.conversation_id, "next-worker") is True
     next_claim = store.claim_agent_run(

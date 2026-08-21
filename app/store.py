@@ -8401,6 +8401,24 @@ class AutoReplyStore:
         )
         with self._connect() as db:
             db.execute("begin immediate")
+            # A process may have died after its parent run was already marked
+            # failed.  It cannot be retried through the active-attempt path;
+            # close only entries whose parent proves no external effect began.
+            db.execute(
+                """
+                update agent_runtime_attempts
+                set status='failed', failure_class='process',
+                    failure_code='runtime_parent_terminal_no_effect',
+                    failover_permitted=1, lease_owner='', lease_expires_at='',
+                    finished_at=current_timestamp, updated_at=current_timestamp
+                where status in ('starting', 'running')
+                  and first_effect_started_at=''
+                  and agent_run_id in (
+                      select id from agent_runs
+                      where status='failed' and side_effect_state='none'
+                  )
+                """
+            )
             rows = db.execute(
                 """
                 select tasks.*
@@ -8447,6 +8465,23 @@ class AutoReplyStore:
                       and status='running' and side_effect_state='none'
                     """,
                     (error_json, task_id, generation),
+                )
+                db.execute(
+                    """
+                    update agent_runtime_attempts
+                    set status='failed', failure_class='process',
+                        failure_code='service_restart_before_effect',
+                        failover_permitted=1, lease_owner='', lease_expires_at='',
+                        finished_at=current_timestamp, updated_at=current_timestamp
+                    where status in ('starting', 'running')
+                      and first_effect_started_at=''
+                      and agent_run_id in (
+                          select id from agent_runs
+                          where reply_task_id=? and execution_generation=?
+                            and status='failed' and side_effect_state='none'
+                      )
+                    """,
+                    (task_id, generation),
                 )
                 cursor = db.execute(
                     """

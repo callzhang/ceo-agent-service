@@ -5,6 +5,9 @@
   each actual command retains its existing metadata and read/write validation.
   Installed Skills are read through the existing authorized Skill path and
   receipt checks instead of a static route capability list.
+- Close an active runtime-attempt record when startup recovery has already
+  proved its parent Agent run failed before any external effect. Unknown or
+  effectful runs remain untouched for reconciliation.
 
 - Require candidate and hiring reviews to read Xiaoqing's authoritative job,
   resume, interview, and assessment context before escalating the remaining
