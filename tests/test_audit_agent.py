@@ -39,6 +39,7 @@ from app.agent_turn_runner import (
 from app.agent_wire_contracts import AuditAgentWireResult
 from app.audit_agent import (
     AuditAgentRunner,
+    _audit_recovery_error_code,
     _expected_effect_action,
     _recovery_authorizations,
     _recovery_prompt,
@@ -4988,6 +4989,31 @@ def test_recovery_event_limit_is_suspended_for_new_evidence(setup):
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.reconciliation_suspended is True
     assert json.loads(persisted.structured_error_json)["retryable"] is False
+
+
+def test_recovery_preserves_runtime_capability_diagnostic(setup):
+    store, task, _audit_context, run = _seed_crashed_audit_write(setup)
+    claim = store.claim_unknown_agent_run(run.id, owner="audit-agent")
+    assert claim.claimed
+    runner = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        owner="audit-agent",
+    )
+
+    class CapabilityFailure(RuntimeError):
+        code = "runtime_capability_missing"
+        reason = "no_eligible_route:codex_oauth=surface_missing:consumer_read_only_enforcement"
+
+    failure = CapabilityFailure("runtime_capability_missing")
+    assert _audit_recovery_error_code(failure) == "runtime_capability_missing"
+    runner._defer_claimed_unknown_recovery(claim.run, failure)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    error = json.loads(persisted.structured_error_json)
+    assert error["code"] == "runtime_capability_missing"
+    assert error["detail"] == failure.reason
 
 
 def test_persisted_absence_resumes_execute_phase_without_reconciling_again(setup):
