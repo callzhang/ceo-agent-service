@@ -2350,6 +2350,32 @@ def test_recovery_keeps_a_specific_audit_failure_code(setup, monkeypatch):
     )
 
 
+def test_recovery_conservatively_reconciles_a_valid_non_reconciled_result(
+    setup,
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+    executor = CapturingExecutor(
+        _audit_result_jsonl(
+            "executed",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+            reconciliation=[],
+        )
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, audit_context, run=run)
+
+    persisted = store.get_agent_run(run.id)
+    assert result.result.outcome is AuditOutcome.RECONCILED
+    assert result.result.reconciliation[0].disposition.value == "ambiguous"
+    assert persisted is not None and persisted.status == "unknown"
+    assert persisted.side_effect_state == "unknown"
+
+
 def test_missing_delivery_ledger_does_not_prove_unknown_chat_was_not_sent(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     executor = CapturingExecutor(
@@ -3384,7 +3410,7 @@ def test_matching_live_read_without_structured_disposition_does_not_confirm(setu
         ).recover(task, audit_context, run=run)
 
 
-def test_reconciliation_rejects_unrecorded_read_event_digest(setup):
+def test_reconciliation_uses_persisted_digest_when_model_cites_a_wrong_one(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     executor = CapturingExecutor(
         _audit_result_jsonl(
@@ -3401,12 +3427,15 @@ def test_reconciliation_rejects_unrecorded_read_event_digest(setup):
         )
     )
 
-    with pytest.raises(RuntimeError, match="audit_reconciliation_evidence_mismatch"):
-        AuditAgentRunner(
-            store=store,
-            workspace=Path("/workspace"),
-            executor=executor,
-        ).recover(task, audit_context, run=run)
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).recover(task, audit_context, run=run)
+
+    assert result.result.outcome is AuditOutcome.RECONCILED
+    assert result.result.reconciliation[0].disposition.value == "ambiguous"
+    assert result.result.reconciliation[0].read_result_digest == "recovery-read-digest"
 
 
 def test_target_scoped_failed_read_can_only_prove_ambiguous_reconciliation():

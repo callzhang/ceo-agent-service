@@ -604,14 +604,41 @@ class AgentTurnProcess(Generic[ResultT]):
         persisted = self.store.get_agent_run(run.id)
         assert persisted is not None
         if run.role is AgentRole.AUDIT and recovery_phase == "reconcile":
-            reconciliation = self._validate_audit_reconciliation_result(
-                run,
-                result,
-                persisted,
-                expected_effect_actions=expected_effect_actions,
-                recovery_event_start=recovery_event_start,
-                completed_before_recovery=completed_before_recovery,
-            )
+            try:
+                reconciliation = self._validate_audit_reconciliation_result(
+                    run,
+                    result,
+                    persisted,
+                    expected_effect_actions=expected_effect_actions,
+                    recovery_event_start=recovery_event_start,
+                    completed_before_recovery=completed_before_recovery,
+                )
+            except RuntimeError as exc:
+                if str(exc) not in {
+                    "audit_reconciliation_result_invalid",
+                    "audit_reconciliation_evidence_mismatch",
+                    "audit_recovery_evidence_missing",
+                }:
+                    raise
+                fallback = _conservative_reconciliation_result_from_readbacks(
+                    run=run,
+                    persisted=persisted,
+                    expected_effect_actions=expected_effect_actions,
+                    recovery_event_start=recovery_event_start,
+                    completed_before_recovery=completed_before_recovery,
+                    registry=self.effects,
+                )
+                if fallback is None:
+                    raise exc
+                result = cast(ResultT, fallback)
+                reconciliation = self._validate_audit_reconciliation_result(
+                    run,
+                    result,
+                    persisted,
+                    expected_effect_actions=expected_effect_actions,
+                    recovery_event_start=recovery_event_start,
+                    completed_before_recovery=completed_before_recovery,
+                )
             result = result.model_copy(
                 update={
                     "reconciliation": tuple(
@@ -1714,6 +1741,56 @@ def _recovery_execution_result_from_receipts(
         reconciliation=(),
         error=AgentError(),
     )
+
+
+def _conservative_reconciliation_result_from_readbacks(
+    *,
+    run: AgentRun,
+    persisted: AgentRun,
+    expected_effect_actions: tuple[dict[str, object], ...],
+    recovery_event_start: int,
+    completed_before_recovery: set[int],
+    registry: McpToolEffectRegistry,
+) -> AuditAgentResult | None:
+    """Preserve unknown state when durable target-matched reads outlive bad model JSON."""
+    entries: list[AuditReconciliation] = []
+    for action_index, action in enumerate(expected_effect_actions):
+        if action_index in completed_before_recovery or not _action_has_readback(
+            action, registry
+        ):
+            continue
+        digest = _matching_read_digest(
+            persisted.tool_events,
+            action,
+            event_start=recovery_event_start,
+            registry=registry,
+        )
+        if not digest:
+            return None
+        entries.append(
+            AuditReconciliation(
+                action_index=action_index,
+                disposition=ReconciliationDisposition.AMBIGUOUS,
+                read_result_digest=digest,
+            )
+        )
+    if not entries:
+        return None
+    return AuditAgentResult(
+        outcome=AuditOutcome.RECONCILED,
+        summary=(
+            "Controlled target-matched live readbacks completed, but the recovery "
+            "result could not safely classify the prior external action."
+        ),
+        proposal_revision=run.proposal_revision,
+        side_effect_state=SideEffectState.UNKNOWN,
+        feedback=None,
+        external_result=None,
+        reconciliation=tuple(entries),
+        error=AgentError(),
+    )
+
+
 
 
 def _read_matches_action(
