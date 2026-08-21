@@ -3471,6 +3471,47 @@ def test_service_restart_releases_pending_unknown_audit_reconciliation_lease(
     assert store.claim_unknown_agent_run(run.id, owner="new-reconciler").claimed
 
 
+def test_service_restart_releases_failed_unknown_audit_reconciliation_lease(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="stopped-worker",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="stopped-worker",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="stopped-reconciler")
+    assert claim.claimed
+    store.fail_reply_task(
+        task.id,
+        "no such table: agent_run_state_events",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    released = store.release_unknown_audit_reconciliation_leases_after_service_restart()
+
+    assert [item.id for item in released] == [run.id]
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.lease_owner == ""
+    assert persisted.lease_expires_at == ""
+    resumed = store.requeue_failed_unknown_audit_reconciliation(
+        task.id,
+        run.id,
+        reason="unknown_agent_run_reconciliation",
+    )
+    assert resumed.status == "pending"
+
+
 def test_finalize_closed_failed_audit_run_repairs_completed_unknown_state(
     tmp_path: Path,
 ) -> None:

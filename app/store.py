@@ -9042,7 +9042,7 @@ class AutoReplyStore:
                   and runs.role='audit'
                   and runs.reconciliation_suspended=0
                   and runs.lease_owner<>''
-                  and tasks.status in ('processing', 'pending')
+                  and tasks.status in ('processing', 'pending', 'failed')
                   and tasks.execution_generation=runs.execution_generation
                 order by runs.updated_at, runs.id
                 limit ?
