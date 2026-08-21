@@ -225,6 +225,34 @@ def test_oauth_route_keeps_the_existing_provider_selection(adapter, config, monk
     assert not any("model_providers.ceo_openai_api" in item for item in command)
 
 
+def test_api_route_command_uses_the_configured_base_url(tmp_path):
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_api",
+            "CEO_CODEX_API_KEY": "service-secret",
+            "CEO_CODEX_API_BASE_URL": "https://gateway.example/v1/",
+        }
+    )
+    adapter = CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test")
+
+    command = adapter.build_command(
+        route(config, "codex_api"),
+        prompt="hello",
+        session_id=None,
+        image_paths=None,
+        output_schema_path=None,
+        use_output_schema=False,
+        approval_policy="never",
+        developer_instructions=None,
+        use_approval_bypass=False,
+    )
+
+    assert (
+        'model_providers.ceo_openai_api.base_url="https://gateway.example/v1"'
+        in command
+    )
+
+
 def test_local_oauth_expiration_allows_failover(adapter):
     failure = adapter.classify_failure(
         stderr="failed to refresh token: session has ended",

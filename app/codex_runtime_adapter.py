@@ -65,9 +65,8 @@ _SAFE_LOCALE_ENV_KEYS = {
     "LC_TIME",
 }
 _API_PROVIDER = "ceo_openai_api"
-_API_PROVIDER_SETTINGS = {
+_API_PROVIDER_METADATA = {
     "name": "CEO OpenAI API fallback",
-    "base_url": "https://api.openai.com/v1",
     "env_key": "OPENAI_API_KEY",
     "wire_api": "responses",
 }
@@ -120,7 +119,7 @@ class CodexRuntimeAdapter:
             model=configured_route.model,
             provider=self._provider_for(configured_route),
             model_provider_settings=(
-                _API_PROVIDER_SETTINGS
+                self._api_provider_settings()
                 if configured_route.credential_mode == CredentialMode.SERVICE_API
                 else None
             ),
@@ -242,6 +241,12 @@ class CodexRuntimeAdapter:
         if route.credential_mode == CredentialMode.SERVICE_API:
             return _API_PROVIDER
         return os.environ.get(CODEX_MODEL_PROVIDER_ENV, "").strip()
+
+    def _api_provider_settings(self) -> dict[str, str]:
+        return {
+            **_API_PROVIDER_METADATA,
+            "base_url": self.config.codex_api_base_url,
+        }
 
     def _api_key_for(self, route: RuntimeRoute, api_key: str | None) -> str:
         configured_secret = self.config.secret_for(route.name)

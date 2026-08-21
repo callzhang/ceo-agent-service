@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, SecretStr
 
@@ -9,11 +10,15 @@ from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRout
 from app.config import DEFAULT_CEO_CODEX_MODEL, parse_duration_value
 
 
+DEFAULT_CODEX_API_BASE_URL = "https://api.openai.com/v1"
+
+
 class AgentRuntimeConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     routes: tuple[RuntimeRoute, ...]
     secrets: dict[str, SecretStr]
+    codex_api_base_url: str
     probe_interval: timedelta
     retry_delay: timedelta
 
@@ -35,6 +40,9 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
         raise ValueError(f"unsupported runtime routes: {sorted(unknown)}")
     model = env.get("CEO_CODEX_MODEL", DEFAULT_CEO_CODEX_MODEL).strip()
     api_model = env.get("CEO_CODEX_API_MODEL", model).strip()
+    codex_api_base_url = normalize_codex_api_base_url(
+        env.get("CEO_CODEX_API_BASE_URL", DEFAULT_CODEX_API_BASE_URL)
+    )
     claude_model = env.get("CEO_CLAUDE_MODEL", "sonnet").strip()
     routes = []
     secrets: dict[str, SecretStr] = {}
@@ -77,6 +85,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     return AgentRuntimeConfig(
         routes=tuple(routes),
         secrets=secrets,
+        codex_api_base_url=codex_api_base_url,
         probe_interval=parse_duration_value(
             "CEO_RUNTIME_PROBE_INTERVAL",
             env.get("CEO_RUNTIME_PROBE_INTERVAL"),
@@ -88,3 +97,21 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
             timedelta(minutes=30),
         ),
     )
+
+
+def normalize_codex_api_base_url(value: str) -> str:
+    normalized = value.strip().rstrip("/")
+    parsed = urlsplit(normalized)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(
+            "CEO_CODEX_API_BASE_URL must be an absolute HTTP(S) URL without "
+            "credentials, query, or fragment"
+        )
+    return normalized

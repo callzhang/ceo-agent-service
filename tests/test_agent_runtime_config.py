@@ -28,6 +28,38 @@ def test_dual_auth_requires_a_private_api_key():
     assert config.secret_for("codex_api").get_secret_value() == "secret-value"
 
 
+def test_codex_api_base_url_is_normalized_for_the_runtime_route():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_api",
+            "CEO_CODEX_API_KEY": "secret-value",
+            "CEO_CODEX_API_BASE_URL": "https://gateway.example/v1/",
+        }
+    )
+
+    assert config.codex_api_base_url == "https://gateway.example/v1"
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "gateway.example/v1",
+        "https://user:pass@gateway.example/v1",
+        "https://gateway.example/v1?tenant=ceo",
+        "https://gateway.example/v1#fragment",
+    ],
+)
+def test_codex_api_base_url_rejects_unsafe_or_ambiguous_urls(base_url: str):
+    with pytest.raises(ValueError, match="CEO_CODEX_API_BASE_URL"):
+        load_runtime_config(
+            {
+                "CEO_AGENT_RUNTIME_ROUTES": "codex_api",
+                "CEO_CODEX_API_KEY": "secret-value",
+                "CEO_CODEX_API_BASE_URL": base_url,
+            }
+        )
+
+
 def test_codex_api_route_rejects_a_missing_api_key():
     with pytest.raises(ValueError, match="codex_api requires CEO_CODEX_API_KEY"):
         load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_api"})
