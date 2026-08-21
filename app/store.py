@@ -6983,6 +6983,14 @@ class AutoReplyStore:
                 target_status = "unknown"
                 final_result_json = ""
                 side_effect_state = "unknown"
+                if not structured_error_json:
+                    structured_error_json = json.dumps(
+                        {
+                            "code": "dispatched_effect_acknowledgement_missing",
+                            "retryable": True,
+                        },
+                        separators=(",", ":"),
+                    )
             end_line = (
                 row["transcript_end_line"]
                 if transcript_end_line is None

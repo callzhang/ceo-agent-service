@@ -4899,6 +4899,19 @@ def test_dispatched_effect_intent_forces_completed_run_to_unknown(tmp_path: Path
     assert settled.status == "unknown"
     assert settled.side_effect_state == "unknown"
     assert settled.final_result_json == ""
+    assert json.loads(settled.structured_error_json)["code"] == (
+        "dispatched_effect_acknowledgement_missing"
+    )
+    with store._connect() as db:
+        [state_event] = db.execute(
+            "select phase, structured_error_json from agent_run_state_events "
+            "where agent_run_id=? order by id",
+            (run.id,),
+        ).fetchall()
+    assert state_event["phase"] == "initial_unknown"
+    assert json.loads(state_event["structured_error_json"])["code"] == (
+        "dispatched_effect_acknowledgement_missing"
+    )
 
 
 def test_expired_run_with_dispatched_intent_enters_reconciliation(tmp_path: Path):
