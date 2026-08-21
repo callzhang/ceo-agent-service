@@ -4308,7 +4308,11 @@ def test_render_config_page_shows_dedicated_agent_runtime_settings_without_token
     assert 'name="codex_api_enabled"' in html
     assert 'name="codex_api_base_url"' in html
     assert '<select name="codex_api_model"' in html
+    assert 'id="codex-api-token"' in html
     assert 'type="password" name="codex_api_token"' in html
+    assert 'id="codex-api-token-toggle"' in html
+    assert 'aria-controls="codex-api-token"' in html
+    assert 'tokenInput.type = showing ? "password" : "text";' in html
     assert "已配置" in html
     assert "must-not-render" not in html
     assert "CEO_CODEX_MODEL" not in html

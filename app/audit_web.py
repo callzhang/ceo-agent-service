@@ -3232,12 +3232,28 @@ def _render_agent_runtime_config() -> str:
         '<p><label>Fallback model<br><select name="codex_api_model">'
         f"{_agent_runtime_option_html(_AGENT_RUNTIME_MODELS, api_model)}"
         "</select></label></p>"
-        '<p><label>API Token<br><input class="config-value-input" type="password" '
-        'name="codex_api_token" autocomplete="new-password"></label><br>'
+        '<p><label>API Token<br><input id="codex-api-token" '
+        'class="config-value-input" type="password" name="codex_api_token" '
+        'autocomplete="new-password"></label> '
+        '<button id="codex-api-token-toggle" type="button" '
+        'aria-controls="codex-api-token" aria-pressed="false">显示</button><br>'
         f'<span class="muted">当前状态：{"已配置" if token_configured else "未配置"}。'
-        "留空会保留当前 Token，Token 不会在此页面回显。</span></p>"
+        "切换显示不会清空当前输入；保存后 Token 不会在此页面回显。</span></p>"
         "<p><button type=\"submit\">Save Agent Runtime</button></p>"
         "</form>"
+        "<script>"
+        "(() => {"
+        "const tokenInput = document.getElementById('codex-api-token');"
+        "const toggle = document.getElementById('codex-api-token-toggle');"
+        "if (!tokenInput || !toggle) return;"
+        "toggle.addEventListener('click', () => {"
+        "const showing = tokenInput.type === 'text';"
+        "tokenInput.type = showing ? \"password\" : \"text\";"
+        "toggle.textContent = showing ? '显示' : '隐藏';"
+        "toggle.setAttribute('aria-pressed', String(!showing));"
+        "});"
+        "})();"
+        "</script>"
         "</section>"
     )
 
