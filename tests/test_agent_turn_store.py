@@ -2609,6 +2609,95 @@ def test_normal_audit_write_receipt_does_not_require_recovery_authorization(
     assert event["type"] == "item.completed"
 
 
+def test_completed_dingtalk_message_read_persists_content_proof_without_plaintext(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    argv = [
+        "dws",
+        "chat",
+        "+chat-messages",
+        "--group",
+        "cid-turns",
+        "--start",
+        "2026-08-06T09:55:00+08:00",
+        "--end",
+        "2026-08-06T10:05:00+08:00",
+        "--page-all",
+        "--format",
+        "json",
+    ]
+    descriptor = describe_native_command(
+        {"type": "command_execution", "argv": argv}
+    )
+    assert descriptor is not None
+    stdout = json.dumps(
+        {
+            "complete": True,
+            "hasMore": False,
+            "paginationKnown": True,
+            "failures": [],
+            "queryRange": {
+                "startTime": "2026-08-06T01:55:00Z",
+                "endTime": "2026-08-06T02:05:00Z",
+            },
+            "messages": [
+                {
+                    "conversationId": "cid-turns",
+                    "messageId": "message-1",
+                    "text": "exact reviewed reply",
+                }
+            ],
+        }
+    )
+    receipt = {
+        "cli": "dws",
+        "operation": descriptor.command_path,
+        "operation_digest": descriptor.command_digest,
+        "target_identifiers": descriptor.target_identifiers,
+        "result_digest": hashlib.sha256(stdout.encode()).hexdigest(),
+        "stdout": stdout,
+    }
+    payload = {
+        "type": "item.completed",
+        "item": {
+            "id": "read-1",
+            "type": "mcp_tool_call",
+            "server": "agent_cli",
+            "tool": "execute_reviewed_read",
+            "arguments": {"argv": argv},
+            "status": "completed",
+            "result": {"structuredContent": receipt, "isError": False},
+        },
+    }
+
+    event = AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=tmp_path,
+        owner="audit",
+    )._normalized_effect_event(
+        payload,
+        read_only=True,
+        operation_id="",
+        expected_message_text_digests=frozenset(
+            {hashlib.sha256(b"exact reviewed reply").hexdigest()}
+        ),
+        message_operation_started_at="2026-08-06 02:00:00",
+    )
+
+    assert event is not None
+    metadata = event["item"]["metadata"]
+    assert metadata["message_readback_complete"] is True
+    assert metadata["message_readback_window_matches"] is True
+    assert metadata["message_text_digests"] == [
+        hashlib.sha256(b"exact reviewed reply").hexdigest()
+    ]
+    assert "exact reviewed reply" not in json.dumps(event)
+    assert "stdout" not in json.dumps(event)
+
+
 def _read_skill_payload(
     path: Path,
     content: str,

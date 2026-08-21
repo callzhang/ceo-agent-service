@@ -995,6 +995,13 @@ def _expected_effect_action(
             expected["arguments_digest"] = _json_digest({"argv": legacy_argv})
         expected["operation_digest"] = descriptor.command_digest
         expected["target_identifiers"] = descriptor.target_identifiers
+        message_text = _argv_option_value(tuple(argv or ()), "--text") or (
+            _argv_option_value(tuple(argv or ()), "--content")
+        )
+        if descriptor.cli == "dws" and message_text:
+            expected["message_text_digest"] = hashlib.sha256(
+                message_text.encode("utf-8")
+            ).hexdigest()
         if descriptor.command_path == "chat +dm":
             recipient = action.target.get("recipient_open_dingtalk_id")
             if isinstance(recipient, str) and recipient:
@@ -1220,7 +1227,11 @@ def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:
     """Canonicalize persisted pre-contract DingTalk chat actions for audit."""
     if action.capability != "dingtalk-chat":
         return None
-    text = action.payload.get("text")
+    if native_command_argv(
+        {"type": "command_execution", **action.payload}
+    ) is not None:
+        return None
+    text = action.payload.get("text") or action.payload.get("content")
     if not isinstance(text, str) or not text:
         return None
     target = action.target
@@ -1233,7 +1244,11 @@ def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:
             "dws", "chat", "+messages-send", "--open-dingtalk-id", recipient,
             "--text", text, "--yes", "--format", "json",
         ]
-    group = action.payload.get("group")
+    group = (
+        action.payload.get("group")
+        or action.target.get("conversation_id")
+        or action.target.get("conversation-id")
+    )
     if not isinstance(group, str) or not group:
         return None
     return [
@@ -1383,6 +1398,17 @@ def _recovery_prompt(
             f"{unavailable}. Do not execute or replay these actions. Unless an exact "
             "persisted receipt already confirms them, return needs_human."
         )
+    chat_guidance = ""
+    if context.task.channel == "dingtalk":
+        chat_guidance = (
+            " For DingTalk chat writes, use dws chat +chat-messages against the "
+            "exact group or conversation with --start and --end, a window no "
+            f"wider than two hours that covers the original operation start "
+            f"{run.started_at}, plus --page-all and --format json. Treat an exact "
+            "full message text match in that scoped window as present. Treat no "
+            "match as absent only when complete=true, hasMore=false, "
+            "paginationKnown=true, and failures is empty; otherwise use ambiguous."
+        )
     return (
         "RECOVERY MODE OVERRIDES NORMAL AUDIT EXECUTION: this is a strictly "
         "read-only reconciliation turn. Do not return executed, "
@@ -1413,10 +1439,10 @@ def _recovery_prompt(
         "or replace a target-scoped read with a global search; neither can prove "
         "the outcome for one recipient. "
         "Start with the smallest recent target-scoped window that can verify the "
-        "exact action. Do not start with an unbounded or --page-all read. Fetch "
+        "exact action. Do not start with an unbounded read. Fetch "
         "older pages only when the recent window cannot decide, and treat every "
         "partial result according to its completeness: an incomplete window cannot "
-        "prove absence. "
+        f"prove absence.{chat_guidance} "
         "Do not write. Return reconciled even when a disposition is ambiguous; "
         "use the ambiguous disposition to preserve the uncertainty for the "
         "service rather than changing the outcome."

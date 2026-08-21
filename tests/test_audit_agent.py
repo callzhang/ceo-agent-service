@@ -3,6 +3,7 @@ import json
 import sqlite3
 import tomllib
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -465,9 +466,12 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
     assert "Exact readback contracts:" in prompt
     assert "shares a stable identifier from its exact readback contract" in prompt
     assert "Do not substitute a different target type" in prompt
-    assert "Do not start with an unbounded or --page-all read" in prompt
+    assert "Do not start with an unbounded read" in prompt
     assert "an incomplete window cannot prove absence" in prompt
     assert "use the ambiguous disposition" in prompt
+    assert "dws chat +chat-messages" in prompt
+    assert "exact full message text" in prompt
+    assert "no wider than two hours" in prompt
 
 
 def test_audit_developer_instructions_define_wire_json_field_shapes():
@@ -567,10 +571,43 @@ def _audit_result_jsonl(
     include_read: bool = True,
     include_write: bool = False,
     read_target: str = "cid-agent",
-    read_stdout: str = "{}",
+    read_stdout: str | None = None,
     structured_read_receipt: bool = False,
     reconciliation: list[dict[str, object]] | None = None,
 ) -> str:
+    if read_stdout is None:
+        now = datetime.now(UTC)
+        content_is_present = (
+            any(
+                entry.get("disposition") == "present"
+                for entry in (reconciliation or [])
+            )
+            if reconciliation is not None
+            else outcome == "reconciled" and not include_write
+        )
+        read_stdout = json.dumps(
+            {
+                "complete": True,
+                "hasMore": False,
+                "paginationKnown": True,
+                "failures": [],
+                "queryRange": {
+                    "startTime": (now - timedelta(minutes=30)).isoformat(),
+                    "endTime": (now + timedelta(minutes=30)).isoformat(),
+                },
+                "messages": (
+                    [
+                        {
+                            "conversationId": read_target,
+                            "messageId": "recovered-message",
+                            "text": "done",
+                        }
+                    ]
+                    if content_is_present
+                    else []
+                ),
+            }
+        )
     records = [json.dumps({"type": "thread.started", "thread_id": session})]
     if include_read:
         arguments = {
@@ -3522,6 +3559,35 @@ def test_legacy_dingtalk_chat_candidate_normalizes_for_reconciliation():
     assert expected["reviewed_tool"] == "execute_reviewed_write"
 
 
+def test_legacy_group_content_keeps_a_message_digest_for_reconciliation():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Post the reviewed conclusion",
+            "capability": "dingtalk-chat",
+            "operation": (
+                'dws chat +send-to-group --group "cid-agent" '
+                "--content <content> --yes"
+            ),
+            "target": {
+                "conversation_id": "cid-agent",
+                "recipient_type": "group",
+            },
+            "payload": {"content": "exact reviewed reply"},
+            "expected_verification": "Message exists",
+        }
+    )
+
+    expected = _expected_effect_action(
+        action, McpToolEffectRegistry.default(), action_index=0
+    )
+
+    assert expected["operation"] == "chat message send"
+    assert expected["target_identifiers"] == {"group": "cid-agent"}
+    assert expected["message_text_digest"] == hashlib.sha256(
+        b"exact reviewed reply"
+    ).hexdigest()
+
+
 def test_legacy_direct_dingtalk_chat_candidate_normalizes_for_reconciliation():
     action = ProposedAction.model_validate(
         {
@@ -3893,7 +3959,7 @@ def test_matching_live_read_without_structured_disposition_does_not_confirm(setu
         ).recover(task, audit_context, run=run)
 
 
-def test_reconciliation_uses_persisted_digest_when_model_cites_a_wrong_one(setup):
+def test_reconciliation_uses_content_proof_when_model_cites_a_wrong_digest(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     executor = CapturingExecutor(
         _audit_result_jsonl(
@@ -3917,7 +3983,7 @@ def test_reconciliation_uses_persisted_digest_when_model_cites_a_wrong_one(setup
     ).recover(task, audit_context, run=run)
 
     assert result.result.outcome is AuditOutcome.RECONCILED
-    assert result.result.reconciliation[0].disposition.value == "ambiguous"
+    assert result.result.reconciliation[0].disposition.value == "present"
     assert result.result.reconciliation[0].read_result_digest == "recovery-read-digest"
 
 
@@ -3970,6 +4036,139 @@ def test_target_scoped_failed_read_can_only_prove_ambiguous_reconciliation():
             event_start=0,
             registry=McpToolEffectRegistry.default(),
         )
+
+
+def test_group_message_content_match_promotes_reconciliation_to_present():
+    text_digest = hashlib.sha256(b"exact reviewed reply").hexdigest()
+    action = {
+        "capability": "agent_cli.dws",
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "chat message send",
+        "target_identifiers": {"group": "cid-agent"},
+        "message_text_digest": text_digest,
+    }
+    read = {
+        "type": "item.completed",
+        "item": {
+            "metadata": {
+                "effect": "read_only",
+                "reviewed_server": "agent_cli",
+                "reviewed_tool": "execute_reviewed_read",
+                "operation": "chat message list",
+                "target_identifiers": {"group": "cid-agent"},
+                "result_digest": "read-digest",
+                "message_readback_complete": True,
+                "message_readback_window_matches": True,
+                "message_text_digests": [text_digest],
+            }
+        },
+    }
+
+    validated = _validated_reconciliation(
+        (
+            AuditReconciliation(
+                action_index=0,
+                disposition="ambiguous",
+                read_result_digest="read-digest",
+            ),
+        ),
+        [read],
+        (action,),
+        event_start=0,
+        registry=McpToolEffectRegistry.default(),
+    )
+
+    assert validated[0].disposition.value == "present"
+
+
+def test_group_message_without_content_match_cannot_be_claimed_present():
+    action = {
+        "capability": "agent_cli.dws",
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "chat message send",
+        "target_identifiers": {"group": "cid-agent"},
+        "message_text_digest": hashlib.sha256(b"exact reviewed reply").hexdigest(),
+    }
+    read = {
+        "type": "item.completed",
+        "item": {
+            "metadata": {
+                "effect": "read_only",
+                "reviewed_server": "agent_cli",
+                "reviewed_tool": "execute_reviewed_read",
+                "operation": "chat message list",
+                "target_identifiers": {"group": "cid-agent"},
+                "result_digest": "read-digest",
+                "message_readback_complete": True,
+                "message_readback_window_matches": True,
+                "message_text_digests": [
+                    hashlib.sha256(b"different reply").hexdigest()
+                ],
+            }
+        },
+    }
+
+    validated = _validated_reconciliation(
+        (
+            AuditReconciliation(
+                action_index=0,
+                disposition="present",
+                read_result_digest="read-digest",
+            ),
+        ),
+        [read],
+        (action,),
+        event_start=0,
+        registry=McpToolEffectRegistry.default(),
+    )
+
+    assert validated[0].disposition.value == "ambiguous"
+
+
+def test_group_message_match_outside_operation_window_stays_ambiguous():
+    text_digest = hashlib.sha256(b"exact reviewed reply").hexdigest()
+    action = {
+        "capability": "agent_cli.dws",
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "chat message send",
+        "target_identifiers": {"group": "cid-agent"},
+        "message_text_digest": text_digest,
+    }
+    read = {
+        "type": "item.completed",
+        "item": {
+            "metadata": {
+                "effect": "read_only",
+                "reviewed_server": "agent_cli",
+                "reviewed_tool": "execute_reviewed_read",
+                "operation": "chat message list",
+                "target_identifiers": {"group": "cid-agent"},
+                "result_digest": "read-digest",
+                "message_readback_complete": True,
+                "message_readback_window_matches": False,
+                "message_text_digests": [text_digest],
+            }
+        },
+    }
+
+    validated = _validated_reconciliation(
+        (
+            AuditReconciliation(
+                action_index=0,
+                disposition="present",
+                read_result_digest="read-digest",
+            ),
+        ),
+        [read],
+        (action,),
+        event_start=0,
+        registry=McpToolEffectRegistry.default(),
+    )
+
+    assert validated[0].disposition.value == "ambiguous"
 
 
 def test_reconciliation_accepts_repeated_matching_readbacks(setup):
@@ -5386,6 +5585,23 @@ def test_two_action_recovery_confirms_unknown_first_and_executes_second_once(set
         operation_id=run.operation_id,
         session=run.codex_session_id,
         read_target="cid-second",
+        read_stdout=json.dumps(
+            {
+                "complete": True,
+                "hasMore": False,
+                "paginationKnown": True,
+                "failures": [],
+                "queryRange": {
+                    "startTime": (
+                        datetime.now(UTC) - timedelta(minutes=30)
+                    ).isoformat(),
+                    "endTime": (
+                        datetime.now(UTC) + timedelta(minutes=30)
+                    ).isoformat(),
+                },
+                "messages": [],
+            }
+        ),
     ).splitlines()
     final_result = _audit_result_jsonl(
         "reconciled",

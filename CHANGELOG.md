@@ -1,5 +1,13 @@
 # Changelog
 
+- Reconcile unknown DingTalk chat writes from a bounded, target-scoped message
+  history read. The service now hashes the approved full message text, retains
+  only matching text hashes and completeness/window facts from DWS, and
+  deterministically confirms `present` without trusting the model's label.
+  Missing content proves `absent` only for a complete query no wider than two
+  hours that covers the original Audit start; partial, unbounded, stale, or
+  mismatched reads remain `ambiguous` and never authorize a replay.
+
 - Continue unknown Audit reconciliation with the existing capped fifteen-minute
   read-only backoff after a historical attempt or event window is exhausted.
   The worker never replays the original external action; it rolls old

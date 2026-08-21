@@ -146,6 +146,16 @@ Audit writes.
 9. Append the first unknown cause, including lease-expiry transitions, and every reconciliation deferral to
    `agent_run_state_events`; later route failures no longer destroy the original
    diagnosis.
+10. For DingTalk chat writes, derive a SHA-256 digest of the approved full
+    message text and reconcile it against `dws chat +chat-messages` for the
+    exact group or conversation. The DWS read must use a query window no wider
+    than two hours that covers the original Audit start. The service keeps only
+    matched text digests plus the query completeness/window facts; it does not
+    persist group-message plaintext in Agent events. An exact scoped match is
+    `present` even if the model returned `ambiguous`; a model claim of
+    `present` without that match is downgraded to `ambiguous`. No match is
+    `absent` only when the bounded result is complete, has no remaining pages,
+    has known pagination, and contains no failures.
 
 ## Remaining irreducible window
 
@@ -155,14 +165,20 @@ If the external request is accepted and the tool process dies before recording
 the acknowledgement, the intent remains `dispatched`; the service must keep it
 unknown and use the target-specific read-only reconciliation adapter.
 
-The complete elimination of this final window requires the external API to
-accept the local authorization as an idempotency key or return a stable external
-operation/message ID that can be queried. DWS operations that do not expose
-either property cannot be retried safely. The implemented one-shot intent
-minimizes the window and prevents local duplicate dispatch; it does not pretend
-that an unconfirmed third-party write is known. Reconciliation may consume a
-still-`prepared` token after proving absence, but a token that reached
-`dispatched` is never locally re-armed; it remains read-only reconciled.
+For DingTalk messages, a stable external operation ID is not required to prove
+success when a bounded read of the exact target contains the approved full
+message text: the returned message ID, target, content digest, result digest,
+and query window form the reconciliation evidence. Failure to find the content
+is not automatically proof of failure; incomplete, stale, over-wide, or failed
+queries remain ambiguous and are retried read-only.
+
+For external operations without an authoritative readback, complete elimination
+of the final window still requires the API to accept the local authorization as
+an idempotency key or return a stable external operation ID. The implemented
+one-shot intent minimizes the window and prevents local duplicate dispatch; it
+does not pretend that an unconfirmed third-party write is known. Reconciliation
+may consume a still-`prepared` token after proving absence, but a token that
+reached `dispatched` is never locally re-armed; it remains read-only reconciled.
 
 ## Runtime-route retry-budget correction
 

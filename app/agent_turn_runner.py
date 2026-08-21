@@ -852,6 +852,14 @@ class AgentTurnProcess(Generic[ResultT]):
                     read_only=read_only,
                     operation_id=run.operation_id,
                     require_recovery_authorization=recovery_phase == "execute",
+                    expected_message_text_digests=frozenset(
+                        digest
+                        for action in expected_effect_actions
+                        if isinstance(
+                            digest := action.get("message_text_digest"), str
+                        )
+                    ),
+                    message_operation_started_at=run.started_at,
                 )
             )
             if event is None:
@@ -1197,6 +1205,14 @@ class AgentTurnProcess(Generic[ResultT]):
                         read_only=(recovery_phase == "reconcile"),
                         operation_id=run.operation_id,
                         require_recovery_authorization=(recovery_phase == "execute"),
+                        expected_message_text_digests=frozenset(
+                            digest
+                            for action in expected_effect_actions
+                            if isinstance(
+                                digest := action.get("message_text_digest"), str
+                            )
+                        ),
+                        message_operation_started_at=run.started_at,
                     )
                 except AgentReadOnlyViolationError as exc:
                     if str(exc) != "agent_cli_receipt_invalid":
@@ -2145,6 +2161,8 @@ class AgentTurnProcess(Generic[ResultT]):
         read_only: bool,
         operation_id: str,
         require_recovery_authorization: bool = False,
+        expected_message_text_digests: frozenset[str] = frozenset(),
+        message_operation_started_at: str = "",
     ) -> dict[str, object] | None:
         if payload.get("type") not in {"item.started", "item.completed", "item.failed"}:
             return None
@@ -2342,6 +2360,18 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             if result_identifiers:
                 metadata["result_identifiers"] = result_identifiers
+            if validated_receipt is not None:
+                metadata.update(
+                    _dingtalk_message_readback_proof(
+                        validated_receipt,
+                        native_cli=native_cli,
+                        operation=operation,
+                        expected_message_text_digests=(
+                            expected_message_text_digests
+                        ),
+                        operation_started_at=message_operation_started_at,
+                    )
+                )
         elif controlled_receipt_failed and validated_receipt is not None:
             result_digest = validated_receipt.get("result_digest")
             if isinstance(result_digest, str) and result_digest:
@@ -3362,7 +3392,7 @@ def _validated_reconciliation(
         action_index = entry.action_index
         if action_index >= len(actions):
             raise RuntimeError("audit_reconciliation_action_mismatch")
-        matching_digests: list[str] = []
+        matching_reads: list[dict[str, object]] = []
         for index, event in enumerate(events):
             if index < event_start or (
                 event.get("type") != "item.completed"
@@ -3389,11 +3419,52 @@ def _validated_reconciliation(
                 write_metadata or actions[action_index],
                 registry,
             ):
-                matching_digests.append(str(metadata["result_digest"]))
-        if not matching_digests:
+                matching_reads.append(metadata)
+        if not matching_reads:
             raise RuntimeError("audit_reconciliation_evidence_mismatch")
-        if entry.read_result_digest not in matching_digests:
+        cited_read = next(
+            (
+                metadata
+                for metadata in matching_reads
+                if metadata.get("result_digest") == entry.read_result_digest
+            ),
+            None,
+        )
+        if cited_read is None:
             raise RuntimeError("audit_reconciliation_evidence_mismatch")
+        expected_text_digest = actions[action_index].get("message_text_digest")
+        same_message_identity_count = sum(
+            candidate.get("message_text_digest") == expected_text_digest
+            and candidate.get("target_identifiers")
+            == actions[action_index].get("target_identifiers")
+            for candidate in actions
+        )
+        if (
+            _is_expected_dingtalk_chat_send(actions[action_index])
+            and isinstance(expected_text_digest, str)
+            and same_message_identity_count == 1
+        ):
+            observed_text_digests = cited_read.get("message_text_digests")
+            window_matches = (
+                cited_read.get("message_readback_window_matches") is True
+            )
+            if (
+                window_matches
+                and
+                isinstance(observed_text_digests, list)
+                and expected_text_digest in observed_text_digests
+            ):
+                disposition = ReconciliationDisposition.PRESENT
+            elif (
+                window_matches
+                and
+                entry.disposition is ReconciliationDisposition.ABSENT
+                and cited_read.get("message_readback_complete") is True
+            ):
+                disposition = ReconciliationDisposition.ABSENT
+            else:
+                disposition = ReconciliationDisposition.AMBIGUOUS
+            entry = entry.model_copy(update={"disposition": disposition})
         validated[action_index] = entry
     return validated
 
@@ -3609,6 +3680,99 @@ def _json_digest(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _message_text_digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _dingtalk_message_readback_proof(
+    receipt: dict[str, object],
+    *,
+    native_cli: str,
+    operation: str,
+    expected_message_text_digests: frozenset[str],
+    operation_started_at: str,
+) -> dict[str, object]:
+    """Reduce a scoped DingTalk history read to privacy-safe content evidence."""
+    if native_cli != "dws" or not operation.startswith("chat "):
+        return {}
+    stdout = receipt.get("stdout")
+    if not isinstance(stdout, str) or not stdout:
+        return {}
+    try:
+        payload = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return {}
+    matched: set[str] = set()
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        text = message.get("text")
+        message_id = message.get("messageId")
+        conversation_id = message.get("conversationId")
+        if (
+            not isinstance(text, str)
+            or not isinstance(message_id, str)
+            or not message_id
+            or not isinstance(conversation_id, str)
+            or not conversation_id
+        ):
+            continue
+        digest = _message_text_digest(text)
+        if digest in expected_message_text_digests:
+            matched.add(digest)
+    complete = (
+        payload.get("complete") is True
+        and payload.get("hasMore") is False
+        and payload.get("paginationKnown") is True
+        and payload.get("failures") == []
+    )
+    return {
+        "message_readback_complete": complete,
+        "message_readback_window_matches": _message_readback_window_matches(
+            payload,
+            operation_started_at=operation_started_at,
+        ),
+        "message_text_digests": sorted(matched),
+    }
+
+
+def _message_readback_window_matches(
+    payload: dict[str, object],
+    *,
+    operation_started_at: str,
+) -> bool:
+    query_range = payload.get("queryRange")
+    if not isinstance(query_range, dict):
+        return False
+    start = _parse_reconciliation_timestamp(query_range.get("startTime"))
+    end = _parse_reconciliation_timestamp(query_range.get("endTime"))
+    operation_started = _parse_reconciliation_timestamp(operation_started_at)
+    if start is None or end is None or operation_started is None:
+        return False
+    return (
+        start <= operation_started < end
+        and timedelta(0) < end - start <= timedelta(hours=2)
+    )
+
+
+def _parse_reconciliation_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _trusted_claude_effect_event(
