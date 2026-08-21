@@ -5817,6 +5817,43 @@ def test_active_audit_lease_is_deferred_after_retry_budget(tmp_path: Path, monke
     assert available_at - datetime.now(timezone.utc) < timedelta(seconds=10)
 
 
+def test_runtime_route_unavailable_is_deferred_after_retry_budget(
+    tmp_path: Path,
+    monkeypatch,
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    worker.produce_once()
+    task = worker.store.claim_reply_tasks(limit=1)[0]
+    worker.max_task_attempts = task.attempts
+
+    completed = worker._apply_orchestration_result(
+        task,
+        OrchestrationResult(
+            status="failed_retryable",
+            final_run_id=0,
+            final_role=AgentRole.CONSUMER,
+            summary="no eligible route until the next health probe",
+            error=AgentError(code="runtime_route_unavailable", retryable=True),
+            feedback_cycles=0,
+        ),
+    )
+
+    persisted = worker.store.get_reply_task(task.id)
+    assert not completed
+    assert persisted is not None and persisted.status == "pending"
+    assert persisted.error == "runtime_route_unavailable"
+    available_at = datetime.strptime(persisted.available_at, "%Y-%m-%d %H:%M:%S").replace(
+        tzinfo=timezone.utc
+    )
+    assert available_at - datetime.now(timezone.utc) < timedelta(seconds=10)
+
+
 def test_consume_once_completes_generation_mismatch_after_terminal_at_max_attempts(
     tmp_path: Path, monkeypatch
 ):

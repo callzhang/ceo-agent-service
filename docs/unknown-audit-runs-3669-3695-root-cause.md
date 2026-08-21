@@ -152,3 +152,18 @@ operation/message ID that can be queried. DWS operations that do not expose
 either property cannot be retried safely. The implemented one-shot intent
 minimizes the window and prevents local duplicate dispatch; it does not pretend
 that an unconfirmed third-party write is known.
+
+## Runtime-route retry-budget correction
+
+The later `runtime_route_unavailable` task failures were a separate scheduling
+defect. `AgentOrchestrator` already returns `failed_retryable` without a second
+same-process turn when no healthy route can satisfy a turn. However, the worker
+did not include that code in its active-recovery wait set. Once a reply task had
+used its ordinary attempt budget, the worker converted the transient wait into
+`failed`.
+
+The worker now preserves the task as `pending` and schedules its normal
+short active-recovery retry at the budget boundary. This applies only after the
+router has already classified the condition as `runtime_route_unavailable`;
+capability/surface errors retain their distinct error codes and are not hidden
+by this retry policy. No external action is started by this transition.

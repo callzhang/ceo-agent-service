@@ -2114,6 +2114,7 @@ class DingTalkAutoReplyWorker:
         active_recovery_wait = result.error.code in {
             "agent_run_unavailable",
             "codex_session_locked",
+            "runtime_route_unavailable",
         }
         if result.status == "failed_retryable" and result.final_run_id == 0:
             error = error_code or "agent_orchestration_deferred"
