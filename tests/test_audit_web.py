@@ -16,6 +16,7 @@ from app.audit_web import (
     create_default_audit_app,
     handle_audit_rules_post,
     handle_developer_prompt_post,
+    handle_agent_runtime_config_post,
     handle_prompt_variables_post,
     handle_system_config_post,
     handle_user_prompt_post,
@@ -48,7 +49,6 @@ from app.audit_web import (
 from app.audit_rules import read_audit_rules_template
 from app.developer_prompt import read_developer_prompt_template
 from app.config import load_env_file
-from app.codex_runner import CodexRunner
 from app.dingtalk_models import DingTalkMessage
 from app.setup_wizard_models import SetupWizardEvent
 from app.setup_wizard import SETUP_WIZARD_STEPS
@@ -4244,10 +4244,8 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS" in html
     assert "CEO_CONSUMER_WORKERS" in html
     assert "同一会话仍由 SQLite 会话锁串行执行" in html
-    assert "CEO_CODEX_MODEL" in html
-    assert "CEO_CODEX_MODEL_REASONING_EFFORT" in html
-    assert "Codex 执行模型" in html
-    assert "thinking 强度" in html
+    assert "CEO_CODEX_MODEL" not in html
+    assert "CEO_CODEX_MODEL_REASONING_EFFORT" not in html
     assert "CEO_MEETING_PRODUCER_INTERVAL_SECONDS" in html
     assert "meeting producer 扫描 dws minutes 的间隔秒数" in html
     assert "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS" in html
@@ -4283,6 +4281,37 @@ def test_render_config_page_shows_system_config_tab_with_descriptions():
     assert "CEO_FORBIDDEN_PATH_PREFIXES" in html
     system_section = html.split("<h2>系统运行参数</h2>", 1)[1]
     assert "保存位置" in system_section
+
+
+def test_render_config_page_shows_dedicated_agent_runtime_settings_without_token(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_CODEX_MODEL=gpt-5.5\n"
+        "CEO_CODEX_MODEL_REASONING_EFFORT=high\n"
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api\n"
+        "CEO_CODEX_API_BASE_URL=https://gateway.example/v1\n"
+        "CEO_CODEX_API_MODEL=gpt-5.5\n"
+        "CEO_CODEX_API_KEY=must-not-render\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    html = render_config_page(active_tab="agent-runtime")
+
+    assert "Agent Runtime" in html
+    assert 'method="post" action="/config/agent-runtime"' in html
+    assert '<select name="codex_model"' in html
+    assert '<select name="codex_reasoning_effort"' in html
+    assert 'name="codex_api_enabled"' in html
+    assert 'name="codex_api_base_url"' in html
+    assert '<select name="codex_api_model"' in html
+    assert 'type="password" name="codex_api_token"' in html
+    assert "已配置" in html
+    assert "must-not-render" not in html
+    assert "CEO_CODEX_MODEL" not in html
 
 
 def test_system_config_hides_and_rejects_unknown_env_keys(tmp_path, monkeypatch):
@@ -4392,10 +4421,6 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
         "&system_value=10"
         "&system_key=CEO_CONSUMER_WORKERS"
         "&system_value=2"
-        "&system_key=CEO_CODEX_MODEL"
-        "&system_value=gpt-5.5"
-        "&system_key=CEO_CODEX_MODEL_REASONING_EFFORT"
-        "&system_value=high"
         "&system_key=CEO_MEETING_PRODUCER_INTERVAL_SECONDS"
         "&system_value=60"
         "&system_key=CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS"
@@ -4428,8 +4453,6 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     assert "CEO_PRODUCER_INTERVAL_SECONDS=60" in env_text
     assert "CEO_CONSUMER_POLL_INTERVAL_SECONDS=10" in env_text
     assert "CEO_CONSUMER_WORKERS=2" in env_text
-    assert "CEO_CODEX_MODEL=gpt-5.5" in env_text
-    assert "CEO_CODEX_MODEL_REASONING_EFFORT=high" in env_text
     assert "CEO_MEETING_PRODUCER_INTERVAL_SECONDS=60" in env_text
     assert "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS=10" in env_text
     assert "CEO_MEETING_SETTLE_SECONDS=600" in env_text
@@ -4441,9 +4464,117 @@ def test_handle_system_config_post_saves_runtime_params_to_env_file(
     assert "SINGLE_CHAT_READ_RECOVERY_WINDOW=12h" in env_text
     assert "SINGLE_CHAT_READ_RECOVERY_LIMIT=25" in env_text
     assert "MESSAGE_RECOVERY_INTERVAL" not in read_developer_prompt_template()
-    command = CodexRunner(workspace=tmp_path).build_command("test", None)
-    assert command[command.index("-m") + 1] == "gpt-5.5"
-    assert 'model_reasoning_effort="high"' in command
+
+
+def test_handle_agent_runtime_config_post_saves_enabled_api_fallback(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_CODEX_API_KEY=existing-token\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, headers, html = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=high"
+            "&codex_api_enabled=1"
+            "&codex_api_base_url=https%3A%2F%2Fgateway.example%2Fv1%2F"
+            "&codex_api_model=gpt-5.5"
+            "&codex_api_token=new-token"
+        ).encode()
+    )
+
+    assert status == 303
+    assert headers["Location"] == "/config?tab=agent-runtime&saved=1"
+    assert html == ""
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_CODEX_MODEL=gpt-5.5" in env_text
+    assert "CEO_CODEX_MODEL_REASONING_EFFORT=high" in env_text
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api" in env_text
+    assert "CEO_CODEX_API_BASE_URL=https://gateway.example/v1" in env_text
+    assert "CEO_CODEX_API_MODEL=gpt-5.5" in env_text
+    assert "CEO_CODEX_API_KEY=new-token" in env_text
+
+
+def test_handle_agent_runtime_config_post_preserves_existing_blank_token(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_CODEX_API_KEY=existing-token\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, _, _ = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=medium"
+            "&codex_api_enabled=1"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+            "&codex_api_token="
+        ).encode()
+    )
+
+    assert status == 303
+    assert "CEO_CODEX_API_KEY=existing-token" in env_path.read_text(encoding="utf-8")
+
+
+def test_handle_agent_runtime_config_post_rejects_enabled_fallback_without_token(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    original = "CEO_CODEX_MODEL=gpt-5.5\n"
+    env_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    monkeypatch.delenv("CEO_CODEX_API_KEY", raising=False)
+
+    status, _, html = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=medium"
+            "&codex_api_enabled=1"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+            "&codex_api_token="
+        ).encode()
+    )
+
+    assert status == 400
+    assert "API Token" in html
+    assert env_path.read_text(encoding="utf-8") == original
+
+
+def test_agent_runtime_settings_route_renders_and_saves_from_loopback(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_CODEX_MODEL=gpt-5.5\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    page = client.get("/settings?tab=config&config_tab=agent-runtime")
+    response = client.post(
+        "/config/agent-runtime",
+        content=(
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=medium"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+        ),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        follow_redirects=False,
+    )
+
+    assert page.status_code == 200
+    assert 'action="/config/agent-runtime"' in page.text
+    assert response.status_code == 303
+    assert response.headers["location"] == "/config?tab=agent-runtime&saved=1"
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth" in env_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_open_dingtalk_bridge_opens_conversation_url(tmp_path: Path, monkeypatch):

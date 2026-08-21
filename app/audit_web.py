@@ -36,6 +36,10 @@ from app.agent_contracts import (
     ConsumerOutcome,
     DecisionOption,
 )
+from app.agent_runtime_config import (
+    DEFAULT_CODEX_API_BASE_URL,
+    normalize_codex_api_base_url,
+)
 from app.approval_history import (
     ApprovalHistoryResult,
     resolve_approval_history_group_result,
@@ -60,8 +64,6 @@ from app.config import (
     broadcast_mention_aliases,
     consumer_poll_interval_seconds,
     consumer_worker_count,
-    codex_model,
-    codex_model_reasoning_effort,
     corpus_dir,
     document_extraction_ids,
     embedding_api_key,
@@ -2710,6 +2712,8 @@ def _render_config_body(
         )
     elif active_tab == "system":
         content = _render_system_config(db_path=db_path)
+    elif active_tab == "agent-runtime":
+        content = _render_agent_runtime_config()
     elif active_tab == "channels":
         store_path = db_path or _configured_worker_db_path()
         content = _render_channel_config(AutoReplyStore(store_path))
@@ -3048,16 +3052,6 @@ def _system_config_rows() -> list[tuple[str, str, str]]:
             "单个 launchd 服务内并发的 reply consumer 线程数；同一会话仍由 SQLite 会话锁串行执行。",
         ),
         (
-            "CEO_CODEX_MODEL",
-            codex_model(),
-            "Codex 执行模型；保存后写入 .env，后续启动的 agent 使用此模型。",
-        ),
-        (
-            "CEO_CODEX_MODEL_REASONING_EFFORT",
-            codex_model_reasoning_effort(),
-            "Codex thinking 强度；保存后写入 .env，后续启动的 agent 使用此强度。",
-        ),
-        (
             "CEO_MEETING_PRODUCER_INTERVAL_SECONDS",
             str(meeting_producer_interval_seconds()),
             "meeting producer 扫描 dws minutes 的间隔秒数。",
@@ -3180,6 +3174,74 @@ def _render_system_config(*, db_path: Path | None = None) -> str:
     )
 
 
+_AGENT_RUNTIME_MODELS = ("gpt-5.5", "gpt-5.6")
+_AGENT_RUNTIME_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
+
+
+def _agent_runtime_config_value(name: str, default: str = "") -> str:
+    return read_env_file().get(name, os.environ.get(name, default)).strip()
+
+
+def _agent_runtime_option_html(values: tuple[str, ...], selected: str) -> str:
+    return "".join(
+        f'<option value="{escape(value, quote=True)}"'
+        f'{" selected" if value == selected else ""}>'
+        f"{escape(value)}</option>"
+        for value in values
+    )
+
+
+def _render_agent_runtime_config() -> str:
+    oauth_model = _agent_runtime_config_value("CEO_CODEX_MODEL", "gpt-5.5")
+    reasoning_effort = _agent_runtime_config_value(
+        "CEO_CODEX_MODEL_REASONING_EFFORT", "medium"
+    )
+    api_base_url = _agent_runtime_config_value(
+        "CEO_CODEX_API_BASE_URL", DEFAULT_CODEX_API_BASE_URL
+    )
+    api_model = _agent_runtime_config_value("CEO_CODEX_API_MODEL", oauth_model)
+    routes = {
+        value.strip()
+        for value in _agent_runtime_config_value(
+            "CEO_AGENT_RUNTIME_ROUTES", "codex_oauth"
+        ).split(",")
+        if value.strip()
+    }
+    api_enabled = "codex_api" in routes
+    token_configured = bool(_agent_runtime_config_value("CEO_CODEX_API_KEY"))
+    return (
+        '<section class="card">'
+        "<h2>Agent Runtime</h2>"
+        "<p class=\"muted\">配置默认 Codex OAuth 路由和可选的 API fallback。"
+        "保存到 .env 后，需要重启主服务使已运行的 worker 使用新配置。</p>"
+        '<form method="post" action="/config/agent-runtime">'
+        "<h3>Codex OAuth 默认路由</h3>"
+        '<p><label>Model<br><select name="codex_model">'
+        f"{_agent_runtime_option_html(_AGENT_RUNTIME_MODELS, oauth_model)}"
+        "</select></label></p>"
+        '<p><label>Thinking strength<br><select name="codex_reasoning_effort">'
+        f"{_agent_runtime_option_html(_AGENT_RUNTIME_REASONING_EFFORTS, reasoning_effort)}"
+        "</select></label></p>"
+        "<h3>API fallback</h3>"
+        '<p><label><input type="checkbox" name="codex_api_enabled" value="1"'
+        f'{" checked" if api_enabled else ""}>'
+        " 启用 Codex API fallback</label></p>"
+        '<p><label>API Base URL<br><input class="config-value-input" type="url" '
+        'name="codex_api_base_url" required value="'
+        f'{escape(api_base_url, quote=True)}"></label></p>'
+        '<p><label>Fallback model<br><select name="codex_api_model">'
+        f"{_agent_runtime_option_html(_AGENT_RUNTIME_MODELS, api_model)}"
+        "</select></label></p>"
+        '<p><label>API Token<br><input class="config-value-input" type="password" '
+        'name="codex_api_token" autocomplete="new-password"></label><br>'
+        f'<span class="muted">当前状态：{"已配置" if token_configured else "未配置"}。'
+        "留空会保留当前 Token，Token 不会在此页面回显。</span></p>"
+        "<p><button type=\"submit\">Save Agent Runtime</button></p>"
+        "</form>"
+        "</section>"
+    )
+
+
 def _runtime_identity_cache_html(db_path: Path | None) -> str:
     configured_db_path = os.environ.get("CEO_WORKER_DB", "").strip()
     store_path = (
@@ -3232,8 +3294,6 @@ def _editable_system_config_keys() -> set[str]:
         "CEO_PRODUCER_INTERVAL_SECONDS",
         "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
         "CEO_CONSUMER_WORKERS",
-        "CEO_CODEX_MODEL",
-        "CEO_CODEX_MODEL_REASONING_EFFORT",
         "CEO_MEETING_PRODUCER_INTERVAL_SECONDS",
         "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS",
         "CEO_MEETING_SETTLE_SECONDS",
@@ -7169,6 +7229,9 @@ def _config_tabs(active_tab: str, *, tab_href_prefix: str = "/config?tab=") -> s
 
     info_class = "prompt-tab active" if active_tab == "info" else "prompt-tab"
     system_class = "prompt-tab active" if active_tab == "system" else "prompt-tab"
+    agent_runtime_class = (
+        "prompt-tab active" if active_tab == "agent-runtime" else "prompt-tab"
+    )
     channels_class = (
         "prompt-tab active" if active_tab == "channels" else "prompt-tab"
     )
@@ -7185,6 +7248,8 @@ def _config_tabs(active_tab: str, *, tab_href_prefix: str = "/config?tab=") -> s
         f"<a class=\"{info_class}\" href=\"{href('info')}\">Info</a>"
         f"<a class=\"{system_class}\" href=\"{href('system')}\">"
         "System Config</a>"
+        f"<a class=\"{agent_runtime_class}\" href=\"{href('agent-runtime')}\">"
+        "Agent Runtime</a>"
         f"<a class=\"{channels_class}\" href=\"{href('channels')}\">Channels</a>"
         f"<a class=\"{wechat_class}\" href=\"{href('wechat')}\">WeChat</a>"
         f"<a class=\"{developer_class}\" href=\"{href('developer')}\">"
@@ -7496,6 +7561,58 @@ def handle_system_config_post(body: bytes) -> tuple[int, dict[str, str], str]:
     }
     write_env_values(updates)
     return 303, {"Location": "/config?tab=system&saved=1"}, ""
+
+
+def handle_agent_runtime_config_post(
+    body: bytes,
+) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    model = parsed.get("codex_model", [""])[0].strip()
+    reasoning_effort = parsed.get("codex_reasoning_effort", [""])[0].strip()
+    api_enabled = parsed.get("codex_api_enabled", [""])[0] == "1"
+    api_model = parsed.get("codex_api_model", [""])[0].strip()
+    api_token = parsed.get("codex_api_token", [""])[0].strip()
+    if model not in _AGENT_RUNTIME_MODELS:
+        return _invalid_agent_runtime_config("Model must be selected from this page.")
+    if reasoning_effort not in _AGENT_RUNTIME_REASONING_EFFORTS:
+        return _invalid_agent_runtime_config(
+            "Thinking strength must be selected from this page."
+        )
+    if api_model not in _AGENT_RUNTIME_MODELS:
+        return _invalid_agent_runtime_config(
+            "Fallback model must be selected from this page."
+        )
+    try:
+        api_base_url = normalize_codex_api_base_url(
+            parsed.get("codex_api_base_url", [""])[0]
+        )
+    except ValueError as exc:
+        return _invalid_agent_runtime_config(str(exc))
+    existing_token = _agent_runtime_config_value("CEO_CODEX_API_KEY")
+    if api_enabled and not (api_token or existing_token):
+        return _invalid_agent_runtime_config(
+            "API Token is required before API fallback can be enabled."
+        )
+    updates = {
+        "CEO_CODEX_MODEL": model,
+        "CEO_CODEX_MODEL_REASONING_EFFORT": reasoning_effort,
+        "CEO_AGENT_RUNTIME_ROUTES": (
+            "codex_oauth,codex_api" if api_enabled else "codex_oauth"
+        ),
+        "CEO_CODEX_API_BASE_URL": api_base_url,
+        "CEO_CODEX_API_MODEL": api_model,
+    }
+    if api_token:
+        updates["CEO_CODEX_API_KEY"] = api_token
+    write_env_values(updates)
+    return 303, {"Location": "/config?tab=agent-runtime&saved=1"}, ""
+
+
+def _invalid_agent_runtime_config(message: str) -> tuple[int, dict[str, str], str]:
+    return 400, {}, render_page(
+        "Agent Runtime config invalid",
+        f'<p class="attempt-warning">{escape(message)}</p>',
+    )
 
 
 def handle_user_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
@@ -8759,6 +8876,11 @@ def create_audit_app(
     @app.post("/config/system")
     async def config_system_save(request: Request):
         status, headers, html = handle_system_config_post(await request.body())
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/config/agent-runtime")
+    async def config_agent_runtime_save(request: Request):
+        status, headers, html = handle_agent_runtime_config_post(await request.body())
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/attempts/{attempt_id}/recall")
