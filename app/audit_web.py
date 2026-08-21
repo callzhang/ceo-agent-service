@@ -219,6 +219,10 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .config-variable-table input[type="text"]{height:28px;padding:4px 7px;border-radius:6px;font-size:12px;line-height:1.35}
 .config-key-input{font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;color:var(--steel);background:var(--surface-soft)}
 .config-value-input{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.secret-token-input{width:320px;max-width:100%;letter-spacing:.12em}
+.secret-token-input::placeholder{color:var(--ink);opacity:1;letter-spacing:.12em}
+.secret-token-toggle{margin-left:8px;padding:7px 10px;background:var(--surface);border:1px solid var(--hairline);color:var(--ink);font-size:13px}
+.secret-token-toggle:hover{border-color:var(--ink);background:var(--surface-soft)}
 .config-value{display:inline-flex;max-width:100%;padding:4px 8px;border-radius:7px;background:var(--surface);border:1px solid var(--hairline-soft);color:var(--charcoal);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
 .config-token{display:inline-flex;max-width:100%;padding:3px 7px;border-radius:6px;background:#ddfff6;border:1px solid rgba(0,180,138,.55);color:#005b49;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;font-weight:700;line-height:1.4;white-space:pre-wrap;word-break:break-word;box-shadow:0 0 0 2px rgba(0,212,164,.12)}
 .system-config-table th:first-child,.system-config-table td:first-child{width:260px}
@@ -3174,7 +3178,14 @@ def _render_system_config(*, db_path: Path | None = None) -> str:
     )
 
 
-_AGENT_RUNTIME_MODELS = ("gpt-5.5", "gpt-5.6")
+_AGENT_RUNTIME_MODELS = (
+    ("gpt-5.5", "GPT-5.5"),
+    ("gpt-5.6", "GPT-5.6 (Sol alias)"),
+    ("gpt-5.6-sol", "GPT-5.6 Sol"),
+    ("gpt-5.6-terra", "GPT-5.6 Terra"),
+    ("gpt-5.6-luna", "GPT-5.6 Luna"),
+)
+_AGENT_RUNTIME_MODEL_VALUES = frozenset(value for value, _ in _AGENT_RUNTIME_MODELS)
 _AGENT_RUNTIME_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 
 
@@ -3188,6 +3199,15 @@ def _agent_runtime_option_html(values: tuple[str, ...], selected: str) -> str:
         f'{" selected" if value == selected else ""}>'
         f"{escape(value)}</option>"
         for value in values
+    )
+
+
+def _agent_runtime_model_option_html(selected: str) -> str:
+    return "".join(
+        f'<option value="{escape(value, quote=True)}"'
+        f'{" selected" if value == selected else ""}>'
+        f"{escape(label)}</option>"
+        for value, label in _AGENT_RUNTIME_MODELS
     )
 
 
@@ -3217,7 +3237,7 @@ def _render_agent_runtime_config() -> str:
         '<form method="post" action="/config/agent-runtime">'
         "<h3>Codex OAuth 默认路由</h3>"
         '<p><label>Model<br><select name="codex_model">'
-        f"{_agent_runtime_option_html(_AGENT_RUNTIME_MODELS, oauth_model)}"
+        f"{_agent_runtime_model_option_html(oauth_model)}"
         "</select></label></p>"
         '<p><label>Thinking strength<br><select name="codex_reasoning_effort">'
         f"{_agent_runtime_option_html(_AGENT_RUNTIME_REASONING_EFFORTS, reasoning_effort)}"
@@ -3230,15 +3250,19 @@ def _render_agent_runtime_config() -> str:
         'name="codex_api_base_url" required value="'
         f'{escape(api_base_url, quote=True)}"></label></p>'
         '<p><label>Fallback model<br><select name="codex_api_model">'
-        f"{_agent_runtime_option_html(_AGENT_RUNTIME_MODELS, api_model)}"
+        f"{_agent_runtime_model_option_html(api_model)}"
         "</select></label></p>"
         '<p><label>API Token<br><input id="codex-api-token" '
-        'class="config-value-input" type="password" name="codex_api_token" '
-        'autocomplete="new-password"></label> '
-        '<button id="codex-api-token-toggle" type="button" '
-        'aria-controls="codex-api-token" aria-pressed="false">显示</button><br>'
+        'class="config-value-input secret-token-input" type="password" '
+        'name="codex_api_token" autocomplete="new-password" '
+        f'placeholder="{"●" * 12 if token_configured else ""}" '
+        f'data-token-configured="{str(token_configured).lower()}"></label> '
+        '<button id="codex-api-token-toggle" class="secret-token-toggle" type="button" '
+        'aria-controls="codex-api-token" aria-pressed="false" '
+        'aria-label="显示或隐藏本次输入的 API Token">👁 <span>显示</span></button><br>'
         f'<span class="muted">当前状态：{"已配置" if token_configured else "未配置"}。'
-        "切换显示不会清空当前输入；保存后 Token 不会在此页面回显。</span></p>"
+        "页面不会重新下发已保存的 Token；输入新 Token 后可用眼睛按钮显示或隐藏本次输入，"
+        "留空保存会保留已配置的 Token。</span></p>"
         "<p><button type=\"submit\">Save Agent Runtime</button></p>"
         "</form>"
         "<script>"
@@ -3251,7 +3275,7 @@ def _render_agent_runtime_config() -> str:
         "const showing = tokenInput.type === 'text';"
         "tokenInput.type = showing ? \"password\" : \"text\";"
         "tokenInput.value = currentValue;"
-        "toggle.textContent = showing ? '显示' : '隐藏';"
+        "toggle.querySelector('span').textContent = showing ? '显示' : '隐藏';"
         "toggle.setAttribute('aria-pressed', String(!showing));"
         "});"
         "})();"
@@ -7590,13 +7614,13 @@ def handle_agent_runtime_config_post(
     api_enabled = parsed.get("codex_api_enabled", [""])[0] == "1"
     api_model = parsed.get("codex_api_model", [""])[0].strip()
     api_token = parsed.get("codex_api_token", [""])[0].strip()
-    if model not in _AGENT_RUNTIME_MODELS:
+    if model not in _AGENT_RUNTIME_MODEL_VALUES:
         return _invalid_agent_runtime_config("Model must be selected from this page.")
     if reasoning_effort not in _AGENT_RUNTIME_REASONING_EFFORTS:
         return _invalid_agent_runtime_config(
             "Thinking strength must be selected from this page."
         )
-    if api_model not in _AGENT_RUNTIME_MODELS:
+    if api_model not in _AGENT_RUNTIME_MODEL_VALUES:
         return _invalid_agent_runtime_config(
             "Fallback model must be selected from this page."
         )

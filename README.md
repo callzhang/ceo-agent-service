@@ -287,8 +287,8 @@ cp .env.example .env
 | `CEO_MEETING_PRODUCER_INTERVAL_SECONDS` | 会议信息发现周期，默认 60 秒 |
 | `CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS` | 会后对齐队列消费周期，默认 10 秒 |
 | `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
-| `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex OAuth 默认模型、thinking 强度和可选 provider；默认 `gpt-5.5` + `medium`。在 `Settings → Config → Agent Runtime` 中用下拉菜单修改，保存到 `.env` 后重启主服务统一生效，认证与 MCP/skills 保持沿用当前安装用户配置。 |
-| `CEO_AGENT_RUNTIME_ROUTES` / `CEO_CODEX_API_BASE_URL` / `CEO_CODEX_API_MODEL` / `CEO_CODEX_API_KEY` | 可选 Codex API fallback：在 `Settings → Config → Agent Runtime` 启用，填写 Base URL、模型和 Token。Token 是只写字段，页面只显示是否已配置而不会回显；留空保存会保留已有 Token。 |
+| `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex OAuth 默认模型、thinking 强度和可选 provider；默认 `gpt-5.5` + `medium`。在 `Settings → Config → Agent Runtime` 中用下拉菜单修改；模型可选 `gpt-5.5`、`gpt-5.6`（Sol 别名）、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。保存到 `.env` 后重启主服务统一生效，认证与 MCP/skills 保持沿用当前安装用户配置。 |
+| `CEO_AGENT_RUNTIME_ROUTES` / `CEO_CODEX_API_BASE_URL` / `CEO_CODEX_API_MODEL` / `CEO_CODEX_API_KEY` | 可选 Codex API fallback：在 `Settings → Config → Agent Runtime` 启用，填写 Base URL、模型和 Token。已配置的 Token 以圆点掩码显示，页面不会重新下发密钥；眼睛按钮只显示或隐藏本次输入的内容。留空保存会保留已有 Token。 |
 | `CEO_CODEX_CAPACITY_RETRY_DELAY` | Codex 明确返回 workspace credits、quota 或 usage limit 后的全局暂停期；默认 30 分钟，暂停期内不再启动新的 Codex 回复、工作汇总或会议分析，过期后自动恢复 |
 | `CEO_CODEX_CAPACITY_RETRY_MAX_DELAY` | Codex 容量持续不足时的最长探测间隔；默认 4 小时。探测从 `CEO_CODEX_CAPACITY_RETRY_DELAY` 开始逐次翻倍，成功后重置 |
 | `CEO_FEISHU_CLI_BINARY` | 飞书 CLI 二进制名，默认 `lark` |

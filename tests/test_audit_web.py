@@ -4304,14 +4304,21 @@ def test_render_config_page_shows_dedicated_agent_runtime_settings_without_token
     assert "Agent Runtime" in html
     assert 'method="post" action="/config/agent-runtime"' in html
     assert '<select name="codex_model"' in html
+    assert '<option value="gpt-5.6">GPT-5.6 (Sol alias)</option>' in html
+    assert '<option value="gpt-5.6-sol">GPT-5.6 Sol</option>' in html
+    assert '<option value="gpt-5.6-terra">GPT-5.6 Terra</option>' in html
+    assert '<option value="gpt-5.6-luna">GPT-5.6 Luna</option>' in html
     assert '<select name="codex_reasoning_effort"' in html
     assert 'name="codex_api_enabled"' in html
     assert 'name="codex_api_base_url"' in html
     assert '<select name="codex_api_model"' in html
     assert 'id="codex-api-token"' in html
     assert 'type="password" name="codex_api_token"' in html
+    assert 'placeholder="●●●●●●●●●●●●"' in html
+    assert 'data-token-configured="true"' in html
     assert 'id="codex-api-token-toggle"' in html
     assert 'aria-controls="codex-api-token"' in html
+    assert 'aria-label="显示或隐藏本次输入的 API Token"' in html
     assert "const currentValue = tokenInput.value;" in html
     assert 'tokenInput.type = showing ? "password" : "text";' in html
     assert "tokenInput.value = currentValue;" in html
@@ -4501,6 +4508,31 @@ def test_handle_agent_runtime_config_post_saves_enabled_api_fallback(
     assert "CEO_CODEX_API_BASE_URL=https://gateway.example/v1" in env_text
     assert "CEO_CODEX_API_MODEL=gpt-5.5" in env_text
     assert "CEO_CODEX_API_KEY=new-token" in env_text
+
+
+def test_handle_agent_runtime_config_post_accepts_explicit_gpt_5_6_family_models(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_CODEX_API_KEY=existing-token\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, _, _ = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.6-sol"
+            "&codex_reasoning_effort=high"
+            "&codex_api_enabled=1"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.6-terra"
+            "&codex_api_token="
+        ).encode()
+    )
+
+    assert status == 303
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_CODEX_MODEL=gpt-5.6-sol" in env_text
+    assert "CEO_CODEX_API_MODEL=gpt-5.6-terra" in env_text
 
 
 def test_handle_agent_runtime_config_post_preserves_existing_blank_token(
