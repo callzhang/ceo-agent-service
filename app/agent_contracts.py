@@ -190,6 +190,7 @@ class AuditOutcome(StrEnum):
 class ReconciliationDisposition(StrEnum):
     PRESENT = "present"
     ABSENT = "absent"
+    SUPERSEDED = "superseded"
     AMBIGUOUS = "ambiguous"
 
 

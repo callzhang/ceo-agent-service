@@ -531,6 +531,25 @@ def test_audit_reconciliation_is_strict_structured_per_action():
     assert result.reconciliation[0].disposition.value == "ambiguous"
 
 
+def test_audit_reconciliation_accepts_superseded_target_context():
+    result = AuditAgentResult.model_validate(
+        _audit_payload(
+            outcome="reconciled",
+            side_effect_state="unknown",
+            feedback=None,
+            reconciliation=[
+                {
+                    "action_index": 0,
+                    "disposition": "superseded",
+                    "read_result_digest": "later-target-message",
+                }
+            ],
+        )
+    )
+
+    assert result.reconciliation[0].disposition.value == "superseded"
+
+
 @pytest.mark.parametrize(
     "reconciliation",
     (

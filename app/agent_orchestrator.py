@@ -441,6 +441,17 @@ class AgentOrchestrator:
                     reconciled = _audit_result(latest)
                     if reconciled.outcome is AuditOutcome.RECONCILED:
                         if any(
+                            entry.disposition.value == "superseded"
+                            for entry in reconciled.reconciliation
+                        ):
+                            return self._finalize_reconciled_audit(
+                                latest,
+                                reconciled,
+                                feedback_cycles=revision,
+                                needs_human=False,
+                                superseded=True,
+                            )
+                        if any(
                             entry.disposition.value == "ambiguous"
                             for entry in reconciled.reconciliation
                         ):
@@ -546,6 +557,7 @@ class AgentOrchestrator:
         *,
         feedback_cycles: int,
         needs_human: bool,
+        superseded: bool = False,
     ) -> OrchestrationResult | _Deferred:
         owner = f"agent-orchestrator-reconciled-{run.id}"
         claim = self.store.claim_unknown_agent_run(run.id, owner=owner)
@@ -560,15 +572,23 @@ class AgentOrchestrator:
             status = "needs_human"
             side_effect_state = SideEffectState.UNKNOWN.value
         else:
+            summary = reconciled.summary
+            side_effect_state = SideEffectState.CONFIRMED.value
+            if superseded:
+                summary = (
+                    "A later target-scoped message resolved the trigger; the "
+                    "unconfirmed prior action was not replayed."
+                )
+                side_effect_state = SideEffectState.NONE.value
             result = AuditAgentResult(
                 outcome=AuditOutcome.EXECUTED,
-                summary=reconciled.summary,
+                summary=summary,
                 proposal_revision=run.proposal_revision,
-                side_effect_state=SideEffectState.CONFIRMED,
+                side_effect_state=SideEffectState(side_effect_state),
                 feedback=None,
                 external_result={
                     "operation_id": run.operation_id,
-                    "verification_summary": reconciled.summary,
+                    "verification_summary": summary,
                     "live_result_reference": {
                         "reconciliation": [
                             entry.model_dump(mode="json")
@@ -580,7 +600,6 @@ class AgentOrchestrator:
                 error=AgentError(),
             )
             status = "executed"
-            side_effect_state = SideEffectState.CONFIRMED.value
         completed = self.store.complete_agent_run(
             run.id,
             result.model_dump(mode="json"),
