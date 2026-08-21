@@ -444,7 +444,7 @@ def _encode_runtime_domain_result(
     else:
         if (
             role is not AgentRole.CONSUMER
-            or result.outcome is not ConsumerOutcome.PROPOSAL
+            or result.outcome is ConsumerOutcome.FAILED
             or type(result_reference_run_id) is not int
             or result_reference_run_id <= 0
         ):
@@ -541,7 +541,7 @@ def _decode_runtime_domain_result(
             _reject_runtime_document_fields(projected_result)
             if projected_result != envelope["result"]:
                 raise ValueError("runtime_result_envelope_projection_mismatch")
-        elif result.outcome is not ConsumerOutcome.PROPOSAL:
+        elif result.outcome is ConsumerOutcome.FAILED:
             raise ValueError("runtime_result_reference_invalid")
         evidence = _validate_runtime_result_evidence_shape(envelope["evidence"])
         return _DecodedRuntimeDomainResult(result=result, evidence=evidence)
@@ -1114,6 +1114,20 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             if (
                 completed_attempt is None
+                and run.role is AgentRole.CONSUMER
+                and run.status == "completed"
+                and any(
+                    attempt.status == "completed"
+                    and attempt.result_envelope_json
+                    and attempt.runtime_kind == RuntimeKind.CLAUDE_CLI.value
+                    for attempt in runtime_attempts
+                )
+            ):
+                raise CompletedRuntimeResultBlockedError(
+                    "completed_runtime_result_contract_mismatch"
+                )
+            if (
+                completed_attempt is None
                 and run.effect_started_count > 0
                 and any(
                     attempt.status == "completed"
@@ -1608,9 +1622,9 @@ class AgentTurnProcess(Generic[ResultT]):
             domain_result = cast(
                 ConsumerAgentResult | AuditAgentResult, result
             ).model_dump(mode="json")
-            durable_consumer_proposal = (
+            durable_consumer_result = (
                 run.role is AgentRole.CONSUMER
-                and outcome is ConsumerOutcome.PROPOSAL
+                and outcome is not ConsumerOutcome.FAILED
             )
             self.store.complete_agent_runtime_attempt(
                 persisted_attempt.id,
@@ -1626,7 +1640,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     recovery_phase=recovery_phase,
                     result=cast(ConsumerAgentResult | AuditAgentResult, result),
                     result_reference_run_id=(
-                        run.id if durable_consumer_proposal else None
+                        run.id if durable_consumer_result else None
                     ),
                     evidence=_runtime_result_evidence(
                         run=cast(
@@ -1652,13 +1666,13 @@ class AgentTurnProcess(Generic[ResultT]):
                 route_name=route.name,
                 conversation_contract_hash=conversation_contract_hash,
                 agent_run_final_result=(
-                    domain_result if durable_consumer_proposal else None
+                    domain_result if durable_consumer_result else None
                 ),
                 agent_run_final_side_effect_state=(
-                    side_effect_state.value if durable_consumer_proposal else "none"
+                    side_effect_state.value if durable_consumer_result else "none"
                 ),
                 agent_run_transcript_end=(
-                    transcript_end if durable_consumer_proposal else None
+                    transcript_end if durable_consumer_result else None
                 ),
             )
         if recovery_phase == "reconcile":

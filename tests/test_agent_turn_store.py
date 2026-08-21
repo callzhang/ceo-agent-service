@@ -512,10 +512,14 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
         crash_task.id, crash_task.execution_generation
     )
     [crash_attempt] = store.list_agent_runtime_attempts(crash_run.id)
-    assert crash_run.status == "running"
+    assert crash_run.status == "completed"
     assert crash_attempt.status == "completed"
     assert crash_attempt.session_id == session_id
     assert crash_attempt.result_envelope_json
+    crash_envelope = json.loads(crash_attempt.result_envelope_json)
+    assert "result" not in crash_envelope
+    assert crash_envelope["result_ref"]["agent_run_id"] == crash_run.id
+    assert "Nothing to do." not in crash_attempt.result_envelope_json
     assert store.get_conversation_runtime_session(
         task.conversation_id, "claude_api", required_contract_hash="contract-v1"
     ) == session_id
@@ -538,25 +542,80 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
         )[0].id
     )
     assert first_attempt.session_id == session_id
+    first_envelope = json.loads(first_attempt.result_envelope_json)
+    assert "result" not in first_envelope
+    assert first_envelope["result_ref"]["agent_run_id"] > 0
+    assert "Nothing to do." not in first_attempt.result_envelope_json
 
-    # A completed provider result belongs to the full execution contract, not
-    # merely the wire schema. A new business context must execute again when
-    # the prior turn had no effects and is therefore safe to re-plan.
+    needs_human_result = json.dumps(
+        {
+            "outcome": "needs_human",
+            "summary": "A management decision is required.",
+            "proposal": None,
+            "decision_options": [
+                {
+                    "key": "A",
+                    "label": "Approve",
+                    "instruction": "Approve the reviewed option.",
+                    "consequence": "The reviewed plan may continue.",
+                },
+                {
+                    "key": "B",
+                    "label": "Hold",
+                    "instruction": "Hold the reviewed option.",
+                    "consequence": "No further action is taken.",
+                },
+            ],
+            "error_code": "decision_required",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        },
+        separators=(",", ":"),
+    )
+    executor.stream = stream_for_result(needs_human_result)
+    needs_human_task = next_task("msg-turns-human", "generation-human")
+    monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
+    with pytest.raises(RuntimeError, match="injected_parent_terminal_failure"):
+        execute(needs_human_task)
+    needs_human_executor_calls = len(executor.commands)
+    [needs_human_run] = store.list_agent_runs_for_task_generation(
+        needs_human_task.id, needs_human_task.execution_generation
+    )
+    [needs_human_attempt] = store.list_agent_runtime_attempts(needs_human_run.id)
+    assert needs_human_run.status == "completed"
+    needs_human_envelope = json.loads(needs_human_attempt.result_envelope_json)
+    assert "result" not in needs_human_envelope
+    assert needs_human_envelope["result_ref"]["agent_run_id"] == needs_human_run.id
+    assert "A management decision is required." not in (
+        needs_human_attempt.result_envelope_json
+    )
+    monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
+    execute(needs_human_task)
+    assert len(executor.commands) == needs_human_executor_calls
+    recovered_needs_human = store.get_agent_run(needs_human_run.id)
+    assert recovered_needs_human is not None
+    assert recovered_needs_human.status == "completed"
+
+    # A completed provider result belongs to the full execution contract. Once
+    # the parent and result are atomically terminal, a context mismatch must
+    # block rather than spawn a second model call.
     stale_task = next_task("msg-turns-stale", "generation-stale")
     monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
     with pytest.raises(RuntimeError, match="injected_parent_terminal_failure"):
         execute(stale_task, current_prompt="OLD business context")
     stale_executor_calls = len(executor.commands)
     monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
-    execute(stale_task, current_prompt="NEW business context")
-    assert len(executor.commands) == stale_executor_calls + 1
+    with pytest.raises(
+        ValueError, match="completed_runtime_result_contract_mismatch"
+    ):
+        execute(stale_task, current_prompt="NEW business context")
+    assert len(executor.commands) == stale_executor_calls
     [stale_run] = store.list_agent_runs_for_task_generation(
         stale_task.id, stale_task.execution_generation
     )
     stale_attempts = store.list_agent_runtime_attempts(stale_run.id)
-    assert len(stale_attempts) == 2
-    assert all(attempt.status == "completed" for attempt in stale_attempts)
-    assert len({attempt.result_schema_id for attempt in stale_attempts}) == 2
+    assert len(stale_attempts) == 1
+    assert stale_attempts[0].status == "completed"
 
     corrupt_task = next_task("msg-turns-corrupt", "generation-corrupt")
     monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
@@ -573,6 +632,15 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
         db.execute(
             "update agent_runtime_attempts set result_envelope_json=? where id=?",
             (json.dumps(corrupt_envelope), corrupt_attempt.id),
+        )
+        db.execute(
+            """
+            update agent_runs
+            set status='running', final_result_json='', completed_at='',
+                lease_owner='consumer', lease_expires_at='2099-01-01 00:00:00'
+            where id=?
+            """,
+            (corrupt_run.id,),
         )
     monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
     with pytest.raises(ValueError, match="completed_runtime_result_invalid"):
@@ -885,6 +953,148 @@ def test_runtime_attempt_completion_rejects_event_appended_after_evidence_snapsh
     assert persisted_attempt is not None
     assert persisted_attempt.status == "running"
     assert persisted_attempt.result_envelope_json == ""
+
+
+@pytest.mark.parametrize("outcome", ("no_action", "needs_human"))
+def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_atomic(
+    tmp_path,
+    monkeypatch,
+    outcome,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_consumer(store, task).run
+    attempt = store.claim_agent_runtime_attempt(
+        run.id,
+        "claude_api",
+        "claude_cli",
+        "service_api",
+        "claude-sonnet-4-5",
+    )
+    attempt = store.mark_agent_runtime_attempt_running_once(attempt.id)
+    summary = f"terminal summary must exist once for {outcome}"
+    options = (
+        [
+            {
+                "key": "A",
+                "label": "Approve",
+                "instruction": "Approve the reviewed option.",
+                "consequence": "The reviewed plan may continue.",
+            },
+            {
+                "key": "B",
+                "label": "Hold",
+                "instruction": "Hold the reviewed option.",
+                "consequence": "No further action is taken.",
+            },
+        ]
+        if outcome == "needs_human"
+        else []
+    )
+    result = parse_consumer_agent_wire_result(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": json.dumps(
+                        {
+                            "outcome": outcome,
+                            "summary": summary,
+                            "proposal": None,
+                            "decision_options": options,
+                            "error_code": (
+                                "decision_required" if outcome == "needs_human" else ""
+                            ),
+                            "error_retryable": False,
+                            "error_authorization_required": False,
+                        }
+                    ),
+                },
+            }
+        )
+    )
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    schema_id = f"schema-{outcome}"
+    envelope = _encode_runtime_domain_result(
+        schema_id=schema_id,
+        role=AgentRole.CONSUMER,
+        recovery_phase="",
+        result=result,
+        evidence=_runtime_result_evidence(
+            run=persisted,
+            event_start=0,
+            receipts=[],
+            recovery_started_actions=set(),
+            completed_before_recovery=set(),
+        ),
+        result_reference_run_id=run.id,
+    )
+    original_upsert = store._upsert_conversation_runtime_session_in_connection
+
+    def fail_slot_write(*args, **kwargs):
+        raise RuntimeError("injected_slot_write_failure")
+
+    monkeypatch.setattr(
+        store, "_upsert_conversation_runtime_session_in_connection", fail_slot_write
+    )
+    complete_kwargs = {
+        "owner": "consumer",
+        "result_schema_id": schema_id,
+        "result_envelope_json": envelope,
+        "conversation_id": task.conversation_id,
+        "route_name": "claude_api",
+        "conversation_contract_hash": "contract-v1",
+        "agent_run_final_result": result.model_dump(mode="json"),
+        "agent_run_final_side_effect_state": "none",
+        "agent_run_transcript_end": 3,
+    }
+    with pytest.raises(RuntimeError, match="injected_slot_write_failure"):
+        store.complete_agent_runtime_attempt(
+            attempt.id,
+            "claude-session",
+            "",
+            0,
+            3,
+            **complete_kwargs,
+        )
+    rolled_back_attempt = store.get_agent_runtime_attempt(attempt.id)
+    rolled_back_run = store.get_agent_run(run.id)
+    assert rolled_back_attempt is not None and rolled_back_attempt.status == "running"
+    assert rolled_back_attempt.result_envelope_json == ""
+    assert rolled_back_run is not None and rolled_back_run.status == "running"
+    assert rolled_back_run.final_result_json == ""
+    assert store.get_conversation_runtime_session(
+        task.conversation_id,
+        "claude_api",
+        required_contract_hash="contract-v1",
+    ) is None
+
+    monkeypatch.setattr(
+        store,
+        "_upsert_conversation_runtime_session_in_connection",
+        original_upsert,
+    )
+    store.complete_agent_runtime_attempt(
+        attempt.id,
+        "claude-session",
+        "",
+        0,
+        3,
+        **complete_kwargs,
+    )
+    completed_attempt = store.get_agent_runtime_attempt(attempt.id)
+    completed_run = store.get_agent_run(run.id)
+    assert completed_attempt is not None and completed_attempt.status == "completed"
+    assert summary not in completed_attempt.result_envelope_json
+    assert completed_run is not None and completed_run.status == "completed"
+    assert summary in completed_run.final_result_json
+    assert store.get_conversation_runtime_session(
+        task.conversation_id,
+        "claude_api",
+        required_contract_hash="contract-v1",
+    ) == "claude-session"
 
 
 @pytest.mark.parametrize(
