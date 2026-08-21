@@ -4855,6 +4855,42 @@ def test_dispatched_effect_intent_forces_failed_run_to_unknown(
     assert json.loads(state_event["structured_error_json"])["code"] == failure_code
 
 
+def test_dispatched_effect_intent_forces_completed_run_to_unknown(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store,
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-08-22 00:00:00",
+    ).run
+    authorization = _effect_intent_authorization("authorization-completed")
+    store.prepare_agent_effect_intents(
+        run.id,
+        (authorization,),
+        owner="worker-1",
+        now="2026-08-22 00:00:01",
+    )
+    store.dispatch_agent_effect_intent(
+        run.id,
+        authorization,
+        now="2026-08-22 00:00:02",
+    )
+
+    settled = store.complete_agent_run(
+        run.id,
+        {"outcome": "executed"},
+        owner="worker-1",
+        side_effect_state="confirmed",
+        now="2026-08-22 00:00:03",
+    )
+
+    assert settled.status == "unknown"
+    assert settled.side_effect_state == "unknown"
+    assert settled.final_result_json == ""
+
+
 def test_expired_run_with_dispatched_intent_enters_reconciliation(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

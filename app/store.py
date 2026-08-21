@@ -6677,6 +6677,17 @@ class AutoReplyStore:
                 (run_id,),
             ).fetchone()
             side_effect_state = _agent_effect_state_from_counts(counts)
+            intent_states = db.execute(
+                "select "
+                "sum(case when state='dispatched' then 1 else 0 end) as dispatched, "
+                "sum(case when state='acknowledged' then 1 else 0 end) as acknowledged "
+                "from agent_effect_intents where agent_run_id=?",
+                (run_id,),
+            ).fetchone()
+            if int(intent_states["dispatched"] or 0):
+                side_effect_state = "unknown"
+            elif int(intent_states["acknowledged"] or 0):
+                side_effect_state = "confirmed"
             cursor = db.execute(
                 """
                 update agent_runs
@@ -7356,6 +7367,12 @@ class AutoReplyStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError("expired agent run is not eligible for reconciliation")
+            db.execute(
+                "insert into agent_run_state_events ("
+                "agent_run_id, phase, structured_error_json, created_at"
+                ") values (?, 'initial_unknown', ?, ?)",
+                (run_id, error_json, now_text),
+            )
             row = db.execute(
                 "select * from agent_runs where id=?",
                 (run_id,),
