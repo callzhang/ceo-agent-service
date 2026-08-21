@@ -248,6 +248,26 @@ def test_recover_fails_safe_when_full_batch_makes_no_progress(
     executor.close()
 
 
+def test_recover_retries_a_transient_sqlite_lock(tmp_path: Path, monkeypatch):
+    store = _store(tmp_path)
+    calls = 0
+
+    def locked_once(*, now=None):
+        nonlocal calls
+        del now
+        calls += 1
+        if calls == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return ()
+
+    monkeypatch.setattr(store, "reconcile_unquiesced_proposer_batch", locked_once)
+    executor = WorkbenchExecutor(store, RuntimeRegistry(), workspace=tmp_path)
+
+    assert executor.recover() == 0
+    assert calls == 2
+    executor.close()
+
+
 def test_run_once_persists_stream_session_and_one_terminal_event(tmp_path: Path):
     store = _store(tmp_path)
     task, turn = _queued(store)

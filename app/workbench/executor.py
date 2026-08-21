@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -39,6 +40,8 @@ from app.workbench.store import WORKBENCH_RECOVERY_BATCH_LIMIT, WorkbenchStore
 
 
 _MAX_CLAIMS = 2
+_RECOVERY_SQLITE_LOCK_RETRY_ATTEMPTS = 3
+_RECOVERY_SQLITE_LOCK_RETRY_DELAY_SECONDS = 0.1
 _RUNTIME_FAILURE = "Runtime execution could not be completed."
 _KNOWN_RUNTIME_FAILURE_DETAILS = {
     "provider_output_limit": (
@@ -143,19 +146,40 @@ class WorkbenchExecutor:
 
     def recover(self, *, now=None) -> int:
         recovery_now, _ = _utc_store_time(now)
-        proposer_failures = self._drain_recovery_batches(
-            self.store.reconcile_unquiesced_proposer_batch,
-            now=recovery_now,
+        proposer_failures = self._retry_transient_sqlite_lock(
+            lambda: self._drain_recovery_batches(
+                self.store.reconcile_unquiesced_proposer_batch,
+                now=recovery_now,
+            )
         )
-        ambiguous = self._drain_recovery_batches(
-            self.store.reconcile_confirmed_without_result_batch,
-            now=recovery_now,
+        ambiguous = self._retry_transient_sqlite_lock(
+            lambda: self._drain_recovery_batches(
+                self.store.reconcile_confirmed_without_result_batch,
+                now=recovery_now,
+            )
         )
         return (
             proposer_failures
             + ambiguous
-            + self.store.recover_expired_turns(now=recovery_now)
+            + self._retry_transient_sqlite_lock(
+                lambda: self.store.recover_expired_turns(now=recovery_now)
+            )
         )
+
+    @staticmethod
+    def _retry_transient_sqlite_lock(operation):
+        for attempt in range(_RECOVERY_SQLITE_LOCK_RETRY_ATTEMPTS):
+            try:
+                return operation()
+            except sqlite3.OperationalError as exc:
+                message = str(exc).casefold()
+                if (
+                    "database is locked" not in message
+                    and "database is busy" not in message
+                ) or attempt + 1 >= _RECOVERY_SQLITE_LOCK_RETRY_ATTEMPTS:
+                    raise
+                time.sleep(_RECOVERY_SQLITE_LOCK_RETRY_DELAY_SECONDS)
+        raise RuntimeError("SQLite recovery retry loop exhausted")
 
     @staticmethod
     def _drain_recovery_batches(operation, *, now) -> int:
