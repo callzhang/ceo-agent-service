@@ -177,6 +177,22 @@ def _runtime_evidence_digest(value: object) -> str:
     ).hexdigest()
 
 
+def _runtime_authorizations_digest(
+    recovery_authorizations: dict[str, int],
+) -> str:
+    canonical: list[tuple[str, int]] = []
+    for authorization_id, action_index in recovery_authorizations.items():
+        if (
+            not isinstance(authorization_id, str)
+            or not authorization_id
+            or type(action_index) is not int
+            or action_index < 0
+        ):
+            raise ValueError("runtime_recovery_authorization_invalid")
+        canonical.append((authorization_id, action_index))
+    return _runtime_evidence_digest(sorted(canonical))
+
+
 def _runtime_result_evidence(
     *,
     run: AgentRun,
@@ -184,7 +200,9 @@ def _runtime_result_evidence(
     receipts: list[object],
     recovery_started_actions: set[int],
     completed_before_recovery: set[int],
+    recovery_authorizations: dict[str, int] | None = None,
 ) -> dict[str, object]:
+    recovery_authorizations = recovery_authorizations or {}
     event_end = len(run.tool_events)
     if event_start < 0 or event_start > event_end:
         raise ValueError("runtime_result_evidence_event_bounds_invalid")
@@ -213,6 +231,9 @@ def _runtime_result_evidence(
         "receipts_sha256": _runtime_evidence_digest(receipt_projection),
         "recovery_started_actions": sorted(recovery_started_actions),
         "completed_before_recovery": sorted(completed_before_recovery),
+        "recovery_authorizations_sha256": _runtime_authorizations_digest(
+            recovery_authorizations
+        ),
     }
 
 
@@ -227,6 +248,7 @@ def _validate_runtime_result_evidence_shape(
         "receipts_sha256",
         "recovery_started_actions",
         "completed_before_recovery",
+        "recovery_authorizations_sha256",
     }:
         raise ValueError("runtime_result_evidence_invalid")
     if (
@@ -240,6 +262,8 @@ def _validate_runtime_result_evidence_shape(
         or len(evidence["events_sha256"]) != 64
         or not isinstance(evidence.get("receipts_sha256"), str)
         or len(evidence["receipts_sha256"]) != 64
+        or not isinstance(evidence.get("recovery_authorizations_sha256"), str)
+        or len(evidence["recovery_authorizations_sha256"]) != 64
     ):
         raise ValueError("runtime_result_evidence_invalid")
     for key in ("recovery_started_actions", "completed_before_recovery"):
@@ -391,6 +415,7 @@ def _encode_runtime_domain_result(
     recovery_phase: str,
     result: ConsumerAgentResult | AuditAgentResult,
     evidence: dict[str, object] | None = None,
+    result_reference_run_id: int | None = None,
 ) -> str:
     if evidence is None:
         empty_digest = _runtime_evidence_digest([])
@@ -402,18 +427,38 @@ def _encode_runtime_domain_result(
             "receipts_sha256": empty_digest,
             "recovery_started_actions": [],
             "completed_before_recovery": [],
+            "recovery_authorizations_sha256": _runtime_authorizations_digest({}),
         }
     evidence = _validate_runtime_result_evidence_shape(evidence)
-    projected_result = _project_runtime_domain_result(result)
-    _reject_runtime_document_fields(projected_result)
     envelope = {
         "schema_id": schema_id,
         "version": _RUNTIME_DOMAIN_RESULT_CODEC_VERSION,
         "role": role.value,
         "recovery_phase": recovery_phase,
-        "result": projected_result,
         "evidence": evidence,
     }
+    if result_reference_run_id is None:
+        projected_result = _project_runtime_domain_result(result)
+        _reject_runtime_document_fields(projected_result)
+        envelope["result"] = projected_result
+    else:
+        if (
+            role is not AgentRole.CONSUMER
+            or result.outcome is not ConsumerOutcome.PROPOSAL
+            or type(result_reference_run_id) is not int
+            or result_reference_run_id <= 0
+        ):
+            raise ValueError("runtime_result_reference_invalid")
+        domain_text = json.dumps(
+            result.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        envelope["result_ref"] = {
+            "agent_run_id": result_reference_run_id,
+            "result_sha256": hashlib.sha256(domain_text.encode("utf-8")).hexdigest(),
+        }
     if _contains_sensitive_value(envelope):
         raise ValueError("runtime_result_envelope_contains_sensitive_value")
     encoded = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
@@ -434,6 +479,8 @@ def _decode_runtime_domain_result(
     schema_id: str,
     role: AgentRole,
     recovery_phase: str,
+    referenced_agent_run_id: int | None = None,
+    referenced_result_json: str = "",
 ) -> _DecodedRuntimeDomainResult:
     try:
         if len(encoded.encode("utf-8")) > _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES:
@@ -441,27 +488,61 @@ def _decode_runtime_domain_result(
         envelope = json.loads(encoded)
     except (json.JSONDecodeError, UnicodeError, MemoryError) as exc:
         raise ValueError("runtime_result_envelope_invalid") from exc
+    expected_keys = {
+        "schema_id",
+        "version",
+        "role",
+        "recovery_phase",
+        "result",
+        "evidence",
+    }
+    reference_keys = expected_keys - {"result"} | {"result_ref"}
     if (
         not isinstance(envelope, dict)
-        or set(envelope)
-        != {"schema_id", "version", "role", "recovery_phase", "result", "evidence"}
+        or frozenset(envelope)
+        not in {frozenset(expected_keys), frozenset(reference_keys)}
         or envelope.get("schema_id") != schema_id
         or type(envelope.get("version")) is not int
         or envelope.get("version") != _RUNTIME_DOMAIN_RESULT_CODEC_VERSION
         or envelope.get("role") != role.value
         or envelope.get("recovery_phase") != recovery_phase
-        or not isinstance(envelope.get("result"), dict)
         or _contains_sensitive_value(envelope)
         or contains_local_runtime_leak(encoded)
     ):
         raise ValueError("runtime_result_envelope_invalid")
+    result_value = envelope.get("result")
+    if "result_ref" in envelope:
+        reference = envelope.get("result_ref")
+        if (
+            role is not AgentRole.CONSUMER
+            or not isinstance(reference, dict)
+            or set(reference) != {"agent_run_id", "result_sha256"}
+            or type(reference.get("agent_run_id")) is not int
+            or reference["agent_run_id"] <= 0
+            or reference["agent_run_id"] != referenced_agent_run_id
+            or not isinstance(reference.get("result_sha256"), str)
+            or len(reference["result_sha256"]) != 64
+            or not referenced_result_json
+            or hashlib.sha256(referenced_result_json.encode("utf-8")).hexdigest()
+            != reference["result_sha256"]
+        ):
+            raise ValueError("runtime_result_envelope_invalid")
+        try:
+            result_value = json.loads(referenced_result_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("runtime_result_envelope_invalid") from exc
+    if not isinstance(result_value, dict):
+        raise ValueError("runtime_result_envelope_invalid")
     model = ConsumerAgentResult if role is AgentRole.CONSUMER else AuditAgentResult
     try:
-        result = model.model_validate(envelope["result"])
-        projected_result = _project_runtime_domain_result(result)
-        _reject_runtime_document_fields(projected_result)
-        if projected_result != envelope["result"]:
-            raise ValueError("runtime_result_envelope_projection_mismatch")
+        result = model.model_validate(result_value)
+        if "result" in envelope:
+            projected_result = _project_runtime_domain_result(result)
+            _reject_runtime_document_fields(projected_result)
+            if projected_result != envelope["result"]:
+                raise ValueError("runtime_result_envelope_projection_mismatch")
+        elif result.outcome is not ConsumerOutcome.PROPOSAL:
+            raise ValueError("runtime_result_reference_invalid")
         evidence = _validate_runtime_result_evidence_shape(envelope["evidence"])
         return _DecodedRuntimeDomainResult(result=result, evidence=evidence)
     except (ValidationError, ValueError) as exc:
@@ -1004,6 +1085,9 @@ class AgentTurnProcess(Generic[ResultT]):
             "reviewed_skills": sorted(
                 (receipt.name, receipt.sha256) for receipt in required_skill_receipts
             ),
+            "recovery_authorizations_sha256": _runtime_authorizations_digest(
+                recovery_authorizations
+            ),
         }
         execution_contract_digest = hashlib.sha256(
             json.dumps(
@@ -1068,6 +1152,8 @@ class AgentTurnProcess(Generic[ResultT]):
                         schema_id=runtime_result_schema_id,
                         role=run.role,
                         recovery_phase=recovery_phase,
+                        referenced_agent_run_id=run.id,
+                        referenced_result_json=run.final_result_json,
                     )
                     evidence = decoded.evidence
                     evidence_started = set(
@@ -1085,6 +1171,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         receipts=self.store.list_agent_execution_receipts(run.id),
                         recovery_started_actions=evidence_started,
                         completed_before_recovery=evidence_completed_before,
+                        recovery_authorizations=recovery_authorizations,
                     )
                     if current_evidence != evidence:
                         raise ValueError("runtime_result_evidence_mismatch")
@@ -1098,8 +1185,16 @@ class AgentTurnProcess(Generic[ResultT]):
                         self._defer_unknown(
                             run, "completed_runtime_result_envelope_invalid"
                         )
+                    elif (
+                        run.role is AgentRole.CONSUMER
+                        and run.effect_started_count == 0
+                    ):
+                        self.store.block_consumer_agent_run_for_completed_result_recovery(
+                            run.id,
+                            owner=self.owner,
+                        )
                     raise CompletedRuntimeResultBlockedError(
-                        "completed_runtime_result_envelope_invalid"
+                        "completed_runtime_result_invalid"
                     ) from exc
                 if _contains_sensitive_value(result.model_dump(mode="json")):
                     raise ValueError("agent_result_contains_sensitive_value")
@@ -1510,18 +1605,29 @@ class AgentTurnProcess(Generic[ResultT]):
                 raise AgentRuntimeAttemptStartConflictError(
                     "Claude runtime attempt is not running at result commit"
                 )
+            domain_result = cast(
+                ConsumerAgentResult | AuditAgentResult, result
+            ).model_dump(mode="json")
+            durable_consumer_proposal = (
+                run.role is AgentRole.CONSUMER
+                and outcome is ConsumerOutcome.PROPOSAL
+            )
             self.store.complete_agent_runtime_attempt(
                 persisted_attempt.id,
                 pending_claude_session_id,
                 "",
                 attempt_transcript_start,
                 attempt_transcript_start + (line_count - attempt_line_start),
+                owner=self.owner,
                 result_schema_id=runtime_result_schema_id,
                 result_envelope_json=_encode_runtime_domain_result(
                     schema_id=runtime_result_schema_id,
                     role=run.role,
                     recovery_phase=recovery_phase,
                     result=cast(ConsumerAgentResult | AuditAgentResult, result),
+                    result_reference_run_id=(
+                        run.id if durable_consumer_proposal else None
+                    ),
                     evidence=_runtime_result_evidence(
                         run=cast(
                             AgentRun,
@@ -1535,6 +1641,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         receipts=self.store.list_agent_execution_receipts(run.id),
                         recovery_started_actions=recovery_started_actions,
                         completed_before_recovery=completed_before_recovery,
+                        recovery_authorizations=recovery_authorizations,
                     ),
                 ),
                 conversation_id=(
@@ -1544,6 +1651,15 @@ class AgentTurnProcess(Generic[ResultT]):
                 ),
                 route_name=route.name,
                 conversation_contract_hash=conversation_contract_hash,
+                agent_run_final_result=(
+                    domain_result if durable_consumer_proposal else None
+                ),
+                agent_run_final_side_effect_state=(
+                    side_effect_state.value if durable_consumer_proposal else "none"
+                ),
+                agent_run_transcript_end=(
+                    transcript_end if durable_consumer_proposal else None
+                ),
             )
         if recovery_phase == "reconcile":
             self.store.persist_unknown_agent_run_result(

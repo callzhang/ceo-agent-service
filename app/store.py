@@ -824,6 +824,12 @@ def _json_object_text(value: object, *, field: str) -> str:
     return text
 
 
+def _canonical_json_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _is_sqlite_lock_error(exc: sqlite3.OperationalError) -> bool:
     message = str(exc).lower()
     return "locked" in message or "busy" in message
@@ -5071,6 +5077,9 @@ class AutoReplyStore:
         conversation_id: str = "",
         route_name: str = "",
         conversation_contract_hash: str = "",
+        agent_run_final_result: dict[str, object] | None = None,
+        agent_run_final_side_effect_state: str = "none",
+        agent_run_transcript_end: int | None = None,
         now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
         if not isinstance(session_id, str) or not isinstance(transcript_reference, str):
@@ -5094,6 +5103,18 @@ class AutoReplyStore:
                 raise ValueError("result envelope exceeds size limit")
         elif result_envelope_json:
             raise ValueError("result schema is required")
+        if agent_run_final_result is not None:
+            if not result_schema_id:
+                raise ValueError("agent run result reference requires result schema")
+            if agent_run_final_side_effect_state != SideEffectState.NONE.value:
+                raise ValueError("Consumer Agent cannot persist side effects")
+            if agent_run_transcript_end is None or agent_run_transcript_end < 0:
+                raise ValueError("agent run transcript end is required")
+            agent_run_final_result_json = _json_object_text(
+                agent_run_final_result, field="agent_run_final_result"
+            )
+        else:
+            agent_run_final_result_json = ""
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
             expected = (
@@ -5115,6 +5136,37 @@ class AutoReplyStore:
             self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
             if row["status"] in {"failed", "superseded"}:
                 raise ValueError("cannot complete terminal runtime attempt")
+            if result_envelope_json and row["agent_run_id"] is not None:
+                evidence = envelope.get("evidence")
+                if isinstance(evidence, dict):
+                    self._validate_runtime_result_evidence_snapshot(
+                        db,
+                        int(row["agent_run_id"]),
+                        evidence,
+                    )
+            if agent_run_final_result is not None:
+                if row["agent_run_id"] is None:
+                    raise ValueError("agent run result reference requires agent run")
+                reference = envelope.get("result_ref")
+                if (
+                    not isinstance(reference, dict)
+                    or set(reference) != {"agent_run_id", "result_sha256"}
+                    or reference.get("agent_run_id") != row["agent_run_id"]
+                    or reference.get("result_sha256")
+                    != hashlib.sha256(
+                        agent_run_final_result_json.encode("utf-8")
+                    ).hexdigest()
+                ):
+                    raise ValueError("agent run result reference mismatch")
+                run_row = self._require_current_agent_run_write_access(
+                    db,
+                    int(row["agent_run_id"]),
+                    owner=owner,
+                    now_text=now_text,
+                    expected_status="running",
+                )
+                if run_row["role"] != AgentRole.CONSUMER.value:
+                    raise ValueError("agent run result reference requires Consumer")
             cursor = db.execute(
                 """
                 update agent_runtime_attempts
@@ -5151,9 +5203,83 @@ class AutoReplyStore:
                     conversation_contract_hash,
                     now_text,
                 )
+            if agent_run_final_result is not None:
+                run_cursor = db.execute(
+                    """
+                    update agent_runs
+                    set status='completed', final_result_json=?,
+                        structured_error_json='', side_effect_state='none',
+                        transcript_end_line=?, lease_owner='', lease_expires_at='',
+                        completed_at=?, updated_at=?
+                    where id=? and status='running' and lease_owner=?
+                      and lease_expires_at>?
+                    """,
+                    (
+                        agent_run_final_result_json,
+                        agent_run_transcript_end,
+                        now_text,
+                        now_text,
+                        row["agent_run_id"],
+                        owner,
+                        now_text,
+                    ),
+                )
+                if run_cursor.rowcount != 1:
+                    raise AgentRunLeaseLostError(
+                        f"agent run lease lost: {row['agent_run_id']}"
+                    )
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
+
+    @staticmethod
+    def _validate_runtime_result_evidence_snapshot(
+        db: sqlite3.Connection,
+        run_id: int,
+        evidence: dict[str, object],
+    ) -> None:
+        event_start = evidence.get("event_start")
+        event_end = evidence.get("event_end")
+        if (
+            type(event_start) is not int
+            or type(event_end) is not int
+            or event_start < 0
+            or event_end < event_start
+        ):
+            raise ValueError("runtime result evidence bounds invalid")
+        event_rows = db.execute(
+            "select event_json from agent_run_events "
+            "where agent_run_id=? order by sequence",
+            (run_id,),
+        ).fetchall()
+        events = [json.loads(row["event_json"]) for row in event_rows]
+        receipt_rows = db.execute(
+            "select * from agent_execution_receipts "
+            "where agent_run_id=? order by id",
+            (run_id,),
+        ).fetchall()
+        receipts = [
+            {
+                "receipt_id": str(receipt["receipt_id"]),
+                "operation_id": str(receipt["operation_id"]),
+                "cli": str(receipt["cli"]),
+                "command_path": str(receipt["command_path"]),
+                "command_digest": str(receipt["command_digest"]),
+                "exit_code": int(receipt["exit_code"]),
+                "completed": bool(receipt["completed"]),
+                "persisted": bool(receipt["persisted"]),
+                "safe_to_confirm": bool(receipt["safe_to_confirm"]),
+                "effect_counted": bool(receipt["effect_counted"]),
+            }
+            for receipt in receipt_rows
+        ]
+        if (
+            event_end != len(events)
+            or evidence.get("events_sha256")
+            != _canonical_json_sha256(events[event_start:event_end])
+            or evidence.get("receipts_sha256") != _canonical_json_sha256(receipts)
+        ):
+            raise ValueError("runtime result evidence changed before completion")
 
     def renew_runtime_operation_attempt_lease(
         self,
@@ -6520,6 +6646,80 @@ class AutoReplyStore:
             transcript_end_line=transcript_end_line,
             now=now,
         )
+
+    def block_consumer_agent_run_for_completed_result_recovery(
+        self,
+        run_id: int,
+        *,
+        owner: str,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        """Suspend a corrupt durable Consumer result for explicit recovery."""
+        code = "completed_runtime_result_invalid"
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                expected_status="running",
+            )
+            if (
+                row["role"] != AgentRole.CONSUMER.value
+                or int(row["effect_started_count"]) != 0
+                or row["side_effect_state"] != SideEffectState.NONE.value
+            ):
+                raise ValueError("completed result block requires effect-free Consumer")
+            error_json = json.dumps(
+                {
+                    "authorization_required": False,
+                    "code": code,
+                    "retryable": False,
+                    "reason": (
+                        "The durable runtime result failed integrity validation; "
+                        "manual recovery is required."
+                    ),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            run_cursor = db.execute(
+                """
+                update agent_runs
+                set status='unknown', final_result_json='',
+                    structured_error_json=?, side_effect_state='none',
+                    reconciliation_suspended=1,
+                    reconciliation_next_attempt_at='',
+                    lease_owner='', lease_expires_at='', updated_at=?
+                where id=? and status='running' and lease_owner=?
+                  and lease_expires_at>?
+                """,
+                (error_json, now_text, run_id, owner, now_text),
+            )
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status='failed', locked_at=null, available_at='',
+                    error=?, recovery_code=?, updated_at=?
+                where id=? and status='processing'
+                  and execution_generation=?
+                """,
+                (
+                    code,
+                    code,
+                    now_text,
+                    row["reply_task_id"],
+                    row["execution_generation"],
+                ),
+            )
+            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"completed runtime result block is stale: {run_id}"
+                )
+            updated = db.execute(
+                "select * from agent_runs where id=?", (run_id,)
+            ).fetchone()
+            return self._agent_run_from_row(updated, db=db)
 
     def finalize_closed_failed_audit_run(
         self,

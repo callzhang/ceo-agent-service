@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sqlite3
+import threading
 from pathlib import Path
 
 import pytest
@@ -333,6 +334,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     assert store.get_conversation_runtime_session(
         task.conversation_id, "claude_api", required_contract_hash="contract-v1"
     ) == session_id
+
     def stream_for_result(result_text: str) -> str:
         return "\n".join(
             (
@@ -377,6 +379,53 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
         claimed = store.claim_reply_task(pending.id)
         assert claimed is not None
         return claimed
+
+    body_marker = "consumer-business-body-marker"
+    url_marker = "https://business.example.test/private/source"
+    proposal_result = json.dumps(
+        {
+            "outcome": "proposal",
+            "summary": "Prepared the reviewed proposal.",
+            "proposal": {
+                "objective": "Send the reviewed update.",
+                "actions": [
+                    {
+                        "description": "Send update",
+                        "capability": "agent_cli.dws",
+                        "operation": "chat message send",
+                        "target": {"conversation_id": "cid-1"},
+                        "payload": {
+                            "document_content": body_marker,
+                            "source_url": url_marker,
+                        },
+                        "expected_verification": "Read it back",
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "Ready.",
+            },
+            "decision_options": [],
+            "error_code": "",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        },
+        separators=(",", ":"),
+    )
+    executor.stream = stream_for_result(proposal_result)
+    proposal_task = next_task("msg-turns-proposal", "generation-proposal")
+    execute(proposal_task)
+    [proposal_run] = store.list_agent_runs_for_task_generation(
+        proposal_task.id, proposal_task.execution_generation
+    )
+    [proposal_attempt] = store.list_agent_runtime_attempts(proposal_run.id)
+    proposal_envelope = json.loads(proposal_attempt.result_envelope_json)
+    assert proposal_run.status == "completed"
+    assert proposal_envelope["result_ref"]["agent_run_id"] == proposal_run.id
+    assert "result" not in proposal_envelope
+    assert body_marker not in proposal_attempt.result_envelope_json
+    assert url_marker not in proposal_attempt.result_envelope_json
+    assert body_marker in proposal_run.final_result_json
+    assert url_marker in proposal_run.final_result_json
 
     sensitive_result = json.dumps(
         {
@@ -526,19 +575,25 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
             (json.dumps(corrupt_envelope), corrupt_attempt.id),
         )
     monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
-    with pytest.raises(
-        ValueError, match="completed_runtime_result_envelope_invalid"
-    ):
+    with pytest.raises(ValueError, match="completed_runtime_result_invalid"):
         execute(corrupt_task)
     assert len(executor.commands) == corrupt_executor_calls
     blocked_corrupt_run = store.get_agent_run(corrupt_run.id)
     assert blocked_corrupt_run is not None
-    assert blocked_corrupt_run.status == "running"
-    assert blocked_corrupt_run.lease_owner == "consumer"
-    assert json.loads(blocked_corrupt_run.structured_error_json or "{}") == {}
+    assert blocked_corrupt_run.status == "unknown"
+    assert blocked_corrupt_run.lease_owner == ""
+    assert blocked_corrupt_run.reconciliation_suspended is True
+    assert json.loads(blocked_corrupt_run.structured_error_json)["code"] == (
+        "completed_runtime_result_invalid"
+    )
     blocked_corrupt_task = store.get_reply_task(corrupt_task.id)
     assert blocked_corrupt_task is not None
-    assert blocked_corrupt_task.status == "processing"
+    assert blocked_corrupt_task.status == "failed"
+    assert blocked_corrupt_task.locked_at is None
+    assert blocked_corrupt_task.recovery_code == "completed_runtime_result_invalid"
+    assert store.claim_reply_task(blocked_corrupt_task.id) is None
+    assert store.list_unknown_agent_runs(limit=10) == []
+    assert store.list_suspended_unknown_agent_runs(limit=10) == []
 
     assert store.enqueue_reply_task(
         conversation_id=task.conversation_id,
@@ -741,6 +796,97 @@ def test_runtime_domain_result_codec_rejects_consumer_document_payload():
         )
 
 
+def test_runtime_attempt_completion_rejects_event_appended_after_evidence_snapshot(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_consumer(store, task).run
+    attempt = store.claim_agent_runtime_attempt(
+        run.id,
+        "claude_api",
+        "claude_cli",
+        "service_api",
+        "claude-sonnet-4-5",
+    )
+    attempt = store.mark_agent_runtime_attempt_running_once(attempt.id)
+    result = parse_consumer_agent_wire_result(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": json.dumps(
+                        {
+                            "outcome": "no_action",
+                            "summary": "Nothing to do.",
+                            "proposal": None,
+                            "decision_options": [],
+                            "error_code": "",
+                            "error_retryable": False,
+                            "error_authorization_required": False,
+                        }
+                    ),
+                },
+            }
+        )
+    )
+    snapshot = store.get_agent_run(run.id)
+    assert snapshot is not None
+    schema_id = "schema-evidence-cas"
+    envelope = _encode_runtime_domain_result(
+        schema_id=schema_id,
+        role=AgentRole.CONSUMER,
+        recovery_phase="",
+        result=result,
+        evidence=_runtime_result_evidence(
+            run=snapshot,
+            event_start=0,
+            receipts=[],
+            recovery_started_actions=set(),
+            completed_before_recovery=set(),
+        ),
+    )
+    snapshot_ready = threading.Barrier(2)
+    append_done = threading.Barrier(2)
+    completion_errors: list[BaseException] = []
+
+    def complete_from_stale_snapshot() -> None:
+        snapshot_ready.wait()
+        append_done.wait()
+        try:
+            store.complete_agent_runtime_attempt(
+                attempt.id,
+                "claude-session",
+                "",
+                0,
+                3,
+                result_schema_id=schema_id,
+                result_envelope_json=envelope,
+            )
+        except Exception as exc:
+            completion_errors.append(exc)
+
+    thread = threading.Thread(target=complete_from_stale_snapshot)
+    thread.start()
+    snapshot_ready.wait()
+    store.append_agent_run_event(
+        run.id,
+        {"type": "turn.started", "thread_id": "claude-session"},
+        owner="consumer",
+    )
+    append_done.wait()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert len(completion_errors) == 1
+    assert "evidence changed" in str(completion_errors[0])
+    persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
+    assert persisted_attempt is not None
+    assert persisted_attempt.status == "running"
+    assert persisted_attempt.result_envelope_json == ""
+
+
 @pytest.mark.parametrize(
     "evidence_mutation",
     (
@@ -798,7 +944,9 @@ def _runtime_result_schema_for_test(
     developer_instructions,
     recovery_phase,
     expected_effect_actions,
+    recovery_authorizations=None,
 ):
+    recovery_authorizations = recovery_authorizations or {}
     required_capabilities = _required_runtime_capabilities(
         run=run,
         recovery_phase=recovery_phase,
@@ -823,6 +971,12 @@ def _runtime_result_schema_for_test(
             ).encode()
         ).hexdigest(),
         "reviewed_skills": [],
+        "recovery_authorizations_sha256": hashlib.sha256(
+            json.dumps(
+                sorted(recovery_authorizations.items()),
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest(),
     }
     contract_digest = hashlib.sha256(
         json.dumps(contract, sort_keys=True, separators=(",", ":")).encode()
@@ -858,10 +1012,14 @@ def _unknown_audit_recovery_fixture(store, task, *, owner):
     return claim.run, action
 
 
-@pytest.mark.parametrize("recovery_phase", ("reconcile", "execute"))
+@pytest.mark.parametrize(
+    ("recovery_phase", "rotate_authorization"),
+    (("reconcile", False), ("execute", False), ("execute", True)),
+)
 def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spawn(
     tmp_path,
     recovery_phase,
+    rotate_authorization,
 ):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
@@ -878,6 +1036,9 @@ def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spa
     event_start = len(run.tool_events)
     recovery_started_actions: set[int] = set()
     completed_before_recovery: set[int] = set()
+    persisted_authorizations = (
+        {"authorization-old": 0} if recovery_phase == "execute" else {}
+    )
     if recovery_phase == "reconcile":
         store.append_unknown_agent_run_event(
             run.id,
@@ -972,6 +1133,7 @@ def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spa
         developer_instructions=developer,
         recovery_phase=recovery_phase,
         expected_effect_actions=actions,
+        recovery_authorizations=persisted_authorizations,
     )
     validator = AgentTurnProcess(
         store=store,
@@ -1028,6 +1190,7 @@ def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spa
             receipts=store.list_agent_execution_receipts(run.id),
             recovery_started_actions=recovery_started_actions,
             completed_before_recovery=completed_before_recovery,
+            recovery_authorizations=persisted_authorizations,
         ),
     )
     store.complete_agent_runtime_attempt(
@@ -1054,7 +1217,7 @@ def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spa
             "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
         }
     )
-    recovered = AgentTurnProcess(
+    process = AgentTurnProcess(
         store=store,
         task=task,
         workspace=tmp_path,
@@ -1063,22 +1226,39 @@ def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spa
         runtime_config=config,
         runtime_router=object(),
         mcp_effect_registry=registry,
-    ).execute(
-        run=store.get_agent_run(run.id),
-        prompt=prompt,
-        session_id=None,
-        developer_instructions=developer,
-        configure_command=lambda command: None,
-        parse_result=lambda raw: (_ for _ in ()).throw(
+    )
+    execute_kwargs = {
+        "run": store.get_agent_run(run.id),
+        "prompt": prompt,
+        "session_id": None,
+        "developer_instructions": developer,
+        "configure_command": lambda command: None,
+        "parse_result": lambda raw: (_ for _ in ()).throw(
             AssertionError("completed recovery must not parse provider output")
         ),
-        persist_conversation_session=False,
-        expected_effect_actions=actions,
-        recovery_phase=recovery_phase,
-        authorized_recovery_actions=(
+        "persist_conversation_session": False,
+        "expected_effect_actions": actions,
+        "recovery_phase": recovery_phase,
+        "authorized_recovery_actions": (
             frozenset({0}) if recovery_phase == "execute" else frozenset()
         ),
-    )
+        "recovery_authorizations": (
+            {"authorization-new": 0}
+            if rotate_authorization
+            else persisted_authorizations
+        ),
+    }
+    if rotate_authorization:
+        with pytest.raises(
+            ValueError, match="completed_runtime_result_contract_mismatch"
+        ):
+            process.execute(**execute_kwargs)
+        assert executor_calls == 0
+        blocked = store.get_agent_run(run.id)
+        assert blocked is not None and blocked.status == "unknown"
+        assert blocked.lease_owner == ""
+        return
+    recovered = process.execute(**execute_kwargs)
 
     assert executor_calls == 0
     assert recovered.result.outcome is result.outcome
