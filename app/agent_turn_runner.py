@@ -591,7 +591,11 @@ def _required_runtime_capabilities(
     required.update(
         capability.strip()
         for capability in explicit_capabilities
-        if capability.strip()
+        # Skill availability is governed by agent_cli.read_skill and then
+        # rechecked from exact receipts before an Audit effect starts. It is
+        # not a route-health capability, so a static surface must never block
+        # a currently installed Codex Skill before that validation runs.
+        if capability.strip() and not capability.startswith("reviewed_skill:")
     )
     return frozenset(required)
 

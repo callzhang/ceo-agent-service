@@ -3,7 +3,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.agent_result import EffectKind
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_production import (
     PRODUCTION_RUNTIME_CAPABILITIES,
@@ -12,7 +11,6 @@ from app.agent_runtime_production import (
     build_production_routed_codex_execution,
     build_production_runtime_refresher,
 )
-from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.process_runner import ProcessRunResult
 from app.store import AutoReplyStore
 
@@ -178,18 +176,10 @@ def test_production_refresher_publishes_reviewed_surfaces_from_exact_transports(
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
     registry = RuntimeCapabilityRegistry()
-    classifier = NativeCliMetadataClassifier(
-        reviewed_effects={
-            ("dws", "chat message send"): EffectKind.EFFECTFUL,
-            ("lark-cli", "chat +messages-send"): EffectKind.EFFECTFUL,
-        }
-    )
-
     build_production_runtime_refresher(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
         capability_registry=registry,
         temporary_root=tmp_path,
-        native_cli_classifier=classifier,
     )
 
     manifest = registry.surface_manifest("codex_oauth")
@@ -203,7 +193,7 @@ def test_production_refresher_publishes_reviewed_surfaces_from_exact_transports(
         "agent_cli.dws",
         "agent_cli.lark-cli",
     } <= manifest.capabilities
-    assert any(
+    assert not any(
         capability.startswith("reviewed_skill:") for capability in manifest.capabilities
     )
 
@@ -212,11 +202,8 @@ def test_reviewed_surfaces_keep_all_production_callers_eligible_without_claiming
     tmp_path, monkeypatch
 ):
     home = tmp_path / "home"
-    skill = home / ".agents" / "skills" / "dingtang-okr-review" / "SKILL.md"
-    skill.parent.mkdir(parents=True)
-    skill.write_text("# Exact reviewed skill\n", encoding="utf-8")
     codex_home = home / ".codex"
-    codex_home.mkdir()
+    codex_home.mkdir(parents=True)
     (codex_home / "config.toml").write_text(
         "[mcp_servers.agent_cli]\ncommand='agent-cli'\n"
         "[mcp_servers.memory_connector]\nurl='https://memory.invalid/mcp'\n",
@@ -226,17 +213,10 @@ def test_reviewed_surfaces_keep_all_production_callers_eligible_without_claiming
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
     registry = RuntimeCapabilityRegistry()
-    classifier = NativeCliMetadataClassifier(
-        reviewed_effects={
-            ("dws", "chat message send"): EffectKind.EFFECTFUL,
-            ("lark-cli", "chat +messages-send"): EffectKind.EFFECTFUL,
-        }
-    )
     build_production_runtime_refresher(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
         capability_registry=registry,
         temporary_root=tmp_path,
-        native_cli_classifier=classifier,
     )
     registry.refresh(
         {
@@ -262,10 +242,8 @@ def test_reviewed_surfaces_keep_all_production_callers_eligible_without_claiming
     )
     manifest = registry.surface_manifest("codex_oauth")
     assert manifest is not None
-    exact_skill = next(
-        item
-        for item in manifest.capabilities
-        if item.startswith("reviewed_skill:dingtang-okr-review:")
+    assert not any(
+        capability.startswith("reviewed_skill:") for capability in manifest.capabilities
     )
     caller_requirements = (
         {"structured_output", "consumer_read_only_enforcement"},
@@ -279,7 +257,7 @@ def test_reviewed_surfaces_keep_all_production_callers_eligible_without_claiming
         },
         {"structured_output", "memory_connector_read"},
         {"structured_output", "mcp:memory_connector:memory_write"},
-        {"structured_output", "dws_read", exact_skill},
+        {"structured_output", "dws_read", "agent_cli.dws"},
     )
 
     for required in caller_requirements:
@@ -288,15 +266,7 @@ def test_reviewed_surfaces_keep_all_production_callers_eligible_without_claiming
         )
         assert decision.route is not None, (required, decision.reason)
 
-    wrong_skill = exact_skill.rsplit(":", 1)[0] + ":different-sha"
-    decision = routed._router.first_route_decision(
-        required_capabilities=frozenset({wrong_skill})
-    )
-    assert decision.route is None
-    assert f"surface_missing:{wrong_skill}" in decision.reason
-
-
-def test_agent_cli_action_capabilities_come_from_exact_reviewed_metadata(
+def test_agent_cli_action_capabilities_do_not_depend_on_bulk_metadata(
     tmp_path, monkeypatch
 ):
     codex_home = tmp_path / "codex-home"
@@ -306,26 +276,17 @@ def test_agent_cli_action_capabilities_come_from_exact_reviewed_metadata(
     )
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
-    classifier = NativeCliMetadataClassifier(
-        reviewed_effects={
-            ("dws", "chat message send"): EffectKind.EFFECTFUL,
-            ("dws", "chat message list"): EffectKind.READ_ONLY,
-            ("lark-cli", "chat +messages-send"): EffectKind.EFFECTFUL,
-        }
-    )
     registry = RuntimeCapabilityRegistry()
 
     build_production_runtime_refresher(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
         capability_registry=registry,
         temporary_root=tmp_path,
-        native_cli_classifier=classifier,
     )
 
     manifest = registry.surface_manifest("codex_oauth")
     assert manifest is not None
-    expected = {f"agent_cli.{cli}" for cli, _operation in classifier.cache_keys}
-    assert expected == {"agent_cli.dws", "agent_cli.lark-cli"}
+    expected = {"agent_cli.dws", "agent_cli.lark-cli"}
     assert expected <= manifest.capabilities
     assert "agent_cli.dwz" not in manifest.capabilities
     registry.refresh(
@@ -350,8 +311,7 @@ def test_agent_cli_action_capabilities_come_from_exact_reviewed_metadata(
         idle_timeout_seconds=5,
         capability_registry=registry,
     )
-    for cli_name, _operation in classifier.cache_keys:
-        capability = f"agent_cli.{cli_name}"
+    for capability in expected:
         decision = routed._router.first_route_decision(
             required_capabilities=frozenset({capability})
         )
@@ -378,16 +338,13 @@ def test_agent_cli_action_capabilities_use_service_owned_transport(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
         capability_registry=registry,
         temporary_root=tmp_path,
-        native_cli_classifier=NativeCliMetadataClassifier(
-            reviewed_effects={("dws", "chat message send"): EffectKind.EFFECTFUL}
-        ),
     )
 
     manifest = registry.surface_manifest("codex_oauth")
     assert manifest is not None
     # The user-global Codex config is intentionally empty.  Production Agent
     # turns add the reviewed local agent_cli transport themselves.
-    assert "agent_cli.dws" in manifest.capabilities
+    assert {"agent_cli.dws", "agent_cli.lark-cli"} <= manifest.capabilities
     registry.refresh({"codex_oauth": _snapshot("codex_oauth")})
     routed = build_production_routed_codex_execution(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
@@ -402,7 +359,7 @@ def test_agent_cli_action_capabilities_use_service_owned_transport(
     assert decision.route is not None
 
 
-def test_unrelated_skill_file_is_not_implicitly_authorized(tmp_path, monkeypatch):
+def test_skill_files_do_not_create_static_route_capabilities(tmp_path, monkeypatch):
     home = tmp_path / "home"
     arbitrary = home / ".agents" / "skills" / "unreviewed" / "SKILL.md"
     arbitrary.parent.mkdir(parents=True)
@@ -415,7 +372,6 @@ def test_unrelated_skill_file_is_not_implicitly_authorized(tmp_path, monkeypatch
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
         capability_registry=registry,
         temporary_root=tmp_path,
-        native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
     )
 
     manifest = registry.surface_manifest("codex_oauth")
@@ -439,14 +395,12 @@ def test_claude_surface_claims_only_service_owned_exact_read_tools(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
         capability_registry=registry,
         temporary_root=tmp_path,
-        native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
     )
 
     manifest = registry.surface_manifest("claude_api")
     assert manifest is not None
-    assert any(
-        item.startswith("reviewed_skill:dingtang-okr-review:")
-        for item in manifest.capabilities
+    assert not any(
+        item.startswith("reviewed_skill:") for item in manifest.capabilities
     )
     assert "reviewed_read_tools" in manifest.capabilities
     assert "consumer_read_only_enforcement" in manifest.capabilities
@@ -483,7 +437,6 @@ def test_production_agent_runtime_is_pure_and_injects_exact_claude_transports(
         store=AutoReplyStore(tmp_path / "store.sqlite3"),
         capability_registry=registry,
         temporary_root=tmp_path,
-        native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
     )
 
     runtime = build_production_agent_runtime(

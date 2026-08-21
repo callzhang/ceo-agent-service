@@ -1217,83 +1217,20 @@ def test_read_only_audit_reconcile_pre_session_failure_reaches_claude(
     )
 
 
-def test_missing_claude_skill_defers_instead_of_running(tmp_path):
+def test_missing_claude_skill_is_not_a_route_preflight_requirement(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
-    config = load_runtime_config(
-        {
-            "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
-            "CEO_CLAUDE_API_KEY": "test-anthropic-secret",
-            "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
-        }
-    )
-    now = datetime.now(UTC)
-    router = AgentRuntimeRouter(
-        routes=config.routes,
-        store=store,
-        snapshots={
-            "claude_api": RuntimeCapabilitySnapshot(
-                route_name="claude_api",
-                capabilities=frozenset(
-                    {
-                        "structured_output",
-                        "local_schema_validation",
-                        "consumer_read_only_enforcement",
-                    }
-                ),
-                healthy=True,
-                checked_at=now.isoformat(),
-                expires_at=(now + timedelta(minutes=5)).isoformat(),
-            )
-        },
-        surface_manifests={
-            "claude_api": RuntimeRouteSurfaceManifest(
-                route_name="claude_api",
-                capabilities=frozenset({"reviewed_read_tools"}),
-            )
-        },
-    )
-    executor_calls = 0
-
-    def must_not_execute(*args, **kwargs):
-        nonlocal executor_calls
-        executor_calls += 1
-        raise AssertionError("missing exact skill must fail before spawn")
-
     claim = _claim_consumer(store, task)
-    with pytest.raises(RuntimeError, match="runtime_capability_missing"):
-        AgentTurnProcess(
-            store=store,
-            task=task,
-            workspace=tmp_path,
-            owner="consumer",
-            executor=must_not_execute,
-            runtime_config=config,
-            runtime_router=router,
-        ).execute(
-            run=claim.run,
-            prompt="Read-only decision",
-            session_id=None,
-            developer_instructions="Return the exact schema.",
-            configure_command=lambda command: None,
-            parse_result=parse_consumer_agent_wire_result,
-            persist_conversation_session=True,
-            required_capabilities=frozenset(
-                {"reviewed_skill:dingtalk-chat:expected-sha"}
-            ),
-            conversation_contract_hash="contract-v1",
-        )
+    skill = "reviewed_skill:dingtalk-chat:expected-sha"
 
-    assert executor_calls == 0
-    assert store.list_agent_runtime_attempts(claim.run.id) == []
-    failed = store.get_agent_run(claim.run.id)
-    assert failed is not None and failed.status == "failed"
-    assert json.loads(failed.structured_error_json)["code"] == (
-        "runtime_capability_missing"
+    required = _required_runtime_capabilities(
+        run=claim.run,
+        recovery_phase="",
+        expected_effect_actions=(),
+        explicit_capabilities=frozenset({skill}),
     )
-    assert "reviewed_skill:dingtalk-chat:expected-sha" in json.loads(
-        failed.structured_error_json
-    )["detail"]
+
+    assert skill not in required
 
 
 def test_effectful_audit_never_selects_claude_even_with_false_surface_claims(

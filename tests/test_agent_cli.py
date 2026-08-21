@@ -203,6 +203,44 @@ def test_execute_reviewed_read_rejects_arbitrary_python(
         )
 
 
+def test_execute_reviewed_read_classifies_dws_from_exact_schema_without_prewarm(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    classifier = NativeCliMetadataClassifier()
+    metadata_calls: list[list[str]] = []
+    monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/local/bin/dws")
+    monkeypatch.setattr(
+        classifier,
+        "prewarm",
+        lambda: pytest.fail("DWS command validation must not preload every tool"),
+    )
+
+    def exact_schema(argv, *, timeout):
+        metadata_calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, '{"effect":"read"}', "")
+
+    monkeypatch.setattr("app.native_cli_metadata.run_bounded_process", exact_schema)
+
+    receipt = agent_cli.execute_reviewed_read(
+        ["dws", "chat", "message", "get", "--message-id", "message-1"],
+        classifier=classifier,
+        process_runner=lambda argv, **_: subprocess.CompletedProcess(argv, 0, "{}", ""),
+    )
+
+    assert metadata_calls == [
+        [
+            "dws",
+            "schema",
+            "--cli-path",
+            "chat message get",
+            "--compact",
+            "--format",
+            "json",
+        ]
+    ]
+    assert receipt["operation"] == "chat message get"
+
+
 def test_execute_reviewed_write_preserves_provider_error_instead_of_read_failure(
     monkeypatch: pytest.MonkeyPatch,
 ):

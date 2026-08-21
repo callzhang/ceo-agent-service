@@ -101,8 +101,11 @@ occurs. Attempts are ordered and immutable after completion.
 
 A capability snapshot is a recent, non-secret record of what a route can
 actually use: executable availability, model access, required MCP servers,
-required native CLIs, reviewed skills, output mode, and read/write policy. It
-is evidence from probes, not a declaration inferred from configuration.
+required native CLIs, output mode, and read/write policy. Installed Skills are
+not preloaded into the route surface: `agent_cli.read_skill` uses the current
+authorized Skill path, and Audit validates the exact observed Skill receipt
+before an external effect can start. A snapshot is evidence from probes, not a
+declaration inferred from configuration.
 
 During migration, the existing local `codex_oauth` route alone may use a
 trusted-legacy bootstrap when no OAuth snapshot exists. This exception preserves

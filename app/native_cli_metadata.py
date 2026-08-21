@@ -85,62 +85,6 @@ class NativeCliCommand:
 
 
 @lru_cache(maxsize=1)
-def _load_reviewed_dws_effects() -> dict[tuple[str, str], EffectKind]:
-    effects: dict[tuple[str, str], EffectKind] = {}
-    try:
-        process = run_bounded_process(
-            ["dws", "schema", "--all", "--compact", "--format", "json"],
-            timeout=30,
-        )
-    except ProcessOutputLimitError as exc:
-        raise NativeCliMetadataUnavailableError(
-            cli="dws", code="native_cli_metadata_output_limit"
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise NativeCliMetadataUnavailableError(
-            cli="dws", code="native_cli_metadata_timeout"
-        ) from exc
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise NativeCliMetadataUnavailableError(
-            cli="dws", code="native_cli_metadata_start"
-        ) from exc
-    if process.returncode != 0:
-        raise NativeCliMetadataUnavailableError(
-            cli="dws", code="native_cli_metadata_nonzero"
-        )
-    try:
-        payload = json.loads(process.stdout)
-    except json.JSONDecodeError as exc:
-        raise NativeCliMetadataUnavailableError(
-            cli="dws", code="native_cli_metadata_invalid_json"
-        ) from exc
-    products = payload.get("products") if isinstance(payload, dict) else None
-    if not isinstance(products, list):
-        raise NativeCliMetadataUnavailableError(
-            cli="dws", code="native_cli_metadata_invalid_json"
-        )
-    for product in products:
-        tools = product.get("tools") if isinstance(product, dict) else None
-        if not isinstance(tools, list):
-            continue
-        for tool in tools:
-            if not isinstance(tool, dict):
-                continue
-            command_path = tool.get("cli_path")
-            effect = tool.get("effect")
-            if not isinstance(command_path, str) or not command_path.strip():
-                continue
-            if effect == "read":
-                parsed = EffectKind.READ_ONLY
-            elif effect == "write":
-                parsed = EffectKind.EFFECTFUL
-            else:
-                continue
-            effects[("dws", command_path.strip())] = parsed
-    return effects
-
-
-@lru_cache(maxsize=1)
 def _load_reviewed_lark_effects() -> dict[tuple[str, str], EffectKind]:
     effects: dict[tuple[str, str], EffectKind] = {}
     try:
@@ -215,10 +159,10 @@ class NativeCliMetadataClassifier:
             return
         retrying = self._prewarmed
         self._prewarmed = True
-        for cli, loader in (
-            ("dws", _load_reviewed_dws_effects),
-            ("lark-cli", _load_reviewed_lark_effects),
-        ):
+        # DWS is always classified from the exact `schema --cli-path` command.
+        # Its complete schema is both unnecessary for an individual command
+        # decision and too large to use as a health or authorization signal.
+        for cli, loader in (("lark-cli", _load_reviewed_lark_effects),):
             if retrying and cli not in self._discovery_errors:
                 continue
             try:

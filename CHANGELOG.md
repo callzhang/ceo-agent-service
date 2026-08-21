@@ -1,5 +1,11 @@
 # Changelog
 
+- Avoid full DWS-schema preloading during Agent runtime health checks. Route
+  selection now declares the service-owned `agent_cli` transport directly;
+  each actual command retains its existing metadata and read/write validation.
+  Installed Skills are read through the existing authorized Skill path and
+  receipt checks instead of a static route capability list.
+
 - Require candidate and hiring reviews to read Xiaoqing's authoritative job,
   resume, interview, and assessment context before escalating the remaining
   sensitive hiring decision to Derek.

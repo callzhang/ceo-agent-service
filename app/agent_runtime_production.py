@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import sys
 from collections.abc import Iterator, Mapping
@@ -222,20 +221,16 @@ def build_production_runtime_refresher(
     executor: ProcessExecutor | None = None,
     capability_registry: RuntimeCapabilityRegistry = PRODUCTION_RUNTIME_CAPABILITIES,
     temporary_root: Path | None = None,
-    native_cli_classifier: NativeCliMetadataClassifier | None = None,
 ):
     """Build the route probe/refresher that owns the shared production view."""
 
     from app.agent_runtime_probe import AgentRuntimeProbe, RuntimeCapabilityRefresher
 
     runtime_config = load_runtime_config(os.environ)
-    classifier = native_cli_classifier or NativeCliMetadataClassifier()
-    classifier.prewarm()
     capability_registry.refresh_surface_manifests(
         _reviewed_surface_manifests(
             runtime_config,
             codex_bin=codex_bin,
-            native_cli_classifier=classifier,
         )
     )
     probe_kwargs = {
@@ -258,7 +253,6 @@ def _reviewed_surface_manifests(
     runtime_config,
     *,
     codex_bin: str,
-    native_cli_classifier: NativeCliMetadataClassifier,
 ):
     adapter = CodexRuntimeAdapter(Path.cwd(), runtime_config, codex_bin=codex_bin)
     effects = McpToolEffectRegistry.default()
@@ -266,14 +260,10 @@ def _reviewed_surface_manifests(
         server.name for server in _production_claude_service_mcp_servers()
     }
     claude_read_tools = effects.reviewed_read_tools()
-    reviewed_skills = _explicit_reviewed_skill_capabilities()
-    reviewed_agent_cli_capabilities = frozenset(
-        f"agent_cli.{cli}" for cli, _operation in native_cli_classifier.cache_keys
-    )
     manifests = {}
     for route in runtime_config.routes:
         if route.runtime_kind is RuntimeKind.CLAUDE_CLI:
-            capabilities = set(reviewed_skills)
+            capabilities = set()
             if "agent_cli" in claude_servers and claude_read_tools.get("agent_cli"):
                 capabilities.update(
                     {
@@ -293,7 +283,8 @@ def _reviewed_surface_manifests(
                         "native_cli:lark",
                         "reviewed_dws_read_instructions",
                         "dws_read",
-                        *reviewed_agent_cli_capabilities,
+                        "agent_cli.dws",
+                        "agent_cli.lark-cli",
                     }
                 )
             if (
@@ -346,8 +337,12 @@ def _reviewed_surface_manifests(
                     "mcp:agent_cli:reviewed_read",
                     "mcp:agent_cli:reviewed_write",
                     "dws_read",
-                    *reviewed_skills,
-                    *reviewed_agent_cli_capabilities,
+                    # The service owns this transport.  Its individual
+                    # commands remain validated against their own reviewed
+                    # metadata at execution time; route selection must not
+                    # scan the complete DWS schema to establish that fact.
+                    "agent_cli.dws",
+                    "agent_cli.lark-cli",
                 }
             )
         if "memory_connector" in transports:
@@ -363,27 +358,3 @@ def _reviewed_surface_manifests(
             capabilities=frozenset(capabilities),
         )
     return manifests
-
-
-def _explicit_reviewed_skill_capabilities() -> frozenset[str]:
-    """Capabilities for production workloads with an explicit skill contract.
-
-    A file merely appearing below a skill root is not authorization. Each entry
-    here corresponds to a concrete production workload requirement.
-    """
-    reviewed_paths = (
-        (
-            "dingtang-okr-review",
-            Path.home() / ".agents" / "skills" / "dingtang-okr-review" / "SKILL.md",
-        ),
-    )
-    capabilities = set()
-    for expected_name, skill_path in reviewed_paths:
-        try:
-            if skill_path.parent.name != expected_name or not skill_path.is_file():
-                continue
-            digest = hashlib.sha256(skill_path.read_bytes()).hexdigest()
-        except OSError:
-            continue
-        capabilities.add(f"reviewed_skill:{expected_name}:{digest}")
-    return frozenset(capabilities)

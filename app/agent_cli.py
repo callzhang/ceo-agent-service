@@ -164,7 +164,6 @@ def _classify_reviewed_write(
     if descriptor is None or descriptor.cli == "local-shell":
         command = reviewed.classify(item)
     else:
-        reviewed.prewarm()
         command = reviewed.classify(item)
     if command is None:
         raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
@@ -539,7 +538,6 @@ def _execute_reviewed(
         command = reviewed.classify(item)
     else:
         try:
-            reviewed.prewarm()
             command = reviewed.classify(item)
         except NativeCliMetadataUnavailableError as exc:
             return _process_failure_receipt(
