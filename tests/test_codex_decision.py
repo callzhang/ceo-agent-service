@@ -111,6 +111,36 @@ def test_routed_decision_propagates_runtime_failure_instead_of_business_stop(
     assert raised.value.code == "runtime_route_unavailable"
 
 
+def test_routed_decision_correction_prompt_accepts_raw_output_only(tmp_path: Path):
+    class Routed:
+        def execute(self, **kwargs):
+            correction_prompt = kwargs["result_validation_retry"].correction_prompt
+            assert correction_prompt is not None
+            correction = correction_prompt("not valid AgentEnvelope")
+            assert "valid AgentEnvelope" in correction
+            value = kwargs["parser"](
+                _agent_envelope_json(
+                    kind="no_action", mode="no_reply", summary="无需回复。"
+                )
+            )
+            return SimpleNamespace(
+                value=value,
+                session_id="decision-correction-session",
+                transcript_start=2,
+                transcript_end=4,
+            )
+
+    runner = CodexDecisionRunner(
+        workspace=tmp_path,
+        routed_execution=Routed(),
+        codex_home=tmp_path,
+    )
+
+    decision = runner.decide("decide", None, run_id=42)
+
+    assert decision.action == CodexAction.NO_REPLY
+
+
 def _agent_envelope_json(
     *,
     mode: str = "no_reply",

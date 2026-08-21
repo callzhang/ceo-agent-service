@@ -839,7 +839,7 @@ class CodexDecisionRunner:
                 result_codec=RoutedResultCodec.text(schema_id="codex_decision.v1"),
                 required_capabilities=DECISION_RUNTIME_CAPABILITIES,
                 result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
-                    correction_prompt=lambda _prompt, _error: (
+                    correction_prompt=lambda _raw_output: (
                         "Resume the same decision turn. Output one valid AgentEnvelope "
                         "JSON object only. Reply actions require non-empty text and all "
                         "non-error decisions require a non-empty audit summary."
