@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Generic, TypeVar, cast
 
 from pydantic import ValidationError
@@ -760,6 +761,73 @@ class AgentTurnProcess(Generic[ResultT]):
         transcript_start = (
             run.transcript_end_line if recover_unknown else run.transcript_start_line
         )
+        effect_fence_lock = RLock()
+
+        def authorize_claude_effect_dispatch(request: dict[str, object]) -> bool:
+            if active_attempt is None or active_route is None:
+                return False
+            required_request_keys = {
+                "dispatch_id",
+                "reviewed_server",
+                "reviewed_tool",
+                "capability",
+                "operation",
+                "operation_digest",
+                "arguments_digest",
+                "target_identifiers",
+            }
+            if (
+                set(request) != required_request_keys
+                or active_route.runtime_kind is not RuntimeKind.CLAUDE_CLI
+                or run.role is not AgentRole.AUDIT
+                or recovery_phase
+                or not isinstance(request.get("dispatch_id"), str)
+                or not request["dispatch_id"].startswith("claude-dispatch:")
+            ):
+                return False
+            with effect_fence_lock:
+                candidates = [
+                    index
+                    for index, action in enumerate(expected_effect_actions)
+                    if request.get("reviewed_server")
+                    == action.get("reviewed_server")
+                    and request.get("reviewed_tool") == action.get("reviewed_tool")
+                    and _metadata_matches_action(request, action)
+                ]
+                if not candidates:
+                    return False
+                action_index = min(candidates, key=effect_action_counts.__getitem__)
+                metadata = {
+                    "effect": EffectKind.EFFECTFUL.value,
+                    **request,
+                    "operation_id": run.operation_id,
+                    "action_index": action_index,
+                }
+                dispatch_id = str(metadata.pop("dispatch_id"))
+                event = {
+                    "type": "item.started",
+                    "item": {
+                        "type": "mcp_tool_call",
+                        "id": dispatch_id,
+                        "status": "in_progress",
+                        "metadata": metadata,
+                    },
+                }
+                claim = self.store.authorize_claude_effect_dispatch(
+                    run_id=run.id,
+                    attempt_id=active_attempt.id,
+                    owner=self.owner,
+                    event=event,
+                    expected_action=expected_effect_actions[action_index],
+                    required_skill_receipts=tuple(
+                        (receipt.name, receipt.path, receipt.sha256)
+                        for receipt in required_skill_receipts
+                    ),
+                )
+                if claim.dispatch_acquired:
+                    effect_action_counts[action_index] += 1
+                    effect_action_by_call_id[dispatch_id] = action_index
+                return claim.dispatch_acquired
 
         def persist_effect_event(
             payload: dict[str, object],
@@ -788,13 +856,50 @@ class AgentTurnProcess(Generic[ResultT]):
             item = event.get("item")
             metadata = item.get("metadata") if isinstance(item, dict) else None
             effect = metadata.get("effect") if isinstance(metadata, dict) else None
+            call_id = (
+                str(item.get("id") or item.get("call_id") or "")
+                if isinstance(item, dict)
+                else ""
+            )
+            if from_claude_normalizer and effect == EffectKind.EFFECTFUL.value:
+                persisted = self.store.get_agent_run(run.id)
+                persisted_start = (
+                    _matching_effect_metadata(
+                        persisted.tool_events if persisted is not None else [],
+                        event_type="item.started",
+                        operation_id=run.operation_id,
+                        action_index=effect_action_by_call_id.get(call_id, -1),
+                        expected_action=(
+                            expected_effect_actions[
+                                effect_action_by_call_id.get(call_id, -1)
+                            ]
+                            if effect_action_by_call_id.get(call_id, -1) >= 0
+                            else {}
+                        ),
+                    )
+                    if call_id
+                    else None
+                )
+                if persisted_start is None:
+                    raise AgentReadOnlyViolationError(
+                        "claude_effect_fence_evidence_missing"
+                    )
+                if event.get("type") == "item.started":
+                    return
+                assert isinstance(metadata, dict)
+                metadata.update(
+                    {
+                        key: value
+                        for key, value in persisted_start.items()
+                        if key not in {"result_digest"}
+                    }
+                )
             if (
                 event.get("type") == "item.started"
                 and effect == EffectKind.EFFECTFUL.value
                 and active_attempt is not None
             ):
                 self.store.note_runtime_attempt_effect_started(active_attempt.id)
-            call_id = str(item.get("id") or item.get("call_id") or "") if isinstance(item, dict) else ""
             if (
                 event.get("type") == "item.started"
                 and effect == EffectKind.EFFECTFUL.value
@@ -3402,6 +3507,7 @@ def _trusted_claude_effect_event(
             "reviewed_tool",
             "operation",
             "operation_digest",
+            "arguments_digest",
             "target_identifiers",
             "native_cli",
             "result_digest",
@@ -3416,6 +3522,13 @@ def _trusted_claude_effect_event(
     for key in ("capability", "operation", "operation_digest"):
         if not isinstance(metadata.get(key), str) or not metadata[key]:
             raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
+    arguments_digest = metadata.get("arguments_digest")
+    if (
+        not isinstance(arguments_digest, str)
+        or len(arguments_digest) != 64
+        or any(character not in "0123456789abcdef" for character in arguments_digest)
+    ):
+        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
     if not isinstance(metadata.get("target_identifiers"), dict):
         raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
     result_digest = metadata.get("result_digest")

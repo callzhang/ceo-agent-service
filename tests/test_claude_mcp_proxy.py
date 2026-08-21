@@ -98,6 +98,85 @@ def test_remote_proxy_injects_only_target_credentials(tmp_path):
         target.shutdown()
 
 
+@pytest.mark.parametrize("fence_allows", [False, True])
+def test_effectful_remote_proxy_requires_parent_fence_before_target(
+    tmp_path, fence_allows
+):
+    order = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_POST(self):
+            order.append("target")
+            self.rfile.read(int(self.headers["Content-Length"]))
+            payload = b'{"jsonrpc":"2.0","id":1,"result":{}}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args):
+            return
+
+    target = ThreadingHTTPServer(("127.0.0.1", 0), Target)
+    threading.Thread(target=target.serve_forever, daemon=True).start()
+    manager = ClaudeMcpCredentialProxyManager(root=tmp_path)
+    try:
+        transport = manager.prepare(
+            ServiceMcpServer(
+                name="agent_cli",
+                url=f"http://127.0.0.1:{target.server_port}/mcp",
+            ),
+            invocation_id="effect-fence",
+            allowed_tools=("mcp__agent_cli__execute_reviewed_write",),
+            source_env={},
+            effect_fence=lambda request: order.append(("fence", request))
+            or fence_allows,
+        )
+        arguments = {
+            "argv": [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--group",
+                "cid-test",
+                "--text",
+                "synthetic",
+                "--yes",
+            ]
+        }
+        grant = _issue_grant(
+            manager,
+            "effect-fence",
+            "agent_cli",
+            "mcp__agent_cli__execute_reviewed_write",
+            arguments,
+        )
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "execute_reviewed_write",
+                "arguments": {**arguments, "__ceo_runtime_grant": grant},
+            },
+        }
+        if fence_allows:
+            with _post(transport["url"], request, transport["headers"]) as response:
+                assert response.status == 200
+            assert order[0][0] == "fence"
+            assert order[1] == "target"
+        else:
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                _post(transport["url"], request, transport["headers"])
+            assert exc.value.code == 403
+            assert len(order) == 1 and order[0][0] == "fence"
+    finally:
+        manager.close()
+        target.shutdown()
+
+
 def test_proxy_rejects_unauthenticated_and_unknown_tools_before_target(tmp_path):
     calls = []
 

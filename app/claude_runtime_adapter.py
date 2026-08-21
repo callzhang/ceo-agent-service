@@ -27,7 +27,10 @@ from app.agent_runtime_contracts import (
 )
 from app.claude_mcp_proxy import ClaudeMcpCredentialProxyManager
 from app.codex_runtime_adapter import _safe_child_environment
-from app.native_cli_metadata import NativeCliMetadataClassifier
+from app.native_cli_metadata import (
+    NativeCliMetadataClassifier,
+    describe_native_command,
+)
 from app.service_codex_config import ServiceMcpServer, load_service_mcp_servers
 
 ResultT = TypeVar("ResultT")
@@ -180,6 +183,7 @@ class ClaudeRuntimeAdapter:
         session_id: str | None,
         max_turns: int,
         policy: ClaudeCommandPolicy | None = None,
+        effect_fence: Callable[[dict[str, object]], bool] | None = None,
     ) -> list[str]:
         configured = self._configured_route(route)
         selected_policy = policy or ClaudeCommandPolicy.no_tools()
@@ -193,7 +197,10 @@ class ClaudeRuntimeAdapter:
             raise ValueError("max_turns must be a positive integer")
         if session_id is not None:
             require_claude_session_id(session_id)
-        settings_path, mcp_path = self._write_invocation_boundary(selected_policy)
+        settings_path, mcp_path = self._write_invocation_boundary(
+            selected_policy,
+            effect_fence=effect_fence,
+        )
         exposed_builtins = "Bash" if selected_policy.allow_native_cli else ""
         denied_builtins = sorted(
             _BUILTIN_TOOLS - ({"Bash"} if selected_policy.allow_native_cli else set())
@@ -456,7 +463,10 @@ class ClaudeRuntimeAdapter:
         )
 
     def _write_invocation_boundary(
-        self, policy: ClaudeCommandPolicy
+        self,
+        policy: ClaudeCommandPolicy,
+        *,
+        effect_fence: Callable[[dict[str, object]], bool] | None,
     ) -> tuple[Path, Path]:
         root = Path(self._runtime_root.name)
         invocation_id = uuid.uuid4().hex
@@ -472,6 +482,7 @@ class ClaudeRuntimeAdapter:
             reviewed_transports = self._reviewed_mcp_transports(
                 policy,
                 invocation_id=invocation_id,
+                effect_fence=effect_fence,
             )
             grant_endpoints = {
                 server: self._mcp_proxy.grant_descriptor(invocation_id, server)
@@ -546,7 +557,11 @@ class ClaudeRuntimeAdapter:
         return settings_path, mcp_path
 
     def _reviewed_mcp_transports(
-        self, policy: ClaudeCommandPolicy, *, invocation_id: str
+        self,
+        policy: ClaudeCommandPolicy,
+        *,
+        invocation_id: str,
+        effect_fence: Callable[[dict[str, object]], bool] | None,
     ) -> dict[str, dict[str, object]]:
         if not policy.mcp_tools:
             return {}
@@ -564,10 +579,10 @@ class ClaudeRuntimeAdapter:
                     "arguments": {},
                 }
             )
-            if (
-                reviewed_call is not None
-                and reviewed_call.effect is EffectKind.EFFECTFUL
-            ):
+            if reviewed_call is not None and reviewed_call.effect is EffectKind.EFFECTFUL:
+                if effect_fence is not None:
+                    required_servers.add(server)
+                    continue
                 raise ValueError(
                     "Claude effectful MCP permission callback origin is not trusted"
                 )
@@ -598,6 +613,7 @@ class ClaudeRuntimeAdapter:
                 invocation_id=invocation_id,
                 allowed_tools=tools_by_server[server.name],
                 source_env=os.environ,
+                effect_fence=effect_fence,
             )
             for server in selected
         }
@@ -828,30 +844,67 @@ class ClaudeEventNormalizer:
         mcp_identity = self._mcp_tool_names.get(tool_name)
         if mcp_identity is not None:
             server, tool = mcp_identity
+            reviewed_arguments = dict(arguments)
+            grant = reviewed_arguments.pop("__ceo_runtime_grant", None)
             call = self._effects.classify(
                 {
                     "type": "mcp_tool_call",
                     "server": server,
                     "tool": tool,
-                    "arguments": arguments,
+                    "arguments": reviewed_arguments,
                 }
             )
             if call is None:
                 raise ClaudeEventPolicyError("claude_tool_unreviewed")
+            item_id = call_id
+            capability = call.server
+            operation = call.operation
+            operation_digest = call.operation_digest
+            target_identifiers = call.target_identifiers
+            native_cli = ""
+            arguments_digest = _json_digest(reviewed_arguments)
+            if server == "agent_cli" and tool in {
+                "execute_reviewed_read",
+                "execute_reviewed_write",
+            }:
+                descriptor = describe_native_command(
+                    {
+                        "type": "command_execution",
+                        "argv": reviewed_arguments.get("argv"),
+                    }
+                )
+                if descriptor is None:
+                    raise ClaudeEventPolicyError("claude_tool_unreviewed")
+                capability = f"agent_cli.{descriptor.cli}"
+                operation = descriptor.command_path
+                operation_digest = descriptor.command_digest
+                target_identifiers = descriptor.target_identifiers
+                native_cli = descriptor.cli
+                arguments_digest = _json_digest(
+                    {"argv": reviewed_arguments.get("argv")}
+                )
+            if call.effect is EffectKind.EFFECTFUL:
+                if not isinstance(grant, str) or not grant:
+                    raise ClaudeEventPolicyError("claude_effect_fence_evidence_missing")
+                item_id = "claude-dispatch:" + hashlib.sha256(
+                    grant.encode("utf-8")
+                ).hexdigest()
             return {
                 "type": "mcp_tool_call",
-                "id": call_id,
+                "id": item_id,
                 "status": "in_progress",
                 "server": server,
                 "tool": tool,
                 "metadata": {
                     "effect": call.effect.value,
-                    "capability": call.server,
+                    "capability": capability,
                     "reviewed_server": server,
                     "reviewed_tool": tool,
-                    "operation": call.operation,
-                    "operation_digest": call.operation_digest,
-                    "target_identifiers": call.target_identifiers,
+                    "operation": operation,
+                    "operation_digest": operation_digest,
+                    "target_identifiers": target_identifiers,
+                    "arguments_digest": arguments_digest,
+                    **({"native_cli": native_cli} if native_cli else {}),
                 },
             }
         if tool_name == "Bash":
@@ -912,6 +965,18 @@ def _required_string(value: object) -> str | None:
     return (
         value if isinstance(value, str) and value and value == value.strip() else None
     )
+
+
+def _json_digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _validated_success_result(event: dict[str, object]) -> str:

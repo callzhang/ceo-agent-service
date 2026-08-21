@@ -711,6 +711,36 @@ def test_effectful_mcp_policy_fails_closed_without_trusted_callback_origin(
         )
 
 
+def test_effectful_mcp_policy_requires_service_owned_persisted_fence(
+    adapter, route, tmp_path, monkeypatch
+):
+    manifest = tmp_path / "service-mcp.json"
+    manifest.write_text(
+        json.dumps(
+            {"servers": {"agent_cli": {"url": "https://agent.invalid/mcp"}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+    fenced = []
+
+    command = adapter.build_command(
+        route=route,
+        session_id=None,
+        max_turns=2,
+        policy=ClaudeCommandPolicy.reviewed(
+            mcp_tools=("mcp__agent_cli__execute_reviewed_write",)
+        ),
+        effect_fence=lambda request: fenced.append(request) or True,
+    )
+
+    mcp_config_path = Path(command[command.index("--mcp-config") + 1])
+    serialized = mcp_config_path.read_text(encoding="utf-8")
+    assert "effect_fence" not in serialized
+    assert "gate_token" not in serialized
+    assert fenced == []
+
+
 def test_reviewed_mcp_policy_exposes_only_local_service_proxy(
     adapter, route, tmp_path, monkeypatch
 ):

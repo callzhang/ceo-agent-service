@@ -1368,6 +1368,58 @@ def test_effectful_audit_never_selects_claude_even_with_false_surface_claims(
     )
 
 
+def test_claude_effect_fence_atomically_persists_one_dispatch_start(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    attempt = store.claim_agent_runtime_attempt(
+        run.id,
+        "claude_api",
+        "claude_cli",
+        "service_api",
+        "claude-sonnet-test",
+    )
+    attempt = store.mark_agent_runtime_attempt_running_once(
+        attempt.id,
+        owner="audit",
+        effectful=False,
+    )
+    action = {
+        "capability": "agent_cli.dws",
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "chat message send",
+        "operation_digest": "operation-digest",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {"group": "cid-test"},
+    }
+    event = _effect_event(event_type="item.started", action_index=0, **action)
+    event["item"]["id"] = "claude-call-1"
+
+    first = store.authorize_claude_effect_dispatch(
+        run_id=run.id,
+        attempt_id=attempt.id,
+        owner="audit",
+        event=event,
+        expected_action=action,
+    )
+    duplicate = store.authorize_claude_effect_dispatch(
+        run_id=run.id,
+        attempt_id=attempt.id,
+        owner="audit",
+        event=event,
+        expected_action=action,
+    )
+
+    assert first.dispatch_acquired is True
+    assert duplicate.dispatch_acquired is False
+    persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
+    persisted_run = store.get_agent_run(run.id)
+    assert persisted_attempt is not None and persisted_attempt.first_effect_started_at
+    assert persisted_run is not None and persisted_run.effect_started_count == 1
+    assert persisted_run.tool_events[-1] == event
+
+
 @pytest.mark.parametrize(
     "unsafe_summary, expected",
     [

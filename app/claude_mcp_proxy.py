@@ -13,7 +13,7 @@ import selectors
 import subprocess
 import sys
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,6 +26,7 @@ from app.claude_tool_input import (
     validate_claude_tool_input,
 )
 from app.codex_runtime_adapter import _safe_child_environment
+from app.native_cli_metadata import describe_native_command
 from app.service_codex_config import ServiceMcpServer
 
 _AUTH_HEADER = "X-CEO-Runtime-Invocation"
@@ -63,12 +64,61 @@ class _ProxyProcess:
     url: str
 
 
+class _ParentEffectGate:
+    def __init__(self, callback: Callable[[dict[str, object]], bool]) -> None:
+        self.callback = callback
+        self.token = secrets.token_urlsafe(32)
+        parent = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                if self.path != "/effect-start" or not secrets.compare_digest(
+                    self.headers.get(_AUTH_HEADER, ""), parent.token
+                ):
+                    self.send_error(401, "effect fence authentication required")
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    payload = json.loads(self.rfile.read(length))
+                    allowed = isinstance(payload, dict) and parent.callback(payload)
+                except Exception:  # noqa: BLE001 - parent persistence fails closed
+                    allowed = False
+                if not allowed:
+                    self.send_error(403, "effect fence denied")
+                    return
+                body = b'{"dispatch_acquired":true}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args: object) -> None:
+                return
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def descriptor(self) -> dict[str, str]:
+        return {
+            "url": f"http://127.0.0.1:{self.server.server_port}/effect-start",
+            "token": self.token,
+        }
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+
 class ClaudeMcpCredentialProxyManager:
     """Own authenticated proxy processes for exact invocation/server pairs."""
 
     def __init__(self, *, root: Path) -> None:
         self._root = root
         self._processes: dict[str, list[_ProxyProcess]] = {}
+        self._effect_gates: dict[str, _ParentEffectGate] = {}
 
     @property
     def active_process_count(self) -> int:
@@ -85,11 +135,21 @@ class ClaudeMcpCredentialProxyManager:
         invocation_id: str,
         allowed_tools: Sequence[str],
         source_env: Mapping[str, str],
+        effect_fence: Callable[[dict[str, object]], bool] | None = None,
     ) -> dict[str, object]:
         if not invocation_id or invocation_id != invocation_id.strip():
             raise ValueError("Claude MCP proxy invocation id is invalid")
         if server.args_env is not None:
             raise ValueError("Claude reviewed MCP args_env is not safely supported")
+        effect_gate: dict[str, str] = {}
+        if effect_fence is not None:
+            gate = self._effect_gates.get(invocation_id)
+            if gate is None:
+                gate = _ParentEffectGate(effect_fence)
+                self._effect_gates[invocation_id] = gate
+            elif gate.callback is not effect_fence:
+                raise ValueError("Claude effect fence callback changed")
+            effect_gate = gate.descriptor()
         if server.command is not None:
             exact_tools = tuple(sorted(set(allowed_tools)))
             if not exact_tools or any(
@@ -105,6 +165,7 @@ class ClaudeMcpCredentialProxyManager:
                     "broker_token": broker_token,
                     "client_token": client_token,
                     "allowed_tools": exact_tools,
+                    "effect_gate": effect_gate,
                 },
             )
             base_url = f"http://127.0.0.1:{port}"
@@ -164,6 +225,7 @@ class ClaudeMcpCredentialProxyManager:
                 "broker_token": broker_token,
                 "client_token": client_token,
                 "allowed_tools": exact_tools,
+                "effect_gate": effect_gate,
             },
         )
         self._processes.setdefault(invocation_id, []).append(
@@ -197,6 +259,9 @@ class ClaudeMcpCredentialProxyManager:
     def close_invocation(self, invocation_id: str) -> None:
         for owned in self._processes.pop(invocation_id, []):
             _stop_process(owned.process)
+        gate = self._effect_gates.pop(invocation_id, None)
+        if gate is not None:
+            gate.close()
 
     def close(self) -> None:
         for invocation_id in tuple(self._processes):
@@ -267,6 +332,7 @@ def _serve_remote_proxy(
     broker_token: str,
     client_token: str,
     allowed_tools: Sequence[str],
+    effect_gate: Mapping[str, str],
 ) -> None:
     safe_env = _safe_child_environment(dict(os.environ))
     os.environ.clear()
@@ -300,6 +366,7 @@ def _serve_remote_proxy(
                 registry=registry,
                 grants=grants,
                 grant_lock=grant_lock,
+                effect_gate=effect_gate,
             )
             if forwarded is None:
                 self.send_error(403, "MCP operation denied")
@@ -431,6 +498,7 @@ def _serve_grant_authority(
     broker_token: str,
     client_token: str,
     allowed_tools: Sequence[str],
+    effect_gate: Mapping[str, str],
 ) -> None:
     safe_env = _safe_child_environment(dict(os.environ))
     os.environ.clear()
@@ -469,11 +537,18 @@ def _serve_grant_authority(
                     return
                 self._json({"grant": grant})
                 return
-            if self.path == "/consume" and _consume_grant_payload(
-                payload, grants=grants, grant_lock=grant_lock
-            ):
-                self._json({"allowed": True})
-                return
+            if self.path == "/consume":
+                consumed = _consume_grant_payload(
+                    payload, grants=grants, grant_lock=grant_lock
+                )
+                if consumed and _authorize_effect_if_required(
+                    payload,
+                    server_name=server_name,
+                    registry=registry,
+                    effect_gate=effect_gate,
+                ):
+                    self._json({"allowed": True})
+                    return
             self.send_error(403, "MCP grant denied")
 
         def _json(self, payload: dict[str, object]) -> None:
@@ -561,6 +636,7 @@ def _authorized_jsonrpc_request(
     registry: McpToolEffectRegistry,
     grants: dict[str, tuple[str, str]],
     grant_lock: threading.Lock,
+    effect_gate: Mapping[str, str],
 ) -> bytes | None:
     try:
         payload = json.loads(body)
@@ -596,24 +672,121 @@ def _authorized_jsonrpc_request(
         return None
     if not validate_claude_tool_input(exact_name, arguments):
         return None
-    if (
-        registry.classify(
-            {
-                "type": "mcp_tool_call",
-                "server": server_name,
-                "tool": wire_name,
-                "arguments": arguments,
-            }
-        )
-        is None
-    ):
+    call_payload = {
+        "type": "mcp_tool_call",
+        "server": server_name,
+        "tool": wire_name,
+        "arguments": arguments,
+    }
+    if registry.classify(call_payload) is None:
         return None
     with grant_lock:
         expected = grants.pop(grant, None)
     if expected != (exact_name, _arguments_digest(arguments)):
         return None
+    if not _authorize_effect_if_required(
+        {"grant": grant, "tool": exact_name, "arguments": arguments},
+        server_name=server_name,
+        registry=registry,
+        effect_gate=effect_gate,
+    ):
+        return None
     params["arguments"] = arguments
     return json.dumps(payload, separators=(",", ":")).encode()
+
+
+def _authorize_effect_if_required(
+    payload: object,
+    *,
+    server_name: str,
+    registry: McpToolEffectRegistry,
+    effect_gate: Mapping[str, str],
+) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    exact_name = payload.get("tool")
+    arguments = payload.get("arguments")
+    grant = payload.get("grant")
+    prefix = f"mcp__{server_name}__"
+    if (
+        not isinstance(exact_name, str)
+        or not exact_name.startswith(prefix)
+        or not isinstance(arguments, dict)
+        or not isinstance(grant, str)
+    ):
+        return False
+    tool = exact_name[len(prefix) :]
+    call = registry.classify(
+        {
+            "type": "mcp_tool_call",
+            "server": server_name,
+            "tool": tool,
+            "arguments": arguments,
+        }
+    )
+    if call is None:
+        return False
+    if call.effect.value != "effectful":
+        return True
+    request: dict[str, object] = {
+        "dispatch_id": "claude-dispatch:"
+        + hashlib.sha256(grant.encode("utf-8")).hexdigest(),
+        "reviewed_server": server_name,
+        "reviewed_tool": tool,
+        "capability": call.server,
+        "operation": call.operation,
+        "operation_digest": call.operation_digest,
+        "arguments_digest": _canonical_arguments_digest(arguments),
+        "target_identifiers": call.target_identifiers,
+    }
+    if server_name == "agent_cli" and tool in {
+        "execute_reviewed_read",
+        "execute_reviewed_write",
+    }:
+        argv = arguments.get("argv")
+        descriptor = describe_native_command(
+            {"type": "command_execution", "argv": argv}
+        )
+        if descriptor is None or descriptor.effect is not None:
+            return False
+        request.update(
+            {
+                "capability": f"agent_cli.{descriptor.cli}",
+                "operation": descriptor.command_path,
+                "operation_digest": descriptor.command_digest,
+                "arguments_digest": _canonical_arguments_digest({"argv": argv}),
+                "target_identifiers": descriptor.target_identifiers,
+            }
+        )
+    return _request_parent_effect_fence(effect_gate, request)
+
+
+def _request_parent_effect_fence(
+    descriptor: Mapping[str, str], request_payload: Mapping[str, object]
+) -> bool:
+    from urllib.request import Request, urlopen
+
+    if set(descriptor) != {"url", "token"} or not all(
+        isinstance(value, str) and value for value in descriptor.values()
+    ):
+        return False
+    body = json.dumps(
+        request_payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    request = Request(
+        descriptor["url"],
+        data=body,
+        headers={
+            _AUTH_HEADER: descriptor["token"],
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read())
+    except Exception:  # noqa: BLE001 - no durable ACK means no target dispatch
+        return False
+    return payload == {"dispatch_acquired": True}
 
 
 def _arguments_digest(arguments: Mapping[str, object]) -> str:
@@ -623,6 +796,17 @@ def _arguments_digest(arguments: Mapping[str, object]) -> str:
         separators=(",", ":"),
         ensure_ascii=True,
     ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _canonical_arguments_digest(arguments: Mapping[str, object]) -> str:
+    encoded = json.dumps(
+        arguments,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -714,6 +898,7 @@ def main(argv: list[str] | None = None) -> int:
                 _required_payload_string(payload, "broker_token"),
                 _required_payload_string(payload, "client_token"),
                 _required_string_sequence(payload, "allowed_tools"),
+                _required_string_mapping(payload, "effect_gate"),
             )
         else:
             _serve_grant_authority(
@@ -722,6 +907,7 @@ def main(argv: list[str] | None = None) -> int:
                 _required_payload_string(payload, "broker_token"),
                 _required_payload_string(payload, "client_token"),
                 _required_string_sequence(payload, "allowed_tools"),
+                _required_string_mapping(payload, "effect_gate"),
             )
         return 0
     parser = argparse.ArgumentParser()

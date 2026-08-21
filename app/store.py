@@ -573,6 +573,11 @@ class AgentRuntimeAttemptStartClaim:
 
 
 @dataclass(frozen=True)
+class ClaudeEffectDispatchClaim:
+    dispatch_acquired: bool
+
+
+@dataclass(frozen=True)
 class ManualAgentRunResolution:
     run_id: int
     task_id: int
@@ -5627,6 +5632,136 @@ class AutoReplyStore:
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
+
+    def authorize_claude_effect_dispatch(
+        self,
+        *,
+        run_id: int,
+        attempt_id: int,
+        owner: str,
+        event: dict[str, object],
+        expected_action: dict[str, object],
+        required_skill_receipts: tuple[tuple[str, str, str], ...] = (),
+        now: str | datetime | None = None,
+    ) -> ClaudeEffectDispatchClaim:
+        """Persist one exact Claude effect start before allowing target dispatch."""
+        if not owner.strip():
+            raise ValueError("owner must be non-empty")
+        event_text = _json_object_text(event, field="event")
+        if len(event_text.encode("utf-8")) > MAX_AGENT_RUN_EVENT_BYTES:
+            raise ValueError("agent run event exceeds size limit")
+        normalized_event = json.loads(event_text)
+        event_type, call_id, effect_kind, receipt_operation_id = (
+            _agent_event_columns(normalized_event)
+        )
+        item = normalized_event.get("item")
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        if (
+            event_type != "item.started"
+            or effect_kind != "effectful"
+            or receipt_operation_id
+            or not call_id
+            or not isinstance(metadata, dict)
+            or any(metadata.get(key) != value for key, value in expected_action.items())
+        ):
+            raise ValueError("Claude effect dispatch identity mismatch")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            run_row = self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                status_error="Claude effect dispatch requires running Audit",
+            )
+            if run_row["role"] != AgentRole.AUDIT.value:
+                raise ValueError("Claude effect dispatch requires Audit")
+            if metadata.get("operation_id") != run_row["operation_id"]:
+                raise ValueError("effect operation identity mismatch")
+            attempt_row = self._runtime_attempt_for_transition(db, attempt_id)
+            if (
+                attempt_row["agent_run_id"] != run_id
+                or attempt_row["route_name"] != "claude_api"
+                or attempt_row["runtime_kind"] != "claude_cli"
+                or attempt_row["status"] != "running"
+            ):
+                raise ValueError("Claude effect dispatch attempt is not active")
+            if required_skill_receipts:
+                rows = db.execute(
+                    "select event_json from agent_run_events "
+                    "where agent_run_id=? and event_type='item.completed'",
+                    (run_id,),
+                ).fetchall()
+                observed: set[tuple[str, str, str]] = set()
+                for row in rows:
+                    try:
+                        persisted_event = json.loads(row["event_json"])
+                    except json.JSONDecodeError:
+                        continue
+                    persisted_item = persisted_event.get("item")
+                    persisted_metadata = (
+                        persisted_item.get("metadata")
+                        if isinstance(persisted_item, dict)
+                        else None
+                    )
+                    if isinstance(persisted_metadata, dict):
+                        identity = tuple(
+                            str(persisted_metadata.get(key) or "")
+                            for key in ("skill_name", "skill_path", "skill_sha256")
+                        )
+                        if all(identity):
+                            observed.add(identity)
+                if not set(required_skill_receipts).issubset(observed):
+                    raise ValueError("Claude effect dispatch skill receipt missing")
+            prior = db.execute(
+                "select event_json from agent_run_events "
+                "where agent_run_id=? and call_id=? and event_type='item.started' "
+                "order by sequence",
+                (run_id, call_id),
+            ).fetchall()
+            if prior:
+                if len(prior) == 1 and prior[0]["event_json"] == event_text:
+                    return ClaudeEffectDispatchClaim(dispatch_acquired=False)
+                raise ValueError("Claude effect dispatch call identity conflict")
+            sequence = db.execute(
+                "select coalesce(max(sequence), 0) + 1 from agent_run_events "
+                "where agent_run_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            db.execute(
+                """
+                insert into agent_run_events (
+                    agent_run_id, sequence, event_json, event_type,
+                    call_id, effect_kind, receipt_operation_id, event_scope, created_at
+                ) values (?, ?, ?, 'item.started', ?, 'effectful', '', 'direct', ?)
+                """,
+                (run_id, sequence, event_text, call_id, now_text),
+            )
+            attempt_cursor = db.execute(
+                """
+                update agent_runtime_attempts
+                set first_effect_started_at=?, updated_at=?
+                where id=? and agent_run_id=? and status='running'
+                  and first_effect_started_at=''
+                """,
+                (now_text, now_text, attempt_id, run_id),
+            )
+            if attempt_cursor.rowcount != 1:
+                raise ValueError("Claude effect dispatch attempt conflict")
+            run_cursor = db.execute(
+                """
+                update agent_runs
+                set effect_started_count=effect_started_count+1,
+                    side_effect_state='unknown',
+                    transcript_end_line=transcript_end_line+1,
+                    updated_at=?
+                where id=? and status='running' and lease_owner=?
+                  and lease_expires_at>?
+                """,
+                (now_text, run_id, owner, now_text),
+            )
+            if run_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            return ClaudeEffectDispatchClaim(dispatch_acquired=True)
 
     @staticmethod
     def _require_current_agent_run_write_access(
