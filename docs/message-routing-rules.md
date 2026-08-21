@@ -102,6 +102,10 @@ Service 只接受 completed `agent_cli.read_skill` events 形成的 receipt。B 
 reconciliation 只接受同一群的 `chat +chat-messages` 或 `chat +search-msg` 读回；这只能保留
 `unknown` 或标记明确结果，不能凭群级读取确认发送成功。
 
+Unknown recovery 使用独立的只读 Audit 协议：它必须先对每个有读回契约的动作做目标匹配的实时读取，
+然后仅返回 `reconciled`。正常 Audit 的 `executed`、`revision_required`、`failed` 和
+`needs_human` 结果在这个阶段均无效，不能挤掉恢复协议。
+
 ## Task extraction 与 follow-up
 
 任务提取不是消息 router 的副产品，follow-up 也不是独立发送器。`ceo-work-tracking` 负责从证据中

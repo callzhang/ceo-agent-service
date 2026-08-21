@@ -462,6 +462,20 @@ def test_audit_instructions_accept_the_authorized_low_consequence_standard():
     assert "do not require a prior\nmessage containing the same choice" in instructions
 
 
+def test_audit_recovery_instructions_override_normal_audit_outcomes():
+    instructions = audit_developer_instructions(
+        "Verify every supported fact.",
+        allow_write=False,
+        recovery_reconciliation=True,
+    )
+
+    assert instructions.startswith("This is an unknown-outcome recovery")
+    assert "perform a target-matched live read" in instructions
+    assert "External writes are unavailable" in instructions
+    assert "Return only outcome=reconciled" in instructions
+    assert "Do not return executed, revision_required, failed, or needs_human" in instructions
+
+
 def test_consumer_instructions_do_not_enumerate_specialist_workflows():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 

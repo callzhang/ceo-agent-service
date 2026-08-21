@@ -530,6 +530,7 @@ def audit_developer_instructions(
     audit_rules: str,
     *,
     allow_write: bool = True,
+    recovery_reconciliation: bool = False,
 ) -> str:
     core = _developer_instructions(
         audit_rules=audit_rules,
@@ -537,7 +538,19 @@ def audit_developer_instructions(
         wire_model=AuditAgentWireResult,
         result_model=AuditAgentResult,
     )
-    return _role_developer_instructions(
+    recovery_boundary = (
+        "This is an unknown-outcome recovery reconciliation turn. Before returning "
+        "a result, perform a target-matched live read for every unresolved action "
+        "with a registered readback. External writes are unavailable. Return only "
+        "outcome=reconciled with side_effect_state=unknown, feedback=null, and "
+        "external_result=null. Include one reconciliation entry per required action "
+        "with the exact result_digest from this turn's read receipt; use ambiguous "
+        "when the read cannot prove present or absent. Do not return executed, "
+        "revision_required, failed, or needs_human in this recovery turn.\n\n"
+        if recovery_reconciliation
+        else ""
+    )
+    return recovery_boundary + _role_developer_instructions(
         core,
         capability_instructions=(
             "Reread every verified Skill path supplied from Consumer A with "

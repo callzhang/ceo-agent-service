@@ -702,6 +702,7 @@ class AuditAgentRunner:
                 allow_write=(
                     not self.dry_run and recovery_phase != "reconcile"
                 ),
+                recovery_reconciliation=recovery_phase == "reconcile",
             ),
             configure_command=lambda command: make_audit_agent_command(
                 command,
