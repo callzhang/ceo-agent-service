@@ -3,6 +3,10 @@ from datetime import timedelta
 from pathlib import Path
 
 
+DEFAULT_CEO_CODEX_MODEL = "gpt-5.5"
+DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT = "medium"
+
+
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -112,6 +116,17 @@ def worker_db_path() -> Path:
 
 def corpus_dir() -> Path:
     return env_path("CEO_CORPUS_DIR", repo_root() / "data" / "corpus")
+
+
+def codex_model() -> str:
+    return os.getenv("CEO_CODEX_MODEL", DEFAULT_CEO_CODEX_MODEL).strip()
+
+
+def codex_model_reasoning_effort() -> str:
+    return os.getenv(
+        "CEO_CODEX_MODEL_REASONING_EFFORT",
+        DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT,
+    ).strip()
 
 
 def env_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:

@@ -6,7 +6,7 @@ from datetime import timedelta
 from pydantic import BaseModel, ConfigDict, SecretStr
 
 from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
-from app.config import parse_duration_value
+from app.config import DEFAULT_CEO_CODEX_MODEL, parse_duration_value
 
 
 class AgentRuntimeConfig(BaseModel):
@@ -33,7 +33,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     unknown = set(names) - supported
     if unknown:
         raise ValueError(f"unsupported runtime routes: {sorted(unknown)}")
-    model = env.get("CEO_CODEX_MODEL", "gpt-5.5").strip()
+    model = env.get("CEO_CODEX_MODEL", DEFAULT_CEO_CODEX_MODEL).strip()
     api_model = env.get("CEO_CODEX_API_MODEL", model).strip()
     claude_model = env.get("CEO_CLAUDE_MODEL", "sonnet").strip()
     routes = []

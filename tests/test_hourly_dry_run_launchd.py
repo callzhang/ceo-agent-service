@@ -5,6 +5,13 @@ import plistlib
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_env_example_sets_default_codex_agent_settings():
+    content = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert "\nCEO_CODEX_MODEL=gpt-5.5\n" in content
+    assert "\nCEO_CODEX_MODEL_REASONING_EFFORT=medium\n" in content
+
+
 def test_local_service_script_runs_single_main_service():
     script = REPO_ROOT / "scripts" / "run-local-service.sh"
 
@@ -12,11 +19,8 @@ def test_local_service_script_runs_single_main_service():
 
     assert '${HOME}/.local/bin' in content
     assert 'export CODEX_HOME="${CODEX_HOME:-${HOME}/.codex}"' in content
-    assert 'export CEO_CODEX_MODEL="${CEO_CODEX_MODEL:-gpt-5.5}"' in content
-    assert (
-        'export CEO_CODEX_MODEL_REASONING_EFFORT="${CEO_CODEX_MODEL_REASONING_EFFORT:-medium}"'
-        in content
-    )
+    assert "CEO_CODEX_MODEL" not in content
+    assert "CEO_CODEX_MODEL_REASONING_EFFORT" not in content
     assert 'export HOME="${CEO_SERVICE_HOME:-${HOME}}"' in content
     assert 'export PYTHONPATH="${PYTHONPATH:-.}"' in content
     assert "export PYTHONDONTWRITEBYTECODE=1" in content
@@ -84,11 +88,8 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert "CEO_NOT_SEND_MESSAGE=0" in command[2]
     assert "CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1" in command[2]
     assert "CEO_OKR_LIVE_SOURCE_COMMAND" in command[2]
-    assert 'CEO_CODEX_MODEL="${CEO_CODEX_MODEL:-gpt-5.5}"' in command[2]
-    assert (
-        'CEO_CODEX_MODEL_REASONING_EFFORT="${CEO_CODEX_MODEL_REASONING_EFFORT:-medium}"'
-        in command[2]
-    )
+    assert "CEO_CODEX_MODEL" not in command[2]
+    assert "CEO_CODEX_MODEL_REASONING_EFFORT" not in command[2]
     assert "dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}" in command[2]
     env = plist["EnvironmentVariables"]
     assert env["CEO_SERVICE_ROOT"] == (

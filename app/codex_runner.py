@@ -4,6 +4,7 @@ import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from app.config import codex_model, codex_model_reasoning_effort
 from app.dingtalk_models import CodexDecision
 from app.dws_client import dws_noninteractive_environment
 from app.prompt import ceo_agent_thread_prompt
@@ -27,8 +28,6 @@ DWS_CLI_AUTH_ENV_KEYS = {
 CODEX_MODEL_ENV = "CEO_CODEX_MODEL"
 CODEX_MODEL_PROVIDER_ENV = "CEO_CODEX_MODEL_PROVIDER"
 CODEX_MODEL_REASONING_EFFORT_ENV = "CEO_CODEX_MODEL_REASONING_EFFORT"
-DEFAULT_CODEX_MODEL = "gpt-5.5"
-DEFAULT_CODEX_MODEL_REASONING_EFFORT = "medium"
 
 
 def native_codex_login_available(
@@ -128,7 +127,7 @@ def codex_model_config_options(
     reasoning_effort: str | None = None,
 ) -> list[str]:
     selected_model = (
-        os.environ.get(CODEX_MODEL_ENV, DEFAULT_CODEX_MODEL).strip()
+        codex_model()
         if model is None
         else model.strip()
     )
@@ -138,10 +137,7 @@ def codex_model_config_options(
         else provider.strip()
     )
     selected_reasoning_effort = (
-        os.environ.get(
-            CODEX_MODEL_REASONING_EFFORT_ENV,
-            DEFAULT_CODEX_MODEL_REASONING_EFFORT,
-        ).strip()
+        codex_model_reasoning_effort()
         if reasoning_effort is None
         else reasoning_effort.strip()
     )

@@ -10,6 +10,10 @@ from pathlib import Path
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.audit_rules import SEED_AUDIT_RULES_TEMPLATE
 from app.channel_gate import ChannelGateState, default_channel_gates
+from app.config import (
+    DEFAULT_CEO_CODEX_MODEL,
+    DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT,
+)
 from app.developer_prompt import (
     SEED_DEVELOPER_PROMPT_TEMPLATE,
     SEED_USER_PROMPT_TEMPLATE,
@@ -1217,8 +1221,9 @@ def _setup_service_config(
         "CEO_SERVICE_MCP_CONFIG_PATH": "data/config/service-mcp.json",
         "CEO_NOT_SEND_MESSAGE": "1",
         "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
-        "CEO_CODEX_MODEL": "gpt-5.5",
-        "CEO_CODEX_API_MODEL": "gpt-5.5",
+        "CEO_CODEX_MODEL": DEFAULT_CEO_CODEX_MODEL,
+        "CEO_CODEX_MODEL_REASONING_EFFORT": DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT,
+        "CEO_CODEX_API_MODEL": DEFAULT_CEO_CODEX_MODEL,
         "CEO_RUNTIME_PROBE_INTERVAL": "5m",
         "CEO_RUNTIME_ROUTE_RETRY_DELAY": "30m",
     }

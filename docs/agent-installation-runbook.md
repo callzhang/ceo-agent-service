@@ -308,7 +308,8 @@ not in `~/.agents/skills`.
    CEO_WORKSPACE=$HOME/Documents/memory
    CEO_WORKER_DB=$HOME/Library/Application Support/ceo-agent-service/auto-reply.sqlite3
    CEO_CORPUS_DIR=./data/corpus
-   CEO_CODEX_MODEL=
+   CEO_CODEX_MODEL=gpt-5.5
+   CEO_CODEX_MODEL_REASONING_EFFORT=medium
    CEO_CODEX_MODEL_PROVIDER=
    CEO_DRY_RUN=1
    CEO_PRINCIPAL_NAME=<principal display name>
@@ -319,6 +320,9 @@ not in `~/.agents/skills`.
    CEO_HANDOFF_ACK=<handoff acknowledgement>
    CEO_LIVE_SEND_BLOCKERS_ACCEPTED=
    ```
+
+   也可以在审计页 `Settings → Config → System Config` 修改模型与 thinking
+   强度。保存会写入 `.env`；重启主服务后，所有新的 agent runtime 路由都会使用新设置。
 
 3. Keep dry-run on for first validation. For this codebase, dry-run can be set
    as either `CEO_DRY_RUN=1` or `CEO_NOT_SEND_MESSAGE=1`; launchd defaults to

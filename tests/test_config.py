@@ -2,7 +2,14 @@ from datetime import timedelta
 
 import pytest
 
-from app.config import env_duration, parse_duration_value
+from app.config import (
+    DEFAULT_CEO_CODEX_MODEL,
+    DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT,
+    codex_model,
+    codex_model_reasoning_effort,
+    env_duration,
+    parse_duration_value,
+)
 
 
 @pytest.mark.parametrize(
@@ -38,3 +45,20 @@ def test_env_duration_retains_environment_lookup_and_default_behavior(monkeypatc
 
     monkeypatch.setenv("CEO_INTERVAL", "2h")
     assert env_duration("CEO_INTERVAL", default) == timedelta(hours=2)
+
+
+def test_codex_model_settings_use_configured_values_or_service_defaults(monkeypatch):
+    monkeypatch.delenv("CEO_CODEX_MODEL", raising=False)
+    monkeypatch.delenv("CEO_CODEX_MODEL_REASONING_EFFORT", raising=False)
+
+    assert codex_model() == DEFAULT_CEO_CODEX_MODEL
+    assert (
+        codex_model_reasoning_effort()
+        == DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT
+    )
+
+    monkeypatch.setenv("CEO_CODEX_MODEL", "gpt-5.6")
+    monkeypatch.setenv("CEO_CODEX_MODEL_REASONING_EFFORT", "high")
+
+    assert codex_model() == "gpt-5.6"
+    assert codex_model_reasoning_effort() == "high"
