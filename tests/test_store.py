@@ -4745,6 +4745,191 @@ def test_effect_intent_is_one_shot_and_ack_survives_run_becoming_unknown(
     assert (state, persisted_digest) == ("acknowledged", "result-digest")
 
 
+def test_effect_intent_is_one_shot_across_initial_and_recovery_owners(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store,
+        task_id,
+        "initial",
+        owner="initial-owner",
+        now="2026-08-22 00:00:00",
+    ).run
+    initial = _effect_intent_authorization("initial-authorization")
+    recovery = {
+        **initial,
+        "authorization_id": "recovery-authorization",
+    }
+    store.prepare_agent_effect_intents(
+        run.id,
+        (initial,),
+        owner="initial-owner",
+        now="2026-08-22 00:00:01",
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "runtime_disconnected", "retryable": True},
+        owner="initial-owner",
+        now="2026-08-22 00:00:02",
+    )
+    claim = store.claim_unknown_agent_run(
+        run.id,
+        owner="recovery-owner",
+        now="2026-08-22 00:00:03",
+    )
+    assert claim.claimed is True
+
+    with pytest.raises(ValueError, match="conflicting logical effect intent"):
+        store.prepare_agent_effect_intents(
+            run.id,
+            (recovery,),
+            owner="recovery-owner",
+            now="2026-08-22 00:00:04",
+        )
+
+    # A stale child and the recovery child can race under the new live lease,
+    # but only their shared logical action is allowed across the dispatch fence.
+    store.dispatch_agent_effect_intent(
+        run.id, initial, now="2026-08-22 00:00:05"
+    )
+    with pytest.raises(ValueError, match="effect intent was not prepared"):
+        store.dispatch_agent_effect_intent(
+            run.id, recovery, now="2026-08-22 00:00:06"
+        )
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    (
+        "agent_cli_timeout",
+        "agent_cli_nonzero_exit",
+        "mcp_transport_disconnected",
+        "agent_run_lease_lost_after_dispatch",
+    ),
+)
+def test_dispatched_effect_intent_forces_failed_run_to_unknown(
+    tmp_path: Path,
+    failure_code: str,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store,
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-08-22 00:00:00",
+    ).run
+    authorization = _effect_intent_authorization("authorization-dispatched")
+    store.prepare_agent_effect_intents(
+        run.id,
+        (authorization,),
+        owner="worker-1",
+        now="2026-08-22 00:00:01",
+    )
+    store.dispatch_agent_effect_intent(
+        run.id,
+        authorization,
+        now="2026-08-22 00:00:02",
+    )
+
+    settled = store.fail_agent_run(
+        run.id,
+        {"code": failure_code, "retryable": True},
+        owner="worker-1",
+        now="2026-08-22 00:00:03",
+    )
+
+    assert settled.status == "unknown"
+    assert settled.side_effect_state == "unknown"
+    assert settled.completed_at == ""
+    with store._connect() as db:
+        [state_event] = db.execute(
+            "select phase, structured_error_json from agent_run_state_events "
+            "where agent_run_id=? order by id",
+            (run.id,),
+        ).fetchall()
+    assert state_event["phase"] == "initial_unknown"
+    assert json.loads(state_event["structured_error_json"])["code"] == failure_code
+
+
+def test_expired_run_with_dispatched_intent_enters_reconciliation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    generation = store.get_reply_task(task_id).execution_generation
+    run = _claim_audit_run(
+        store,
+        task_id,
+        generation,
+        owner="worker-1",
+        lease_seconds=60,
+        now="2026-08-22 00:00:00",
+    ).run
+    authorization = _effect_intent_authorization("authorization-expired")
+    store.prepare_agent_effect_intents(
+        run.id,
+        (authorization,),
+        owner="worker-1",
+        now="2026-08-22 00:00:01",
+    )
+    store.dispatch_agent_effect_intent(
+        run.id,
+        authorization,
+        now="2026-08-22 00:00:02",
+    )
+    effect_identity = {
+        "effect": "effectful",
+        "capability": authorization["capability"],
+        "operation": authorization["operation"],
+        "operation_id": run.operation_id,
+        "operation_digest": authorization["operation_digest"],
+        "arguments_digest": authorization["arguments_digest"],
+        "target_identifiers": authorization["target_identifiers"],
+        "action_index": authorization["action_index"],
+    }
+    store.append_agent_run_event(
+        run.id,
+        {
+            "type": "item.started",
+            "item": {"id": "write-1", "metadata": effect_identity},
+        },
+        owner="worker-1",
+        now="2026-08-22 00:00:03",
+    )
+    after_failed_event = store.append_agent_run_event(
+        run.id,
+        {
+            "type": "item.failed",
+            "item": {"id": "write-1", "metadata": effect_identity},
+        },
+        owner="worker-1",
+        now="2026-08-22 00:00:04",
+    )
+    assert after_failed_event.side_effect_state == "unknown"
+
+    unknown = store.mark_expired_agent_run_unknown(
+        run.id,
+        {"code": "agent_run_lease_expired", "retryable": True},
+        expected_execution_generation=generation,
+        now="2026-08-22 00:01:01",
+    )
+
+    assert unknown.status == "unknown"
+    assert unknown.side_effect_state == "unknown"
+    with store._connect() as db:
+        [state_event] = db.execute(
+            "select phase, structured_error_json from agent_run_state_events "
+            "where agent_run_id=? order by id",
+            (run.id,),
+        ).fetchall()
+    assert state_event["phase"] == "initial_unknown"
+    assert json.loads(state_event["structured_error_json"])["code"] == (
+        "agent_run_lease_expired"
+    )
+
+
 def _effect_intent_authorization(authorization_id: str) -> dict[str, object]:
     return {
         "authorization_id": authorization_id,
@@ -9914,7 +10099,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-20.1"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-22.1"
     assert {
         "lease_owner",
         "lease_expires_at",
@@ -9925,3 +10110,69 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
         "result_envelope_json",
     } <= columns
     assert reopened._schema_is_current() is True
+
+
+def test_prior_schema_reopen_creates_durable_effect_state_machine_tables(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "prior-effect-intent-schema.sqlite3"
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        db.execute("drop table agent_effect_intents")
+        db.execute("drop table agent_run_state_events")
+        db.execute(
+            "update service_state set value='2026-08-20.1' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    reopened = AutoReplyStore(db_path)
+
+    with reopened._connect() as db:
+        tables = {
+            row["name"]
+            for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            ).fetchall()
+        }
+        indexes = {
+            row["name"]
+            for row in db.execute(
+                "select name from sqlite_master where type='index'"
+            ).fetchall()
+        }
+    assert {"agent_effect_intents", "agent_run_state_events"} <= tables
+    assert {
+        "idx_agent_effect_intents_run",
+        "idx_agent_effect_intents_operation",
+        "idx_agent_run_state_events_run",
+    } <= indexes
+    assert reopened.foreign_key_violations() == []
+
+    task_id = _enqueue_universal_reply_task(reopened)
+    run = _claim_audit_run(
+        reopened,
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-08-22 00:00:00",
+    ).run
+    authorization = _effect_intent_authorization("migration-authorization")
+    reopened.prepare_agent_effect_intents(
+        run.id,
+        (authorization,),
+        owner="worker-1",
+        now="2026-08-22 00:00:01",
+    )
+    reopened.dispatch_agent_effect_intent(
+        run.id,
+        authorization,
+        now="2026-08-22 00:00:02",
+    )
+    unknown = reopened.fail_agent_run(
+        run.id,
+        {"code": "post_dispatch_disconnect", "retryable": True},
+        owner="worker-1",
+        now="2026-08-22 00:00:03",
+    )
+    assert unknown.status == "unknown"

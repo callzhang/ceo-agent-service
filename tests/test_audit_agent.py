@@ -42,6 +42,8 @@ from app.audit_agent import (
     AuditAgentRunner,
     _audit_recovery_error_code,
     _expected_effect_action,
+    _initial_write_authorizations,
+    _proposed_operation_contract_valid,
     _recovery_authorizations,
     _recovery_prompt,
 )
@@ -3732,6 +3734,45 @@ def test_native_command_contract_uses_parsed_cli_not_consumer_label():
     assert expected["operation"] == "chat +messages-send"
     assert expected["operation_contract_valid"] is True
     assert expected["target_identifiers"] == {"open-dingtalk-id": "recipient-1"}
+
+
+def test_native_read_command_is_not_a_valid_write_operation_contract():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Inspect the DWS schema",
+            "capability": "dws",
+            "operation": "schema",
+            "target": {"scope": "schema"},
+            "payload": {"argv": ["dws", "schema", "--yes"]},
+            "expected_verification": "Schema was inspected",
+        }
+    )
+
+    assert not _proposed_operation_contract_valid(
+        action, McpToolEffectRegistry.default()
+    )
+
+
+def test_initial_and_recovery_authorizations_share_one_logical_effect_token(setup):
+    _, _, audit_context, run = _seed_crashed_audit_write(setup)
+    expected = (
+        _expected_effect_action(
+            audit_context.proposal.actions[0],
+            McpToolEffectRegistry.default(),
+            action_index=0,
+        ),
+    )
+
+    [initial] = _initial_write_authorizations(run, expected)
+    [recovery] = _recovery_authorizations(
+        run,
+        audit_context,
+        frozenset({0}),
+        McpToolEffectRegistry.default(),
+    )
+
+    assert initial["receipt_operation_id"] == recovery["receipt_operation_id"]
+    assert initial["authorization_id"] == recovery["authorization_id"]
 
 
 def test_chat_id_readback_matches_conversation_id():

@@ -60,7 +60,7 @@ CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-20.1"
+STORE_SCHEMA_VERSION = "2026-08-22.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "task_todo_sync_outbox",
     "agent_runtime_attempts",
@@ -68,6 +68,8 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "weekly_okr_analysis_jobs",
     "wechat_memory_import_jobs",
     "agent_run_events",
+    "agent_run_state_events",
+    "agent_effect_intents",
     "follow_up_send_attempts",
     "runtime_route_pauses",
     "workbench_tasks",
@@ -81,6 +83,9 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_runtime_attempt_active_route",
     "idx_runtime_attempt_active_lease",
     "idx_task_agent_runs_active_input",
+    "idx_agent_run_state_events_run",
+    "idx_agent_effect_intents_run",
+    "idx_agent_effect_intents_operation",
     "idx_meeting_alignment_runs_active_job",
     "idx_weekly_okr_analysis_jobs_identity",
     "idx_wechat_memory_import_jobs_status",
@@ -1373,6 +1378,8 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_agent_effect_intents_run
                     on agent_effect_intents(agent_run_id, action_index, id);
+                create unique index if not exists idx_agent_effect_intents_operation
+                    on agent_effect_intents(agent_run_id, receipt_operation_id);
                 create table if not exists wechat_read_state (
                     account_id text primary key,
                     account_dir text not null,
@@ -4377,6 +4384,17 @@ class AutoReplyStore:
             if run_row["role"] != AgentRole.AUDIT.value:
                 raise ValueError("effect intents require an Audit run")
             for identity in identities:
+                existing = db.execute(
+                    "select * from agent_effect_intents "
+                    "where agent_run_id=? and receipt_operation_id=?",
+                    (run_id, identity[2]),
+                ).fetchone()
+                if (
+                    existing is not None
+                    and self._persisted_agent_effect_intent_identity(existing)
+                    != identity
+                ):
+                    raise ValueError("conflicting logical effect intent")
                 db.execute(
                     """
                     insert or ignore into agent_effect_intents (
@@ -4435,6 +4453,11 @@ class AutoReplyStore:
             )
             if cursor.rowcount != 1:
                 raise ValueError("effect intent already dispatched")
+            db.execute(
+                "update agent_runs set side_effect_state='unknown', updated_at=? "
+                "where id=? and status in ('running', 'unknown')",
+                (now_text, run_id),
+            )
 
     def acknowledge_agent_effect_intent(
         self,
@@ -6900,6 +6923,24 @@ class AutoReplyStore:
                 and side_effect_state != "none"
             ):
                 raise ValueError("Consumer Agent cannot persist side effects")
+            dispatched_intent = None
+            if row["role"] == AgentRole.AUDIT.value:
+                dispatched_intent = db.execute(
+                    "select 1 from agent_effect_intents "
+                    "where agent_run_id=? and state='dispatched' limit 1",
+                    (run_id,),
+                ).fetchone()
+            if dispatched_intent is not None and target_status in {
+                "completed",
+                "failed",
+            }:
+                if expected_status != "running":
+                    raise ValueError(
+                        "cannot settle unknown run with dispatched effect intent"
+                    )
+                target_status = "unknown"
+                final_result_json = ""
+                side_effect_state = "unknown"
             end_line = (
                 row["transcript_end_line"]
                 if transcript_end_line is None

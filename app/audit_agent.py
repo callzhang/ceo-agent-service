@@ -40,6 +40,8 @@ from app.codex_history import extract_codex_mcp_tool_results_from_session
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import (
+    NativeCliMetadataClassifier,
+    NativeCliMetadataUnavailableError,
     describe_native_command,
     has_noninteractive_confirmation,
     native_command_argv,
@@ -54,6 +56,7 @@ from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_comman
 
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 EFFECT_INTENT_CONTEXT_ENV = "CEO_AGENT_EFFECT_INTENT_CONTEXT"
+_OPERATION_CONTRACT_CLASSIFIER = NativeCliMetadataClassifier()
 
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
@@ -1033,16 +1036,21 @@ def _proposed_operation_contract_valid(
     registry: McpToolEffectRegistry,
 ) -> bool:
     """Require a real executable contract; prose is never dispatch authority."""
-    descriptor = describe_native_command(
-        {"type": "command_execution", **action.payload}
-    )
+    item = {"type": "command_execution", **action.payload}
+    descriptor = describe_native_command(item)
     if descriptor is not None:
-        argv = native_command_argv(
-            {"type": "command_execution", **action.payload}
-        )
+        argv = native_command_argv(item)
+        try:
+            reviewed = _OPERATION_CONTRACT_CLASSIFIER.classify(item)
+        except NativeCliMetadataUnavailableError:
+            return False
         return bool(
-            descriptor.cli != "dws"
-            or (argv is not None and has_noninteractive_confirmation(argv))
+            reviewed is not None
+            and reviewed.effect is EffectKind.EFFECTFUL
+            and (
+                reviewed.cli != "dws"
+                or (argv is not None and has_noninteractive_confirmation(argv))
+            )
         )
     call = registry.classify(
         {
@@ -1269,21 +1277,19 @@ def _recovery_authorizations(
         )
         for action_index in sorted(absent)
     )
-    return _write_authorizations(run, actions, purpose="recovery")
+    return _write_authorizations(run, actions)
 
 
 def _initial_write_authorizations(
     run: AgentRun,
     actions: tuple[dict[str, object], ...],
 ) -> tuple[dict[str, object], ...]:
-    return _write_authorizations(run, actions, purpose="initial")
+    return _write_authorizations(run, actions)
 
 
 def _write_authorizations(
     run: AgentRun,
     actions: tuple[dict[str, object], ...],
-    *,
-    purpose: str,
 ) -> tuple[dict[str, object], ...]:
     entries: list[dict[str, object]] = []
     for action in actions:
@@ -1298,7 +1304,6 @@ def _write_authorizations(
         identity = {
             "proposal_operation_id": run.operation_id,
             "proposal_revision": run.proposal_revision,
-            "authorization_purpose": purpose,
             **action,
         }
         authorization_id = hashlib.sha256(
