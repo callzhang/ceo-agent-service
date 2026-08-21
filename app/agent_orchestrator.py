@@ -637,6 +637,18 @@ class AgentOrchestrator:
             )
         if run.status == "failed" and error.retryable:
             if error.code == "runtime_route_unavailable":
+                if task.error == error.code:
+                    feedback = self._retry_feedback(run)
+                    if run.proposal_revision > 0 and feedback is None:
+                        return _Deferred(
+                            run, "agent_feedback_missing", feedback_cycles
+                        )
+                    return _NextConsumer(
+                        run.proposal_revision,
+                        run.parent_agent_run_id,
+                        feedback,
+                        deferred_error_code=error.code,
+                    )
                 return _Deferred(run, error.code, feedback_cycles)
             if is_codex_provider_recovery_code(error.code):
                 if task.error == error.code:
@@ -714,6 +726,14 @@ class AgentOrchestrator:
             )
         if run.status == "failed" and error.retryable and run.side_effect_state == "none":
             if error.code == "runtime_route_unavailable":
+                if task.error == error.code:
+                    return _NextAudit(
+                        run.proposal_revision,
+                        run.turn_attempt,
+                        run.parent_agent_run_id or 0,
+                        None,
+                        deferred_error_code=error.code,
+                    )
                 return _Deferred(run, error.code, feedback_cycles)
             if is_codex_provider_recovery_code(error.code):
                 if task.error == error.code:

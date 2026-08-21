@@ -167,3 +167,11 @@ short active-recovery retry at the budget boundary. This applies only after the
 router has already classified the condition as `runtime_route_unavailable`;
 capability/surface errors retain their distinct error codes and are not hidden
 by this retry policy. No external action is started by this transition.
+
+The orchestrator also distinguishes a first unavailable result from a later
+worker cycle. The first cycle returns immediately, so it cannot hammer a paused
+route. If the task is subsequently re-claimed with the same deferred error, it
+opens exactly one fresh Consumer or effect-free Audit turn. That fresh turn
+still goes through normal route-health validation; if no route is ready it
+defers again, and if one is healthy it can progress. The Audit path remains
+blocked whenever its prior run has any possible side effect.

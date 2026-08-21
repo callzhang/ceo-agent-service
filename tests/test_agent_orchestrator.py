@@ -546,6 +546,44 @@ def test_runtime_route_unavailable_defers_without_same_process_retry(store):
     assert len(consumer.calls) == 1
 
 
+def test_recovered_runtime_route_unavailable_starts_one_new_consumer_turn(store):
+    unavailable = _consumer_result("failed", "No eligible route.").model_copy(
+        update={
+            "error": AgentError(code="runtime_route_unavailable", retryable=True)
+        }
+    )
+    pending = _task(store)
+    task = store.claim_reply_task(pending.id)
+    assert task is not None
+    consumer = ScriptedConsumer(
+        store,
+        unavailable,
+        _consumer_result("no_action", "Healthy route completed the retry."),
+    )
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=consumer,
+        audit=ScriptedAudit(store),
+    )
+
+    first = _process(orchestrator, task)
+    assert first.status == "failed_retryable"
+    assert first.error.code == "runtime_route_unavailable"
+    assert len(consumer.calls) == 1
+    store.defer_reply_task(
+        task.id,
+        first.error.code,
+        expected_execution_generation=task.execution_generation,
+    )
+    recovered_task = store.claim_reply_task(task.id)
+    assert recovered_task is not None
+
+    second = _process(orchestrator, recovered_task)
+
+    assert second.status == "no_action"
+    assert len(consumer.calls) == 2
+
+
 def test_no_action_finishes_without_launching_audit(store):
     task = _task(store)
     consumer = ScriptedConsumer(store, _consumer_result("no_action", "Nothing to do."))
@@ -1504,6 +1542,43 @@ def test_authorization_recovery_retries_same_persisted_turn_on_next_process(stor
         if run.role is AgentRole.AUDIT
     ]
     assert len(audit_runs) == 1
+
+
+def test_runtime_route_recovery_retries_same_audit_turn_on_next_process(store):
+    pending_task = _task(store)
+    task = store.claim_reply_task(pending_task.id)
+    assert task is not None
+    audit = ScriptedAudit(
+        store,
+        _audit_result(
+            "failed",
+            0,
+            code="runtime_route_unavailable",
+            retryable=True,
+        ),
+        _audit_result("executed", 0),
+    )
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ScriptedConsumer(store, _consumer_result("proposal", "candidate-0")),
+        audit=audit,
+    )
+
+    first = _process(orchestrator, task)
+    assert first.status == "failed_retryable"
+    assert first.error.code == "runtime_route_unavailable"
+    store.defer_reply_task(
+        task.id,
+        first.error.code,
+        expected_execution_generation=task.execution_generation,
+    )
+    recovered_task = store.claim_reply_task(task.id)
+    assert recovered_task is not None
+
+    second = _process(orchestrator, recovered_task)
+
+    assert second.status == "executed"
+    assert [call["turn_attempt"] for call in audit.calls] == [0, 0]
 
 
 def test_authorization_recovery_defers_again_after_one_failed_retry(store):
