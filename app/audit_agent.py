@@ -44,7 +44,6 @@ from app.native_cli_metadata import (
     native_command_argv,
 )
 from app.store import (
-    RECONCILIATION_EVENT_LIMIT_ERROR,
     AgentRole,
     AgentRun,
     AutoReplyStore,
@@ -859,18 +858,12 @@ class AuditAgentRunner:
             or persisted.lease_owner != self.owner
         ):
             return
-        event_limit_reached = str(exc).strip() == RECONCILIATION_EVENT_LIMIT_ERROR
         structured_error = {
             "code": _audit_recovery_error_code(exc),
-            "retryable": not event_limit_reached,
+            "retryable": True,
         }
         if detail := _audit_recovery_error_detail(exc):
             structured_error["detail"] = detail
-        if event_limit_reached:
-            structured_error["reason"] = (
-                "Controlled reconciliation evidence reached its bounded event limit; "
-                "new configuration or a manual readback is required before another retry."
-            )
         self.store.defer_unknown_agent_run_reconciliation(
             run.id,
             structured_error,
@@ -879,7 +872,7 @@ class AuditAgentRunner:
             next_attempt_at=unknown_reconciliation_retry_at(
                 persisted.reconciliation_attempts
             ),
-            suspended=event_limit_reached,
+            suspended=False,
         )
 
 

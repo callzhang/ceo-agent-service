@@ -413,10 +413,11 @@ Failed read-only reconciliation attempts keep the external result unknown and
 use persisted exponential retry delays from one minute up to fifteen minutes.
 They are never immediately reclaimed in a hot loop, and the delay does not
 authorize replaying an approval, message, or other external action.
-When the bounded reconciliation-event ledger is full, the run is suspended
-instead of being retried. The same transaction closes the queue row and creates
-one `needs_human` History item linked to the original Audit run; it does not leave
-the task in an unclaimable `pending` state. History and the attempt detail page
+When the reconciliation-event detail window is full, the oldest reconciliation
+entries are retired and the run continues at the capped fifteen-minute
+read-only backoff. The worker never replays the original external action, and
+the queue row remains owned by target-matched confirmation rather than being
+left in an unclaimable `pending` state. History and the attempt detail page
 offer only three safe resolutions after a manual live readback: confirm the action
 occurred, confirm it did not occur and reopen the same task, or stop with the
 unknown result preserved. No resolution creates a replacement business item or
@@ -473,9 +474,10 @@ target-scoped read proves presence or absence. A completed controlled tool event
 or persisted receipt for the exact action overrides any older absent readback and
 prevents recovery from authorizing the same write again.
 On service startup, unfinished unknown Audit reconciliation leases are released
-immediately. The next worker pass continues the read-only reconciliation only
-while it remains within both the attempt and evidence limits; it does not mark
-the old external action as absent or replay it because of restart. A run that
+immediately. The next worker pass continues the read-only reconciliation with
+the capped backoff even after an earlier attempt or detail window is exhausted;
+it does not mark the old external action as absent or replay it because of
+restart. A run that
 has exhausted either limit is suspended with a concrete reason and can only
 resume after a new manual live readback establishes a safe next state.
 

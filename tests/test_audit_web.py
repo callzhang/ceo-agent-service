@@ -8011,7 +8011,7 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
     assert "untrusted-client-value" not in attempt.audit_summary
 
 
-def test_suspended_unknown_run_exposes_safe_resolution_choices_in_history(
+def test_exhausted_unknown_run_stays_available_for_automatic_readback(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -8038,44 +8038,12 @@ def test_suspended_unknown_run_exposes_safe_resolution_choices_in_history(
             (MAX_RECONCILIATION_EVENTS, run.id),
         )
 
-    assert store.suspend_exhausted_unknown_agent_runs() == 1
-    attempt = store.get_latest_reply_attempt_for_trigger(
-        task.conversation_id,
-        task.trigger_message_id,
-    )
-    assert attempt is not None
-
-    history_html = render_attempt_list(store)
-    assert "确认已执行" in history_html
-    assert "确认未执行" in history_html
-    assert "无法确认并停止" in history_html
-    assert "重试当前任务" not in history_html
-    assert f'/agent-runs/{run.id}/resolution-form' in history_html
-
-    status, detail_html = render_attempt_detail(store, attempt.id)
-    assert status == 200
-    assert "需要你确认外部结果" in detail_html
-    assert "确认已执行" in detail_html
-    assert "确认未执行" in detail_html
-    assert "无法确认并停止" in detail_html
-    assert "其他处理指令" not in detail_html
-
-    client = loopback_test_client(create_audit_app(store.path))
-    response = client.post(
-        f"/agent-runs/{run.id}/resolution-form",
-        data={
-            "execution_generation": task.execution_generation,
-            "resolution": "confirmed_not_occurred",
-            "reason": "已回读外部系统，确认动作未发生",
-            "return_to": "/history",
-        },
-        follow_redirects=False,
-    )
-
-    assert response.status_code == 303
-    assert response.headers["location"] == "/history"
-    assert store.get_agent_run(run.id).side_effect_state == "none"
-    assert store.get_reply_task(task.id).status == "pending"
+    assert store.suspend_exhausted_unknown_agent_runs() == 0
+    assert store.get_latest_reply_attempt_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    ) is None
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+    assert store.get_reply_task(task.id).status == "processing"
 
 
 def test_agent_run_resolution_handler_rejects_free_text_without_enum(tmp_path: Path):

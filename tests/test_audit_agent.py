@@ -4984,7 +4984,7 @@ def test_invalid_absent_recovery_candidate_rotates_consumer_generation(setup):
     assert executor.commands == []
 
 
-def test_recovery_event_limit_is_suspended_for_new_evidence(setup):
+def test_recovery_event_limit_defers_the_next_read_only_window(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     claim = store.claim_unknown_agent_run(run.id, owner="audit-agent")
     assert claim.claimed
@@ -5000,8 +5000,9 @@ def test_recovery_event_limit_is_suspended_for_new_evidence(setup):
     )
 
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.reconciliation_suspended is True
-    assert json.loads(persisted.structured_error_json)["retryable"] is False
+    assert persisted is not None and persisted.reconciliation_suspended is False
+    assert json.loads(persisted.structured_error_json)["retryable"] is True
+    assert persisted.reconciliation_next_attempt_at
 
 
 def test_recovery_preserves_runtime_capability_diagnostic(setup):

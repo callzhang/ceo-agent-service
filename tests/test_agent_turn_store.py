@@ -38,7 +38,6 @@ from app.service_codex_config import ServiceMcpServer
 from app.store import (
     MAX_RECONCILIATION_EVENTS,
     MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS,
-    RECONCILIATION_ATTEMPT_LIMIT_ERROR,
     RECONCILIATION_EVENT_LIMIT_ERROR,
     AgentRole,
     AgentRunLeaseLostError,
@@ -2431,7 +2430,7 @@ def test_consumer_turn_rejects_effectful_tool_events(tmp_path):
     assert store.get_agent_run(run.id).side_effect_state == "none"
 
 
-def test_unknown_reconciliation_event_limit_suspends_inner_recovery(tmp_path):
+def test_unknown_reconciliation_event_limit_defers_the_next_read_only_window(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
@@ -2452,13 +2451,13 @@ def test_unknown_reconciliation_event_limit_suspends_inner_recovery(tmp_path):
 
     persisted = store.get_agent_run(run.id)
     assert persisted is not None
-    assert persisted.reconciliation_suspended is True
+    assert persisted.reconciliation_suspended is False
     error = json.loads(persisted.structured_error_json)
     assert error["code"] == RECONCILIATION_EVENT_LIMIT_ERROR
-    assert error["retryable"] is False
+    assert error["retryable"] is True
 
 
-def test_event_limited_unknown_run_is_suspended_before_pending_claim(tmp_path):
+def test_event_limited_unknown_run_remains_due_for_read_only_recovery(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
@@ -2473,12 +2472,12 @@ def test_event_limited_unknown_run_is_suspended_before_pending_claim(tmp_path):
             (MAX_RECONCILIATION_EVENTS, run.id),
         )
 
-    assert store.suspend_exhausted_unknown_agent_runs() == 1
-    assert [item.id for item in store.list_suspended_unknown_agent_runs()] == [run.id]
-    assert store.peek_reply_tasks(limit=10) == []
+    assert store.suspend_exhausted_unknown_agent_runs() == 0
+    assert store.list_suspended_unknown_agent_runs() == []
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
 
 
-def test_attempt_limited_unknown_run_is_suspended_before_another_recovery(tmp_path):
+def test_attempt_limited_unknown_run_can_start_the_next_read_only_window(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
@@ -2493,18 +2492,17 @@ def test_attempt_limited_unknown_run_is_suspended_before_another_recovery(tmp_pa
             (MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS, run.id),
         )
 
-    assert store.claim_unknown_agent_run(run.id, owner="audit-recovery").claimed is False
-    assert store.suspend_exhausted_unknown_agent_runs() == 1
+    assert store.claim_unknown_agent_run(run.id, owner="audit-recovery").claimed is True
+    assert store.suspend_exhausted_unknown_agent_runs() == 0
     persisted = store.get_agent_run(run.id)
 
-    assert persisted is not None and persisted.reconciliation_suspended is True
-    assert json.loads(persisted.structured_error_json)["code"] == (
-        RECONCILIATION_ATTEMPT_LIMIT_ERROR
+    assert persisted is not None and persisted.reconciliation_suspended is False
+    assert persisted.reconciliation_attempts == (
+        MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS + 1
     )
-    assert store.list_unknown_agent_runs() == []
 
 
-def test_suspended_unknown_run_closes_pending_task_once_for_human_resolution(
+def test_suspended_unknown_run_is_reopened_for_read_only_reconciliation(
     tmp_path,
 ):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
@@ -2539,23 +2537,16 @@ def test_suspended_unknown_run_closes_pending_task_once_for_human_resolution(
     assert store.suspend_exhausted_unknown_agent_runs() == 1
 
     closed_task = store.get_reply_task(task.id)
-    attempt = store.get_latest_reply_attempt_for_trigger(
-        task.conversation_id,
-        task.trigger_message_id,
-    )
     assert closed_task is not None and closed_task.status == "failed"
     assert closed_task.available_at == ""
-    assert attempt is not None and attempt.send_status == "needs_human"
-    assert attempt.agent_run_id == run.id
-    assert attempt.send_error == RECONCILIATION_EVENT_LIMIT_ERROR
-    assert attempt.oa_process_instance_id == "process-123"
-    assert attempt.oa_task_id == "task-456"
-    assert attempt.oa_url == oa_url
-    attempt_count = store.count_reply_attempts()
+    assert store.get_latest_reply_attempt_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    ) is None
+    resumed = store.get_agent_run(run.id)
+    assert resumed is not None and resumed.reconciliation_suspended is False
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
 
     assert store.suspend_exhausted_unknown_agent_runs() == 0
-    assert store.count_reply_attempts() == attempt_count
-    assert store.claim_reply_task(task.id) is None
 
 
 def _normalize_read_skill_event(store, task, payload):

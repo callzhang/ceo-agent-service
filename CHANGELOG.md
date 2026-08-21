@@ -1,5 +1,11 @@
 # Changelog
 
+- Continue unknown Audit reconciliation with the existing capped fifteen-minute
+  read-only backoff after a historical attempt or event window is exhausted.
+  The worker never replays the original external action; it rolls old
+  reconciliation-event detail forward instead of permanently suspending the
+  target-matched confirmation loop.
+
 - Avoid full DWS-schema preloading during Agent runtime health checks. Route
   selection now declares the service-owned `agent_cli` transport directly;
   each actual command retains its existing metadata and read/write validation.

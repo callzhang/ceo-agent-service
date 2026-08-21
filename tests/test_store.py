@@ -6250,12 +6250,15 @@ def test_unknown_event_append_is_bounded_and_does_not_reload_agent_run(
         is None
     )
     monkeypatch.setattr("app.store.MAX_RECONCILIATION_EVENTS", 1)
-    with pytest.raises(ValueError, match="reconciliation event limit exceeded"):
+    assert (
         store.append_unknown_agent_run_event(
             run.id,
             {"type": "item.completed", "item": {"id": "q2"}},
             owner="reconciler-1",
         )
+        is None
+    )
+    assert store.get_agent_run(run.id).reconciliation_event_count == 1
     monkeypatch.setattr("app.store.MAX_RECONCILIATION_EVENTS", 256)
     with pytest.raises(ValueError, match="agent run event exceeds size limit"):
         store.append_unknown_agent_run_event(
@@ -6294,12 +6297,14 @@ def test_reconciliation_event_limit_excludes_direct_run_history(
         {"type": "item.completed", "item": {"id": "reconcile-1"}},
         owner="reconciler-1",
     )
-    with pytest.raises(ValueError, match="reconciliation event limit exceeded"):
+    assert (
         store.append_unknown_agent_run_event(
             run.id,
             {"type": "item.completed", "item": {"id": "reconcile-2"}},
             owner="reconciler-1",
         )
+        is None
+    )
 
 
 def test_reconciliation_event_limit_uses_incremental_run_counter(tmp_path: Path):
