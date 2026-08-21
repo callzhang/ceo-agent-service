@@ -477,10 +477,24 @@ class RuntimeCapabilityRefresher:
                         if snapshot.failure is not None
                         else "runtime_probe_failed"
                     )
+                    retry_delay = self._config.retry_delay
+                    if (
+                        snapshot.failure is not None
+                        and snapshot.failure.failure_class
+                        is RuntimeFailureClass.UNCLASSIFIED
+                    ):
+                        # An unclassified probe failure gives no evidence that
+                        # the route is persistently unavailable. Re-probe on
+                        # the normal health cadence instead of turning an
+                        # opaque one-off into a full route cooldown.
+                        retry_delay = min(
+                            self._config.retry_delay,
+                            self._config.probe_interval,
+                        )
                     self._store.open_runtime_route_pause(
                         route_name,
                         failure_code,
-                        retry_at=(now + self._config.retry_delay).isoformat(),
+                        retry_at=(now + retry_delay).isoformat(),
                     )
             self._registry.refresh(snapshots)
             return {name: snapshots[name] for name in selected if name in snapshots}

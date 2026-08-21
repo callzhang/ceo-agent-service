@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.agent_runtime_config import load_runtime_config
+from app.agent_runtime_contracts import RuntimeFailureClass
 from app.agent_runtime_probe import (
     AgentRuntimeProbe,
     RuntimeCapabilityRefresher,
@@ -688,6 +689,43 @@ def test_refresher_isolates_unexpected_probe_exception_and_continues_routes(
     assert snapshots["codex_oauth"].failure.code == "runtime_probe_failed"
     assert "secret" not in snapshots["codex_oauth"].model_dump_json()
     assert snapshots["codex_api"].healthy is True
+
+
+def test_refresher_reprobes_unclassified_route_on_health_cadence(monkeypatch, tmp_path):
+    config = _config(monkeypatch, routes="codex_oauth")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    registry = RuntimeCapabilityRegistry()
+    refresher = RuntimeCapabilityRefresher(
+        config=config,
+        store=store,
+        registry=registry,
+        probe=AgentRuntimeProbe(
+            config=config,
+            executor=lambda *_args, **_kwargs: ProcessRunResult(
+                1, "", "unrecognized runtime failure"
+            ),
+            now=lambda: NOW,
+            temporary_root=tmp_path,
+        ),
+        now=lambda: NOW,
+    )
+
+    snapshots = refresher.refresh_expired(force=True)
+
+    assert snapshots["codex_oauth"].failure is not None
+    assert (
+        snapshots["codex_oauth"].failure.failure_class
+        is RuntimeFailureClass.UNCLASSIFIED
+    )
+    with store._connect() as db:
+        row = db.execute(
+            "select retry_at from runtime_route_pauses where route_name=?",
+            ("codex_oauth",),
+        ).fetchone()
+    assert row is not None
+    assert datetime.fromisoformat(row["retry_at"]).replace(tzinfo=UTC) == (
+        NOW + timedelta(minutes=5)
+    )
 
 
 def test_successful_no_tools_probe_does_not_claim_unverified_business_capabilities(
