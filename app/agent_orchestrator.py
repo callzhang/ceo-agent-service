@@ -637,7 +637,7 @@ class AgentOrchestrator:
             )
         if run.status == "failed" and error.retryable:
             if error.code == "runtime_route_unavailable":
-                if task.error == error.code:
+                if _retryable_route_error_can_resume(task, error):
                     feedback = self._retry_feedback(run)
                     if run.proposal_revision > 0 and feedback is None:
                         return _Deferred(
@@ -726,7 +726,7 @@ class AgentOrchestrator:
             )
         if run.status == "failed" and error.retryable and run.side_effect_state == "none":
             if error.code == "runtime_route_unavailable":
-                if task.error == error.code:
+                if _retryable_route_error_can_resume(task, error):
                     return _NextAudit(
                         run.proposal_revision,
                         run.turn_attempt,
@@ -908,6 +908,11 @@ def _run_error(run: AgentRun) -> AgentError:
             "authorization_required": payload.get("authorization_required") is True,
         }
     )
+
+
+def _retryable_route_error_can_resume(task: ReplyTask, error: AgentError) -> bool:
+    """A deferred error or an explicit safe recovery permits one fresh turn."""
+    return task.error == error.code or bool(task.recovery_code)
 
 
 def _consumer_result(run: AgentRun) -> ConsumerAgentResult:
