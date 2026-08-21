@@ -779,3 +779,35 @@ def test_refresher_skips_current_snapshots(monkeypatch, tmp_path):
     refresher.refresh_expired()
 
     assert calls == ["probe"]
+
+
+def test_refresher_renews_a_healthy_snapshot_before_its_expiry(monkeypatch, tmp_path):
+    config = _config(monkeypatch, routes="codex_oauth")
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    registry = RuntimeCapabilityRegistry()
+    calls = []
+    clock = [NOW]
+    probe = AgentRuntimeProbe(
+        config=config,
+        executor=lambda *_args, **_kwargs: (
+            calls.append("probe") or ProcessRunResult(0, _successful_probe_stream(), "")
+        ),
+        now=lambda: clock[0],
+        temporary_root=tmp_path,
+    )
+    refresher = RuntimeCapabilityRefresher(
+        config=config,
+        store=store,
+        registry=registry,
+        probe=probe,
+        now=lambda: clock[0],
+    )
+
+    refresher.refresh_expired()
+    clock[0] = NOW + timedelta(minutes=4, seconds=31)
+    refresher.refresh_expired()
+
+    assert calls == ["probe", "probe"]
+    assert datetime.fromisoformat(registry["codex_oauth"].expires_at) == (
+        NOW + timedelta(minutes=9, seconds=31)
+    )

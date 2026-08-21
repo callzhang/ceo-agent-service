@@ -6,7 +6,7 @@ import json
 import sys
 import tempfile
 from collections.abc import Callable, Iterable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import RLock
 
@@ -35,6 +35,7 @@ from app.store import AutoReplyStore
 
 PROBE_TOTAL_TIMEOUT_SECONDS = 60.0
 PROBE_IDLE_TIMEOUT_SECONDS = 30.0
+PROBE_RENEWAL_WINDOW = timedelta(seconds=30)
 _PROBE_PROMPT = 'Return only the synthetic probe result {"ok":true}.'
 _PROBE_CANONICAL_RESULT = '{"ok":true}'
 _PROBE_DEVELOPER_INSTRUCTIONS = (
@@ -448,7 +449,11 @@ class RuntimeCapabilityRefresher:
                 if (
                     not force
                     and current is not None
-                    and _snapshot_is_current(current, now)
+                    and _snapshot_is_current(
+                        current,
+                        now,
+                        renewal_window=PROBE_RENEWAL_WINDOW,
+                    )
                 ):
                     continue
                 try:
@@ -500,14 +505,19 @@ class RuntimeCapabilityRefresher:
             return {name: snapshots[name] for name in selected if name in snapshots}
 
 
-def _snapshot_is_current(snapshot: RuntimeCapabilitySnapshot, now: datetime) -> bool:
+def _snapshot_is_current(
+    snapshot: RuntimeCapabilitySnapshot,
+    now: datetime,
+    *,
+    renewal_window: timedelta = timedelta(0),
+) -> bool:
     try:
         expires_at = datetime.fromisoformat(snapshot.expires_at)
     except ValueError:
         return False
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=UTC)
-    return expires_at.astimezone(UTC) > now
+    return expires_at.astimezone(UTC) > now + renewal_window
 
 
 def _snapshot(

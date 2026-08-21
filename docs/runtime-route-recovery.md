@@ -22,6 +22,15 @@ explicit reopen. `reply_tasks.recovery_code` records that the reopen was
 intentional. Scheduling must use that structured recovery fact rather than
 mistaking the displayed reason for evidence that the route has not yet waited.
 
+## Health-snapshot renewal
+
+The runtime probe loop must renew a healthy snapshot shortly before its expiry.
+Its cadence can otherwise wake a few milliseconds before the exact expiry,
+skip the still-current snapshot, and leave a following Audit turn without an
+eligible route for a full additional probe interval. Early renewal changes only
+the health evidence; route selection still rejects unhealthy, paused, or
+capability-incomplete routes.
+
 ## Verification
 
 Regression coverage exercises both Consumer and Audit paths: a safely reopened
