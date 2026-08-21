@@ -8466,7 +8466,6 @@ class AutoReplyStore:
             now_expression = "current_timestamp" if now is None else "?"
             clauses = [
                 "reply_tasks.status='pending'",
-                f"(reply_tasks.available_at='' or reply_tasks.available_at <= {now_expression})",
                 "agent_runs.role='audit'",
                 "agent_runs.status='unknown'",
                 "agent_runs.execution_generation=reply_tasks.execution_generation",
@@ -8476,7 +8475,7 @@ class AutoReplyStore:
             ]
             args: list[str | int] = []
             if now is not None:
-                args.extend((now, now, now))
+                args.extend((now, now))
             if channel is not None:
                 clauses.append("reply_tasks.channel=?")
                 args.append(channel)
@@ -8507,11 +8506,30 @@ class AutoReplyStore:
             now_expression = "current_timestamp" if now is None else "?"
             clauses = [
                 "status='pending'",
-                f"(available_at='' or available_at <= {now_expression})",
+                f"""(
+                    available_at='' or available_at <= {now_expression}
+                    or exists (
+                        select 1 from agent_runs
+                        where agent_runs.reply_task_id=reply_tasks.id
+                          and agent_runs.role='audit'
+                          and agent_runs.status='unknown'
+                          and agent_runs.execution_generation=
+                              reply_tasks.execution_generation
+                          and agent_runs.reconciliation_suspended=0
+                          and (
+                              agent_runs.reconciliation_next_attempt_at=''
+                              or agent_runs.reconciliation_next_attempt_at <= {now_expression}
+                          )
+                          and (
+                              agent_runs.lease_owner=''
+                              or agent_runs.lease_expires_at <= {now_expression}
+                          )
+                    )
+                )""",
             ]
             args: list[str] = []
             if now is not None:
-                args.append(now)
+                args.extend((now, now, now))
             if channel is not None:
                 clauses.append("channel=?")
                 args.append(channel)
@@ -8541,7 +8559,7 @@ class AutoReplyStore:
             now_expression = "current_timestamp" if now is None else "?"
             args: list[str | int] = [task_id]
             if now is not None:
-                args.append(now)
+                args.extend((now, now, now))
             cursor = db.execute(
                 f"""
                 update reply_tasks
@@ -8552,7 +8570,26 @@ class AutoReplyStore:
                     updated_at=current_timestamp
                 where id=?
                   and status='pending'
-                  and (available_at='' or available_at <= {now_expression})
+                  and (
+                      available_at='' or available_at <= {now_expression}
+                      or exists (
+                          select 1 from agent_runs
+                          where agent_runs.reply_task_id=reply_tasks.id
+                            and agent_runs.role='audit'
+                            and agent_runs.status='unknown'
+                            and agent_runs.execution_generation=
+                                reply_tasks.execution_generation
+                            and agent_runs.reconciliation_suspended=0
+                            and (
+                                agent_runs.reconciliation_next_attempt_at=''
+                                or agent_runs.reconciliation_next_attempt_at <= {now_expression}
+                            )
+                            and (
+                                agent_runs.lease_owner=''
+                                or agent_runs.lease_expires_at <= {now_expression}
+                            )
+                      )
+                  )
                 """,
                 args,
             )

@@ -1,5 +1,11 @@
 # Changelog
 
+- Schedule an unknown Audit run's bounded, read-only reconciliation from its
+  own persisted due time, rather than holding it behind an unrelated ordinary
+  reply retry delay. Only the matching current-generation unknown Audit run
+  may bypass that delay, and only after its lease is absent or expired; normal
+  retries and all write recovery remain unchanged.
+
 - Reconcile unknown DingTalk chat writes from a bounded, target-scoped message
   history read. The service now hashes the approved full message text, retains
   only matching text hashes and completeness/window facts from DWS, and
