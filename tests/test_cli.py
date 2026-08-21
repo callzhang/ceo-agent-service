@@ -5960,7 +5960,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
     def stop(component):
         raise RuntimeError(f"stop {component}")
 
-    monkeypatch.setattr(cli, "create_worker", lambda settings: object())
+    monkeypatch.setattr(cli, "create_worker", lambda settings, **_kwargs: object())
     def producer_loop(worker, poll_interval_seconds, max_tasks=None, network_ready=None):
         calls.append(
             ("producer", poll_interval_seconds, max_tasks, network_ready is gate.ready)

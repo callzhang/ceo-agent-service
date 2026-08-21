@@ -38,6 +38,7 @@ from app.agent_contracts import (
 )
 from app.agent_runtime_config import (
     DEFAULT_CODEX_API_BASE_URL,
+    SUPPORTED_CODEX_RUNTIME_MODELS,
     normalize_codex_api_base_url,
 )
 from app.approval_history import (
@@ -3184,7 +3185,7 @@ _AGENT_RUNTIME_MODELS = (
     ("gpt-5.6-terra", "GPT-5.6 Terra"),
     ("gpt-5.6-luna", "GPT-5.6 Luna"),
 )
-_AGENT_RUNTIME_MODEL_VALUES = frozenset(value for value, _ in _AGENT_RUNTIME_MODELS)
+_AGENT_RUNTIME_MODEL_VALUES = SUPPORTED_CODEX_RUNTIME_MODELS
 _AGENT_RUNTIME_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 
 

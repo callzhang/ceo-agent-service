@@ -687,6 +687,7 @@ class AgentTurnProcess(Generic[ResultT]):
         claude_adapter: ClaudeRuntimeAdapter | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
+        refresh_runtime_capabilities: Callable[[], object] | None = None,
     ) -> None:
         self.store = store
         self.task = task
@@ -706,6 +707,7 @@ class AgentTurnProcess(Generic[ResultT]):
         self.executor = executor or run_process_with_idle_timeout
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
         self.native_cli = native_cli_classifier or NativeCliMetadataClassifier()
+        self.refresh_runtime_capabilities = refresh_runtime_capabilities
 
     def execute(
         self,
@@ -1433,6 +1435,8 @@ class AgentTurnProcess(Generic[ResultT]):
                 turn_event_start = 0
                 recovered_completed_attempt = True
                 raise _RecoveredCompletedRuntimeResult
+            if self.refresh_runtime_capabilities is not None:
+                self.refresh_runtime_capabilities()
             decision = self.runtime_router.first_route_decision(
                 required_capabilities=required_capabilities,
                 allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,

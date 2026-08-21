@@ -813,10 +813,9 @@ def create_worker(
         UnconfiguredOkrLiveSource,
     )
 
-    # Runtime probing is owned by the CLI/service host, never by an ordinary
-    # worker constructor. Keep the compatibility argument inert for callers
-    # migrating to explicit ownership.
-    del runtime_refresher
+    # The CLI/service host owns the refresher. Workers receive only its bound
+    # refresh operation so every concrete Agent turn can renew a stale health
+    # snapshot before route selection.
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
         ding_robot_code=settings.ding_robot_code,
@@ -831,6 +830,11 @@ def create_worker(
     agent_runtime = build_production_agent_runtime(
         store=store,
         workspace=settings.workspace,
+        refresh_runtime_capabilities=(
+            runtime_refresher.refresh_expired
+            if runtime_refresher is not None
+            else None
+        ),
     )
     codex = CodexDecisionRunner(
         workspace=settings.workspace,
@@ -866,8 +870,7 @@ def create_worker(
 
 
 def _create_service_worker(settings: WorkerSettings, runtime_refresher):
-    del runtime_refresher
-    return create_worker(settings)
+    return create_worker(settings, runtime_refresher=runtime_refresher)
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()

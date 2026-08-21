@@ -489,6 +489,11 @@ class DingTalkAutoReplyWorker:
                 claude_adapter=(
                     runtime.claude_adapter if runtime is not None else None
                 ),
+                refresh_runtime_capabilities=(
+                    runtime.refresh_runtime_capabilities
+                    if runtime is not None
+                    else None
+                ),
             ),
             audit=AuditAgentRunner(
                 store=self.store,
@@ -501,6 +506,11 @@ class DingTalkAutoReplyWorker:
                 ),
                 claude_adapter=(
                     runtime.claude_adapter if runtime is not None else None
+                ),
+                refresh_runtime_capabilities=(
+                    runtime.refresh_runtime_capabilities
+                    if runtime is not None
+                    else None
                 ),
                 dry_run=self.dry_run,
             ),

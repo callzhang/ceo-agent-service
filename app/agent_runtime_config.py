@@ -11,6 +11,9 @@ from app.config import DEFAULT_CEO_CODEX_MODEL, parse_duration_value
 
 
 DEFAULT_CODEX_API_BASE_URL = "https://api.openai.com/v1"
+SUPPORTED_CODEX_RUNTIME_MODELS = frozenset(
+    {"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+)
 
 
 class AgentRuntimeConfig(BaseModel):
@@ -40,6 +43,12 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
         raise ValueError(f"unsupported runtime routes: {sorted(unknown)}")
     model = env.get("CEO_CODEX_MODEL", DEFAULT_CEO_CODEX_MODEL).strip()
     api_model = env.get("CEO_CODEX_API_MODEL", model).strip()
+    if "codex_oauth" in names and model not in SUPPORTED_CODEX_RUNTIME_MODELS:
+        raise ValueError("CEO_CODEX_MODEL must select a supported Codex runtime model")
+    if "codex_api" in names and api_model not in SUPPORTED_CODEX_RUNTIME_MODELS:
+        raise ValueError(
+            "CEO_CODEX_API_MODEL must select a supported Codex runtime model"
+        )
     codex_api_base_url = normalize_codex_api_base_url(
         env.get("CEO_CODEX_API_BASE_URL", DEFAULT_CODEX_API_BASE_URL)
     )

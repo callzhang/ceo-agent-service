@@ -297,6 +297,7 @@ class ConsumerAgentRunner:
         claude_adapter: ClaudeRuntimeAdapter | None = None,
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
+        refresh_runtime_capabilities: Callable[[], object] | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
         codex_session_exists: Callable[[str], bool] | None = None,
@@ -310,6 +311,7 @@ class ConsumerAgentRunner:
         self.claude_adapter = claude_adapter
         self.executor = executor
         self.owner = owner or f"consumer-agent-{uuid4().hex}"
+        self.refresh_runtime_capabilities = refresh_runtime_capabilities
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
         self.native_cli_classifier = native_cli_classifier
         self.codex_session_exists = codex_session_exists or (
@@ -507,6 +509,7 @@ class ConsumerAgentRunner:
             claude_adapter=self.claude_adapter,
             mcp_effect_registry=self.effects,
             native_cli_classifier=self.native_cli_classifier,
+            refresh_runtime_capabilities=self.refresh_runtime_capabilities,
         )
 
         if (image_error := context.image_dependency_error) is not None:

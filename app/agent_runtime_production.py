@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -111,6 +111,7 @@ class ProductionAgentRuntime:
     router: AgentRuntimeRouter
     codex_adapter: CodexRuntimeAdapter
     claude_adapter: ClaudeRuntimeAdapter | None
+    refresh_runtime_capabilities: Callable[[], object] | None
 
 
 def build_production_agent_runtime(
@@ -120,6 +121,7 @@ def build_production_agent_runtime(
     codex_bin: str = "codex",
     claude_bin: str = "claude",
     capability_registry: RuntimeCapabilityRegistry = PRODUCTION_RUNTIME_CAPABILITIES,
+    refresh_runtime_capabilities: Callable[[], object] | None = None,
 ) -> ProductionAgentRuntime:
     """Build the pure, pre-probed runtime dependencies for Agent workloads."""
 
@@ -156,6 +158,7 @@ def build_production_agent_runtime(
             if has_claude_route
             else None
         ),
+        refresh_runtime_capabilities=refresh_runtime_capabilities,
     )
 
 

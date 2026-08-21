@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
@@ -77,6 +78,7 @@ class AuditAgentRunner:
         owner: str | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
         dry_run: bool = False,
+        refresh_runtime_capabilities: Callable[[], object] | None = None,
     ) -> None:
         self.store = store
         self.workspace = workspace
@@ -89,6 +91,7 @@ class AuditAgentRunner:
         self.owner = owner or f"audit-agent-{uuid4().hex}"
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
         self.dry_run = dry_run
+        self.refresh_runtime_capabilities = refresh_runtime_capabilities
 
     @staticmethod
     def _required_capabilities(
@@ -302,6 +305,7 @@ class AuditAgentRunner:
             codex_adapter=self.codex_adapter,
             claude_adapter=self.claude_adapter,
             mcp_effect_registry=self.effects,
+            refresh_runtime_capabilities=self.refresh_runtime_capabilities,
         )
         for payload in extract_codex_mcp_tool_results_from_session(
             runtime_attempt.session_id,
