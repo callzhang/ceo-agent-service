@@ -1212,6 +1212,11 @@ class AgentTurnProcess(Generic[ResultT]):
                     ) from exc
                 if _contains_sensitive_value(result.model_dump(mode="json")):
                     raise ValueError("agent_result_contains_sensitive_value")
+                if (
+                    run.role is AgentRole.CONSUMER
+                    and result.outcome is not ConsumerOutcome.FAILED
+                ):
+                    _validate_runtime_reference_domain_result(result)
                 active_attempt = completed_attempt
                 observed_session_id = completed_attempt.session_id
                 pending_claude_session_id = completed_attempt.session_id
@@ -1464,6 +1469,12 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             if _contains_sensitive_value(result.model_dump(mode="json")):
                 raise ValueError("agent_result_contains_sensitive_value")
+            if (
+                route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                and run.role is AgentRole.CONSUMER
+                and result.outcome is not ConsumerOutcome.FAILED
+            ):
+                _validate_runtime_reference_domain_result(result)
             persisted_attempt = (
                 self.store.get_agent_runtime_attempt(active_attempt.id)
                 if active_attempt is not None
@@ -3334,6 +3345,88 @@ def _contains_sensitive_value(value: object, *, depth: int = 0) -> bool:
     except json.JSONDecodeError:
         return False
     return _contains_sensitive_value(decoded, depth=depth + 1)
+
+
+def _contains_local_runtime_value(value: object, *, depth: int = 0) -> bool:
+    if depth > 12:
+        return True
+    if isinstance(value, dict):
+        return any(
+            contains_local_runtime_leak(str(key))
+            or _contains_local_runtime_value(item, depth=depth + 1)
+            for key, item in value.items()
+        )
+    if isinstance(value, list | tuple):
+        return any(
+            _contains_local_runtime_value(item, depth=depth + 1) for item in value
+        )
+    if not isinstance(value, str):
+        return False
+    if contains_local_runtime_leak(value):
+        return True
+    stripped = value.lstrip()
+    if not stripped.startswith(("{", "[")) or len(value) > 64 * 1024:
+        return False
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError:
+        return False
+    return _contains_local_runtime_value(decoded, depth=depth + 1)
+
+
+_RUNTIME_REFERENCE_TEXT_LIMITS = {
+    "assertion": 2048,
+    "authoredjudgment": 2048,
+    "capability": 512,
+    "consequence": 2048,
+    "description": 2048,
+    "expectedverification": 2048,
+    "instruction": 2048,
+    "key": 128,
+    "label": 512,
+    "objective": 2048,
+    "operation": 512,
+    "reason": 2048,
+    "reference": 512,
+    "summary": _RUNTIME_RESULT_SUMMARY_MAX_CHARS,
+}
+
+
+def _validate_runtime_reference_text_bounds(value: object, *, depth: int = 0) -> None:
+    if depth > 12:
+        raise ValueError("runtime_result_reference_depth_invalid")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = _normalized_key(str(key))
+            limit = _RUNTIME_REFERENCE_TEXT_LIMITS.get(normalized)
+            if limit is not None and isinstance(item, str) and len(item) > limit:
+                raise ValueError("runtime_result_reference_text_too_large")
+            _validate_runtime_reference_text_bounds(item, depth=depth + 1)
+    elif isinstance(value, list | tuple):
+        for item in value:
+            _validate_runtime_reference_text_bounds(item, depth=depth + 1)
+
+
+def _validate_runtime_reference_domain_result(
+    result: ConsumerAgentResult | AuditAgentResult,
+) -> None:
+    domain_result = result.model_dump(mode="json")
+    _project_runtime_domain_result(result)
+    _validate_runtime_reference_text_bounds(domain_result)
+    if _contains_sensitive_value(domain_result):
+        raise ValueError("agent_result_contains_sensitive_value")
+    if _contains_local_runtime_value(domain_result):
+        raise AgentReadOnlyViolationError(
+            "runtime_result_contains_local_runtime_leak"
+        )
+    encoded = json.dumps(
+        domain_result,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    if len(encoded.encode("utf-8")) > _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES:
+        raise ValueError("runtime_result_reference_too_large")
 
 
 def _contains_sensitive_argv(value: dict[object, object]) -> bool:

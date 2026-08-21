@@ -20,7 +20,7 @@ from app.agent_turn_runner import (
     _runtime_result_evidence,
 )
 from app.agent_wire_contracts import parse_consumer_agent_wire_result
-from app.native_cli_metadata import describe_native_command
+from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
 from app.store import (
     MAX_RECONCILIATION_EVENTS,
@@ -452,6 +452,103 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     assert store.get_conversation_runtime_session(
         task.conversation_id, "claude_api", required_contract_hash="contract-v1"
     ) == session_id
+
+    def private_consumer_result(outcome: str, unsafe_value: str) -> str:
+        proposal = None
+        options = []
+        summary = "Reviewed terminal result."
+        if outcome == "no_action":
+            summary = unsafe_value
+        elif outcome == "proposal":
+            proposal = {
+                "objective": "Prepare the reviewed update.",
+                "actions": [
+                    {
+                        "description": "Prepare update",
+                        "capability": "agent_cli.dws",
+                        "operation": "chat message send",
+                        "target": {"conversation_id": "cid-privacy"},
+                        "payload": {"document_content": unsafe_value},
+                        "expected_verification": "Read it back",
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "Ready.",
+            }
+        else:
+            options = [
+                {
+                    "key": "A",
+                    "label": "Approve",
+                    "instruction": unsafe_value,
+                    "consequence": "The reviewed plan may continue.",
+                },
+                {
+                    "key": "B",
+                    "label": "Hold",
+                    "instruction": "Hold the reviewed option.",
+                    "consequence": "No further action is taken.",
+                },
+            ]
+        return json.dumps(
+            {
+                "outcome": outcome,
+                "summary": summary,
+                "proposal": proposal,
+                "decision_options": options,
+                "error_code": (
+                    "decision_required" if outcome == "needs_human" else ""
+                ),
+                "error_retryable": False,
+                "error_authorization_required": False,
+            },
+            separators=(",", ":"),
+        )
+
+    for unsafe_kind, unsafe_value, expected_error in (
+        (
+            "path",
+            "file:///private/var/tmp/claude-runtime/transcript-settings.jsonl",
+            "runtime_result_contains_local_runtime_leak",
+        ),
+        (
+            "credential",
+            "Bearer sk-private-secret-must-not-persist",
+            "agent_result_contains_sensitive_value",
+        ),
+        (
+            "signed-url",
+            "https://business.example.test/file?X-Amz-Signature=secret",
+            "agent_result_contains_sensitive_value",
+        ),
+        ("oversize", "x" * (33 * 1024), "too_large|summary_invalid"),
+    ):
+        for outcome in ("proposal", "no_action", "needs_human"):
+            executor.stream = stream_for_result(
+                private_consumer_result(outcome, unsafe_value)
+            )
+            private_task = next_task(
+                f"msg-turns-{unsafe_kind}-{outcome}",
+                f"generation-{unsafe_kind}-{outcome}",
+            )
+            with pytest.raises(
+                (ValueError, AgentReadOnlyViolationError), match=expected_error
+            ):
+                execute(private_task)
+            [private_run] = store.list_agent_runs_for_task_generation(
+                private_task.id, private_task.execution_generation
+            )
+            [private_attempt] = store.list_agent_runtime_attempts(private_run.id)
+            assert private_run.status == "failed"
+            assert private_run.final_result_json == ""
+            assert private_attempt.status == "failed"
+            assert private_attempt.session_id == ""
+            assert private_attempt.result_envelope_json == ""
+            assert store.get_conversation_runtime_session(
+                task.conversation_id,
+                "claude_api",
+                required_contract_hash="contract-v1",
+            ) == session_id
 
     executor.stream = stream_for_result('{"outcome":"no_action"}')
     invalid_task = next_task("msg-turns-invalid", "generation-invalid")
