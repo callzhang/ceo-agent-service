@@ -7513,18 +7513,21 @@ class AutoReplyStore:
         *,
         now: str | datetime | None = None,
     ) -> int:
-        """Suspend unknown runs only when their reconciliation evidence is exhausted.
+        """Suspend unknown runs once bounded read-only reconciliation is exhausted.
 
         An incomplete external-effect readback is never retried by replaying the
-        effect.  Its audit reconciliation is read-only, so retry count is a
-        pacing signal rather than a terminal safety boundary.
+        effect. The attempt and evidence limits bound repeated reads that did
+        not produce a decisive, target-matched result.
         """
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             rows = db.execute(
                 """
                 select agent_runs.id as run_id,
                        agent_runs.reply_task_id as task_id,
-                       ? as limit_error
+                       case
+                           when agent_runs.reconciliation_attempts>=? then ?
+                           else ?
+                       end as limit_error
                 from agent_runs
                 join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.status='unknown'
@@ -7535,6 +7538,8 @@ class AutoReplyStore:
                       (
                           agent_runs.reconciliation_suspended=0
                           and (
+                              agent_runs.reconciliation_attempts>=?
+                              or
                               agent_runs.reconciliation_event_count>=?
                           )
                           and (agent_runs.lease_owner=''
@@ -7549,7 +7554,10 @@ class AutoReplyStore:
                 order by agent_runs.id
                 """,
                 (
+                    MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS,
+                    RECONCILIATION_ATTEMPT_LIMIT_ERROR,
                     RECONCILIATION_EVENT_LIMIT_ERROR,
+                    MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS,
                     MAX_RECONCILIATION_EVENTS,
                     now_text,
                 ),
@@ -7558,14 +7566,22 @@ class AutoReplyStore:
                 run_id = int(row["run_id"])
                 task_id = int(row["task_id"])
                 limit_error = str(row["limit_error"])
+                if limit_error == RECONCILIATION_ATTEMPT_LIMIT_ERROR:
+                    reason = (
+                        "Read-only reconciliation reached its bounded attempt limit "
+                        "without decisive target-matched evidence; a manual live "
+                        "readback is required before another retry."
+                    )
+                else:
+                    reason = (
+                        "Controlled reconciliation reached its bounded evidence limit; "
+                        "a manual live readback is required before another retry."
+                    )
                 structured_error = _json_object_text(
                     {
                         "code": limit_error,
                         "retryable": False,
-                        "reason": (
-                            "Controlled reconciliation reached its bounded limit; "
-                            "a manual live readback is required before another retry."
-                        ),
+                        "reason": reason,
                     },
                     field="structured_error",
                 )
@@ -7602,7 +7618,7 @@ class AutoReplyStore:
                     task_id=task_id,
                     codex_reason=limit_error,
                     audit_summary=(
-                        "自动核对已达到安全上限，外部动作结果仍无法确认。"
+                        "自动核对未取得可判定的新证据，外部动作结果仍无法确认。"
                         "请先从外部系统回读，再选择确认已执行、确认未执行或停止处理；"
                         "系统不会自动重放。"
                     ),
@@ -7610,43 +7626,6 @@ class AutoReplyStore:
                     send_error=limit_error,
                 )
             return len(rows)
-
-    def resume_attempt_limited_unknown_agent_runs(
-        self,
-        *,
-        now: str | datetime | None = None,
-    ) -> int:
-        """Restore historical attempt-limit suspensions to read-only retry.
-
-        Only the legacy, machine-generated attempt-limit state is resumed.
-        Runs suspended for an evidence limit or by an operator remain suspended.
-        """
-        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            cursor = db.execute(
-                """
-                update agent_runs
-                set reconciliation_suspended=0,
-                    reconciliation_next_attempt_at=?,
-                    lease_owner='', lease_expires_at='', updated_at=?
-                where status='unknown'
-                  and role='audit'
-                  and reconciliation_suspended=1
-                  and json_extract(structured_error_json, '$.code')=?
-                  and exists (
-                      select 1 from reply_tasks
-                      where reply_tasks.id=agent_runs.reply_task_id
-                        and reply_tasks.status in ('pending', 'processing', 'failed')
-                        and reply_tasks.execution_generation=
-                            agent_runs.execution_generation
-                  )
-                """,
-                (
-                    now_text,
-                    now_text,
-                    RECONCILIATION_ATTEMPT_LIMIT_ERROR,
-                ),
-            )
-            return cursor.rowcount
 
     def resume_suspended_unknown_agent_run(
         self,
@@ -8021,6 +8000,7 @@ class AutoReplyStore:
                 where id=? and status='unknown'
                   and role='audit'
                   and reconciliation_suspended=0
+                  and reconciliation_attempts<?
                   and (reconciliation_next_attempt_at=''
                        or reconciliation_next_attempt_at<=?)
                   and (lease_owner='' or lease_expires_at<=?)
@@ -8032,7 +8012,15 @@ class AutoReplyStore:
                             agent_runs.execution_generation
                   )
                 """,
-                (owner, lease_expires_at, now_text, run_id, now_text, now_text),
+                (
+                    owner,
+                    lease_expires_at,
+                    now_text,
+                    run_id,
+                    MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS,
+                    now_text,
+                    now_text,
+                ),
             )
             row = db.execute(
                 "select * from agent_runs where id=?",

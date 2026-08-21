@@ -4576,7 +4576,7 @@ def test_consume_once_prioritizes_pending_reconciliation(
     assert claimed_task_ids == [priority.id]
 
 
-def test_consume_once_recovers_unknown_runs_before_suspending_exhausted_runs(
+def test_consume_once_suspends_exhausted_runs_before_and_after_recovery(
     tmp_path: Path, monkeypatch
 ):
     worker = make_worker(
@@ -4614,7 +4614,7 @@ def test_consume_once_recovers_unknown_runs_before_suspending_exhausted_runs(
     )
 
     assert worker.consume_once(max_tasks=1) == 0
-    assert calls == ["backfill", "recover", "suspend"]
+    assert calls == ["backfill", "suspend", "recover", "suspend"]
 
 
 def test_due_unknown_audit_run_is_requeued_without_waiting_for_stale_timeout(

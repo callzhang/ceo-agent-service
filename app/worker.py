@@ -1512,7 +1512,7 @@ class DingTalkAutoReplyWorker:
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
         self._backfill_confirmed_direct_reply_ledgers(limit=limit)
-        self.store.resume_attempt_limited_unknown_agent_runs()
+        self.store.suspend_exhausted_unknown_agent_runs()
         self._recover_due_unknown_agent_reply_tasks(limit=limit)
         self.store.suspend_exhausted_unknown_agent_runs()
         self._recover_stale_agent_reply_tasks()

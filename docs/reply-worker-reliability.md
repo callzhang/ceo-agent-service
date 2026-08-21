@@ -473,8 +473,11 @@ target-scoped read proves presence or absence. A completed controlled tool event
 or persisted receipt for the exact action overrides any older absent readback and
 prevents recovery from authorizing the same write again.
 On service startup, unfinished unknown Audit reconciliation leases are released
-immediately. The next worker pass continues the read-only reconciliation; it
-does not mark the old external action as absent or replay it because of restart.
+immediately. The next worker pass continues the read-only reconciliation only
+while it remains within both the attempt and evidence limits; it does not mark
+the old external action as absent or replay it because of restart. A run that
+has exhausted either limit is suspended with a concrete reason and can only
+resume after a new manual live readback establishes a safe next state.
 
 Browser notification clicks call the local DingTalk bridge with `POST`, matching
 the bridge's external-action boundary. The click may then focus an existing audit
