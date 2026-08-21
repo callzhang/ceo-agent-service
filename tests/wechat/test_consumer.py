@@ -421,7 +421,7 @@ def test_stale_wechat_worker_cannot_persist_attempt_or_delivery(
     assert store.get_latest_reply_attempt_for_trigger("u9", "m1") is None
 
 
-def test_consumer_error_keeps_trigger_identity(fake_codex, consumer):
+def test_consumer_error_keeps_trigger_identity(fake_codex, consumer, store):
     class FailingRunner:
         def decide(self, *_args, **_kwargs):
             raise RuntimeError("decision failed")
@@ -434,3 +434,7 @@ def test_consumer_error_keeps_trigger_identity(fake_codex, consumer):
     assert caught.value.conversation_id == "u9"
     assert caught.value.trigger_message_id == "m1"
     assert str(caught.value) == "decision failed"
+    task = store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.error == "wechat_decision_failed"

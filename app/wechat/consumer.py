@@ -195,6 +195,21 @@ class WechatReplyConsumer:
                     task_status="pending" if retryable else "failed",
                     available_at=self._retry_available_at() if retryable else "",
                 )
+            else:
+                retryable = task.attempts < self.max_task_attempts
+                self.store.finalize_wechat_reply_task(
+                    task_id=task.id,
+                    expected_execution_generation=task.execution_generation,
+                    action="decision_failure",
+                    sensitivity_kind="normal",
+                    codex_reason="wechat_decision_failed",
+                    draft_reply_text="",
+                    audit_summary="wechat_decision_failed",
+                    send_status="failed",
+                    send_error="wechat_decision_failed",
+                    task_status="pending" if retryable else "failed",
+                    available_at=self._retry_available_at() if retryable else "",
+                )
             raise
         self.store.complete_agent_run(
             run_claim.run.id,
