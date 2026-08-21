@@ -86,7 +86,9 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
 }
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RECONCILIATION_EVENTS = 256
+MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS = 16
 RECONCILIATION_EVENT_LIMIT_ERROR = "agent run reconciliation event limit exceeded"
+RECONCILIATION_ATTEMPT_LIMIT_ERROR = "agent run reconciliation attempt limit exceeded"
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
 
@@ -5419,28 +5421,21 @@ class AutoReplyStore:
             ).fetchall()
             return [self._agent_run_from_row(row, db=db) for row in rows]
 
-    def suspend_reconciliation_event_limited_agent_runs(
+    def suspend_exhausted_unknown_agent_runs(
         self,
         *,
         now: str | datetime | None = None,
     ) -> int:
         """Close exhausted read-only recoveries as one actionable human item."""
-        structured_error = _json_object_text(
-            {
-                "code": RECONCILIATION_EVENT_LIMIT_ERROR,
-                "retryable": False,
-                "reason": (
-                    "Controlled reconciliation evidence reached its bounded event "
-                    "limit; a manual live readback is required before another retry."
-                ),
-            },
-            field="structured_error",
-        )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             rows = db.execute(
                 """
                 select agent_runs.id as run_id,
-                       agent_runs.reply_task_id as task_id
+                       agent_runs.reply_task_id as task_id,
+                       case
+                           when agent_runs.reconciliation_attempts>=? then ?
+                           else ?
+                       end as limit_error
                 from agent_runs
                 join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
                 where agent_runs.status='unknown'
@@ -5450,7 +5445,10 @@ class AutoReplyStore:
                   and (
                       (
                           agent_runs.reconciliation_suspended=0
-                          and agent_runs.reconciliation_event_count>=?
+                          and (
+                              agent_runs.reconciliation_event_count>=?
+                              or agent_runs.reconciliation_attempts>=?
+                          )
                           and (agent_runs.lease_owner=''
                                or agent_runs.lease_expires_at<=?)
                           and reply_tasks.status in ('pending', 'processing', 'failed')
@@ -5462,11 +5460,30 @@ class AutoReplyStore:
                   )
                 order by agent_runs.id
                 """,
-                (MAX_RECONCILIATION_EVENTS, now_text),
+                (
+                    MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS,
+                    RECONCILIATION_ATTEMPT_LIMIT_ERROR,
+                    RECONCILIATION_EVENT_LIMIT_ERROR,
+                    MAX_RECONCILIATION_EVENTS,
+                    MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS,
+                    now_text,
+                ),
             ).fetchall()
             for row in rows:
                 run_id = int(row["run_id"])
                 task_id = int(row["task_id"])
+                limit_error = str(row["limit_error"])
+                structured_error = _json_object_text(
+                    {
+                        "code": limit_error,
+                        "retryable": False,
+                        "reason": (
+                            "Controlled reconciliation reached its bounded limit; "
+                            "a manual live readback is required before another retry."
+                        ),
+                    },
+                    field="structured_error",
+                )
                 run_cursor = db.execute(
                     """
                     update agent_runs
@@ -5485,7 +5502,7 @@ class AutoReplyStore:
                     where id=? and status in ('pending', 'processing', 'failed')
                     """,
                     (
-                        RECONCILIATION_EVENT_LIMIT_ERROR,
+                        limit_error,
                         now_text,
                         task_id,
                     ),
@@ -5498,14 +5515,14 @@ class AutoReplyStore:
                     db,
                     run_id=run_id,
                     task_id=task_id,
-                    codex_reason=RECONCILIATION_EVENT_LIMIT_ERROR,
+                    codex_reason=limit_error,
                     audit_summary=(
                         "自动核对已达到安全上限，外部动作结果仍无法确认。"
                         "请先从外部系统回读，再选择确认已执行、确认未执行或停止处理；"
                         "系统不会自动重放。"
                     ),
                     send_status="needs_human",
-                    send_error=RECONCILIATION_EVENT_LIMIT_ERROR,
+                    send_error=limit_error,
                 )
             return len(rows)
 

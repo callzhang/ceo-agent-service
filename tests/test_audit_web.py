@@ -7800,7 +7800,7 @@ def test_suspended_unknown_run_exposes_safe_resolution_choices_in_history(
             (MAX_RECONCILIATION_EVENTS, run.id),
         )
 
-    assert store.suspend_reconciliation_event_limited_agent_runs() == 1
+    assert store.suspend_exhausted_unknown_agent_runs() == 1
     attempt = store.get_latest_reply_attempt_for_trigger(
         task.conversation_id,
         task.trigger_message_id,

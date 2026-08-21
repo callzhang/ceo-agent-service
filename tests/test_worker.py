@@ -4576,7 +4576,7 @@ def test_consume_once_prioritizes_pending_reconciliation(
     assert claimed_task_ids == [priority.id]
 
 
-def test_consume_once_recovers_unknown_runs_before_suspending_event_limited_runs(
+def test_consume_once_recovers_unknown_runs_before_suspending_exhausted_runs(
     tmp_path: Path, monkeypatch
 ):
     worker = make_worker(
@@ -4598,7 +4598,7 @@ def test_consume_once_recovers_unknown_runs_before_suspending_event_limited_runs
     )
     monkeypatch.setattr(
         worker.store,
-        "suspend_reconciliation_event_limited_agent_runs",
+        "suspend_exhausted_unknown_agent_runs",
         lambda: calls.append("suspend") or 0,
     )
     monkeypatch.setattr(worker, "_recover_stale_agent_reply_tasks", lambda: None)

@@ -9,6 +9,8 @@ from app.agent_turn_runner import AgentTurnProcess
 from app.native_cli_metadata import describe_native_command
 from app.store import (
     MAX_RECONCILIATION_EVENTS,
+    MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS,
+    RECONCILIATION_ATTEMPT_LIMIT_ERROR,
     RECONCILIATION_EVENT_LIMIT_ERROR,
     AgentRole,
     AgentRunLeaseLostError,
@@ -222,8 +224,33 @@ def test_event_limited_unknown_run_is_suspended_before_pending_claim(tmp_path):
             (MAX_RECONCILIATION_EVENTS, run.id),
         )
 
-    assert store.suspend_reconciliation_event_limited_agent_runs() == 1
+    assert store.suspend_exhausted_unknown_agent_runs() == 1
     assert [item.id for item in store.list_suspended_unknown_agent_runs()] == [run.id]
+    assert store.peek_reply_tasks(limit=10) == []
+
+
+def test_attempt_limited_unknown_run_is_suspended_before_pending_claim(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
+        owner="audit",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set reconciliation_attempts=? where id=?",
+            (MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS, run.id),
+        )
+
+    assert store.suspend_exhausted_unknown_agent_runs() == 1
+    persisted = store.get_agent_run(run.id)
+    closed_task = store.get_reply_task(task.id)
+
+    assert persisted is not None and persisted.reconciliation_suspended is True
+    assert closed_task is not None and closed_task.status == "failed"
+    assert closed_task.error == RECONCILIATION_ATTEMPT_LIMIT_ERROR
     assert store.peek_reply_tasks(limit=10) == []
 
 
@@ -259,7 +286,7 @@ def test_suspended_unknown_run_closes_pending_task_once_for_human_resolution(
         expected_execution_generation=task.execution_generation,
     )
 
-    assert store.suspend_reconciliation_event_limited_agent_runs() == 1
+    assert store.suspend_exhausted_unknown_agent_runs() == 1
 
     closed_task = store.get_reply_task(task.id)
     attempt = store.get_latest_reply_attempt_for_trigger(
@@ -276,7 +303,7 @@ def test_suspended_unknown_run_closes_pending_task_once_for_human_resolution(
     assert attempt.oa_url == oa_url
     attempt_count = store.count_reply_attempts()
 
-    assert store.suspend_reconciliation_event_limited_agent_runs() == 0
+    assert store.suspend_exhausted_unknown_agent_runs() == 0
     assert store.count_reply_attempts() == attempt_count
     assert store.claim_reply_task(task.id) is None
 
