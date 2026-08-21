@@ -192,6 +192,12 @@ class CodexRuntimeAdapter:
                 failover_permitted=True,
                 route_pause_required=True,
             )
+        if _is_chatgpt_oauth_model_unsupported(detail):
+            return RuntimeFailure(
+                failure_class=RuntimeFailureClass.CAPABILITY,
+                code="codex_oauth_model_unsupported",
+                detail="Selected Codex OAuth model is not available for this ChatGPT account.",
+            )
         if process_code == CODEX_PROCESS_PROVIDER_UNAVAILABLE:
             provider_code = codex_provider_failure_code(detail)
             if provider_code in {
@@ -317,6 +323,13 @@ def _event_error_messages(event: dict[str, object]) -> list[str]:
 def _is_structured_invalid_api_key(messages: list[str]) -> bool:
     detail = "\n".join(messages).casefold()
     return "incorrect api key provided" in detail and "invalid_api_key" in detail
+
+
+def _is_chatgpt_oauth_model_unsupported(detail: str) -> bool:
+    return (
+        "model is not supported when using codex with a chatgpt account"
+        in detail.casefold()
+    )
 
 
 def _is_responses_transport_error(detail: str) -> bool:

@@ -468,3 +468,21 @@ def test_unknown_failure_is_fail_closed(adapter):
     assert failure.retryable_on_same_route is False
     assert failure.failover_permitted is False
     assert failure.route_pause_required is False
+
+
+def test_chatgpt_oauth_rejected_model_is_classified_without_hiding_the_cause(
+    adapter,
+):
+    failure = adapter.classify_failure(
+        stderr="",
+        stdout=(
+            '{"type":"error","error":{"message":"The \'gpt-5.6\' model is '
+            'not supported when using Codex with a ChatGPT account."}}'
+        ),
+        returncode=1,
+    )
+
+    assert failure.failure_class.value == "capability"
+    assert failure.code == "codex_oauth_model_unsupported"
+    assert failure.failover_permitted is False
+    assert failure.route_pause_required is False

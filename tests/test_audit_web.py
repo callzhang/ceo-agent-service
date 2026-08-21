@@ -4304,7 +4304,7 @@ def test_render_config_page_shows_dedicated_agent_runtime_settings_without_token
     assert "Agent Runtime" in html
     assert 'method="post" action="/config/agent-runtime"' in html
     assert '<select name="codex_model"' in html
-    assert '<option value="gpt-5.6">GPT-5.6 (Sol alias)</option>' in html
+    assert '<option value="gpt-5.6">' not in html
     assert '<option value="gpt-5.6-sol">GPT-5.6 Sol</option>' in html
     assert '<option value="gpt-5.6-terra">GPT-5.6 Terra</option>' in html
     assert '<option value="gpt-5.6-luna">GPT-5.6 Luna</option>' in html
