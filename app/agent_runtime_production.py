@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sys
 from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
-from app.agent_runtime_config import load_runtime_config
+from app.agent_effects import McpToolEffectRegistry
+from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
     RuntimeKind,
@@ -19,8 +22,14 @@ from app.agent_runtime_router import (
     _configured_mcp_server_transport_names,
     local_codex_session_effect_probe,
 )
+from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.native_cli_metadata import NativeCliMetadataClassifier
+from app.service_codex_config import (
+    ServiceMcpConfigError,
+    ServiceMcpServer,
+    load_service_mcp_servers,
+)
 from app.store import AutoReplyStore
 
 
@@ -95,6 +104,76 @@ class _RuntimeSurfaceManifestView(Mapping[str, RuntimeRouteSurfaceManifest]):
 
 
 PRODUCTION_RUNTIME_CAPABILITIES = RuntimeCapabilityRegistry()
+
+
+@dataclass(frozen=True)
+class ProductionAgentRuntime:
+    config: AgentRuntimeConfig
+    router: AgentRuntimeRouter
+    codex_adapter: CodexRuntimeAdapter
+    claude_adapter: ClaudeRuntimeAdapter | None
+
+
+def build_production_agent_runtime(
+    *,
+    store: AutoReplyStore,
+    workspace: Path,
+    codex_bin: str = "codex",
+    claude_bin: str = "claude",
+    capability_registry: RuntimeCapabilityRegistry = PRODUCTION_RUNTIME_CAPABILITIES,
+) -> ProductionAgentRuntime:
+    """Build the pure, pre-probed runtime dependencies for Agent workloads."""
+
+    runtime_config = load_runtime_config(os.environ)
+    effects = McpToolEffectRegistry.default()
+    native_cli = NativeCliMetadataClassifier()
+    has_claude_route = any(
+        route.runtime_kind is RuntimeKind.CLAUDE_CLI
+        for route in runtime_config.routes
+    )
+    service_servers = (
+        _production_claude_service_mcp_servers() if has_claude_route else ()
+    )
+    return ProductionAgentRuntime(
+        config=runtime_config,
+        router=AgentRuntimeRouter(
+            routes=runtime_config.routes,
+            store=store,
+            snapshots=capability_registry,
+            surface_manifests=capability_registry.surface_manifests,
+        ),
+        codex_adapter=CodexRuntimeAdapter(
+            workspace, runtime_config, codex_bin=codex_bin
+        ),
+        claude_adapter=(
+            ClaudeRuntimeAdapter(
+                workspace=workspace,
+                config=runtime_config,
+                claude_bin=claude_bin,
+                effect_registry=effects,
+                native_cli_classifier=native_cli,
+                service_mcp_servers=service_servers,
+            )
+            if has_claude_route
+            else None
+        ),
+    )
+
+
+def _production_claude_service_mcp_servers() -> tuple[ServiceMcpServer, ...]:
+    try:
+        configured = list(load_service_mcp_servers(env=os.environ))
+    except ServiceMcpConfigError as exc:
+        configured = list(exc.valid_servers)
+    if not any(server.name == "agent_cli" for server in configured):
+        configured.append(
+            ServiceMcpServer(
+                name="agent_cli",
+                command=sys.executable,
+                args=("-m", "app.agent_cli"),
+            )
+        )
+    return tuple(configured)
 
 
 def build_production_routed_codex_execution(
@@ -182,6 +261,11 @@ def _reviewed_surface_manifests(
     native_cli_classifier: NativeCliMetadataClassifier,
 ):
     adapter = CodexRuntimeAdapter(Path.cwd(), runtime_config, codex_bin=codex_bin)
+    effects = McpToolEffectRegistry.default()
+    claude_servers = {
+        server.name for server in _production_claude_service_mcp_servers()
+    }
+    claude_read_tools = effects.reviewed_read_tools()
     reviewed_skills = _explicit_reviewed_skill_capabilities()
     reviewed_agent_cli_capabilities = frozenset(
         f"agent_cli.{cli}" for cli, _operation in native_cli_classifier.cache_keys
@@ -189,9 +273,36 @@ def _reviewed_surface_manifests(
     manifests = {}
     for route in runtime_config.routes:
         if route.runtime_kind is RuntimeKind.CLAUDE_CLI:
+            capabilities = set(reviewed_skills)
+            if "agent_cli" in claude_servers and claude_read_tools.get("agent_cli"):
+                capabilities.update(
+                    {
+                        "task_context",
+                        "channel:dingtalk",
+                        "channel:wechat",
+                        "channel:lark",
+                        "channel:feishu",
+                        "reviewed_read_tools",
+                        "reconciliation_read_only",
+                        "mcp:agent_cli:reviewed_read",
+                        "native_cli:reviewed",
+                        "native_cli:dws",
+                        "native_cli:lark",
+                        "reviewed_dws_read_instructions",
+                        "dws_read",
+                        *reviewed_agent_cli_capabilities,
+                    }
+                )
+            if (
+                "memory_connector" in claude_servers
+                and claude_read_tools.get("memory_connector")
+            ):
+                capabilities.update(
+                    {"memory_connector_read", "mcp:memory_connector:read"}
+                )
             manifests[route.name] = RuntimeRouteSurfaceManifest(
                 route_name=route.name,
-                capabilities=reviewed_skills,
+                capabilities=frozenset(capabilities),
             )
             continue
         transports = frozenset(

@@ -95,6 +95,7 @@ ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
 UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS = 60
 UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS = 15 * 60
+CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
 _COMMON_RUNTIME_CAPABILITIES = frozenset(
     {"structured_output", "local_schema_validation"}
 )
@@ -150,6 +151,8 @@ class RuntimeRouteUnavailableError(RuntimeError):
 
     def __init__(self, reason: str) -> None:
         self.reason = reason
+        if "missing_capabilities:" in reason or "surface_missing:" in reason:
+            self.code = "runtime_capability_missing"
         super().__init__(self.code)
 
 
@@ -646,6 +649,20 @@ def _result_parse_error_detail(exc: ResultParseError) -> str:
 
 def _is_terminal_codex_auth_failure(code: str) -> bool:
     return code.startswith(CODEX_PROVIDER_AUTH_FAILED)
+
+
+def _claude_input_contract(*, prompt: str, developer_instructions: str) -> str:
+    payload = (
+        "<developer-instructions>\n"
+        f"{developer_instructions}\n"
+        "</developer-instructions>\n"
+        "<task>\n"
+        f"{prompt}\n"
+        "</task>"
+    )
+    if len(payload.encode("utf-8")) > CLAUDE_INPUT_MAX_BYTES:
+        raise RuntimeRouteUnavailableError("claude_input_contract_too_large")
+    return payload
 
 
 class AgentTurnProcess(Generic[ResultT]):
@@ -1235,13 +1252,17 @@ class AgentTurnProcess(Generic[ResultT]):
             )
             route = decision.route
             if route is None:
+                unavailable = RuntimeRouteUnavailableError(decision.reason)
                 if not recover_unknown:
                     self._fail_running(
                         run,
-                        RuntimeRouteUnavailableError.code,
+                        unavailable.code,
                         detail=decision.reason,
                     )
-                raise RuntimeRouteUnavailableError(decision.reason)
+                raise unavailable
+            self._validate_route_workload_boundary(
+                route, run=run, recovery_phase=recovery_phase
+            )
             route_session_id = self._session_for_route(
                 route,
                 role=run.role,
@@ -1259,6 +1280,14 @@ class AgentTurnProcess(Generic[ResultT]):
                 active_route = route
                 route_uses_codex_history = (
                     route.runtime_kind is RuntimeKind.CODEX_CLI
+                )
+                executor_prompt = (
+                    _claude_input_contract(
+                        prompt=prompt,
+                        developer_instructions=developer_instructions,
+                    )
+                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                    else prompt
                 )
                 attempt_line_start = line_count
                 if not attempt_is_preclaimed:
@@ -1282,7 +1311,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         route=route,
                         session_id=route_session_id,
                         max_turns=1,
-                        policy=ClaudeCommandPolicy.no_tools(),
+                        policy=self._claude_read_only_policy(),
                     )
                     claude_normalizer = claude_adapter.new_event_normalizer(
                         expected_session_id=route_session_id,
@@ -1310,7 +1339,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 try:
                     process = self.executor(
                         command,
-                        prompt=prompt,
+                        prompt=executor_prompt,
                         env=command_env,
                         total_timeout_seconds=TOTAL_TIMEOUT_SECONDS,
                         idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
@@ -1429,6 +1458,9 @@ class AgentTurnProcess(Generic[ResultT]):
                     self._raise_for_process_failure(process, run=run)
                     raise AssertionError("unreachable process failure")
                 route = decision.route
+                self._validate_route_workload_boundary(
+                    route, run=run, recovery_phase=recovery_phase
+                )
                 if decision.fresh_session:
                     self._clear_incompatible_route_session_for_fresh_retry(
                         run=run,
@@ -1500,7 +1532,9 @@ class AgentTurnProcess(Generic[ResultT]):
             pass
         except CompletedRuntimeResultBlockedError:
             raise
-        except RuntimeRouteUnavailableError:
+        except RuntimeRouteUnavailableError as exc:
+            if not recover_unknown:
+                self._fail_running(run, exc.code, detail=exc.reason)
             raise
         except ResultParseError as exc:
             self._fail_runtime_attempt_unclassified(active_attempt)
@@ -1777,6 +1811,38 @@ class AgentTurnProcess(Generic[ResultT]):
                 native_cli_classifier=self.native_cli,
             )
         return self.claude_adapter
+
+    def _claude_read_only_policy(self) -> ClaudeCommandPolicy:
+        reviewed = self.effects.reviewed_read_tools()
+        exact_tools = tuple(
+            sorted(
+                f"mcp__{server}__{tool}"
+                for server in ("agent_cli", "memory_connector")
+                for tool in reviewed.get(server, ())
+            )
+        )
+        if not exact_tools:
+            raise RuntimeRouteUnavailableError("claude_reviewed_read_surface_missing")
+        return ClaudeCommandPolicy.reviewed(
+            mcp_tools=exact_tools,
+            allow_native_cli=True,
+        )
+
+    @staticmethod
+    def _validate_route_workload_boundary(
+        route: RuntimeRoute,
+        *,
+        run: AgentRun,
+        recovery_phase: str,
+    ) -> None:
+        if (
+            route.runtime_kind is RuntimeKind.CLAUDE_CLI
+            and run.role is AgentRole.AUDIT
+            and recovery_phase != "reconcile"
+        ):
+            raise RuntimeRouteUnavailableError(
+                "claude_effectful_audit_ineligible"
+            )
 
     def _clear_incompatible_route_session_for_fresh_retry(
         self,

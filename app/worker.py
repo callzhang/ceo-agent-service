@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit, urlunsplit
 
 from app.agent_context import (
@@ -96,6 +96,9 @@ from app.store import (
 )
 from app.work_profile import safe_excerpt
 from PIL import Image, UnidentifiedImageError
+
+if TYPE_CHECKING:
+    from app.agent_runtime_production import ProductionAgentRuntime
 
 
 ORCHESTRATION_ATTEMPT_STATUS = {
@@ -430,6 +433,7 @@ class DingTalkAutoReplyWorker:
         channel_gates: dict[str, ChannelGate] | None = None,
         login_coordinator: LoginCoordinator | None = None,
         agent_orchestrator: AgentOrchestrator | None = None,
+        agent_runtime: "ProductionAgentRuntime | None" = None,
     ):
         self.store = store
         self.dws = dws
@@ -458,6 +462,7 @@ class DingTalkAutoReplyWorker:
         self._pass_channel_results: dict[str, ChannelGateResult] = {}
         self._task_image_paths: dict[int, set[Path]] = {}
         self.agent_orchestrator = agent_orchestrator
+        self.agent_runtime = agent_runtime
 
     def _agent_orchestrator(self) -> AgentOrchestrator:
         if self.agent_orchestrator is not None:
@@ -466,17 +471,34 @@ class DingTalkAutoReplyWorker:
         if workspace is None:
             raise RuntimeError("native Codex runner workspace is unavailable")
         codex_bin = str(getattr(self.codex, "codex_bin", "codex"))
+        runtime = self.agent_runtime
         self.agent_orchestrator = AgentOrchestrator(
             store=self.store,
             consumer=ConsumerAgentRunner(
                 store=self.store,
                 workspace=Path(workspace),
                 codex_bin=codex_bin,
+                runtime_config=(runtime.config if runtime is not None else None),
+                runtime_router=(runtime.router if runtime is not None else None),
+                codex_adapter=(
+                    runtime.codex_adapter if runtime is not None else None
+                ),
+                claude_adapter=(
+                    runtime.claude_adapter if runtime is not None else None
+                ),
             ),
             audit=AuditAgentRunner(
                 store=self.store,
                 workspace=Path(workspace),
                 codex_bin=codex_bin,
+                runtime_config=(runtime.config if runtime is not None else None),
+                runtime_router=(runtime.router if runtime is not None else None),
+                codex_adapter=(
+                    runtime.codex_adapter if runtime is not None else None
+                ),
+                claude_adapter=(
+                    runtime.claude_adapter if runtime is not None else None
+                ),
                 dry_run=self.dry_run,
             ),
         )

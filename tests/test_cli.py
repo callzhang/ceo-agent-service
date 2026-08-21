@@ -314,6 +314,8 @@ def test_worker_constructor_never_refreshes_or_spawns_runtime(tmp_path, monkeypa
         "CEO_OKR_LIVE_SOURCE_COMMAND",
         "dws api --user-id {user_id} --period {period_label} --format json",
     )
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "claude_api")
+    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "test-anthropic-secret")
 
     worker = create_worker(
         WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
@@ -322,6 +324,12 @@ def test_worker_constructor_never_refreshes_or_spawns_runtime(tmp_path, monkeypa
 
     assert calls == []
     assert worker.store.path == tmp_path / "worker.sqlite3"
+    assert worker.agent_runtime is not None
+    assert worker.agent_runtime.claude_adapter is not None
+    assert worker.agent_runtime.claude_adapter.active_proxy_process_count == 0
+    orchestrator = worker._agent_orchestrator()
+    assert orchestrator.consumer.claude_adapter is worker.agent_runtime.claude_adapter
+    assert orchestrator.audit.claude_adapter is worker.agent_runtime.claude_adapter
 
 
 def test_quality_check_help_names_the_default_live_channel_gates():
@@ -3980,11 +3988,13 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
             dry_run,
             style_profile="",
             style_records=None,
+            agent_runtime=None,
         ):
             constructed["worker"] = self
             constructed["worker_args"] = (store, dws, codex, dry_run)
             constructed["style_profile"] = style_profile
             constructed["style_records"] = style_records
+            constructed["agent_runtime"] = agent_runtime
 
     monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
@@ -4043,6 +4053,7 @@ def test_create_worker_wires_store_dws_codex_and_dry_run(monkeypatch, tmp_path):
     assert "先结论" in constructed["style_profile"]
     assert len(constructed["style_records"]) == 1
     assert constructed["style_records"][0].message_id == "style-msg-1"
+    assert constructed["agent_runtime"] is not None
     assert "memory_client" not in constructed
 
 

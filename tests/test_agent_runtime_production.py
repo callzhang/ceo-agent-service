@@ -8,6 +8,7 @@ from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_production import (
     PRODUCTION_RUNTIME_CAPABILITIES,
     RuntimeCapabilityRegistry,
+    build_production_agent_runtime,
     build_production_routed_codex_execution,
     build_production_runtime_refresher,
 )
@@ -416,7 +417,9 @@ def test_unrelated_skill_file_is_not_implicitly_authorized(tmp_path, monkeypatch
     assert not any("unreviewed" in item for item in manifest.capabilities)
 
 
-def test_claude_surface_does_not_claim_unprobed_business_tools(tmp_path, monkeypatch):
+def test_claude_surface_claims_only_service_owned_exact_read_tools(
+    tmp_path, monkeypatch
+):
     home = tmp_path / "home"
     reviewed = home / ".agents" / "skills" / "dingtang-okr-review" / "SKILL.md"
     reviewed.parent.mkdir(parents=True)
@@ -439,7 +442,55 @@ def test_claude_surface_does_not_claim_unprobed_business_tools(tmp_path, monkeyp
         item.startswith("reviewed_skill:dingtang-okr-review:")
         for item in manifest.capabilities
     )
-    assert "reviewed_read_tools" not in manifest.capabilities
+    assert "reviewed_read_tools" in manifest.capabilities
+    assert "reconciliation_read_only" in manifest.capabilities
+    assert "mcp:agent_cli:reviewed_read" in manifest.capabilities
     assert "reviewed_write_tools" not in manifest.capabilities
-    assert "dws_read" not in manifest.capabilities
+    assert "mcp:agent_cli:reviewed_write" not in manifest.capabilities
+    assert "audit_effect_visibility" not in manifest.capabilities
+    assert "dws_read" in manifest.capabilities
     assert "memory_connector_read" not in manifest.capabilities
+
+
+def test_production_agent_runtime_is_pure_and_injects_exact_claude_transports(
+    tmp_path, monkeypatch
+):
+    service_config = tmp_path / "service-mcp.json"
+    service_config.write_text(
+        json.dumps(
+            {
+                "servers": {
+                    "memory_connector": {
+                        "url": "https://memory.example.test/mcp"
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(service_config))
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "claude_api")
+    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "test-anthropic-secret")
+    registry = RuntimeCapabilityRegistry()
+    build_production_runtime_refresher(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        capability_registry=registry,
+        temporary_root=tmp_path,
+        native_cli_classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+    )
+
+    runtime = build_production_agent_runtime(
+        store=AutoReplyStore(tmp_path / "agent.sqlite3"),
+        workspace=tmp_path,
+        capability_registry=registry,
+    )
+
+    assert runtime.claude_adapter is not None
+    assert runtime.claude_adapter.active_proxy_process_count == 0
+    assert {
+        server.name for server in runtime.claude_adapter._service_mcp_servers or ()
+    } == {"agent_cli", "memory_connector"}
+    manifest = registry.surface_manifest("claude_api")
+    assert manifest is not None
+    assert "mcp:memory_connector:read" in manifest.capabilities
+    assert "reviewed_write_tools" not in manifest.capabilities

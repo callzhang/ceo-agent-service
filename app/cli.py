@@ -825,6 +825,12 @@ def create_worker(
         transient_retry_delay_seconds=settings.dws_transient_retry_delay_seconds,
     )
     cached_dws = CachedDwsClient(dws=dws, org_directory=CachedOrgDirectory(store))
+    from app.agent_runtime_production import build_production_agent_runtime
+
+    agent_runtime = build_production_agent_runtime(
+        store=store,
+        workspace=settings.workspace,
+    )
     codex = CodexDecisionRunner(
         workspace=settings.workspace,
         store=store,
@@ -840,6 +846,7 @@ def create_worker(
         dry_run=settings.dry_run,
         style_profile=style_profile,
         style_records=style_records,
+        agent_runtime=agent_runtime,
     )
     okr_source_kind = _okr_source_kind()
     if okr_source_kind == "agoal":

@@ -33,6 +33,7 @@ from app.agent_turn_runner import (
 )
 from app.agent_wire_contracts import parse_audit_agent_wire_result
 from app.audit_rules import render_audit_rules
+from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import extract_codex_mcp_tool_results_from_session
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
@@ -66,6 +67,7 @@ class AuditAgentRunner:
         runtime_config: AgentRuntimeConfig | None = None,
         runtime_router: AgentRuntimeRouter | None = None,
         codex_adapter: CodexRuntimeAdapter | None = None,
+        claude_adapter: ClaudeRuntimeAdapter | None = None,
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
@@ -77,6 +79,7 @@ class AuditAgentRunner:
         self.runtime_config = runtime_config
         self.runtime_router = runtime_router
         self.codex_adapter = codex_adapter
+        self.claude_adapter = claude_adapter
         self.executor = executor
         self.owner = owner or f"audit-agent-{uuid4().hex}"
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
@@ -287,6 +290,7 @@ class AuditAgentRunner:
             runtime_config=self.runtime_config,
             runtime_router=self.runtime_router,
             codex_adapter=self.codex_adapter,
+            claude_adapter=self.claude_adapter,
             mcp_effect_registry=self.effects,
         )
         for payload in extract_codex_mcp_tool_results_from_session(
@@ -723,6 +727,7 @@ class AuditAgentRunner:
             runtime_config=self.runtime_config,
             runtime_router=self.runtime_router,
             codex_adapter=self.codex_adapter,
+            claude_adapter=self.claude_adapter,
             mcp_effect_registry=self.effects,
         )
         turn_prompt = (

@@ -2,6 +2,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -10,8 +11,14 @@ from app.agent_contracts import AuditAgentResult, AuditExternalResult, AuditOutc
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_result import AgentError, EffectKind, SideEffectState
 from app.agent_runtime_config import load_runtime_config
-from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
-from app.agent_runtime_router import RuntimeRouteDecision
+from app.agent_runtime_contracts import (
+    CredentialMode,
+    RuntimeCapabilitySnapshot,
+    RuntimeKind,
+    RuntimeRoute,
+    RuntimeRouteSurfaceManifest,
+)
+from app.agent_runtime_router import AgentRuntimeRouter, RuntimeRouteDecision
 from app.agent_turn_runner import (
     AgentTurnProcess,
     _decode_runtime_domain_result,
@@ -20,8 +27,11 @@ from app.agent_turn_runner import (
     _runtime_result_evidence,
 )
 from app.agent_wire_contracts import parse_consumer_agent_wire_result
+from app.claude_runtime_adapter import ClaudeRuntimeAdapter
+from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
+from app.service_codex_config import ServiceMcpServer
 from app.store import (
     MAX_RECONCILIATION_EVENTS,
     RECONCILIATION_EVENT_LIMIT_ERROR,
@@ -319,6 +329,17 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
             executor=executor,
             runtime_config=config,
             runtime_router=OneRouteRouter(),
+            claude_adapter=ClaudeRuntimeAdapter(
+                workspace=tmp_path,
+                config=config,
+                claude_bin="claude-test",
+                service_mcp_servers=(
+                    ServiceMcpServer(name="agent_cli", command="/usr/bin/true"),
+                    ServiceMcpServer(
+                        name="memory_connector", url="http://127.0.0.1:9/mcp"
+                    ),
+                ),
+            ),
         ).execute(
             run=run,
             prompt=current_prompt,
@@ -783,6 +804,317 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     assert store.get_conversation_runtime_session(
         task.conversation_id, "claude_api", required_contract_hash="contract-v1"
     ) == session_id
+
+
+def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,claude_api",
+            "CEO_CODEX_API_KEY": "test-openai-secret",
+            "CEO_CLAUDE_API_KEY": "test-anthropic-secret",
+            "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
+        }
+    )
+    now = datetime.now(UTC)
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=frozenset(
+                {
+                    "structured_output",
+                    "local_schema_validation",
+                    "consumer_read_only_enforcement",
+                }
+            ),
+            healthy=True,
+            checked_at=now.isoformat(),
+            expires_at=(now + timedelta(minutes=5)).isoformat(),
+        )
+        for route in config.routes
+    }
+    manifests = {
+        route.name: RuntimeRouteSurfaceManifest(
+            route_name=route.name,
+            capabilities=frozenset({"reviewed_read_tools"}),
+        )
+        for route in config.routes
+    }
+    router = AgentRuntimeRouter(
+        routes=config.routes,
+        store=store,
+        snapshots=snapshots,
+        surface_manifests=manifests,
+    )
+    result_json = json.dumps(
+        {
+            "outcome": "no_action",
+            "summary": "Claude completed the read-only turn.",
+            "proposal": None,
+            "decision_options": [],
+            "error_code": "",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        },
+        separators=(",", ":"),
+    )
+    claude_session = "claude-consumer-session"
+    claude_stream = "\n".join(
+        (
+            json.dumps(
+                {"type": "system", "subtype": "init", "session_id": claude_session}
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "session_id": claude_session,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": result_json}],
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "session_id": claude_session,
+                    "result": result_json,
+                }
+            ),
+        )
+    )
+    commands: list[list[str]] = []
+    submitted_prompts: list[str] = []
+
+    def executor(command, *, prompt, on_stdout_line, **kwargs):
+        commands.append(command)
+        submitted_prompts.append(prompt)
+        if command[0] != "claude-test":
+            return ProcessRunResult(
+                1,
+                "",
+                "unexpected status 401 Unauthorized: missing bearer or basic "
+                "authentication /v1/responses",
+            )
+        for line in claude_stream.splitlines():
+            on_stdout_line(line)
+        return ProcessRunResult(0, claude_stream, "")
+
+    claim = _claim_consumer(store, task)
+    result = AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=tmp_path,
+        owner="consumer",
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
+        claude_adapter=ClaudeRuntimeAdapter(
+            workspace=tmp_path,
+            config=config,
+            claude_bin="claude-test",
+            service_mcp_servers=(
+                ServiceMcpServer(name="agent_cli", command="/usr/bin/true"),
+                ServiceMcpServer(
+                    name="memory_connector", url="http://127.0.0.1:9/mcp"
+                ),
+            ),
+        ),
+    ).execute(
+        run=claim.run,
+        prompt="Read-only decision",
+        session_id=None,
+        developer_instructions="Return the exact schema.",
+        configure_command=lambda command: None,
+        parse_result=parse_consumer_agent_wire_result,
+        persist_conversation_session=True,
+        conversation_contract_hash="contract-v1",
+    )
+
+    assert result.run_id == claim.run.id
+    attempts = store.list_agent_runtime_attempts(claim.run.id)
+    assert [attempt.route_name for attempt in attempts] == [
+        "codex_oauth",
+        "codex_api",
+        "claude_api",
+    ]
+    assert [command[0] for command in commands] == [
+        "codex-test",
+        "codex-test",
+        "claude-test",
+    ]
+    assert submitted_prompts[:2] == ["Read-only decision", "Read-only decision"]
+    assert submitted_prompts[2] == (
+        "<developer-instructions>\n"
+        "Return the exact schema.\n"
+        "</developer-instructions>\n"
+        "<task>\n"
+        "Read-only decision\n"
+        "</task>"
+    )
+    assert "Return the exact schema." not in commands[2]
+    assert store.get_conversation_runtime_session(
+        task.conversation_id,
+        "claude_api",
+        required_contract_hash="contract-v1",
+    ) == claude_session
+
+
+def test_missing_claude_skill_defers_instead_of_running(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+            "CEO_CLAUDE_API_KEY": "test-anthropic-secret",
+            "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
+        }
+    )
+    now = datetime.now(UTC)
+    router = AgentRuntimeRouter(
+        routes=config.routes,
+        store=store,
+        snapshots={
+            "claude_api": RuntimeCapabilitySnapshot(
+                route_name="claude_api",
+                capabilities=frozenset(
+                    {
+                        "structured_output",
+                        "local_schema_validation",
+                        "consumer_read_only_enforcement",
+                    }
+                ),
+                healthy=True,
+                checked_at=now.isoformat(),
+                expires_at=(now + timedelta(minutes=5)).isoformat(),
+            )
+        },
+        surface_manifests={
+            "claude_api": RuntimeRouteSurfaceManifest(
+                route_name="claude_api",
+                capabilities=frozenset({"reviewed_read_tools"}),
+            )
+        },
+    )
+    executor_calls = 0
+
+    def must_not_execute(*args, **kwargs):
+        nonlocal executor_calls
+        executor_calls += 1
+        raise AssertionError("missing exact skill must fail before spawn")
+
+    claim = _claim_consumer(store, task)
+    with pytest.raises(RuntimeError, match="runtime_capability_missing"):
+        AgentTurnProcess(
+            store=store,
+            task=task,
+            workspace=tmp_path,
+            owner="consumer",
+            executor=must_not_execute,
+            runtime_config=config,
+            runtime_router=router,
+        ).execute(
+            run=claim.run,
+            prompt="Read-only decision",
+            session_id=None,
+            developer_instructions="Return the exact schema.",
+            configure_command=lambda command: None,
+            parse_result=parse_consumer_agent_wire_result,
+            persist_conversation_session=True,
+            required_capabilities=frozenset(
+                {"reviewed_skill:dingtalk-chat:expected-sha"}
+            ),
+            conversation_contract_hash="contract-v1",
+        )
+
+    assert executor_calls == 0
+    assert store.list_agent_runtime_attempts(claim.run.id) == []
+    failed = store.get_agent_run(claim.run.id)
+    assert failed is not None and failed.status == "failed"
+    assert json.loads(failed.structured_error_json)["code"] == (
+        "runtime_capability_missing"
+    )
+    assert "reviewed_skill:dingtalk-chat:expected-sha" in json.loads(
+        failed.structured_error_json
+    )["detail"]
+
+
+def test_effectful_audit_never_selects_claude_even_with_false_surface_claims(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+            "CEO_CLAUDE_API_KEY": "test-anthropic-secret",
+            "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
+        }
+    )
+    now = datetime.now(UTC)
+    required = _required_runtime_capabilities(
+        run=run,
+        recovery_phase="",
+        expected_effect_actions=(),
+    )
+    router = AgentRuntimeRouter(
+        routes=config.routes,
+        store=store,
+        snapshots={
+            "claude_api": RuntimeCapabilitySnapshot(
+                route_name="claude_api",
+                capabilities=required,
+                healthy=True,
+                checked_at=now.isoformat(),
+                expires_at=(now + timedelta(minutes=5)).isoformat(),
+            )
+        },
+        surface_manifests={
+            "claude_api": RuntimeRouteSurfaceManifest(
+                route_name="claude_api",
+                capabilities=required,
+            )
+        },
+    )
+    executor_calls = 0
+
+    def must_not_execute(*args, **kwargs):
+        nonlocal executor_calls
+        executor_calls += 1
+        raise AssertionError("effectful Audit must stop before Claude spawn")
+
+    with pytest.raises(RuntimeError, match="runtime_route_unavailable"):
+        AgentTurnProcess(
+            store=store,
+            task=task,
+            workspace=tmp_path,
+            owner="audit",
+            executor=must_not_execute,
+            runtime_config=config,
+            runtime_router=router,
+        ).execute(
+            run=run,
+            prompt="Execute an external action",
+            session_id=None,
+            developer_instructions="Return the exact schema.",
+            configure_command=lambda command: None,
+            parse_result=lambda raw: raw,
+            persist_conversation_session=False,
+            allow_effectful_tools=True,
+        )
+
+    assert executor_calls == 0
+    assert store.list_agent_runtime_attempts(run.id) == []
+    failed = store.get_agent_run(run.id)
+    assert failed is not None and failed.status == "failed"
+    assert json.loads(failed.structured_error_json)["code"] == (
+        "runtime_route_unavailable"
+    )
 
 
 @pytest.mark.parametrize(

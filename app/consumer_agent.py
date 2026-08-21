@@ -34,6 +34,7 @@ from app.business_skills import (
     installed_business_skill_catalog,
     render_business_skill_protocol,
 )
+from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.native_cli_metadata import (
@@ -277,6 +278,7 @@ class ConsumerAgentRunner:
         runtime_config: AgentRuntimeConfig | None = None,
         runtime_router: AgentRuntimeRouter | None = None,
         codex_adapter: CodexRuntimeAdapter | None = None,
+        claude_adapter: ClaudeRuntimeAdapter | None = None,
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
@@ -289,6 +291,7 @@ class ConsumerAgentRunner:
         self.runtime_config = runtime_config
         self.runtime_router = runtime_router
         self.codex_adapter = codex_adapter
+        self.claude_adapter = claude_adapter
         self.executor = executor
         self.owner = owner or f"consumer-agent-{uuid4().hex}"
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
@@ -485,6 +488,7 @@ class ConsumerAgentRunner:
             runtime_config=self.runtime_config,
             runtime_router=self.runtime_router,
             codex_adapter=self.codex_adapter,
+            claude_adapter=self.claude_adapter,
             mcp_effect_registry=self.effects,
             native_cli_classifier=self.native_cli_classifier,
         )
