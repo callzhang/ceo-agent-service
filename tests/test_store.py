@@ -4674,6 +4674,152 @@ def test_execution_receipt_requires_current_unexpired_owner(tmp_path: Path):
     assert store.list_agent_execution_receipts(run.id) == []
 
 
+def test_effect_intent_is_one_shot_and_ack_survives_run_becoming_unknown(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store,
+        task_id,
+        "initial",
+        owner="worker-1",
+        lease_seconds=60,
+        now="2026-08-22 00:00:00",
+    ).run
+    authorization = {
+        "authorization_id": "authorization-1",
+        "action_index": 0,
+        "receipt_operation_id": "operation-action-0",
+        "capability": "agent_cli.dws",
+        "operation": "chat +dm",
+        "operation_digest": "operation-digest",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {"to": "recipient"},
+    }
+
+    store.prepare_agent_effect_intents(
+        run.id,
+        (authorization,),
+        owner="worker-1",
+        now="2026-08-22 00:00:01",
+    )
+    store.dispatch_agent_effect_intent(
+        run.id,
+        authorization,
+        now="2026-08-22 00:00:02",
+    )
+    with pytest.raises(ValueError, match="effect intent already dispatched"):
+        store.dispatch_agent_effect_intent(
+            run.id,
+            authorization,
+            now="2026-08-22 00:00:03",
+        )
+
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "codex_result_missing", "retryable": True},
+        owner="worker-1",
+        now="2026-08-22 00:00:04",
+    )
+    store.acknowledge_agent_effect_intent(
+        run.id,
+        authorization,
+        result_digest="result-digest",
+        exit_code=0,
+        now="2026-08-22 00:00:05",
+    )
+
+    [receipt] = store.list_agent_execution_receipts(run.id)
+    assert receipt.receipt_id == "authorization-1"
+    assert receipt.operation_id == "operation-action-0"
+    assert receipt.completed is True
+    assert receipt.persisted is True
+    assert receipt.safe_to_confirm is True
+    with sqlite3.connect(store.path) as db:
+        state, persisted_digest = db.execute(
+            "select state, result_digest from agent_effect_intents "
+            "where agent_run_id=? and authorization_id=?",
+            (run.id, "authorization-1"),
+        ).fetchone()
+    assert (state, persisted_digest) == ("acknowledged", "result-digest")
+
+
+def _effect_intent_authorization(authorization_id: str) -> dict[str, object]:
+    return {
+        "authorization_id": authorization_id,
+        "action_index": 0,
+        "receipt_operation_id": "operation-action-0",
+        "capability": "agent_cli.dws",
+        "operation": "chat +dm",
+        "operation_digest": "operation-digest",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {"to": "recipient"},
+    }
+
+
+def test_unknown_error_history_preserves_initial_and_reconciliation_causes(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    generation = store.get_reply_task(task_id).execution_generation
+    run = _claim_audit_run(
+        store, task_id, generation, owner="worker-1",
+        now="2026-08-21 00:00:00",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "audit_external_readback_missing", "retryable": True},
+        owner="worker-1",
+        now="2026-08-21 00:00:01",
+    )
+    claim = store.claim_unknown_agent_run(
+        run.id, owner="reconciler-1", now="2026-08-21 00:00:02",
+    )
+    assert claim.claimed is True
+    store.defer_unknown_agent_run_reconciliation(
+        run.id,
+        {"code": "runtime_route_unavailable", "retryable": True},
+        owner="reconciler-1",
+        expected_execution_generation=generation,
+        next_attempt_at="2026-08-21 00:15:00",
+        now="2026-08-21 00:00:03",
+    )
+    with sqlite3.connect(store.path) as db:
+        rows = db.execute(
+            "select phase, structured_error_json from agent_run_state_events "
+            "where agent_run_id=? order by id", (run.id,),
+        ).fetchall()
+    assert [(phase, json.loads(error)["code"]) for phase, error in rows] == [
+        ("initial_unknown", "audit_external_readback_missing"),
+        ("reconciliation_deferred", "runtime_route_unavailable"),
+    ]
+
+
+def test_prepared_effect_intent_cannot_dispatch_after_run_is_terminal(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store, task_id, "initial", owner="worker-1",
+        now="2026-08-21 00:00:00",
+    ).run
+    authorization = _effect_intent_authorization("authorization-terminal")
+    store.prepare_agent_effect_intents(
+        run.id, (authorization,), owner="worker-1", now="2026-08-21 00:00:01",
+    )
+    store.fail_agent_run(
+        run.id, {"code": "audit_revision_required"}, owner="worker-1",
+        now="2026-08-21 00:00:02",
+    )
+    with pytest.raises(ValueError, match="effect intent run is not active"):
+        store.dispatch_agent_effect_intent(
+            run.id, authorization, now="2026-08-21 00:00:03",
+        )
+
+
 def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     first_store = AutoReplyStore(db_path)

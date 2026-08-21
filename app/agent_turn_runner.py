@@ -2388,7 +2388,7 @@ class AgentTurnProcess(Generic[ResultT]):
             or not self._is_recordable_dingtalk_chat_delivery(metadata, argv)
         ):
             return
-        reply_text = _command_option_value(argv, "--text")
+        reply_text = _dingtalk_message_text(argv)
         if not reply_text or self.store.has_sent_reply_for_trigger(
             self.task.conversation_id, self.task.trigger_message_id
         ):
@@ -2419,11 +2419,9 @@ class AgentTurnProcess(Generic[ResultT]):
             return True
         recipient = _command_option_value(argv, "--to")
         return (
-            self.task.single_chat
-            and metadata.get("operation") == "chat +dm"
+            metadata.get("operation") == "chat +dm"
             and bool(recipient)
-            and recipient.casefold() == self.task.trigger_sender.casefold()
-            and bool(_command_option_value(argv, "--text"))
+            and bool(_dingtalk_message_text(argv))
         )
 
     def _require_direct_send_receipt(
@@ -2845,7 +2843,7 @@ def _is_dingtalk_chat_send_argv(
         and argv[0] == "dws"
         and isinstance(operation, str)
         and operation.startswith("chat ")
-        and bool(_command_option_value(argv, "--text"))
+        and bool(_dingtalk_message_text(argv))
     )
 
 
@@ -2875,6 +2873,12 @@ def _command_option_value(
         return ""
     value = argv[index + 1]
     return value if value and not value.startswith("--") else ""
+
+
+def _dingtalk_message_text(argv: tuple[str, ...] | None) -> str:
+    return _command_option_value(argv, "--text") or _command_option_value(
+        argv, "--content"
+    )
 
 
 def _closed_effect_failure(

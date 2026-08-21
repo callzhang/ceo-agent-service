@@ -1233,6 +1233,16 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_agent_runs_status
                     on agent_runs(status, updated_at);
+                create table if not exists agent_run_state_events (
+                    id integer primary key autoincrement,
+                    agent_run_id integer not null,
+                    phase text not null,
+                    structured_error_json text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(agent_run_id) references agent_runs(id)
+                );
+                create index if not exists idx_agent_run_state_events_run
+                    on agent_run_state_events(agent_run_id, id);
                 create table if not exists agent_runtime_attempts (
                     id integer primary key autoincrement,
                     agent_run_id integer,
@@ -1339,6 +1349,30 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_agent_execution_receipts_run
                     on agent_execution_receipts(agent_run_id, id);
+                create table if not exists agent_effect_intents (
+                    id integer primary key autoincrement,
+                    agent_run_id integer not null,
+                    authorization_id text not null,
+                    action_index integer not null check(action_index >= 0),
+                    receipt_operation_id text not null,
+                    capability text not null,
+                    operation text not null,
+                    operation_digest text not null,
+                    arguments_digest text not null,
+                    target_identifiers_json text not null,
+                    state text not null default 'prepared'
+                        check(state in ('prepared', 'dispatched', 'acknowledged')),
+                    result_digest text not null default '',
+                    exit_code integer,
+                    prepared_at text not null default current_timestamp,
+                    dispatched_at text not null default '',
+                    acknowledged_at text not null default '',
+                    updated_at text not null default current_timestamp,
+                    unique(agent_run_id, authorization_id),
+                    foreign key(agent_run_id) references agent_runs(id)
+                );
+                create index if not exists idx_agent_effect_intents_run
+                    on agent_effect_intents(agent_run_id, action_index, id);
                 create table if not exists wechat_read_state (
                     account_id text primary key,
                     account_dir text not null,
@@ -4256,6 +4290,214 @@ class AutoReplyStore:
                 raise ValueError("conflicting execution receipt")
             return AgentExecutionReceipt.model_validate(dict(row))
 
+    @staticmethod
+    def _agent_effect_intent_identity(
+        authorization: dict[str, object],
+    ) -> tuple[str, int, str, str, str, str, str, str]:
+        values = (
+            authorization.get("authorization_id"),
+            authorization.get("action_index"),
+            authorization.get("receipt_operation_id"),
+            authorization.get("capability"),
+            authorization.get("operation"),
+            authorization.get("operation_digest"),
+            authorization.get("arguments_digest"),
+        )
+        target_identifiers = authorization.get("target_identifiers")
+        if (
+            not isinstance(values[0], str)
+            or not values[0].strip()
+            or isinstance(values[1], bool)
+            or not isinstance(values[1], int)
+            or values[1] < 0
+            or not all(
+                isinstance(value, str) and value.strip()
+                for value in values[2:]
+            )
+            or not isinstance(target_identifiers, dict)
+        ):
+            raise ValueError("effect intent identity is invalid")
+        return (
+            values[0],
+            values[1],
+            values[2],
+            values[3],
+            values[4],
+            values[5],
+            values[6],
+            _json_object_text(target_identifiers, field="target_identifiers"),
+        )
+
+    @staticmethod
+    def _persisted_agent_effect_intent_identity(
+        row: sqlite3.Row,
+    ) -> tuple[str, int, str, str, str, str, str, str]:
+        return tuple(
+            row[key]
+            for key in (
+                "authorization_id",
+                "action_index",
+                "receipt_operation_id",
+                "capability",
+                "operation",
+                "operation_digest",
+                "arguments_digest",
+                "target_identifiers_json",
+            )
+        )
+
+    def prepare_agent_effect_intents(
+        self,
+        run_id: int,
+        authorizations: tuple[dict[str, object], ...],
+        *,
+        owner: str,
+        now: str | datetime | None = None,
+    ) -> None:
+        """Persist exact one-shot write intents before the model can dispatch them."""
+        identities = tuple(
+            self._agent_effect_intent_identity(authorization)
+            for authorization in authorizations
+        )
+        if len({identity[0] for identity in identities}) != len(identities):
+            raise ValueError("effect intent authorization IDs must be unique")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            run_row = db.execute(
+                "select * from agent_runs where id=?", (run_id,)
+            ).fetchone()
+            if run_row is None or run_row["status"] not in {"running", "unknown"}:
+                raise ValueError("effect intents require an active Audit run")
+            self._require_current_agent_run_write_access(
+                db,
+                run_id,
+                owner=owner,
+                now_text=now_text,
+                expected_status=run_row["status"],
+            )
+            if run_row["role"] != AgentRole.AUDIT.value:
+                raise ValueError("effect intents require an Audit run")
+            for identity in identities:
+                db.execute(
+                    """
+                    insert or ignore into agent_effect_intents (
+                        agent_run_id, authorization_id, action_index,
+                        receipt_operation_id, capability, operation,
+                        operation_digest, arguments_digest,
+                        target_identifiers_json, state, prepared_at, updated_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
+                    """,
+                    (run_id, *identity, now_text, now_text),
+                )
+                row = db.execute(
+                    "select * from agent_effect_intents "
+                    "where agent_run_id=? and authorization_id=?",
+                    (run_id, identity[0]),
+                ).fetchone()
+                if self._persisted_agent_effect_intent_identity(row) != identity:
+                    raise ValueError("conflicting effect intent")
+
+    def dispatch_agent_effect_intent(
+        self,
+        run_id: int,
+        authorization: dict[str, object],
+        *,
+        now: str | datetime | None = None,
+    ) -> None:
+        """Consume one prepared authorization immediately before target dispatch."""
+        identity = self._agent_effect_intent_identity(authorization)
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            run_row = db.execute(
+                "select status, lease_owner, lease_expires_at from agent_runs "
+                "where id=?", (run_id,)
+            ).fetchone()
+            if (
+                run_row is None
+                or run_row["status"] not in {"running", "unknown"}
+                or not run_row["lease_owner"]
+                or run_row["lease_expires_at"] <= now_text
+            ):
+                raise ValueError("effect intent run is not active")
+            row = db.execute(
+                "select * from agent_effect_intents "
+                "where agent_run_id=? and authorization_id=?",
+                (run_id, identity[0]),
+            ).fetchone()
+            if row is None:
+                raise ValueError("effect intent was not prepared")
+            if self._persisted_agent_effect_intent_identity(row) != identity:
+                raise ValueError("effect intent identity mismatch")
+            if row["state"] != "prepared":
+                raise ValueError("effect intent already dispatched")
+            cursor = db.execute(
+                "update agent_effect_intents set state='dispatched', "
+                "dispatched_at=?, updated_at=? where id=? and state='prepared'",
+                (now_text, now_text, row["id"]),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("effect intent already dispatched")
+
+    def acknowledge_agent_effect_intent(
+        self,
+        run_id: int,
+        authorization: dict[str, object],
+        *,
+        result_digest: str,
+        exit_code: int,
+        now: str | datetime | None = None,
+    ) -> None:
+        """Persist a successful tool ack even if the service lease was lost."""
+        identity = self._agent_effect_intent_identity(authorization)
+        if not result_digest.strip() or exit_code != 0:
+            raise ValueError("only a successful durable ack can confirm an intent")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                "select * from agent_effect_intents "
+                "where agent_run_id=? and authorization_id=?",
+                (run_id, identity[0]),
+            ).fetchone()
+            if row is None or row["state"] != "dispatched":
+                raise ValueError("effect intent is not awaiting acknowledgement")
+            if self._persisted_agent_effect_intent_identity(row) != identity:
+                raise ValueError("effect intent identity mismatch")
+            db.execute(
+                """
+                insert or ignore into agent_execution_receipts (
+                    agent_run_id, receipt_id, operation_id, cli,
+                    command_path, command_digest, exit_code,
+                    completed, persisted, safe_to_confirm, created_at
+                ) values (?, ?, ?, ?, ?, ?, 0, 1, 1, 1, ?)
+                """,
+                (
+                    run_id,
+                    identity[0],
+                    identity[2],
+                    identity[3].rsplit(".", 1)[-1],
+                    identity[4],
+                    identity[5],
+                    now_text,
+                ),
+            )
+            receipt = db.execute(
+                "select * from agent_execution_receipts "
+                "where agent_run_id=? and operation_id=?",
+                (run_id, identity[2]),
+            ).fetchone()
+            if (
+                receipt is None
+                or receipt["receipt_id"] != identity[0]
+                or receipt["cli"] != identity[3].rsplit(".", 1)[-1]
+                or receipt["command_path"] != identity[4]
+                or receipt["command_digest"] != identity[5]
+                or receipt["exit_code"] != exit_code
+            ):
+                raise ValueError("conflicting execution receipt")
+            db.execute(
+                "update agent_effect_intents set state='acknowledged', "
+                "result_digest=?, exit_code=?, acknowledged_at=?, updated_at=? "
+                "where id=? and state='dispatched'",
+                (result_digest, exit_code, now_text, now_text, row["id"]),
+            )
+
     def confirm_agent_execution_receipt(
         self,
         run_id: int,
@@ -6733,6 +6975,13 @@ class AutoReplyStore:
                 )
                 if cursor.rowcount != 1:
                     raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            if target_status == "unknown" and structured_error_json:
+                db.execute(
+                    "insert into agent_run_state_events ("
+                    "agent_run_id, phase, structured_error_json, created_at"
+                    ") values (?, 'initial_unknown', ?, ?)",
+                    (run_id, structured_error_json, now_text),
+                )
             updated = db.execute(
                 "select * from agent_runs where id=?",
                 (run_id,),
@@ -8031,6 +8280,12 @@ class AutoReplyStore:
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+            db.execute(
+                "insert into agent_run_state_events ("
+                "agent_run_id, phase, structured_error_json, created_at"
+                ") values (?, 'reconciliation_deferred', ?, ?)",
+                (run_id, error_json, now_text),
+            )
             row = db.execute(
                 "select * from agent_runs where id=?",
                 (run_id,),

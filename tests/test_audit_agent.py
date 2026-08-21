@@ -27,6 +27,7 @@ from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import (
+    AgentTurnProcess,
     _action_completion_accounting,
     _action_receipt_operation_id,
     _actions_have_required_readbacks,
@@ -1321,6 +1322,83 @@ def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):
     assert result.result.feedback is not None
     assert "--yes" in result.result.feedback.requested_revision
     assert executor.commands == []
+
+
+def test_audit_returns_write_without_executable_contract_to_consumer(setup):
+    store, task, audit_context, parent = setup
+    invalid_proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Reply in the source group",
+            "actions": [
+                {
+                    "description": "Send the requested Skill location",
+                    "capability": "dingtalk-chat",
+                    "operation": (
+                        "dws chat +send-to-group --group cid-group "
+                        "--content <content> --yes"
+                    ),
+                    "target": {
+                        "conversation_id": "cid-group",
+                        "recipient_type": "group",
+                    },
+                    "payload": {"content": "Skill location"},
+                    "expected_verification": "The group message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "The source group requested the link.",
+        }
+    )
+    executor = CapturingExecutor("")
+    result = AuditAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor,
+    ).run(
+        task,
+        replace(audit_context, proposal=invalid_proposal),
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+    )
+    assert result.result.outcome.value == "revision_required"
+    assert result.result.feedback is not None
+    assert "executable" in result.result.feedback.requested_revision
+    assert executor.commands == []
+
+
+def test_completed_chat_dm_content_is_recorded_in_delivery_ledger(setup):
+    store, task, _audit_context, parent = setup
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+        operation_id="operation-1",
+        owner="audit-owner",
+    ).run
+    argv = [
+        "dws", "chat", "+dm", "--to", task.trigger_sender,
+        "--content", "Approval completed.", "--yes", "--format", "json",
+    ]
+    event = {
+        "type": "item.completed",
+        "item": {"metadata": {
+            "effect": "effectful",
+            "capability": "agent_cli.dws",
+            "operation": "chat +dm",
+            "result_digest": "result-digest",
+        }},
+    }
+    payload = {"item": {"arguments": {"argv": argv}}}
+    AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=Path("/workspace"),
+        owner="audit-owner",
+    )._record_direct_send_receipt(event, payload, run=run)
+    assert store.has_sent_reply_for_trigger(
+        task.conversation_id, task.trigger_message_id,
+    )
 
 
 def test_audit_returns_single_chat_open_id_passed_as_user_to_consumer(setup):

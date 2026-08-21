@@ -45,6 +45,7 @@ MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 CLI_TIMEOUT_SECONDS = 15 * 60
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
+EFFECT_INTENT_CONTEXT_ENV = "CEO_AGENT_EFFECT_INTENT_CONTEXT"
 CliOutputLimitError = ProcessOutputLimitError
 SPREADSHEET_MATERIAL_ROOTS = (
     Path("/tmp").resolve(),
@@ -104,7 +105,7 @@ def execute_reviewed_write(
     authorization_id: str | None = None,
     action_index: int | None = None,
     authorization: ReviewedWriteAuthorization | None = None,
-    authorization_consumer: Callable[[ReviewedWriteAuthorization], object] | None = None,
+    authorization_consumer: Callable[[object], object] | None = None,
     classifier: NativeCliMetadataClassifier | None = None,
     process_runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, object]:
@@ -249,6 +250,28 @@ def _recovery_write_authorization(
     if match is None:
         raise AgentReadOnlyViolationError("recovery_write_not_authorized")
     return match
+
+
+def _effect_intent_context() -> tuple[Path, int]:
+    raw_context = os.environ.get(EFFECT_INTENT_CONTEXT_ENV, "")
+    try:
+        context = json.loads(raw_context)
+    except json.JSONDecodeError as exc:
+        raise AgentReadOnlyViolationError("effect_intent_context_invalid") from exc
+    if not isinstance(context, dict) or set(context) != {"db_path", "run_id"}:
+        raise AgentReadOnlyViolationError("effect_intent_context_invalid")
+    db_path = context.get("db_path")
+    run_id = context.get("run_id")
+    if (
+        not isinstance(db_path, str)
+        or not db_path.strip()
+        or not Path(db_path).is_absolute()
+        or isinstance(run_id, bool)
+        or not isinstance(run_id, int)
+        or run_id <= 0
+    ):
+        raise AgentReadOnlyViolationError("effect_intent_context_invalid")
+    return Path(db_path), run_id
 
 
 def read_skill(path: str) -> dict[str, str]:
@@ -528,7 +551,7 @@ def _execute_reviewed(
     authorization_id: str | None = None,
     action_index: int | None = None,
     reviewed_authorization: ReviewedWriteAuthorization | None = None,
-    authorization_consumer: Callable[[ReviewedWriteAuthorization], object] | None = None,
+    authorization_consumer: Callable[[object], object] | None = None,
 ) -> dict[str, object]:
     argv = _validate_reviewed_argv(argv)
     reviewed = classifier or NativeCliMetadataClassifier()
@@ -591,7 +614,7 @@ def _execute_reviewed(
             code="agent_cli_start_unavailable",
             retryable=True,
         )
-    if isinstance(authorization, ReviewedWriteAuthorization):
+    if authorization is not None and authorization_consumer is not None:
         authorization_consumer(authorization)
     reviewed_argv = [executable, *argv[1:]]
     try:
@@ -770,7 +793,36 @@ def execute_reviewed_write_tool(
     This tool accepts only reviewed commands with a matching authorization.
     Consumer Agents must describe writes as proposal data and never call it.
     """
-    return execute_reviewed_write(argv, authorization_id=authorization_id)
+    canonical_argv, command = _classify_reviewed_write(argv, classifier=None)
+    authorization = _recovery_write_authorization(
+        command,
+        canonical_argv,
+        authorization_id=authorization_id,
+    )
+    if authorization is None:
+        raise AgentReadOnlyViolationError("reviewed_write_not_authorized")
+    db_path, run_id = _effect_intent_context()
+    from app.store import AutoReplyStore
+
+    store = AutoReplyStore(db_path)
+    receipt = execute_reviewed_write(
+        canonical_argv,
+        authorization_id=authorization_id,
+        authorization_consumer=lambda consumed: store.dispatch_agent_effect_intent(
+            run_id, consumed
+        ),
+    )
+    if "error" not in receipt:
+        result_digest = receipt.get("result_digest")
+        if not isinstance(result_digest, str) or not result_digest:
+            raise AgentReadOnlyViolationError("agent_cli_receipt_digest_missing")
+        store.acknowledge_agent_effect_intent(
+            run_id,
+            authorization,
+            result_digest=result_digest,
+            exit_code=0,
+        )
+    return receipt
 
 
 if __name__ == "__main__":

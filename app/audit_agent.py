@@ -16,7 +16,7 @@ from app.agent_contracts import (
     AuditFeedback,
     AuditOutcome,
 )
-from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
+from app.agent_effects import LEASE_SECONDS, EffectKind, McpToolEffectRegistry
 from app.agent_result import AgentError, ResultParseError, SideEffectState
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
@@ -26,6 +26,7 @@ from app.agent_turn_runner import (
     AgentTurnRunResult,
     ProcessExecutor,
     _action_completion_accounting,
+    _action_receipt_operation_id,
     _actions_have_required_readbacks,
     _agent_process_error_code,
     _metadata_matches_action,
@@ -52,6 +53,7 @@ from app.store import (
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
+EFFECT_INTENT_CONTEXT_ENV = "CEO_AGENT_EFFECT_INTENT_CONTEXT"
 
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
@@ -617,8 +619,9 @@ class AuditAgentRunner:
                 ),
                 observation=" ".join(invalid_details),
                 requested_revision=(
-                    "Return the same intended operation with an operation label that "
-                    "matches the exact argv and with --yes on every DWS write. For a "
+                    "Return the same intended operation with an executable argv "
+                    "contract, an operation label that matches that exact argv, and "
+                    "--yes on every DWS write. For a "
                     "single-chat recipient, use --user only with sender_user_id and "
                     "use --open-dingtalk-id with sender_open_dingtalk_id. Preserve the "
                     "business recipient and payload."
@@ -722,6 +725,19 @@ class AuditAgentRunner:
             _expected_effect_action(action, self.effects, action_index=index)
             for index, action in enumerate(context.proposal.actions)
         )
+        write_authorizations = (
+            recovery_authorizations
+            if recovery_phase == "execute"
+            else _initial_write_authorizations(run, expected_effect_actions)
+            if not recovery_phase and not self.dry_run
+            else ()
+        )
+        if write_authorizations:
+            self.store.prepare_agent_effect_intents(
+                run.id,
+                write_authorizations,
+                owner=self.owner,
+            )
         process = AgentTurnProcess[AuditAgentResult](
             store=self.store,
             task=task,
@@ -746,6 +762,8 @@ class AuditAgentRunner:
             if recovery_phase == "execute"
             else context.render()
         )
+        if write_authorizations and recovery_phase != "execute":
+            turn_prompt += _write_authorization_prompt(write_authorizations)
         if self.dry_run:
             turn_prompt += (
                 "\n\n### Dry Run Context\n"
@@ -781,13 +799,21 @@ class AuditAgentRunner:
                         (
                             RECOVERY_WRITE_ALLOWLIST_ENV,
                             json.dumps(
-                                recovery_authorizations,
+                                write_authorizations,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                        ),
+                        (
+                            EFFECT_INTENT_CONTEXT_ENV,
+                            json.dumps(
+                                {"db_path": str(self.store.path), "run_id": run.id},
                                 sort_keys=True,
                                 separators=(",", ":"),
                             ),
                         ),
                     )
-                    if recovery_phase == "execute"
+                    if write_authorizations
                     else (),
                 ),
                 allow_write=not self.dry_run and recovery_phase != "reconcile",
@@ -998,12 +1024,35 @@ def _invalid_operation_contracts(
     return tuple(
         index
         for index, action in enumerate(context.proposal.actions)
-        if _expected_effect_action(
-            action,
-            registry,
-            action_index=index,
-        ).get("operation_contract_valid") is False
+        if not _proposed_operation_contract_valid(action, registry)
     )
+
+
+def _proposed_operation_contract_valid(
+    action,
+    registry: McpToolEffectRegistry,
+) -> bool:
+    """Require a real executable contract; prose is never dispatch authority."""
+    descriptor = describe_native_command(
+        {"type": "command_execution", **action.payload}
+    )
+    if descriptor is not None:
+        argv = native_command_argv(
+            {"type": "command_execution", **action.payload}
+        )
+        return bool(
+            descriptor.cli != "dws"
+            or (argv is not None and has_noninteractive_confirmation(argv))
+        )
+    call = registry.classify(
+        {
+            "type": "mcp_tool_call",
+            "server": action.capability,
+            "tool": action.operation,
+            "arguments": action.payload,
+        }
+    )
+    return call is not None and call.effect is EffectKind.EFFECTFUL
 
 
 def _typed_direct_recipient_mismatches(
@@ -1110,7 +1159,10 @@ def _record_verified_chat_delivery_receipt(
     )
     if descriptor is None or descriptor.cli != "dws" or argv is None:
         return
-    reply_text = _argv_option_value(argv, "--text")
+    reply_text = _argv_option_value(argv, "--text") or _argv_option_value(
+        argv,
+        "--content",
+    )
     if not reply_text:
         return
     target = descriptor.target_identifiers
@@ -1209,15 +1261,36 @@ def _recovery_authorizations(
     absent: frozenset[int],
     registry: McpToolEffectRegistry,
 ) -> tuple[dict[str, object], ...]:
-    entries: list[dict[str, object]] = []
-    for action_index in sorted(absent):
-        action = _expected_effect_action(
+    actions = tuple(
+        _expected_effect_action(
             context.proposal.actions[action_index],
             registry,
             action_index=action_index,
         )
+        for action_index in sorted(absent)
+    )
+    return _write_authorizations(run, actions, purpose="recovery")
+
+
+def _initial_write_authorizations(
+    run: AgentRun,
+    actions: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    return _write_authorizations(run, actions, purpose="initial")
+
+
+def _write_authorizations(
+    run: AgentRun,
+    actions: tuple[dict[str, object], ...],
+    *,
+    purpose: str,
+) -> tuple[dict[str, object], ...]:
+    entries: list[dict[str, object]] = []
+    for action in actions:
+        action_index = action.get("action_index")
         if (
-            action.get("reviewed_server") != "agent_cli"
+            not isinstance(action_index, int)
+            or action.get("reviewed_server") != "agent_cli"
             or action.get("reviewed_tool") != "execute_reviewed_write"
             or action.get("operation_contract_valid") is False
         ):
@@ -1225,6 +1298,7 @@ def _recovery_authorizations(
         identity = {
             "proposal_operation_id": run.operation_id,
             "proposal_revision": run.proposal_revision,
+            "authorization_purpose": purpose,
             **action,
         }
         authorization_id = hashlib.sha256(
@@ -1233,10 +1307,33 @@ def _recovery_authorizations(
         entries.append(
             {
                 "authorization_id": authorization_id,
+                "receipt_operation_id": _action_receipt_operation_id(
+                    run.operation_id, action, action_index
+                ),
                 **action,
             }
         )
     return tuple(entries)
+
+
+def _write_authorization_prompt(
+    authorizations: tuple[dict[str, object], ...],
+) -> str:
+    allowed = [
+        {
+            "action_index": entry["action_index"],
+            "authorization_id": entry["authorization_id"],
+        }
+        for entry in authorizations
+    ]
+    return (
+        "\n\n### One-shot write authorizations\n"
+        "For each approved action, call agent_cli.execute_reviewed_write exactly "
+        "once with the proposal argv and the matching authorization_id below. "
+        "An authorization is durably consumed before the external command starts "
+        "and cannot be reused.\n"
+        f"{json.dumps(allowed, ensure_ascii=False, separators=(',', ':'))}"
+    )
 
 
 def _recovery_prompt(
