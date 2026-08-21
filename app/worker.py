@@ -131,6 +131,7 @@ SPLIT_PERSON_SIGNATURE = assistant_signature()
 STALE_PROCESSING_TASK_SECONDS = 30 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
 REPLY_TASK_RETRY_BASE_DELAY_SECONDS = 60
+ACTIVE_RECOVERY_RETRY_DELAY_SECONDS = 5
 REPLY_TASK_RETRY_MAX_DELAY_SECONDS = 15 * 60
 RECOVERABLE_AGENT_RUNTIME_ERRORS = frozenset(
     {
@@ -1774,6 +1775,12 @@ class DingTalkAutoReplyWorker:
                         run.id,
                         reason="unknown_agent_run_reconciliation",
                     )
+                elif task.status == "processing" and run.final_result_json:
+                    # The active worker has persisted a reconciliation result and
+                    # is about to terminalize it. Requeueing here races that
+                    # finalization and can turn a confirmed readback into an
+                    # avoidable agent_run_unavailable retry.
+                    continue
                 else:
                     self.store.requeue_reply_task(
                         task.id,
@@ -1991,6 +1998,13 @@ class DingTalkAutoReplyWorker:
             self._now().astimezone(timezone.utc) + timedelta(seconds=delay_seconds)
         )
 
+    def _active_recovery_retry_available_at(self) -> str:
+        """Retry a lease race promptly; no provider or external write was retried."""
+        return self._sqlite_timestamp(
+            self._now().astimezone(timezone.utc)
+            + timedelta(seconds=ACTIVE_RECOVERY_RETRY_DELAY_SECONDS)
+        )
+
     def _codex_capacity_retry_available_at(self) -> str:
         previous_failures = self.store.codex_capacity_failure_count()
         return self._sqlite_timestamp(
@@ -2113,9 +2127,15 @@ class DingTalkAutoReplyWorker:
                     self._reply_task_authorization_available_at()
                     if authorization_wait
                     else (
-                        self._codex_capacity_retry_available_at()
-                        if capacity_exhausted
-                        else self._reply_task_retry_available_at(max(task.attempts, 1))
+                        self._active_recovery_retry_available_at()
+                        if active_recovery_wait
+                        else (
+                            self._codex_capacity_retry_available_at()
+                            if capacity_exhausted
+                            else self._reply_task_retry_available_at(
+                                max(task.attempts, 1)
+                            )
+                        )
                     )
                 )
                 if capacity_exhausted and self._open_codex_capacity_pause():

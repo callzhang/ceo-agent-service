@@ -1,5 +1,5 @@
 import errno
-from datetime import datetime
+from datetime import datetime, timezone
 from datetime import timedelta
 from dataclasses import dataclass
 from enum import StrEnum
@@ -4662,6 +4662,57 @@ def test_due_unknown_audit_run_is_requeued_without_waiting_for_stale_timeout(
     assert persisted.error == "unknown_agent_run_reconciliation"
 
 
+def test_due_reconciled_unknown_audit_run_does_not_requeue_active_task(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-reconcile-finalize",
+        conversation_title="Reconcile finalize",
+        single_chat=False,
+        trigger_message_id="msg-reconcile-finalize",
+        trigger_create_time="2026-08-10 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Check external result",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="crashed-audit",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="crashed-audit",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="reconciler")
+    assert claim.claimed
+    store.persist_unknown_agent_run_result(
+        run.id,
+        {"outcome": "reconciled"},
+        owner="reconciler",
+        transcript_end_line=0,
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([], {}),
+        codex=FakeCodex(
+            CodexDecision(action=CodexAction.NO_REPLY, audit_summary="unused")
+        ),
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
+    )
+
+    recovered = worker._recover_due_unknown_agent_reply_tasks(limit=10)
+
+    persisted = store.get_reply_task(task.id)
+    assert recovered == 0
+    assert persisted is not None
+    assert persisted.status == "processing"
+
+
 def test_due_unknown_audit_run_requeues_failed_task_without_rotating_generation(
     tmp_path: Path, monkeypatch
 ):
@@ -5760,6 +5811,10 @@ def test_active_audit_lease_is_deferred_after_retry_budget(tmp_path: Path, monke
     assert not completed
     assert persisted is not None and persisted.status == "pending"
     assert persisted.error == "agent_run_unavailable"
+    available_at = datetime.strptime(persisted.available_at, "%Y-%m-%d %H:%M:%S").replace(
+        tzinfo=timezone.utc
+    )
+    assert available_at - datetime.now(timezone.utc) < timedelta(seconds=10)
 
 
 def test_consume_once_completes_generation_mismatch_after_terminal_at_max_attempts(
