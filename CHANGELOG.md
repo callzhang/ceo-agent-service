@@ -1,5 +1,18 @@
 # Changelog
 
+- Recover legacy, terminal `audit_recovery_session_missing` chat deliveries by
+  cloning their completed Consumer decision into a fresh execution generation.
+  The recovered Audit still enforces current controlled-write and readback
+  checks; any prior effect, receipt, delivery, non-chat action, calendar, or
+  other order-sensitive action stays outside this automatic path.
+
+- Automatically reopen a historical Audit failure exactly once when its
+  Consumer parent has a durable proposal and the whole execution generation is
+  proven effect-free. The retry reuses that immutable proposal rather than
+  regenerating a decision, but still runs Audit's current authorization and
+  verification gates before any write. Unknown, started, delivered, or
+  receipt-bearing effects remain excluded from this path.
+
 - Update effectful Codex command construction for Codex CLI 0.149: use its
   supported `on-failure` approval policy instead of the removed `untrusted`
   value. OAuth and service-API Audit execution can now start normally while

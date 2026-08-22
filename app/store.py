@@ -9545,6 +9545,251 @@ class AutoReplyStore:
             recovered.append(int(row["id"]))
         return recovered
 
+    def recover_failed_effect_free_audit_tasks(self, *, channel: str) -> list[int]:
+        """Retry a failed Audit delivery once without regenerating Consumer's proposal.
+
+        This recovery is limited to a completed Consumer parent and an Audit turn
+        that recorded no effect.  Reopening the same generation lets the
+        orchestrator reuse the durable proposal, while Audit still applies the
+        current execution and verification gates before it can write anything.
+        """
+        recovery_code = "automatic_effect_free_audit_retry"
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select tasks.id, runs.id as run_id
+                from reply_tasks as tasks
+                join agent_runs as runs on runs.reply_task_id=tasks.id
+                join agent_runs as parents on parents.id=runs.parent_agent_run_id
+                where tasks.channel=?
+                  and tasks.status='failed'
+                  and tasks.recovery_code<>?
+                  and runs.execution_generation=tasks.execution_generation
+                  and runs.id=(
+                      select max(latest.id)
+                      from agent_runs as latest
+                      where latest.reply_task_id=tasks.id
+                        and latest.execution_generation=tasks.execution_generation
+                  )
+                  and runs.role='audit'
+                  and runs.status='failed'
+                  and runs.side_effect_state='none'
+                  and json_valid(runs.structured_error_json)=1
+                  and json_extract(runs.structured_error_json, '$.retryable')=1
+                  and parents.reply_task_id=tasks.id
+                  and parents.execution_generation=tasks.execution_generation
+                  and parents.role='consumer'
+                  and parents.status='completed'
+                  and parents.proposal_revision=runs.proposal_revision
+                  and parents.final_result_json<>''
+                  and not exists (
+                      select 1
+                      from agent_runs as generation_runs
+                      where generation_runs.reply_task_id=tasks.id
+                        and generation_runs.execution_generation=tasks.execution_generation
+                        and (
+                            generation_runs.status in ('running', 'unknown')
+                            or generation_runs.side_effect_state<>'none'
+                        )
+                  )
+                  and not exists (
+                      select 1
+                      from agent_execution_receipts as receipts
+                      join agent_runs as receipt_runs on receipt_runs.id=receipts.agent_run_id
+                      where receipt_runs.reply_task_id=tasks.id
+                        and receipt_runs.execution_generation=tasks.execution_generation
+                        and receipts.completed=1 and receipts.persisted=1
+                  )
+                  and not exists (
+                      select 1 from sent_replies as sent
+                      where sent.channel=tasks.channel
+                        and sent.conversation_id=tasks.conversation_id
+                        and sent.trigger_message_id=tasks.trigger_message_id
+                  )
+                order by tasks.id
+                """,
+                (channel, recovery_code),
+            ).fetchall()
+        recovered: list[int] = []
+        for row in rows:
+            try:
+                self.retry_failed_reply_task(
+                    int(row["id"]),
+                    int(row["run_id"]),
+                    reason=recovery_code,
+                    recovery_code=recovery_code,
+                )
+            except (AgentRunLeaseLostError, ValueError):
+                continue
+            recovered.append(int(row["id"]))
+        return recovered
+
+    def recover_terminal_sessionless_audit_chat_deliveries(
+        self,
+        *,
+        channel: str,
+    ) -> list[int]:
+        """Reopen legacy sessionless Audit chat deliveries with their saved decision.
+
+        Older releases terminalized a no-session unknown Audit as
+        ``audit_recovery_session_missing``.  That is a recovery defect, not a
+        decision failure, when no effect boundary, receipt, or delivery exists.
+        Clone only the completed Consumer proposal into a fresh generation so
+        that Audit can apply today's controlled write and readback rules.  The
+        narrow native-command shape deliberately excludes calendar, OA, and
+        every other order-sensitive action.
+        """
+        recovery_code = "legacy_sessionless_audit_chat_delivery_retry"
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            rows = db.execute(
+                """
+                select tasks.id as task_id,
+                       tasks.execution_generation as task_generation,
+                       audits.id as audit_run_id,
+                       parents.proposal_revision,
+                       parents.final_result_json as consumer_result_json,
+                       parents.tool_events_json as consumer_tool_events_json
+                from reply_tasks as tasks
+                join agent_runs as audits on audits.reply_task_id=tasks.id
+                join agent_runs as parents on parents.id=audits.parent_agent_run_id
+                where tasks.channel=?
+                  and tasks.status='done'
+                  and tasks.recovery_code<>?
+                  and audits.execution_generation=tasks.execution_generation
+                  and audits.id=(
+                      select max(latest.id)
+                      from agent_runs as latest
+                      where latest.reply_task_id=tasks.id
+                        and latest.execution_generation=tasks.execution_generation
+                  )
+                  and audits.role='audit'
+                  and audits.status='completed'
+                  and audits.side_effect_state='unknown'
+                  and audits.effect_started_count=0
+                  and audits.effect_completed_count=0
+                  and audits.effect_failed_count=0
+                  and audits.effect_receipt_count=0
+                  and audits.effect_unreviewed_count=0
+                  and json_valid(audits.final_result_json)=1
+                  and json_extract(
+                      audits.final_result_json, '$.error.code'
+                  )='audit_recovery_session_missing'
+                  and json_extract(
+                      audits.final_result_json, '$.side_effect_state'
+                  )='none'
+                  and parents.reply_task_id=tasks.id
+                  and parents.execution_generation=tasks.execution_generation
+                  and parents.role='consumer'
+                  and parents.status='completed'
+                  and parents.proposal_revision=audits.proposal_revision
+                  and json_valid(parents.final_result_json)=1
+                  and json_extract(
+                      parents.final_result_json, '$.outcome'
+                  )='proposal'
+                  and json_array_length(
+                      json_extract(parents.final_result_json, '$.proposal.actions')
+                  )=1
+                  and json_extract(
+                      parents.final_result_json,
+                      '$.proposal.actions[0].payload.argv[0]'
+                  )='dws'
+                  and json_extract(
+                      parents.final_result_json,
+                      '$.proposal.actions[0].payload.argv[1]'
+                  )='chat'
+                  and not exists (
+                      select 1 from agent_effect_intents as intents
+                      where intents.agent_run_id=audits.id
+                        and intents.state in ('dispatched', 'acknowledged')
+                  )
+                  and not exists (
+                      select 1 from sent_replies as sent
+                      where sent.channel=tasks.channel
+                        and sent.conversation_id=tasks.conversation_id
+                        and sent.trigger_message_id=tasks.trigger_message_id
+                  )
+                  and not exists (
+                      select 1
+                      from agent_execution_receipts as receipts
+                      join agent_runs as receipt_runs on receipt_runs.id=receipts.agent_run_id
+                      where receipt_runs.reply_task_id=tasks.id
+                        and receipt_runs.execution_generation=tasks.execution_generation
+                        and receipts.completed=1 and receipts.persisted=1
+                  )
+                  and not exists (
+                      select 1 from agent_runs as other_runs
+                      where other_runs.reply_task_id=tasks.id
+                        and other_runs.execution_generation=tasks.execution_generation
+                        and other_runs.id<>audits.id
+                        and (
+                            other_runs.status in ('running', 'unknown')
+                            or other_runs.side_effect_state<>'none'
+                        )
+                  )
+                order by tasks.id
+                """,
+                (channel, recovery_code),
+            ).fetchall()
+            recovered: list[int] = []
+            for row in rows:
+                next_generation = uuid4().hex
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', attempts=0, locked_at=null,
+                        available_at='', force_new_decision=0,
+                        execution_generation=?, error=?, recovery_code=?,
+                        updated_at=?
+                    where id=? and status='done' and execution_generation=?
+                    """,
+                    (
+                        next_generation,
+                        recovery_code,
+                        recovery_code,
+                        now_text,
+                        int(row["task_id"]),
+                        str(row["task_generation"]),
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                db.execute(
+                    """
+                    insert into agent_runs (
+                        reply_task_id, execution_generation, role,
+                        proposal_revision, turn_attempt, parent_agent_run_id,
+                        operation_id, status, final_result_json,
+                        tool_events_json, side_effect_state, started_at,
+                        completed_at, created_at, updated_at
+                    ) values (?, ?, 'consumer', ?, 0, null, '', 'completed',
+                              ?, ?, 'none', ?, ?, ?, ?)
+                    """,
+                    (
+                        int(row["task_id"]),
+                        next_generation,
+                        int(row["proposal_revision"]),
+                        str(row["consumer_result_json"]),
+                        str(row["consumer_tool_events_json"]),
+                        now_text,
+                        now_text,
+                        now_text,
+                        now_text,
+                    ),
+                )
+                db.execute(
+                    """
+                    update agent_runs
+                    set side_effect_state='none', updated_at=?
+                    where id=? and status='completed' and side_effect_state='unknown'
+                      and effect_started_count=0 and effect_completed_count=0
+                      and effect_failed_count=0 and effect_receipt_count=0
+                      and effect_unreviewed_count=0
+                    """,
+                    (now_text, int(row["audit_run_id"])),
+                )
+                recovered.append(int(row["task_id"]))
+            return recovered
+
     def retry_failed_pre_agent_reply_task(
         self,
         task_id: int,

@@ -5620,6 +5620,163 @@ def test_recover_failed_effect_free_consumer_task_requeues_once_without_age_limi
     assert store.recover_failed_effect_free_consumer_tasks(channel="dingtalk") == []
 
 
+def test_recover_failed_effect_free_audit_reuses_completed_consumer_decision(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    consumer = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    )
+    completed_consumer = store.complete_agent_run(
+        consumer.run.id,
+        {"outcome": "proposal"},
+        owner="worker-1",
+    )
+    audit = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=completed_consumer.id,
+        operation_id=f"agent-task:{task_id}:initial:proposal:0",
+        owner="worker-1",
+    )
+    store.fail_agent_run(
+        audit.run.id,
+        {"code": "runtime_capability_missing", "retryable": True},
+        owner="worker-1",
+    )
+    store.fail_reply_task(
+        task_id,
+        "audit_retry_exhausted",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    assert store.recover_failed_effect_free_audit_tasks(channel="dingtalk") == [task_id]
+
+    recovered = store.get_reply_task(task_id)
+    assert recovered is not None
+    assert recovered.status == "pending"
+    assert recovered.execution_generation == task.execution_generation
+    assert recovered.recovery_code == "automatic_effect_free_audit_retry"
+    assert store.get_agent_run(completed_consumer.id).status == "completed"
+    assert store.recover_failed_effect_free_audit_tasks(channel="dingtalk") == []
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected_recovery"),
+    (
+        ("chat +messages-reply", True),
+        ("calendar event respond", False),
+    ),
+)
+def test_recover_terminal_sessionless_audit_reuses_only_chat_decision(
+    tmp_path: Path,
+    operation: str,
+    expected_recovery: bool,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    consumer = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    )
+    decision = {
+        "outcome": "proposal",
+        "proposal": {
+            "actions": [
+                {
+                    "operation": operation,
+                    "payload": {
+                        "argv": (
+                            ["dws", "chat", "message", "send"]
+                            if expected_recovery
+                            else ["dws", "calendar", "event", "respond"]
+                        )
+                    },
+                }
+            ]
+        },
+    }
+    completed_consumer = store.complete_agent_run(
+        consumer.run.id,
+        decision,
+        owner="worker-1",
+    )
+    audit = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=completed_consumer.id,
+        operation_id=f"agent-task:{task_id}:initial:proposal:0",
+        owner="worker-1",
+    )
+    store.complete_agent_run(
+        audit.run.id,
+        {
+            "outcome": "needs_human",
+            "proposal_revision": 0,
+            "side_effect_state": "none",
+            "error": {"code": "audit_recovery_session_missing"},
+        },
+        owner="worker-1",
+        side_effect_state="unknown",
+    )
+    store.complete_reply_task(
+        task_id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    recovered = store.recover_terminal_sessionless_audit_chat_deliveries(
+        channel="dingtalk"
+    )
+
+    if not expected_recovery:
+        assert recovered == []
+        assert store.get_reply_task(task_id).execution_generation == task.execution_generation
+        return
+    assert recovered == [task_id]
+    retried = store.get_reply_task(task_id)
+    assert retried is not None
+    assert retried.status == "pending"
+    assert retried.execution_generation != task.execution_generation
+    assert retried.recovery_code == "legacy_sessionless_audit_chat_delivery_retry"
+    cloned = store.list_agent_runs_for_task_generation(
+        task_id, retried.execution_generation
+    )
+    assert len(cloned) == 1
+    assert cloned[0].role is AgentRole.CONSUMER
+    assert cloned[0].status == "completed"
+    assert cloned[0].final_result_json == json.dumps(
+        decision, ensure_ascii=False, separators=(",", ":")
+    )
+    assert store.get_agent_run(audit.run.id).status == "completed"
+    assert store.recover_terminal_sessionless_audit_chat_deliveries(
+        channel="dingtalk"
+    ) == []
+
+
 def test_recover_failed_native_codex_auth_task_requires_no_effect_or_delivery(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
