@@ -323,6 +323,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
         *,
         current_prompt="Read-only decision",
         current_developer_instructions="Return the exact schema.",
+        prepare_result=None,
     ):
         run = _claim_consumer(store, current_task).run
         return AgentTurnProcess(
@@ -352,6 +353,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
             configure_command=lambda command: None,
             parse_result=parse_consumer_agent_wire_result,
             persist_conversation_session=True,
+            prepare_result=prepare_result,
             conversation_contract_hash="contract-v1",
         )
 
@@ -620,6 +622,12 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     crash_task = next_task("msg-turns-crash", "generation-crash")
     original_complete_agent_run = store.complete_agent_run
     parent_writes = 0
+    preparation_calls = 0
+
+    def prepare_completed_result(result):
+        nonlocal preparation_calls
+        preparation_calls += 1
+        return result.model_copy(update={"summary": "Prepared exactly once."})
 
     def crash_before_parent_terminal(*args, **kwargs):
         nonlocal parent_writes
@@ -628,7 +636,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
 
     monkeypatch.setattr(store, "complete_agent_run", crash_before_parent_terminal)
     with pytest.raises(RuntimeError, match="injected_parent_terminal_failure"):
-        execute(crash_task)
+        execute(crash_task, prepare_result=prepare_completed_result)
     executor_calls_after_crash = len(executor.commands)
     [crash_run] = store.list_agent_runs_for_task_generation(
         crash_task.id, crash_task.execution_generation
@@ -647,8 +655,9 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     ) == session_id
 
     monkeypatch.setattr(store, "complete_agent_run", original_complete_agent_run)
-    execute(crash_task)
+    execute(crash_task, prepare_result=prepare_completed_result)
     assert len(executor.commands) == executor_calls_after_crash
+    assert preparation_calls == 2
     recovered_run = store.get_agent_run(crash_run.id)
     assert recovered_run is not None and recovered_run.status == "completed"
     assert parent_writes == 1

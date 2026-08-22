@@ -17,6 +17,7 @@ from app.agent_contracts import (
     AuditFeedback,
     ConsumerAgentResult,
     ConsumerOutcome,
+    ProposedAction,
 )
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_result import ResultParseError
@@ -37,8 +38,15 @@ from app.business_skills import (
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.config import feedback_spike_vercel_base_url
+from app.feedback_spike import prepare_outgoing_reply_text
 from app.native_cli_metadata import (
     NativeCliMetadataClassifier,
+    dingtalk_message_text,
+    dingtalk_outgoing_message_command_path,
+    describe_native_command,
+    native_command_argv,
+    replace_dingtalk_message_text,
     service_read_command_contract,
 )
 from app.store import AgentRole, AutoReplyStore, ReplyTask
@@ -561,6 +569,10 @@ class ConsumerAgentRunner:
                     ),
                 ),
                 parse_result=parse_consumer_agent_wire_result,
+                prepare_result=lambda parsed: _prepare_outgoing_dingtalk_messages(
+                    parsed,
+                    context=context,
+                ),
                 persist_conversation_session=persist_conversation_session,
                 on_progress=renew_session_lock,
                 image_paths=[Path(path) for path in context.image_paths],
@@ -619,6 +631,55 @@ class ConsumerAgentRunner:
             raise
 
 
+def _prepare_outgoing_dingtalk_messages(
+    result: ConsumerAgentResult,
+    *,
+    context: AgentTaskContext,
+) -> ConsumerAgentResult:
+    """Apply the service-owned reply postfix before Audit reviews the candidate."""
+    proposal = result.proposal
+    if proposal is None or context.channel != "dingtalk":
+        return result
+    actions = tuple(
+        _prepare_outgoing_dingtalk_action(action, context=context)
+        for action in proposal.actions
+    )
+    if actions == proposal.actions:
+        return result
+    return result.model_copy(
+        update={"proposal": proposal.model_copy(update={"actions": actions})}
+    )
+
+
+def _prepare_outgoing_dingtalk_action(
+    action: ProposedAction,
+    *,
+    context: AgentTaskContext,
+) -> ProposedAction:
+    payload = action.payload
+    argv = native_command_argv({"type": "command_execution", **payload})
+    descriptor = describe_native_command({"type": "command_execution", **payload})
+    command_path = dingtalk_outgoing_message_command_path(argv)
+    if (
+        argv is None
+        or descriptor is None
+        or descriptor.cli != "dws"
+        or command_path is None
+    ):
+        return action
+    reply_text = dingtalk_message_text(argv)
+    if not reply_text.strip():
+        return action
+    prepared = prepare_outgoing_reply_text(
+        reply_text=reply_text,
+        original_text=context.trigger_text,
+        feedback_base_url=feedback_spike_vercel_base_url(),
+    )
+    prepared_argv = list(replace_dingtalk_message_text(argv, prepared.text))
+    prepared_payload = dict(payload)
+    prepared_payload.pop("command", None)
+    prepared_payload["argv"] = prepared_argv
+    return action.model_copy(update={"payload": prepared_payload})
 def consumer_developer_instructions(
     audit_rules: str,
     *,

@@ -23,6 +23,7 @@ from app.consumer_agent import (
     consumer_wire_contract_hash,
 )
 from app.developer_prompt import DeveloperPromptTemplateError
+from app.feedback_spike import PreparedOutgoingReplyText
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
@@ -1574,6 +1575,232 @@ def test_consumer_accepts_valid_nested_output_locally(store, task, context):
         "text": "Verified notice."
     }
     assert "--output-schema" not in executor.commands[0]
+
+
+@pytest.mark.parametrize(
+    ("command_argv", "body_index"),
+    (
+        (
+            [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--group",
+                "cid-agent",
+                "--text",
+                "Verified notice.",
+                "--yes",
+            ],
+            7,
+        ),
+        (
+            [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--conversation-id",
+                "cid-agent",
+                "--ai-tag",
+                "Verified notice.",
+                "--yes",
+            ],
+            7,
+        ),
+        (
+            [
+                "dws",
+                "chat",
+                "+messages-send",
+                "--conversation-id",
+                "cid-agent",
+                "--markdown",
+                "Verified notice.",
+                "--yes",
+            ],
+            6,
+        ),
+        (
+            [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "Verified notice.",
+                "--group",
+                "cid-agent",
+                "--yes",
+            ],
+            4,
+        ),
+        (
+            [
+                "dws",
+                "chat",
+                "message",
+                "send",
+                "--group",
+                "cid-agent",
+                "--yes",
+                "Verified notice.",
+            ],
+            7,
+        ),
+    ),
+)
+def test_consumer_prepares_dingtalk_message_postfix_before_persisting(
+    store,
+    task,
+    context,
+    monkeypatch,
+    command_argv,
+    body_index,
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    executor = CapturingExecutor(
+        _proposal_jsonl({"argv": command_argv})
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.proposal is not None
+    argv = result.result.proposal.actions[0].payload["argv"]
+    text = argv[body_index]
+    assert text.startswith("Verified notice.（by明哥分身）")
+    assert text.count("（by明哥分身）") == 1
+    assert text.count("/api/dingtalk-feedback-spike") == 2
+    persisted = store.get_agent_run(result.run_id)
+    assert persisted is not None
+    persisted_result = ConsumerAgentResult.model_validate_json(
+        persisted.final_result_json
+    )
+    assert persisted_result.proposal is not None
+    assert persisted_result.proposal.actions[0].payload["argv"] == argv
+
+
+def test_consumer_prepares_command_string_and_persists_one_argv_contract(
+    store,
+    task,
+    context,
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    executor = CapturingExecutor(
+        _proposal_jsonl(
+            {
+                "command": (
+                    "dws chat message send --conversation-id cid-agent "
+                    "--content 'Verified notice.' --yes"
+                )
+            }
+        )
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.proposal is not None
+    payload = result.result.proposal.actions[0].payload
+    assert "command" not in payload
+    assert isinstance(payload["argv"], list)
+    text = payload["argv"][payload["argv"].index("--content") + 1]
+    assert text.startswith("Verified notice.（by明哥分身）")
+    assert text.count("/api/dingtalk-feedback-spike") == 2
+
+
+def test_consumer_preserves_dash_prefixed_explicit_content_as_message_body(
+    store,
+    task,
+    context,
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    executor = CapturingExecutor(
+        _proposal_jsonl(
+            {
+                "argv": [
+                    "dws",
+                    "chat",
+                    "message",
+                    "send",
+                    "--conversation-id",
+                    "cid-agent",
+                    "--content",
+                    "--hello",
+                    "--yes",
+                ]
+            }
+        )
+    )
+
+    result = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.proposal is not None
+    argv = result.result.proposal.actions[0].payload["argv"]
+    text = argv[argv.index("--content") + 1]
+    assert text.startswith("--hello（by明哥分身）")
+    assert text.count("/api/dingtalk-feedback-spike") == 2
+
+
+def test_consumer_rejects_sensitive_value_added_by_postfix_preparation(
+    store,
+    task,
+    context,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        consumer_agent,
+        "prepare_outgoing_reply_text",
+        lambda **_kwargs: PreparedOutgoingReplyText(
+            feedback_token="",
+            text="Bearer sk-sensitive-value-added-after-model-validation",
+        ),
+    )
+    executor = CapturingExecutor(
+        _proposal_jsonl(
+            {
+                "argv": [
+                    "dws",
+                    "chat",
+                    "message",
+                    "send",
+                    "--group",
+                    "cid-agent",
+                    "--text",
+                    "Verified notice.",
+                    "--yes",
+                ]
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="agent_result_contains_sensitive_value"):
+        ConsumerAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=executor,
+        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
 @pytest.mark.parametrize(

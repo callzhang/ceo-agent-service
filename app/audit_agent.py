@@ -44,6 +44,7 @@ from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import (
     NativeCliMetadataClassifier,
     NativeCliMetadataUnavailableError,
+    dingtalk_message_text,
     describe_native_command,
     has_noninteractive_confirmation,
     native_command_argv,
@@ -1019,9 +1020,7 @@ def _expected_effect_action(
             expected["arguments_digest"] = _json_digest({"argv": legacy_argv})
         expected["operation_digest"] = descriptor.command_digest
         expected["target_identifiers"] = descriptor.target_identifiers
-        message_text = _argv_option_value(tuple(argv or ()), "--text") or (
-            _argv_option_value(tuple(argv or ()), "--content")
-        )
+        message_text = dingtalk_message_text(tuple(argv or ()))
         if descriptor.cli == "dws" and message_text:
             expected["message_text_digest"] = hashlib.sha256(
                 message_text.encode("utf-8")
@@ -1207,10 +1206,7 @@ def _record_verified_chat_delivery_receipt(
     )
     if descriptor is None or descriptor.cli != "dws" or argv is None:
         return
-    reply_text = _argv_option_value(argv, "--text") or _argv_option_value(
-        argv,
-        "--content",
-    )
+    reply_text = dingtalk_message_text(argv)
     if not reply_text:
         return
     target = descriptor.target_identifiers

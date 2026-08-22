@@ -76,10 +76,13 @@ from app.codex_history import (
 )
 from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.config import feedback_spike_vercel_base_url
+from app.feedback_spike import sanitize_configured_feedback_links
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
+    dingtalk_message_text,
     describe_native_command,
     native_command_argv,
 )
@@ -720,6 +723,7 @@ class AgentTurnProcess(Generic[ResultT]):
         configure_command: Callable[[list[str]], None],
         parse_result: Callable[[str], ResultT],
         persist_conversation_session: bool,
+        prepare_result: Callable[[ResultT], ResultT] | None = None,
         expected_effect_actions: tuple[dict[str, object], ...] = (),
         on_progress: Callable[[], None] | None = None,
         recovery_phase: str = "",
@@ -1421,13 +1425,20 @@ class AgentTurnProcess(Generic[ResultT]):
                     raise CompletedRuntimeResultBlockedError(
                         "completed_runtime_result_invalid"
                     ) from exc
-                if _contains_sensitive_value(result.model_dump(mode="json")):
-                    raise ValueError("agent_result_contains_sensitive_value")
-                if (
-                    run.role is AgentRole.CONSUMER
-                    and result.outcome is not ConsumerOutcome.FAILED
-                ):
-                    _validate_runtime_reference_domain_result(result)
+                if prepare_result is not None:
+                    result = prepare_result(result)
+                    _validate_runtime_reference_domain_result(
+                        cast(ConsumerAgentResult | AuditAgentResult, result),
+                        allow_configured_feedback_links=True,
+                    )
+                else:
+                    if _contains_sensitive_value(result.model_dump(mode="json")):
+                        raise ValueError("agent_result_contains_sensitive_value")
+                    if (
+                        run.role is AgentRole.CONSUMER
+                        and result.outcome is not ConsumerOutcome.FAILED
+                    ):
+                        _validate_runtime_reference_domain_result(result)
                 active_attempt = completed_attempt
                 observed_session_id = completed_attempt.session_id
                 pending_claude_session_id = completed_attempt.session_id
@@ -1706,6 +1717,12 @@ class AgentTurnProcess(Generic[ResultT]):
                 and result.outcome is not ConsumerOutcome.FAILED
             ):
                 _validate_runtime_reference_domain_result(result)
+            if prepare_result is not None:
+                result = prepare_result(result)
+                _validate_runtime_reference_domain_result(
+                    cast(ConsumerAgentResult | AuditAgentResult, result),
+                    allow_configured_feedback_links=True,
+                )
             persisted_attempt = (
                 self.store.get_agent_runtime_attempt(active_attempt.id)
                 if active_attempt is not None
@@ -2941,9 +2958,7 @@ def _command_option_value(
 
 
 def _dingtalk_message_text(argv: tuple[str, ...] | None) -> str:
-    return _command_option_value(argv, "--text") or _command_option_value(
-        argv, "--content"
-    )
+    return dingtalk_message_text(argv)
 
 
 def _closed_effect_failure(
@@ -4111,11 +4126,22 @@ def _validate_runtime_reference_text_bounds(value: object, *, depth: int = 0) ->
 
 def _validate_runtime_reference_domain_result(
     result: ConsumerAgentResult | AuditAgentResult,
+    *,
+    allow_configured_feedback_links: bool = False,
 ) -> None:
     domain_result = result.model_dump(mode="json")
     _project_runtime_domain_result(result)
     _validate_runtime_reference_text_bounds(domain_result)
-    if _contains_sensitive_value(domain_result):
+    sensitive_projection = domain_result
+    if allow_configured_feedback_links:
+        sensitive_projection = cast(
+            dict[str, object],
+            sanitize_configured_feedback_links(
+                domain_result,
+                vercel_base_url=feedback_spike_vercel_base_url(),
+            ),
+        )
+    if _contains_sensitive_value(sensitive_projection):
         raise ValueError("agent_result_contains_sensitive_value")
     if _contains_local_runtime_value(domain_result):
         raise AgentReadOnlyViolationError("runtime_result_contains_local_runtime_leak")

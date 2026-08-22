@@ -44,6 +44,27 @@ _ALLOWED_MATERIAL_DOWNLOAD_COMMANDS = frozenset(
         ("dws", "oa attachment download"),
     }
 )
+DINGTALK_OUTGOING_MESSAGE_COMMAND_PATHS = frozenset(
+    {
+        "chat +dm",
+        "chat +messages-reply",
+        "chat +messages-send",
+        "chat +send-to-group",
+        "chat message reply",
+        "chat message send",
+    }
+)
+_DWS_BOOLEAN_FLAGS = frozenset(
+    {
+        "--ai-tag",
+        "--at-all",
+        "--debug",
+        "--mock",
+        "--verbose",
+        "--yes",
+        "-y",
+    }
+)
 
 
 def service_read_command_contract() -> tuple[str, ...]:
@@ -583,7 +604,7 @@ def _classified_native_command(
     cli: str,
     command_path: str,
     argv: tuple[str, ...],
-    effect: EffectKind,
+    effect: EffectKind | None,
 ) -> NativeCliCommand | None:
     if effect is EffectKind.READ_ONLY and not _safe_read_local_output(
         command_path, argv
@@ -668,6 +689,14 @@ def describe_native_command(item: dict[str, object]) -> NativeCliCommand | None:
     argv = native_command_argv(item)
     if argv is None or "--dry-run" in argv:
         return None
+    outgoing_message_path = dingtalk_outgoing_message_command_path(argv)
+    if outgoing_message_path is not None:
+        return _classified_native_command(
+            "dws",
+            outgoing_message_path,
+            argv,
+            None,
+        )
     command_paths = _command_path_candidates(argv[1:])
     if not command_paths:
         return None
@@ -677,3 +706,66 @@ def describe_native_command(item: dict[str, object]) -> NativeCliCommand | None:
         argv,
         None,
     )
+
+
+def dingtalk_outgoing_message_command_path(
+    argv: tuple[str, ...] | None,
+) -> str | None:
+    if argv is None or not argv or Path(argv[0]).name != "dws":
+        return None
+    for command_path in DINGTALK_OUTGOING_MESSAGE_COMMAND_PATHS:
+        command_parts = tuple(command_path.split())
+        if argv[1 : 1 + len(command_parts)] == command_parts:
+            return command_path
+    return None
+
+
+def dingtalk_message_text(argv: tuple[str, ...] | None) -> str:
+    location = _dingtalk_message_text_location(argv)
+    if argv is None or location is None:
+        return ""
+    index, inline_prefix = location
+    return argv[index][len(inline_prefix) :] if inline_prefix else argv[index]
+
+
+def replace_dingtalk_message_text(
+    argv: tuple[str, ...],
+    replacement: str,
+) -> tuple[str, ...]:
+    location = _dingtalk_message_text_location(argv)
+    if location is None:
+        return argv
+    index, inline_prefix = location
+    prepared = list(argv)
+    prepared[index] = f"{inline_prefix}{replacement}"
+    return tuple(prepared)
+
+
+def _dingtalk_message_text_location(
+    argv: tuple[str, ...] | None,
+) -> tuple[int, str] | None:
+    command_path = dingtalk_outgoing_message_command_path(argv)
+    if argv is None or command_path is None:
+        return None
+    for index, value in enumerate(argv):
+        if value in {"--text", "--content", "--markdown"} and index + 1 < len(argv):
+            candidate = argv[index + 1]
+            return (index + 1, "") if candidate else None
+        if value.startswith(("--text=", "--content=", "--markdown=")):
+            return index, value.partition("=")[0] + "="
+    if command_path != "chat message send":
+        return None
+    index = 1 + len(command_path.split())
+    while index < len(argv):
+        value = argv[index]
+        if not value.startswith("-"):
+            return index, ""
+        if (
+            "=" not in value
+            and value not in _DWS_BOOLEAN_FLAGS
+            and index + 1 < len(argv)
+            and not argv[index + 1].startswith("-")
+        ):
+            index += 1
+        index += 1
+    return None

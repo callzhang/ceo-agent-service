@@ -29,6 +29,8 @@ from app.codex_failure import (
     classify_codex_process_failure,
 )
 from app.feedback_policy import FeedbackPressureStats
+from app.config import feedback_spike_vercel_base_url
+from app.feedback_spike import extract_configured_feedback_link_context
 from app.history import HistoryItem
 from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.meeting_alignment_models import (
@@ -13352,6 +13354,16 @@ class AutoReplyStore:
         recall_key: str = "",
         feedback_token: str = "",
     ) -> None:
+        if not feedback_token:
+            feedback_context = extract_configured_feedback_link_context(
+                reply_text,
+                vercel_base_url=feedback_spike_vercel_base_url(),
+            )
+            feedback_token = (
+                feedback_context.feedback_token
+                if feedback_context is not None
+                else ""
+            )
         with self._connect() as db:
             db.execute(
                 """
@@ -13435,6 +13447,13 @@ class AutoReplyStore:
         """
         if not reply_text.strip():
             raise ValueError("reply_text must be non-empty")
+        feedback_context = extract_configured_feedback_link_context(
+            reply_text,
+            vercel_base_url=feedback_spike_vercel_base_url(),
+        )
+        feedback_token = (
+            feedback_context.feedback_token if feedback_context is not None else ""
+        )
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
@@ -13455,9 +13474,10 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 insert into sent_replies (
-                    conversation_id, trigger_message_id, reply_text, send_result_json
+                    conversation_id, trigger_message_id, reply_text, send_result_json,
+                    feedback_token
                 )
-                select ?, ?, ?, ?
+                select ?, ?, ?, ?, ?
                 where not exists (
                     select 1 from sent_replies
                     where conversation_id=? and trigger_message_id=?
@@ -13468,6 +13488,7 @@ class AutoReplyStore:
                     row["trigger_message_id"],
                     reply_text,
                     send_result_json,
+                    feedback_token,
                     row["conversation_id"],
                     row["trigger_message_id"],
                 ),
@@ -14439,6 +14460,17 @@ class AutoReplyStore:
             raise ValueError("expected_execution_generation must be non-empty")
         if sent_reply_text and (task_status != "done" or send_status != "completed"):
             raise ValueError("sent reply ledger requires completed task delivery")
+        feedback_context = (
+            extract_configured_feedback_link_context(
+                sent_reply_text,
+                vercel_base_url=feedback_spike_vercel_base_url(),
+            )
+            if sent_reply_text
+            else None
+        )
+        sent_reply_feedback_token = (
+            feedback_context.feedback_token if feedback_context is not None else ""
+        )
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
@@ -14539,9 +14571,10 @@ class AutoReplyStore:
                 db.execute(
                     """
                     insert into sent_replies (
-                        conversation_id, trigger_message_id, reply_text, send_result_json
+                        conversation_id, trigger_message_id, reply_text, send_result_json,
+                        feedback_token
                     )
-                    select ?, ?, ?, ?
+                    select ?, ?, ?, ?, ?
                     where not exists (
                         select 1 from sent_replies
                         where conversation_id=? and trigger_message_id=?
@@ -14552,6 +14585,7 @@ class AutoReplyStore:
                         trigger_message_id,
                         sent_reply_text,
                         sent_reply_result_json,
+                        sent_reply_feedback_token,
                         conversation_id,
                         trigger_message_id,
                     ),

@@ -78,7 +78,7 @@ from app.notification import (
     send_browser_notification,
     send_macos_notification,
 )
-from app.native_cli_metadata import describe_native_command
+from app.native_cli_metadata import describe_native_command, dingtalk_message_text
 from app.leak_check import contains_forbidden_leak, redact_forbidden_leak_markers
 from app.oa_approval import extract_oa_url
 from app.org_cache import (
@@ -2434,18 +2434,9 @@ class DingTalkAutoReplyWorker:
         argv = action.payload.get("argv")
         if not isinstance(argv, (list, tuple)):
             return None
-        reply_text = ""
-        for index, value in enumerate(argv):
-            if not isinstance(value, str):
-                return None
-            if value == "--text" and index + 1 < len(argv):
-                candidate = argv[index + 1]
-                if isinstance(candidate, str):
-                    reply_text = candidate
-                break
-            if value.startswith("--text="):
-                reply_text = value.partition("=")[2]
-                break
+        if not all(isinstance(value, str) for value in argv):
+            return None
+        reply_text = dingtalk_message_text(tuple(argv))
         if not reply_text.strip():
             return None
         return (

@@ -2283,7 +2283,12 @@ def test_list_agent_run_summaries_for_terminal_runs_batches_without_events(
 
 def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
     tmp_path: Path,
+    monkeypatch,
 ):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         conversation_id="cid-confirmed-direct",
@@ -2308,6 +2313,13 @@ def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
         side_effect_state="confirmed",
     )
 
+    sent_reply_text = (
+        "Verified direct reply（by明哥分身）\n\n"
+        "反馈：[👍 有帮助](https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd1234&rating=up)｜"
+        "[👎 需改进](https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd1234&rating=down)"
+    )
     store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,
@@ -2329,19 +2341,44 @@ def test_finalize_orchestration_records_confirmed_sent_reply_atomically(
         send_status="completed",
         send_error="",
         channel="dingtalk",
-        sent_reply_text="Verified direct reply",
+        sent_reply_text=sent_reply_text,
         sent_reply_result_json='{"source":"test"}',
     )
 
     sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
 
     assert sent is not None
-    assert sent.reply_text == "Verified direct reply"
+    assert sent.reply_text == sent_reply_text
+    assert sent.feedback_token == "spike_1_abcd1234"
     assert store.record_confirmed_sent_reply_if_absent(
         audit_run_id=audit.id,
-        reply_text="Verified direct reply",
+        reply_text=sent_reply_text,
         send_result_json='{"source":"test"}',
     ) is False
+
+
+def test_earliest_delivery_receipt_records_exact_configured_feedback_token(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    reply_text = (
+        "Verified direct reply（by明哥分身）\n\n"
+        "反馈：[👍 有帮助](https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd1234&rating=up)｜"
+        "[👎 需改进](https://feedback.example.com/api/dingtalk-feedback-spike"
+        "?feedback_token=spike_1_abcd1234&rating=down)"
+    )
+
+    store.record_sent_reply("cid-1", "msg-1", reply_text)
+
+    sent = store.get_sent_reply("cid-1", "msg-1")
+    assert sent is not None
+    assert sent.feedback_token == "spike_1_abcd1234"
 
 
 def test_finalize_orchestration_inherits_oa_identity_from_reply_task(

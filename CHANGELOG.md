@@ -1,5 +1,12 @@
 # Changelog
 
+- Restore the configured Agent signature and counterparty feedback links on
+  DingTalk messages proposed by Consumer Agent A. The service now prepares the
+  executable message text after validating the Agent result and before Audit B
+  reviews or persists it, so review, execution, recovery digests, and delivery
+  readback all use the same final body. Confirmed delivery rows also retain the
+  generated feedback token so later feedback synchronization works again.
+
 - Close expired, effect-free Codex task-runtime leases whose parent task run is
   already terminal. Startup and routine work-item processing now recover these
   abandoned attempts, so a historical `runtime_attempt_active` cannot remain

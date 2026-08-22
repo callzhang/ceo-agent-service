@@ -1238,7 +1238,11 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
         assert action["target"] == {"group": "cid-1"}
-        assert action["payload"]["argv"][-2] == self.message_text
+        prepared_message_text = action["payload"]["argv"][-2]
+        assert prepared_message_text.startswith(
+            f"{self.message_text}（by明哥分身）"
+        )
+        assert prepared_message_text.count("/api/dingtalk-feedback-spike") == 2
         assert "--user" not in action["payload"]["argv"]
 
         write_command = shlex.join(action["payload"]["argv"])
@@ -1274,7 +1278,7 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
                                     "message_id": "question-1",
                                     "conversation_id": "cid-1",
                                     "mentioned_open_dingtalk_ids": ["inviter-1"],
-                                    "text": self.message_text,
+                                    "text": prepared_message_text,
                                 }
                             ]
                         }
@@ -4458,6 +4462,10 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
     tmp_path: Path,
     monkeypatch,
 ):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.com",
+    )
     skills_root = tmp_path / "installed-skills"
     skill_paths: dict[str, Path] = {}
     for name in (

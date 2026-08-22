@@ -3805,6 +3805,70 @@ def test_legacy_group_content_keeps_a_message_digest_for_reconciliation():
     )
 
 
+@pytest.mark.parametrize(
+    "argv",
+    (
+        [
+            "dws",
+            "chat",
+            "+messages-send",
+            "--conversation-id",
+            "cid-agent",
+            "--markdown",
+            "exact reviewed reply",
+            "--yes",
+        ],
+        [
+            "dws",
+            "chat",
+            "message",
+            "send",
+            "--group",
+            "cid-agent",
+            "--yes",
+            "exact reviewed reply",
+        ],
+        [
+            "dws",
+            "chat",
+            "message",
+            "send",
+            "--conversation-id",
+            "cid-agent",
+            "--ai-tag",
+            "exact reviewed reply",
+            "--yes",
+        ],
+    ),
+)
+def test_current_message_forms_keep_digest_and_canonical_path_for_reconciliation(argv):
+    action = ProposedAction.model_validate(
+        {
+            "description": "Post the reviewed conclusion",
+            "capability": "agent_cli.dws",
+            "operation": "send the reviewed message",
+            "target": {"conversation_id": "cid-agent"},
+            "payload": {"argv": argv},
+            "expected_verification": "Message exists",
+        }
+    )
+
+    expected = _expected_effect_action(
+        action,
+        McpToolEffectRegistry.default(),
+        action_index=0,
+    )
+
+    assert expected["operation"] in {
+        "chat +messages-send",
+        "chat message send",
+    }
+    assert expected["message_text_digest"] == hashlib.sha256(
+        b"exact reviewed reply"
+    ).hexdigest()
+    assert expected["message_rendered_text_digest"]
+
+
 def test_legacy_group_content_reconstructs_the_persisted_write_contract():
     action = ProposedAction.model_validate(
         {

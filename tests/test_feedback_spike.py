@@ -13,6 +13,7 @@ from app.feedback_spike import (
     build_feedback_link_text,
     build_feedback_spike_link_message,
     contains_forbidden_leak_outside_feedback_links,
+    extract_configured_feedback_link_context,
     extract_feedback_link_context,
     normalize_vercel_base_url,
     prepare_outgoing_reply_text,
@@ -26,7 +27,7 @@ def test_leak_check_trusts_only_exact_generated_feedback_callbacks():
         reply_text="先按A方案走",
         original_text="怎么处理",
         attempt_id=42,
-        feedback_token="spike_1_abcd",
+        feedback_token="spike_1_abcd1234",
     )
 
     assert not contains_forbidden_leak_outside_feedback_links(
@@ -198,14 +199,97 @@ def test_prepare_outgoing_reply_text_applies_signature_and_feedback_once():
         original_text="帮我看一下",
         attempt_id=42,
         feedback_base_url="https://feedback.example.com",
-        feedback_token="spike_1_abcd",
+        feedback_token="spike_1_abcd1234",
     )
 
-    assert prepared.feedback_token == "spike_1_abcd"
+    assert prepared.feedback_token == "spike_1_abcd1234"
     assert prepared.text.startswith("收到（by明哥分身）")
     assert prepared.text.count("（by明哥分身）") == 1
     assert prepared.text.count("/api/dingtalk-feedback-spike") == 2
     assert "attempt_id=42" in prepared.text
+
+
+def test_prepare_outgoing_reply_text_is_idempotent_for_its_exact_callback_pair():
+    first = prepare_outgoing_reply_text(
+        reply_text="收到",
+        original_text="帮我看一下",
+        attempt_id=42,
+        feedback_base_url="https://feedback.example.com",
+        feedback_token="spike_1_abcd1234",
+    )
+
+    second = prepare_outgoing_reply_text(
+        reply_text=first.text,
+        original_text="帮我看一下",
+        attempt_id=42,
+        feedback_base_url="https://feedback.example.com",
+    )
+
+    assert second == first
+    assert second.text.count("（by明哥分身）") == 1
+    assert second.text.count("/api/dingtalk-feedback-spike") == 2
+
+
+def test_prepare_outgoing_reply_text_rejects_untrusted_feedback_callback():
+    foreign = build_feedback_spike_link_message(
+        vercel_base_url="https://foreign.example.com",
+        reply_text="收到（by明哥分身）",
+        feedback_token="foreign-token",
+    )
+
+    with pytest.raises(ValueError, match="feedback_callback_pair_invalid"):
+        prepare_outgoing_reply_text(
+            reply_text=foreign.text,
+            feedback_base_url="https://feedback.example.com",
+        )
+
+    assert extract_configured_feedback_link_context(
+        foreign.text,
+        vercel_base_url="https://feedback.example.com",
+    ) is None
+
+
+def test_prepare_outgoing_reply_text_rejects_unsigned_configured_callback_pair():
+    unsigned = build_feedback_spike_link_message(
+        vercel_base_url="https://feedback.example.com",
+        reply_text="收到",
+        feedback_token="spike_1_abcd1234",
+    )
+
+    with pytest.raises(ValueError, match="feedback_callback_pair_invalid"):
+        prepare_outgoing_reply_text(
+            reply_text=unsigned.text,
+            feedback_base_url="https://feedback.example.com",
+        )
+
+
+def test_prepare_outgoing_reply_text_rejects_credential_as_feedback_token():
+    credential_pair = build_feedback_spike_link_message(
+        vercel_base_url="https://feedback.example.com",
+        reply_text="收到（by明哥分身）",
+        feedback_token="sk-proj-ABCDEFGHIJKLMNO12345",
+    )
+
+    with pytest.raises(ValueError, match="feedback_callback_pair_invalid"):
+        prepare_outgoing_reply_text(
+            reply_text=credential_pair.text,
+            feedback_base_url="https://feedback.example.com",
+        )
+
+
+def test_prepare_outgoing_reply_text_rejects_credential_as_attempt_id():
+    credential_pair = build_feedback_spike_link_message(
+        vercel_base_url="https://feedback.example.com",
+        reply_text="收到（by明哥分身）",
+        feedback_token="spike_1780000000_deadbeef",
+        attempt_id="sk-proj-AAAAAAAAAAAAAAAAAAAAAAAA",
+    )
+
+    with pytest.raises(ValueError, match="feedback_callback_pair_invalid"):
+        prepare_outgoing_reply_text(
+            reply_text=credential_pair.text,
+            feedback_base_url="https://feedback.example.com",
+        )
 
 
 def test_callback_url_truncates_long_feedback_context():

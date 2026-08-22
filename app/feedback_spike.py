@@ -3,7 +3,7 @@ import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse
 
 from app.codex_decision import append_signature
 from app.dws_client import DwsClient
@@ -12,6 +12,7 @@ from app.leak_check import contains_forbidden_leak
 MAX_FEEDBACK_CONTEXT_CHARS = 30
 FEEDBACK_UP_LINK_LABEL = "👍 有帮助"
 FEEDBACK_DOWN_LINK_LABEL = "👎 需改进"
+FEEDBACK_CALLBACK_PATH = "/api/dingtalk-feedback-spike"
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,14 @@ class FeedbackLinkContext:
     feedback_token: str
     vercel_base_url: str
     attempt_id: str = ""
+
+
+@dataclass(frozen=True)
+class _ConfiguredFeedbackLinkPair:
+    context: FeedbackLinkContext
+    body: str
+    callback_url_up: str
+    callback_url_down: str
 
 
 def generate_feedback_token(now_seconds: int | None = None) -> str:
@@ -149,6 +158,181 @@ def extract_feedback_link_context(text: str) -> FeedbackLinkContext | None:
             attempt_id=attempt_id.strip(),
         )
     return None
+
+
+def extract_configured_feedback_link_context(
+    text: str,
+    *,
+    vercel_base_url: str,
+    link_prefix: str = "反馈：",
+) -> FeedbackLinkContext | None:
+    """Return context only for the exact callback pair emitted by this service."""
+    pair = _configured_feedback_link_pair(
+        text,
+        vercel_base_url=vercel_base_url,
+        link_prefix=link_prefix,
+    )
+    return pair.context if pair is not None else None
+
+
+def sanitize_configured_feedback_links(
+    value: object,
+    *,
+    vercel_base_url: str,
+    link_prefix: str = "反馈：",
+) -> object:
+    """Remove only a structurally exact service callback pair before leak checks."""
+    if isinstance(value, dict):
+        return {
+            key: sanitize_configured_feedback_links(
+                item,
+                vercel_base_url=vercel_base_url,
+                link_prefix=link_prefix,
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            sanitize_configured_feedback_links(
+                item,
+                vercel_base_url=vercel_base_url,
+                link_prefix=link_prefix,
+            )
+            for item in value
+        ]
+    if isinstance(value, tuple):
+        return tuple(
+            sanitize_configured_feedback_links(
+                item,
+                vercel_base_url=vercel_base_url,
+                link_prefix=link_prefix,
+            )
+            for item in value
+        )
+    if not isinstance(value, str) or FEEDBACK_CALLBACK_PATH not in value:
+        return value
+    pair = _configured_feedback_link_pair(
+        value,
+        vercel_base_url=vercel_base_url,
+        link_prefix=link_prefix,
+    )
+    if pair is None:
+        raise ValueError("feedback_callback_pair_invalid")
+    return pair.body + "\n\n[service-generated feedback callbacks]"
+
+
+def _configured_feedback_link_pair(
+    text: str,
+    *,
+    vercel_base_url: str,
+    link_prefix: str,
+) -> _ConfiguredFeedbackLinkPair | None:
+    if not vercel_base_url:
+        return None
+    up_marker = f"\n\n{link_prefix}[{FEEDBACK_UP_LINK_LABEL}]("
+    body, marker, link_text = text.rpartition(up_marker)
+    down_marker = f")｜[{FEEDBACK_DOWN_LINK_LABEL}]("
+    up_url, separator, down_with_closing = link_text.partition(down_marker)
+    if (
+        not marker
+        or not body.strip()
+        or append_signature(body) != body.strip()
+        or not separator
+        or not down_with_closing.endswith(")")
+    ):
+        return None
+    down_url = down_with_closing[:-1]
+    expected_base = urlparse(normalize_vercel_base_url(vercel_base_url))
+    expected_path = f"{expected_base.path.rstrip('/')}{FEEDBACK_CALLBACK_PATH}"
+    up_query = _configured_callback_query(
+        up_url,
+        expected_base=expected_base,
+        expected_path=expected_path,
+        expected_rating="up",
+    )
+    down_query = _configured_callback_query(
+        down_url,
+        expected_base=expected_base,
+        expected_path=expected_path,
+        expected_rating="down",
+    )
+    if up_query is None or down_query is None:
+        return None
+    up_without_rating = {key: value for key, value in up_query.items() if key != "rating"}
+    down_without_rating = {
+        key: value for key, value in down_query.items() if key != "rating"
+    }
+    if up_without_rating != down_without_rating:
+        return None
+    token = up_query["feedback_token"].strip()
+    if not _is_generated_feedback_token(token):
+        return None
+    return _ConfiguredFeedbackLinkPair(
+        context=FeedbackLinkContext(
+            feedback_token=token,
+            vercel_base_url=normalize_vercel_base_url(vercel_base_url),
+            attempt_id=up_query.get("attempt_id", "").strip(),
+        ),
+        body=body,
+        callback_url_up=up_url,
+        callback_url_down=down_url,
+    )
+
+
+def _configured_callback_query(
+    url: str,
+    *,
+    expected_base,
+    expected_path: str,
+    expected_rating: str,
+) -> dict[str, str] | None:
+    parsed = urlparse(url)
+    if (
+        parsed.scheme != expected_base.scheme
+        or parsed.netloc != expected_base.netloc
+        or parsed.path != expected_path
+        or parsed.params
+        or parsed.fragment
+    ):
+        return None
+    fields = parse_qsl(parsed.query, keep_blank_values=True)
+    query = dict(fields)
+    allowed_fields = {
+        "feedback_token",
+        "rating",
+        "attempt_id",
+        "original_text",
+        "reply_text",
+    }
+    if (
+        len(query) != len(fields)
+        or not set(query).issubset(allowed_fields)
+        or query.get("rating") != expected_rating
+        or not query.get("feedback_token", "").strip()
+        or any(
+            contains_forbidden_leak(query.get(field_name, ""))
+            for field_name in ("attempt_id", "original_text", "reply_text")
+        )
+    ):
+        return None
+    return query
+
+
+def _is_generated_feedback_token(value: str) -> bool:
+    prefix, separator, remainder = value.partition("_")
+    timestamp, second_separator, nonce = remainder.partition("_")
+    return (
+        prefix == "spike"
+        and bool(separator)
+        and bool(second_separator)
+        and timestamp.isascii()
+        and timestamp.isdecimal()
+        and 1 <= len(timestamp) <= 12
+        and len(nonce) == 8
+        and nonce == nonce.casefold()
+        and all(character in "0123456789abcdef" for character in nonce)
+        and not contains_forbidden_leak(value)
+    )
 
 
 def contains_forbidden_leak_outside_feedback_links(
@@ -269,6 +453,21 @@ def prepare_outgoing_reply_text(
     feedback_link_prefix: str = "反馈：",
     feedback_link_appender: Callable[..., FeedbackReplyText] = append_feedback_links,
 ) -> PreparedOutgoingReplyText:
+    if feedback_base_url:
+        existing_pair = _configured_feedback_link_pair(
+            reply_text,
+            vercel_base_url=feedback_base_url,
+            link_prefix=feedback_link_prefix,
+        )
+        if existing_pair is not None:
+            return PreparedOutgoingReplyText(
+                feedback_token=existing_pair.context.feedback_token,
+                text=reply_text,
+                callback_url_up=existing_pair.callback_url_up,
+                callback_url_down=existing_pair.callback_url_down,
+            )
+        if FEEDBACK_CALLBACK_PATH in reply_text:
+            raise ValueError("feedback_callback_pair_invalid")
     text = append_signature(reply_text)
     if not feedback_base_url:
         return PreparedOutgoingReplyText(feedback_token="", text=text)
