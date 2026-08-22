@@ -1,5 +1,11 @@
 # Changelog
 
+- Permit an unknown Audit run to start its fresh, read-only reconciliation when
+  the original provider attempt durably crossed the runtime effect boundary but
+  crashed before emitting a normalized tool event. This closes the prior
+  `unknown recovery agent run is not safely claimed` dead end without allowing
+  any replay or new external write.
+
 - Continue an unknown Audit through its fresh, isolated read-only
   reconciliation even when the interrupted run did not persist a Codex session
   ID. The original unknown effect remains unknown unless readback proves it;

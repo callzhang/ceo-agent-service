@@ -2457,6 +2457,58 @@ def test_unknown_reconciliation_event_limit_defers_the_next_read_only_window(tmp
     assert error["retryable"] is True
 
 
+def test_unknown_recovery_can_start_after_runtime_effect_boundary_without_tool_event(
+    tmp_path,
+):
+    """A crashed provider may lose its session after the effect boundary.
+
+    The runtime-attempt boundary is durable evidence that a read-only Audit
+    reconciliation is required, even before the provider emitted a normalized
+    tool event.  It must not be rejected solely because the per-tool counters
+    are still zero.
+    """
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    initial = store.claim_agent_runtime_attempt(
+        run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+    )
+    running = store.mark_agent_runtime_attempt_running_once(initial.id)
+    store.note_runtime_attempt_effect_started(running.id)
+    store.fail_agent_runtime_attempt(
+        running.id,
+        "unclassified",
+        "runtime_unclassified",
+        False,
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "runtime_failed_route_effect_requires_reconciliation", "retryable": True},
+        owner="audit",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="audit-recovery")
+
+    recovery = store.claim_unknown_recovery_agent_runtime_attempt(
+        claim.run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="audit-recovery",
+    )
+
+    assert claim.claimed is True
+    assert recovery.start_acquired is True
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.effect_started_count == 0
+    assert persisted.side_effect_state == "unknown"
+
+
 def test_event_limited_unknown_run_remains_due_for_read_only_recovery(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)

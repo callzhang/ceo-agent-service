@@ -4983,6 +4983,13 @@ class AutoReplyStore:
                     (agent_run_id,),
                 ).fetchone()
                 if unknown_recovery_owner:
+                    runtime_effect_boundary = db.execute(
+                        "select 1 from agent_runtime_attempts "
+                        "where agent_run_id=? and workload_kind='agent_run' "
+                        "and workload_key=? and first_effect_started_at<>'' "
+                        "limit 1",
+                        (agent_run_id, str(agent_run_id)),
+                    ).fetchone()
                     if (
                         run is None
                         or run["status"] != "unknown"
@@ -4996,7 +5003,16 @@ class AutoReplyStore:
                             SideEffectState.UNKNOWN.value,
                             SideEffectState.CONFIRMED.value,
                         }
-                        or int(run["effect_started_count"]) <= 0
+                        # A provider crash can happen after the runtime boundary
+                        # was durably crossed but before a normalized tool event
+                        # increments the per-effect counters.  That boundary is
+                        # sufficient to permit *only* fresh read-only
+                        # reconciliation; rejecting it creates an unrecoverable
+                        # `unknown` with no execution path.
+                        or (
+                            int(run["effect_started_count"]) <= 0
+                            and runtime_effect_boundary is None
+                        )
                         or run["lease_owner"] != unknown_recovery_owner
                         or run["lease_expires_at"] <= now_text
                         or int(run["reconciliation_suspended"]) != 0
