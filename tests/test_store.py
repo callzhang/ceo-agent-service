@@ -10762,7 +10762,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-22.1"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-23.1"
     assert {
         "lease_owner",
         "lease_expires_at",
@@ -10772,6 +10772,31 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
         "result_schema_id",
         "result_envelope_json",
     } <= columns
+    assert reopened._schema_is_current() is True
+
+
+def test_current_schema_reopens_and_adds_agent_run_recovery_index(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "current-version-missing-recovery-index.sqlite3"
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        db.execute("drop index idx_reply_attempts_agent_run_recovery")
+
+    assert store._schema_is_current() is False
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+
+    reopened = AutoReplyStore(db_path)
+
+    with reopened._connect() as db:
+        index_names = {
+            row["name"]
+            for row in db.execute(
+                "select name from sqlite_master where type='index'"
+            )
+        }
+
+    assert "idx_reply_attempts_agent_run_recovery" in index_names
     assert reopened._schema_is_current() is True
 
 
