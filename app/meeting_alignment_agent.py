@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from app.agent_runtime_router import (
     ApprovedCodexCommandFactory,
+    READ_ONLY_BACKGROUND_AGENT_BOUNDARY,
     RoutedCodexExecution,
     RoutedCodexExecutionError,
     RoutedResultCodec,
@@ -119,7 +120,8 @@ class MeetingAlignmentCodexRunner:
                 command_factory=ApprovedCodexCommandFactory.read_only_meeting(
                     developer_instructions=(
                         "Return exactly one MeetingAlignmentDecision JSON object. "
-                        "Use only reviewed read tools."
+                        "Use only reviewed read tools.\n\n"
+                        + READ_ONLY_BACKGROUND_AGENT_BOUNDARY
                     ),
                     output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
                     use_output_schema=True,

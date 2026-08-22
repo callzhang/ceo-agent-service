@@ -3405,6 +3405,9 @@ def test_task_agent_codex_runner_uses_reviewed_read_only_factory():
         routed.calls[0]["command_factory"]._approved_policy.effect_mode
         == "read_only"
     )
+    assert "Do not invoke generic shell or exec tools" in (
+        routed.calls[0]["command_factory"]._developer_instructions
+    )
 
 
 def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract():

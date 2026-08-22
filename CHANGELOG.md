@@ -1,5 +1,11 @@
 # Changelog
 
+- Give isolated Task and Meeting background decisions the same explicit
+  preloaded-context boundary as Consumer and Audit turns. They no longer try
+  to reopen `AGENT.md` or Skill files through generic `exec`, which had been
+  correctly rejected as an unreviewed runtime effect before a decision could
+  be produced.
+
 - Permit an unknown Audit run to start its fresh, read-only reconciliation when
   the original provider attempt durably crossed the runtime effect boundary but
   crashed before emitting a normalized tool event. This closes the prior

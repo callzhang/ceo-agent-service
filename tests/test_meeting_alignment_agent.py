@@ -177,6 +177,9 @@ def test_meeting_runner_routes_persisted_run_fresh_with_exact_capabilities(tmp_p
             "reviewed_read_tools",
         }
     )
+    assert "Do not invoke generic shell or exec tools" in (
+        call["command_factory"]._developer_instructions
+    )
     assert decision.action == "no_action"
     assert runner.last_session_id == "meeting-session"
 

@@ -188,6 +188,14 @@ _READ_ONLY_DISABLED_DYNAMIC_FEATURES = (
 )
 
 
+READ_ONLY_BACKGROUND_AGENT_BOUNDARY = """
+This is an isolated, read-only background decision. The service has already
+provided the applicable shared rules and Skill material in this turn. Do not invoke generic shell or exec tools to reopen AGENT.md, SKILL.md, or any other
+local file. For evidence not already supplied, use only the allowed
+`agent_cli` reviewed-read tools; do not attempt a write or a substitute tool.
+""".strip()
+
+
 @dataclass(frozen=True, slots=True)
 class _ApprovedExecutionPolicy:
     effect_mode: ExecutionEffectMode

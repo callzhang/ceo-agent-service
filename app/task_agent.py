@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from app.agent_runtime_router import (
     ApprovedCodexCommandFactory,
+    READ_ONLY_BACKGROUND_AGENT_BOUNDARY,
     RoutedCodexExecution,
     RoutedCodexExecutionError,
     RoutedResultCodec,
@@ -162,7 +163,8 @@ class TaskAgentCodexRunner:
                 command_factory=ApprovedCodexCommandFactory.read_only_task(
                     developer_instructions=(
                         "Return exactly one TaskAgentDecision JSON object. "
-                        "Use only reviewed read tools."
+                        "Use only reviewed read tools.\n\n"
+                        + READ_ONLY_BACKGROUND_AGENT_BOUNDARY
                     ),
                 ),
                 parser=_encode_task_agent_result,
