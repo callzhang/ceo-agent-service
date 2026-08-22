@@ -9673,6 +9673,22 @@ class AutoReplyStore:
                 join agent_runs as parents on parents.id=audits.parent_agent_run_id
                 where tasks.channel=?
                   and tasks.status='done'
+                  and not exists (
+                      select 1
+                      from sent_replies as sent
+                      where sent.conversation_id=tasks.conversation_id
+                        and sent.trigger_message_id=tasks.trigger_message_id
+                  )
+                  and not exists (
+                      select 1
+                      from agent_execution_receipts as receipts
+                      join agent_runs as receipt_runs
+                        on receipt_runs.id=receipts.agent_run_id
+                      where receipt_runs.reply_task_id=tasks.id
+                        and receipts.completed=1
+                        and receipts.persisted=1
+                        and receipts.safe_to_confirm=1
+                  )
                   and (
                       tasks.recovery_code<>?
                       or not exists (

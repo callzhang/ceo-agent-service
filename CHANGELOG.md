@@ -11,7 +11,9 @@
   without a confirmed Audit effect is reopened rather than being mistaken for
   successful delivery. The delayed-message annotation now updates both
   `payload.content` and `payload.text` contracts, including their executable
-  argv and expected readback text.
+  argv and expected readback text. Replay eligibility is independent of action
+  type, but an existing `sent_replies` entry or safe persisted execution receipt
+  for the same trigger is treated as successful delivery and is not resent.
 
 - Automatically reopen a historical Audit failure exactly once when its
   Consumer parent has a durable proposal and the whole execution generation is
