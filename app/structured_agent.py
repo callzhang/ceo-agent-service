@@ -194,12 +194,28 @@ def parse_agent_envelope(raw: str) -> AgentEnvelope:
             if "kind" in payload and "user_response" in payload:
                 return AgentEnvelope.model_validate(payload)
             item = payload.get("item")
-            if isinstance(item, dict) and isinstance(item.get("text"), str):
-                return _parse_agent_envelope_payload(json.loads(item["text"]))
+            item_text = _agent_message_text(item)
+            if item_text is not None:
+                return _parse_agent_envelope_payload(json.loads(item_text))
             message = payload.get("message")
             if isinstance(message, str) and message.strip().startswith("{"):
                 return _parse_agent_envelope_payload(json.loads(message))
     raise ValueError("no valid AgentEnvelope found")
+
+
+def _agent_message_text(item: object) -> str | None:
+    if not isinstance(item, dict):
+        return None
+    text = item.get("text")
+    if isinstance(text, str):
+        return text
+    content = item.get("content")
+    if not isinstance(content, list):
+        return None
+    for part in reversed(content):
+        if isinstance(part, dict) and isinstance(part.get("text"), str):
+            return part["text"]
+    return None
 
 
 def _no_reply_shorthand_envelope(payload: dict) -> AgentEnvelope | None:
