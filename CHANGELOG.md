@@ -1,11 +1,11 @@
 # Changelog
 
-- Recover legacy, terminal `audit_recovery_session_missing` chat deliveries by
-  cloning their completed Consumer decision into a fresh execution generation.
-  The recovered Audit now freezes that decision: it may execute only its
-  authorized chat command and target-matched readback, never request a new
-  Consumer proposal. Any prior effect, receipt, delivery, non-chat action,
-  calendar, or other order-sensitive action stays outside this automatic path.
+- Replay every legacy, terminal `audit_recovery_session_missing` delivery by
+  cloning its completed Consumer decision into a fresh execution generation.
+  The recovered Audit freezes that decision and executes its authorized external
+  action with target-matched readback, without requesting a new Consumer
+  proposal. Delayed text replays append `原消息生成于 YYYY-M-D HH:MM` and rotate
+  an existing idempotency key so the retry is an explicit new delivery.
 
 - Automatically reopen a historical Audit failure exactly once when its
   Consumer parent has a durable proposal and the whole execution generation is

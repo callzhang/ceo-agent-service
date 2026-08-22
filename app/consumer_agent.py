@@ -666,7 +666,8 @@ def audit_developer_instructions(
     delivery_boundary = (
         "This is a frozen delivery retry. Consumer A's persisted proposal is an "
         "immutable business decision for this turn: do not reconsider it, request "
-        "a revision, or call Consumer A. Execute exactly its authorized chat write "
+        "a revision, or call Consumer A. Execute exactly its authorized external "
+        "action "
         "once, then perform the required target-matched readback. If execution or "
         "readback cannot complete, return failed; do not return revision_required "
         "or needs_human.\n\n"

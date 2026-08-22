@@ -14,6 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
@@ -165,6 +166,21 @@ MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR = (
 )
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
+
+
+def _replace_text_in_json(value: object, old: str, new: str) -> object:
+    """Replace one persisted proposal text everywhere its verification names it."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            value[key] = _replace_text_in_json(child, old, new)
+        return value
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            value[index] = _replace_text_in_json(child, old, new)
+        return value
+    if isinstance(value, str):
+        return value.replace(old, new)
+    return value
 
 
 class OrgUserProfile(BaseModel):
@@ -9624,61 +9640,52 @@ class AutoReplyStore:
             recovered.append(int(row["id"]))
         return recovered
 
-    def recover_terminal_sessionless_audit_chat_deliveries(
+    def recover_terminal_sessionless_audit_deliveries(
         self,
         *,
         channel: str,
+        now: datetime | None = None,
     ) -> list[int]:
-        """Reopen legacy sessionless Audit chat deliveries with their saved decision.
+        """Replay legacy sessionless Audit deliveries with their saved decision.
 
         Older releases terminalized a no-session unknown Audit as
-        ``audit_recovery_session_missing``.  That is a recovery defect, not a
-        decision failure, when no effect boundary, receipt, or delivery exists.
-        Clone only the completed Consumer proposal into a fresh generation so
-        that Audit can apply today's controlled write and readback rules.  The
-        narrow native-command shape deliberately excludes calendar, OA, and
-        every other order-sensitive action.
+        ``audit_recovery_session_missing``.  The explicit replay policy reuses
+        the persisted Consumer decision for every affected action type.  A
+        delayed text delivery identifies its original message time so recipients
+        can distinguish the replay from a newly generated instruction.
         """
-        recovery_code = "legacy_sessionless_audit_chat_delivery_retry"
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+        recovery_code = "legacy_sessionless_audit_delivery_replay"
+        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
             rows = db.execute(
                 """
                 select tasks.id as task_id,
                        tasks.execution_generation as task_generation,
+                       tasks.trigger_create_time,
                        audits.id as audit_run_id,
                        parents.proposal_revision,
                        parents.final_result_json as consumer_result_json,
                        parents.tool_events_json as consumer_tool_events_json
                 from reply_tasks as tasks
                 join agent_runs as audits on audits.reply_task_id=tasks.id
+                left join reply_attempts as attempts
+                  on attempts.agent_run_id=audits.id
+                 and attempts.send_error='audit_recovery_session_missing'
                 join agent_runs as parents on parents.id=audits.parent_agent_run_id
                 where tasks.channel=?
                   and tasks.status='done'
                   and tasks.recovery_code<>?
-                  and audits.execution_generation=tasks.execution_generation
-                  and audits.id=(
-                      select max(latest.id)
-                      from agent_runs as latest
-                      where latest.reply_task_id=tasks.id
-                        and latest.execution_generation=tasks.execution_generation
-                  )
                   and audits.role='audit'
                   and audits.status='completed'
-                  and audits.side_effect_state='unknown'
-                  and audits.effect_started_count=0
-                  and audits.effect_completed_count=0
-                  and audits.effect_failed_count=0
-                  and audits.effect_receipt_count=0
-                  and audits.effect_unreviewed_count=0
-                  and json_valid(audits.final_result_json)=1
-                  and json_extract(
-                      audits.final_result_json, '$.error.code'
-                  )='audit_recovery_session_missing'
-                  and json_extract(
-                      audits.final_result_json, '$.side_effect_state'
-                  )='none'
+                  and (
+                      attempts.id is not null
+                      or (
+                          json_valid(audits.final_result_json)=1
+                          and json_extract(
+                              audits.final_result_json, '$.error.code'
+                          )='audit_recovery_session_missing'
+                      )
+                  )
                   and parents.reply_task_id=tasks.id
-                  and parents.execution_generation=tasks.execution_generation
                   and parents.role='consumer'
                   and parents.status='completed'
                   and parents.proposal_revision=audits.proposal_revision
@@ -9686,36 +9693,6 @@ class AutoReplyStore:
                   and json_extract(
                       parents.final_result_json, '$.outcome'
                   )='proposal'
-                  and json_array_length(
-                      json_extract(parents.final_result_json, '$.proposal.actions')
-                  )=1
-                  and json_extract(
-                      parents.final_result_json,
-                      '$.proposal.actions[0].payload.argv[0]'
-                  )='dws'
-                  and json_extract(
-                      parents.final_result_json,
-                      '$.proposal.actions[0].payload.argv[1]'
-                  )='chat'
-                  and not exists (
-                      select 1 from agent_effect_intents as intents
-                      where intents.agent_run_id=audits.id
-                        and intents.state in ('dispatched', 'acknowledged')
-                  )
-                  and not exists (
-                      select 1 from sent_replies as sent
-                      where sent.channel=tasks.channel
-                        and sent.conversation_id=tasks.conversation_id
-                        and sent.trigger_message_id=tasks.trigger_message_id
-                  )
-                  and not exists (
-                      select 1
-                      from agent_execution_receipts as receipts
-                      join agent_runs as receipt_runs on receipt_runs.id=receipts.agent_run_id
-                      where receipt_runs.reply_task_id=tasks.id
-                        and receipt_runs.execution_generation=tasks.execution_generation
-                        and receipts.completed=1 and receipts.persisted=1
-                  )
                   and not exists (
                       select 1 from agent_runs as other_runs
                       where other_runs.reply_task_id=tasks.id
@@ -9726,13 +9703,19 @@ class AutoReplyStore:
                             or other_runs.side_effect_state<>'none'
                         )
                   )
-                order by tasks.id
+                order by audits.id, attempts.id
                 """,
                 (channel, recovery_code),
             ).fetchall()
             recovered: list[int] = []
             for row in rows:
                 next_generation = uuid4().hex
+                consumer_result_json = self._sessionless_replay_result_json(
+                    str(row["consumer_result_json"]),
+                    trigger_create_time=str(row["trigger_create_time"]),
+                    replay_generation=next_generation,
+                    now=now_value,
+                )
                 cursor = db.execute(
                     """
                     update reply_tasks
@@ -9768,7 +9751,7 @@ class AutoReplyStore:
                         int(row["task_id"]),
                         next_generation,
                         int(row["proposal_revision"]),
-                        str(row["consumer_result_json"]),
+                        consumer_result_json,
                         str(row["consumer_tool_events_json"]),
                         now_text,
                         now_text,
@@ -9776,19 +9759,54 @@ class AutoReplyStore:
                         now_text,
                     ),
                 )
-                db.execute(
-                    """
-                    update agent_runs
-                    set side_effect_state='none', updated_at=?
-                    where id=? and status='completed' and side_effect_state='unknown'
-                      and effect_started_count=0 and effect_completed_count=0
-                      and effect_failed_count=0 and effect_receipt_count=0
-                      and effect_unreviewed_count=0
-                    """,
-                    (now_text, int(row["audit_run_id"])),
-                )
                 recovered.append(int(row["task_id"]))
             return recovered
+
+    @staticmethod
+    def _sessionless_replay_result_json(
+        consumer_result_json: str,
+        *,
+        trigger_create_time: str,
+        replay_generation: str,
+        now: datetime,
+    ) -> str:
+        """Return a replay-safe copy of a persisted Consumer proposal."""
+        result = json.loads(consumer_result_json)
+        proposal = result.get("proposal")
+        actions = proposal.get("actions") if isinstance(proposal, dict) else None
+        if not isinstance(actions, list):
+            raise ValueError("sessionless replay requires Consumer proposal actions")
+        source_time = datetime.fromisoformat(trigger_create_time).replace(
+            tzinfo=ZoneInfo("Asia/Shanghai")
+        )
+        replay_time = now.astimezone(ZoneInfo("Asia/Shanghai"))
+        notice = ""
+        if replay_time - source_time > timedelta(minutes=30):
+            notice = (
+                "原消息生成于 "
+                f"{source_time.year}-{source_time.month}-{source_time.day} "
+                f"{source_time.hour}:{source_time.minute:02d}"
+            )
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            payload = action.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            content = payload.get("content")
+            if isinstance(content, str) and notice:
+                replay_content = f"{content}\n\n{notice}"
+                _replace_text_in_json(action, content, replay_content)
+            argv = payload.get("argv")
+            if not isinstance(argv, list):
+                continue
+            for index, argument in enumerate(argv[:-1]):
+                if argument == "--idempotency-key" and isinstance(argv[index + 1], str):
+                    key_material = f"{argv[index + 1]}:{replay_generation}".encode()
+                    argv[index + 1] = (
+                        "replay-" + hashlib.sha256(key_material).hexdigest()[:24]
+                    )
+        return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
 
     def retry_failed_pre_agent_reply_task(
         self,

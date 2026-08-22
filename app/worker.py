@@ -1529,7 +1529,7 @@ class DingTalkAutoReplyWorker:
         recover_native_codex_auth_failures(self.store, channel="dingtalk")
         self.store.recover_failed_effect_free_consumer_tasks(channel="dingtalk")
         self.store.recover_failed_effect_free_audit_tasks(channel="dingtalk")
-        self.store.recover_terminal_sessionless_audit_chat_deliveries(
+        self.store.recover_terminal_sessionless_audit_deliveries(
             channel="dingtalk"
         )
         if self.store.active_codex_capacity_pause(now=self._now()):

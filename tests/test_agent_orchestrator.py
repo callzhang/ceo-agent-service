@@ -1650,7 +1650,7 @@ def test_frozen_delivery_retry_executes_saved_proposal_without_consumer_rerun(st
     with store._connect() as db:
         db.execute(
             "update reply_tasks set recovery_code=? where id=?",
-            ("legacy_sessionless_audit_chat_delivery_retry", pending_task.id),
+            ("legacy_sessionless_audit_delivery_replay", pending_task.id),
         )
     task = store.claim_reply_task(pending_task.id)
     assert task is not None

@@ -440,7 +440,7 @@ class AgentOrchestrator:
                     consumer_state.proposal,
                     frozen_delivery_retry=(
                         task.recovery_code
-                        == "legacy_sessionless_audit_chat_delivery_retry"
+                        == "legacy_sessionless_audit_delivery_replay"
                     ),
                 )
             latest = audits[-1]

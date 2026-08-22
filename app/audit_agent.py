@@ -1327,7 +1327,7 @@ def _frozen_delivery_retry_prompt(
         "FROZEN DELIVERY RETRY: the persisted Consumer proposal is the immutable "
         "business decision for this turn. Do not reconsider its content, return "
         "revision_required, or ask Consumer A to generate a replacement. Execute "
-        "only the exact authorized chat action below once through "
+        "only the exact authorized external action below once through "
         "agent_cli.execute_reviewed_write, then perform its target-matched readback. "
         "If either step cannot complete, return failed with a stable error code; do "
         "not substitute another action or target.\n\n"
