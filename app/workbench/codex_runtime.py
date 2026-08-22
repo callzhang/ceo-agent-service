@@ -709,7 +709,7 @@ class CodexRuntime:
             session_id=provider_session_ref or None,
             image_paths=validated_images,
             use_output_schema=False,
-            approval_policy="untrusted",
+            approval_policy="on-failure",
             use_approval_bypass=True,
             preserve_native_model_config=True,
             preserve_native_instructions=True,

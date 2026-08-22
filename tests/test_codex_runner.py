@@ -91,6 +91,21 @@ def test_codex_command_supports_strict_read_only_policy(tmp_path: Path):
     assert "Read-only invocation. Do not write." in _developer_instructions_arg(command)
 
 
+def test_codex_command_uses_current_effectful_approval_policy(tmp_path: Path):
+    runner = CodexRunner(workspace=tmp_path, codex_bin="codex")
+
+    command = runner.build_command(prompt="hello", session_id=None)
+
+    assert 'approval_policy="on-failure"' in command
+    assert 'approval_policy="untrusted"' not in command
+    assert 'approvals_reviewer="auto_review"' in command
+
+    with pytest.raises(ValueError, match="unsupported approval policy"):
+        runner.build_command(
+            prompt="hello", session_id=None, approval_policy="untrusted"
+        )
+
+
 def test_native_read_fixture_command_ignores_user_config_and_exposes_only_reads(
     tmp_path: Path,
 ):
@@ -132,7 +147,7 @@ def test_native_read_fixture_command_ignores_user_config_and_exposes_only_reads(
     assert "features.apps=false" in isolated
     assert "tools.enabled_tools=[]" in isolated
     assert 'web_search="disabled"' in isolated
-    assert 'approval_policy="untrusted"' in isolated
+    assert 'approval_policy="on-failure"' in isolated
     assert 'approvals_reviewer="auto_review"' in isolated
     assert (
         'mcp_servers.agent_cli.enabled_tools=["read_skill","execute_reviewed_read"]'
@@ -792,7 +807,7 @@ def test_builds_new_thread_command(tmp_path: Path):
         "-c",
         'model_reasoning_effort="medium"',
         "-c",
-        'approval_policy="untrusted"',
+        'approval_policy="on-failure"',
         "-c",
         'approvals_reviewer="auto_review"',
         "-c",
@@ -827,7 +842,7 @@ def test_builds_resume_command(tmp_path: Path):
         "-c",
         'model_reasoning_effort="medium"',
         "-c",
-        'approval_policy="untrusted"',
+        'approval_policy="on-failure"',
         "-c",
         'approvals_reviewer="auto_review"',
         "-c",

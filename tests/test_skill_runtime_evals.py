@@ -1041,7 +1041,7 @@ def test_live_command_is_isolated_and_read_only(role: str, tmp_path: Path):
 
     assert command[:2] == ["codex", "exec"]
     assert_isolated_read_only_fixture_command(command)
-    assert 'approval_policy="untrusted"' in command
+    assert 'approval_policy="on-failure"' in command
     assert 'approvals_reviewer="auto_review"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     if role == "audit":

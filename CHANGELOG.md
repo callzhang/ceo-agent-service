@@ -1,5 +1,11 @@
 # Changelog
 
+- Update effectful Codex command construction for Codex CLI 0.149: use its
+  supported `on-failure` approval policy instead of the removed `untrusted`
+  value. OAuth and service-API Audit execution can now start normally while
+  retaining automatic review, controlled MCP tools, and one-shot write
+  authorization.
+
 - Give isolated Task and Meeting background decisions the same explicit
   preloaded-context boundary as Consumer and Audit turns. They no longer try
   to reopen `AGENT.md` or Skill files through generic `exec`, which had been

@@ -454,7 +454,7 @@ class ApprovedCodexCommandFactory:
             image_paths=list(self._image_paths),
             output_schema_path=self._output_schema_path,
             use_output_schema=self._use_output_schema,
-            approval_policy="never" if read_only else "untrusted",
+            approval_policy="never" if read_only else "on-failure",
             developer_instructions=self._developer_instructions,
             use_approval_bypass=not read_only,
             sandbox_mode="read-only" if read_only else None,

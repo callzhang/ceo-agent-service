@@ -218,7 +218,7 @@ class CodexRunner:
         image_paths: list[Path] | None = None,
         output_schema_path: Path | None = None,
         use_output_schema: bool = True,
-        approval_policy: str = "untrusted",
+        approval_policy: str = "on-failure",
         developer_instructions: str | None = None,
         use_approval_bypass: bool = True,
         preserve_native_model_config: bool = False,
@@ -233,7 +233,7 @@ class CodexRunner:
         sandbox_mode: str | None = None,
         skip_git_repo_check: bool = False,
     ) -> list[str]:
-        if approval_policy not in {"untrusted", "never"}:
+        if approval_policy not in {"on-failure", "never"}:
             raise ValueError("unsupported approval policy")
         if sandbox_mode not in {
             None,
@@ -281,7 +281,7 @@ class CodexRunner:
                 _config_string("approval_policy", approval_policy),
                 *(
                     ["-c", 'approvals_reviewer="auto_review"']
-                    if approval_policy == "untrusted"
+                    if approval_policy == "on-failure"
                     else []
                 ),
             ]

@@ -1524,7 +1524,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         output_schema_path=None,
                         use_output_schema=False,
                         approval_policy=(
-                            "untrusted" if allow_effectful_tools else "never"
+                            "on-failure" if allow_effectful_tools else "never"
                         ),
                         developer_instructions=developer_instructions,
                         use_approval_bypass=allow_effectful_tools,

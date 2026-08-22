@@ -694,14 +694,14 @@ class CodexDecisionRunner:
         timeout_seconds: int = 1200,
         idle_timeout_seconds: int = 900,
         codex_home: Path | None = None,
-        approval_policy: str = "untrusted",
+        approval_policy: str = "on-failure",
         use_approval_bypass: bool = True,
         developer_instructions: str | None = None,
         command_mutator: Callable[[list[str]], None] | None = None,
         store=None,
         routed_execution: RoutedCodexExecution | None = None,
     ):
-        if approval_policy not in {"untrusted", "never"}:
+        if approval_policy not in {"on-failure", "never"}:
             raise ValueError("unsupported approval policy")
         self.workspace = workspace
         self.codex_bin = codex_bin

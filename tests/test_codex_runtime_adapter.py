@@ -181,7 +181,7 @@ def test_adapter_builds_equivalent_route_command_options(adapter, config, tmp_pa
         image_paths=[tmp_path / "image.png"],
         output_schema_path=tmp_path / "result.schema.json",
         use_output_schema=True,
-        approval_policy="untrusted",
+        approval_policy="on-failure",
         developer_instructions="Follow the contract.",
         use_approval_bypass=True,
     )

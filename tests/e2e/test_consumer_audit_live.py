@@ -816,7 +816,7 @@ def test_native_consumer_reuses_session_and_audit_writes_controlled_sink_once(tm
         prompt=audit_prompt,
         session_id=None,
         use_output_schema=False,
-        approval_policy="untrusted",
+        approval_policy="on-failure",
         developer_instructions="You are Audit Agent B. Use only the supplied audit_sink MCP tool.",
         use_approval_bypass=True,
         preserve_native_model_config=True,

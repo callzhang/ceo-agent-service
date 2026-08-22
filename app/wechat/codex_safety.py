@@ -212,7 +212,7 @@ def make_role_agent_command(
         agent_cli_tools.insert(1, "execute_reviewed_write")
         approval_options = [
             "-c",
-            'approval_policy="untrusted"',
+            'approval_policy="on-failure"',
             "-c",
             'approvals_reviewer="auto_review"',
         ]

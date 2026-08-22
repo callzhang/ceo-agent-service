@@ -1745,7 +1745,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(
     assert command[command.index("--disable") + 1] == "plugins"
     assert "apps" in command
     assert "tools.enabled_tools=[]" in command
-    assert 'approval_policy="untrusted"' in command
+    assert 'approval_policy="on-failure"' in command
     assert 'approvals_reviewer="auto_review"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" in command
     assert (
