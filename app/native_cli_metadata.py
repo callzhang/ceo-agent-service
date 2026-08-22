@@ -458,7 +458,23 @@ def _local_read_only_segments(
 def _is_local_read_only_segment(argv: tuple[str, ...]) -> bool:
     if not argv:
         return False
-    return _is_service_read_only_python_command(argv)
+    return _is_service_read_only_python_command(argv) or _is_agent_instruction_read(
+        argv
+    )
+
+
+def _is_agent_instruction_read(argv: tuple[str, ...]) -> bool:
+    """Recognize the bounded local reads required before an agent may decide."""
+    if len(argv) != 4 or Path(argv[0]).name != "sed" or argv[1] != "-n":
+        return False
+    expression, raw_path = argv[2:]
+    if not expression.endswith("p") or not expression[:-1].replace(",", "").isdigit():
+        return False
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute() or candidate.name not in {"AGENT.md", "SKILL.md"}:
+        return False
+    trusted_roots = (Path.home() / ".agents", Path.home() / ".codex" / "skills")
+    return any(candidate.is_relative_to(root) for root in trusted_roots)
 
 
 def _is_service_read_only_python_command(argv: tuple[str, ...]) -> bool:

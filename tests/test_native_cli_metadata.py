@@ -1,6 +1,7 @@
 import hashlib
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -33,6 +34,35 @@ def test_describe_native_command_rejects_generic_local_read():
     )
 
     assert descriptor is None
+
+
+def test_describe_native_command_allows_bounded_agent_instruction_read():
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                "sed",
+                "-n",
+                "1,120p",
+                str(Path.home() / ".agents" / "AGENT.md"),
+            ],
+        }
+    )
+
+    assert descriptor is not None
+    assert descriptor.effect is EffectKind.READ_ONLY
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["sed", "-i", "", "1p", str(Path.home() / ".agents" / "AGENT.md")],
+        ["sed", "-n", "1e touch /tmp/written", str(Path.home() / ".agents" / "AGENT.md")],
+        ["sed", "-n", "1p", "/tmp/AGENT.md"],
+    ],
+)
+def test_describe_native_command_rejects_untrusted_or_effectful_instruction_read(argv):
+    assert describe_native_command({"type": "command_execution", "argv": argv}) is None
 
 
 def test_describe_native_command_rejects_arbitrary_python_even_when_not_blacklisted():
