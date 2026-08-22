@@ -286,8 +286,15 @@ class CodexRunner:
                 ),
             ]
         )
+        sandbox_options = (
+            ["-c", _config_string("sandbox_mode", sandbox_mode)]
+            if session_id and sandbox_mode
+            else ["--sandbox", sandbox_mode]
+            if sandbox_mode
+            else []
+        )
         common_options = [
-            *(["--sandbox", sandbox_mode] if sandbox_mode else []),
+            *sandbox_options,
             *(["--skip-git-repo-check"] if skip_git_repo_check else []),
             "--json",
             *(["--ignore-user-config"] if ignore_user_config else []),

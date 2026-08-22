@@ -154,6 +154,20 @@ def test_codex_command_read_only_resume_inherits_native_user_config(tmp_path: Pa
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
 
 
+def test_codex_command_read_only_resume_uses_config_sandbox_override(
+    tmp_path: Path,
+):
+    command = CodexRunner(workspace=tmp_path).build_command(
+        prompt="hello",
+        session_id="session-1",
+        approval_policy="never",
+        sandbox_mode="read-only",
+    )
+
+    assert "--sandbox" not in command
+    assert 'sandbox_mode="read-only"' in command
+
+
 def test_codex_command_can_preserve_native_model_config(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("CEO_CODEX_MODEL", "codex-MiniMax-M2.7")
     monkeypatch.setenv("CEO_CODEX_MODEL_PROVIDER", "minimax")
