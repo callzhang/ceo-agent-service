@@ -166,6 +166,36 @@ def test_parse_agent_envelope_accepts_legacy_okr_review_result():
     assert envelope.domain_payload["person_name"] == "Claire"
 
 
+def test_parse_agent_envelope_accepts_no_reply_shorthand_without_actions():
+    envelope = parse_agent_envelope(
+        json.dumps(
+            {
+                "mode": "no_reply",
+                "audit_summary": "The delayed response would be stale.",
+            }
+        )
+    )
+
+    assert envelope.kind == "no_action"
+    assert envelope.user_response.mode == "no_reply"
+    assert envelope.user_response.text == ""
+    assert envelope.system_actions == []
+    assert envelope.domain_payload == {}
+    assert envelope.audit.summary == "The delayed response would be stale."
+
+
+def test_parse_agent_envelope_rejects_no_reply_shorthand_with_extra_fields():
+    with pytest.raises(ValueError, match="no valid AgentEnvelope"):
+        parse_agent_envelope(
+            json.dumps(
+                {
+                    "mode": "no_reply",
+                    "system_actions": [],
+                }
+            )
+        )
+
+
 def test_parse_agent_envelope_normalizes_okr_review_audit_object():
     payload = {
         "kind": "okr_review",

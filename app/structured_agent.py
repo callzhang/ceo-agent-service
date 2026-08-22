@@ -188,6 +188,9 @@ def parse_agent_envelope(raw: str) -> AgentEnvelope:
     payloads = [json.loads(line) for line in raw.splitlines() if line.strip()]
     for payload in reversed(payloads):
         if isinstance(payload, dict):
+            shorthand = _no_reply_shorthand_envelope(payload)
+            if shorthand is not None:
+                return shorthand
             if "kind" in payload and "user_response" in payload:
                 return AgentEnvelope.model_validate(payload)
             item = payload.get("item")
@@ -197,6 +200,34 @@ def parse_agent_envelope(raw: str) -> AgentEnvelope:
             if isinstance(message, str) and message.strip().startswith("{"):
                 return _parse_agent_envelope_payload(json.loads(message))
     raise ValueError("no valid AgentEnvelope found")
+
+
+def _no_reply_shorthand_envelope(payload: dict) -> AgentEnvelope | None:
+    """Accept only the action-free no-reply shorthand emitted by some Codex turns."""
+    if set(payload) - {"mode", "audit_summary"}:
+        return None
+    if payload.get("mode") != "no_reply":
+        return None
+    summary = payload.get("audit_summary", "Agent selected no reply.")
+    if not isinstance(summary, str) or not summary.strip():
+        return None
+    return AgentEnvelope.model_validate(
+        {
+            "kind": "no_action",
+            "user_response": {
+                "mode": "no_reply",
+                "text": "",
+                "sensitivity_kind": "general",
+            },
+            "system_actions": [],
+            "domain_payload": {},
+            "audit": {
+                "summary": summary.strip(),
+                "documents": [],
+                "confidence": 0.5,
+            },
+        }
+    )
 
 
 def _parse_agent_envelope_payload(payload: object) -> AgentEnvelope:
