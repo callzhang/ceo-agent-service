@@ -1,5 +1,11 @@
 # Changelog
 
+- Close expired, effect-free Codex task-runtime leases whose parent task run is
+  already terminal. Startup and routine work-item processing now recover these
+  abandoned attempts, so a historical `runtime_attempt_active` cannot remain
+  permanently open after its input retries under a new task-run ID. Attempts
+  that crossed the external-effect boundary remain untouched for reconciliation.
+
 - Add the Agent-run recovery lookup index used by the periodic legacy-delivery
   scan.  The service no longer repeatedly scans the large reply-attempt history
   for every completed Audit run, so an outstanding unknown Audit reconciliation

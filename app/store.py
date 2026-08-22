@@ -5676,6 +5676,37 @@ class AutoReplyStore:
                 self._runtime_attempt_for_transition(db, row["id"])
             )
 
+    def recover_expired_terminal_task_runtime_attempts(
+        self,
+        *,
+        now: str | datetime | None = None,
+    ) -> int:
+        """Close read-only task attempts abandoned after their task run ended."""
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts as attempt
+                set status='failed', failure_class='process',
+                    failure_code='runtime_lease_expired', failover_permitted=1,
+                    lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
+                where attempt.agent_run_id is null
+                  and attempt.workload_kind='task'
+                  and attempt.workload_key not like '%:%'
+                  and attempt.status in ('starting', 'running')
+                  and attempt.first_effect_started_at=''
+                  and attempt.lease_expires_at!=''
+                  and attempt.lease_expires_at<=?
+                  and exists (
+                      select 1
+                      from task_agent_runs as task_run
+                      where cast(task_run.id as text)=attempt.workload_key
+                        and task_run.status in ('completed', 'failed')
+                  )
+                """,
+                (now_text, now_text, now_text),
+            )
+            return cursor.rowcount
+
     def set_agent_runtime_attempt_session(
         self,
         attempt_id: int,

@@ -1490,6 +1490,86 @@ def test_task_agent_run_begin_is_concurrent_and_finish_is_idempotent(tmp_path: P
     assert row["finished_at"]
 
 
+def test_expired_runtime_attempt_is_closed_after_its_task_run_is_terminal(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "terminal-task-runtime.sqlite3")
+    summary_id = store.enqueue_work_summary_input("local_file", "source", "{}")
+    store.claim_work_summary_inputs(1)
+    run_id = store.begin_task_agent_run(summary_id)
+    attempt = store.claim_runtime_operation_attempt(
+        "task",
+        str(run_id),
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="crashed-task-runtime",
+        lease_seconds=5,
+        now="2026-08-22 16:01:19",
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        attempt.id,
+        owner="crashed-task-runtime",
+        lease_seconds=5,
+        now="2026-08-22 16:01:19",
+    )
+    store.finish_task_agent_run(
+        run_id,
+        status="failed",
+        error="runtime_attempt_active",
+    )
+
+    assert store.recover_expired_terminal_task_runtime_attempts(
+        now="2026-08-22 16:01:25"
+    ) == 1
+
+    recovered = store.get_agent_runtime_attempt(attempt.id)
+    assert recovered is not None
+    assert recovered.status == "failed"
+    assert recovered.failure_code == "runtime_lease_expired"
+    assert recovered.first_effect_started_at == ""
+    assert recovered.lease_owner == ""
+    assert recovered.lease_expires_at == ""
+
+
+def test_expired_terminal_task_runtime_with_effect_evidence_is_not_closed(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "effectful-terminal-task-runtime.sqlite3")
+    summary_id = store.enqueue_work_summary_input("local_file", "source", "{}")
+    store.claim_work_summary_inputs(1)
+    run_id = store.begin_task_agent_run(summary_id)
+    attempt = store.claim_runtime_operation_attempt(
+        "task",
+        str(run_id),
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="effectful-task-runtime",
+        lease_seconds=5,
+        now="2026-08-22 16:01:19",
+    )
+    store.mark_agent_runtime_attempt_running_once(
+        attempt.id,
+        owner="effectful-task-runtime",
+        lease_seconds=5,
+        effectful=True,
+        now="2026-08-22 16:01:19",
+    )
+    store.finish_task_agent_run(run_id, status="failed", error="interrupted")
+
+    assert store.recover_expired_terminal_task_runtime_attempts(
+        now="2026-08-22 16:01:25"
+    ) == 0
+
+    untouched = store.get_agent_runtime_attempt(attempt.id)
+    assert untouched is not None
+    assert untouched.status == "running"
+    assert untouched.first_effect_started_at == "2026-08-22 16:01:19"
+
+
 def test_meeting_run_begin_is_idempotent_and_finish_closes_running_parent(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "meeting-run-lifecycle.sqlite3")
     job_id = store.upsert_meeting_alignment_job(

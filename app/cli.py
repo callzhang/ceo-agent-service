@@ -1016,6 +1016,7 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     if limit <= 0:
         print("process-work-items processed=0", flush=True)
         return 0
+    store.recover_expired_terminal_task_runtime_attempts()
     store.reset_stale_processing_work_summary_inputs(
         _work_summary_processing_stale_seconds(settings)
     )
@@ -2929,8 +2930,9 @@ def _recover_processing_work_summary_inputs_on_service_start(
     settings: WorkerSettings,
 ) -> int:
     store = AutoReplyStore(settings.db_path)
+    recovered_attempts = store.recover_expired_terminal_task_runtime_attempts()
     recovered_inputs = store.reset_processing_work_summary_inputs()
-    return len(recovered_inputs)
+    return recovered_attempts + len(recovered_inputs)
 
 
 def _normalize_user_rejected_wechat_deliveries_on_service_start(
