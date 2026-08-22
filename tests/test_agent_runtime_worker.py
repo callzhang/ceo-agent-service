@@ -2712,7 +2712,7 @@ def test_stale_worker_recovers_completed_consumer_turn_without_legacy_parsing(
     assert attempt is not None and attempt.send_status == "skipped"
 
 
-def test_worker_finalizes_unknown_audit_without_session_as_needs_human(
+def test_worker_reconciles_unknown_audit_without_session_as_needs_human(
     tmp_path: Path,
 ):
     trigger = _message("Send the reviewed message.")
@@ -2806,6 +2806,45 @@ def test_worker_finalizes_unknown_audit_without_session_as_needs_human(
             "update reply_tasks set locked_at='2026-07-29 08:00:00' where id=?",
             (task.id,),
         )
+    class ReadOnlyRecoveryAudit:
+        def __init__(self) -> None:
+            self.sessions: list[str] = []
+
+        def recover(self, _task, _context, *, run):
+            self.sessions.append(run.codex_session_id)
+            owner = "read-only-recovery"
+            recovered = store.claim_unknown_agent_run(run.id, owner=owner)
+            assert recovered.claimed
+            result = AuditAgentResult.model_validate(
+                {
+                    "outcome": "reconciled",
+                    "summary": "The external action remains ambiguous.",
+                    "proposal_revision": 0,
+                    "side_effect_state": "unknown",
+                    "feedback": None,
+                    "external_result": None,
+                    "reconciliation": [
+                        {
+                            "action_index": 0,
+                            "disposition": "ambiguous",
+                            "read_result_digest": "read-only-digest",
+                        }
+                    ],
+                    "error": {
+                        "code": "",
+                        "retryable": False,
+                        "authorization_required": False,
+                    },
+                }
+            )
+            store.persist_unknown_agent_run_result(
+                run.id,
+                result.model_dump(mode="json"),
+                owner=owner,
+                transcript_end_line=run.transcript_end_line,
+            )
+
+    audit_runner = ReadOnlyRecoveryAudit()
     worker = DingTalkAutoReplyWorker(
         store=store,
         dws=ContextOnlyDws([trigger]),
@@ -2813,7 +2852,7 @@ def test_worker_finalizes_unknown_audit_without_session_as_needs_human(
         agent_orchestrator=AgentOrchestrator(
             store=store,
             consumer=UnexpectedRoleRunner(),
-            audit=UnexpectedRoleRunner(),
+            audit=audit_runner,
         ),
         channel_gates={"dingtalk": ReadyGate("dingtalk")},
         now_provider=lambda: NOW,
@@ -2827,8 +2866,9 @@ def test_worker_finalizes_unknown_audit_without_session_as_needs_human(
     assert persisted_task is not None and persisted_task.status == "done"
     assert persisted_run is not None and persisted_run.status == "completed"
     assert persisted_run.side_effect_state == "unknown"
+    assert audit_runner.sessions == [""]
     assert attempt is not None and attempt.send_status == "needs_human"
-    assert attempt.send_error == "audit_recovery_session_missing"
+    assert attempt.send_error == "audit_recovery_ambiguous"
 
 
 def test_worker_requeues_absent_direct_mcp_recovery_without_write(tmp_path: Path):

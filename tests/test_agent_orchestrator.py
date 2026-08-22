@@ -1216,7 +1216,7 @@ def test_invalid_audit_result_with_unknown_effect_recovers_instead_of_failing_ta
     assert recovery.recovery_calls[0]["session_id"] == "audit-session-with-effect"
 
 
-def test_unknown_audit_without_session_finishes_needs_human(store):
+def test_unknown_audit_without_session_starts_read_only_recovery(store):
     pending = _task(store)
     task = store.claim_reply_task(pending.id)
     assert task is not None
@@ -1251,17 +1251,29 @@ def test_unknown_audit_without_session_finishes_needs_human(store):
         owner="crashed-audit",
     )
 
+    recovery = RecoveringScriptedAudit(
+        store,
+        _audit_result("needs_human", 0, code="reconciliation_ambiguous"),
+    )
     result = _process(
         AgentOrchestrator(
             store=store,
             consumer=ScriptedConsumer(store),
-            audit=ScriptedAudit(store),
+            audit=recovery,
         ),
         task,
     )
 
     assert result.status == "needs_human"
-    assert result.error.code == "audit_recovery_session_missing"
+    assert result.error.code == "reconciliation_ambiguous"
+    assert recovery.recovery_calls == [
+        {
+            "run_id": unknown.id,
+            "session_id": "",
+            "operation_id": audit_run.operation_id,
+            "revision": 0,
+        }
+    ]
     persisted = store.get_agent_run(unknown.id)
     assert persisted is not None and persisted.status == "completed"
     assert persisted.side_effect_state == "unknown"

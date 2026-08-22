@@ -1,5 +1,11 @@
 # Changelog
 
+- Continue an unknown Audit through its fresh, isolated read-only
+  reconciliation even when the interrupted run did not persist a Codex session
+  ID. The original unknown effect remains unknown unless readback proves it;
+  absence of an old session can no longer prematurely create
+  `audit_recovery_session_missing` or authorize a write replay.
+
 - Show a recovered terminal task on the detail page for historical
   `runtime_route_unavailable` and `runtime_unclassified` attempts. The original
   failed attempt remains immutable and visible, while its later completed task
