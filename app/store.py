@@ -9693,16 +9693,6 @@ class AutoReplyStore:
                   and json_extract(
                       parents.final_result_json, '$.outcome'
                   )='proposal'
-                  and not exists (
-                      select 1 from agent_runs as other_runs
-                      where other_runs.reply_task_id=tasks.id
-                        and other_runs.execution_generation=tasks.execution_generation
-                        and other_runs.id<>audits.id
-                        and (
-                            other_runs.status in ('running', 'unknown')
-                            or other_runs.side_effect_state<>'none'
-                        )
-                  )
                 order by audits.id, attempts.id
                 """,
                 (channel, recovery_code),

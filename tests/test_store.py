@@ -5860,6 +5860,84 @@ def test_sessionless_delivery_replay_appends_original_message_time_after_30_minu
     assert action["payload"]["argv"][-1] != "task-retry"
 
 
+def test_sessionless_delivery_replay_retries_even_after_a_confirmed_delivery(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    consumer = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    )
+    decision = {
+        "outcome": "proposal",
+        "proposal": {"actions": [{"payload": {"argv": ["dws", "chat"]}}]},
+    }
+    completed_consumer = store.complete_agent_run(
+        consumer.run.id,
+        decision,
+        owner="worker-1",
+    )
+    audit = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=completed_consumer.id,
+        operation_id=f"agent-task:{task_id}:initial:proposal:0",
+        owner="worker-1",
+    )
+    store.complete_agent_run(
+        audit.run.id,
+        {
+            "outcome": "needs_human",
+            "proposal_revision": 0,
+            "side_effect_state": "none",
+            "error": {"code": "audit_recovery_session_missing"},
+        },
+        owner="worker-1",
+        side_effect_state="unknown",
+    )
+    store.complete_reply_task(
+        task_id,
+        expected_execution_generation=task.execution_generation,
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set execution_generation='confirmed-retry' where id=?",
+            (task_id,),
+        )
+    confirmed = store.claim_agent_run(
+        task_id,
+        "confirmed-retry",
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=f"agent-task:{task_id}:confirmed-retry:proposal:0",
+        owner="worker-2",
+    )
+    store.complete_agent_run(
+        confirmed.run.id,
+        {"outcome": "executed", "proposal_revision": 0},
+        owner="worker-2",
+        side_effect_state="confirmed",
+    )
+
+    assert store.recover_terminal_sessionless_audit_deliveries(
+        channel="dingtalk"
+    ) == [task_id]
+
+
 def test_recover_failed_native_codex_auth_task_requires_no_effect_or_delivery(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
