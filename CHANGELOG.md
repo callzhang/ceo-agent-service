@@ -1,5 +1,10 @@
 # Changelog
 
+- Add the Agent-run recovery lookup index used by the periodic legacy-delivery
+  scan.  The service no longer repeatedly scans the large reply-attempt history
+  for every completed Audit run, so an outstanding unknown Audit reconciliation
+  cannot be starved by SQLite read/write contention.
+
 - Replay every legacy, terminal `audit_recovery_session_missing` delivery by
   cloning its completed Consumer decision into a fresh execution generation.
   The recovered Audit freezes that decision and executes its authorized external

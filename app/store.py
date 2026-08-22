@@ -2601,6 +2601,12 @@ class AutoReplyStore:
             )
             db.execute(
                 """
+                create index if not exists idx_reply_attempts_agent_run_recovery
+                    on reply_attempts(agent_run_id, send_error, id)
+                """
+            )
+            db.execute(
+                """
                 create index if not exists idx_sent_replies_history
                     on sent_replies(
                         conversation_id, trigger_message_id, sent_at

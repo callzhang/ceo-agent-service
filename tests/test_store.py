@@ -8913,6 +8913,7 @@ def test_history_query_has_indexes_for_correlated_reply_lookups(tmp_path: Path):
         "idx_reply_attempts_oa_history",
         "idx_reply_attempts_trigger_history",
         "idx_reply_attempts_current_trigger",
+        "idx_reply_attempts_agent_run_recovery",
         "idx_sent_replies_history",
         "idx_work_summary_inputs_updated",
     } <= index_names
