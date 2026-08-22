@@ -4617,7 +4617,7 @@ def test_consume_once_suspends_exhausted_runs_before_and_after_recovery(
     assert calls == ["backfill", "suspend", "recover", "suspend"]
 
 
-def test_due_unknown_audit_run_is_requeued_without_waiting_for_stale_timeout(
+def test_due_unknown_audit_run_does_not_requeue_active_processing_task(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -4655,11 +4655,11 @@ def test_due_unknown_audit_run_is_requeued_without_waiting_for_stale_timeout(
     recovered = worker._recover_due_unknown_agent_reply_tasks(limit=10)
 
     persisted = store.get_reply_task(task.id)
-    assert recovered == 1
+    assert recovered == 0
     assert persisted is not None
-    assert persisted.status == "pending"
+    assert persisted.status == "processing"
     assert persisted.execution_generation == task.execution_generation
-    assert persisted.error == "unknown_agent_run_reconciliation"
+    assert persisted.error == ""
 
 
 def test_due_reconciled_unknown_audit_run_does_not_requeue_active_task(

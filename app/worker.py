@@ -1789,11 +1789,14 @@ class DingTalkAutoReplyWorker:
                         run.id,
                         reason="unknown_agent_run_reconciliation",
                     )
-                elif task.status == "processing" and run.final_result_json:
-                    # The active worker has persisted a reconciliation result and
-                    # is about to terminalize it. Requeueing here races that
-                    # finalization and can turn a confirmed readback into an
-                    # avoidable agent_run_unavailable retry.
+                elif task.status == "processing":
+                    # A Consumer worker has already claimed this task.  With more
+                    # than one Consumer loop, turning it back to pending here can
+                    # repeatedly steal an active unknown-effect reconciliation
+                    # before Audit acquires its own run lease.  Startup recovery
+                    # and stale-processing recovery handle a genuinely orphaned
+                    # processing task; this scheduler must leave an active one
+                    # to its owner.
                     continue
                 else:
                     self.store.requeue_reply_task(
