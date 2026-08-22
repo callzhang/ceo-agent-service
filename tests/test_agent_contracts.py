@@ -181,6 +181,14 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
                 decision_options=_decision_options(),
             ),
         ),
+        (
+            AuditAgentWireResult,
+            _audit_wire_payload(
+                outcome="dry_run",
+                error_code="dry_run_execution_suppressed",
+                error_retryable=False,
+            ),
+        ),
         (AuditAgentWireResult, _audit_wire_payload(outcome="failed")),
         (
             AuditAgentWireResult,
@@ -481,6 +489,32 @@ def test_audit_needs_human_requires_actionable_options_and_wire_preserves_them()
     ).to_result()
 
     assert result.decision_options[0].instruction == options[0]["instruction"]
+
+
+def test_audit_dry_run_is_non_effectful_and_cannot_be_a_human_decision():
+    result = AuditAgentWireResult.model_validate(
+        _audit_wire_payload(
+            outcome="dry_run",
+            error_code="dry_run_execution_suppressed",
+            error_retryable=False,
+        )
+    ).to_result()
+
+    assert result.outcome is AuditOutcome.DRY_RUN
+    assert result.decision_options == ()
+
+    with pytest.raises(ValidationError, match="dry_run requires"):
+        AuditAgentResult.model_validate(
+            _audit_payload(
+                outcome="dry_run",
+                feedback=None,
+                error={
+                    "code": "wrong_code",
+                    "retryable": False,
+                    "authorization_required": False,
+                },
+            )
+        )
 
 
 def test_audit_revision_feedback_is_concrete_and_non_effectful():

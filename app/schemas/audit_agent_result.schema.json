@@ -85,6 +85,7 @@
         "executed",
         "revision_required",
         "needs_human",
+        "dry_run",
         "failed",
         "unknown",
         "reconciled"
@@ -249,6 +250,23 @@
             "needs_human",
             "failed"
           ]
+        },
+        "side_effect_state": {
+          "const": "none"
+        },
+        "feedback": {
+          "type": "null"
+        },
+        "external_result": {
+          "type": "null"
+        }
+      },
+      "type": "object"
+    },
+    {
+      "properties": {
+        "outcome": {
+          "const": "dry_run"
         },
         "side_effect_state": {
           "const": "none"

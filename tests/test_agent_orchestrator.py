@@ -106,6 +106,8 @@ def _audit_result(
                 "consequence": "No new external action will run.",
             },
         ]
+    elif outcome == "dry_run":
+        code = "dry_run_execution_suppressed"
     return AuditAgentResult.model_validate(
         {
             "outcome": outcome,
@@ -1506,6 +1508,21 @@ def test_expired_audit_turn_without_session_is_reclaimed_in_place(store):
     assert result.status == "executed"
     assert result.final_run_id == stale.id
     assert audit.calls[0]["turn_attempt"] == 0
+
+
+def test_dry_run_audit_finishes_without_creating_a_human_decision(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(store, _consumer_result("proposal", "candidate-0"))
+    audit = ScriptedAudit(store, _audit_result("dry_run", 0))
+
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=audit), task
+    )
+
+    assert result.status == "dry_run"
+    assert result.audit_result is not None
+    assert result.audit_result.outcome is AuditOutcome.DRY_RUN
+    assert result.audit_result.decision_options == ()
 
 
 @pytest.mark.parametrize("side_effect_state", ["unknown", "confirmed"])

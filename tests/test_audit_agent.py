@@ -983,26 +983,13 @@ def _audit_jsonl(
 
 def _dry_run_suppressed_jsonl(*, proposal_revision: int = 0) -> str:
     result = {
-        "outcome": "needs_human",
+        "outcome": "dry_run",
         "summary": "The candidate is executable but dry-run suppresses execution.",
         "proposal_revision": proposal_revision,
         "side_effect_state": "none",
         "feedback": None,
         "external_result": None,
-        "decision_options": [
-            {
-                "key": "A",
-                "label": "Execute after dry-run",
-                "instruction": "Run the verified candidate outside dry-run.",
-                "consequence": "Audit may execute the verified external action.",
-            },
-            {
-                "key": "B",
-                "label": "Keep dry-run only",
-                "instruction": "Stop after dry-run without an external action.",
-                "consequence": "No external action will run.",
-            },
-        ],
+        "decision_options": [],
         "error": {
             "code": "dry_run_execution_suppressed",
             "retryable": False,
@@ -2059,7 +2046,7 @@ def test_dry_run_audit_command_exposes_only_reviewed_read_tools(setup):
     )
 
     command = executor.commands[0]
-    assert result.result.outcome.value == "needs_human"
+    assert result.result.outcome.value == "dry_run"
     assert result.result.error.code == "dry_run_execution_suppressed"
     assert result.result.side_effect_state.value == "none"
     assert (
@@ -2069,7 +2056,7 @@ def test_dry_run_audit_command_exposes_only_reviewed_read_tools(setup):
     assert "execute_reviewed_write" not in command
     assert 'approval_policy="never"' in command
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
-    assert "dry_run_execution_suppressed" in executor.prompts[0]
+    assert "return dry_run" in executor.prompts[0]
     assert "dry_run_execution_suppressed" not in " ".join(command)
 
 

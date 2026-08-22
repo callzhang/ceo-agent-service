@@ -9129,7 +9129,7 @@ def _attempt_detail_body(
         else attempt.send_status
     )
     send_error = (
-        "受阻原因见下方“Codex reason”；该外部操作未执行。"
+        "受阻原因见下方“审计说明”；该外部操作未执行。"
         if closed_after_review
         else attempt.send_error
     )
@@ -9177,8 +9177,8 @@ def _attempt_detail_body(
         ),
         trigger_title="Trigger",
         trigger_text=_trigger_text(attempt),
-        reason_title="Codex reason",
-        reason_text=attempt.codex_reason,
+        reason_title="审计说明",
+        reason_text=attempt.audit_summary or attempt.codex_reason,
         reply_title="生成回复",
         reply_text=_attempt_detail_reply_text(attempt),
         side_html=(
@@ -9715,15 +9715,15 @@ def _needs_human_decision_card(
         for option in options
     )
     choice_section = (
-        "<p class=\"muted\">选择后会创建可恢复任务，由 Agent 审核、执行、回读并自动发布。</p>"
+        "<p class=\"muted\">请选择一项明确处理。系统会重新核验、执行并回读；每个选项会说明是否产生外部动作。</p>"
         + option_forms
         if options
         else ""
     )
     return (
         '<section class="card needs-human-card"><h2>需要你的判断</h2>'
-        '<p class="muted">已核验的事实和待决定原因：</p>'
-        f'<pre class="reply-pre">{escape(attempt.audit_summary or attempt.codex_reason)}</pre>'
+        '<p class="muted">这是无法由服务自动消除的管理分歧，不是技术报错。'
+        '请根据下方的中文选项决定如何处理；已核验事实见本页“审计摘要”。</p>'
         f"{choice_section}"
         f'<form method="post" action="{action}" class="needs-human-custom">'
         '<label>其他处理指令</label>'

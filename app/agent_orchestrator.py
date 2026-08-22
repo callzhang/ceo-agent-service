@@ -540,6 +540,8 @@ class AgentOrchestrator:
                 return _audit_terminal("executed", latest, audit_state, revision)
             if audit_state.outcome is AuditOutcome.NEEDS_HUMAN:
                 return _audit_terminal("needs_human", latest, audit_state, revision)
+            if audit_state.outcome is AuditOutcome.DRY_RUN:
+                return _audit_terminal("dry_run", latest, audit_state, revision)
             if audit_state.outcome is AuditOutcome.UNKNOWN:
                 return _audit_terminal("unknown", latest, audit_state, revision)
             if audit_state.outcome is AuditOutcome.FAILED:

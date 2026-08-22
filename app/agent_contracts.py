@@ -81,6 +81,15 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "external_result": null_value,
             }
         },
+        {
+            "type": "object",
+            "properties": {
+                "outcome": {"const": "dry_run"},
+                "side_effect_state": {"const": "none"},
+                "feedback": null_value,
+                "external_result": null_value,
+            }
+        },
     ]
 
 
@@ -182,6 +191,7 @@ class AuditOutcome(StrEnum):
     EXECUTED = "executed"
     REVISION_REQUIRED = "revision_required"
     NEEDS_HUMAN = "needs_human"
+    DRY_RUN = "dry_run"
     FAILED = "failed"
     UNKNOWN = "unknown"
     RECONCILED = "reconciled"
@@ -289,4 +299,9 @@ class AuditAgentResult(BaseModel):
                 raise ValueError("decision option keys must be unique")
         elif self.decision_options:
             raise ValueError("decision options are only valid for needs_human")
+        if self.outcome is AuditOutcome.DRY_RUN:
+            if self.error.code != "dry_run_execution_suppressed":
+                raise ValueError("dry_run requires dry_run_execution_suppressed")
+            if self.error.retryable or self.error.authorization_required:
+                raise ValueError("dry_run must not be retryable or require authorization")
         return self

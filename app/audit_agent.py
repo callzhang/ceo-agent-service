@@ -783,14 +783,25 @@ class AuditAgentRunner:
         )
         if write_authorizations and recovery_phase != "execute":
             turn_prompt += _write_authorization_prompt(write_authorizations)
+        turn_prompt += (
+            "\n\n### Needs Human Display Contract\n"
+            "Return needs_human only for a real Derek management decision. Its "
+            "summary and every decision option label, instruction, and consequence "
+            "must be concise Simplified Chinese that state the exact decision, "
+            "verified facts, Agent action, and external effect. Do not expose "
+            "technical state names or convert an unavailable dependency or dry-run "
+            "setting into needs_human."
+        )
         if self.dry_run:
             turn_prompt += (
                 "\n\n### Dry Run Context\n"
                 "Use read-only tools to complete the independent review. Return "
                 "revision_required normally when the candidate must change. When "
                 "the candidate is executable but execution is suppressed only by "
-                "dry-run, return needs_human with error code "
-                "dry_run_execution_suppressed and side_effect_state none."
+                "dry-run, return dry_run with error code "
+                "dry_run_execution_suppressed and side_effect_state none. Do not "
+                "return needs_human and do not provide decision_options: the "
+                "simulation setting is not a management decision."
             )
         return process.execute(
             run=run,

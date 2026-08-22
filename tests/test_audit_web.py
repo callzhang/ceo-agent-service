@@ -5900,7 +5900,7 @@ def test_render_attempt_detail_marks_closed_blocked_work_as_historical(tmp_path:
 
     assert status == 200
     assert "已核验结案（未自动执行）" in html
-    assert "受阻原因见下方“Codex reason”；该外部操作未执行。" in html
+    assert "受阻原因见下方“审计说明”；该外部操作未执行。" in html
     assert "该事项已核验结案；外部动作未自动执行" in html
     assert "◌ 已核验结案" in html
     assert "DINGTEAM_OKR_NOT_AUTHENTICATED" not in html
@@ -7281,7 +7281,7 @@ def test_render_attempt_detail_shows_full_decision_and_feedback_form(tmp_path: P
     assert html.index("attempt-banner-actions") < html.index("trigger message id")
     assert html.index("Trigger") < html.index("生成回复")
     assert html.index("Trigger") < html.index("先按A方案走（by明哥分身）")
-    assert html.index("Codex reason") < html.index("生成回复")
+    assert html.index("审计说明") < html.index("生成回复")
     assert html.index("direct ask") < html.index("生成回复")
     assert "review-grid" in html
     assert "reply-pre" in html
@@ -8740,6 +8740,8 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
     assert "B. 要求补充材料" in html
     assert "会执行已审计的外部动作。" in html
     assert 'name="instruction" value="同意已核验方案并发布。"' in html
+    assert "这是无法由服务自动消除的管理分歧" in html
+    assert "两个管理决策都会改变外部状态。" not in html
 
 
 def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):

@@ -57,8 +57,9 @@ approve execution under the configured rules.
 - B is an auditor and executor, not a second business author.
 - B has broad read/write permissions from the start of its invocation.
 - In service dry-run mode B remains an auditor but receives only reviewed
-  read-only tools. An otherwise executable candidate returns `needs_human`
-  with `dry_run_execution_suppressed`; revision feedback remains available.
+  read-only tools. An otherwise executable candidate returns `dry_run` with
+  `dry_run_execution_suppressed`; it records that no external action ran and
+  must not create a fake Derek decision. Revision feedback remains available.
 - Every proposal revision is reviewed by a newly created B Codex session.
 - B sends rejected-review feedback to A as a new Agent message and obtains a
   revised result from the same A session.

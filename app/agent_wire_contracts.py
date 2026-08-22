@@ -130,6 +130,15 @@ class _AuditNeedsHumanWire(_AuditWireBase):
     )
 
 
+class _AuditDryRunWire(_AuditWireBase):
+    outcome: Literal["dry_run"]
+    side_effect_state: Literal["none"]
+    feedback: None
+    external_result: None
+    reconciliation: list[AuditReconciliation] = Field(max_length=0)
+    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
+
+
 class _AuditFailedWire(_AuditWireBase):
     outcome: Literal["failed"]
     side_effect_state: Literal["none"]
@@ -163,6 +172,7 @@ AuditWirePayload = Annotated[
     _AuditExecutedWire
     | _AuditRevisionRequiredWire
     | _AuditNeedsHumanWire
+    | _AuditDryRunWire
     | _AuditFailedWire
     | _AuditUnknownWire
     | _AuditReconciledWire,
