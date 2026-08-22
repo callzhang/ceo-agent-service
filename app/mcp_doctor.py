@@ -198,12 +198,12 @@ def _service_server_status(
             authorization_required=True,
             recover_command=f"configure {server.bearer_token_env_var}",
         )
-    if verify_live and server.name == "memory_connector" and server.url is not None:
+    if verify_live and server.url is not None:
         try:
-            if memory_reachability_checker is not None:
+            if server.name == "memory_connector" and memory_reachability_checker is not None:
                 memory_reachability_checker(server.url)
             else:
-                _check_http_reachable(server.url, bearer_token=bearer_token)
+                _check_mcp_reachable(server.url, bearer_token=bearer_token)
         except Exception as exc:
             state, reason = _live_probe_failure(exc)
             return McpStatus(
@@ -276,10 +276,25 @@ def _live_probe_failure(exc: Exception) -> tuple[str, str]:
     return state, reasons[state]
 
 
-def _check_http_reachable(url: str, *, bearer_token: str = "") -> None:
-    headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else None
+def _check_mcp_reachable(url: str, *, bearer_token: str = "") -> None:
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "mcp-doctor-probe",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "ceo-agent-mcp-doctor", "version": "1"},
+        },
+    }
     with httpx.Client(timeout=10.0, trust_env=False) as client:
-        response = client.get(url, headers=headers)
+        response = client.post(url, headers=headers, json=payload)
         response.raise_for_status()
 
 

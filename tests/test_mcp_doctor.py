@@ -212,9 +212,10 @@ def test_mcp_doctor_live_probe_uses_bearer_and_rejects_unauthorized(
         def __exit__(self, *args):
             return False
 
-        def get(self, url, **kwargs):
+        def post(self, url, **kwargs):
             observed["url"] = url
             observed["headers"] = kwargs.get("headers")
+            assert kwargs["json"]["method"] == "initialize"
             return Response()
 
     import httpx
@@ -227,10 +228,61 @@ def test_mcp_doctor_live_probe_uses_bearer_and_rejects_unauthorized(
         verify_live=True,
     )
 
-    assert observed["headers"] == {"Authorization": "Bearer must-not-appear"}
+    assert observed["headers"]["Authorization"] == "Bearer must-not-appear"
     assert statuses[0].state == "needs_login"
     assert statuses[0].reason == "HTTP authorization failed"
     assert "must-not-appear" not in repr(statuses)
+
+
+def test_mcp_doctor_live_probe_checks_xiaoqing_url(tmp_path: Path, monkeypatch) -> None:
+    config = _write_manifest(
+        tmp_path / "service-mcp.json",
+        {"xiaoqing_interview": {"url": "https://xiaoqing.example/mcp"}},
+    )
+
+    class Response:
+        def raise_for_status(self) -> None:
+            request = httpx.Request("GET", "https://xiaoqing.example/mcp")
+            response = httpx.Response(401, request=request)
+            raise httpx.HTTPStatusError(
+                "authorization required",
+                request=request,
+                response=response,
+            )
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, **kwargs):
+            assert url == "https://xiaoqing.example/mcp"
+            assert kwargs["json"]["method"] == "initialize"
+            return Response()
+
+    import httpx
+
+    monkeypatch.setattr("app.mcp_doctor.httpx.Client", Client)
+
+    [status] = check_mcp_statuses(
+        service_config_path=config,
+        env={},
+        verify_live=True,
+    )
+
+    assert status == McpStatus(
+        name="xiaoqing_interview",
+        state="needs_login",
+        ready=False,
+        reason="HTTP authorization failed",
+        authorization_required=True,
+        recover_command="ceo-agent doctor-mcp --verify-live",
+    )
 
 
 def test_mcp_doctor_notification_is_sent_once(tmp_path: Path) -> None:

@@ -13,6 +13,11 @@ existing Codex OAuth session without a second transport configuration. Bearer
 tokens and dynamic header values belong only in the service environment, never
 in the JSON file.
 
+`ceo-agent doctor-mcp --verify-live` performs the read-only MCP `initialize`
+handshake for each URL transport. A configured URL is not sufficient evidence
+that the service can use it: authorization failures are reported as
+`needs_login`, while network and server failures remain service errors.
+
 `mcp-tool-effects.json` is the reviewed allowlist used to classify native Codex
 MCP events as read-only or effectful. Unknown server/tool pairs remain
 unclassified and cannot confirm an external write.
