@@ -212,6 +212,9 @@ def _decision_from_payload(
     allow_legacy: bool = True,
 ) -> CodexDecision | None:
     if isinstance(payload, dict):
+        shorthand = _action_free_no_reply_decision(payload)
+        if shorthand is not None:
+            return shorthand
         if _looks_like_agent_envelope(payload):
             try:
                 return codex_decision_from_envelope(payload)
@@ -230,6 +233,9 @@ def _decision_from_payload(
                 parsed = json.loads(text)
             except json.JSONDecodeError:
                 continue
+            shorthand = _action_free_no_reply_decision(parsed)
+            if shorthand is not None:
+                return shorthand
             if isinstance(parsed, dict) and _looks_like_agent_envelope(parsed):
                 try:
                     return codex_decision_from_envelope(parsed)
@@ -244,6 +250,22 @@ def _decision_from_payload(
             except ValidationError:
                 continue
     return None
+
+
+def _action_free_no_reply_decision(payload: object) -> CodexDecision | None:
+    """Accept only Codex's harmless no-reply shorthand in strict mode."""
+    if not isinstance(payload, dict) or set(payload) - {"mode", "audit_summary"}:
+        return None
+    if payload.get("mode") != CodexAction.NO_REPLY.value:
+        return None
+    summary = payload.get("audit_summary", "Agent selected no reply without a summary.")
+    if not isinstance(summary, str) or not summary.strip():
+        return None
+    return CodexDecision(
+        action=CodexAction.NO_REPLY,
+        reason=summary.strip(),
+        audit_summary=summary.strip(),
+    )
 
 
 def _looks_like_agent_envelope(payload: dict[str, Any]) -> bool:
