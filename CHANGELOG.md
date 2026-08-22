@@ -1,5 +1,10 @@
 # Changelog
 
+- Show a recovered terminal task on the detail page for historical
+  `runtime_route_unavailable` and `runtime_unclassified` attempts. The original
+  failed attempt remains immutable and visible, while its later completed task
+  is shown as the authoritative recovery outcome.
+
 - Let a healthy service-owned Agent CLI route accept an Audit turn that names
   a concrete, persisted Skill receipt. Route selection now advertises receipt
   revalidation rather than pretending every installed Skill is a static

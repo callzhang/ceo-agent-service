@@ -6622,6 +6622,46 @@ def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' not in html
 
 
+def test_runtime_route_failure_detail_shows_later_task_recovery(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-route-recovery",
+        conversation_title="Runtime recovery",
+        single_chat=False,
+        trigger_message_id="msg-route-recovery",
+        trigger_create_time="2026-08-22 07:00:00",
+        trigger_sender="System",
+        trigger_text="Recover this routed task.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="runtime_route_unavailable",
+        send_status="failed",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="runtime_route_unavailable",
+    )
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "后续路由恢复" in html
+    assert f"任务 #{task.id} 已完成" in html
+    assert "原始失败记录仍保留" in html
+
+
 def test_worker_attention_collapses_reply_attempt_into_matching_reply_task(
     tmp_path: Path,
 ):

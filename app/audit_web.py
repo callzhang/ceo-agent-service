@@ -9099,6 +9099,7 @@ def _attempt_detail_body(
         if closed_after_review
         else attempt.send_error
     )
+    route_recovery_state = _route_failure_recovery_state(attempt, reply_task)
     fields = [
         ("trigger message id", attempt.trigger_message_id),
         ("action", attempt.action),
@@ -9137,6 +9138,7 @@ def _attempt_detail_body(
         fields=fields,
         pills_html=_attempt_action_pills(
             attempt,
+            recovery_state=route_recovery_state,
             closed_after_review=closed_after_review,
         ),
         trigger_title="Trigger",
@@ -9151,6 +9153,7 @@ def _attempt_detail_body(
             f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         ),
         extra_cards=(
+            f"{_route_failure_recovery_card(attempt, reply_task)}"
             f"{_agent_failure_reason_card(attempt, agent_runs)}"
             f"{_quality_warning_card(attempt)}"
             f"{_context_only_info_card(attempt)}"
@@ -9161,6 +9164,35 @@ def _attempt_detail_body(
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
             f"{_runtime_attempt_evidence_card(runtime_attempts or [])}"
         ),
+    )
+
+
+def _route_failure_recovery_state(
+    attempt: ReplyAttempt,
+    reply_task: ReplyTask | None,
+) -> str:
+    """Expose a terminal task recovery without changing an immutable attempt."""
+    failure_code = (attempt.send_error or attempt.codex_reason).strip()
+    if (
+        reply_task is not None
+        and reply_task.status == "done"
+        and failure_code in {"runtime_route_unavailable", "runtime_unclassified"}
+    ):
+        return "recovered"
+    return ""
+
+
+def _route_failure_recovery_card(
+    attempt: ReplyAttempt,
+    reply_task: ReplyTask | None,
+) -> str:
+    if _route_failure_recovery_state(attempt, reply_task) != "recovered":
+        return ""
+    assert reply_task is not None
+    return (
+        '<section class="card recovery-card"><h2>后续路由恢复</h2>'
+        f"<p>关联任务 #{reply_task.id} 已完成。此条记录保留当时的路由失败，"
+        "原始失败记录仍保留；后续处理没有重写该审计事实。</p></section>"
     )
 
 
