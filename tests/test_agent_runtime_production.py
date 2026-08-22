@@ -266,6 +266,43 @@ def test_reviewed_surfaces_keep_all_production_callers_eligible_without_claiming
         )
         assert decision.route is not None, (required, decision.reason)
 
+
+def test_reviewed_surface_accepts_a_validated_skill_receipt_requirement(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    codex_home = home / ".codex"
+    codex_home.mkdir(parents=True)
+    (codex_home / "config.toml").write_text(
+        "[mcp_servers.agent_cli]\ncommand='agent-cli'\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
+    registry = RuntimeCapabilityRegistry()
+    build_production_runtime_refresher(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        capability_registry=registry,
+        temporary_root=tmp_path,
+    )
+    registry.refresh({"codex_oauth": _snapshot("codex_oauth")})
+    routed = build_production_routed_codex_execution(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        workspace=tmp_path,
+        total_timeout_seconds=10,
+        idle_timeout_seconds=5,
+        capability_registry=registry,
+    )
+
+    decision = routed._router.first_route_decision(
+        required_capabilities=frozenset(
+            {"structured_output", "reviewed_skill:ceo-message-triage:abc123"}
+        )
+    )
+
+    assert decision.route is not None, decision.reason
+    assert decision.route.name == "codex_oauth"
+
 def test_agent_cli_action_capabilities_do_not_depend_on_bulk_metadata(
     tmp_path, monkeypatch
 ):

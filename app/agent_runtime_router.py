@@ -22,6 +22,10 @@ from app.agent_effects import (
     TOTAL_TIMEOUT_SECONDS,
     McpToolEffectRegistry,
 )
+from app.agent_skill_usage import (
+    REVIEWED_SKILL_RECEIPT_VALIDATION_CAPABILITY,
+    is_reviewed_skill_capability,
+)
 from app.agent_result import EffectKind
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import (
@@ -1119,6 +1123,17 @@ class AgentRuntimeRouter:
             if manifest is not None and manifest.route_name == route.name
             else frozenset()
         )
+        if REVIEWED_SKILL_RECEIPT_VALIDATION_CAPABILITY in manifest_capabilities:
+            # A concrete Skill capability is a persisted receipt, not a
+            # static provider feature. The controlled agent_cli read_skill
+            # operation revalidates its exact path, name, and content digest
+            # during the turn, so route selection needs proof only that this
+            # validation surface is installed.
+            unresolved = {
+                capability
+                for capability in unresolved
+                if not is_reviewed_skill_capability(capability)
+            }
         missing_surface = sorted(
             unresolved
             - PROBE_VERIFIED_RUNTIME_CAPABILITIES

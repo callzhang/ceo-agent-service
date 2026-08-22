@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import RLock
 
 from app.agent_effects import McpToolEffectRegistry
+from app.agent_skill_usage import REVIEWED_SKILL_RECEIPT_VALIDATION_CAPABILITY
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
@@ -346,6 +347,10 @@ def _reviewed_surface_manifests(
                     # scan the complete DWS schema to establish that fact.
                     "agent_cli.dws",
                     "agent_cli.lark-cli",
+                    # The route can validate and reread a concrete Skill
+                    # receipt supplied by an already completed Consumer run.
+                    # It does not claim that any ambient Skill file exists.
+                    REVIEWED_SKILL_RECEIPT_VALIDATION_CAPABILITY,
                 }
             )
         if "memory_connector" in transports:

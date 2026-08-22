@@ -21,6 +21,21 @@ AGENT_SKILL_ROOTS = (
     Path.home() / ".codex" / "skills",
     Path.home() / ".codex" / "plugins",
 )
+REVIEWED_SKILL_CAPABILITY_PREFIX = "reviewed_skill:"
+REVIEWED_SKILL_RECEIPT_VALIDATION_CAPABILITY = "reviewed_skill_receipt_validation"
+
+
+def is_reviewed_skill_capability(capability: str) -> bool:
+    """Whether a route requirement names one concrete, persisted Skill receipt."""
+    parts = capability.split(":")
+    return (
+        len(parts) == 3
+        and parts[0] == REVIEWED_SKILL_CAPABILITY_PREFIX.removesuffix(":")
+        and bool(parts[1])
+        and bool(parts[2])
+    )
+
+
 @dataclass(frozen=True)
 class AuthorizedSkillPath:
     name: str

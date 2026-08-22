@@ -1,5 +1,11 @@
 # Changelog
 
+- Let a healthy service-owned Agent CLI route accept an Audit turn that names
+  a concrete, persisted Skill receipt. Route selection now advertises receipt
+  revalidation rather than pretending every installed Skill is a static
+  provider capability; the turn still verifies the exact path, name, and
+  content digest before it can act.
+
 - Accept the documented action-free WeChat no-reply result
   (`user_mode: no_reply`, `reply: null`) in strict Codex result validation.
   The parser remains closed to that exact no-side-effect shape, so a reply,
