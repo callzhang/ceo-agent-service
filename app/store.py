@@ -9794,10 +9794,11 @@ class AutoReplyStore:
             payload = action.get("payload")
             if not isinstance(payload, dict):
                 continue
-            content = payload.get("content")
-            if isinstance(content, str) and notice:
-                replay_content = f"{content}\n\n{notice}"
-                _replace_text_in_json(action, content, replay_content)
+            for text_field in ("content", "text"):
+                content = payload.get(text_field)
+                if isinstance(content, str) and notice:
+                    replay_content = f"{content}\n\n{notice}"
+                    _replace_text_in_json(action, content, replay_content)
             argv = payload.get("argv")
             if not isinstance(argv, list):
                 continue

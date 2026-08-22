@@ -5860,6 +5860,50 @@ def test_sessionless_delivery_replay_appends_original_message_time_after_30_minu
     assert action["payload"]["argv"][-1] != "task-retry"
 
 
+def test_sessionless_delivery_replay_appends_original_time_to_text_payload(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    result = {
+        "outcome": "proposal",
+        "proposal": {
+            "actions": [
+                {
+                    "operation": "chat +messages-send",
+                    "payload": {
+                        "argv": [
+                            "dws",
+                            "chat",
+                            "+messages-send",
+                            "--text",
+                            "已收到。",
+                            "--idempotency-key",
+                            "task-retry",
+                            "--yes",
+                        ],
+                        "text": "已收到。",
+                    },
+                    "expected_verification": "Read back 已收到。",
+                }
+            ]
+        },
+    }
+
+    replayed = json.loads(
+        store._sessionless_replay_result_json(
+            json.dumps(result, ensure_ascii=False),
+            trigger_create_time="2026-07-20 10:00:00",
+            replay_generation="generation-1",
+            now=datetime(2026, 7, 20, 3, 31, tzinfo=timezone.utc),
+        )
+    )
+    action = replayed["proposal"]["actions"][0]
+    expected_content = "已收到。\n\n原消息生成于 2026-7-20 10:00"
+    assert action["payload"]["text"] == expected_content
+    assert action["payload"]["argv"][4] == expected_content
+    assert action["expected_verification"] == f"Read back {expected_content}"
+
+
 def test_sessionless_delivery_replay_retries_even_after_a_confirmed_delivery(
     tmp_path: Path,
 ):

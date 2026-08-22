@@ -9,7 +9,9 @@
   preserved revision-1/2 proposal now remains at that exact revision; a stale
   Audit revision request is retried against the same saved action, and a replay
   without a confirmed Audit effect is reopened rather than being mistaken for
-  successful delivery.
+  successful delivery. The delayed-message annotation now updates both
+  `payload.content` and `payload.text` contracts, including their executable
+  argv and expected readback text.
 
 - Automatically reopen a historical Audit failure exactly once when its
   Consumer parent has a durable proposal and the whole execution generation is
