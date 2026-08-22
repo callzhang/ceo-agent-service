@@ -254,9 +254,17 @@ def _decision_from_payload(
 
 def _action_free_no_reply_decision(payload: object) -> CodexDecision | None:
     """Accept only Codex's harmless no-reply shorthand in strict mode."""
-    if not isinstance(payload, dict) or set(payload) - {"mode", "audit_summary"}:
+    if not isinstance(payload, dict):
         return None
-    if payload.get("mode") != CodexAction.NO_REPLY.value:
+    direct_shape = set(payload) <= {"mode", "audit_summary"} and payload.get(
+        "mode"
+    ) == CodexAction.NO_REPLY.value
+    wechat_shape = (
+        set(payload) <= {"user_mode", "reply", "audit_summary"}
+        and payload.get("user_mode") == CodexAction.NO_REPLY.value
+        and payload.get("reply") is None
+    )
+    if not (direct_shape or wechat_shape):
         return None
     summary = payload.get("audit_summary", "Agent selected no reply without a summary.")
     if not isinstance(summary, str) or not summary.strip():

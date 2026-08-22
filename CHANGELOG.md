@@ -1,5 +1,10 @@
 # Changelog
 
+- Accept the documented action-free WeChat no-reply result
+  (`user_mode: no_reply`, `reply: null`) in strict Codex result validation.
+  The parser remains closed to that exact no-side-effect shape, so a reply,
+  additional fields, or another mode still requires the normal Agent envelope.
+
 - Schedule an unknown Audit run's bounded, read-only reconciliation from its
   own persisted due time, rather than holding it behind an unrelated ordinary
   reply retry delay. Only the matching current-generation unknown Audit run

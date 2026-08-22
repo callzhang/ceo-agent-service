@@ -274,6 +274,37 @@ def test_parse_codex_json_strict_accepts_action_free_no_reply_shorthand():
     assert decision.system_actions == []
 
 
+def test_parse_codex_json_strict_accepts_wechat_action_free_no_reply_shape():
+    decision = parse_codex_json(
+        json.dumps(
+            {
+                "user_mode": "no_reply",
+                "reply": None,
+                "audit_summary": "The delayed message is stale.",
+            }
+        ),
+        allow_legacy=False,
+    )
+
+    assert decision.action == CodexAction.NO_REPLY
+    assert decision.audit_summary == "The delayed message is stale."
+    assert decision.system_actions == []
+
+
+def test_parse_codex_json_strict_rejects_wechat_no_reply_with_reply_text():
+    with pytest.raises(json.JSONDecodeError):
+        parse_codex_json(
+            json.dumps(
+                {
+                    "user_mode": "no_reply",
+                    "reply": "This must not be treated as action-free.",
+                    "audit_summary": "Invalid no-reply shape.",
+                }
+            ),
+            allow_legacy=False,
+        )
+
+
 def test_parse_codex_json_accepts_audit_fields():
     raw = json.dumps(
         {
