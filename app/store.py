@@ -9673,7 +9673,18 @@ class AutoReplyStore:
                 join agent_runs as parents on parents.id=audits.parent_agent_run_id
                 where tasks.channel=?
                   and tasks.status='done'
-                  and tasks.recovery_code<>?
+                  and (
+                      tasks.recovery_code<>?
+                      or not exists (
+                          select 1
+                          from agent_runs as replay_audits
+                          where replay_audits.reply_task_id=tasks.id
+                            and replay_audits.execution_generation=tasks.execution_generation
+                            and replay_audits.role='audit'
+                            and replay_audits.status='completed'
+                            and replay_audits.side_effect_state='confirmed'
+                      )
+                  )
                   and audits.role='audit'
                   and audits.status='completed'
                   and (

@@ -5,7 +5,11 @@
   The recovered Audit freezes that decision and executes its authorized external
   action with target-matched readback, without requesting a new Consumer
   proposal. Delayed text replays append `原消息生成于 YYYY-M-D HH:MM` and rotate
-  an existing idempotency key so the retry is an explicit new delivery.
+  an existing idempotency key so the retry is an explicit new delivery. A
+  preserved revision-1/2 proposal now remains at that exact revision; a stale
+  Audit revision request is retried against the same saved action, and a replay
+  without a confirmed Audit effect is reopened rather than being mistaken for
+  successful delivery.
 
 - Automatically reopen a historical Audit failure exactly once when its
   Consumer parent has a durable proposal and the whole execution generation is

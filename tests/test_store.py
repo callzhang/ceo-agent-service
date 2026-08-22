@@ -5938,6 +5938,78 @@ def test_sessionless_delivery_replay_retries_even_after_a_confirmed_delivery(
     ) == [task_id]
 
 
+def test_sessionless_delivery_replay_retries_after_an_unexecuted_replay(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    consumer = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    )
+    decision = {
+        "outcome": "proposal",
+        "proposal": {"actions": [{"payload": {"argv": ["dws", "chat"]}}]},
+    }
+    completed_consumer = store.complete_agent_run(
+        consumer.run.id,
+        decision,
+        owner="worker-1",
+    )
+    audit = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=completed_consumer.id,
+        operation_id=f"agent-task:{task_id}:initial:proposal:0",
+        owner="worker-1",
+    )
+    store.complete_agent_run(
+        audit.run.id,
+        {
+            "outcome": "needs_human",
+            "proposal_revision": 0,
+            "side_effect_state": "none",
+            "error": {"code": "audit_recovery_session_missing"},
+        },
+        owner="worker-1",
+        side_effect_state="unknown",
+    )
+    store.complete_reply_task(
+        task_id,
+        expected_execution_generation=task.execution_generation,
+    )
+    assert store.recover_terminal_sessionless_audit_deliveries(channel="dingtalk") == [
+        task_id
+    ]
+    first_replay = store.get_reply_task(task_id)
+    assert first_replay is not None
+    # Simulate the pre-fix failure mode: a fresh Consumer returns no_action and
+    # no Audit write is ever confirmed.  A forced replay must not treat that as
+    # successful delivery.
+    claimed_replay = store.claim_reply_task(task_id)
+    assert claimed_replay is not None
+    store.complete_reply_task(
+        task_id,
+        expected_execution_generation=claimed_replay.execution_generation,
+    )
+
+    assert store.recover_terminal_sessionless_audit_deliveries(channel="dingtalk") == [
+        task_id
+    ]
+    second_replay = store.get_reply_task(task_id)
+    assert second_replay is not None
+    assert second_replay.execution_generation != first_replay.execution_generation
+
+
 def test_recover_failed_native_codex_auth_task_requires_no_effect_or_delivery(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)

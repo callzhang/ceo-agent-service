@@ -161,7 +161,7 @@ class AuditAgentRunner:
             return skill_failure
         invalid_actions = _invalid_operation_contracts(context, self.effects)
         recipient_type_mismatches = _typed_direct_recipient_mismatches(context)
-        if invalid_actions or recipient_type_mismatches:
+        if (invalid_actions or recipient_type_mismatches) and not frozen_delivery_retry:
             return self._return_invalid_candidate(
                 claim.run,
                 invalid_actions=invalid_actions,

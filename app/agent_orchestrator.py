@@ -384,8 +384,44 @@ class AgentOrchestrator:
             default=0,
         )
 
-        revision = 0
-        while revision <= MAX_CONTENT_FEEDBACK_CYCLES:
+        frozen_delivery_retry = (
+            task.recovery_code == "legacy_sessionless_audit_delivery_replay"
+        )
+        # A frozen recovery is a delivery retry, not a new content-review loop.
+        # The preserved Consumer result can legitimately be revision 1 or 2 from
+        # the old workflow.  Starting from revision 0 would invite a fresh
+        # Consumer decision and silently turn a resend into ``no_action``.
+        frozen_consumer: AgentRun | None = None
+        if frozen_delivery_retry:
+            frozen_candidates = sorted(
+                (
+                    run
+                    for run in runs
+                    if run.role is AgentRole.CONSUMER and run.status == "completed"
+                ),
+                key=lambda run: (run.proposal_revision, run.turn_attempt, run.id),
+                reverse=True,
+            )
+            for candidate in frozen_candidates:
+                state = self._consumer_state(
+                    task, candidate, candidate.proposal_revision
+                )
+                if isinstance(state, ConsumerAgentResult) and state.proposal is not None:
+                    frozen_consumer = candidate
+                    break
+            if frozen_consumer is None:
+                return _Deferred(
+                    None,
+                    "frozen_delivery_replay_proposal_missing",
+                    0,
+                )
+
+        revisions = (
+            (frozen_consumer.proposal_revision,)
+            if frozen_consumer is not None
+            else range(MAX_CONTENT_FEEDBACK_CYCLES + 1)
+        )
+        for revision in revisions:
             revision_runs = by_revision.get(revision, [])
             consumer_turns = sorted(
                 (run for run in revision_runs if run.role is AgentRole.CONSUMER),
@@ -438,10 +474,7 @@ class AgentOrchestrator:
                     0,
                     consumer.id,
                     consumer_state.proposal,
-                    frozen_delivery_retry=(
-                        task.recovery_code
-                        == "legacy_sessionless_audit_delivery_replay"
-                    ),
+                    frozen_delivery_retry=frozen_delivery_retry,
                 )
             latest = audits[-1]
             if latest.status == "unknown":
@@ -496,6 +529,7 @@ class AgentOrchestrator:
                     consumer_state.proposal,
                     audit_state.authorization_error_code,
                     audit_state.deferred_error_code,
+                    frozen_delivery_retry=frozen_delivery_retry,
                 )
             if not isinstance(audit_state, AuditAgentResult):
                 return audit_state
@@ -515,6 +549,17 @@ class AgentOrchestrator:
                     audit_state,
                     revision,
                 )
+            if frozen_delivery_retry:
+                # The frozen prompt forbids content revisions.  If a model still
+                # asks for one, retry Audit on the same persisted proposal; never
+                # hand the decision back to Consumer.
+                return _NextAudit(
+                    revision,
+                    latest.turn_attempt + 1,
+                    consumer.id,
+                    consumer_state.proposal,
+                    frozen_delivery_retry=True,
+                )
             if revision == MAX_CONTENT_FEEDBACK_CYCLES:
                 return _audit_terminal(
                     "needs_human",
@@ -522,8 +567,7 @@ class AgentOrchestrator:
                     audit_state,
                     MAX_CONTENT_FEEDBACK_CYCLES,
                 )
-            revision += 1
-        return _Deferred(None, "agent_turn_state_incomplete", revision)
+        return _Deferred(None, "agent_turn_state_incomplete", 0)
 
     def _finalize_reconciled_audit(
         self,
