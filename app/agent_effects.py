@@ -68,6 +68,8 @@ class McpToolEffectRegistry:
             tuple[str, str, str, str], set[tuple[str, str]]
         ]
         | None = None,
+        readback_operation_target_modes: dict[tuple[str, str, str, str, str, str], str]
+        | None = None,
         readback_identity_matches: dict[
             tuple[str, str, str, str, str, str], tuple[dict[str, str], ...]
         ]
@@ -88,10 +90,11 @@ class McpToolEffectRegistry:
             key: frozenset(values)
             for key, values in (readback_operation_relations or {}).items()
         }
-        self._readback_identity_matches = dict(readback_identity_matches or {})
-        self._readback_result_constraints = dict(
-            readback_result_constraints or {}
+        self._readback_operation_target_modes = dict(
+            readback_operation_target_modes or {}
         )
+        self._readback_identity_matches = dict(readback_identity_matches or {})
+        self._readback_result_constraints = dict(readback_result_constraints or {})
 
     @classmethod
     def from_path(cls, path: Path) -> "McpToolEffectRegistry":
@@ -108,6 +111,9 @@ class McpToolEffectRegistry:
         readback_operation_modes: dict[tuple[str, str, str, str], str] = {}
         readback_operation_relations: dict[
             tuple[str, str, str, str], set[tuple[str, str]]
+        ] = {}
+        readback_operation_target_modes: dict[
+            tuple[str, str, str, str, str, str], str
         ] = {}
         readback_identity_matches: dict[
             tuple[str, str, str, str, str, str], tuple[dict[str, str], ...]
@@ -160,7 +166,10 @@ class McpToolEffectRegistry:
                     raise ValueError("MCP readback target match is invalid")
                 readback_target_modes[
                     relation_key := (
-                        key[0], key[1], target["server"].strip(), target["tool"].strip()
+                        key[0],
+                        key[1],
+                        target["server"].strip(),
+                        target["tool"].strip(),
                     )
                 ] = target_match
                 operation_match = target.get("operation_match", "outer")
@@ -182,6 +191,23 @@ class McpToolEffectRegistry:
                     readback_operation_relations.setdefault(relation_key, set()).add(
                         (relation["read"].strip(), relation["write"].strip())
                     )
+                    relation_target_match = relation.get("target_match")
+                    if relation_target_match is not None:
+                        if relation_target_match not in {
+                            "exact",
+                            "shared",
+                            "created_resource",
+                        }:
+                            raise ValueError(
+                                "MCP readback operation target match is invalid"
+                            )
+                        readback_operation_target_modes[
+                            (
+                                *relation_key,
+                                relation["read"].strip(),
+                                relation["write"].strip(),
+                            )
+                        ] = relation_target_match
                     identity_matches = relation.get("identity_matches", [])
                     if not isinstance(identity_matches, list):
                         raise ValueError("MCP readback identity matches must be a list")
@@ -221,9 +247,7 @@ class McpToolEffectRegistry:
                         readback_identity_matches[identity_key] = tuple(
                             normalized_matches
                         )
-                    result_constraints = relation.get(
-                        "read_result_constraints", []
-                    )
+                    result_constraints = relation.get("read_result_constraints", [])
                     if not isinstance(result_constraints, list):
                         raise ValueError(
                             "MCP readback result constraints must be a list"
@@ -232,8 +256,7 @@ class McpToolEffectRegistry:
                     for constraint in result_constraints:
                         if (
                             not isinstance(constraint, dict)
-                            or set(constraint)
-                            != {"path", "equals", "comparison"}
+                            or set(constraint) != {"path", "equals", "comparison"}
                             or not isinstance(constraint.get("path"), str)
                             or not constraint["path"].strip()
                             or not isinstance(constraint.get("equals"), str)
@@ -260,7 +283,9 @@ class McpToolEffectRegistry:
                             normalized_constraints
                         )
                 if operation_match == "registered" and not operation_relations:
-                    raise ValueError("registered MCP readback requires operation relations")
+                    raise ValueError(
+                        "registered MCP readback requires operation relations"
+                    )
         for read_key, write_keys in readbacks.items():
             if any(
                 effects.get(write_key) is not EffectKind.EFFECTFUL
@@ -276,6 +301,7 @@ class McpToolEffectRegistry:
             readback_target_modes=readback_target_modes,
             readback_operation_modes=readback_operation_modes,
             readback_operation_relations=readback_operation_relations,
+            readback_operation_target_modes=readback_operation_target_modes,
             readback_identity_matches=readback_identity_matches,
             readback_result_constraints=readback_result_constraints,
         )
@@ -365,6 +391,20 @@ class McpToolEffectRegistry:
         # must not turn a controlled wrapper into a no-readback effect.
         return bool(relation_keys)
 
+    def readback_requires_completed_write(
+        self,
+        *,
+        write_server: str,
+        write_tool: str,
+        write_operation: str,
+    ) -> bool:
+        return any(
+            mode == "created_resource"
+            and key[2:4] == (write_server, write_tool)
+            and key[5] == write_operation
+            for key, mode in self._readback_operation_target_modes.items()
+        )
+
     def readback_targets_match(
         self,
         *,
@@ -374,10 +414,19 @@ class McpToolEffectRegistry:
         write_tool: str,
         read_targets: dict[str, object],
         write_targets: dict[str, object],
+        read_operation: str = "",
+        write_operation: str = "",
     ) -> bool:
-        mode = self._readback_target_modes.get(
-            (read_server, read_tool, write_server, write_tool), "exact"
+        relation_key = (read_server, read_tool, write_server, write_tool)
+        mode = self._readback_operation_target_modes.get(
+            (*relation_key, read_operation, write_operation),
+            self._readback_target_modes.get(relation_key, "exact"),
         )
+        if mode == "created_resource":
+            # Creation operations may not have a resource ID until the write
+            # returns. A subsequent reviewed read can safely bind that newly
+            # returned ID to the completed write lifecycle.
+            return not write_targets and bool(read_targets)
         if mode == "exact":
             return bool(read_targets) and read_targets == write_targets
         normalized_read_targets = _normalized_shared_targets(read_targets)
@@ -403,7 +452,10 @@ class McpToolEffectRegistry:
         relation_key = (read_server, read_tool, write_server, write_tool)
         if self._readback_operation_modes.get(relation_key, "outer") == "outer":
             return True
-        return (read_operation, write_operation) in self._readback_operation_relations.get(
+        return (
+            read_operation,
+            write_operation,
+        ) in self._readback_operation_relations.get(
             relation_key,
             (),
         )
@@ -418,17 +470,29 @@ class McpToolEffectRegistry:
     ) -> dict[str, str]:
         paths: set[str] = set()
         for key, matches in self._readback_identity_matches.items():
-            read_server, read_tool, write_server, write_tool, read_operation, write_operation = key
+            (
+                read_server,
+                read_tool,
+                write_server,
+                write_tool,
+                read_operation,
+                write_operation,
+            ) = key
             if (server, tool, operation) == (read_server, read_tool, read_operation):
                 paths.update(
-                    match["read_result"]
-                    for match in matches
-                    if "read_result" in match
+                    match["read_result"] for match in matches if "read_result" in match
                 )
             if (server, tool, operation) == (write_server, write_tool, write_operation):
                 paths.update(match["write_result"] for match in matches)
         for key, constraints in self._readback_result_constraints.items():
-            read_server, read_tool, _write_server, _write_tool, read_operation, _write_operation = key
+            (
+                read_server,
+                read_tool,
+                _write_server,
+                _write_tool,
+                read_operation,
+                _write_operation,
+            ) = key
             if (server, tool, operation) == (read_server, read_tool, read_operation):
                 paths.update(constraint["path"] for constraint in constraints)
         return {
@@ -466,7 +530,10 @@ class McpToolEffectRegistry:
             if not isinstance(write_value, str) or not write_value:
                 return False
             read_target = match.get("read_target")
-            if read_target is not None and _target_value(read_targets, read_target) != write_value:
+            if (
+                read_target is not None
+                and _target_value(read_targets, read_target) != write_value
+            ):
                 return False
             read_result = match.get("read_result")
             if (

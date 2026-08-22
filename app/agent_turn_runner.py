@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import time
+import unicodedata
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Generic, TypeVar, cast
 
+from markdown_it import MarkdownIt
 from pydantic import ValidationError
 
 from app.agent_contracts import (
@@ -300,9 +302,7 @@ def _project_runtime_external_reference(
                 or any(type(index) is not int or index < 0 for index in value)
                 or len(value) > 128
             ):
-                raise ValueError(
-                    "runtime_result_envelope_external_reference_invalid"
-                )
+                raise ValueError("runtime_result_envelope_external_reference_invalid")
             projected[key] = list(value)
             continue
         if not isinstance(value, (str, int, bool)) or isinstance(value, float):
@@ -557,14 +557,13 @@ def unknown_reconciliation_retry_at(
     attempts: int, *, now: datetime | None = None
 ) -> str:
     delay_seconds = min(
-        UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS
-        * (2 ** max(attempts - 1, 0)),
+        UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS * (2 ** max(attempts - 1, 0)),
         UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS,
     )
     current = now or datetime.now(timezone.utc)
-    return (current.astimezone(timezone.utc) + timedelta(seconds=delay_seconds)).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
+    return (
+        current.astimezone(timezone.utc) + timedelta(seconds=delay_seconds)
+    ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _required_runtime_capabilities(
@@ -644,7 +643,9 @@ def _result_parse_error_detail(exc: ResultParseError) -> str:
         if isinstance(current, ValidationError):
             fields = []
             for error in current.errors():
-                location = ".".join(str(part) for part in error.get("loc", ())) or "result"
+                location = (
+                    ".".join(str(part) for part in error.get("loc", ())) or "result"
+                )
                 kind = str(error.get("type") or "validation_error")
                 fields.append(f"{location}: {kind}")
             if fields:
@@ -794,8 +795,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 candidates = [
                     index
                     for index, action in enumerate(expected_effect_actions)
-                    if request.get("reviewed_server")
-                    == action.get("reviewed_server")
+                    if request.get("reviewed_server") == action.get("reviewed_server")
                     and request.get("reviewed_tool") == action.get("reviewed_tool")
                     and _metadata_matches_action(request, action)
                 ]
@@ -842,10 +842,7 @@ class AgentTurnProcess(Generic[ResultT]):
         ) -> None:
             nonlocal line_count, saw_json
             nonlocal primary_turn_started, primary_turn_closed
-            read_only = (
-                run.role is AgentRole.CONSUMER
-                or recovery_phase == "reconcile"
-            )
+            read_only = run.role is AgentRole.CONSUMER or recovery_phase == "reconcile"
             event = (
                 _trusted_claude_effect_event(payload, read_only=read_only)
                 if from_claude_normalizer
@@ -857,8 +854,14 @@ class AgentTurnProcess(Generic[ResultT]):
                     expected_message_text_digests=frozenset(
                         digest
                         for action in expected_effect_actions
+                        if isinstance(digest := action.get("message_text_digest"), str)
+                    ),
+                    expected_message_rendered_text_digests=frozenset(
+                        digest
+                        for action in expected_effect_actions
                         if isinstance(
-                            digest := action.get("message_text_digest"), str
+                            digest := action.get("message_rendered_text_digest"),
+                            str,
                         )
                     ),
                     message_operation_started_at=run.started_at,
@@ -920,9 +923,7 @@ class AgentTurnProcess(Generic[ResultT]):
             ):
                 current_run = self.store.get_agent_run(run.id)
                 persisted_events = (
-                    current_run.tool_events[turn_event_start:]
-                    if current_run
-                    else ()
+                    current_run.tool_events[turn_event_start:] if current_run else ()
                 )
                 observed = {
                     (receipt.name, receipt.path, receipt.sha256)
@@ -933,9 +934,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     for receipt in required_skill_receipts
                 }
                 if not required.issubset(observed):
-                    raise AgentReadOnlyViolationError(
-                        "audit_skill_reread_missing"
-                    )
+                    raise AgentReadOnlyViolationError("audit_skill_reread_missing")
             if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
                 if event.get("type") == "item.started":
                     authorization_id = metadata.get("authorization_id")
@@ -976,7 +975,10 @@ class AgentTurnProcess(Generic[ResultT]):
                         effect_action_counts[action_index] += 1
                         effect_action_by_call_id[call_id] = action_index
                 else:
-                    if from_session_replay and call_id in suppressed_session_replay_call_ids:
+                    if (
+                        from_session_replay
+                        and call_id in suppressed_session_replay_call_ids
+                    ):
                         return
                     action_index = effect_action_by_call_id.get(call_id)
                     if action_index is not None:
@@ -1039,9 +1041,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         new_session,
                         owner=self.owner,
                         transcript_start_line=run.transcript_start_line,
-                        allow_consumer_session_handoff=(
-                            run.role is AgentRole.CONSUMER
-                        ),
+                        allow_consumer_session_handoff=(run.role is AgentRole.CONSUMER),
                     )
                 if not is_claude and (
                     run.role is AgentRole.CONSUMER
@@ -1214,6 +1214,14 @@ class AgentTurnProcess(Generic[ResultT]):
                                 digest := action.get("message_text_digest"), str
                             )
                         ),
+                        expected_message_rendered_text_digests=frozenset(
+                            digest
+                            for action in expected_effect_actions
+                            if isinstance(
+                                digest := action.get("message_rendered_text_digest"),
+                                str,
+                            )
+                        ),
                         message_operation_started_at=run.started_at,
                     )
                 except AgentReadOnlyViolationError as exc:
@@ -1301,9 +1309,9 @@ class AgentTurnProcess(Generic[ResultT]):
             ).encode("utf-8")
         ).hexdigest()
         runtime_result_schema_id = hashlib.sha256(
-            (
-                "agent_turn_claude_result_v1\0" + execution_contract_digest
-            ).encode("utf-8")
+            ("agent_turn_claude_result_v1\0" + execution_contract_digest).encode(
+                "utf-8"
+            )
         ).hexdigest()
 
         try:
@@ -1351,9 +1359,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         {"code": mismatch_code, "retryable": True},
                         owner=self.owner,
                     )
-                raise CompletedRuntimeResultBlockedError(
-                    mismatch_code
-                )
+                raise CompletedRuntimeResultBlockedError(mismatch_code)
             if completed_attempt is not None:
                 route = next(
                     (
@@ -1406,8 +1412,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             run, "completed_runtime_result_envelope_invalid"
                         )
                     elif (
-                        run.role is AgentRole.CONSUMER
-                        and run.effect_started_count == 0
+                        run.role is AgentRole.CONSUMER and run.effect_started_count == 0
                     ):
                         self.store.block_consumer_agent_run_for_completed_result_recovery(
                             run.id,
@@ -1429,7 +1434,8 @@ class AgentTurnProcess(Generic[ResultT]):
                 attempt_transcript_start = completed_attempt.transcript_start
                 attempt_line_start = 0
                 line_count = (
-                    completed_attempt.transcript_end - completed_attempt.transcript_start
+                    completed_attempt.transcript_end
+                    - completed_attempt.transcript_start
                 )
                 session_transcript_end = completed_attempt.transcript_end
                 turn_event_start = 0
@@ -1469,9 +1475,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 observed_session_id = ""
                 replayed_effect_evidence = False
                 active_route = route
-                route_uses_codex_history = (
-                    route.runtime_kind is RuntimeKind.CODEX_CLI
-                )
+                route_uses_codex_history = route.runtime_kind is RuntimeKind.CODEX_CLI
                 executor_prompt = (
                     _claude_input_contract(
                         prompt=prompt,
@@ -1718,8 +1722,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     "",
                     attempt_transcript_start,
                     max(
-                        attempt_transcript_start
-                        + (line_count - attempt_line_start),
+                        attempt_transcript_start + (line_count - attempt_line_start),
                         session_transcript_end,
                     ),
                 )
@@ -1815,10 +1818,9 @@ class AgentTurnProcess(Generic[ResultT]):
                 # structured disposition for every unresolved action. Durable
                 # reads may repair an invalid result, but may not turn an empty
                 # reconciliation claim into implicit confirmation.
-                if (
-                    getattr(result, "outcome") is AuditOutcome.RECONCILED
-                    and not getattr(result, "reconciliation")
-                ):
+                if getattr(
+                    result, "outcome"
+                ) is AuditOutcome.RECONCILED and not getattr(result, "reconciliation"):
                     raise
                 fallback = _conservative_reconciliation_result_from_readbacks(
                     run=run,
@@ -1864,10 +1866,11 @@ class AgentTurnProcess(Generic[ResultT]):
                 required_skill_receipts=required_skill_receipts,
                 turn_event_start=turn_event_start,
             )
-        claude_business_failure = (
-            outcome in {ConsumerOutcome.FAILED, AuditOutcome.FAILED, AuditOutcome.UNKNOWN}
-            or (recovery_phase == "execute" and outcome is not AuditOutcome.EXECUTED)
-        )
+        claude_business_failure = outcome in {
+            ConsumerOutcome.FAILED,
+            AuditOutcome.FAILED,
+            AuditOutcome.UNKNOWN,
+        } or (recovery_phase == "execute" and outcome is not AuditOutcome.EXECUTED)
         if (
             route.runtime_kind is RuntimeKind.CLAUDE_CLI
             and not recovered_completed_attempt
@@ -1883,7 +1886,10 @@ class AgentTurnProcess(Generic[ResultT]):
                 "runtime_business_result_failed",
                 False,
             )
-        elif route.runtime_kind is RuntimeKind.CLAUDE_CLI and not recovered_completed_attempt:
+        elif (
+            route.runtime_kind is RuntimeKind.CLAUDE_CLI
+            and not recovered_completed_attempt
+        ):
             if not pending_claude_session_id:
                 raise RuntimeError("claude_session_evidence_missing")
             persisted_attempt = (
@@ -1899,8 +1905,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 ConsumerAgentResult | AuditAgentResult, result
             ).model_dump(mode="json")
             durable_consumer_result = (
-                run.role is AgentRole.CONSUMER
-                and outcome is not ConsumerOutcome.FAILED
+                run.role is AgentRole.CONSUMER and outcome is not ConsumerOutcome.FAILED
             )
             self.store.complete_agent_runtime_attempt(
                 persisted_attempt.id,
@@ -2071,9 +2076,7 @@ class AgentTurnProcess(Generic[ResultT]):
             and run.role is AgentRole.AUDIT
             and recovery_phase != "reconcile"
         ):
-            raise RuntimeRouteUnavailableError(
-                "claude_effectful_audit_ineligible"
-            )
+            raise RuntimeRouteUnavailableError("claude_effectful_audit_ineligible")
 
     def _clear_incompatible_route_session_for_fresh_retry(
         self,
@@ -2166,6 +2169,7 @@ class AgentTurnProcess(Generic[ResultT]):
         operation_id: str,
         require_recovery_authorization: bool = False,
         expected_message_text_digests: frozenset[str] = frozenset(),
+        expected_message_rendered_text_digests: frozenset[str] = frozenset(),
         message_operation_started_at: str = "",
     ) -> dict[str, object] | None:
         if payload.get("type") not in {"item.started", "item.completed", "item.failed"}:
@@ -2264,15 +2268,24 @@ class AgentTurnProcess(Generic[ResultT]):
                         failure_code or "agent_cli_receipt_missing"
                     )
                 if receipt.get("operation") != descriptor.command_path:
-                    raise AgentReadOnlyViolationError("agent_cli_receipt_operation_mismatch")
+                    raise AgentReadOnlyViolationError(
+                        "agent_cli_receipt_operation_mismatch"
+                    )
                 if receipt.get("operation_digest") != operation_digest:
-                    raise AgentReadOnlyViolationError("agent_cli_receipt_digest_mismatch")
+                    raise AgentReadOnlyViolationError(
+                        "agent_cli_receipt_digest_mismatch"
+                    )
                 if receipt.get("target_identifiers") != target_identifiers:
-                    raise AgentReadOnlyViolationError("agent_cli_receipt_target_mismatch")
+                    raise AgentReadOnlyViolationError(
+                        "agent_cli_receipt_target_mismatch"
+                    )
                 if (
                     require_recovery_authorization
                     and call.effect is EffectKind.EFFECTFUL
-                    and (not authorization_id or receipt.get("authorization_id") != authorization_id)
+                    and (
+                        not authorization_id
+                        or receipt.get("authorization_id") != authorization_id
+                    )
                 ):
                     raise AgentReadOnlyViolationError(
                         "agent_cli_receipt_authorization_mismatch"
@@ -2287,8 +2300,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     item.get("arguments"), item.get("result")
                 )
                 controlled_receipt_failed = (
-                    skill_metadata is None
-                    or item.get("status") != "completed"
+                    skill_metadata is None or item.get("status") != "completed"
                 )
         event_type = str(payload["type"])
         if controlled_receipt_failed:
@@ -2314,9 +2326,7 @@ class AgentTurnProcess(Generic[ResultT]):
             "operation_digest": operation_digest,
             "target_identifiers": target_identifiers,
             "arguments_digest": _json_digest(
-                {"argv": argv}
-                if native_cli
-                else item.get("arguments")
+                {"argv": argv} if native_cli else item.get("arguments")
             ),
         }
         if call.effect is EffectKind.EFFECTFUL:
@@ -2370,8 +2380,9 @@ class AgentTurnProcess(Generic[ResultT]):
                         validated_receipt,
                         native_cli=native_cli,
                         operation=operation,
-                        expected_message_text_digests=(
-                            expected_message_text_digests
+                        expected_message_text_digests=(expected_message_text_digests),
+                        expected_message_rendered_text_digests=(
+                            expected_message_rendered_text_digests
                         ),
                         operation_started_at=message_operation_started_at,
                     )
@@ -2407,9 +2418,7 @@ class AgentTurnProcess(Generic[ResultT]):
         if event.get("type") != "item.completed":
             return
         event_item = event.get("item")
-        metadata = (
-            event_item.get("metadata") if isinstance(event_item, dict) else None
-        )
+        metadata = event_item.get("metadata") if isinstance(event_item, dict) else None
         raw_item = payload.get("item")
         arguments = raw_item.get("arguments") if isinstance(raw_item, dict) else None
         argv = native_command_argv(
@@ -2417,10 +2426,9 @@ class AgentTurnProcess(Generic[ResultT]):
             if isinstance(arguments, dict)
             else {}
         )
-        if (
-            not isinstance(metadata, dict)
-            or not self._is_recordable_dingtalk_chat_delivery(metadata, argv)
-        ):
+        if not isinstance(
+            metadata, dict
+        ) or not self._is_recordable_dingtalk_chat_delivery(metadata, argv):
             return
         reply_text = _dingtalk_message_text(argv)
         if not reply_text or self.store.has_sent_reply_for_trigger(
@@ -2512,7 +2520,9 @@ class AgentTurnProcess(Generic[ResultT]):
             receipt for receipt in missing_receipts if receipt.path in attempted_paths
         )
         absent_receipts = tuple(
-            receipt for receipt in missing_receipts if receipt.path not in attempted_paths
+            receipt
+            for receipt in missing_receipts
+            if receipt.path not in attempted_paths
         )
         if absent_receipts or (
             unreadable_receipts and outcome is not AuditOutcome.REVISION_REQUIRED
@@ -2540,7 +2550,10 @@ class AgentTurnProcess(Generic[ResultT]):
                 operation_id=run.operation_id,
                 registry=self.effects,
             )
-            if completed == set(range(len(expected_effect_actions))) and all_effects_closed:
+            if (
+                completed == set(range(len(expected_effect_actions)))
+                and all_effects_closed
+            ):
                 if not _actions_have_required_readbacks(
                     persisted.tool_events,
                     expected_effect_actions,
@@ -2661,8 +2674,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 self.store.record_agent_execution_receipt(
                     run.id,
                     receipt_id=(
-                        "reconciliation:"
-                        f"{receipt_operation_id}:{read_result_digest}"
+                        f"reconciliation:{receipt_operation_id}:{read_result_digest}"
                     ),
                     operation_id=receipt_operation_id,
                     cli=str(metadata.get("native_cli") or metadata.get("capability")),
@@ -2762,7 +2774,9 @@ class AgentTurnProcess(Generic[ResultT]):
                 and not persisted.tool_events
                 and _stream_has_no_agent_result(process.stdout)
             ):
-                raise ResultParseError("no valid typed result JSON found in Codex JSONL")
+                raise ResultParseError(
+                    "no valid typed result JSON found in Codex JSONL"
+                )
             raise RuntimeError(failure_code)
 
     def _fail_running(self, run: AgentRun, code: str, *, detail: str = "") -> None:
@@ -2844,9 +2858,10 @@ def _stream_has_no_agent_result(raw: str) -> bool:
             return False
         if isinstance(payload.get("last_agent_message"), str):
             return False
-        if (
-            isinstance(payload.get("message"), str)
-            and payload.get("type") in (None, "agent_message", "task_complete")
+        if isinstance(payload.get("message"), str) and payload.get("type") in (
+            None,
+            "agent_message",
+            "task_complete",
         ):
             return False
     return saw_json
@@ -2860,7 +2875,13 @@ def _is_dingtalk_chat_send(metadata: dict[str, object]) -> bool:
         and isinstance(target, dict)
         and any(
             isinstance(target.get(key), str) and target[key]
-            for key in ("group", "user", "open-dingtalk-id", "conversation-id", "conversation")
+            for key in (
+                "group",
+                "user",
+                "open-dingtalk-id",
+                "conversation-id",
+                "conversation",
+            )
         )
     )
 
@@ -2882,13 +2903,23 @@ def _is_dingtalk_chat_send_argv(
 
 
 def _is_expected_dingtalk_chat_send(action: dict[str, object]) -> bool:
-    target = action.get("target_identifiers")
+    target = action.get("readback_target_identifiers")
+    if not isinstance(target, dict):
+        target = action.get("target_identifiers")
     return (
         action.get("capability") == "agent_cli.dws"
+        and str(action.get("operation") or "").startswith("chat ")
+        and isinstance(action.get("message_text_digest"), str)
         and isinstance(target, dict)
         and any(
             isinstance(target.get(key), str) and target[key]
-            for key in ("group", "user", "open-dingtalk-id", "conversation-id", "conversation")
+            for key in (
+                "group",
+                "user",
+                "open-dingtalk-id",
+                "conversation-id",
+                "conversation",
+            )
         )
     )
 
@@ -2993,7 +3024,10 @@ def _agent_cli_receipt(
     receipt = _controlled_cli_receipt(value)
     if receipt is not None or not isinstance(value, dict):
         return receipt
-    candidates: list[object] = [value.get("structuredContent"), value.get("structured_content")]
+    candidates: list[object] = [
+        value.get("structuredContent"),
+        value.get("structured_content"),
+    ]
     content = value.get("content")
     if isinstance(content, list):
         for block in content:
@@ -3243,8 +3277,6 @@ def _conservative_reconciliation_result_from_readbacks(
     )
 
 
-
-
 def _read_matches_action(
     read: dict[str, object],
     action: dict[str, object],
@@ -3283,6 +3315,8 @@ def _read_matches_action(
         write_tool=write_tool,
         read_targets=read_target,
         write_targets=action_target,
+        read_operation=str(read.get("operation") or ""),
+        write_operation=str(action.get("operation") or ""),
     ):
         return False
     read_result_identifiers = read.get("result_identifiers")
@@ -3296,9 +3330,7 @@ def _read_matches_action(
         write_operation=str(action.get("operation") or ""),
         read_targets=read_target,
         read_result_identifiers=(
-            read_result_identifiers
-            if isinstance(read_result_identifiers, dict)
-            else {}
+            read_result_identifiers if isinstance(read_result_identifiers, dict) else {}
         ),
         write_result_identifiers=(
             write_result_identifiers
@@ -3329,13 +3361,21 @@ def _matching_read_digest(
 ) -> str:
     readback_action = _readback_action_metadata(action, action)
     for index, event in enumerate(events):
-        if index < event_start or index <= after_index or event.get("type") != "item.completed":
+        if (
+            index < event_start
+            or index <= after_index
+            or event.get("type") != "item.completed"
+        ):
             continue
         metadata = _event_metadata(event)
         if metadata is None or metadata.get("effect") != EffectKind.READ_ONLY.value:
             continue
         digest = metadata.get("result_digest")
-        if _read_matches_action(metadata, readback_action, registry) and isinstance(digest, str):
+        if (
+            _read_matches_action(metadata, readback_action, registry)
+            and _message_readback_matches_action(metadata, readback_action)
+            and isinstance(digest, str)
+        ):
             return digest
     return ""
 
@@ -3358,6 +3398,12 @@ def _actions_have_required_readbacks(
             and _metadata_matches_action(metadata, action)
         ]
         if not writes:
+            if registry.readback_requires_completed_write(
+                write_server=str(action.get("reviewed_server") or ""),
+                write_tool=str(action.get("reviewed_tool") or ""),
+                write_operation=str(action.get("operation") or ""),
+            ):
+                return False
             writes = [(-1, action)]
         if any(
             not _matching_read_digest(
@@ -3381,6 +3427,32 @@ def _readback_action_metadata(
     if not isinstance(targets, dict):
         return write_metadata
     return {**write_metadata, "target_identifiers": targets}
+
+
+def _message_readback_matches_action(
+    read_metadata: dict[str, object],
+    action: dict[str, object],
+) -> bool:
+    """Require body evidence for message writes; target-only reads are unsafe."""
+    if not _is_expected_dingtalk_chat_send(action):
+        return True
+    if read_metadata.get("message_readback_window_matches") is not True:
+        return False
+    expected_raw = action.get("message_text_digest")
+    observed_raw = read_metadata.get("message_text_digests")
+    if (
+        isinstance(expected_raw, str)
+        and isinstance(observed_raw, list)
+        and expected_raw in observed_raw
+    ):
+        return True
+    expected_rendered = action.get("message_rendered_text_digest")
+    observed_rendered = read_metadata.get("message_rendered_text_digests")
+    return (
+        isinstance(expected_rendered, str)
+        and isinstance(observed_rendered, list)
+        and expected_rendered in observed_rendered
+    )
 
 
 def _validated_reconciliation(
@@ -3437,6 +3509,9 @@ def _validated_reconciliation(
         if cited_read is None:
             raise RuntimeError("audit_reconciliation_evidence_mismatch")
         expected_text_digest = actions[action_index].get("message_text_digest")
+        expected_rendered_text_digest = actions[action_index].get(
+            "message_rendered_text_digest"
+        )
         same_message_identity_count = sum(
             candidate.get("message_text_digest") == expected_text_digest
             and candidate.get("target_identifiers")
@@ -3449,20 +3524,24 @@ def _validated_reconciliation(
             and same_message_identity_count == 1
         ):
             observed_text_digests = cited_read.get("message_text_digests")
-            window_matches = (
-                cited_read.get("message_readback_window_matches") is True
+            observed_rendered_text_digests = cited_read.get(
+                "message_rendered_text_digests"
             )
+            window_matches = cited_read.get("message_readback_window_matches") is True
             if (
                 window_matches
-                and
-                isinstance(observed_text_digests, list)
+                and isinstance(observed_text_digests, list)
                 and expected_text_digest in observed_text_digests
+            ) or (
+                window_matches
+                and isinstance(expected_rendered_text_digest, str)
+                and isinstance(observed_rendered_text_digests, list)
+                and expected_rendered_text_digest in observed_rendered_text_digests
             ):
                 disposition = ReconciliationDisposition.PRESENT
             elif (
                 window_matches
-                and
-                entry.disposition is ReconciliationDisposition.ABSENT
+                and entry.disposition is ReconciliationDisposition.ABSENT
                 and cited_read.get("message_readback_complete") is True
             ):
                 disposition = ReconciliationDisposition.ABSENT
@@ -3524,6 +3603,9 @@ def _action_completion_accounting(
     starts: list[dict[str, object]] = []
     starts_per_action = [0] * len(actions)
     successes = [0] * len(actions)
+    durable_completion_fingerprints: list[set[tuple[str, str, str, str]]] = [
+        set() for _ in actions
+    ]
     for event_index, event in enumerate(events):
         metadata = _event_metadata(event)
         if (
@@ -3533,7 +3615,11 @@ def _action_completion_accounting(
         ):
             continue
         item = event.get("item")
-        call_id = str(item.get("id") or item.get("call_id") or "") if isinstance(item, dict) else ""
+        call_id = (
+            str(item.get("id") or item.get("call_id") or "")
+            if isinstance(item, dict)
+            else ""
+        )
         if event.get("type") == "item.started":
             candidates = [
                 index
@@ -3543,8 +3629,7 @@ def _action_completion_accounting(
             persisted_index = metadata.get("action_index")
             action_index = (
                 int(persisted_index)
-                if isinstance(persisted_index, int)
-                and persisted_index in candidates
+                if isinstance(persisted_index, int) and persisted_index in candidates
                 else min(candidates, key=starts_per_action.__getitem__)
                 if candidates
                 else None
@@ -3579,7 +3664,7 @@ def _action_completion_accounting(
         start = next(
             (
                 candidate
-                for candidate in starts
+                for candidate in reversed(starts)
                 if not candidate["closed"]
                 and candidate["call_id"] == call_id
                 and (
@@ -3599,11 +3684,28 @@ def _action_completion_accounting(
             continue
         start["closed"] = True
         action_index = start["action_index"]
-        if (
-            event.get("type") == "item.completed"
-            and action_index is not None
-        ):
-            successes[int(action_index)] += 1
+        if event.get("type") == "item.completed" and action_index is not None:
+            authorization_id = metadata.get("authorization_id")
+            result_digest = metadata.get("result_digest")
+            operation_digest = metadata.get("operation_digest")
+            arguments_digest = metadata.get("arguments_digest")
+            fingerprint = (
+                authorization_id,
+                operation_digest,
+                arguments_digest,
+                result_digest,
+            )
+            if (
+                all(isinstance(value, str) and value for value in fingerprint)
+                and fingerprint
+                not in durable_completion_fingerprints[int(action_index)]
+            ):
+                durable_completion_fingerprints[int(action_index)].add(
+                    cast(tuple[str, str, str, str], fingerprint)
+                )
+                successes[int(action_index)] += 1
+            elif not all(isinstance(value, str) and value for value in fingerprint):
+                successes[int(action_index)] += 1
 
     # An interrupted write may be followed by a later, independently recorded
     # successful write and its target-matched readback. The readback closes the
@@ -3614,8 +3716,7 @@ def _action_completion_accounting(
         if (
             not start["closed"]
             and not any(
-                other is not start
-                and other["call_id"] == start["call_id"]
+                other is not start and other["call_id"] == start["call_id"]
                 for other in starts
             )
             and action_index is not None
@@ -3663,11 +3764,13 @@ def _action_completion_accounting(
         )
         if open_start is not None:
             open_start["closed"] = True
-        successes[action_index] += 1
+        # The durable receipt and completed event are two persistence views of
+        # the same authorized write, not two external effects.
+        if successes[action_index] == 0:
+            successes[action_index] += 1
 
-    # Session replay is suppressed before persistence. Multiple completed calls
-    # for one proposal action in this accounting pass are therefore distinct
-    # external writes and must keep Audit from reporting a single safe effect.
+    # Multiple distinct completion fingerprints for one proposal action are
+    # possible duplicate external writes and must prevent single-effect proof.
     completed = {
         index for index, success_count in enumerate(successes) if success_count == 1
     }
@@ -3690,6 +3793,26 @@ def _message_text_digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+_MARKDOWN_RENDERER = MarkdownIt("commonmark", {"html": False})
+
+
+def _message_rendered_text_digest(text: str) -> str:
+    """Digest visible Markdown content, ignoring transport-only formatting."""
+    visible: list[str] = []
+    for token in _MARKDOWN_RENDERER.parse(text):
+        children = token.children or ()
+        for child in children:
+            if child.type in {"text", "code_inline", "image"}:
+                visible.append(child.content)
+            elif child.type in {"softbreak", "hardbreak"}:
+                visible.append(" ")
+        if token.type in {"code_block", "fence"}:
+            visible.append(token.content)
+    normalized = unicodedata.normalize("NFC", "".join(visible))
+    compact = " ".join(normalized.split())
+    return _message_text_digest(compact)
+
+
 def _dingtalk_message_readback_proof(
     receipt: dict[str, object],
     *,
@@ -3697,6 +3820,7 @@ def _dingtalk_message_readback_proof(
     operation: str,
     expected_message_text_digests: frozenset[str],
     operation_started_at: str,
+    expected_message_rendered_text_digests: frozenset[str] = frozenset(),
 ) -> dict[str, object]:
     """Reduce a scoped DingTalk history read to privacy-safe content evidence."""
     if native_cli != "dws" or not operation.startswith("chat "):
@@ -3714,6 +3838,7 @@ def _dingtalk_message_readback_proof(
     if not isinstance(messages, list):
         return {}
     matched: set[str] = set()
+    rendered_matched: set[str] = set()
     for message in messages:
         if not isinstance(message, dict):
             continue
@@ -3731,6 +3856,9 @@ def _dingtalk_message_readback_proof(
         digest = _message_text_digest(text)
         if digest in expected_message_text_digests:
             matched.add(digest)
+        rendered_digest = _message_rendered_text_digest(text)
+        if rendered_digest in expected_message_rendered_text_digests:
+            rendered_matched.add(rendered_digest)
     complete = (
         payload.get("complete") is True
         and payload.get("hasMore") is False
@@ -3744,6 +3872,7 @@ def _dingtalk_message_readback_proof(
             operation_started_at=operation_started_at,
         ),
         "message_text_digests": sorted(matched),
+        "message_rendered_text_digests": sorted(rendered_matched),
     }
 
 
@@ -3760,9 +3889,8 @@ def _message_readback_window_matches(
     operation_started = _parse_reconciliation_timestamp(operation_started_at)
     if start is None or end is None or operation_started is None:
         return False
-    return (
-        start <= operation_started < end
-        and timedelta(0) < end - start <= timedelta(hours=2)
+    return start <= operation_started < end and timedelta(0) < end - start <= timedelta(
+        hours=2
     )
 
 
@@ -3990,9 +4118,7 @@ def _validate_runtime_reference_domain_result(
     if _contains_sensitive_value(domain_result):
         raise ValueError("agent_result_contains_sensitive_value")
     if _contains_local_runtime_value(domain_result):
-        raise AgentReadOnlyViolationError(
-            "runtime_result_contains_local_runtime_leak"
-        )
+        raise AgentReadOnlyViolationError("runtime_result_contains_local_runtime_leak")
     encoded = json.dumps(
         domain_result,
         ensure_ascii=False,

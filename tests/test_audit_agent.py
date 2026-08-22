@@ -33,8 +33,10 @@ from app.agent_turn_runner import (
     _action_completion_accounting,
     _action_receipt_operation_id,
     _actions_have_required_readbacks,
+    _dingtalk_message_readback_proof,
     _is_dingtalk_chat_send_argv,
     _json_digest,
+    _message_rendered_text_digest,
     _metadata_matches_action,
     _read_matches_action,
     _validated_reconciliation,
@@ -58,7 +60,7 @@ from app.native_cli_metadata import (
 )
 from app.process_runner import ProcessRunResult
 from app.runtime_environment import central_python
-from app.store import AgentRole, AutoReplyStore
+from app.store import AgentExecutionReceipt, AgentRole, AutoReplyStore
 from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 from tests.prompt_structure import validate_prompt_structure
 
@@ -84,9 +86,11 @@ class CapturingExecutor:
         if self.inject_skill_receipt and not explicit_skill_read:
             marker = "Verified Skills read by Consumer A\n"
             if marker in kwargs["prompt"]:
-                receipt_text = kwargs["prompt"].split(marker, 1)[1].split(
-                    "\n\nCandidate revision\n", 1
-                )[0]
+                receipt_text = (
+                    kwargs["prompt"]
+                    .split(marker, 1)[1]
+                    .split("\n\nCandidate revision\n", 1)[0]
+                )
                 receipts = json.loads(receipt_text)
                 if receipts:
                     receipt = receipts[0]
@@ -240,9 +244,7 @@ def test_failed_route_replays_hidden_completed_write_before_failover(
     )
     failure_stream = "\n".join(
         (
-            json.dumps(
-                {"type": "thread.started", "thread_id": "oauth-hidden-write"}
-            ),
+            json.dumps({"type": "thread.started", "thread_id": "oauth-hidden-write"}),
             skill_event,
             json.dumps(
                 {"type": "error", "message": "stream disconnected before completion"}
@@ -306,10 +308,13 @@ def test_audit_never_resumes_or_overwrites_consumer_oauth_route_session(setup):
 
     assert executor.commands[0][:2] == ["codex", "exec"]
     assert executor.commands[0][:3] != ["codex", "exec", "resume"]
-    assert store.get_conversation_runtime_session(
-        task.conversation_id,
-        "codex_oauth",
-    ) == "consumer-oauth-session"
+    assert (
+        store.get_conversation_runtime_session(
+            task.conversation_id,
+            "codex_oauth",
+        )
+        == "consumer-oauth-session"
+    )
 
 
 def test_audit_never_reads_or_overwrites_consumer_api_route_session(setup):
@@ -345,10 +350,13 @@ def test_audit_never_reads_or_overwrites_consumer_api_route_session(setup):
 
     assert executor.commands[0][:2] == ["codex", "exec"]
     assert executor.commands[0][:3] != ["codex", "exec", "resume"]
-    assert store.get_conversation_runtime_session(
-        task.conversation_id,
-        "codex_api",
-    ) == "consumer-api-session"
+    assert (
+        store.get_conversation_runtime_session(
+            task.conversation_id,
+            "codex_api",
+        )
+        == "consumer-api-session"
+    )
     run = store.get_agent_run(result.run_id)
     assert run is not None and run.codex_session_id == ""
     [attempt] = store.list_agent_runtime_attempts(result.run_id)
@@ -373,9 +381,7 @@ def test_audit_reconciliation_does_not_require_historical_skill_receipts(setup):
     store, _, audit_context, _ = setup
     runner = AuditAgentRunner(store=store, workspace=Path("/workspace"))
 
-    required = runner._required_capabilities(
-        audit_context, recovery_phase="reconcile"
-    )
+    required = runner._required_capabilities(audit_context, recovery_phase="reconcile")
 
     assert "mcp:agent_cli:reviewed_write" not in required
     assert "mcp:agent_cli:reviewed_read" in required
@@ -485,27 +491,39 @@ def test_audit_developer_instructions_define_wire_json_field_shapes():
     assert '"read_result_digest"' in instructions
     assert '"title":"AuditAgentWireResult"' in instructions
     assert "external_result must\ncontain exactly" in instructions
-    assert 'dws schema --cli-path "<product> <command>" --compact --format json' in instructions
-    assert "discovery is not an unavailable-tool result" in instructions
     assert (
-        "operation_id, verification_summary, and\nlive_result_reference"
+        'dws schema --cli-path "<product> <command>" --compact --format json'
         in instructions
     )
+    assert "discovery is not an unavailable-tool result" in instructions
     assert (
-        "operation_id must equal the candidate proposal\noperation_id"
-        in instructions
+        "operation_id, verification_summary, and\nlive_result_reference" in instructions
+    )
+    assert (
+        "operation_id must equal the candidate proposal\noperation_id" in instructions
     )
     assert "reconciliation is always an array" in instructions
     assert "use [] unless\noutcome is reconciled" in instructions
     assert "object wrapper in reconciliation" in instructions
-    assert "exactly these string fields:\nrule, observation, and requested_revision" in instructions
+    assert (
+        "exactly these string fields:\nrule, observation, and requested_revision"
+        in instructions
+    )
     assert "failed_rule, evidence, or required_change" in instructions
     assert "reconciled requires\nside_effect_state=unknown" in instructions
-    assert "action_index, disposition (present,\nabsent, or ambiguous), and read_result_digest" in instructions
+    assert (
+        "action_index, disposition (present,\nabsent, or ambiguous), and read_result_digest"
+        in instructions
+    )
     assert "reconciled outcome is reserved for unknown-outcome recovery" in instructions
-    assert "error_code, error_retryable, and error_authorization_required" in instructions
+    assert (
+        "error_code, error_retryable, and error_authorization_required" in instructions
+    )
     assert "Do not return a nested error object" in instructions
-    assert "return revision_required and ask\nConsumer Agent A to return no_action" in instructions
+    assert (
+        "return revision_required and ask\nConsumer Agent A to return no_action"
+        in instructions
+    )
     assert "Never execute a DWS write command without --yes" in instructions
     assert "missing command syntax is a read-only evidence task" in instructions
     assert "reviewed local read command" in instructions
@@ -538,8 +556,11 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
 
 def test_recovery_mcp_env_override_is_a_toml_inline_table():
     command = [
-        "codex", "exec", "prompt",
-        "-c", 'mcp_servers.xiaoqing_interview.command="server"',
+        "codex",
+        "exec",
+        "prompt",
+        "-c",
+        'mcp_servers.xiaoqing_interview.command="server"',
     ]
     make_audit_agent_command(
         command,
@@ -547,19 +568,18 @@ def test_recovery_mcp_env_override_is_a_toml_inline_table():
             command="python",
             args=("-m", "app.agent_cli"),
             cwd="/tmp/service root",
-            env=(("ALLOWLIST", '[{"text":"quoted \\\" value"}]'),),
+            env=(("ALLOWLIST", '[{"text":"quoted \\" value"}]'),),
         ),
         allow_write=True,
     )
     override = next(
         command[index + 1]
         for index, value in enumerate(command[:-1])
-        if value == "-c"
-        and command[index + 1].startswith("mcp_servers.agent_cli.env=")
+        if value == "-c" and command[index + 1].startswith("mcp_servers.agent_cli.env=")
     )
     parsed = tomllib.loads("value=" + override.partition("=")[2])
 
-    assert parsed["value"] == {"ALLOWLIST": '[{"text":"quoted \\\" value"}]'}
+    assert parsed["value"] == {"ALLOWLIST": '[{"text":"quoted \\" value"}]'}
 
 
 def _audit_result_jsonl(
@@ -577,7 +597,7 @@ def _audit_result_jsonl(
 ) -> str:
     if read_stdout is None:
         now = datetime.now(UTC)
-        content_is_present = (
+        content_is_present = outcome == "executed" or (
             any(
                 entry.get("disposition") == "present"
                 for entry in (reconciliation or [])
@@ -612,8 +632,14 @@ def _audit_result_jsonl(
     if include_read:
         arguments = {
             "argv": [
-                "dws", "chat", "message", "list", "--group", read_target,
-                "--time", "2026-08-06",
+                "dws",
+                "chat",
+                "message",
+                "list",
+                "--group",
+                read_target,
+                "--time",
+                "2026-08-06",
             ]
         }
         descriptor = describe_native_command(
@@ -735,7 +761,9 @@ def _audit_result_jsonl(
             disposition = (
                 "ambiguous"
                 if outcome == "needs_human"
-                else "absent" if include_write else "present"
+                else "absent"
+                if include_write
+                else "present"
             )
             reconciliation.append(
                 {
@@ -749,7 +777,10 @@ def _audit_result_jsonl(
         json.dumps(
             {
                 "type": "item.completed",
-                "item": {"type": "agent_message", "text": json.dumps(_wire_result(result))},
+                "item": {
+                    "type": "agent_message",
+                    "text": json.dumps(_wire_result(result)),
+                },
             }
         )
     )
@@ -773,9 +804,16 @@ def _audit_jsonl(
     authorization_id: str = "",
 ) -> str:
     result = {
-        "outcome": "executed", "summary": "Executed and verified.",
-        "proposal_revision": proposal_revision, "side_effect_state": "confirmed", "feedback": None,
-        "external_result": {"operation_id": operation_id, "verification_summary": "Present.", "live_result_reference": {"id": "one"}},
+        "outcome": "executed",
+        "summary": "Executed and verified.",
+        "proposal_revision": proposal_revision,
+        "side_effect_state": "confirmed",
+        "feedback": None,
+        "external_result": {
+            "operation_id": operation_id,
+            "verification_summary": "Present.",
+            "live_result_reference": {"id": "one"},
+        },
         "error": {"code": "", "retryable": False, "authorization_required": False},
         "reconciliation": [],
     }
@@ -824,7 +862,11 @@ def _audit_jsonl(
             receipt["target_identifiers"] = descriptor.target_identifiers
             item = {
                 "type": "mcp_tool_call",
-                "id": f"write-{index + 1}",
+                "id": (
+                    f"recovery-write-{index + 1}"
+                    if authorization_id
+                    else f"write-{index + 1}"
+                ),
                 "server": "agent_cli",
                 "tool": "execute_reviewed_write",
                 "arguments": arguments,
@@ -875,7 +917,29 @@ def _audit_jsonl(
                 "operation_digest": descriptor.command_digest,
                 "target_identifiers": descriptor.target_identifiers,
                 "result_digest": f"verification-digest-{index}",
-                "stdout": "{}",
+                "stdout": json.dumps(
+                    {
+                        "complete": True,
+                        "hasMore": False,
+                        "paginationKnown": True,
+                        "failures": [],
+                        "queryRange": {
+                            "startTime": (
+                                datetime.now(UTC) - timedelta(minutes=30)
+                            ).isoformat(),
+                            "endTime": (
+                                datetime.now(UTC) + timedelta(minutes=30)
+                            ).isoformat(),
+                        },
+                        "messages": [
+                            {
+                                "conversationId": verification_target,
+                                "messageId": f"verified-{index}",
+                                "text": write_text,
+                            }
+                        ],
+                    }
+                ),
             }
             item = {
                 "type": "mcp_tool_call",
@@ -907,7 +971,10 @@ def _audit_jsonl(
         json.dumps(
             {
                 "type": "item.completed",
-                "item": {"type": "agent_message", "text": json.dumps(_wire_result(result))},
+                "item": {
+                    "type": "agent_message",
+                    "text": json.dumps(_wire_result(result)),
+                },
             }
         )
     )
@@ -1041,26 +1108,68 @@ def _revision_required_jsonl(observation: str) -> str:
 def setup(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "agent.sqlite3")
     store.enqueue_reply_task(
-        conversation_id="cid-agent", conversation_title="Group", single_chat=False,
-        trigger_message_id="msg-1", trigger_create_time="2026-08-06 10:00:00",
-        trigger_sender="Derek", trigger_text="Send this", execution_generation="gen-1",
+        conversation_id="cid-agent",
+        conversation_title="Group",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-08-06 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Send this",
+        execution_generation="gen-1",
     )
     task = store.claim_reply_tasks(limit=1)[0]
     context = AgentTaskContext(
-        task_id=task.id, channel=task.channel, conversation_id=task.conversation_id,
-        conversation_title=task.conversation_title, single_chat=task.single_chat,
-        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
-        trigger_text=task.trigger_text, trigger_create_time=task.trigger_create_time,
-        messages=(), materials=(), prior_receipts=(),
+        task_id=task.id,
+        channel=task.channel,
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        single_chat=task.single_chat,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        trigger_create_time=task.trigger_create_time,
+        messages=(),
+        materials=(),
+        prior_receipts=(),
     )
-    proposal = ConsumerProposal.model_validate({
-        "objective": "Send result", "actions": [{"description": "Send", "capability": "agent_cli.dws", "operation": "chat message send", "target": {"group": "cid-agent"}, "payload": {"argv": ["dws", "chat", "message", "send", "--group", "cid-agent", "--text", "done", "--yes"]}, "expected_verification": "Message exists"}],
-        "sourced_facts": [], "authored_judgment": "Requested by Derek",
-    })
+    proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Send result",
+            "actions": [
+                {
+                    "description": "Send",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"group": "cid-agent"},
+                    "payload": {
+                        "argv": [
+                            "dws",
+                            "chat",
+                            "message",
+                            "send",
+                            "--group",
+                            "cid-agent",
+                            "--text",
+                            "done",
+                            "--yes",
+                        ]
+                    },
+                    "expected_verification": "Message exists",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Requested by Derek",
+        }
+    )
     parent = store.claim_agent_run(
-        task.id, task.execution_generation, role=AgentRole.CONSUMER,
-        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
-        operation_id="", owner="parent",
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="parent",
     ).run
     skill_path = tmp_path / "installed-skills" / "business-review" / "SKILL.md"
     skill_path.parent.mkdir(parents=True)
@@ -1095,7 +1204,9 @@ def test_scripted_audit_voluntarily_proceeds_after_matching_consumer_skill_sha(
     skill_path.parent.mkdir(parents=True)
     content = "# Business review\n"
     skill_path.write_text(content, encoding="utf-8")
-    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",))
+    monkeypatch.setattr(
+        "app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",)
+    )
     skill_event, digest = _skill_read_jsonl(skill_path, content)
     context = replace(
         audit_context,
@@ -1128,7 +1239,9 @@ def test_scripted_audit_voluntarily_requires_revision_for_changed_skill_sha(
     skill_path.parent.mkdir(parents=True)
     content = "# Changed business review\n"
     skill_path.write_text(content, encoding="utf-8")
-    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",))
+    monkeypatch.setattr(
+        "app.agent_skill_usage.AGENT_SKILL_ROOTS", (tmp_path / "skills",)
+    )
     skill_event, _digest = _skill_read_jsonl(skill_path, content)
     context = replace(
         audit_context,
@@ -1335,11 +1448,18 @@ def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):
                     "target": {"instance_id": "instance-1", "task_id": "task-1"},
                     "payload": {
                         "argv": [
-                            "dws", "oa", "approval", "approve",
-                            "--instance-id", "instance-1",
-                            "--task-id", "task-1",
-                            "--remark", "同意",
-                            "--format", "json",
+                            "dws",
+                            "oa",
+                            "approval",
+                            "approve",
+                            "--instance-id",
+                            "instance-1",
+                            "--task-id",
+                            "task-1",
+                            "--remark",
+                            "同意",
+                            "--format",
+                            "json",
                         ]
                     },
                     "expected_verification": "OA task is completed",
@@ -1395,7 +1515,9 @@ def test_audit_returns_write_without_executable_contract_to_consumer(setup):
     )
     executor = CapturingExecutor("")
     result = AuditAgentRunner(
-        store=store, workspace=Path("/workspace"), executor=executor,
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
     ).run(
         task,
         replace(audit_context, proposal=invalid_proposal),
@@ -1421,17 +1543,27 @@ def test_completed_chat_dm_content_is_recorded_in_delivery_ledger(setup):
         owner="audit-owner",
     ).run
     argv = [
-        "dws", "chat", "+dm", "--to", task.trigger_sender,
-        "--content", "Approval completed.", "--yes", "--format", "json",
+        "dws",
+        "chat",
+        "+dm",
+        "--to",
+        task.trigger_sender,
+        "--content",
+        "Approval completed.",
+        "--yes",
+        "--format",
+        "json",
     ]
     event = {
         "type": "item.completed",
-        "item": {"metadata": {
-            "effect": "effectful",
-            "capability": "agent_cli.dws",
-            "operation": "chat +dm",
-            "result_digest": "result-digest",
-        }},
+        "item": {
+            "metadata": {
+                "effect": "effectful",
+                "capability": "agent_cli.dws",
+                "operation": "chat +dm",
+                "result_digest": "result-digest",
+            }
+        },
     }
     payload = {"item": {"arguments": {"argv": argv}}}
     AgentTurnProcess(
@@ -1441,7 +1573,8 @@ def test_completed_chat_dm_content_is_recorded_in_delivery_ledger(setup):
         owner="audit-owner",
     )._record_direct_send_receipt(event, payload, run=run)
     assert store.has_sent_reply_for_trigger(
-        task.conversation_id, task.trigger_message_id,
+        task.conversation_id,
+        task.trigger_message_id,
     )
 
 
@@ -1466,8 +1599,16 @@ def test_audit_returns_single_chat_open_id_passed_as_user_to_consumer(setup):
                         "target": {"user": "open-dingtalk-1"},
                         "payload": {
                             "argv": [
-                                "dws", "chat", "+messages-send", "--as", "user",
-                                "--user", "open-dingtalk-1", "--text", "done", "--yes",
+                                "dws",
+                                "chat",
+                                "+messages-send",
+                                "--as",
+                                "user",
+                                "--user",
+                                "open-dingtalk-1",
+                                "--text",
+                                "done",
+                                "--yes",
                             ]
                         },
                         "expected_verification": "Message exists",
@@ -1519,8 +1660,16 @@ def test_audit_keeps_typed_recipient_check_when_cli_label_is_noncanonical(setup)
                         "target": {"user": "open-dingtalk-1"},
                         "payload": {
                             "argv": [
-                                "dws", "chat", "+messages-send", "--as", "user",
-                                "--user", "open-dingtalk-1", "--text", "done", "--yes",
+                                "dws",
+                                "chat",
+                                "+messages-send",
+                                "--as",
+                                "user",
+                                "--user",
+                                "open-dingtalk-1",
+                                "--text",
+                                "done",
+                                "--yes",
                             ]
                         },
                         "expected_verification": "Message exists",
@@ -1575,12 +1724,15 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(
         ),
     )
     execution = _audit_jsonl("operation-1", session="session-b").splitlines()
-    executor = CapturingExecutor(
-        "\n".join((execution[0], skill_event, *execution[1:]))
-    )
+    executor = CapturingExecutor("\n".join((execution[0], skill_event, *execution[1:])))
 
-    result = AuditAgentRunner(store=store, workspace=Path("/workspace"), executor=executor).run(
-        task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id,
+    result = AuditAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor
+    ).run(
+        task,
+        audit_context,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
     )
 
     command = executor.commands[0]
@@ -1619,8 +1771,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(
     ]
     assert len(skill_reads) == 1
     assert {
-        key: skill_reads[0][key]
-        for key in ("skill_name", "skill_path", "skill_sha256")
+        key: skill_reads[0][key] for key in ("skill_name", "skill_path", "skill_sha256")
     } == {
         "skill_name": "business-review",
         "skill_path": str(skill_path),
@@ -1630,8 +1781,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(
         event["item"]
         for event in run.tool_events
         if event["type"] == "item.completed"
-        and event["item"].get("metadata", {}).get("operation")
-        == "chat message send"
+        and event["item"].get("metadata", {}).get("operation") == "chat message send"
     ]
     assert len(completed_writes) == 1
     assert completed_writes[0]["status"] == "completed"
@@ -1683,12 +1833,17 @@ def test_audit_recovers_session_only_dingtalk_receipt_but_requires_readback(
     session_id = "session-only-receipt"
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     argv = [
-        "dws", "chat", "message", "send", "--group", "cid-agent",
-        "--text", "done", "--yes",
+        "dws",
+        "chat",
+        "message",
+        "send",
+        "--group",
+        "cid-agent",
+        "--text",
+        "done",
+        "--yes",
     ]
-    descriptor = describe_native_command(
-        {"type": "command_execution", "argv": argv}
-    )
+    descriptor = describe_native_command({"type": "command_execution", "argv": argv})
     assert descriptor is not None
     receipt = {
         "content": [{"type": "text", "text": "accepted"}],
@@ -1702,7 +1857,11 @@ def test_audit_recovers_session_only_dingtalk_receipt_but_requires_readback(
         "isError": False,
     }
     session_path = (
-        tmp_path / "sessions" / "2026" / "08" / "11"
+        tmp_path
+        / "sessions"
+        / "2026"
+        / "08"
+        / "11"
         / f"rollout-2026-08-11T04-00-00-{session_id}.jsonl"
     )
     session_path.parent.mkdir(parents=True)
@@ -1749,7 +1908,9 @@ def test_audit_recovers_session_only_dingtalk_receipt_but_requires_readback(
     # The streaming transport omitted the completed MCP lifecycle; its durable
     # local session is the only successful controlled-send receipt.
     stdout = _audit_jsonl(
-        "operation-1", session=session_id, include_write=False,
+        "operation-1",
+        session=session_id,
+        include_write=False,
     )
 
     runner = AuditAgentRunner(
@@ -1770,7 +1931,9 @@ def test_audit_recovers_session_only_dingtalk_receipt_but_requires_readback(
     )
     assert run is not None and run.status == "unknown"
     assert [event["type"] for event in run.tool_events] == [
-        "item.completed", "item.started", "item.completed"
+        "item.completed",
+        "item.started",
+        "item.completed",
     ]
     assert store.has_sent_reply_for_trigger(
         task.conversation_id, task.trigger_message_id
@@ -1782,15 +1945,24 @@ def test_audit_ignores_session_replay_of_streamed_write(setup, tmp_path, monkeyp
     session_id = "streamed-write-also-in-session"
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     argv = [
-        "dws", "chat", "message", "send", "--group", "cid-agent",
-        "--text", "done", "--yes",
+        "dws",
+        "chat",
+        "message",
+        "send",
+        "--group",
+        "cid-agent",
+        "--text",
+        "done",
+        "--yes",
     ]
-    descriptor = describe_native_command(
-        {"type": "command_execution", "argv": argv}
-    )
+    descriptor = describe_native_command({"type": "command_execution", "argv": argv})
     assert descriptor is not None
     session_path = (
-        tmp_path / "sessions" / "2026" / "08" / "11"
+        tmp_path
+        / "sessions"
+        / "2026"
+        / "08"
+        / "11"
         / f"rollout-2026-08-11T04-00-00-{session_id}.jsonl"
     )
     session_path.parent.mkdir(parents=True)
@@ -1910,9 +2082,7 @@ def test_audit_reads_current_audit_rules_for_each_turn(
     rules_path = tmp_path / "audit_rules.md"
     rules_path.write_text("Current audit rule.", encoding="utf-8")
     monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(rules_path))
-    executor = CapturingExecutor(
-        _audit_jsonl("operation-1", session="session-b")
-    )
+    executor = CapturingExecutor(_audit_jsonl("operation-1", session="session-b"))
 
     AuditAgentRunner(
         store=store,
@@ -1924,9 +2094,7 @@ def test_audit_reads_current_audit_rules_for_each_turn(
     assert "Check authority." not in executor.prompts[0]
     assert "Effective Audit Rules" not in executor.prompts[0]
     assert any("Current audit rule." in item for item in executor.commands[0])
-    assert any(
-        "do not rewrite the candidate" in item for item in executor.commands[0]
-    )
+    assert any("do not rewrite the candidate" in item for item in executor.commands[0])
 
 
 def test_audit_validates_rules_before_claiming_run(
@@ -1949,13 +2117,16 @@ def test_audit_validates_rules_before_claiming_run(
             ),
         ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
 
-    assert store.get_agent_run_for_turn(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-    ) is None
+    assert (
+        store.get_agent_run_for_turn(
+            task.id,
+            task.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=0,
+            turn_attempt=0,
+        )
+        is None
+    )
 
 
 def test_audit_rejects_executed_result_without_completed_write(setup):
@@ -2276,8 +2447,7 @@ def test_audit_preserves_agent_cli_error_receipt_without_confirming_effect(setup
     assert run.status == "failed"
     assert run.side_effect_state == "none"
     failed_events = [
-        event for event in run.tool_events
-        if event.get("type") == "item.failed"
+        event for event in run.tool_events if event.get("type") == "item.failed"
     ]
     assert len(failed_events) == 1
     metadata = failed_events[0]["item"]["metadata"]
@@ -2347,7 +2517,7 @@ def test_audit_process_failure_with_all_effects_closed_is_failed_not_unknown(set
             "code": "reconciliation_read_failed",
             "retryable": False,
             "gate_state": "unavailable",
-        }
+        },
     }
     stdout = "\n".join(
         (
@@ -2477,9 +2647,7 @@ def _seed_crashed_audit_write(setup):
     persisted_item = run.tool_events[1]["item"]
     assert "arguments" not in persisted_item and "result" not in persisted_item
     assert persisted_item["metadata"]["operation_id"] == "operation-1"
-    assert persisted_item["metadata"]["target_identifiers"] == {
-        "group": "cid-agent"
-    }
+    assert persisted_item["metadata"]["target_identifiers"] == {"group": "cid-agent"}
     return store, task, audit_context, run
 
 
@@ -2724,11 +2892,14 @@ def test_crash_after_write_uses_fresh_read_only_recovery_and_confirms_without_re
     assert run.codex_session_id not in executor.commands[0]
     assert "--sandbox" in executor.commands[0]
     assert "read-only" in executor.commands[0]
-    assert sum(
-        event["type"] == "item.started"
-        and event["item"]["metadata"]["effect"] == "effectful"
-        for event in persisted.tool_events
-    ) == 1
+    assert (
+        sum(
+            event["type"] == "item.started"
+            and event["item"]["metadata"]["effect"] == "effectful"
+            for event in persisted.tool_events
+        )
+        == 1
+    )
     receipts = store.list_agent_execution_receipts(run.id)
     assert len(receipts) == 1
     receipt_identity = json.loads(receipts[0].operation_id)
@@ -2746,8 +2917,7 @@ def test_crash_after_write_uses_fresh_read_only_recovery_and_confirms_without_re
         "recovery-read-digest"
     )
     assert receipts[0].receipt_id == (
-        "reconciliation:"
-        f"{receipts[0].operation_id}:recovery-read-digest"
+        f"reconciliation:{receipts[0].operation_id}:recovery-read-digest"
     )
 
 
@@ -2795,9 +2965,9 @@ def test_recovery_conservatively_reconciles_a_valid_non_reconciled_result(
 
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome is AuditOutcome.RECONCILED
-    assert result.result.reconciliation[0].disposition.value == "ambiguous"
+    assert result.result.reconciliation[0].disposition.value == "present"
     assert persisted is not None and persisted.status == "unknown"
-    assert persisted.side_effect_state == "unknown"
+    assert persisted.side_effect_state == "confirmed"
 
 
 def test_missing_delivery_ledger_does_not_prove_unknown_chat_was_not_sent(setup):
@@ -2828,8 +2998,7 @@ def test_missing_delivery_ledger_does_not_prove_unknown_chat_was_not_sent(setup)
     assert result.result.reconciliation[0].disposition.value == "ambiguous"
     assert persisted is not None and persisted.status == "unknown"
     assert (
-        store.get_reply_task(task.id).execution_generation
-        == task.execution_generation
+        store.get_reply_task(task.id).execution_generation == task.execution_generation
     )
     assert executor.commands
 
@@ -2849,9 +3018,15 @@ def test_mixed_unknown_does_not_treat_missing_sent_reply_as_delivery_absence(set
                     "target": {"open_dingtalk_id": "applicant-1"},
                     "payload": {
                         "argv": [
-                            "dws", "chat", "message", "send",
-                            "--open-dingtalk-id", "applicant-1",
-                            "--text", "done", "--yes",
+                            "dws",
+                            "chat",
+                            "message",
+                            "send",
+                            "--open-dingtalk-id",
+                            "applicant-1",
+                            "--text",
+                            "done",
+                            "--yes",
                         ]
                     },
                     "expected_verification": "Applicant receives the result",
@@ -2872,8 +3047,7 @@ def test_mixed_unknown_does_not_treat_missing_sent_reply_as_delivery_absence(set
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.status == "unknown"
     assert (
-        store.get_reply_task(task.id).execution_generation
-        == task.execution_generation
+        store.get_reply_task(task.id).execution_generation == task.execution_generation
     )
     assert executor.commands
 
@@ -2891,8 +3065,16 @@ def test_direct_chat_user_target_without_delivery_record_rotates_generation(setu
                     "target": {"user": "user-1"},
                     "payload": {
                         "argv": [
-                            "dws", "chat", "+messages-send", "--as", "user",
-                            "--user", "user-1", "--text", "done", "--yes",
+                            "dws",
+                            "chat",
+                            "+messages-send",
+                            "--as",
+                            "user",
+                            "--user",
+                            "user-1",
+                            "--text",
+                            "done",
+                            "--yes",
                         ]
                     },
                     "expected_verification": "Message exists",
@@ -2933,9 +3115,14 @@ def test_persisted_single_direct_delivery_receipt_finishes_unknown_without_rerun
                     "target": {"open_dingtalk_id": "user-1"},
                     "payload": {
                         "argv": [
-                            "dws", "chat", "+messages-send",
-                            "--open-dingtalk-id", "user-1",
-                            "--text", "done", "--yes",
+                            "dws",
+                            "chat",
+                            "+messages-send",
+                            "--open-dingtalk-id",
+                            "user-1",
+                            "--text",
+                            "done",
+                            "--yes",
                         ]
                     },
                     "expected_verification": "Message exists",
@@ -2975,8 +3162,14 @@ def test_persisted_chat_dm_to_recipient_finishes_unknown_without_rerun(setup):
                     "target": {"to": task.trigger_sender, "single_chat": True},
                     "payload": {
                         "argv": [
-                            "dws", "chat", "+dm", "--to", task.trigger_sender,
-                            "--text", "done", "--yes",
+                            "dws",
+                            "chat",
+                            "+dm",
+                            "--to",
+                            task.trigger_sender,
+                            "--text",
+                            "done",
+                            "--yes",
                         ]
                     },
                     "expected_verification": "Message exists",
@@ -3101,8 +3294,13 @@ def test_group_delivery_ledger_does_not_finish_direct_recovery(setup):
                     "target": {"group": "group-1"},
                     "payload": {
                         "argv": [
-                            "dws", "chat", "+send-to-group",
-                            "--group", "group-1", "--text", "done",
+                            "dws",
+                            "chat",
+                            "+send-to-group",
+                            "--group",
+                            "group-1",
+                            "--text",
+                            "done",
                         ]
                     },
                     "expected_verification": "Message exists",
@@ -3173,7 +3371,9 @@ def test_completed_recovery_action_overrides_older_absent_reconciliation(setup):
                     "id": "recovery-write",
                     "server": "agent_cli",
                     "tool": "execute_reviewed_write",
-                    "status": "completed" if event_type == "item.completed" else "in_progress",
+                    "status": "completed"
+                    if event_type == "item.completed"
+                    else "in_progress",
                     "metadata": metadata,
                 },
             },
@@ -3203,6 +3403,8 @@ def test_completed_recovery_action_overrides_older_absent_reconciliation(setup):
         "operation": read_descriptor.command_path,
         "target_identifiers": read_descriptor.target_identifiers,
         "result_digest": "post-recovery-read-digest",
+        "message_readback_window_matches": True,
+        "message_text_digests": [expected["message_text_digest"]],
     }
     for event_type in ("item.started", "item.completed"):
         store.append_unknown_agent_run_event(
@@ -3215,9 +3417,7 @@ def test_completed_recovery_action_overrides_older_absent_reconciliation(setup):
                     "server": "agent_cli",
                     "tool": "execute_reviewed_read",
                     "status": (
-                        "completed"
-                        if event_type == "item.completed"
-                        else "in_progress"
+                        "completed" if event_type == "item.completed" else "in_progress"
                     ),
                     "metadata": read_metadata,
                 },
@@ -3276,7 +3476,9 @@ def test_recovery_completes_verified_persisted_effects_without_model_reconciliat
                     "id": "verified-write",
                     "server": "agent_cli",
                     "tool": "execute_reviewed_write",
-                    "status": "completed" if event_type == "item.completed" else "in_progress",
+                    "status": "completed"
+                    if event_type == "item.completed"
+                    else "in_progress",
                     "metadata": write_metadata,
                 },
             },
@@ -3286,8 +3488,14 @@ def test_recovery_completes_verified_persisted_effects_without_model_reconciliat
         {
             "type": "command_execution",
             "argv": [
-                "dws", "chat", "message", "list", "--group", "cid-agent",
-                "--time", "2026-08-06",
+                "dws",
+                "chat",
+                "message",
+                "list",
+                "--group",
+                "cid-agent",
+                "--time",
+                "2026-08-06",
             ],
         }
     )
@@ -3300,6 +3508,8 @@ def test_recovery_completes_verified_persisted_effects_without_model_reconciliat
         "operation": read_descriptor.command_path,
         "target_identifiers": read_descriptor.target_identifiers,
         "result_digest": "verified-post-write-read",
+        "message_readback_window_matches": True,
+        "message_text_digests": [expected["message_text_digest"]],
     }
     for event_type in ("item.started", "item.completed"):
         store.append_unknown_agent_run_event(
@@ -3311,7 +3521,9 @@ def test_recovery_completes_verified_persisted_effects_without_model_reconciliat
                     "id": "verified-read",
                     "server": "agent_cli",
                     "tool": "execute_reviewed_read",
-                    "status": "completed" if event_type == "item.completed" else "in_progress",
+                    "status": "completed"
+                    if event_type == "item.completed"
+                    else "in_progress",
                     "metadata": read_metadata,
                 },
             },
@@ -3361,8 +3573,14 @@ def test_delivery_ledger_recognizes_current_text_message_command():
         "target_identifiers": {"open-dingtalk-id": "user-1"},
     }
     argv = (
-        "dws", "chat", "+messages-send", "--open-dingtalk-id", "user-1",
-        "--text", "done", "--yes",
+        "dws",
+        "chat",
+        "+messages-send",
+        "--open-dingtalk-id",
+        "user-1",
+        "--text",
+        "done",
+        "--yes",
     )
 
     assert _is_dingtalk_chat_send_argv(metadata, argv)
@@ -3376,8 +3594,17 @@ def test_delivery_ledger_recognizes_quote_reply_with_conversation_identity():
         "target_identifiers": {"conversation-id": "conversation-1"},
     }
     argv = (
-        "dws", "chat", "message", "reply", "--conversation-id", "conversation-1",
-        "--ref-msg-id", "message-1", "--text", "done", "--yes",
+        "dws",
+        "chat",
+        "message",
+        "reply",
+        "--conversation-id",
+        "conversation-1",
+        "--ref-msg-id",
+        "message-1",
+        "--text",
+        "done",
+        "--yes",
     )
 
     assert _is_dingtalk_chat_send_argv(metadata, argv)
@@ -3494,11 +3721,14 @@ def test_ambiguous_recovery_becomes_needs_human_without_write(setup):
     assert result.result.outcome.value == "reconciled"
     assert persisted is not None and persisted.status == "unknown"
     assert persisted.side_effect_state == "unknown"
-    assert sum(
-        event["type"] == "item.started"
-        and event["item"]["metadata"]["effect"] == "effectful"
-        for event in persisted.tool_events
-    ) == 1
+    assert (
+        sum(
+            event["type"] == "item.started"
+            and event["item"]["metadata"]["effect"] == "effectful"
+            for event in persisted.tool_events
+        )
+        == 1
+    )
 
 
 def test_recovery_readback_confirms_completed_write_without_receipt(setup):
@@ -3554,7 +3784,7 @@ def test_legacy_dingtalk_chat_candidate_normalizes_for_reconciliation():
         action, McpToolEffectRegistry.default(), action_index=0
     )
     assert expected["capability"] == "agent_cli.dws"
-    assert expected["operation"] == "chat message send"
+    assert expected["operation"] == "chat +send-to-group"
     assert expected["target_identifiers"] == {"group": "cid-agent"}
     assert expected["reviewed_tool"] == "execute_reviewed_write"
 
@@ -3565,8 +3795,7 @@ def test_legacy_group_content_keeps_a_message_digest_for_reconciliation():
             "description": "Post the reviewed conclusion",
             "capability": "dingtalk-chat",
             "operation": (
-                'dws chat +send-to-group --group "cid-agent" '
-                "--content <content> --yes"
+                'dws chat +send-to-group --group "cid-agent" --content <content> --yes'
             ),
             "target": {
                 "conversation_id": "cid-agent",
@@ -3581,11 +3810,45 @@ def test_legacy_group_content_keeps_a_message_digest_for_reconciliation():
         action, McpToolEffectRegistry.default(), action_index=0
     )
 
-    assert expected["operation"] == "chat message send"
+    assert expected["operation"] == "chat +send-to-group"
     assert expected["target_identifiers"] == {"group": "cid-agent"}
-    assert expected["message_text_digest"] == hashlib.sha256(
-        b"exact reviewed reply"
-    ).hexdigest()
+    assert (
+        expected["message_text_digest"]
+        == hashlib.sha256(b"exact reviewed reply").hexdigest()
+    )
+
+
+def test_legacy_group_content_reconstructs_the_persisted_write_contract():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Post the reviewed conclusion",
+            "capability": "dingtalk-chat",
+            "operation": "send to the group",
+            "target": {"conversation_id": "cid-agent"},
+            "payload": {"content": "exact reviewed reply"},
+            "expected_verification": "Message exists",
+        }
+    )
+
+    expected = _expected_effect_action(
+        action, McpToolEffectRegistry.default(), action_index=0
+    )
+
+    argv = [
+        "dws",
+        "chat",
+        "+send-to-group",
+        "--group",
+        "cid-agent",
+        "--content",
+        "exact reviewed reply",
+        "--yes",
+    ]
+    descriptor = describe_native_command({"type": "command_execution", "argv": argv})
+    assert descriptor is not None
+    assert expected["operation"] == "chat +send-to-group"
+    assert expected["operation_digest"] == descriptor.command_digest
+    assert expected["arguments_digest"] == _json_digest({"argv": argv})
 
 
 def test_legacy_direct_dingtalk_chat_candidate_normalizes_for_reconciliation():
@@ -3637,8 +3900,14 @@ def test_named_direct_message_uses_proposal_recipient_only_for_readback():
             },
             "payload": {
                 "argv": [
-                    "dws", "chat", "+dm", "--to", "Mina",
-                    "--text", "done", "--yes",
+                    "dws",
+                    "chat",
+                    "+dm",
+                    "--to",
+                    "Mina",
+                    "--text",
+                    "done",
+                    "--yes",
                 ]
             },
             "expected_verification": "Message exists",
@@ -3665,6 +3934,50 @@ def test_named_direct_message_uses_proposal_recipient_only_for_readback():
     )
 
 
+def test_named_direct_message_accepts_legacy_recipient_user_id_for_readback():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Send the prepared notes",
+            "capability": "dws chat",
+            "operation": "+dm",
+            "target": {
+                "recipient_name": "Mina",
+                "recipient_user_id": "user-1",
+                "single_chat": True,
+            },
+            "payload": {
+                "argv": [
+                    "dws",
+                    "chat",
+                    "+dm",
+                    "--to",
+                    "Mina",
+                    "--text",
+                    "done",
+                    "--yes",
+                ]
+            },
+            "expected_verification": "Message exists",
+        }
+    )
+
+    expected = _expected_effect_action(
+        action, McpToolEffectRegistry.default(), action_index=0
+    )
+
+    assert expected["readback_target_identifiers"] == {"user": "user-1"}
+    assert _read_matches_action(
+        {
+            "reviewed_server": "agent_cli",
+            "reviewed_tool": "execute_reviewed_read",
+            "operation": "chat +chat-messages",
+            "target_identifiers": {"user": "user-1"},
+        },
+        expected,
+        McpToolEffectRegistry.default(),
+    )
+
+
 def test_native_action_uses_argv_digest_matching_persisted_receipt():
     action = ProposedAction.model_validate(
         {
@@ -3674,10 +3987,17 @@ def test_native_action_uses_argv_digest_matching_persisted_receipt():
             "target": {"conversation_id": "conversation-1", "ref_msg_id": "message-1"},
             "payload": {
                 "argv": [
-                    "dws", "chat", "message", "reply",
-                    "--conversation-id", "conversation-1",
-                    "--ref-msg-id", "message-1",
-                    "--text", "done", "--yes",
+                    "dws",
+                    "chat",
+                    "message",
+                    "reply",
+                    "--conversation-id",
+                    "conversation-1",
+                    "--ref-msg-id",
+                    "message-1",
+                    "--text",
+                    "done",
+                    "--yes",
                 ],
                 "text": "done",
             },
@@ -3688,7 +4008,9 @@ def test_native_action_uses_argv_digest_matching_persisted_receipt():
         action, McpToolEffectRegistry.default(), action_index=0
     )
 
-    assert expected["arguments_digest"] == _json_digest({"argv": action.payload["argv"]})
+    assert expected["arguments_digest"] == _json_digest(
+        {"argv": action.payload["argv"]}
+    )
 
 
 def test_named_direct_message_readback_keeps_the_completed_write_receipt():
@@ -3778,6 +4100,99 @@ def test_named_direct_message_readback_rejects_duplicate_write_events():
     assert not all_closed
 
 
+def test_identical_legacy_completion_replay_counts_as_one_external_write():
+    action = {
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "chat +send-to-group",
+        "capability": "agent_cli.dws",
+        "operation_digest": "operation-digest",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {"group": "cid-agent"},
+    }
+    events = [
+        {
+            "type": event_type,
+            "item": {
+                "id": f"write-{index}",
+                "metadata": {
+                    **action,
+                    "effect": "effectful",
+                    "operation_id": "proposal-1",
+                    "authorization_id": "proposal-1:initial:0",
+                    "result_digest": "same-durable-result",
+                },
+            },
+        }
+        for index in range(2)
+        for event_type in ("item.started", "item.completed")
+    ]
+
+    completed, all_closed = _action_completion_accounting(
+        events,
+        (),
+        (action,),
+        operation_id="proposal-1",
+        registry=McpToolEffectRegistry.default(),
+    )
+
+    assert completed == {0}
+    assert all_closed
+
+
+def test_completed_event_and_matching_durable_receipt_count_once():
+    action = {
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "todo +remind",
+        "capability": "agent_cli.dws",
+        "operation_digest": "operation-digest",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {},
+    }
+    receipt = AgentExecutionReceipt(
+        id=1,
+        agent_run_id=3797,
+        receipt_id="receipt-1",
+        operation_id=_action_receipt_operation_id("proposal-1", action, 0),
+        cli="dws",
+        command_path="todo +remind",
+        command_digest="operation-digest",
+        exit_code=0,
+        completed=True,
+        persisted=True,
+        safe_to_confirm=True,
+        created_at="2026-08-21 18:32:31",
+    )
+    events = [
+        {
+            "type": event_type,
+            "item": {
+                "id": "write-1",
+                "metadata": {
+                    **action,
+                    "effect": "effectful",
+                    "operation_id": "proposal-1",
+                    "action_index": 0,
+                    "result_digest": "write-result",
+                },
+            },
+        }
+        for event_type in ("item.started", "item.completed")
+    ]
+
+    completed, all_closed = _action_completion_accounting(
+        events,
+        [receipt],
+        (action,),
+        operation_id="proposal-1",
+        registry=McpToolEffectRegistry.default(),
+    )
+
+    assert completed == {0}
+    assert all_closed
+
+
 def test_native_command_contract_uses_parsed_cli_not_consumer_label():
     action = ProposedAction.model_validate(
         {
@@ -3787,10 +4202,16 @@ def test_native_command_contract_uses_parsed_cli_not_consumer_label():
             "target": {"recipient_open_dingtalk_id": "recipient-1"},
             "payload": {
                 "argv": [
-                    "dws", "chat", "+messages-send",
-                    "--open-dingtalk-id", "recipient-1",
-                    "--text", "I will attend.",
-                    "--yes", "--format", "json",
+                    "dws",
+                    "chat",
+                    "+messages-send",
+                    "--open-dingtalk-id",
+                    "recipient-1",
+                    "--text",
+                    "I will attend.",
+                    "--yes",
+                    "--format",
+                    "json",
                 ]
             },
             "expected_verification": "Message exists",
@@ -3913,6 +4334,58 @@ def test_chat_id_readback_matches_conversation_id():
         write_tool="execute_reviewed_write",
         read_targets={"conversation-id": "cid-1"},
         write_targets={"chat-id": "cid-1"},
+    )
+
+
+def test_created_resource_readback_can_use_the_returned_resource_id():
+    registry = McpToolEffectRegistry.default()
+
+    assert registry.readback_targets_match(
+        read_server="agent_cli",
+        read_tool="execute_reviewed_read",
+        write_server="agent_cli",
+        write_tool="execute_reviewed_write",
+        read_operation="todo +get",
+        write_operation="todo +remind",
+        read_targets={"task-id": "56500076541"},
+        write_targets={},
+    )
+    assert not registry.readback_targets_match(
+        read_server="agent_cli",
+        read_tool="execute_reviewed_read",
+        write_server="agent_cli",
+        write_tool="execute_reviewed_write",
+        read_operation="chat +chat-messages",
+        write_operation="chat +dm",
+        read_targets={"task-id": "56500076541"},
+        write_targets={},
+    )
+
+
+def test_created_resource_readback_requires_a_completed_write_event():
+    action = {
+        "capability": "agent_cli.dws",
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "todo +remind",
+        "target_identifiers": {},
+    }
+    read = {
+        "type": "item.completed",
+        "item": {
+            "metadata": {
+                "effect": "read_only",
+                "reviewed_server": "agent_cli",
+                "reviewed_tool": "execute_reviewed_read",
+                "operation": "todo +get",
+                "target_identifiers": {"task-id": "unrelated-task"},
+                "result_digest": "read-digest",
+            }
+        },
+    }
+
+    assert not _actions_have_required_readbacks(
+        [read], (action,), McpToolEffectRegistry.default()
     )
 
 
@@ -4171,6 +4644,123 @@ def test_group_message_match_outside_operation_window_stays_ambiguous():
     assert validated[0].disposition.value == "ambiguous"
 
 
+def test_group_message_markdown_rendering_match_promotes_to_present():
+    approved = "结论：`unknown` 只读核对\n下一步：继续观察"
+    rendered = "结论：**unknown** 只读核对 下一步：继续观察"
+    action = {
+        "capability": "agent_cli.dws",
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "chat +send-to-group",
+        "target_identifiers": {"group": "cid-agent"},
+        "message_text_digest": hashlib.sha256(approved.encode()).hexdigest(),
+        "message_rendered_text_digest": _message_rendered_text_digest(approved),
+    }
+    proof = _dingtalk_message_readback_proof(
+        {
+            "stdout": json.dumps(
+                {
+                    "messages": [
+                        {
+                            "text": rendered,
+                            "messageId": "message-1",
+                            "conversationId": "cid-agent",
+                        }
+                    ],
+                    "complete": True,
+                    "hasMore": False,
+                    "paginationKnown": True,
+                    "failures": [],
+                    "queryRange": {
+                        "startTime": "2026-08-21T08:00:00Z",
+                        "endTime": "2026-08-21T10:00:00Z",
+                    },
+                }
+            )
+        },
+        native_cli="dws",
+        operation="chat +chat-messages",
+        expected_message_text_digests=frozenset({str(action["message_text_digest"])}),
+        expected_message_rendered_text_digests=frozenset(
+            {str(action["message_rendered_text_digest"])}
+        ),
+        operation_started_at="2026-08-21T09:00:00Z",
+    )
+    read = {
+        "type": "item.completed",
+        "item": {
+            "metadata": {
+                "effect": "read_only",
+                "reviewed_server": "agent_cli",
+                "reviewed_tool": "execute_reviewed_read",
+                "operation": "chat +chat-messages",
+                "target_identifiers": {"group": "cid-agent"},
+                "result_digest": "read-digest",
+                **proof,
+            }
+        },
+    }
+
+    validated = _validated_reconciliation(
+        (
+            AuditReconciliation(
+                action_index=0,
+                disposition="ambiguous",
+                read_result_digest="read-digest",
+            ),
+        ),
+        [read],
+        (action,),
+        event_start=0,
+        registry=McpToolEffectRegistry.default(),
+    )
+
+    assert proof["message_text_digests"] == []
+    assert proof["message_rendered_text_digests"] == [
+        action["message_rendered_text_digest"]
+    ]
+    assert validated[0].disposition.value == "present"
+
+
+def test_markdown_rendered_digest_preserves_word_boundaries():
+    assert _message_rendered_text_digest("alpha beta") != (
+        _message_rendered_text_digest("alphabeta")
+    )
+
+
+def test_target_only_dingtalk_readback_does_not_close_message_write():
+    action = {
+        "capability": "agent_cli.dws",
+        "reviewed_server": "agent_cli",
+        "reviewed_tool": "execute_reviewed_write",
+        "operation": "chat +send-to-group",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {"group": "cid-agent"},
+        "message_text_digest": hashlib.sha256(b"approved body").hexdigest(),
+    }
+    events = [
+        {
+            "type": "item.completed",
+            "item": {
+                "metadata": {
+                    "effect": "read_only",
+                    "reviewed_server": "agent_cli",
+                    "reviewed_tool": "execute_reviewed_read",
+                    "operation": "chat +chat-messages",
+                    "target_identifiers": {"group": "cid-agent"},
+                    "result_digest": "read-digest",
+                    "message_readback_window_matches": True,
+                    "message_text_digests": [],
+                }
+            },
+        }
+    ]
+
+    assert not _actions_have_required_readbacks(
+        events, (action,), McpToolEffectRegistry.default()
+    )
+
+
 def test_reconciliation_accepts_repeated_matching_readbacks(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     first = _audit_result_jsonl(
@@ -4196,9 +4786,7 @@ def test_reconciliation_accepts_repeated_matching_readbacks(setup):
             }
         ],
     ).splitlines()
-    executor = CapturingExecutor(
-        "\n".join(first[:-1] + second[1:-1] + final[-1:])
-    )
+    executor = CapturingExecutor("\n".join(first[:-1] + second[1:-1] + final[-1:]))
 
     AuditAgentRunner(
         store=store,
@@ -4214,16 +4802,24 @@ def test_reconciliation_accepts_repeated_matching_readbacks(setup):
 
 def test_reconciliation_accepts_any_cited_matching_readback_from_current_turn(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
-    first = _audit_result_jsonl(
-        "reconciled",
-        operation_id=run.operation_id,
-        session=run.codex_session_id,
-    ).replace("recovery-read-digest", "first-matching-read-digest").splitlines()
-    second = _audit_result_jsonl(
-        "reconciled",
-        operation_id=run.operation_id,
-        session=run.codex_session_id,
-    ).replace("recovery-read-digest", "second-matching-read-digest").splitlines()
+    first = (
+        _audit_result_jsonl(
+            "reconciled",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+        )
+        .replace("recovery-read-digest", "first-matching-read-digest")
+        .splitlines()
+    )
+    second = (
+        _audit_result_jsonl(
+            "reconciled",
+            operation_id=run.operation_id,
+            session=run.codex_session_id,
+        )
+        .replace("recovery-read-digest", "second-matching-read-digest")
+        .splitlines()
+    )
     final = _audit_result_jsonl(
         "reconciled",
         operation_id=run.operation_id,
@@ -4237,9 +4833,7 @@ def test_reconciliation_accepts_any_cited_matching_readback_from_current_turn(se
             }
         ],
     ).splitlines()
-    executor = CapturingExecutor(
-        "\n".join(first[:-1] + second[1:-1] + final[-1:])
-    )
+    executor = CapturingExecutor("\n".join(first[:-1] + second[1:-1] + final[-1:]))
 
     AuditAgentRunner(
         store=store,
@@ -4311,9 +4905,7 @@ def _seed_crashed_xiaoqing_write(setup):
     initial = CapturingExecutor(
         "\n".join(
             (
-                json.dumps(
-                    {"type": "thread.started", "thread_id": "direct-session"}
-                ),
+                json.dumps({"type": "thread.started", "thread_id": "direct-session"}),
                 json.dumps(started),
             )
         ),
@@ -4420,18 +5012,19 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "reconciled"
     assert persisted is not None and persisted.status == "unknown"
-    assert sum(
-        event["type"] == "item.started"
-        and event["item"]["metadata"]["effect"] == "effectful"
-        for event in persisted.tool_events
-    ) == 1
+    assert (
+        sum(
+            event["type"] == "item.started"
+            and event["item"]["metadata"]["effect"] == "effectful"
+            for event in persisted.tool_events
+        )
+        == 1
+    )
 
 
 def test_direct_mcp_absent_recovery_rotates_generation_without_write(setup):
     store, task, context, run, registry = _seed_crashed_xiaoqing_write(setup)
-    readback = _xiaoqing_recovery_jsonl(
-        run, include_read=True, disposition="absent"
-    )
+    readback = _xiaoqing_recovery_jsonl(run, include_read=True, disposition="absent")
     runner = AuditAgentRunner(
         store=store,
         workspace=Path("/workspace"),
@@ -4460,11 +5053,14 @@ def test_direct_mcp_absent_recovery_rotates_generation_without_write(setup):
     assert persisted is not None and persisted.status == "failed"
     assert requeued is not None and requeued.status == "pending"
     assert requeued.execution_generation != task.execution_generation
-    assert sum(
-        event["type"] == "item.started"
-        and event["item"]["metadata"]["effect"] == "effectful"
-        for event in persisted.tool_events
-    ) == 1
+    assert (
+        sum(
+            event["type"] == "item.started"
+            and event["item"]["metadata"]["effect"] == "effectful"
+            for event in persisted.tool_events
+        )
+        == 1
+    )
 
 
 def test_readback_capable_receipt_without_live_read_stays_unknown(setup):
@@ -4823,9 +5419,9 @@ def test_unregistered_controlled_write_cannot_confirm_without_readback(setup):
         "execute_reviewed_write",
     )
     registry = McpToolEffectRegistry(
-            {
-                ("agent_cli", "read_skill"): EffectKind.READ_ONLY,
-                ("agent_cli", "execute_reviewed_read"): EffectKind.READ_ONLY,
+        {
+            ("agent_cli", "read_skill"): EffectKind.READ_ONLY,
+            ("agent_cli", "execute_reviewed_read"): EffectKind.READ_ONLY,
             ("agent_cli", "execute_reviewed_write"): EffectKind.EFFECTFUL,
         },
         readbacks={
@@ -4915,7 +5511,9 @@ def test_controlled_cli_readback_rejects_conflicting_shared_target():
     )
 
 
-@pytest.mark.parametrize("write_target_key", ["conversation-id", "open-conversation-id"])
+@pytest.mark.parametrize(
+    "write_target_key", ["conversation-id", "open-conversation-id"]
+)
 def test_controlled_cli_readback_matches_conversation_target_aliases(
     write_target_key,
 ):
@@ -5098,11 +5696,14 @@ def test_no_readback_unknown_becomes_needs_human_without_write(setup):
     assert result.result.outcome.value == "reconciled"
     assert persisted is not None and persisted.status == "unknown"
     assert persisted.side_effect_state == "unknown"
-    assert sum(
-        event["type"] == "item.started"
-        and event["item"]["metadata"]["effect"] == "effectful"
-        for event in persisted.tool_events
-    ) == 1
+    assert (
+        sum(
+            event["type"] == "item.started"
+            and event["item"]["metadata"]["effect"] == "effectful"
+            for event in persisted.tool_events
+        )
+        == 1
+    )
     assert "Automatic readback is unavailable" in executor.prompts[0]
 
 
@@ -5137,11 +5738,14 @@ def test_memory_unknown_cannot_authorize_automatic_replay(setup):
 
     persisted = store.get_agent_run(run.id)
     assert persisted is not None and persisted.status == "unknown"
-    assert sum(
-        event["type"] == "item.started"
-        and event["item"]["metadata"]["effect"] == "effectful"
-        for event in persisted.tool_events
-    ) == 1
+    assert (
+        sum(
+            event["type"] == "item.started"
+            and event["item"]["metadata"]["effect"] == "effectful"
+            for event in persisted.tool_events
+        )
+        == 1
+    )
 
 
 def test_exact_receipt_confirms_no_readback_unknown(setup):
@@ -5168,11 +5772,14 @@ def test_exact_receipt_confirms_no_readback_unknown(setup):
     assert result.result.outcome.value == "reconciled"
     assert persisted is not None and persisted.status == "unknown"
     assert persisted.side_effect_state == "confirmed"
-    assert sum(
-        event["type"] == "item.started"
-        and event["item"]["metadata"]["effect"] == "effectful"
-        for event in persisted.tool_events
-    ) == 1
+    assert (
+        sum(
+            event["type"] == "item.started"
+            and event["item"]["metadata"]["effect"] == "effectful"
+            for event in persisted.tool_events
+        )
+        == 1
+    )
 
 
 def test_pre_903_no_readback_start_binds_before_exact_receipt(setup):
@@ -5329,11 +5936,18 @@ def test_invalid_absent_recovery_candidate_rotates_consumer_generation(setup):
                     "target": {"instance_id": "instance-1", "task_id": "task-1"},
                     "payload": {
                         "argv": [
-                            "dws", "oa", "approval", "approve",
-                            "--instance-id", "instance-1",
-                            "--task-id", "task-1",
-                            "--remark", "同意",
-                            "--format", "json",
+                            "dws",
+                            "oa",
+                            "approval",
+                            "approve",
+                            "--instance-id",
+                            "instance-1",
+                            "--task-id",
+                            "task-1",
+                            "--remark",
+                            "同意",
+                            "--format",
+                            "json",
                         ]
                     },
                     "expected_verification": "OA task is completed",
@@ -5503,8 +6117,15 @@ def test_receipt_with_wrong_digest_or_target_does_not_confirm_action(setup, mism
                     {
                         "type": "command_execution",
                         "argv": [
-                            "dws", "chat", "message", "send", "--group",
-                            "cid-unrelated", "--text", "done", "--yes",
+                            "dws",
+                            "chat",
+                            "message",
+                            "send",
+                            "--group",
+                            "cid-unrelated",
+                            "--text",
+                            "done",
+                            "--yes",
                         ],
                     }
                 )
@@ -5550,8 +6171,15 @@ def test_two_action_recovery_confirms_unknown_first_and_executes_second_once(set
             "target": {"group": "cid-second"},
             "payload": {
                 "argv": [
-                    "dws", "chat", "message", "send", "--group", "cid-second",
-                    "--text", "done", "--yes",
+                    "dws",
+                    "chat",
+                    "message",
+                    "send",
+                    "--group",
+                    "cid-second",
+                    "--text",
+                    "done",
+                    "--yes",
                 ]
             },
             "expected_verification": "Second message exists",
@@ -5595,9 +6223,7 @@ def test_two_action_recovery_confirms_unknown_first_and_executes_second_once(set
                     "startTime": (
                         datetime.now(UTC) - timedelta(minutes=30)
                     ).isoformat(),
-                    "endTime": (
-                        datetime.now(UTC) + timedelta(minutes=30)
-                    ).isoformat(),
+                    "endTime": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
                 },
                 "messages": [],
             }
@@ -5622,11 +6248,7 @@ def test_two_action_recovery_confirms_unknown_first_and_executes_second_once(set
         ],
     ).splitlines()
     executor = SequencedExecutor(
-        "\n".join(
-            first_read[:-1]
-            + second_read[1:-1]
-            + final_result[-1:]
-        ),
+        "\n".join(first_read[:-1] + second_read[1:-1] + final_result[-1:]),
         "\n".join(second_write),
     )
 
@@ -5658,7 +6280,12 @@ def test_identical_recovery_actions_bind_to_authorized_index(setup):
     identical_context = replace(
         audit_context,
         proposal=audit_context.proposal.model_copy(
-            update={"actions": (*audit_context.proposal.actions, audit_context.proposal.actions[0])}
+            update={
+                "actions": (
+                    *audit_context.proposal.actions,
+                    audit_context.proposal.actions[0],
+                )
+            }
         ),
     )
     reconciliation = _audit_result_jsonl(
@@ -5708,9 +6335,9 @@ def test_identical_recovery_actions_bind_to_authorized_index(setup):
         if event["type"] == "item.started"
         and event["item"]["metadata"].get("authorization_id")
     ]
-    assert [(item["action_index"], item["authorization_id"]) for item in recovered_starts] == [
-        (1, authorization["authorization_id"])
-    ]
+    assert [
+        (item["action_index"], item["authorization_id"]) for item in recovered_starts
+    ] == [(1, authorization["authorization_id"])]
 
 
 def test_audit_two_starts_with_one_completion_remains_unknown(setup):
@@ -5798,8 +6425,15 @@ def test_audit_rejects_partial_writes(setup):
             "target": {"group": "cid-second"},
             "payload": {
                 "argv": [
-                    "dws", "chat", "message", "send", "--group", "cid-second",
-                    "--text", "second", "--yes",
+                    "dws",
+                    "chat",
+                    "message",
+                    "send",
+                    "--group",
+                    "cid-second",
+                    "--text",
+                    "second",
+                    "--yes",
                 ]
             },
             "expected_verification": "Second message exists",

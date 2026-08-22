@@ -180,6 +180,35 @@ does not pretend that an unconfirmed third-party write is known. Reconciliation
 may consume a still-`prepared` token after proving absence, but a token that
 reached `dispatched` is never locally re-armed; it remains read-only reconciled.
 
+## Historical settlement compatibility
+
+The durable state-machine fix prevents new unacknowledged local dispatches, but
+the historical runs also exposed four compatibility defects in evidence
+settlement:
+
+- Run 3669 used a legacy `recipient_user_id` for the direct-message target.
+  Recovery now maps that ID to the exact reviewed `--user` read target instead
+  of losing the recipient identity.
+- Run 3695's pre-contract group action is reconstructed as the command that was
+  actually persisted, `chat +send-to-group --content`, so its operation and
+  argument digests bind to the original write. Two completions with the same
+  authorization, operation, arguments, and result digest are treated as one
+  replayed acknowledgement; completions without that durable fingerprint are
+  still treated as possible duplicate writes.
+- DingTalk may return rendered Markdown rather than the submitted source. The
+  service now stores a second privacy-safe digest over visible Markdown content
+  with formatting removed and Unicode whitespace collapsed. Either an exact source digest
+  or this deterministic rendered-content digest can prove presence; target-only,
+  fuzzy, incomplete, stale, or over-wide reads still cannot.
+- Run 3797 had both an `item.completed` event and a crash-safe execution receipt
+  for the same `todo +remind` call, followed by an immediate reviewed `todo +get`
+  for the returned task ID. Accounting now treats the event and receipt as two
+  durable views of one write, and the effect registry explicitly allows this
+  created-resource readback relation.
+
+These rules let already-durable evidence settle the historical runs without
+editing the database and without replaying any external write.
+
 ## Runtime-route retry-budget correction
 
 The later `runtime_route_unavailable` task failures were a separate scheduling

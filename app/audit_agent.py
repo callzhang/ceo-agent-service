@@ -30,6 +30,7 @@ from app.agent_turn_runner import (
     _action_receipt_operation_id,
     _actions_have_required_readbacks,
     _agent_process_error_code,
+    _message_rendered_text_digest,
     _metadata_matches_action,
     _result_parse_error_detail,
     unknown_reconciliation_retry_at,
@@ -270,9 +271,7 @@ class AuditAgentRunner:
         runtime_attempt = next(
             (
                 attempt
-                for attempt in reversed(
-                    self.store.list_agent_runtime_attempts(run.id)
-                )
+                for attempt in reversed(self.store.list_agent_runtime_attempts(run.id))
                 if attempt.session_id
                 and attempt.agent_run_id == run.id
                 and attempt.workload_kind == "agent_run"
@@ -428,7 +427,9 @@ class AuditAgentRunner:
         run: AgentRun,
     ) -> AgentTurnRunResult[AuditAgentResult]:
         if run.status != "unknown" or not run.final_result_json:
-            raise ValueError("audit recovery execution requires persisted reconciliation")
+            raise ValueError(
+                "audit recovery execution requires persisted reconciliation"
+            )
         reconciliation = AuditAgentResult.model_validate_json(run.final_result_json)
         if reconciliation.outcome.value != "reconciled":
             raise ValueError("audit recovery execution requires reconciled outcome")
@@ -791,9 +792,7 @@ class AuditAgentRunner:
             session_id=None if recovery_phase else run.codex_session_id or None,
             developer_instructions=audit_developer_instructions(
                 rendered_rules,
-                allow_write=(
-                    not self.dry_run and recovery_phase != "reconcile"
-                ),
+                allow_write=(not self.dry_run and recovery_phase != "reconcile"),
                 recovery_reconciliation=recovery_phase == "reconcile",
             ),
             configure_command=lambda command: make_audit_agent_command(
@@ -834,9 +833,7 @@ class AuditAgentRunner:
                 str(entry["authorization_id"]): int(entry["action_index"])
                 for entry in recovery_authorizations
             },
-            allow_effectful_tools=(
-                not self.dry_run and recovery_phase != "reconcile"
-            ),
+            allow_effectful_tools=(not self.dry_run and recovery_phase != "reconcile"),
             image_paths=[Path(path) for path in context.task.image_paths],
             required_skill_receipts=(
                 () if recovery_phase == "reconcile" else context.consumer_skills
@@ -970,9 +967,7 @@ def _expected_effect_action(
             {
                 "type": "command_execution",
                 **(
-                    {"argv": legacy_argv}
-                    if legacy_argv is not None
-                    else action.payload
+                    {"argv": legacy_argv} if legacy_argv is not None else action.payload
                 ),
             }
         )
@@ -1006,12 +1001,21 @@ def _expected_effect_action(
             expected["message_text_digest"] = hashlib.sha256(
                 message_text.encode("utf-8")
             ).hexdigest()
+            expected["message_rendered_text_digest"] = _message_rendered_text_digest(
+                message_text
+            )
         if descriptor.command_path == "chat +dm":
             recipient = action.target.get("recipient_open_dingtalk_id")
             if isinstance(recipient, str) and recipient:
                 expected["readback_target_identifiers"] = {
                     "open-dingtalk-id": recipient
                 }
+            else:
+                recipient_user_id = action.target.get("recipient_user_id")
+                if isinstance(recipient_user_id, str) and recipient_user_id:
+                    expected["readback_target_identifiers"] = {
+                        "user": recipient_user_id
+                    }
         expected["reviewed_server"] = "agent_cli"
         expected["reviewed_tool"] = "execute_reviewed_write"
     else:
@@ -1231,22 +1235,27 @@ def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:
     """Canonicalize persisted pre-contract DingTalk chat actions for audit."""
     if action.capability != "dingtalk-chat":
         return None
-    if native_command_argv(
-        {"type": "command_execution", **action.payload}
-    ) is not None:
+    if native_command_argv({"type": "command_execution", **action.payload}) is not None:
         return None
     text = action.payload.get("text") or action.payload.get("content")
     if not isinstance(text, str) or not text:
         return None
     target = action.target
-    recipient = (
-        target.get("recipient_open_dingtalk_id")
-        or target.get("sender_open_dingtalk_id")
+    recipient = target.get("recipient_open_dingtalk_id") or target.get(
+        "sender_open_dingtalk_id"
     )
     if isinstance(recipient, str) and recipient:
         return [
-            "dws", "chat", "+messages-send", "--open-dingtalk-id", recipient,
-            "--text", text, "--yes", "--format", "json",
+            "dws",
+            "chat",
+            "+messages-send",
+            "--open-dingtalk-id",
+            recipient,
+            "--text",
+            text,
+            "--yes",
+            "--format",
+            "json",
         ]
     group = (
         action.payload.get("group")
@@ -1256,8 +1265,14 @@ def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:
     if not isinstance(group, str) or not group:
         return None
     return [
-        "dws", "chat", "message", "send", "--group", group,
-        "--text", text, "--yes",
+        "dws",
+        "chat",
+        "+send-to-group",
+        "--group",
+        group,
+        "--content",
+        text,
+        "--yes",
     ]
 
 

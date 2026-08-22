@@ -64,7 +64,12 @@
             {"read": "oa approval tasks", "write": "oa approval approve"},
             {"read": "oa approval tasks", "write": "oa approval comment"},
             {"read": "oa approval tasks", "write": "oa approval oa-comments"},
-            {"read": "todo task get", "write": "todo task update"}
+            {"read": "todo task get", "write": "todo task update"},
+            {
+              "read": "todo +get",
+              "write": "todo +remind",
+              "target_match": "created_resource"
+            }
           ]
         }
       ]
