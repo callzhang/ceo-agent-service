@@ -234,7 +234,15 @@ class ScriptedAudit:
         self.calls = []
         self.owner = "scripted-audit"
 
-    def run(self, task, context, *, turn_attempt, parent_agent_run_id):
+    def run(
+        self,
+        task,
+        context,
+        *,
+        turn_attempt,
+        parent_agent_run_id,
+        frozen_delivery_retry=False,
+    ):
         claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -284,6 +292,7 @@ class ScriptedAudit:
                 "session_id": session_id,
                 "proposal": context.proposal,
                 "context": context,
+                "frozen_delivery_retry": frozen_delivery_retry,
             }
         )
         return AgentTurnRunResult(claim.run.id, result, 0, 1)
@@ -1634,6 +1643,49 @@ def test_runtime_route_recovery_retries_same_audit_turn_on_next_process(store):
 
     assert second.status == "executed"
     assert [call["turn_attempt"] for call in audit.calls] == [0, 0]
+
+
+def test_frozen_delivery_retry_executes_saved_proposal_without_consumer_rerun(store):
+    pending_task = _task(store)
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set recovery_code=? where id=?",
+            ("legacy_sessionless_audit_chat_delivery_retry", pending_task.id),
+        )
+    task = store.claim_reply_task(pending_task.id)
+    assert task is not None
+    consumer_result = _consumer_result("proposal", "immutable delivery")
+    consumer = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="recovered-consumer",
+    )
+    store.complete_agent_run(
+        consumer.run.id,
+        consumer_result.model_dump(mode="json"),
+        owner="recovered-consumer",
+    )
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+    preserved_consumer = ScriptedConsumer(store)
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=preserved_consumer,
+            audit=audit,
+        ),
+        task,
+    )
+
+    assert result.status == "executed"
+    assert preserved_consumer.calls == []
+    assert audit.calls[0]["frozen_delivery_retry"] is True
+    assert audit.calls[0]["proposal"] == consumer_result.proposal
 
 
 def test_safely_reopened_runtime_route_retries_same_audit_turn(store):

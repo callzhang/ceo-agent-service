@@ -2,9 +2,10 @@
 
 - Recover legacy, terminal `audit_recovery_session_missing` chat deliveries by
   cloning their completed Consumer decision into a fresh execution generation.
-  The recovered Audit still enforces current controlled-write and readback
-  checks; any prior effect, receipt, delivery, non-chat action, calendar, or
-  other order-sensitive action stays outside this automatic path.
+  The recovered Audit now freezes that decision: it may execute only its
+  authorized chat command and target-matched readback, never request a new
+  Consumer proposal. Any prior effect, receipt, delivery, non-chat action,
+  calendar, or other order-sensitive action stays outside this automatic path.
 
 - Automatically reopen a historical Audit failure exactly once when its
   Consumer parent has a durable proposal and the whole execution generation is

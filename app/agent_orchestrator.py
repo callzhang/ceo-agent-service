@@ -46,6 +46,7 @@ class AuditRunner(Protocol):
         *,
         turn_attempt: int,
         parent_agent_run_id: int,
+        frozen_delivery_retry: bool = False,
     ) -> AgentTurnRunResult[AuditAgentResult]: ...
 
     def recover(
@@ -95,6 +96,7 @@ class _NextAudit:
     proposal: ConsumerProposal | None
     authorization_error_code: str = ""
     deferred_error_code: str = ""
+    frozen_delivery_retry: bool = False
 
 
 @dataclass(frozen=True)
@@ -297,19 +299,21 @@ class AgentOrchestrator:
                             state.parent_run_id,
                             state.proposal_revision,
                         )
-                        self.audit.run(
-                            task,
-                            AuditTurnContext(
-                                task=audit_task_context,
-                                proposal_revision=state.proposal_revision,
-                                operation_id=_operation_id(task, state.proposal_revision),
-                                proposal=state.proposal,
-                                audit_rules="",
-                                consumer_skills=consumer_skills,
-                            ),
-                            turn_attempt=state.turn_attempt,
-                            parent_agent_run_id=state.parent_run_id,
+                        audit_context = AuditTurnContext(
+                            task=audit_task_context,
+                            proposal_revision=state.proposal_revision,
+                            operation_id=_operation_id(task, state.proposal_revision),
+                            proposal=state.proposal,
+                            audit_rules="",
+                            consumer_skills=consumer_skills,
                         )
+                        run_kwargs = {
+                            "turn_attempt": state.turn_attempt,
+                            "parent_agent_run_id": state.parent_run_id,
+                        }
+                        if state.frozen_delivery_retry:
+                            run_kwargs["frozen_delivery_retry"] = True
+                        self.audit.run(task, audit_context, **run_kwargs)
             except (RuntimeError, ResultParseError) as exc:
                 if str(exc) in {
                     "agent_run_unavailable",
@@ -429,7 +433,16 @@ class AgentOrchestrator:
                 key=lambda run: (run.turn_attempt, run.id),
             )
             if not audits:
-                return _NextAudit(revision, 0, consumer.id, consumer_state.proposal)
+                return _NextAudit(
+                    revision,
+                    0,
+                    consumer.id,
+                    consumer_state.proposal,
+                    frozen_delivery_retry=(
+                        task.recovery_code
+                        == "legacy_sessionless_audit_chat_delivery_retry"
+                    ),
+                )
             latest = audits[-1]
             if latest.status == "unknown":
                 if latest.final_result_json:

@@ -643,6 +643,7 @@ def audit_developer_instructions(
     *,
     allow_write: bool = True,
     recovery_reconciliation: bool = False,
+    frozen_delivery_retry: bool = False,
 ) -> str:
     core = _developer_instructions(
         audit_rules=audit_rules,
@@ -662,7 +663,17 @@ def audit_developer_instructions(
         if recovery_reconciliation
         else ""
     )
-    return recovery_boundary + _role_developer_instructions(
+    delivery_boundary = (
+        "This is a frozen delivery retry. Consumer A's persisted proposal is an "
+        "immutable business decision for this turn: do not reconsider it, request "
+        "a revision, or call Consumer A. Execute exactly its authorized chat write "
+        "once, then perform the required target-matched readback. If execution or "
+        "readback cannot complete, return failed; do not return revision_required "
+        "or needs_human.\n\n"
+        if frozen_delivery_retry
+        else ""
+    )
+    return recovery_boundary + delivery_boundary + _role_developer_instructions(
         core,
         capability_instructions=(
             "Reread every verified Skill path supplied from Consumer A with "

@@ -131,6 +131,7 @@ class AuditAgentRunner:
         *,
         turn_attempt: int,
         parent_agent_run_id: int,
+        frozen_delivery_retry: bool = False,
     ) -> AgentTurnRunResult[AuditAgentResult]:
         if context.task.task_id != task.id:
             raise ValueError("agent context task does not match reply task")
@@ -155,6 +156,7 @@ class AuditAgentRunner:
             context,
             run=claim.run,
             recovery_phase="",
+            allow_missing_receipts=frozen_delivery_retry,
         ):
             return skill_failure
         invalid_actions = _invalid_operation_contracts(context, self.effects)
@@ -170,6 +172,7 @@ class AuditAgentRunner:
             context,
             run=claim.run,
             rendered_rules=rendered_rules,
+            frozen_delivery_retry=frozen_delivery_retry,
         )
 
     def recover(
@@ -699,8 +702,9 @@ class AuditAgentRunner:
         *,
         run: AgentRun,
         recovery_phase: str,
+        allow_missing_receipts: bool = False,
     ) -> AgentTurnRunResult[AuditAgentResult] | None:
-        if context.consumer_skills:
+        if context.consumer_skills or allow_missing_receipts:
             return None
         if recovery_phase == "reconcile":
             return None
@@ -728,6 +732,7 @@ class AuditAgentRunner:
         recovery_phase: str = "",
         authorized_recovery_actions: frozenset[int] = frozenset(),
         recovery_authorizations: tuple[dict[str, object], ...] = (),
+        frozen_delivery_retry: bool = False,
     ) -> AgentTurnRunResult[AuditAgentResult]:
         expected_effect_actions = tuple(
             _expected_effect_action(action, self.effects, action_index=index)
@@ -768,6 +773,12 @@ class AuditAgentRunner:
                 recovery_authorizations,
             )
             if recovery_phase == "execute"
+            else _frozen_delivery_retry_prompt(
+                run,
+                context,
+                write_authorizations,
+            )
+            if frozen_delivery_retry
             else context.render()
         )
         if write_authorizations and recovery_phase != "execute":
@@ -794,6 +805,7 @@ class AuditAgentRunner:
                 rendered_rules,
                 allow_write=(not self.dry_run and recovery_phase != "reconcile"),
                 recovery_reconciliation=recovery_phase == "reconcile",
+                frozen_delivery_retry=frozen_delivery_retry,
             ),
             configure_command=lambda command: make_audit_agent_command(
                 command,
@@ -836,7 +848,9 @@ class AuditAgentRunner:
             allow_effectful_tools=(not self.dry_run and recovery_phase != "reconcile"),
             image_paths=[Path(path) for path in context.task.image_paths],
             required_skill_receipts=(
-                () if recovery_phase == "reconcile" else context.consumer_skills
+                ()
+                if recovery_phase == "reconcile" or frozen_delivery_retry
+                else context.consumer_skills
             ),
             required_capabilities=self._required_capabilities(
                 context,
@@ -1294,6 +1308,32 @@ def _recovery_execute_prompt(
         f"proved only these actions absent: {json.dumps(allowed, separators=(',', ':'))}. "
         "Execute each through agent_cli.execute_reviewed_write with its exact "
         "authorization_id, and verify only those actions. Do not repeat any other action."
+    )
+
+
+def _frozen_delivery_retry_prompt(
+    run: AgentRun,
+    context: AuditTurnContext,
+    authorizations: tuple[dict[str, object], ...],
+) -> str:
+    allowed = [
+        {
+            "action_index": entry["action_index"],
+            "authorization_id": entry["authorization_id"],
+        }
+        for entry in authorizations
+    ]
+    return (
+        "FROZEN DELIVERY RETRY: the persisted Consumer proposal is the immutable "
+        "business decision for this turn. Do not reconsider its content, return "
+        "revision_required, or ask Consumer A to generate a replacement. Execute "
+        "only the exact authorized chat action below once through "
+        "agent_cli.execute_reviewed_write, then perform its target-matched readback. "
+        "If either step cannot complete, return failed with a stable error code; do "
+        "not substitute another action or target.\n\n"
+        f"{context.render()}\n\n"
+        f"Frozen operation: {run.operation_id}; proposal revision: {run.proposal_revision}.\n"
+        f"Authorized action: {json.dumps(allowed, ensure_ascii=False, separators=(',', ':'))}"
     )
 
 
