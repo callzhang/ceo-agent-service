@@ -170,8 +170,14 @@ def test_parse_agent_envelope_accepts_no_reply_shorthand_without_actions():
     envelope = parse_agent_envelope(
         json.dumps(
             {
-                "mode": "no_reply",
-                "audit_summary": "The delayed response would be stale.",
+                "item": {
+                    "text": json.dumps(
+                        {
+                            "mode": "no_reply",
+                            "audit_summary": "The delayed response would be stale.",
+                        }
+                    )
+                }
             }
         )
     )

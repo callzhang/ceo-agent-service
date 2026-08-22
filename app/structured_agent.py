@@ -233,6 +233,9 @@ def _no_reply_shorthand_envelope(payload: dict) -> AgentEnvelope | None:
 def _parse_agent_envelope_payload(payload: object) -> AgentEnvelope:
     if not isinstance(payload, dict):
         raise ValueError("AgentEnvelope payload must be an object")
+    shorthand = _no_reply_shorthand_envelope(payload)
+    if shorthand is not None:
+        return shorthand
     if "kind" in payload and "user_response" in payload:
         return AgentEnvelope.model_validate(_normalize_agent_envelope_payload(payload))
     if payload.get("kind") == "okr_review" and isinstance(payload.get("result"), dict):
