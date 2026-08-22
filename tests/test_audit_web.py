@@ -982,6 +982,49 @@ def test_history_approval_workflow_results_keep_failure_attention_actions(
     assert ">重试当前任务</button>" in failed_card
 
 
+def test_history_pins_only_current_unresolved_needs_human_attempts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    current_id = store.record_reply_attempt(
+        conversation_id="cid-current-needs-human",
+        conversation_title="Current decision",
+        trigger_message_id="msg-current-needs-human",
+        trigger_sender="Mina",
+        trigger_text="Choose the current direction.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+    )
+    recovered_id = store.record_reply_attempt(
+        conversation_id="cid-recovered-needs-human",
+        conversation_title="Recovered decision",
+        trigger_message_id="msg-recovered-needs-human",
+        trigger_sender="Mina",
+        trigger_text="This historical decision was recovered.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+    )
+    store.record_reply_attempt(
+        conversation_id="cid-recovered-needs-human",
+        conversation_title="Recovered decision",
+        trigger_message_id="msg-recovered-needs-human",
+        trigger_sender="Mina",
+        trigger_text="This historical decision was recovered.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="completed",
+    )
+
+    html = render_attempt_list(store, include_chart=False)
+
+    pinned = html.split('<section class="card history-pinned-needs-human">', 1)[1].split(
+        '</section>', 1
+    )[0]
+    assert f'href="/attempts/{current_id}"' in pinned
+    assert f'href="/attempts/{recovered_id}"' not in pinned
+    assert "待人工决策" in pinned
+
+
 def test_history_recovered_approval_keeps_business_and_recovery_pills(
     tmp_path: Path,
 ):

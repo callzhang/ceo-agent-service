@@ -406,6 +406,13 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .history-chart-subtitle{color:var(--steel);font-size:12px;font-weight:600;line-height:1.4}
 .history-chart{width:100%;height:260px}
 .history-chart-empty{display:flex;align-items:center;justify-content:center;height:180px;border:1px dashed var(--hairline);border-radius:8px;color:var(--steel);background:var(--surface-soft);font-size:13px}
+.history-pinned-needs-human{margin:0 0 12px;border-color:rgba(195,125,13,.36);background:#fffaf0}
+.history-pinned-needs-human .card-head{align-items:center}
+.history-pinned-needs-human-list{display:grid;gap:8px}
+.history-pinned-needs-human-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid rgba(195,125,13,.26);border-radius:8px;background:var(--canvas);color:var(--ink);text-decoration:none}
+.history-pinned-needs-human-item:hover{border-color:rgba(195,125,13,.55);background:#fffdf8}
+.history-pinned-needs-human-title{min-width:0;font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.history-pinned-needs-human-meta{flex:0 0 auto;color:#8a5a08;font-size:12px;font-weight:700;white-space:nowrap}
 .attempt-feed{display:grid;gap:8px}
 .attempt-item{--history-kind-color:var(--hairline);background:var(--canvas);border:1px solid var(--hairline);border-left:4px solid var(--history-kind-color);border-radius:8px;padding:10px 12px 10px 10px}
 .attempt-item[data-history-detail-href]{cursor:pointer}
@@ -4444,6 +4451,31 @@ def _render_attempt_list(
     search_history_items = bool(object_types)
     search_reply_tasks = "task" in object_types
     search_codex_sessions = "meeting" in object_types
+    pinned_needs_human_html = ""
+    if page == 1 and not type_filters and not query:
+        unresolved = [
+            attempt
+            for attempt in store.list_current_unresolved_problem_attempts()
+            if attempt.send_status.strip().lower() == "needs_human"
+        ]
+        if unresolved:
+            pinned_rows = "".join(
+                "<a class=\"history-pinned-needs-human-item\" "
+                f"href=\"/attempts/{attempt.id}\">"
+                "<span class=\"history-pinned-needs-human-title\">"
+                f"#{attempt.id} · {escape(attempt.conversation_title)} · "
+                f"{escape(attempt.trigger_text[:96])}</span>"
+                "<span class=\"history-pinned-needs-human-meta\">待你处理</span>"
+                "</a>"
+                for attempt in unresolved
+            )
+            pinned_needs_human_html = (
+                '<section class="card history-pinned-needs-human">'
+                '<div class="card-head"><h2>待人工决策</h2>'
+                f'<span class="pill status-needs-human">{len(unresolved)} 未解决</span>'
+                '</div><div class="history-pinned-needs-human-list">'
+                f"{pinned_rows}</div></section>"
+            )
     send_status_filters = type_filters or None
     total_count = (
         store.count_history_items(
@@ -4672,6 +4704,7 @@ def _render_attempt_list(
         chart_html = _render_history_chart(store) if include_chart else ""
         body = (
             f"{chart_html}"
+            f"{pinned_needs_human_html}"
             f"{_history_table_header(base_path='/history', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query, search_object_type=search_object_type)}"
             "<div data-live-search-region=\"history\">"
             f"{session_search_html}"
@@ -4694,6 +4727,7 @@ def _render_attempt_list(
         )
         body = (
             f"{chart_html}"
+            f"{pinned_needs_human_html}"
             f"{bugfix_html}"
             f"{header}"
             "<div data-live-search-region=\"history\">"
