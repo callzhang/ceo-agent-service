@@ -361,6 +361,14 @@ class McpToolEffectRegistry:
             grouped.setdefault(server, []).append(tool)
         return {server: tuple(sorted(tools)) for server, tools in grouped.items()}
 
+    def is_registered_write_operation(self, operation: str) -> bool:
+        """Return whether a controlled CLI write has a configured readback relation."""
+        return any(
+            write_operation == operation
+            for relations in self._readback_operation_relations.values()
+            for _, write_operation in relations
+        )
+
     def can_readback(
         self,
         *,

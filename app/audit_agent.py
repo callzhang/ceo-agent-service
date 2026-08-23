@@ -1082,12 +1082,19 @@ def _proposed_operation_contract_valid(
         try:
             reviewed = _OPERATION_CONTRACT_CLASSIFIER.classify(item)
         except NativeCliMetadataUnavailableError:
-            return False
+            reviewed = None
+        if reviewed is None:
+            effect = (
+                EffectKind.EFFECTFUL
+                if registry.is_registered_write_operation(descriptor.command_path)
+                else None
+            )
+        else:
+            effect = reviewed.effect
         return bool(
-            reviewed is not None
-            and reviewed.effect is EffectKind.EFFECTFUL
+            effect is EffectKind.EFFECTFUL
             and (
-                reviewed.cli != "dws"
+                descriptor.cli != "dws"
                 or (argv is not None and has_noninteractive_confirmation(argv))
             )
         )

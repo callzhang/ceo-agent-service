@@ -1,5 +1,12 @@
 # Changelog
 
+- Fix reaction-only acknowledgments being rejected by Audit when the live DWS
+  schema does not expose the registered reaction command. The configured
+  readback relation now supplies the reviewed write contract, preventing
+  unnecessary Consumer/Audit revision runs. Bump the store schema to
+  `2026-08-23.2` for the removed-runtime table migration and align Workbench
+  upgrade assertions.
+
 - Restore the configured Agent signature and counterparty feedback links on
   DingTalk messages proposed by Consumer Agent A. The service now prepares the
   executable message text after validating the Agent result and before Audit B

@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import zipfile
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -18,6 +18,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from app.agent_result import EffectKind
+from app.agent_effects import McpToolEffectRegistry
 from app.agent_skill_usage import resolve_authorized_skill_path
 from app.bounded_process import (
     ProcessOutputLimitError,
@@ -165,7 +166,14 @@ def _classify_reviewed_write(
     if descriptor is None or descriptor.cli == "local-shell":
         command = reviewed.classify(item)
     else:
-        command = reviewed.classify(item)
+        try:
+            command = reviewed.classify(item)
+        except NativeCliMetadataUnavailableError:
+            command = None
+        if command is None and _is_registered_native_write(descriptor):
+            command = replace(descriptor, effect=EffectKind.EFFECTFUL)
+    if command is None and _is_registered_native_write(descriptor):
+        command = replace(descriptor, effect=EffectKind.EFFECTFUL)
     if command is None:
         raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
     if command.effect is not EffectKind.EFFECTFUL:
@@ -173,6 +181,16 @@ def _classify_reviewed_write(
     if command.cli == "dws" and not has_noninteractive_confirmation(canonical_argv):
         raise AgentReadOnlyViolationError("agent_cli_confirmation_required")
     return canonical_argv, command
+
+
+def _is_registered_native_write(command) -> bool:
+    return bool(
+        command is not None
+        and command.cli == "dws"
+        and McpToolEffectRegistry.default().is_registered_write_operation(
+            command.command_path
+        )
+    )
 
 
 def review_write_authorization(
@@ -563,11 +581,17 @@ def _execute_reviewed(
         try:
             command = reviewed.classify(item)
         except NativeCliMetadataUnavailableError as exc:
-            return _process_failure_receipt(
-                descriptor,
-                code=exc.code,
-                retryable=exc.retryable,
-            )
+            command = None
+            if _is_registered_native_write(descriptor):
+                command = replace(descriptor, effect=EffectKind.EFFECTFUL)
+            else:
+                return _process_failure_receipt(
+                    descriptor,
+                    code=exc.code,
+                    retryable=exc.retryable,
+                )
+        if command is None and _is_registered_native_write(descriptor):
+            command = replace(descriptor, effect=EffectKind.EFFECTFUL)
     if command is None:
         raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
     if command.effect is not expected_effect:

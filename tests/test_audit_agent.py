@@ -4353,6 +4353,36 @@ def test_unclassified_native_command_is_not_a_valid_write_operation_contract(
     )
 
 
+def test_registered_reaction_native_command_is_a_valid_write_operation_contract():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Add a useful acknowledgment reaction",
+            "capability": "agent_cli.dws",
+            "operation": "chat message reaction add",
+            "target": {"message_id": "msg-1"},
+            "payload": {
+                "argv": [
+                    "dws",
+                    "chat",
+                    "message",
+                    "reaction",
+                    "add",
+                    "--message-id",
+                    "msg-1",
+                    "--emoji",
+                    "👍",
+                    "--yes",
+                ]
+            },
+            "expected_verification": "The reaction appears in the message reactions.",
+        }
+    )
+
+    assert _proposed_operation_contract_valid(
+        action, McpToolEffectRegistry.default()
+    )
+
+
 def test_initial_and_recovery_authorizations_share_one_logical_effect_token(setup):
     _, _, audit_context, run = _seed_crashed_audit_write(setup)
     expected = (

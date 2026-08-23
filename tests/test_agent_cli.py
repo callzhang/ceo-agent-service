@@ -29,6 +29,57 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
     assert "calendar event" in descriptions["execute_reviewed_read"]
 
 
+def test_registered_reaction_write_is_accepted_when_dws_schema_is_incomplete():
+    class Unclassified:
+        @staticmethod
+        def classify(_item):
+            return None
+
+    argv = [
+        "dws",
+        "chat",
+        "message",
+        "reaction",
+        "add",
+        "--message-id",
+        "msg-1",
+        "--emoji",
+        "👍",
+        "--yes",
+    ]
+
+    classifier = Unclassified()
+    canonical, command = agent_cli._classify_reviewed_write(
+        argv, classifier=classifier
+    )
+
+    assert canonical == tuple(argv)
+    assert command.cli == "dws"
+    assert command.command_path == "chat message reaction add"
+    assert command.effect is EffectKind.EFFECTFUL
+
+    authorization = agent_cli.review_write_authorization(
+        argv,
+        authorization_id="reaction-authorization",
+        action_index=0,
+        classifier=classifier,
+    )
+    receipt = agent_cli.execute_reviewed_write(
+        argv,
+        authorization_id="reaction-authorization",
+        action_index=0,
+        authorization=authorization,
+        authorization_consumer=lambda consumed: None,
+        classifier=classifier,
+        process_runner=lambda command, **_: subprocess.CompletedProcess(
+            command, 0, '{"success":true}', ""
+        ),
+    )
+
+    assert receipt["operation"] == "chat message reaction add"
+    assert receipt["authorization_id"] == "reaction-authorization"
+
+
 def test_read_text_file_reads_bounded_temp_material(tmp_path: Path):
     material = tmp_path / "material.md"
     material.write_text("# Verified material", encoding="utf-8")
