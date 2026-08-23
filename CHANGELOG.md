@@ -11,6 +11,10 @@
   reply, recording a no-effect supersession instead of leaving
   `side_effect_state=unknown` indefinitely.
 
+- Close the legacy `reply_attempts` row paired with a repaired absent Audit
+  run, so the History/attempt view no longer surfaces the stale
+  `audit_recovery_ambiguous` decision card after the run and task are settled.
+
 - Allow a strictly read-only Audit reconciliation to fail over from a crashed
   or unclassified provider process to another configured runtime even when the
   original unknown action has only an `item.started` marker and no receipt.

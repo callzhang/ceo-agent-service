@@ -6732,6 +6732,69 @@ def test_historical_completed_unknown_audit_superseded_closes_without_requeue(
     assert settled is not None and settled.status == "done"
 
 
+def test_historical_audit_recovery_attempt_is_closed_with_repaired_run(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task_id,
+        task.execution_generation,
+        owner="worker-1",
+        now="2026-07-29 09:00:00",
+    ).run
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="audit_recovery_ambiguous",
+        audit_summary="audit_recovery_ambiguous",
+        send_status="needs_human",
+    )
+    digest = "readback-digest"
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update reply_attempts set agent_run_id=?, send_error=? where id=?",
+            (run.id, "audit_recovery_ambiguous", attempt_id),
+        )
+        db.execute(
+            "update agent_runs set status='failed', side_effect_state='none', "
+            "structured_error_json=? where id=?",
+            (
+                '{"code":"historical_reconciliation_absent",'
+                '"evidence_digest":"readback-digest"}',
+                run.id,
+            ),
+        )
+        db.execute("update reply_tasks set status='done' where id=?", (task_id,))
+
+    assert store.settle_historical_audit_recovery_attempt(
+        attempt_id,
+        run_id=run.id,
+        task_id=task_id,
+        evidence_digest=digest,
+        now="2026-07-29 09:00:01",
+    )
+
+    with sqlite3.connect(store.path) as db:
+        row = db.execute(
+            "select send_status,send_error,human_decision_options_json,audit_summary "
+            "from reply_attempts where id=?",
+            (attempt_id,),
+        ).fetchone()
+    assert row[0] == "skipped"
+    assert row[1] == ""
+    assert row[2] == "[]"
+    assert "old external action was not replayed" in row[3]
+
+
 @pytest.mark.parametrize(
     ("resolution", "run_status", "task_status", "send_status", "rotates"),
     [

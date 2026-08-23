@@ -8034,6 +8034,75 @@ class AutoReplyStore:
                 send_error=code,
             )
 
+    def settle_historical_audit_recovery_attempt(
+        self,
+        attempt_id: int,
+        *,
+        run_id: int,
+        task_id: int,
+        evidence_digest: str,
+        now: str | datetime | None = None,
+    ) -> bool:
+        """Close the UI attempt paired with a repaired historical Audit run."""
+        digest = evidence_digest.strip()
+        if not digest:
+            raise ValueError("evidence_digest must be non-empty")
+        code = "historical_reconciliation_absent"
+        summary_suffix = (
+            " Historical recovery was resolved as absent from the exact readback; "
+            "the old external action was not replayed."
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select attempts.send_status, attempts.send_error,
+                       attempts.audit_summary, runs.status as run_status,
+                       runs.side_effect_state, runs.structured_error_json,
+                       tasks.status as task_status
+                from reply_attempts attempts
+                join agent_runs runs on runs.id=attempts.agent_run_id
+                join reply_tasks tasks on tasks.id=runs.reply_task_id
+                where attempts.id=? and attempts.agent_run_id=?
+                  and runs.reply_task_id=? and tasks.id=?
+                """,
+                (attempt_id, run_id, task_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise AgentRunLeaseLostError(
+                    f"historical recovery attempt not found: {attempt_id}"
+                )
+            try:
+                structured = json.loads(row["structured_error_json"] or "{}")
+            except json.JSONDecodeError:
+                structured = {}
+            if not (
+                row["send_status"] == "needs_human"
+                and row["send_error"] == "audit_recovery_ambiguous"
+                and row["run_status"] == "failed"
+                and row["side_effect_state"] == "none"
+                and row["task_status"] == "done"
+                and structured.get("code") == code
+                and structured.get("evidence_digest") == digest
+            ):
+                raise AgentRunLeaseLostError(
+                    f"historical recovery attempt is not safely settled: {attempt_id}"
+                )
+            summary = str(row["audit_summary"] or "").rstrip() + summary_suffix
+            cursor = db.execute(
+                """
+                update reply_attempts
+                set send_status='skipped', send_error='', audit_summary=?,
+                    human_decision_options_json='[]', updated_at=?
+                where id=? and send_status='needs_human'
+                """,
+                (summary, now_text, attempt_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"historical recovery attempt changed: {attempt_id}"
+                )
+            return True
+
     @staticmethod
     def _insert_reconciliation_attempt_in_connection(
         db: sqlite3.Connection,
