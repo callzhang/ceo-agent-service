@@ -1150,44 +1150,12 @@ def _database_delivery_absence_reconciliation(
     context: AuditTurnContext,
     run: AgentRun,
 ) -> bool:
-    """Reopen any ledger-backed DingTalk chat delivery proven absent."""
+    """Use the delivery ledger only for a single direct-message recovery."""
     del run
     if store.has_sent_reply_for_trigger(task.conversation_id, task.trigger_message_id):
         return False
     actions = context.proposal.actions
-    if not actions or not all(_is_chat_delivery_action(action, task) for action in actions):
-        return False
-    return True
-
-
-def _is_chat_delivery_action(action: object, task: ReplyTask) -> bool:
-    if _is_direct_chat_send(action, task):
-        return True
-    payload = getattr(action, "payload", None)
-    if not isinstance(payload, dict):
-        return False
-    descriptor = describe_native_command({"type": "command_execution", **payload})
-    if descriptor is None or descriptor.cli != "dws":
-        return False
-    if descriptor.command_path == "chat +dm":
-        argv = native_command_argv({"type": "command_execution", **payload})
-        return bool(
-            task.single_chat
-            and argv is not None
-            and _argv_option_value(argv, "--to").casefold()
-            == task.trigger_sender.casefold()
-        )
-    if descriptor.command_path in {"chat message reply", "chat +messages-reply"}:
-        target = descriptor.target_identifiers
-        return target.get("conversation-id", target.get("conversation", "")) == task.conversation_id
-    # The legacy ``chat message send`` form is also used by recovery tests and
-    # by proposals whose target is not the triggering conversation.  Only the
-    # canonical addressed forms can be safely classified from the persisted
-    # target alone; the generic legacy form still requires live Audit evidence.
-    return descriptor.command_path in {
-        "chat +messages-send",
-        "chat +send-to-group",
-    } and bool({"group", "user", "open-dingtalk-id"} & set(descriptor.target_identifiers))
+    return bool(actions) and all(_is_direct_chat_send(action, task) for action in actions)
 
 
 def _persisted_single_direct_delivery(

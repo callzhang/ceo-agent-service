@@ -3251,7 +3251,7 @@ def test_legacy_direct_chat_without_delivery_record_rotates_generation(setup):
     assert executor.commands == []
 
 
-def test_controlled_group_chat_without_delivery_record_rotates_generation(setup):
+def test_controlled_group_chat_without_delivery_record_requires_audit_readback(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     group_proposal = ConsumerProposal.model_validate(
         {
@@ -3280,19 +3280,15 @@ def test_controlled_group_chat_without_delivery_record_rotates_generation(setup)
             "authored_judgment": "Requested by Derek",
         }
     )
-    result = AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=CapturingExecutor(""),
-    ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
+    with pytest.raises(ResultParseError):
+        AuditAgentRunner(
+            store=store,
+            workspace=Path("/workspace"),
+            executor=CapturingExecutor(""),
+        ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
 
     persisted = store.get_agent_run(run.id)
-    requeued = store.get_reply_task(task.id)
-    assert result.result.error is not None
-    assert result.result.error.code == "persisted_delivery_absent"
-    assert persisted is not None and persisted.status == "failed"
-    assert requeued is not None and requeued.status == "pending"
-    assert requeued.execution_generation != task.execution_generation
+    assert persisted is not None and persisted.status == "unknown"
 
 
 def test_group_delivery_ledger_does_not_finish_direct_recovery(setup):

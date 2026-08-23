@@ -1,8 +1,8 @@
 # Changelog
 
-- Reopen historical DingTalk chat deliveries only when a canonical, addressed
-  command is ledger-absent; legacy command forms still require live Audit
-  evidence. Add an atomic repair for terminal Audit runs that were persisted
+- Reopen historical direct-message deliveries only when the exact trigger is
+  absent from the delivery ledger; group and legacy command forms still require
+  live Audit evidence. Add an atomic repair for terminal Audit runs that were persisted
   as `completed` with `side_effect_state=unknown` after an exact absent
   readback, rotating the task into a fresh Consumer generation without
   replaying the old external write.
