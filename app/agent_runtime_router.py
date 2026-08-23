@@ -852,6 +852,7 @@ class AgentRuntimeRouter:
         *,
         required_capabilities: frozenset[str],
         allow_legacy_oauth_bootstrap: bool = False,
+        excluded_routes: frozenset[str] = frozenset(),
     ) -> RuntimeRoute | None:
         """Select an initial route from current evidence.
 
@@ -862,6 +863,7 @@ class AgentRuntimeRouter:
         return self.first_route_decision(
             required_capabilities=required_capabilities,
             allow_legacy_oauth_bootstrap=allow_legacy_oauth_bootstrap,
+            excluded_routes=excluded_routes,
         ).route
 
     def first_route_decision(
@@ -869,11 +871,15 @@ class AgentRuntimeRouter:
         *,
         required_capabilities: frozenset[str],
         allow_legacy_oauth_bootstrap: bool = False,
+        excluded_routes: frozenset[str] = frozenset(),
     ) -> RuntimeRouteDecision:
         """Return the initial route plus a safe, persisted eligibility reason."""
         now = _parse_timestamp(self._now())
         ineligible: list[str] = []
         for route in self._routes:
+            if route.name in excluded_routes:
+                ineligible.append(f"{route.name}=already_attempted")
+                continue
             if self._store.active_runtime_route_pause(route.name, now=now) is not None:
                 ineligible.append(f"{route.name}=paused")
                 continue

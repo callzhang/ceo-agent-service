@@ -248,6 +248,18 @@ def test_initial_route_rejects_expired_or_missing_capability_evidence(store):
     assert router.first_eligible_route(required_capabilities=required) is None
 
 
+def test_initial_recovery_route_skips_already_attempted_provider(store):
+    routes = (route("codex_oauth"), route("codex_api"))
+    router = make_router(store, routes=routes)
+
+    decision = router.first_route_decision(
+        required_capabilities=frozenset({"structured_output"}),
+        excluded_routes=frozenset({"codex_oauth"}),
+    )
+
+    assert decision.route == routes[1]
+
+
 def test_operation_failover_uses_persisted_identity_failure_and_capabilities(store):
     workload_key = seed_structured_operation(store)
     failure = failover_failure()
