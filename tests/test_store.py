@@ -6647,6 +6647,51 @@ def test_absent_reconciliation_atomically_fails_run_and_rotates_pending_task(
     assert task.error == "reconciliation_confirmed_no_effect"
 
 
+def test_historical_completed_unknown_audit_absence_rotates_only_matching_terminal_run(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task_id,
+        task.execution_generation,
+        owner="worker-1",
+        now="2026-07-29 09:00:00",
+    ).run
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set status='completed', side_effect_state='unknown', "
+            "final_result_json=? where id=?",
+            (
+                '{"outcome":"needs_human","error":{"code":"audit_recovery_ambiguous"}}',
+                run.id,
+            ),
+        )
+        db.execute(
+            "update reply_tasks set status='done' where id=?",
+            (task_id,),
+        )
+
+    generation = store.resolve_completed_unknown_audit_run_absent(
+        run.id,
+        task_id,
+        evidence_digest="readback-digest",
+        now="2026-07-29 09:00:01",
+    )
+
+    resolved = store.get_agent_run(run.id)
+    reopened = store.get_reply_task(task_id)
+    assert resolved is not None and resolved.status == "failed"
+    assert resolved.side_effect_state == "none"
+    assert reopened is not None
+    assert reopened.status == "pending"
+    assert reopened.force_new_decision is True
+    assert reopened.execution_generation == generation != task.execution_generation
+
+
 @pytest.mark.parametrize(
     ("resolution", "run_status", "task_status", "send_status", "rotates"),
     [

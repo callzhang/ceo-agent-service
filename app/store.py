@@ -7868,6 +7868,102 @@ class AutoReplyStore:
             )
         return generation
 
+    def resolve_completed_unknown_audit_run_absent(
+        self,
+        run_id: int,
+        task_id: int,
+        *,
+        evidence_digest: str,
+        now: str | datetime | None = None,
+    ) -> str:
+        """Reopen a terminal historical recovery proven absent by its read digest.
+
+        A pre-fix recovery could persist ``completed`` with
+        ``side_effect_state=unknown`` after an otherwise complete, read-only
+        reconciliation.  This narrow repair is intentionally not a generic
+        status override: it requires the exact historical run/task identity,
+        the old ambiguous terminal result, and a non-empty readback digest.
+        It rotates the task into a fresh Consumer generation and never writes
+        or marks an external effect as confirmed.
+        """
+        digest = evidence_digest.strip()
+        if not digest:
+            raise ValueError("evidence_digest must be non-empty")
+        generation = uuid4().hex
+        code = "historical_reconciliation_absent"
+        error_json = _json_object_text(
+            {"code": code, "retryable": False, "evidence_digest": digest},
+            field="structured_error",
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select agent_runs.status, agent_runs.role,
+                       agent_runs.side_effect_state, agent_runs.final_result_json,
+                       agent_runs.execution_generation,
+                       reply_tasks.status as task_status,
+                       reply_tasks.execution_generation as task_generation
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=? and agent_runs.reply_task_id=?
+                """,
+                (run_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise AgentRunLeaseLostError(f"historical run not found: {run_id}")
+            final_result = row["final_result_json"] or ""
+            if not (
+                row["role"] == "audit"
+                and row["status"] == "completed"
+                and row["side_effect_state"] == "unknown"
+                and row["task_status"] == "done"
+                and row["execution_generation"] == row["task_generation"]
+                and '"audit_recovery_ambiguous"' in final_result
+            ):
+                raise AgentRunLeaseLostError(
+                    f"historical run is not an ambiguous unknown recovery: {run_id}"
+                )
+            run_cursor = db.execute(
+                """
+                update agent_runs
+                set status='failed', final_result_json='', structured_error_json=?,
+                    side_effect_state='none', lease_owner='', lease_expires_at='',
+                    completed_at=?, updated_at=?
+                where id=? and reply_task_id=? and status='completed'
+                  and side_effect_state='unknown'
+                """,
+                (error_json, now_text, now_text, run_id, task_id),
+            )
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending', execution_generation=?, force_new_decision=1,
+                    locked_at=null, available_at='', error=?, updated_at=?
+                where id=? and status='done' and execution_generation=?
+                """,
+                (
+                    generation,
+                    code,
+                    now_text,
+                    task_id,
+                    row["execution_generation"],
+                ),
+            )
+            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"historical run changed during resolution: {run_id}"
+                )
+            self._insert_reconciliation_attempt_in_connection(
+                db,
+                run_id=run_id,
+                task_id=task_id,
+                codex_reason=code,
+                audit_summary=f"readback evidence digest {digest}",
+                send_status="failed",
+                send_error=code,
+            )
+        return generation
+
     @staticmethod
     def _insert_reconciliation_attempt_in_connection(
         db: sqlite3.Connection,

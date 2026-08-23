@@ -1,5 +1,12 @@
 # Changelog
 
+- Reopen historical DingTalk chat deliveries only when a canonical, addressed
+  command is ledger-absent; legacy command forms still require live Audit
+  evidence. Add an atomic repair for terminal Audit runs that were persisted
+  as `completed` with `side_effect_state=unknown` after an exact absent
+  readback, rotating the task into a fresh Consumer generation without
+  replaying the old external write.
+
 - Allow a strictly read-only Audit reconciliation to fail over from a crashed
   or unclassified provider process to another configured runtime even when the
   original unknown action has only an `item.started` marker and no receipt.
