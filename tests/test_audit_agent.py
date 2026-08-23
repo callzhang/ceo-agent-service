@@ -3925,6 +3925,24 @@ def test_legacy_group_content_reconstructs_the_persisted_write_contract():
     assert expected["arguments_digest"] == _json_digest({"argv": argv})
 
 
+def test_group_message_intent_dispatches_without_cli_contract_audit():
+    action = ProposedAction.model_validate(
+        {
+            "description": "Post the reviewed conclusion",
+            "capability": "DingTalk group chat messaging",
+            "operation": "dws chat +send-to-group --group <conversation_id> --content <content> --yes",
+            "target": {"conversation_id": "cid-agent"},
+            "payload": {"content": "exact reviewed reply"},
+            "expected_verification": "Message exists",
+        }
+    )
+
+    assert _proposed_operation_contract_valid(
+        action,
+        McpToolEffectRegistry.default(),
+    )
+
+
 def test_legacy_direct_dingtalk_chat_candidate_normalizes_for_reconciliation():
     action = ProposedAction.model_validate(
         {
