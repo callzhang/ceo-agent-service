@@ -49,6 +49,7 @@ def test_worker_orchestration_status_mapping_is_exact():
         "executed": ("completed", "done"),
         "no_action": ("skipped", "done"),
         "needs_human": ("needs_human", "done"),
+        "dry_run": ("dry_run", "done"),
         "failed_retryable": ("failed", "pending"),
         "failed_terminal": ("failed", "failed"),
         "unknown": ("pending_reconciliation", "pending"),
