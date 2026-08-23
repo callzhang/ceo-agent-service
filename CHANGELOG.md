@@ -1,11 +1,12 @@
 # Changelog
 
 - Allow a strictly read-only Audit reconciliation to fail over from a crashed
-  or unclassified provider process to another configured runtime when no
-  recovery effect has started. Preserve the underlying runtime failure code
-  instead of mislabeling provider-process failures as
-  `audit_recovery_result_invalid`, so historical unknown runs can continue
-  reconciliation with an accurate audit trail.
+  or unclassified provider process to another configured runtime even when the
+  original unknown action has only an `item.started` marker and no receipt.
+  Recovery skips already-attempted routes when an alternative is available,
+  preserves the underlying runtime failure code, and ignores obsolete
+  unreviewed commands while reading old session evidence instead of trapping
+  historical unknown runs as `audit_recovery_result_invalid`.
 
 - Fix reaction-only acknowledgments being rejected by Audit when the live DWS
   schema does not expose the registered reaction command. The configured

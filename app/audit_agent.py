@@ -42,6 +42,7 @@ from app.codex_history import extract_codex_mcp_tool_results_from_session
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import (
+    AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
     NativeCliMetadataUnavailableError,
     dingtalk_message_text,
@@ -313,11 +314,18 @@ class AuditAgentRunner:
         for payload in extract_codex_mcp_tool_results_from_session(
             runtime_attempt.session_id,
         ):
-            event = process._normalized_effect_event(
-                payload,
-                read_only=False,
-                operation_id=run.operation_id,
-            )
+            try:
+                event = process._normalized_effect_event(
+                    payload,
+                    read_only=False,
+                    operation_id=run.operation_id,
+                )
+            except AgentReadOnlyViolationError:
+                # This is historical evidence only.  A command that was
+                # reviewed by an older CLI policy may no longer be registered
+                # today; it cannot prove a receipt, but it must not block the
+                # independent read-only reconciliation turn.
+                continue
             item = event.get("item") if event is not None else None
             metadata = item.get("metadata") if isinstance(item, dict) else None
             if not isinstance(metadata, dict) or not any(

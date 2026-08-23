@@ -2665,6 +2665,30 @@ def test_claude_session_collision_never_reads_codex_delivery_history(
     )
 
 
+def test_historical_unreviewed_backfill_event_does_not_block_reconciliation(
+    setup, monkeypatch
+):
+    store, task, audit_context, run = _seed_crashed_audit_write(setup)
+
+    def raise_unreviewed(*_args, **_kwargs):
+        raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
+
+    monkeypatch.setattr(
+        "app.audit_agent.extract_codex_mcp_tool_results_from_session",
+        lambda _session_id: [{"type": "item.completed", "item": {}}],
+    )
+    monkeypatch.setattr(AgentTurnProcess, "_normalized_effect_event", raise_unreviewed)
+
+    AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+    )._backfill_persisted_direct_delivery_receipt(task, audit_context, run)
+
+    assert not store.has_sent_reply_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    )
+
+
 def test_recovery_reconciliation_without_skill_receipts_stays_strictly_read_only(
     setup,
 ):
