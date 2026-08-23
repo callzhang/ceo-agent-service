@@ -805,14 +805,12 @@ def failover_is_safe(
     if has_confirmed_receipt:
         return False, "confirmed_receipt"
     if recovery_phase == "reconcile":
-        if attempt.first_effect_started_at:
-            return False, "effect_started"
         # A reconciliation turn is strictly read-only and starts a fresh
-        # provider session.  If the provider process dies before producing a
-        # session or any effect evidence, the unknown external action remains
-        # untouched and another configured route can safely supply the
-        # read-only evidence.  The normal execution path stays fail-closed for
-        # the same failures.
+        # provider session.  The original unknown action may already have an
+        # item.started marker, but it has no confirmed receipt; that marker is
+        # exactly why reconciliation is required and must not prevent a
+        # separate healthy route from performing the read-only check.  The
+        # normal execution path stays fail-closed for the same failures.
         if failure.failure_class in {
             RuntimeFailureClass.PROCESS,
             RuntimeFailureClass.SESSION,

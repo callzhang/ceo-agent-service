@@ -571,6 +571,41 @@ def test_read_only_recovery_can_failover_to_api_after_process_failure(
     assert decision.route.name == "codex_api"
 
 
+def test_read_only_recovery_can_failover_after_unknown_effect_started(
+    router, store, running_attempt
+):
+    """An item.started marker without a receipt still needs read-only recovery."""
+    store.note_runtime_attempt_effect_started(running_attempt.id)
+    store.mark_agent_run_unknown(
+        running_attempt.agent_run_id,
+        {"code": "expired_audit_effect_requires_reconciliation", "retryable": False},
+        owner="router-test",
+    )
+    failure = RuntimeFailure(
+        failure_class=RuntimeFailureClass.UNCLASSIFIED,
+        code="runtime_unclassified",
+        detail="provider exited during read-only recovery",
+        failover_permitted=False,
+    )
+    failed_attempt = store.fail_agent_runtime_attempt(
+        running_attempt.id,
+        failure.failure_class.value,
+        failure.code,
+        failure.failover_permitted,
+    )
+
+    decision = router.next_route(
+        run=store.get_agent_run(running_attempt.agent_run_id),
+        failed_attempt=failed_attempt,
+        failure=failure,
+        required_capabilities=frozenset({"structured_output"}),
+        recovery_phase="reconcile",
+    )
+
+    assert decision.route is not None
+    assert decision.route.name == "codex_api"
+
+
 def test_persisted_confirmable_receipt_blocks_failover_when_caller_says_false(
     router, store, running_attempt
 ):
