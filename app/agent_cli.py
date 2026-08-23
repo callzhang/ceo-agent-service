@@ -25,6 +25,8 @@ from app.bounded_process import (
     run_bounded_process,
 )
 from app.channel_gate import classify_cli_read_failure, classify_cli_write_failure
+from app.config import feedback_spike_vercel_base_url
+from app.feedback_spike import sanitize_configured_feedback_links
 from app.leak_check import contains_credential, is_sensitive_field_name
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
@@ -145,13 +147,52 @@ def _validate_reviewed_argv(argv: Sequence[str]) -> tuple[str, ...]:
         )
     ):
         raise AgentReadOnlyViolationError("agent_cli_command_invalid")
+    sensitive_check_argv = _argv_with_service_feedback_links_sanitized(argv)
     if any(
         argument.startswith("--")
         and is_sensitive_field_name(argument[2:].partition("=")[0])
-        for argument in argv
-    ) or any(contains_credential(argument) for argument in argv):
+        for argument in sensitive_check_argv
+    ) or any(contains_credential(argument) for argument in sensitive_check_argv):
         raise AgentReadOnlyViolationError("agent_cli_sensitive_argument")
     return tuple(argv)
+
+
+def _argv_with_service_feedback_links_sanitized(
+    argv: Sequence[str],
+) -> tuple[str, ...]:
+    """Exclude only exact service-owned feedback callbacks from CLI leak checks.
+
+    Feedback callbacks are intentionally part of a DingTalk message body, but
+    their ``feedback_token`` query field resembles a credential to the generic
+    argument scanner.  The callback pair is accepted only for a recognized
+    ``dws chat`` message content flag and only when it exactly matches the
+    configured service base URL and generated-token contract.  All other
+    arguments retain the strict credential checks.
+    """
+    if (
+        len(argv) < 3
+        or argv[0] != "dws"
+        or argv[1] != "chat"
+        or not feedback_spike_vercel_base_url()
+    ):
+        return tuple(argv)
+    content_flags = {"--content", "--text"}
+    sanitized = list(argv)
+    for index, argument in enumerate(argv[:-1]):
+        if argument not in content_flags:
+            continue
+        try:
+            sanitized[index + 1] = str(
+                sanitize_configured_feedback_links(
+                    argv[index + 1],
+                    vercel_base_url=feedback_spike_vercel_base_url(),
+                )
+            )
+        except ValueError:
+            # A callback-shaped value that fails the exact service contract is
+            # still checked as-is and therefore remains rejected.
+            sanitized[index + 1] = argv[index + 1]
+    return tuple(sanitized)
 
 
 def _classify_reviewed_write(

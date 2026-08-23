@@ -1091,18 +1091,6 @@ def _proposed_operation_contract_valid(
     """Require a real executable contract; prose is never dispatch authority."""
     item = {"type": "command_execution", **action.payload}
     descriptor = describe_native_command(item)
-    # The underscore capability is the persisted Consumer spelling emitted by
-    # the affected historical run. Keep the older hyphenated form available
-    # for read-only recovery normalization, but do not let it pass normal Audit
-    # contract validation.
-    legacy_argv = (
-        _legacy_dingtalk_chat_send_argv(action)
-        if action.capability == "dingtalk_chat"
-        else None
-    )
-    if descriptor is None and legacy_argv is not None:
-        item = {"type": "command_execution", "argv": legacy_argv}
-        descriptor = describe_native_command(item)
     if descriptor is not None:
         argv = native_command_argv(item)
         try:
@@ -1285,7 +1273,7 @@ def _argv_option_value(argv: tuple[str, ...], option: str) -> str:
 
 def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:
     """Canonicalize persisted pre-contract DingTalk chat actions for audit."""
-    if action.capability not in {"dingtalk-chat", "dingtalk_chat"}:
+    if action.capability != "dingtalk-chat":
         return None
     if native_command_argv({"type": "command_execution", **action.payload}) is not None:
         return None

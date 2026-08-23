@@ -9,6 +9,7 @@ import pytest
 
 import app.agent_cli as agent_cli
 from app.agent_result import EffectKind
+from app.feedback_spike import prepare_outgoing_reply_text
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.native_cli_metadata import AgentReadOnlyViolationError
 from app.store import AgentRole, AutoReplyStore
@@ -78,6 +79,52 @@ def test_registered_reaction_write_is_accepted_when_dws_schema_is_incomplete():
 
     assert receipt["operation"] == "chat message reaction add"
     assert receipt["authorization_id"] == "reaction-authorization"
+
+
+def test_dws_message_allows_exact_service_feedback_callbacks_in_content(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    base_url = "https://feedback.example.test"
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", base_url)
+    content = prepare_outgoing_reply_text(
+        reply_text="已完成复核。",
+        original_text="触发消息",
+        feedback_base_url=base_url,
+        feedback_token="spike_1787501265_e576c9d1",
+    ).text
+    argv = [
+        "dws",
+        "chat",
+        "+send-to-group",
+        "--group",
+        "cid-agent",
+        "--content",
+        content,
+        "--yes",
+    ]
+
+    assert agent_cli._validate_reviewed_argv(argv) == tuple(argv)
+
+
+def test_dws_message_rejects_non_service_tokenized_url_in_content(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", "https://feedback.example.test"
+    )
+    argv = [
+        "dws",
+        "chat",
+        "+send-to-group",
+        "--group",
+        "cid-agent",
+        "--content",
+        "请访问 https://attacker.example/api?feedback_token=opaque-token&rating=up",
+        "--yes",
+    ]
+
+    with pytest.raises(AgentReadOnlyViolationError, match="sensitive_argument"):
+        agent_cli._validate_reviewed_argv(argv)
 
 
 def test_read_text_file_reads_bounded_temp_material(tmp_path: Path):

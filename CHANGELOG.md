@@ -15,18 +15,19 @@
   run, so the History/attempt view no longer surfaces the stale
   `audit_recovery_ambiguous` decision card after the run and task are settled.
 
-- Normalize the persisted legacy DingTalk chat payload form, including the
-  `dingtalk_chat` capability alias, before validating the reviewed write
-  contract. The command still has to resolve to a registered DWS write and
-  retain the non-interactive confirmation gate.
-
 - Allow a strictly read-only Audit reconciliation to fail over from a crashed
   or unclassified provider process to another configured runtime even when the
   original unknown action has only an `item.started` marker and no receipt.
+
   Recovery skips already-attempted routes when an alternative is available,
   preserves the underlying runtime failure code, and ignores obsolete
   unreviewed commands while reading old session evidence instead of trapping
   historical unknown runs as `audit_recovery_result_invalid`.
+
+- Stop treating provider-specific CLI serialization as an Audit business-rule
+  failure. External writes still require the existing effect registry and
+  one-shot execution authorization, while exact service-owned feedback links
+  remain valid inside a DingTalk message body.
 
 - Fix reaction-only acknowledgments being rejected by Audit when the live DWS
   schema does not expose the registered reaction command. The configured
