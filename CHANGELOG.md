@@ -7,6 +7,10 @@
   readback, rotating the task into a fresh Consumer generation without
   replaying the old external write.
 
+- Close terminal legacy Audit runs whose trigger was later resolved by a newer
+  reply, recording a no-effect supersession instead of leaving
+  `side_effect_state=unknown` indefinitely.
+
 - Allow a strictly read-only Audit reconciliation to fail over from a crashed
   or unclassified provider process to another configured runtime even when the
   original unknown action has only an `item.started` marker and no receipt.

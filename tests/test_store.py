@@ -6692,6 +6692,46 @@ def test_historical_completed_unknown_audit_absence_rotates_only_matching_termin
     assert reopened.execution_generation == generation != task.execution_generation
 
 
+def test_historical_completed_unknown_audit_superseded_closes_without_requeue(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store,
+        task_id,
+        task.execution_generation,
+        owner="worker-1",
+        now="2026-07-29 09:00:00",
+    ).run
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set status='completed', side_effect_state='unknown', "
+            "final_result_json=? where id=?",
+            (
+                '{"outcome":"needs_human","error":{"code":"audit_recovery_ambiguous"}}',
+                run.id,
+            ),
+        )
+        db.execute("update reply_tasks set status='done' where id=?", (task_id,))
+
+    store.settle_completed_unknown_audit_run_superseded(
+        run.id,
+        task_id,
+        reason="A later reply resolved the trigger; the old delivery is stale.",
+        now="2026-07-29 09:00:01",
+    )
+
+    resolved = store.get_agent_run(run.id)
+    settled = store.get_reply_task(task_id)
+    assert resolved is not None
+    assert resolved.status == "failed"
+    assert resolved.side_effect_state == "none"
+    assert settled is not None and settled.status == "done"
+
+
 @pytest.mark.parametrize(
     ("resolution", "run_status", "task_status", "send_status", "rotates"),
     [

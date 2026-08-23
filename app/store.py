@@ -7964,6 +7964,76 @@ class AutoReplyStore:
             )
         return generation
 
+    def settle_completed_unknown_audit_run_superseded(
+        self,
+        run_id: int,
+        task_id: int,
+        *,
+        reason: str,
+        now: str | datetime | None = None,
+    ) -> None:
+        """Close a terminal unknown Audit whose trigger was later resolved.
+
+        This is for legacy runs already marked ``completed``/``unknown`` where
+        a durable later-reply closure proves that replay would be stale.  It
+        records a terminal no-effect state and leaves the task done.
+        """
+        explanation = reason.strip()
+        if not explanation:
+            raise ValueError("reason must be non-empty")
+        code = "historical_reconciliation_superseded"
+        error_json = _json_object_text(
+            {"code": code, "retryable": False, "reason": explanation},
+            field="structured_error",
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select agent_runs.status, agent_runs.role,
+                       agent_runs.side_effect_state, agent_runs.final_result_json,
+                       reply_tasks.status as task_status
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=? and agent_runs.reply_task_id=?
+                """,
+                (run_id, task_id),
+            ).fetchone()
+            final_result = (row["final_result_json"] or "") if row else ""
+            if row is None or not (
+                row["role"] == "audit"
+                and row["status"] == "completed"
+                and row["side_effect_state"] == "unknown"
+                and row["task_status"] == "done"
+                and '"audit_recovery_ambiguous"' in final_result
+            ):
+                raise AgentRunLeaseLostError(
+                    f"historical run is not a superseded unknown recovery: {run_id}"
+                )
+            cursor = db.execute(
+                """
+                update agent_runs
+                set status='failed', final_result_json='', structured_error_json=?,
+                    side_effect_state='none', lease_owner='', lease_expires_at='',
+                    completed_at=?, updated_at=?
+                where id=? and reply_task_id=? and status='completed'
+                  and side_effect_state='unknown'
+                """,
+                (error_json, now_text, now_text, run_id, task_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"historical run changed during supersession: {run_id}"
+                )
+            self._insert_reconciliation_attempt_in_connection(
+                db,
+                run_id=run_id,
+                task_id=task_id,
+                codex_reason=code,
+                audit_summary=explanation,
+                send_status="skipped",
+                send_error=code,
+            )
+
     @staticmethod
     def _insert_reconciliation_attempt_in_connection(
         db: sqlite3.Connection,
