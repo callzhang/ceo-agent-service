@@ -15,6 +15,11 @@
   run, so the History/attempt view no longer surfaces the stale
   `audit_recovery_ambiguous` decision card after the run and task are settled.
 
+- Normalize the persisted legacy DingTalk chat payload form, including the
+  `dingtalk_chat` capability alias, before validating the reviewed write
+  contract. The command still has to resolve to a registered DWS write and
+  retain the non-interactive confirmation gate.
+
 - Allow a strictly read-only Audit reconciliation to fail over from a crashed
   or unclassified provider process to another configured runtime even when the
   original unknown action has only an `item.started` marker and no receipt.
