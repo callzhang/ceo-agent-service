@@ -807,6 +807,18 @@ def failover_is_safe(
     if recovery_phase == "reconcile":
         if attempt.first_effect_started_at:
             return False, "effect_started"
+        # A reconciliation turn is strictly read-only and starts a fresh
+        # provider session.  If the provider process dies before producing a
+        # session or any effect evidence, the unknown external action remains
+        # untouched and another configured route can safely supply the
+        # read-only evidence.  The normal execution path stays fail-closed for
+        # the same failures.
+        if failure.failure_class in {
+            RuntimeFailureClass.PROCESS,
+            RuntimeFailureClass.SESSION,
+            RuntimeFailureClass.UNCLASSIFIED,
+        }:
+            return True, "safe_read_only_reconciliation_runtime_failover"
         if not failure.failover_permitted:
             return False, "failure_not_eligible"
         return True, "safe_read_only_reconciliation"

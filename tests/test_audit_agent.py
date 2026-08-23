@@ -6105,6 +6105,14 @@ def test_recovery_preserves_runtime_capability_diagnostic(setup):
     assert error["detail"] == failure.reason
 
 
+@pytest.mark.parametrize(
+    "code",
+    ["codex_process_failed", "runtime_unclassified", "runtime_session_evidence_missing"],
+)
+def test_recovery_preserves_runtime_failure_code(setup, code):
+    assert _audit_recovery_error_code(RuntimeError(code)) == code
+
+
 def test_persisted_absence_resumes_execute_phase_without_reconciling_again(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     runner = AuditAgentRunner(

@@ -940,6 +940,12 @@ def _audit_recovery_error_code(exc: Exception) -> str:
     if code != "codex_process_failed":
         return code
     detail = str(exc).strip()
+    if detail in {
+        "codex_process_failed",
+        "runtime_unclassified",
+        "runtime_session_evidence_missing",
+    }:
+        return detail
     if detail == IMAGE_DEPENDENCY_UNAVAILABLE_CODE:
         return detail
     if detail.startswith("audit_"):
