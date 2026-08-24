@@ -1429,6 +1429,9 @@ def test_codex_agent_delegates_route_model_selection_to_runtime_adapter(tmp_path
 
     assert routed.calls[0]["conversation_id"] is None
     assert routed.calls[0]["command_factory"]._approved_policy.effect_mode == "read_only"
+    instructions = routed.calls[0]["command_factory"]._developer_instructions
+    assert "CEO_PYTHON" in instructions
+    assert "never invoke a repository-local .venv/bin/python path" in instructions
 
 
 def _weekly_payload_for(name):

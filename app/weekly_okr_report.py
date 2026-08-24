@@ -441,7 +441,10 @@ class CodexWeeklyOkrAgent:
                 command_factory=ApprovedCodexCommandFactory.read_only_weekly_okr(
                     developer_instructions=(
                         "Perform only reviewed read-only OKR evidence analysis. "
-                        "Do not send messages or create or update documents."
+                        "Do not send messages or create or update documents. "
+                        "If a local command is required, use the service's central "
+                        "interpreter from CEO_PYTHON (or $HOME/miniforge3/bin/python); "
+                        "never invoke a repository-local .venv/bin/python path."
                     ),
                     output_schema_path=WEEKLY_OKR_REPORT_SCHEMA_PATH,
                     use_output_schema=True,
