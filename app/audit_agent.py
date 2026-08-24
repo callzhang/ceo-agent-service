@@ -569,7 +569,7 @@ class AuditAgentRunner:
                         "contract; Consumer Agent A must produce a valid replacement."
                     ),
                 )
-            return self._execute_claimed(
+            executed = self._execute_claimed(
                 task,
                 context,
                 run=claim.run,
@@ -578,7 +578,28 @@ class AuditAgentRunner:
                 authorized_recovery_actions=unresolved_absent,
                 recovery_authorizations=authorizations,
             )
+            if executed.result.error.code == "audit_recovery_action_not_authorized":
+                return self._requeue_for_consumer(
+                    task,
+                    claim.run,
+                    code="audit_recovery_candidate_invalid",
+                    summary=(
+                        "历史写入候选缺少可验证的命令授权合同，已退回 Consumer 重新生成；"
+                        "本轮未确认外部写入回执。"
+                    ),
+                )
+            return executed
         except Exception as exc:
+            if _audit_recovery_error_code(exc) == "audit_recovery_action_not_authorized":
+                return self._requeue_for_consumer(
+                    task,
+                    claim.run,
+                    code="audit_recovery_candidate_invalid",
+                    summary=(
+                        "历史写入候选缺少可验证的命令授权合同，已退回 Consumer 重新生成；"
+                        "本轮未确认外部写入回执。"
+                    ),
+                )
             self._defer_claimed_unknown_recovery(claim.run, exc)
             raise
 
