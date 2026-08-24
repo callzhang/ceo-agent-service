@@ -40,7 +40,9 @@ class _WireBase(BaseModel):
 class _ConsumerProposalWire(_WireBase):
     outcome: Literal["proposal"]
     proposal: ConsumerProposal
-    decision_options: list[DecisionOption] = Field(max_length=0)
+    decision_options: list[DecisionOption] = Field(
+        default_factory=list, max_length=0
+    )
 
 
 class _ConsumerNeedsHumanWire(_WireBase):
@@ -56,13 +58,17 @@ class _ConsumerNeedsHumanWire(_WireBase):
 class _ConsumerNoActionWire(_WireBase):
     outcome: Literal["no_action"]
     proposal: None
-    decision_options: list[DecisionOption] = Field(max_length=0)
+    decision_options: list[DecisionOption] = Field(
+        default_factory=list, max_length=0
+    )
 
 
 class _ConsumerFailedWire(_WireBase):
     outcome: Literal["failed"]
     proposal: None
-    decision_options: list[DecisionOption] = Field(max_length=0)
+    decision_options: list[DecisionOption] = Field(
+        default_factory=list, max_length=0
+    )
 
 
 ConsumerWirePayload = Annotated[
