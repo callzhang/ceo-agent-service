@@ -9178,7 +9178,7 @@ def _attempt_detail_body(
         trigger_title="Trigger",
         trigger_text=_trigger_text(attempt),
         reason_title="审计说明",
-        reason_text=attempt.audit_summary or attempt.codex_reason,
+        reason_text=_attempt_reason_text(attempt),
         reply_title="生成回复",
         reply_text=_attempt_detail_reply_text(attempt),
         side_html=(
@@ -9403,6 +9403,16 @@ def _attempt_detail_reply_text(attempt: ReplyAttempt) -> str:
     if reply_text.strip():
         return reply_text
     return _reaction_display_text(attempt) or "No generated reply recorded."
+
+
+def _attempt_reason_text(attempt: ReplyAttempt) -> str:
+    """Keep both persisted decision rationale and audit explanation visible."""
+    parts = []
+    if attempt.audit_summary.strip():
+        parts.append(attempt.audit_summary.strip())
+    if attempt.codex_reason.strip() and attempt.codex_reason.strip() not in parts:
+        parts.append(attempt.codex_reason.strip())
+    return "\n".join(parts)
 
 
 def _permission_display(attempt: ReplyAttempt) -> str:
