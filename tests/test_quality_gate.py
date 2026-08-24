@@ -383,6 +383,34 @@ def test_quality_gate_deduplicates_historical_attempts_after_a_later_success(tmp
     assert not [item for item in report.violations if item.source == "reply_attempts"]
 
 
+def test_quality_gate_ignores_dry_run_when_done_task_has_no_unknown_effect(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into reply_tasks (
+                channel, conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, status,
+                updated_at
+            ) values ('dingtalk', 'conversation', 'group', 0, 'message',
+                '2026-08-07 00:00:00', 'sender', 'trigger', 'done',
+                '2026-08-07 00:59:00')"""
+        )
+        db.execute(
+            """insert into reply_attempts (
+                conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, action, sensitivity_kind,
+                send_status, updated_at
+            ) values ('conversation', 'group', 'message', 'sender', 'trigger',
+                'agent_run', 'general', 'dry_run', '2026-08-07 00:59:00')"""
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert report.ok
+    assert not [item for item in report.violations if item.code == "recent_dry_run"]
+
+
 def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:

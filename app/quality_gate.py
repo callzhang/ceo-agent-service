@@ -391,9 +391,24 @@ def _check_reply_attempts(
     dry_run = _count(
         db,
         latest + """
-            select count(*) from latest
+            select count(*) from latest a
             where ordinal=1 and lower(send_status)='dry_run'
               and datetime(updated_at) >= datetime(?)
+              and not exists (
+                select 1 from reply_tasks t
+                where t.channel=a.channel
+                  and t.conversation_id=a.conversation_id
+                  and t.trigger_message_id=a.trigger_message_id
+                  and lower(t.status)='done'
+                  and not exists (
+                    select 1 from agent_runs run
+                    where run.reply_task_id=t.id
+                      and (
+                        lower(run.status)='unknown'
+                        or lower(run.side_effect_state)='unknown'
+                      )
+                  )
+              )
         """,
         (_cutoff(now, 24 * 60 * 60),),
     )
