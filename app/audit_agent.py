@@ -18,7 +18,7 @@ from app.agent_contracts import (
     AuditOutcome,
 )
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
-from app.agent_result import AgentError, ResultParseError, SideEffectState
+from app.agent_result import AgentError, EffectKind, ResultParseError, SideEffectState
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -731,6 +731,11 @@ class AuditAgentRunner:
             _expected_effect_action(action, self.effects, action_index=index)
             for index, action in enumerate(context.proposal.actions)
         )
+        if recovery_phase == "reconcile":
+            expected_effect_actions = _bind_started_action_contracts(
+                expected_effect_actions,
+                run.tool_events,
+            )
         write_authorizations = (
             recovery_authorizations
             if recovery_phase == "execute"
@@ -1042,6 +1047,69 @@ def _expected_effect_action(
             expected["reviewed_server"] = call.server
             expected["reviewed_tool"] = call.tool
     return expected
+
+
+def _bind_started_action_contracts(
+    actions: tuple[dict[str, object], ...],
+    events: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    """Recover canonical contracts for legacy proposals during reconciliation.
+
+    Older Consumer proposals stored only a free-form operation string.  The
+    durable ``item.started`` event is the authoritative, already-reviewed
+    contract for that action; binding its typed operation/target metadata lets
+    read-only reconciliation request the registered readback without changing
+    the original proposal or authorizing a write.
+    """
+    started: list[dict[str, object]] = []
+    for event in events:
+        if event.get("type") != "item.started":
+            continue
+        item = event.get("item")
+        metadata = item.get("metadata") if isinstance(item, dict) else None
+        if not isinstance(metadata, dict):
+            continue
+        if metadata.get("effect") != EffectKind.EFFECTFUL.value:
+            continue
+        if metadata.get("operation") == "read_skill":
+            continue
+        started.append(metadata)
+    if not started:
+        return actions
+    by_index: dict[int, dict[str, object]] = {}
+    unindexed: list[dict[str, object]] = []
+    for metadata in started:
+        index = metadata.get("action_index")
+        if isinstance(index, int) and 0 <= index < len(actions):
+            by_index.setdefault(index, metadata)
+        else:
+            unindexed.append(metadata)
+    for index, metadata in enumerate(unindexed):
+        if index >= len(actions):
+            break
+        by_index.setdefault(index, metadata)
+    bound: list[dict[str, object]] = []
+    canonical_keys = {
+        "capability",
+        "operation",
+        "operation_digest",
+        "arguments_digest",
+        "target_identifiers",
+        "readback_target_identifiers",
+        "message_text_digest",
+        "message_rendered_text_digest",
+        "reviewed_server",
+        "reviewed_tool",
+    }
+    for index, action in enumerate(actions):
+        metadata = by_index.get(index)
+        if metadata is None:
+            bound.append(action)
+            continue
+        merged = dict(action)
+        merged.update({key: metadata[key] for key in canonical_keys if key in metadata})
+        bound.append(merged)
+    return tuple(bound)
 
 
 def _typed_direct_recipient_mismatches(
