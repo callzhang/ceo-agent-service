@@ -1,5 +1,10 @@
 # Changelog
 
+- Remove the Audit-side mechanical CLI contract gate. Audit now reviews the
+  business proposal and target semantics; external writes still require the
+  execution authorization, typed target, confirmation, and live readback
+  controls at the execution boundary.
+
 - Reopen historical direct-message deliveries only when the exact trigger is
   absent from the delivery ledger; group messages now require the canonical
   executable `payload.argv` contract and no legacy capability or payload

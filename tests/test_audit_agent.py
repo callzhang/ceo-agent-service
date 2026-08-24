@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-import app.audit_agent as audit_agent_module
 from app.agent_context import (
     _AUDIT_AGENT_RULES,
     AgentTaskContext,
@@ -47,7 +46,6 @@ from app.audit_agent import (
     _audit_recovery_error_code,
     _expected_effect_action,
     _initial_write_authorizations,
-    _proposed_operation_contract_valid,
     _recovery_authorizations,
     _recovery_prompt,
 )
@@ -55,7 +53,6 @@ from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import AUDIT_DYNAMIC_SKILL_BODY, audit_developer_instructions
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
-    NativeCliMetadataClassifier,
     describe_native_command,
 )
 from app.process_runner import ProcessRunResult
@@ -1420,101 +1417,6 @@ def test_audit_instructions_require_dynamic_skill_reread_before_execution():
     assert "reconciliation_json" not in instructions
     assert "feedback is required" in instructions
     assert "external_result must\ncontain exactly" in instructions
-
-
-def test_audit_returns_dws_write_without_confirmation_to_consumer(setup):
-    store, task, audit_context, parent = setup
-    invalid_proposal = ConsumerProposal.model_validate(
-        {
-            "objective": "Approve request",
-            "actions": [
-                {
-                    "description": "Approve the exact OA task",
-                    "capability": "agent_cli.dws",
-                    "operation": "oa approval approve",
-                    "target": {"instance_id": "instance-1", "task_id": "task-1"},
-                    "payload": {
-                        "argv": [
-                            "dws",
-                            "oa",
-                            "approval",
-                            "approve",
-                            "--instance-id",
-                            "instance-1",
-                            "--task-id",
-                            "task-1",
-                            "--remark",
-                            "同意",
-                            "--format",
-                            "json",
-                        ]
-                    },
-                    "expected_verification": "OA task is completed",
-                }
-            ],
-            "sourced_facts": [],
-            "authored_judgment": "Materials satisfy the rule",
-        }
-    )
-    executor = CapturingExecutor("")
-
-    result = AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-    ).run(
-        task,
-        replace(audit_context, proposal=invalid_proposal),
-        turn_attempt=0,
-        parent_agent_run_id=parent.id,
-    )
-
-    assert result.result.outcome.value == "revision_required"
-    assert result.result.feedback is not None
-    assert "--yes" in result.result.feedback.requested_revision
-    assert executor.commands == []
-
-
-def test_audit_returns_write_without_executable_contract_to_consumer(setup):
-    store, task, audit_context, parent = setup
-    invalid_proposal = ConsumerProposal.model_validate(
-        {
-            "objective": "Reply in the source group",
-            "actions": [
-                {
-                    "description": "Send the requested Skill location",
-                    "capability": "dingtalk-chat",
-                    "operation": (
-                        "dws chat +send-to-group --group cid-group "
-                        "--content <content> --yes"
-                    ),
-                    "target": {
-                        "conversation_id": "cid-group",
-                        "recipient_type": "group",
-                    },
-                    "payload": {"content": "Skill location"},
-                    "expected_verification": "The group message exists",
-                }
-            ],
-            "sourced_facts": [],
-            "authored_judgment": "The source group requested the link.",
-        }
-    )
-    executor = CapturingExecutor("")
-    result = AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-    ).run(
-        task,
-        replace(audit_context, proposal=invalid_proposal),
-        turn_attempt=0,
-        parent_agent_run_id=parent.id,
-    )
-    assert result.result.outcome.value == "revision_required"
-    assert result.result.feedback is not None
-    assert "executable" in result.result.feedback.requested_revision
-    assert executor.commands == []
 
 
 def test_completed_chat_dm_content_is_recorded_in_delivery_ledger(setup):
@@ -4145,110 +4047,6 @@ def test_native_command_contract_uses_parsed_cli_not_consumer_label():
     assert expected["operation"] == "chat +messages-send"
     assert expected["operation_contract_valid"] is True
     assert expected["target_identifiers"] == {"open-dingtalk-id": "recipient-1"}
-
-
-def test_native_read_command_is_not_a_valid_write_operation_contract():
-    action = ProposedAction.model_validate(
-        {
-            "description": "Inspect the DWS schema",
-            "capability": "dws",
-            "operation": "schema",
-            "target": {"scope": "schema"},
-            "payload": {"argv": ["dws", "schema", "--yes"]},
-            "expected_verification": "Schema was inspected",
-        }
-    )
-
-    assert not _proposed_operation_contract_valid(
-        action, McpToolEffectRegistry.default()
-    )
-
-
-def test_native_lark_read_command_is_not_a_valid_write_operation_contract(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        audit_agent_module,
-        "_OPERATION_CONTRACT_CLASSIFIER",
-        NativeCliMetadataClassifier(
-            reviewed_effects={
-                ("lark-cli", "drive list"): EffectKind.READ_ONLY,
-            }
-        ),
-    )
-    action = ProposedAction.model_validate(
-        {
-            "description": "List drive files",
-            "capability": "lark-cli",
-            "operation": "drive list",
-            "target": {"folder": "root"},
-            "payload": {"argv": ["lark-cli", "drive", "list"]},
-            "expected_verification": "Files were listed",
-        }
-    )
-
-    assert not _proposed_operation_contract_valid(
-        action, McpToolEffectRegistry.default()
-    )
-
-
-def test_unclassified_native_command_is_not_a_valid_write_operation_contract(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    class Unclassified:
-        @staticmethod
-        def classify(_item):
-            return None
-
-    monkeypatch.setattr(
-        audit_agent_module,
-        "_OPERATION_CONTRACT_CLASSIFIER",
-        Unclassified(),
-    )
-    action = ProposedAction.model_validate(
-        {
-            "description": "Run an unknown command",
-            "capability": "dws",
-            "operation": "unknown command",
-            "target": {"scope": "unknown"},
-            "payload": {"argv": ["dws", "unknown", "command", "--yes"]},
-            "expected_verification": "Command completed",
-        }
-    )
-
-    assert not _proposed_operation_contract_valid(
-        action, McpToolEffectRegistry.default()
-    )
-
-
-def test_registered_reaction_native_command_is_a_valid_write_operation_contract():
-    action = ProposedAction.model_validate(
-        {
-            "description": "Add a useful acknowledgment reaction",
-            "capability": "agent_cli.dws",
-            "operation": "chat message reaction add",
-            "target": {"message_id": "msg-1"},
-            "payload": {
-                "argv": [
-                    "dws",
-                    "chat",
-                    "message",
-                    "reaction",
-                    "add",
-                    "--message-id",
-                    "msg-1",
-                    "--emoji",
-                    "👍",
-                    "--yes",
-                ]
-            },
-            "expected_verification": "The reaction appears in the message reactions.",
-        }
-    )
-
-    assert _proposed_operation_contract_valid(
-        action, McpToolEffectRegistry.default()
-    )
 
 
 def test_initial_and_recovery_authorizations_share_one_logical_effect_token(setup):

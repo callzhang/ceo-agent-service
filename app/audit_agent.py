@@ -17,7 +17,7 @@ from app.agent_contracts import (
     AuditFeedback,
     AuditOutcome,
 )
-from app.agent_effects import LEASE_SECONDS, EffectKind, McpToolEffectRegistry
+from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
 from app.agent_result import AgentError, ResultParseError, SideEffectState
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
@@ -43,8 +43,6 @@ from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
-    NativeCliMetadataClassifier,
-    NativeCliMetadataUnavailableError,
     dingtalk_message_text,
     describe_native_command,
     has_noninteractive_confirmation,
@@ -60,9 +58,6 @@ from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_comman
 
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 EFFECT_INTENT_CONTEXT_ENV = "CEO_AGENT_EFFECT_INTENT_CONTEXT"
-_OPERATION_CONTRACT_CLASSIFIER = NativeCliMetadataClassifier()
-
-
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -161,12 +156,10 @@ class AuditAgentRunner:
             allow_missing_receipts=frozen_delivery_retry,
         ):
             return skill_failure
-        invalid_actions = _invalid_operation_contracts(context, self.effects)
         recipient_type_mismatches = _typed_direct_recipient_mismatches(context)
-        if (invalid_actions or recipient_type_mismatches) and not frozen_delivery_retry:
+        if recipient_type_mismatches and not frozen_delivery_retry:
             return self._return_invalid_candidate(
                 claim.run,
-                invalid_actions=invalid_actions,
                 recipient_type_mismatches=recipient_type_mismatches,
             )
         return self._execute_claimed(
@@ -613,15 +606,9 @@ class AuditAgentRunner:
         self,
         run: AgentRun,
         *,
-        invalid_actions: tuple[int, ...],
         recipient_type_mismatches: tuple[int, ...],
     ) -> AgentTurnRunResult[AuditAgentResult]:
         invalid_details: list[str] = []
-        if invalid_actions:
-            listed = ", ".join(str(index) for index in invalid_actions)
-            invalid_details.append(
-                f"Candidate action indexes {listed} do not satisfy the mechanical command contract."
-            )
         if recipient_type_mismatches:
             listed = ", ".join(str(index) for index in recipient_type_mismatches)
             invalid_details.append(
@@ -629,19 +616,16 @@ class AuditAgentRunner:
             )
         result = AuditAgentResult(
             outcome=AuditOutcome.REVISION_REQUIRED,
-            summary="The candidate contains an invalid reviewed command contract.",
+            summary="The candidate uses an invalid typed recipient identifier.",
             proposal_revision=run.proposal_revision,
             side_effect_state=SideEffectState.NONE,
             feedback=AuditFeedback(
                 rule=(
-                    "The operation must match the reviewed command, and DWS writes "
-                    "require non-interactive confirmation and typed recipient identifiers."
+                    "A direct-message recipient must use the correct typed DingTalk identifier."
                 ),
                 observation=" ".join(invalid_details),
                 requested_revision=(
-                    "Return the same intended operation with an executable argv "
-                    "contract, an operation label that matches that exact argv, and "
-                    "--yes on every DWS write. For a "
+                    "Return the same intended operation with the correct recipient identifier. For a "
                     "single-chat recipient, use --user only with sender_user_id and "
                     "use --open-dingtalk-id with sender_open_dingtalk_id. Preserve the "
                     "business recipient and payload."
@@ -1058,56 +1042,6 @@ def _expected_effect_action(
             expected["reviewed_server"] = call.server
             expected["reviewed_tool"] = call.tool
     return expected
-
-
-def _invalid_operation_contracts(
-    context: AuditTurnContext,
-    registry: McpToolEffectRegistry,
-) -> tuple[int, ...]:
-    return tuple(
-        index
-        for index, action in enumerate(context.proposal.actions)
-        if not _proposed_operation_contract_valid(action, registry)
-    )
-
-
-def _proposed_operation_contract_valid(
-    action,
-    registry: McpToolEffectRegistry,
-) -> bool:
-    """Require a real executable contract; prose is never dispatch authority."""
-    item = {"type": "command_execution", **action.payload}
-    descriptor = describe_native_command(item)
-    if descriptor is not None:
-        argv = native_command_argv(item)
-        try:
-            reviewed = _OPERATION_CONTRACT_CLASSIFIER.classify(item)
-        except NativeCliMetadataUnavailableError:
-            reviewed = None
-        if reviewed is None:
-            effect = (
-                EffectKind.EFFECTFUL
-                if registry.is_registered_write_operation(descriptor.command_path)
-                else None
-            )
-        else:
-            effect = reviewed.effect
-        return bool(
-            effect is EffectKind.EFFECTFUL
-            and (
-                descriptor.cli != "dws"
-                or (argv is not None and has_noninteractive_confirmation(argv))
-            )
-        )
-    call = registry.classify(
-        {
-            "type": "mcp_tool_call",
-            "server": action.capability,
-            "tool": action.operation,
-            "arguments": action.payload,
-        }
-    )
-    return call is not None and call.effect is EffectKind.EFFECTFUL
 
 
 def _typed_direct_recipient_mismatches(
