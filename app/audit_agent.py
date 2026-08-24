@@ -1433,6 +1433,22 @@ def _recovery_prompt(
             "match as absent only when complete=true, hasMore=false, "
             "paginationKnown=true, and failures is empty; otherwise use ambiguous."
         )
+    comment_indexes = [
+        index
+        for index, action in enumerate(actions)
+        if str(action.get("operation") or "") in {
+            "doc +comment-create", "doc +comment-reply",
+            "doc +comment-update", "doc +comment-delete",
+        }
+    ]
+    comment_guidance = ""
+    if comment_indexes:
+        comment_guidance = (
+            " For document-comment actions at indexes "
+            f"{comment_indexes}, the only valid readback is exactly "
+            "dws doc +comment-list with the same node; doc +inspect, doc +fetch, "
+            "doc info, and doc read do not inspect comments and cannot be cited."
+        )
     return (
         "RECOVERY MODE OVERRIDES NORMAL AUDIT EXECUTION: this is a strictly "
         "read-only reconciliation turn. Do not return executed, "
@@ -1466,7 +1482,7 @@ def _recovery_prompt(
         "exact action. Do not start with an unbounded read. Fetch "
         "older pages only when the recent window cannot decide, and treat every "
         "partial result according to its completeness: an incomplete window cannot "
-        f"prove absence.{chat_guidance} "
+        f"prove absence.{chat_guidance}{comment_guidance} "
         "Do not write. Return reconciled even when a disposition is ambiguous; "
         "use the ambiguous disposition to preserve the uncertainty for the "
         "service rather than changing the outcome."
