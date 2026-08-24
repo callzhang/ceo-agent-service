@@ -162,13 +162,28 @@ class AuditAgentRunner:
                 claim.run,
                 recipient_type_mismatches=recipient_type_mismatches,
             )
-        return self._execute_claimed(
+        executed = self._execute_claimed(
             task,
             context,
             run=claim.run,
             rendered_rules=rendered_rules,
             frozen_delivery_retry=frozen_delivery_retry,
         )
+        # A normal candidate that reaches the reviewed-write tool without a
+        # valid persisted authorization contract cannot be repaired by retrying
+        # Audit. Return it to Consumer for a fresh typed proposal instead of
+        # leaving the task in an unknown/retry loop.
+        if executed.result.error.code == "reviewed_write_not_authorized":
+            return self._requeue_for_consumer(
+                task,
+                claim.run,
+                code="audit_candidate_invalid",
+                summary=(
+                    "候选写入缺少可验证的 reviewed-write 授权合同，已退回 Consumer 重新生成；"
+                    "本轮未确认外部写入回执。"
+                ),
+            )
+        return executed
 
     def recover(
         self,
