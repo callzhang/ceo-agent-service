@@ -563,10 +563,15 @@ class AgentOrchestrator:
                     frozen_delivery_retry=True,
                 )
             if revision == MAX_CONTENT_FEEDBACK_CYCLES:
-                return _audit_terminal(
-                    "needs_human",
+                exhausted = _failed_audit_result(
                     latest,
-                    audit_state,
+                    AuditOutcome.FAILED,
+                    AgentError(code="audit_revision_exhausted", retryable=False),
+                )
+                return _audit_terminal(
+                    "failed_terminal",
+                    latest,
+                    exhausted,
                     MAX_CONTENT_FEEDBACK_CYCLES,
                 )
         return _Deferred(None, "agent_turn_state_incomplete", 0)

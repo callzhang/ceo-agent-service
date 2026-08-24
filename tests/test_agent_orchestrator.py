@@ -1390,7 +1390,7 @@ def test_newer_context_stale_candidate_is_revised_without_write(store):
     assert audit_run is not None and audit_run.side_effect_state == "none"
 
 
-def test_third_revision_request_becomes_needs_human(store):
+def test_third_revision_request_becomes_terminal_failure_without_escalation(store):
     task = _task(store)
     consumer = ScriptedConsumer(
         store,
@@ -1407,9 +1407,11 @@ def test_third_revision_request_becomes_needs_human(store):
 
     result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
 
-    assert result.status == "needs_human"
+    assert result.status == "failed_terminal"
     assert result.feedback_cycles == 2
-    assert result.feedback is not None
+    assert result.error.code == "audit_revision_exhausted"
+    assert result.audit_result is not None
+    assert result.audit_result.outcome is AuditOutcome.FAILED
 
 
 def test_authorization_wait_defers_without_consuming_feedback_cycle(store):
