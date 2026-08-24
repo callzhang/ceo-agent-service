@@ -4259,6 +4259,65 @@ def test_target_scoped_failed_read_can_only_prove_ambiguous_reconciliation():
         )
 
 
+def test_legacy_reconciliation_binds_unindexed_started_effect_to_same_target_actions():
+    registry = McpToolEffectRegistry.default()
+    node = "https://alidocs.dingtalk.com/i/nodes/recovery"
+    actions = (
+        {
+            "operation": "dws doc +comment-create --node recovery --content first",
+            "target_identifiers": {"node": node, "selection": "first"},
+        },
+        {
+            "operation": "dws doc +comment-create --node recovery --content second",
+            "target_identifiers": {"node": node, "selection": "second"},
+        },
+    )
+    read_digest = "comment-read-digest"
+    events = [
+        {
+            "type": "item.started",
+            "item": {
+                "metadata": {
+                    "effect": "effectful",
+                    "operation": "doc +comment-create",
+                    "reviewed_server": "agent_cli",
+                    "reviewed_tool": "execute_reviewed_write",
+                    "target_identifiers": {"node": node},
+                }
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "metadata": {
+                    "effect": "read_only",
+                    "operation": "doc +comment-list",
+                    "reviewed_server": "agent_cli",
+                    "reviewed_tool": "execute_reviewed_read",
+                    "target_identifiers": {"node": node},
+                    "result_digest": read_digest,
+                }
+            },
+        },
+    ]
+    entries = tuple(
+        AuditReconciliation(
+            action_index=index,
+            disposition="absent",
+            read_result_digest=read_digest,
+        )
+        for index in range(2)
+    )
+
+    assert set(_validated_reconciliation(
+        entries,
+        events,
+        actions,
+        event_start=0,
+        registry=registry,
+    )) == {0, 1}
+
+
 def test_group_message_content_match_promotes_reconciliation_to_present():
     text_digest = hashlib.sha256(b"exact reviewed reply").hexdigest()
     action = {

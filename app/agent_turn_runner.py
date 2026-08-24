@@ -3502,6 +3502,23 @@ def _validated_reconciliation(
     registry: McpToolEffectRegistry,
 ) -> dict[int, AuditReconciliation]:
     validated: dict[int, AuditReconciliation] = {}
+    started_metadata_by_action: dict[int, dict[str, object]] = {}
+    started_without_index: list[dict[str, object]] = []
+    for event in events:
+        if event.get("type") != "item.started":
+            continue
+        metadata = _event_metadata(event)
+        if metadata is None or metadata.get("effect") != EffectKind.EFFECTFUL.value:
+            continue
+        action_index = metadata.get("action_index")
+        if isinstance(action_index, int) and 0 <= action_index < len(actions):
+            started_metadata_by_action.setdefault(action_index, metadata)
+        else:
+            started_without_index.append(metadata)
+    for action_index, metadata in enumerate(started_without_index):
+        if action_index >= len(actions):
+            break
+        started_metadata_by_action.setdefault(action_index, metadata)
     for entry in entries:
         action_index = entry.action_index
         if action_index >= len(actions):
@@ -3528,6 +3545,23 @@ def _validated_reconciliation(
                 actions[action_index],
                 before_index=index,
             )
+            if write_metadata is None:
+                write_metadata = started_metadata_by_action.get(action_index)
+            if write_metadata is None and entry.disposition is ReconciliationDisposition.ABSENT:
+                expected_targets = actions[action_index].get("target_identifiers")
+                if isinstance(expected_targets, dict):
+                    for candidate in started_metadata_by_action.values():
+                        candidate_targets = candidate.get("target_identifiers")
+                        if (
+                            isinstance(candidate_targets, dict)
+                            and candidate_targets
+                            and all(
+                                expected_targets.get(key) == value
+                                for key, value in candidate_targets.items()
+                            )
+                        ):
+                            write_metadata = candidate
+                            break
             if _read_matches_action(
                 metadata,
                 write_metadata or actions[action_index],
