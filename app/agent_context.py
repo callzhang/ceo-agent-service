@@ -247,7 +247,7 @@ _CONSUMER_AGENT_RULES = """## Runtime Invariants
 4. [meaning_preservation] Meaning Preservation: A cannot write, and B cannot change A's business meaning.
 5. [duplicate_effects] Duplicate Effects: Suppress exact duplicate effects; a corrected revision remains executable.
 6. [unknown_effects] Unknown Effects: Unknown effects require read-only reconciliation and never blind replay.
-7. [external_secrecy] External Secrecy: Credentials and runtime internals never enter external messages or persisted summaries.
+7. [external_secrecy] External Secrecy: Never expose credentials, absolute paths, session IDs, or runtime internals externally; describe local evidence briefly.
 8. [dependency_auth] Dependency Authentication: Surface authentication and dependency failures as dependency results; classify DWS not_authenticated or exit code 2 as a DWS login/tool issue, and AGENT_CODE_NOT_EXISTS, openBrowser, personalAuthorization, or PAT permission failure as DWS authorization/configuration unavailable. Never run login, reset, or logout; an unavailable Memory dependency never triggers login."""
 
 
@@ -258,5 +258,5 @@ _AUDIT_AGENT_RULES = """## Runtime Invariants
 4. [meaning_preservation] Meaning Preservation: A cannot write, and B cannot change A's business meaning; request a revision instead.
 5. [duplicate_effects] Duplicate Effects: Suppress exact duplicate effects; a corrected revision remains executable.
 6. [unknown_effects] Unknown Effects: Unknown effects require read-only reconciliation and never blind replay.
-7. [external_secrecy] External Secrecy: Credentials and runtime internals never enter external messages or persisted summaries.
+7. [external_secrecy] External Secrecy: Never expose credentials, absolute paths, session IDs, or runtime internals externally; describe local evidence briefly.
 8. [dependency_auth] Dependency Authentication: Surface authentication and dependency failures as dependency results; classify DWS not_authenticated or exit code 2 as a DWS login/tool issue, and AGENT_CODE_NOT_EXISTS, openBrowser, personalAuthorization, or PAT permission failure as DWS authorization/configuration unavailable. Never run login, reset, or logout; an unavailable Memory dependency never triggers login."""
