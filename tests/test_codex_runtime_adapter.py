@@ -335,12 +335,14 @@ def test_near_miss_provider_auth_signature_is_fail_closed(adapter):
         ("unexpected status 401 Unauthorized: Invalid API key /v1/responses", ""),
     ],
 )
-def test_success_never_authorizes_failure_actions(adapter, stderr, stdout):
+def test_zero_exit_provider_errors_are_classified_for_fallback(
+    adapter, stderr, stdout
+):
     failure = adapter.classify_failure(stderr=stderr, stdout=stdout, returncode=0)
 
-    assert failure.retryable_on_same_route is False
-    assert failure.failover_permitted is False
-    assert failure.route_pause_required is False
+    assert failure.code != "runtime_unclassified"
+    assert failure.failover_permitted is True
+    assert failure.route_pause_required is True
 
 
 def test_terminal_success_never_authorizes_failure_actions(adapter):

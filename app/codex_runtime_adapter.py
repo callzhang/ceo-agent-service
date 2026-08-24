@@ -153,7 +153,12 @@ class CodexRuntimeAdapter:
         timeout_kind: str = "",
         terminal_succeeded: bool = False,
     ) -> RuntimeFailure:
-        if returncode == 0 or terminal_succeeded:
+        # A Codex process can exit zero while emitting a structured provider
+        # error (notably MCP 401/transport failures during shutdown).  Treat
+        # terminal-success as authoritative, but inspect stdout/stderr before
+        # classifying a nominally successful process so configured fallback
+        # routes can take over genuine provider failures.
+        if terminal_succeeded:
             return RuntimeFailure(
                 failure_class=RuntimeFailureClass.UNCLASSIFIED,
                 code="runtime_unclassified",
