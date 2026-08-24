@@ -288,13 +288,18 @@ class AuditAgentRunner:
             # recovery can never produce a valid receipt.  Return it to
             # Consumer A for a fresh, typed proposal instead of leaving the
             # unknown run cycling forever.
-            if _audit_recovery_error_code(exc) == "audit_recovery_action_not_authorized":
+            recovery_code = _audit_recovery_error_code(exc)
+            if recovery_code in {
+                "audit_recovery_action_not_authorized",
+                "audit_reconciliation_evidence_mismatch",
+                "audit_recovery_result_invalid",
+            } and claim.run.effect_started_count == 0:
                 return self._requeue_for_consumer(
                     task,
                     claim.run,
                     code="audit_recovery_candidate_invalid",
                     summary=(
-                        "历史写入候选缺少可验证的命令授权合同，已退回 Consumer 重新生成；"
+                        "历史候选缺少可验证的恢复证据或授权合同，已退回 Consumer 重新生成；"
                         "本轮未确认外部写入回执。"
                     ),
                 )
