@@ -535,6 +535,9 @@ class DwsWeeklyOkrGateway:
             if cursor != "0":
                 command[3:3] = ["--cursor", cursor]
             payload = self.dws.run_json(command)
+            # DWS chat-search currently returns `chats` at the top level;
+            # older clients returned the same records under `groups`.
+            groups.extend(_nested_list(payload, "chats"))
             groups.extend(_nested_list(payload, "groups"))
             result = payload.get("result") if isinstance(payload, dict) else None
             if not isinstance(result, dict) or not result.get("hasMore"):

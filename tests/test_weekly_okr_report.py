@@ -756,6 +756,27 @@ def test_resolve_group_roster_uses_current_dws_conversation_contract():
     ]
 
 
+def test_resolve_group_roster_accepts_live_chat_search_payload():
+    dws = CurrentDwsRoster()
+    original_run_json = dws.run_json
+
+    def run_json(command, **kwargs):
+        payload = original_run_json(command, **kwargs)
+        if command[1:3] == ["chat", "+chat-search"]:
+            return {
+                "chats": payload["result"]["groups"],
+                "hasMore": False,
+            }
+        return payload
+
+    dws.run_json = run_json
+
+    roster = DwsWeeklyOkrGateway(dws).resolve_group_roster("CEO-2 管理群")
+
+    assert roster.conversation_id == "cid-ceo-2"
+    assert [manager.user_id for manager in roster.managers] == ["user-1", "user-2"]
+
+
 def test_resolve_group_roster_searches_by_name_when_group_is_not_recent():
     dws = SearchOnlyDwsRoster()
 
