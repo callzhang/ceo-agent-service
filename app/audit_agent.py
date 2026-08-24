@@ -1314,6 +1314,10 @@ def _recovery_authorizations(
         )
         for action_index in sorted(absent)
     )
+    # Legacy unknown runs may have only free-form proposal operations. Reuse
+    # the durable reviewed contract when deriving one-shot authorization IDs so
+    # the execution turn receives the same canonical identity as reconciliation.
+    actions = _bind_started_action_contracts(actions, run.tool_events)
     return _write_authorizations(run, actions)
 
 
