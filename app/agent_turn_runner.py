@@ -587,7 +587,16 @@ def _required_runtime_capabilities(
     if recovery_phase != "reconcile":
         for action in expected_effect_actions:
             capability = action.get("capability")
-            if isinstance(capability, str) and capability.strip():
+            # Consumer capabilities are descriptive business labels until the
+            # Audit layer canonicalizes a reviewed native command to an
+            # ``agent_cli.*`` or ``native_cli.*`` execution surface.  A raw
+            # label such as ``dingtalk_chat`` must not make route selection
+            # fail before Audit can reject or revise the proposal.
+            if (
+                isinstance(capability, str)
+                and capability.strip()
+                and capability.strip().startswith(("agent_cli.", "native_cli."))
+            ):
                 required.add(capability.strip())
     required.update(
         capability.strip()

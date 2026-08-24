@@ -2371,6 +2371,11 @@ def test_role_runtime_capabilities_include_policy_and_exact_action_tools(tmp_pat
             "reviewed_read_tools",
         }
     )
+    assert "dingtalk_chat" not in _required_runtime_capabilities(
+        run=audit,
+        recovery_phase="execute",
+        expected_effect_actions=({"capability": "dingtalk_chat"},),
+    )
 
 
 def test_turn_operation_identity_is_role_specific(tmp_path):
