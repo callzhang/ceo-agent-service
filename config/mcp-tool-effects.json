@@ -27,6 +27,10 @@
             {"read": "chat +chat-messages", "write": "chat +send-to-group"},
             {"read": "chat +search-msg", "write": "chat +send-to-group"},
             {"read": "chat message reaction list", "write": "chat message reaction add"},
+            {"read": "doc +comment-list", "write": "doc +comment-create"},
+            {"read": "doc +comment-list", "write": "doc +comment-reply"},
+            {"read": "doc +comment-list", "write": "doc +comment-update"},
+            {"read": "doc +comment-list", "write": "doc +comment-delete"},
             {"read": "doc info", "write": "doc +move"},
             {
               "read": "mail message verify",

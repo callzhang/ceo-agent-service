@@ -475,6 +475,7 @@ def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
     assert "dws chat +chat-messages" in prompt
     assert "exact full message text" in prompt
     assert "no wider than two hours" in prompt
+    assert "(this value is UTC; do not reinterpret it as local time)" in prompt
 
 
 def test_audit_developer_instructions_define_wire_json_field_shapes():
@@ -4923,6 +4924,34 @@ def test_effect_registry_requires_registered_inner_cli_operation_relation():
         write_server="agent_cli",
         write_tool="execute_reviewed_write",
         write_operation="unregistered write operation",
+    )
+    assert not registry.has_registered_readback_for(
+        write_server="agent_cli",
+        write_tool="execute_reviewed_write",
+        write_operation="unregistered write operation",
+    )
+
+
+def test_effect_registry_registers_document_comment_readback_operations():
+    registry = McpToolEffectRegistry.default()
+
+    assert registry.has_readback_for(
+        write_server="agent_cli",
+        write_tool="execute_reviewed_write",
+        write_operation="doc +comment-create",
+    )
+    assert registry.readback_operations_match(
+        read_server="agent_cli",
+        read_tool="execute_reviewed_read",
+        write_server="agent_cli",
+        write_tool="execute_reviewed_write",
+        read_operation="doc +comment-list",
+        write_operation="doc +comment-create",
+    )
+    assert not registry.has_registered_readback_for(
+        write_server="agent_cli",
+        write_tool="execute_reviewed_write",
+        write_operation="doc +unknown-write",
     )
 
 

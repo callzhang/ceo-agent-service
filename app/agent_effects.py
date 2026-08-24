@@ -399,6 +399,33 @@ class McpToolEffectRegistry:
         # must not turn a controlled wrapper into a no-readback effect.
         return bool(relation_keys)
 
+    def has_registered_readback_for(
+        self,
+        *,
+        write_server: str,
+        write_tool: str,
+        write_operation: str,
+    ) -> bool:
+        """Return whether this concrete inner operation has a readback relation."""
+        write = (write_server, write_tool)
+        relation_keys = [
+            (*read, *write)
+            for read, targets in self._readbacks.items()
+            if write in targets
+        ]
+        if not relation_keys:
+            return False
+        return any(
+            self._readback_operation_modes.get(relation_key, "outer") == "outer"
+            or any(
+                write_operation == registered_write
+                for _read_operation, registered_write in self._readback_operation_relations.get(
+                    relation_key, ()
+                )
+            )
+            for relation_key in relation_keys
+        )
+
     def readback_requires_completed_write(
         self,
         *,

@@ -1327,9 +1327,10 @@ def _recovery_prompt(
     unavailable = [
         index
         for index, action in enumerate(actions)
-        if not registry.has_readback_for(
+        if not registry.has_registered_readback_for(
             write_server=str(action.get("reviewed_server") or ""),
             write_tool=str(action.get("reviewed_tool") or ""),
+            write_operation=str(action.get("operation") or ""),
         )
     ]
     readback_contracts = json.dumps(
@@ -1358,7 +1359,8 @@ def _recovery_prompt(
             " For DingTalk chat writes, use dws chat +chat-messages against the "
             "exact group or conversation with --start and --end, a window no "
             f"wider than two hours that covers the original operation start "
-            f"{run.started_at}, plus --page-all and --format json. Treat an exact "
+            f"{run.started_at}Z (this value is UTC; do not reinterpret it as local time), "
+            "plus --page-all and --format json. Treat an exact "
             "full message text match in that scoped window as present. Treat no "
             "match as absent only when complete=true, hasMore=false, "
             "paginationKnown=true, and failures is empty; otherwise use ambiguous."
