@@ -824,6 +824,7 @@ class AuditAgentRunner:
             codex_adapter=self.codex_adapter,
             claude_adapter=self.claude_adapter,
             mcp_effect_registry=self.effects,
+            refresh_runtime_capabilities=self.refresh_runtime_capabilities,
         )
         turn_prompt = (
             _recovery_prompt(run, context, expected_effect_actions, self.effects)
