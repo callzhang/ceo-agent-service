@@ -1294,6 +1294,7 @@ def _legacy_dingtalk_chat_send_argv(action) -> list[str] | None:
         "dingtalk-chat",
         "dingtalk_chat",
         "dingtalk group chat messaging",
+        "dingtalk chat group messaging",
     }:
         return None
     if native_command_argv({"type": "command_execution", **action.payload}) is not None:
