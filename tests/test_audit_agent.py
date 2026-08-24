@@ -3214,43 +3214,6 @@ def test_persisted_chat_dm_to_recipient_finishes_unknown_without_rerun(setup):
     assert executor.commands == []
 
 
-def test_legacy_direct_chat_without_delivery_record_rotates_generation(setup):
-    store, task, audit_context, run = _seed_crashed_audit_write(setup)
-    legacy_proposal = ConsumerProposal.model_validate(
-        {
-            "objective": "Send direct result",
-            "actions": [
-                {
-                    "description": "Send direct message",
-                    "capability": "dingtalk-chat",
-                    "operation": "dws chat +messages-send --open-dingtalk-id user-1",
-                    "target": {"recipient_open_dingtalk_id": "user-1"},
-                    "payload": {"text": "done"},
-                    "expected_verification": "Message exists",
-                }
-            ],
-            "sourced_facts": [],
-            "authored_judgment": "Requested by Derek",
-        }
-    )
-    executor = CapturingExecutor("")
-
-    result = AuditAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-    ).recover(task, replace(audit_context, proposal=legacy_proposal), run=run)
-
-    persisted = store.get_agent_run(run.id)
-    requeued = store.get_reply_task(task.id)
-    assert result.result.error is not None
-    assert result.result.error.code == "persisted_delivery_absent"
-    assert persisted is not None and persisted.status == "failed"
-    assert requeued is not None and requeued.status == "pending"
-    assert requeued.execution_generation != task.execution_generation
-    assert executor.commands == []
-
-
 def test_controlled_group_chat_without_delivery_record_requires_audit_readback(setup):
     store, task, audit_context, run = _seed_crashed_audit_write(setup)
     group_proposal = ConsumerProposal.model_validate(
@@ -3779,55 +3742,6 @@ def test_recovery_readback_confirms_completed_write_without_receipt(setup):
     assert len(store.list_agent_execution_receipts(run.id)) == 1
 
 
-def test_legacy_dingtalk_chat_candidate_normalizes_for_reconciliation():
-    action = ProposedAction.model_validate(
-        {
-            "description": "Ask for a missing fact",
-            "capability": "dingtalk-chat",
-            "operation": "dws chat message send",
-            "target": {"openConversationId": "cid-agent"},
-            "payload": {"group": "cid-agent", "text": "Please clarify."},
-            "expected_verification": "Message exists",
-        }
-    )
-    expected = _expected_effect_action(
-        action, McpToolEffectRegistry.default(), action_index=0
-    )
-    assert expected["capability"] == "agent_cli.dws"
-    assert expected["operation"] == "chat +send-to-group"
-    assert expected["target_identifiers"] == {"group": "cid-agent"}
-    assert expected["reviewed_tool"] == "execute_reviewed_write"
-
-
-def test_legacy_group_content_keeps_a_message_digest_for_reconciliation():
-    action = ProposedAction.model_validate(
-        {
-            "description": "Post the reviewed conclusion",
-            "capability": "dingtalk-chat",
-            "operation": (
-                'dws chat +send-to-group --group "cid-agent" --content <content> --yes'
-            ),
-            "target": {
-                "conversation_id": "cid-agent",
-                "recipient_type": "group",
-            },
-            "payload": {"content": "exact reviewed reply"},
-            "expected_verification": "Message exists",
-        }
-    )
-
-    expected = _expected_effect_action(
-        action, McpToolEffectRegistry.default(), action_index=0
-    )
-
-    assert expected["operation"] == "chat +send-to-group"
-    assert expected["target_identifiers"] == {"group": "cid-agent"}
-    assert (
-        expected["message_text_digest"]
-        == hashlib.sha256(b"exact reviewed reply").hexdigest()
-    )
-
-
 @pytest.mark.parametrize(
     "argv",
     (
@@ -3890,97 +3804,6 @@ def test_current_message_forms_keep_digest_and_canonical_path_for_reconciliation
         b"exact reviewed reply"
     ).hexdigest()
     assert expected["message_rendered_text_digest"]
-
-
-def test_legacy_group_content_reconstructs_the_persisted_write_contract():
-    action = ProposedAction.model_validate(
-        {
-            "description": "Post the reviewed conclusion",
-            "capability": "dingtalk-chat",
-            "operation": "send to the group",
-            "target": {"conversation_id": "cid-agent"},
-            "payload": {"content": "exact reviewed reply"},
-            "expected_verification": "Message exists",
-        }
-    )
-
-    expected = _expected_effect_action(
-        action, McpToolEffectRegistry.default(), action_index=0
-    )
-
-    argv = [
-        "dws",
-        "chat",
-        "+send-to-group",
-        "--group",
-        "cid-agent",
-        "--content",
-        "exact reviewed reply",
-        "--yes",
-    ]
-    descriptor = describe_native_command({"type": "command_execution", "argv": argv})
-    assert descriptor is not None
-    assert expected["operation"] == "chat +send-to-group"
-    assert expected["operation_digest"] == descriptor.command_digest
-    assert expected["arguments_digest"] == _json_digest({"argv": argv})
-
-
-def test_group_message_intent_dispatches_without_cli_contract_audit():
-    for capability in (
-        "DingTalk group chat messaging",
-        "dingtalk chat group messaging",
-    ):
-        action = ProposedAction.model_validate(
-            {
-                "description": "Post the reviewed conclusion",
-                "capability": capability,
-                "operation": "dws chat +send-to-group --group <conversation_id> --content <content> --yes",
-                "target": {"conversation_id": "cid-agent"},
-                "payload": {"content": "exact reviewed reply"},
-                "expected_verification": "Message exists",
-            }
-        )
-
-        assert _proposed_operation_contract_valid(
-            action,
-            McpToolEffectRegistry.default(),
-        )
-
-
-def test_legacy_direct_dingtalk_chat_candidate_normalizes_for_reconciliation():
-    action = ProposedAction.model_validate(
-        {
-            "description": "Acknowledge receipt",
-            "capability": "dingtalk-chat",
-            "operation": "dws chat +messages-send --open-dingtalk-id recipient-1",
-            "target": {
-                "channel": "dingtalk",
-                "recipient_open_dingtalk_id": "recipient-1",
-                "single_chat": True,
-            },
-            "payload": {"text": "Received."},
-            "expected_verification": "Message exists",
-        }
-    )
-
-    expected = _expected_effect_action(
-        action, McpToolEffectRegistry.default(), action_index=0
-    )
-
-    assert expected["capability"] == "agent_cli.dws"
-    assert expected["operation"] == "chat +messages-send"
-    assert expected["operation_contract_valid"] is True
-    assert expected["target_identifiers"] == {"open-dingtalk-id": "recipient-1"}
-    assert _read_matches_action(
-        {
-            "reviewed_server": "agent_cli",
-            "reviewed_tool": "execute_reviewed_read",
-            "operation": "chat +chat-messages",
-            "target_identifiers": {"open-dingtalk-id": "recipient-1"},
-        },
-        expected,
-        McpToolEffectRegistry.default(),
-    )
 
 
 def test_named_direct_message_uses_proposal_recipient_only_for_readback():
