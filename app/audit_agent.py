@@ -248,13 +248,24 @@ class AuditAgentRunner:
             )
             if database_absence:
                 return self._requeue_absent_direct_delivery(task, claim.run)
-            return self._execute_claimed(
+            executed = self._execute_claimed(
                 task,
                 context,
                 run=claim.run,
                 rendered_rules=rendered_rules,
                 recovery_phase="reconcile",
             )
+            if executed.result.error.code == "audit_recovery_action_not_authorized":
+                return self._requeue_for_consumer(
+                    task,
+                    claim.run,
+                    code="audit_recovery_candidate_invalid",
+                    summary=(
+                        "历史写入候选缺少可验证的命令授权合同，已退回 Consumer 重新生成；"
+                        "本轮未确认外部写入回执。"
+                    ),
+                )
+            return executed
         except Exception as exc:
             # A legacy unknown run may have a persisted started marker but no
             # valid one-shot authorization contract (for example, an older
