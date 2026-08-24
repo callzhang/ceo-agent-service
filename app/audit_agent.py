@@ -273,7 +273,7 @@ class AuditAgentRunner:
             # recovery can never produce a valid receipt.  Return it to
             # Consumer A for a fresh, typed proposal instead of leaving the
             # unknown run cycling forever.
-            if str(exc) == "audit_recovery_action_not_authorized":
+            if _audit_recovery_error_code(exc) == "audit_recovery_action_not_authorized":
                 return self._requeue_for_consumer(
                     task,
                     claim.run,
