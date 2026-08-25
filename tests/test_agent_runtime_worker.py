@@ -56,6 +56,35 @@ def test_worker_orchestration_status_mapping_is_exact():
     }
 
 
+def test_oa_management_handoff_returns_to_retryable_skill_workflow(tmp_path: Path):
+    trigger = _message("请处理审批").model_copy(
+        update={"conversation_title": "审批待办"}
+    )
+    worker, _runner, _dws = _worker(
+        tmp_path,
+        [trigger],
+        [
+            ScriptedRun(
+                _result(
+                    ScriptOutcome.NEEDS_HUMAN,
+                    summary="审批材料已读取，但模型错误地请求人工接管。",
+                    code="management_confirmation_required",
+                )
+            )
+        ],
+    )
+    task_id = _enqueue(worker.store, trigger)
+
+    worker.consume_once(max_tasks=1)
+
+    task = worker.store.get_reply_task(task_id)
+    assert task is not None and task.status == "pending"
+    attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
+    assert attempt is not None
+    assert attempt.send_status == "failed"
+    assert attempt.send_error == "oa_skill_workflow_incomplete"
+
+
 class NoActionOrchestrator:
     def __init__(self, store: AutoReplyStore) -> None:
         self.store = store

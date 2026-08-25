@@ -2212,12 +2212,28 @@ class DingTalkAutoReplyWorker:
             )
             return False
 
+        # OA work is an executable skill workflow.  A model-level handoff such
+        # as management_confirmation_required is not a valid terminal result
+        # for an assigned approval task; return it through the ordinary retry
+        # path so the next turn can continue the skill and verify the OA
+        # terminal state.
+        oa_work = task.conversation_title == "审批待办" or bool(task.oa_url)
+        oa_handoff = (
+            result.status == "needs_human"
+            and oa_work
+            and result.error.code
+            in {
+                "management_confirmation_required",
+                "management_authorization_missing",
+            }
+        )
+        mapped_status = "failed_retryable" if oa_handoff else result.status
         try:
-            send_status, task_status = ORCHESTRATION_ATTEMPT_STATUS[result.status]
+            send_status, task_status = ORCHESTRATION_ATTEMPT_STATUS[mapped_status]
         except KeyError as exc:
             raise ValueError("invalid orchestration status") from exc
         if (
-            result.status == "failed_retryable"
+            mapped_status == "failed_retryable"
             and task.attempts >= self.max_task_attempts
             and not provider_recovery
             and not authorization_wait
@@ -2225,7 +2241,9 @@ class DingTalkAutoReplyWorker:
         ):
             task_status = "failed"
         send_error = error_code
-        if result.status == "needs_human":
+        if oa_handoff:
+            send_error = "oa_skill_workflow_incomplete"
+        elif result.status == "needs_human":
             send_error = send_error or "needs_human"
         elif result.status == "unknown":
             send_error = send_error or "agent_side_effect_unknown"
