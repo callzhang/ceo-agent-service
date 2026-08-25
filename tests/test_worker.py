@@ -5817,7 +5817,7 @@ def test_active_audit_lease_is_deferred_after_retry_budget(tmp_path: Path, monke
     assert available_at - datetime.now(timezone.utc) < timedelta(seconds=10)
 
 
-def test_oa_evidence_conflict_is_retried_without_human_business_choices(
+def test_worker_does_not_turn_an_oa_read_change_into_a_retry_state(
     tmp_path: Path, monkeypatch
 ):
     trigger = message(
@@ -5837,13 +5837,13 @@ def test_oa_evidence_conflict_is_retried_without_human_business_choices(
     completed = worker._apply_orchestration_result(
         task,
         OrchestrationResult(
-            status="needs_human",
+            status="failed_retryable",
             final_run_id=0,
             final_role=AgentRole.AUDIT,
             summary="technical OA read mismatch",
             error=AgentError(
                 code="live_evidence_conflict",
-                retryable=False,
+                retryable=True,
             ),
             feedback_cycles=0,
         ),
@@ -5852,8 +5852,10 @@ def test_oa_evidence_conflict_is_retried_without_human_business_choices(
     persisted = worker.store.get_reply_task(task.id)
     assert completed is False
     assert persisted is not None
+    # The worker must preserve the model's technical retry code. It must not
+    # rewrite a normal OA update into a second synthetic conflict state.
     assert persisted.status == "pending"
-    assert persisted.error == "oa_live_evidence_conflict"
+    assert persisted.error == "live_evidence_conflict"
     assert worker.store.count_reply_attempts() == 0
 
 

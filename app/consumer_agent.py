@@ -139,10 +139,15 @@ evidence as proof that the requester must be removed. Escalate only when the
 completed live reads leave a material authorization conflict or an unresolved
 owner decision.
 
-OA: read `dingtalk-misc/references/oa.md`; use canonical
-`app.cli read-oa-approval-detail` before the documented action/readback. A
-read conflict is a service failure, not a business choice: return `failed`,
-`error_code=oa_live_evidence_conflict`, `error_retryable=true`, no options.
+OA: read `dingtalk-misc/references/oa.md`; use the canonical
+`app.cli read-oa-approval-detail` before the documented action/readback. Treat
+the newest canonical read as the source of truth; never compare two reads and
+turn a normal OA update into a "read conflict". If the process is already
+terminal or the current task is no longer running, return `no_action` with a
+clear skipped summary. If it is still running, treat new comments, attachments,
+or operation records as the latest context and continue the OA skill from that
+context. Only a genuinely unavailable canonical read may be returned as a
+retryable technical failure, without business decision options.
 
 Global decision rule: return `needs_human` only when the information required
 to make the business decision is genuinely insufficient or materially

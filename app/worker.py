@@ -8,7 +8,7 @@ import re
 import shlex
 import sqlite3
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -23,7 +23,6 @@ from app.agent_context import (
 )
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, DecisionOption
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
-from app.agent_result import AgentError
 from app.audit_agent import AuditAgentRunner
 from app.channel_gate import (
     ChannelGate,
@@ -115,10 +114,6 @@ ORCHESTRATION_ATTEMPT_STATUS = {
     # the task remains eligible for the normal retry budget.
     "unknown": ("failed", "pending"),
 }
-OA_EVIDENCE_RECOVERY_CODES = frozenset({
-    "live_evidence_conflict",
-    "oa_live_evidence_conflict",
-})
 RESOURCE_DEADLOCK_WAIT_ERROR = "os_resource_deadlock_wait"
 logger = logging.getLogger(__name__)
 
@@ -2149,25 +2144,6 @@ class DingTalkAutoReplyWorker:
             or bool(task.oa_url)
             or bool(DINGTALK_APPROVAL_LINK_PATTERN.search(task.trigger_text))
         )
-        if (
-            oa_work
-            and result.status == "needs_human"
-            and result.error.code in OA_EVIDENCE_RECOVERY_CODES
-        ):
-            # A disagreement between OA read sources is a provider/data
-            # consistency failure, never a business choice for Derek. Keep the
-            # same task eligible for the normal exponential retry contract and
-            # persist a concise, non-technical reason.
-            result = replace(
-                result,
-                status="failed_retryable",
-                summary="OA 审批读取结果不一致，未执行同意或拒绝，系统将自动重新读取。",
-                error=AgentError(
-                    code="oa_live_evidence_conflict",
-                    retryable=True,
-                    authorization_required=False,
-                ),
-            )
         error_code = result.error.code
         if _continues_codex_capacity_wait(task, error_code):
             error_code = CODEX_PROVIDER_CAPACITY_EXHAUSTED
