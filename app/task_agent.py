@@ -565,7 +565,10 @@ def process_work_item(
                 now=now,
             )
         except ValueError as exc:
-            if str(exc) != "non-discard task decision requires memory_recall tool event":
+            if str(exc) not in {
+                "non-discard task decision requires memory_recall tool event",
+                "non-skip task decision requires memory_recall tool event",
+            }:
                 raise
             store.finish_task_agent_run(
                 active_run_id,
