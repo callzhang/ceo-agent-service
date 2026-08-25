@@ -291,13 +291,17 @@ class AuditAgentRunner:
             recovery_code = _audit_recovery_error_code(exc)
             if (
                 recovery_code == "audit_recovery_action_not_authorized"
+                and claim.run.side_effect_state == "none"
                 and claim.run.effect_receipt_count == 0
+                and claim.run.effect_unreviewed_count == 0
             ) or (
                 recovery_code in {
                     "audit_reconciliation_evidence_mismatch",
                     "audit_recovery_result_invalid",
                 }
-                and claim.run.effect_started_count == 0
+                and claim.run.side_effect_state == "none"
+                and claim.run.effect_receipt_count == 0
+                and claim.run.effect_unreviewed_count == 0
             ):
                 return self._requeue_for_consumer(
                     task,

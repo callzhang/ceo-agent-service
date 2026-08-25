@@ -822,7 +822,11 @@ def failover_is_safe(
         return True, "safe_read_only_reconciliation"
     if run.side_effect_state != "none":
         return False, "side_effect_state"
-    if run.effect_started_count or attempt.first_effect_started_at:
+    if (
+        run.effect_receipt_count
+        or run.effect_unreviewed_count
+        or attempt.first_effect_started_at
+    ):
         return False, "effect_started"
     if not failure.failover_permitted:
         return False, "failure_not_eligible"

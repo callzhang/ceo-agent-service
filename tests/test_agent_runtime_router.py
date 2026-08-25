@@ -658,7 +658,7 @@ def test_persisted_confirmable_receipt_blocks_failover_when_caller_says_false(
         ({"status": "unknown"}, "run_not_eligible"),
         ({"status": "completed"}, "run_not_eligible"),
         ({"status": "failed"}, "run_not_eligible"),
-        ({"effect_started_count": 1}, "effect_started"),
+        ({"effect_started_count": 1}, "eligible_route"),
     ],
 )
 def test_router_uses_current_persisted_run_safety_evidence(
@@ -687,7 +687,10 @@ def test_router_uses_current_persisted_run_safety_evidence(
         recovery_phase="",
     )
 
-    assert decision.route is None
+    if reason == "eligible_route":
+        assert decision.route is not None
+    else:
+        assert decision.route is None
     assert decision.reason == reason
 
 
@@ -912,7 +915,7 @@ def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
             failover_failure(),
             False,
             "",
-            "effect_started",
+            "safe",
         ),
         (
             {},

@@ -1356,7 +1356,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             if (
                 completed_attempt is None
-                and run.effect_started_count > 0
+                and (run.effect_receipt_count or run.effect_unreviewed_count)
                 and any(
                     attempt.status == "completed"
                     and attempt.result_envelope_json
@@ -1426,7 +1426,9 @@ class AgentTurnProcess(Generic[ResultT]):
                             run, "completed_runtime_result_envelope_invalid"
                         )
                     elif (
-                        run.role is AgentRole.CONSUMER and run.effect_started_count == 0
+                        run.role is AgentRole.CONSUMER
+                        and run.effect_receipt_count == 0
+                        and run.effect_unreviewed_count == 0
                     ):
                         self.store.block_consumer_agent_run_for_completed_result_recovery(
                             run.id,

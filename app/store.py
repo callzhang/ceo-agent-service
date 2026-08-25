@@ -9314,7 +9314,11 @@ class AutoReplyStore:
                     select 1
                     from agent_runs
                     where reply_task_id=? and execution_generation=?
-                      and (side_effect_state<>'none' or effect_started_count>0)
+                      and (
+                          side_effect_state<>'none'
+                          or effect_receipt_count>0
+                          or effect_unreviewed_count>0
+                      )
                     limit 1
                     """,
                     (int(row["id"]), str(row["execution_generation"])),
@@ -9343,7 +9347,8 @@ class AutoReplyStore:
                         completed_at=?, updated_at=?
                     where reply_task_id=? and execution_generation=?
                       and status='running' and side_effect_state='none'
-                      and effect_started_count=0
+                      and effect_receipt_count=0
+                      and effect_unreviewed_count=0
                     """,
                     (error_json, now_text, now_text, task_id, generation),
                 )
@@ -9665,7 +9670,8 @@ class AutoReplyStore:
                 select 1 from agent_runs
                 where reply_task_id=? and execution_generation=?
                   and role='audit' and status='unknown'
-                  and effect_started_count=0
+                  and effect_receipt_count=0
+                  and effect_unreviewed_count=0
                   and reconciliation_suspended=0
                   and exists (
                       select 1 from reply_tasks
