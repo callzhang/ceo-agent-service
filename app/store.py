@@ -17614,6 +17614,48 @@ class AutoReplyStore:
         with self._agent_run_write_transaction(None) as (db, _):
             self._finish_task_agent_run_in_connection(db, run_id, expected)
 
+    def recover_orphaned_task_agent_runs(self) -> int:
+        """Close task runs whose parent input is no longer processing."""
+        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            rows = db.execute(
+                """
+                select run.id
+                from task_agent_runs as run
+                join work_summary_inputs as input
+                  on input.id=run.summary_input_id
+                where run.status='running'
+                  and input.status<>'processing'
+                """
+            ).fetchall()
+            if not rows:
+                return 0
+            run_ids = [int(row["id"]) for row in rows]
+            placeholders = ",".join("?" for _ in run_ids)
+            db.execute(
+                f"""
+                update task_agent_runs
+                set status='failed', error='orphaned_task_agent_run_parent_not_processing',
+                    finished_at=?, updated_at=?
+                where status='running' and id in ({placeholders})
+                """,
+                [now_text, now_text, *run_ids],
+            )
+            db.execute(
+                f"""
+                update agent_runtime_attempts
+                set status='failed', failure_class='process',
+                    failure_code='runtime_parent_terminal_no_effect',
+                    failover_permitted=1, lease_owner='', lease_expires_at='',
+                    finished_at=?, updated_at=?
+                where workload_kind='task'
+                  and workload_key in ({placeholders})
+                  and status in ('starting', 'running')
+                  and first_effect_started_at=''
+                """,
+                [now_text, now_text, *[str(run_id) for run_id in run_ids]],
+            )
+            return len(run_ids)
+
     @staticmethod
     def _finish_task_agent_run_in_connection(
         db: sqlite3.Connection,

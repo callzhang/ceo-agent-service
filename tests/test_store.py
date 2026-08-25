@@ -1570,6 +1570,40 @@ def test_expired_terminal_task_runtime_with_effect_evidence_is_not_closed(
     assert untouched.first_effect_started_at == "2026-08-22 16:01:19"
 
 
+def test_recover_orphaned_task_agent_run_when_parent_input_is_pending(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "orphaned-task-agent-run.sqlite3")
+    input_id = store.enqueue_work_summary_input("local_file", "source", "{}")
+    assert len(store.claim_work_summary_inputs(1)) == 1
+    run_id = store.begin_task_agent_run(input_id)
+    attempt = store.claim_runtime_operation_attempt(
+        "task",
+        str(run_id),
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="orphaned-task-agent-run",
+        lease_seconds=1800,
+    )
+    assert len(store.reset_processing_work_summary_inputs()) == 1
+
+    assert store.recover_orphaned_task_agent_runs() == 1
+
+    with store._connect() as db:
+        run = db.execute(
+            "select status, error from task_agent_runs where id=?", (run_id,)
+        ).fetchone()
+    recovered = store.get_agent_runtime_attempt(attempt.id)
+    assert run is not None
+    assert tuple(run) == (
+        "failed",
+        "orphaned_task_agent_run_parent_not_processing",
+    )
+    assert recovered is not None
+    assert recovered.status == "failed"
+    assert recovered.failure_code == "runtime_parent_terminal_no_effect"
+
+
 def test_meeting_run_begin_is_idempotent_and_finish_closes_running_parent(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "meeting-run-lifecycle.sqlite3")
     job_id = store.upsert_meeting_alignment_job(
