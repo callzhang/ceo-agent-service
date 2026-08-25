@@ -4618,11 +4618,7 @@ def _render_attempt_list(
         terminal_run = None
         attention_status = attempt.send_status.strip().lower()
         if attention_status in {"failed", "needs_human"}:
-            reply_task = (
-                _reply_task_for_attempt(store, attempt, reply_task_cache)
-                if attention_status == "failed"
-                else None
-            )
+            reply_task = _reply_task_for_attempt(store, attempt, reply_task_cache)
             if not approval_history:
                 agent_runs = _agent_runs_for_attempt(
                     store,

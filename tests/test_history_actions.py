@@ -149,6 +149,47 @@ def test_oa_evidence_conflict_is_rendered_as_automatic_recovery():
     assert [action.key for action in state.actions] == ["details"]
 
 
+def test_manual_oa_rerun_replaces_old_human_choice_with_automatic_recovery():
+    attempt = _attempt(
+        id=7546,
+        action="oa_approval",
+        oa_process_instance_id="proc-1",
+        send_status="needs_human",
+        send_error="live_evidence_conflict",
+    )
+    task = _task(
+        status="pending",
+        attempts=1,
+        manual_rerun_attempt_id=7546,
+        available_at="2026-08-11 05:02:00",
+    )
+
+    state = reply_history_attention(
+        attempt,
+        task=task,
+        decision_options=(
+            DecisionOption(
+                key="approve",
+                label="同意",
+                instruction="同意",
+                consequence="审批继续",
+            ),
+            DecisionOption(
+                key="reject",
+                label="拒绝",
+                instruction="拒绝",
+                consequence="审批结束",
+            ),
+        ),
+        side_effect_state="none",
+    )
+
+    assert state is not None
+    assert state.kind == "automatic_recovery"
+    assert "重新读取当前审批" in state.reason
+    assert [action.key for action in state.actions] == ["details"]
+
+
 def test_agent_supplied_choices_are_preserved_for_general_needs_human():
     attempt = _attempt(
         send_status="needs_human",

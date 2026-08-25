@@ -82,6 +82,27 @@ def reply_history_attention(
     external_effect = external_effects[side_effect_state]
 
     if (
+        task is not None
+        and task.manual_rerun_attempt_id == attempt.id
+        and task.status in {"pending", "processing"}
+    ):
+        rerun_reason = (
+            "正在按钉钉 OA 审批技能重新读取当前审批；"
+            "没有执行同意、拒绝或退回。"
+            if attempt.oa_process_instance_id.strip()
+            else "正在重新读取当前事项；本轮没有执行外部动作。"
+        )
+        return HistoryAttention(
+            kind="automatic_recovery",
+            reason=rerun_reason,
+            external_effect="未执行任何外部动作",
+            retry_attempt=task.attempts,
+            retry_limit=MAX_REPLY_TASK_ATTEMPTS,
+            retry_at=task.available_at,
+            actions=(HistoryAction("details", "技术详情"),),
+        )
+
+    if (
         status == "failed"
         and side_effect_state == "none"
         and task is not None
