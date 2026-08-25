@@ -564,9 +564,6 @@ def _check_okr_reviews(
     _add(attention, source="okr_review_requests", code="active", count=_count(
         db, "select count(*) from okr_review_requests where lower(status) in ('pending','processing')"
     ), severity="info", detail="OKR review work is pending")
-    _add(attention, source="okr_review_requests", code="discarded", count=_count(
-        db, "select count(*) from okr_review_requests where lower(status)='discarded'"
-    ), severity="info", detail="OKR request is outside the principal's review scope")
 
 
 def _check_external_delivery_queues(
