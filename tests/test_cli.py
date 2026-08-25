@@ -2451,8 +2451,8 @@ def test_process_work_items_command_uses_task_agent_timeouts(
     assert processed == 1
     assert capsys.readouterr().out == "process-work-items processed=1\n"
     routed_execution = constructed["routed_execution"]
-    assert routed_execution._total_timeout_seconds == 300
-    assert routed_execution._idle_timeout_seconds == 180
+    assert routed_execution._total_timeout_seconds == 900
+    assert routed_execution._idle_timeout_seconds == 300
 
 
 def test_process_work_items_command_passes_dws_client_to_task_agent(

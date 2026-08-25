@@ -1,6 +1,17 @@
 # Changelog
 
+- 2026-08-26: aligned task-agent timeout ceilings with launchd (`900s` total,
+  `300s` idle) after Codex/DWS reads exceeded the previous `180s` idle bound;
+  added recovery for orphaned task-agent runs whose parent input is no longer
+  processing.
+
 ## 2026-08-26
+
+- Require autonomous external-action replies to carry their own risk controls:
+  state what the Agent may do now, the concrete risk, what the recipient must
+  not do, and what still requires Derek's decision. Audit preserves and
+  verifies these boundaries in the exact message body instead of accepting a
+  risk only in an internal summary.
 
 - Preserve local evidence paths only in explicit task-result `source` and
   `source_ref` fields; continue rejecting runtime paths elsewhere.
