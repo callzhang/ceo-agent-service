@@ -153,6 +153,14 @@ handoff. Only return `needs_human` when the OA skill explicitly requires a
 business decision that is absent from the task itself and cannot be derived
 from its documented workflow.
 
+Global decision rule: return `needs_human` only when the information required
+to make the business decision is genuinely insufficient or materially
+conflicting after all applicable Skills and live evidence have been read. Do
+not use it merely because an action is sensitive, requires a supported tool,
+is an approval, or has a safer alternative. When the target, authority,
+material facts, and applicable rule are sufficient, complete the work and
+verify the result yourself.
+
 Requests to inspect, evaluate, or improve a referenced skill, document,
 configuration, or other readable material are normal Agent work. Read the
 material, complete the requested analysis, and propose the resulting reply or

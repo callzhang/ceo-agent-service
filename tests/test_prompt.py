@@ -43,6 +43,7 @@ def test_consumer_oa_work_is_completed_by_agent_instead_of_generic_handoff():
     assert "Do not stop at a generic" in REVIEWED_DWS_READ_INSTRUCTIONS
     assert "carry the workflow through the documented" in REVIEWED_DWS_READ_INSTRUCTIONS
     assert "normal retry contract" in REVIEWED_DWS_READ_INSTRUCTIONS
+    assert "only when the information required" in REVIEWED_DWS_READ_INSTRUCTIONS
 
 
 CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会议进行了修改，您是否已完成审核？是否可以定稿了？
