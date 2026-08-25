@@ -14,22 +14,17 @@
 ## 标准生命周期
 
 ```text
-pending
-  -> processing
-      -> needs_feedback
-          -> revision_pending
-              -> processing
-                  -> done / sent
-      -> needs_human
-      -> failed
+pending -> running -> done
+                  -> failed
+                  -> needs_human
 ```
 
 - `pending`：已持久化，等待执行。
-- `processing`：执行 Agent 或审核 Agent 正在持有租约。
+- `processing`：历史兼容名称；新任务统一使用 `running`。
 - `needs_feedback`：审核 Agent 已完成审阅，反馈已持久化，执行 Agent 需要修改原结果。
 - `revision_pending`：修正版已排队；修正版必须有新的 revision 标识，并保留原结果和反馈的关联。
 - `done`：逻辑完成且结果已持久化。
-- `sent`：外部发送或写入完成，并有外部系统回读证据。
+- `sent`：历史兼容名称；新任务以 `done` 表示完成，发送与回读保存在 trace。
 - `needs_human`：无法由证据读取、参与者澄清或有限反馈周期解决，需要人工判断。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
@@ -57,7 +52,7 @@ pending
 - 已产生的 run 不可被覆盖；修正版必须创建新的 revision，并通过父 run 或反馈关系关联原结果。
 - 只有外部系统回读确认成功，任务才能进入 `sent`。
 
-如果任务确定无需执行，应进入 `skipped`（保留原因）；如果结果需要修改，应进入 `needs_feedback`；如果处理失败，应进入 `failed`。
+如果任务确定无需执行，应进入 `done`，并在 trace 写入 `agent_output/no_action`；如果结果需要修改，写入 `audit_feedback` 并保持 `running`；如果处理失败，应进入 `failed`。
 
 ## 进程、租约和恢复
 
