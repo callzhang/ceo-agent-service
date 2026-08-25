@@ -1245,7 +1245,7 @@ class RoutedCodexExecution:
         effect_registry: McpToolEffectRegistry | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
         owner: str | None = None,
-        lease_seconds: int = 1800,
+        lease_seconds: int | None = None,
         allow_legacy_oauth_bootstrap: bool = False,
         now: Callable[[], datetime] | None = None,
     ) -> None:
@@ -1270,7 +1270,12 @@ class RoutedCodexExecution:
             raise ValueError("owner must be non-empty")
         if lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
-        self._lease_seconds = max(lease_seconds, int(total_timeout_seconds) + 60)
+        configured_lease = (
+            int(total_timeout_seconds) + int(idle_timeout_seconds) + 300
+            if lease_seconds is None
+            else lease_seconds
+        )
+        self._lease_seconds = max(configured_lease, int(total_timeout_seconds) + 60)
         self._allow_legacy_oauth_bootstrap = bool(allow_legacy_oauth_bootstrap)
         self._now = now or (lambda: datetime.now(UTC))
 
