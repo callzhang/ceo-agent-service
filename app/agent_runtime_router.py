@@ -1268,7 +1268,7 @@ class RoutedCodexExecution:
         self._owner = (owner or f"routed-codex-{uuid.uuid4().hex}").strip()
         if not self._owner:
             raise ValueError("owner must be non-empty")
-        if lease_seconds <= 0:
+        if lease_seconds is not None and lease_seconds <= 0:
             raise ValueError("lease_seconds must be positive")
         configured_lease = (
             int(total_timeout_seconds) + int(idle_timeout_seconds) + 300
