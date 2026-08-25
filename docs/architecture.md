@@ -3,6 +3,49 @@
 本文档描述当前 Consumer Agent A / Audit Agent B 运行架构。历史方案保留在
 `docs/superpowers/` 中，仅用于追溯，不代表当前运行方式。
 
+## 当前任务运行机制
+
+本节是所有任务类型的统一运行契约。每个任务都遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务只能替换输入、工具权限和外部回读方式，不能改变这条基本链路。
+
+```text
+pending
+  -> processing
+      -> needs_feedback
+          -> revision_pending
+              -> processing
+                  -> done / sent
+      -> needs_human
+      -> failed
+```
+
+- `pending`：任务已持久化，等待执行。
+- `processing`：执行 Agent 或审核 Agent 正在持有任务租约。
+- `needs_feedback`：审核 Agent 已发现结果需要修改，反馈已持久化并等待执行 Agent 修正。
+- `revision_pending`：修正版已排队；必须有新的 revision，并保留原 run、反馈、session 和外部回执的关系。
+- `done`：任务逻辑完成且结果已持久化。
+- `sent`：外部发送或写入完成，并有外部系统回读证据。
+- `needs_human`：有限反馈周期和证据读取无法解决，需要人工判断。
+- `failed`：执行、依赖、解析、状态转换或外部系统最终失败，并保留失败阶段和原因。
+
+审核闭环如下：
+
+```text
+执行 Agent 生成 R0
+  -> 审核 Agent 审核 R0
+      -> 通过：审核 Agent 执行/发布 R0，回读后完成
+      -> 需要修改：审核 Agent 写入 F0，R0 保留
+          -> 执行 Agent 收到 F0，生成 R1
+              -> 审核 Agent 审核 R1
+```
+
+审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许两个内容反馈周期，基础设施失败不消耗反馈周期。
+
+所有任务都禁止使用 `discard` 动作或写入 `discarded` 状态。确定无需执行的任务使用 `skipped` 并保留原因；需要修正的任务使用 `needs_feedback`；处理失败使用 `failed`；无法自动解决使用 `needs_human`。不得用丢弃代替审核反馈、修正原 run、重新排队、人工升级或失败记录。
+
+`okr_review` 使用上述闭环生成逐 KR 评审；`weekly_okr` 使用上述闭环生成管理者 OKR 进度周报。周报只有在分析、文档发布、群摘要发送和外部回读全部完成后，才能推进成功日期。
+
+完整状态和恢复说明见 [`docs/runtime-mechanism.md`](runtime-mechanism.md)。
+
 ## 设计目标
 
 CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 Derek 处理的消息、

@@ -6,6 +6,21 @@ Do not add audit, review, authorization, confirmation, safety-gate, effect-recon
 
 ## Local Service Reload
 
+## Current runtime contract
+
+The current task lifecycle and execution-agent/audit-agent feedback contract
+are defined in `docs/architecture.md`, with the state details mirrored in
+`docs/runtime-mechanism.md`. Read these documents before changing task
+routing, execution, audit feedback, revisions, recovery, or delivery status.
+
+All task types use execution Agent -> audit Agent -> feedback -> revision.
+Never add a `discard` action or a `discarded` status. Use `skipped` for an
+intentionally non-executable item, `failed` for an unsuccessful run,
+`needs_feedback` for an audit correction, and `needs_human` when the bounded
+feedback cycle cannot resolve the issue. Never overwrite an original run;
+corrections create a new revision and preserve the relation to the original
+run and audit feedback.
+
 This project is normally run by launchd as `com.ceo-agent-service.main`. Python code changes are not hot-reloaded by the running service process.
 
 After every commit that changes runtime code, prompt rendering, routing logic, launchd config, or service behavior:
