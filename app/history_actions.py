@@ -20,6 +20,14 @@ _READABLE_FAILURE_REASONS = {
     "codex_result_invalid": "Agent 已返回结果，但结果不符合当前校验契约。",
     "codex_result_missing": "Agent 运行结束，但没有输出可验证结果。",
     "agent_read_only_violation": "Agent 在只读阶段尝试执行外部动作，系统已安全阻止。",
+    "oa_live_evidence_conflict": (
+        "同一 OA 审批的读取结果不一致，系统没有执行同意或拒绝，"
+        "会按 OA 规则自动重新读取并重试。"
+    ),
+    "live_evidence_conflict": (
+        "同一 OA 审批的读取结果不一致，系统没有执行同意或拒绝，"
+        "会按 OA 规则自动重新读取并重试。"
+    ),
 }
 
 
@@ -59,11 +67,16 @@ def reply_history_attention(
         raise ValueError(f"invalid side effect state: {side_effect_state}")
 
     status = attempt.send_status.strip().lower()
+    persisted_code = attempt.send_error.strip()
     reason = (
-        attempt.audit_summary
-        or attempt.codex_reason
-        or attempt.send_error
-        or "处理未完成"
+        persisted_code
+        if persisted_code in _READABLE_FAILURE_REASONS
+        else (
+            attempt.audit_summary
+            or attempt.codex_reason
+            or persisted_code
+            or "处理未完成"
+        )
     ).strip()
     reason = _readable_failure_reason(reason)
     external_effect = external_effects[side_effect_state]

@@ -547,12 +547,13 @@ def test_audit_recovery_instructions_override_normal_audit_outcomes():
     assert "Do not return executed, revision_required, failed, or needs_human" in instructions
 
 
-def test_consumer_instructions_do_not_enumerate_specialist_workflows():
+def test_consumer_instructions_pin_the_installed_oa_workflow():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
-    assert "OA approval work" not in instructions
-    assert "candidate interview or evaluation" not in instructions
-    assert "OKR review or scoring" not in instructions
+    assert "OA: read" in instructions
+    assert "dingtalk-misc" in instructions
+    assert "references/oa.md" in instructions
+    assert "oa_live_evidence_conflict" in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
 
 

@@ -118,6 +118,37 @@ def test_internal_retry_code_is_rendered_as_readable_failure_reason():
     assert "consumer_retry_exhausted" not in state.reason
 
 
+def test_oa_evidence_conflict_is_rendered_as_automatic_recovery():
+    attempt = _attempt(
+        action="oa_approval",
+        oa_process_instance_id="proc-1",
+        send_error="oa_live_evidence_conflict",
+        audit_summary=(
+            "DWS 与审计读取结果存在冲突，需要 Derek 选择同意或拒绝。"
+        ),
+    )
+    task = _task(
+        status="pending",
+        attempts=1,
+        available_at="2026-08-11 05:02:00",
+    )
+
+    state = reply_history_attention(
+        attempt,
+        task=task,
+        decision_options=(),
+        side_effect_state="none",
+    )
+
+    assert state is not None
+    assert state.kind == "automatic_recovery"
+    assert state.reason == (
+        "同一 OA 审批的读取结果不一致，系统没有执行同意或拒绝，"
+        "会按 OA 规则自动重新读取并重试。"
+    )
+    assert [action.key for action in state.actions] == ["details"]
+
+
 def test_agent_supplied_choices_are_preserved_for_general_needs_human():
     attempt = _attempt(
         send_status="needs_human",

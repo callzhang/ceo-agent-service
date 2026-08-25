@@ -5817,6 +5817,46 @@ def test_active_audit_lease_is_deferred_after_retry_budget(tmp_path: Path, monke
     assert available_at - datetime.now(timezone.utc) < timedelta(seconds=10)
 
 
+def test_oa_evidence_conflict_is_retried_without_human_business_choices(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "请按 OA 审批技能处理\n"
+        "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+        single_chat=True,
+    )
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation(single_chat=True)], {"cid-1": [trigger]}),
+        FakeCodex([]),
+        monkeypatch,
+    )
+    assert worker.produce_once() == 1
+    task = worker.store.claim_reply_tasks(limit=1)[0]
+
+    completed = worker._apply_orchestration_result(
+        task,
+        OrchestrationResult(
+            status="needs_human",
+            final_run_id=0,
+            final_role=AgentRole.AUDIT,
+            summary="technical OA read mismatch",
+            error=AgentError(
+                code="live_evidence_conflict",
+                retryable=False,
+            ),
+            feedback_cycles=0,
+        ),
+    )
+
+    persisted = worker.store.get_reply_task(task.id)
+    assert completed is False
+    assert persisted is not None
+    assert persisted.status == "pending"
+    assert persisted.error == "oa_live_evidence_conflict"
+    assert worker.store.count_reply_attempts() == 0
+
+
 def test_runtime_route_unavailable_is_deferred_after_retry_budget(
     tmp_path: Path,
     monkeypatch,

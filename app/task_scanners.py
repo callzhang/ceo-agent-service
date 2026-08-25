@@ -464,7 +464,8 @@ def scan_pending_oa_approvals(
                 "审批待办扫描发现新增或有新消息的待处理审批："
                 f"{label}\n"
                 f"[查看审批]({oa_url})\n"
-                "请按 dingtalk-oa skill 审阅完整审批材料、历史处理记录和当前节点；"
+                "请按钉钉 OA 审批技能（dingtalk-misc 的 references/oa.md）审阅完整审批材料、"
+                "历史处理记录和当前节点；"
                 "材料不足时评论要求补充，只有规则和证据满足时才执行审批动作。"
             ),
             raw_payload={
