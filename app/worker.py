@@ -1527,12 +1527,13 @@ class DingTalkAutoReplyWorker:
         self._recover_due_unknown_agent_reply_tasks(limit=limit)
         self.store.suspend_exhausted_unknown_agent_runs()
         self._recover_stale_agent_reply_tasks()
-        recover_native_codex_auth_failures(self.store, channel="dingtalk")
-        self.store.recover_failed_effect_free_consumer_tasks(channel="dingtalk")
-        self.store.recover_failed_effect_free_audit_tasks(channel="dingtalk")
-        self.store.recover_terminal_sessionless_audit_deliveries(
-            channel="dingtalk"
-        )
+        for channel in ("dingtalk", "wechat"):
+            recover_native_codex_auth_failures(self.store, channel=channel)
+            self.store.recover_failed_effect_free_consumer_tasks(channel=channel)
+            self.store.recover_failed_effect_free_audit_tasks(channel=channel)
+            self.store.recover_terminal_sessionless_audit_deliveries(
+                channel=channel
+            )
         if self.store.active_codex_capacity_pause(now=self._now()):
             return 0
         claimed_tasks = 0
