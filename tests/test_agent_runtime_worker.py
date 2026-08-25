@@ -52,7 +52,7 @@ def test_worker_orchestration_status_mapping_is_exact():
         "dry_run": ("dry_run", "done"),
         "failed_retryable": ("failed", "pending"),
         "failed_terminal": ("failed", "failed"),
-        "unknown": ("pending_reconciliation", "pending"),
+        "unknown": ("failed", "pending"),
     }
 
 

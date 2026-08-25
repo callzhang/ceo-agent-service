@@ -13082,7 +13082,7 @@ def test_queued_okr_review_ack_delivery_failure_requeues_after_agent_queue_actio
     assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "pending_reconciliation"
+    assert attempt.send_status == "failed"
     assert attempt.send_error == "okr_ack_side_effect_unknown"
     assert worker.store.get_agent_run(1).status == "unknown"
 
@@ -15070,7 +15070,7 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "pending_reconciliation"
+    assert attempt.send_status == "failed"
     assert attempt.retry_count == 0
     assert attempt.send_error == "send_result_unknown"
     run = store.get_agent_run(1)
@@ -15798,7 +15798,7 @@ def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monke
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
-    assert attempt.send_status == "pending_reconciliation"
+    assert attempt.send_status == "failed"
     assert attempt.send_error == "chat_result_unknown"
     run = worker.store.get_agent_run(1)
     assert run is not None

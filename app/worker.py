@@ -109,7 +109,10 @@ ORCHESTRATION_ATTEMPT_STATUS = {
     "dry_run": ("dry_run", "done"),
     "failed_retryable": ("failed", "pending"),
     "failed_terminal": ("failed", "failed"),
-    "unknown": ("pending_reconciliation", "pending"),
+    # Unknown outcomes follow the ordinary retry contract.  They are not a
+    # user-visible terminal/reconciliation state: the attempt is failed and
+    # the task remains eligible for the normal retry budget.
+    "unknown": ("failed", "pending"),
 }
 RESOURCE_DEADLOCK_WAIT_ERROR = "os_resource_deadlock_wait"
 logger = logging.getLogger(__name__)
