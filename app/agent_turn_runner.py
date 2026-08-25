@@ -933,6 +933,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 event.get("type") == "item.started"
                 and effect == EffectKind.EFFECTFUL.value
                 and required_skill_receipts
+                and recovery_phase != "reconcile"
             ):
                 current_run = self.store.get_agent_run(run.id)
                 persisted_events = (
@@ -1903,7 +1904,9 @@ class AgentTurnProcess(Generic[ResultT]):
                 result,
                 persisted,
                 expected_effect_actions=expected_effect_actions,
-                required_skill_receipts=required_skill_receipts,
+                required_skill_receipts=(
+                    () if recovery_phase == "reconcile" else required_skill_receipts
+                ),
                 turn_event_start=turn_event_start,
             )
         claude_business_failure = outcome in {
