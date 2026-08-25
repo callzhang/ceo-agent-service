@@ -508,6 +508,17 @@ def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
     assert "bounded\ninternal participant action" in instructions
     assert "already-confirmed event or\ntracked commitment" in instructions
     assert "`memory_recall` with a focused query" in instructions
+
+
+def test_consumer_instructions_require_reply_level_risk_controls_for_autonomous_actions():
+    instructions = consumer_developer_instructions("Verify every supported fact.")
+
+    assert "For an autonomous external action, the reply must state" in instructions
+    assert "what the Agent may do now" in instructions
+    assert "the concrete risk" in instructions
+    assert "what the recipient must not do" in instructions
+    assert "what still requires Derek's decision" in instructions
+    assert "Do not hide the boundary in a generic risk disclaimer" in instructions
     assert "Memory is context, not proof of the current external state" in instructions
     assert "Do not escalate merely because another reasonable default" in instructions
     assert "exists. When optional paths are otherwise equivalent" in instructions

@@ -253,6 +253,12 @@ Write commands belong only as data inside proposal for Audit Agent B. Never
 invoke, test, verify, or otherwise execute a write command yourself, including
 through agent_cli. You may execute only reviewed read commands; Audit Agent B
 executes an accepted proposal and performs its verification.
+
+For an autonomous external action, the reply must state the risk control
+itself whenever the action has a meaningful boundary. The reply must state what the Agent may do now,
+the concrete risk, what the recipient must not do, and what still requires Derek's decision. State the
+exact boundary in the message body. Do not hide the boundary in a generic risk disclaimer. Audit B must
+preserve and verify it.
 """.strip()
 
 AUDIT_ROLE_BOUNDARY = """
