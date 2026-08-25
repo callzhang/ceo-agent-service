@@ -24,7 +24,9 @@ def load_env_file(path: Path | None = None) -> None:
     if not env_path.exists():
         return
     for key, value in read_env_file(env_path).items():
-        os.environ[key] = value
+        # Launchd and explicit shell environment are authoritative; the file
+        # supplies defaults for keys that were not already configured.
+        os.environ.setdefault(key, value)
 
 
 def read_env_file(path: Path | None = None) -> dict[str, str]:

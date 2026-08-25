@@ -5111,7 +5111,7 @@ def test_browser_notification_event_ignores_invalid_attempt_id():
     assert event["detail_url"] == ""
 
 
-def test_env_file_overrides_existing_environment(tmp_path: Path, monkeypatch):
+def test_env_file_does_not_override_existing_environment(tmp_path: Path, monkeypatch):
     env_path = tmp_path / ".env"
     env_path.write_text("MESSAGE_RECOVERY_INTERVAL=45m\n", encoding="utf-8")
     monkeypatch.setenv("MESSAGE_RECOVERY_INTERVAL", "1h")
@@ -5119,7 +5119,7 @@ def test_env_file_overrides_existing_environment(tmp_path: Path, monkeypatch):
     load_env_file(env_path)
 
     assert "MESSAGE_RECOVERY_INTERVAL" in env_path.read_text(encoding="utf-8")
-    assert os.environ["MESSAGE_RECOVERY_INTERVAL"] == "45m"
+    assert os.environ["MESSAGE_RECOVERY_INTERVAL"] == "1h"
 
 
 def test_render_config_dynamic_functions_do_not_hardcode_principal_name(monkeypatch):
