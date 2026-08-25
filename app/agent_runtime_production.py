@@ -242,6 +242,15 @@ def build_production_runtime_refresher(
         "codex_bin": codex_bin,
         "claude_bin": claude_bin,
         "temporary_root": temporary_root,
+        # A startup health probe must not hold the worker offline for the
+        # full task execution timeout. Failed probes are recorded by the
+        # refresher and the worker can retry them on its normal cadence.
+        "total_timeout_seconds": float(
+            os.getenv("CEO_RUNTIME_PROBE_TIMEOUT_SECONDS", "15")
+        ),
+        "idle_timeout_seconds": float(
+            os.getenv("CEO_RUNTIME_PROBE_IDLE_TIMEOUT_SECONDS", "5")
+        ),
     }
     if executor is not None:
         probe_kwargs["executor"] = executor
