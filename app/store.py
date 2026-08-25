@@ -9660,6 +9660,18 @@ class AutoReplyStore:
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
         with self._connect() as db:
+            unknown = db.execute(
+                """
+                select 1 from agent_runs
+                where reply_task_id=? and execution_generation=?
+                  and role='audit' and status='unknown'
+                  and effect_started_count=0
+                  and reconciliation_suspended=0
+                limit 1
+                """,
+                (task_id, expected_execution_generation),
+            ).fetchone()
+            next_generation = uuid4().hex if unknown is not None else expected_execution_generation
             cursor = db.execute(
                 """
                 update reply_tasks
@@ -9667,10 +9679,18 @@ class AutoReplyStore:
                     locked_at=null,
                     available_at=?,
                     error=?,
+                    force_new_decision=1,
+                    execution_generation=?,
                     updated_at=current_timestamp
                 where id=? and status='processing' and execution_generation=?
                 """,
-                (available_at, error, task_id, expected_execution_generation),
+                (
+                    available_at,
+                    error,
+                    next_generation,
+                    task_id,
+                    expected_execution_generation,
+                ),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
