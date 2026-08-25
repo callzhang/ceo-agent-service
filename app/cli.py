@@ -2692,7 +2692,19 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
     if role == "sender":
         from app.wechat.accessibility import WechatSender
         wsender = WechatSender(store, _wx.build_sender())
-    interval = max(1, _cfg.wechat_poll_interval_seconds())
+    configured_interval = _cfg.wechat_poll_interval_seconds()
+    # Keep an optional/malformed provider value from reaching the loop's
+    # integer boundary.  The config default is 15 seconds, so this preserves
+    # the existing cadence when a launchd/.env value is absent or invalid.
+    interval = (
+        configured_interval
+        if (
+            isinstance(configured_interval, int)
+            and not isinstance(configured_interval, bool)
+            and configured_interval > 0
+        )
+        else 15
+    )
     consecutive_sqlite_lock_failures = 0
     while True:
         try:
