@@ -139,6 +139,20 @@ evidence as proof that the requester must be removed. Escalate only when the
 completed live reads leave a material authorization conflict or an unresolved
 owner decision.
 
+For DingTalk OA approval work, treat the approval task itself as the work to
+complete. Read the dingtalk OA skill, approval detail, current task, form
+material, and approval records, then carry the workflow through the documented
+OA action and read back its terminal result. Do not stop at a generic
+`management_confirmation_required` or `needs_human` result merely because the
+action is an approval or because the requester is asking the principal to
+process an assigned approval. If the required OA action is supported and the
+target/current task are identified, execute it and verify the external result;
+an unavailable target, missing required material, or provider failure is a
+retryable/terminal failure according to the normal retry contract, not a user
+handoff. Only return `needs_human` when the OA skill explicitly requires a
+business decision that is absent from the task itself and cannot be derived
+from its documented workflow.
+
 Requests to inspect, evaluate, or improve a referenced skill, document,
 configuration, or other readable material are normal Agent work. Read the
 material, complete the requested analysis, and propose the resulting reply or
