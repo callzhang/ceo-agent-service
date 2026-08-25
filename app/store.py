@@ -9263,7 +9263,7 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
-    def discard_unstarted_service_tasks(
+    def skip_unstarted_service_tasks(
         self,
         task_ids: list[int] | tuple[int, ...],
         *,
@@ -9329,7 +9329,7 @@ class AutoReplyStore:
             error_json = json.dumps(
                 {
                     "authorization_required": False,
-                    "code": "invalid_service_task_discarded",
+                    "code": "invalid_service_task_skipped",
                     "reason": reason.strip(),
                     "retryable": False,
                 },
@@ -12737,20 +12737,6 @@ class AutoReplyStore:
                 where id=?
                 """,
                 (error, request_id),
-            )
-
-    def mark_okr_review_request_discarded(self, request_id: int, reason: str) -> None:
-        with self._connect() as db:
-            db.execute(
-                """
-                update okr_review_requests
-                set status='discarded',
-                    error=?,
-                    codex_session_id='',
-                    updated_at=current_timestamp
-                where id=?
-                """,
-                (reason, request_id),
             )
 
     def record_okr_review_run(
@@ -16380,17 +16366,17 @@ class AutoReplyStore:
                 on conflict(source_type, source_ref) do update set
                     payload_json=excluded.payload_json,
                     status=case
-                        when work_summary_inputs.status in ('failed', 'discarded')
+                        when work_summary_inputs.status in ('failed', 'skipped')
                             then 'pending'
                         else work_summary_inputs.status
                     end,
                     error=case
-                        when work_summary_inputs.status in ('failed', 'discarded')
+                        when work_summary_inputs.status in ('failed', 'skipped')
                             then ''
                         else work_summary_inputs.error
                     end,
                     available_at=case
-                        when work_summary_inputs.status in ('failed', 'discarded')
+                        when work_summary_inputs.status in ('failed', 'skipped')
                             then ''
                         else work_summary_inputs.available_at
                     end,
@@ -16509,7 +16495,7 @@ class AutoReplyStore:
                 (input_id,),
             )
 
-    def mark_work_summary_input_discarded(
+    def mark_work_summary_input_skipped(
         self,
         input_id: int,
         reason: str,
@@ -16520,7 +16506,7 @@ class AutoReplyStore:
             db.execute(
                 """
                 update work_summary_inputs
-                set status='discarded', error=?, updated_at=current_timestamp
+                set status='skipped', error=?, updated_at=current_timestamp
                 where id=?
                 """,
                 (reason, input_id),
@@ -18802,7 +18788,7 @@ class AutoReplyStore:
                     attempts.state in ('claimed', 'sending', 'unknown')
                     or (
                       attempts.state='sent'
-                      and coalesce(reviews.status, '') not in ('done', 'discarded')
+                      and coalesce(reviews.status, '') not in ('done', 'skipped')
                     )
                   )
                 order by attempts.draft_revision, attempts.id
@@ -18985,17 +18971,17 @@ class AutoReplyStore:
                 on conflict(source_type, source_ref) do update set
                     payload_json=excluded.payload_json,
                     status=case
-                        when work_summary_inputs.status in ('failed', 'discarded')
+                        when work_summary_inputs.status in ('failed', 'skipped')
                             then 'pending'
                         else work_summary_inputs.status
                     end,
                     error=case
-                        when work_summary_inputs.status in ('failed', 'discarded')
+                        when work_summary_inputs.status in ('failed', 'skipped')
                             then ''
                         else work_summary_inputs.error
                     end,
                     available_at=case
-                        when work_summary_inputs.status in ('failed', 'discarded')
+                        when work_summary_inputs.status in ('failed', 'skipped')
                             then ''
                         else work_summary_inputs.available_at
                     end,
@@ -19662,7 +19648,7 @@ class AutoReplyStore:
                       select 1
                       from work_summary_inputs as work_input
                       where cast(work_input.id as text)=incident.message_id
-                        and lower(work_input.status) in ('done', 'discarded')
+                        and lower(work_input.status) in ('done', 'skipped')
                         and datetime(work_input.updated_at) >=
                             datetime(incident.created_at)
                   )

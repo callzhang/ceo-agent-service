@@ -181,13 +181,13 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     payload = {
-        "action": "discard",
-        "discard_reason": "no durable update",
+        "action": "skip",
+        "skip_reason": "no durable update",
         "project": None,
         "todo_changes": [],
         "follow_up_drafts": [],
         "follow_up_changes": [],
-        "update_summary": "discarded",
+        "update_summary": "skipped",
         "merge_reason": "",
         "memory_recall_used": False,
         "confidence": 0.8,
@@ -215,7 +215,7 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
         ).fetchall()
     assert len(runs) == 1
     assert runs[0]["status"] == "completed"
-    assert json.loads(runs[0]["decision_json"])["action"] == "discard"
+    assert json.loads(runs[0]["decision_json"])["action"] == "skip"
 
 
 def _memory_context():
@@ -293,7 +293,7 @@ def _decision_with_follow_up_change(
     return TaskAgentDecision.model_validate(
         {
             "action": "update_project",
-            "discard_reason": "",
+            "skip_reason": "",
             "project": {
                 "id": project_id,
                 "title": "售前知识库",
@@ -423,8 +423,8 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     codex = FakeCodex(
         {
-            "action": "discard",
-            "discard_reason": "prompt inspection only",
+            "action": "skip",
+            "skip_reason": "prompt inspection only",
             "project": None,
             "todo_changes": [],
             "follow_up_drafts": [],
@@ -524,7 +524,7 @@ def test_process_work_item_accepts_lily_owner_correction_reply(tmp_path):
     codex = FakeCodex(
         {
             "action": "update_project",
-            "discard_reason": "",
+            "skip_reason": "",
             "project": {
                 "id": project_id,
                 "title": "海外数据合规与中美开发隔离闭环",
@@ -670,7 +670,7 @@ def test_process_work_item_accepts_clear_follow_up_completion_reply(tmp_path):
     codex = FakeCodex(
         {
             "action": "update_project",
-            "discard_reason": "",
+            "skip_reason": "",
             "project": {
                 "id": project_id,
                 "title": "客户验收交付",
@@ -768,8 +768,8 @@ def test_process_work_item_discards_ambiguous_follow_up_reply_without_changes(
     )
     codex = FakeCodex(
         {
-            "action": "discard",
-            "discard_reason": "回复过于模糊，不能证明TODO完成或需要更新follow-up。",
+            "action": "skip",
+            "skip_reason": "回复过于模糊，不能证明TODO完成或需要更新follow-up。",
             "project": None,
             "todo_changes": [],
             "follow_up_drafts": [],
@@ -801,7 +801,7 @@ def test_process_work_item_discards_ambiguous_follow_up_reply_without_changes(
             (input_id,),
         ).fetchone()
     assert input_row == (
-        "discarded",
+        "skipped",
         "回复过于模糊，不能证明TODO完成或需要更新follow-up。",
     )
 
@@ -889,7 +889,7 @@ def test_process_work_item_creates_project_todo_update_and_run(tmp_path):
     assert store.list_work_updates(project_id=projects[0].id)[0].summary == "创建售前知识库项目。"
     assert store.claim_work_summary_inputs(limit=1) == []
     assert "memory_recall" in codex.prompts[0]
-    assert "Required evidence sequence for every non-discard decision" in codex.prompts[0]
+    assert "Required evidence sequence for every non-skip decision" in codex.prompts[0]
     assert "applicable live DWS read" in codex.prompts[0]
     assert "候选项目" in codex.prompts[0]
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
@@ -1019,7 +1019,7 @@ def test_apply_decision_suppresses_existing_follow_up_without_closing_todo(tmp_p
     decision = TaskAgentDecision.model_validate(
         {
             "action": "update_project",
-            "discard_reason": "",
+            "skip_reason": "",
             "project": {
                 "id": project_id,
                 "title": "海外数据合规与中美开发隔离闭环",
@@ -1987,8 +1987,8 @@ def test_discard_decision_records_run_and_marks_input_discarded(tmp_path):
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     codex = FakeCodex(
         {
-            "action": "discard",
-            "discard_reason": "不是稳定任务。",
+            "action": "skip",
+            "skip_reason": "不是稳定任务。",
             "todo_changes": [],
             "follow_up_drafts": [],
             "follow_up_changes": [],
@@ -2009,7 +2009,7 @@ def test_discard_decision_records_run_and_marks_input_discarded(tmp_path):
         run_row = db.execute(
             "select summary_input_id, audit_summary from task_agent_runs",
         ).fetchone()
-    assert input_row == ("discarded", "不是稳定任务。")
+    assert input_row == ("skipped", "不是稳定任务。")
     assert run_row == (input_id, "丢弃输入。")
 
 
@@ -3394,8 +3394,8 @@ def test_task_agent_codex_runner_uses_reviewed_read_only_factory():
     routed = FakeRoutedTaskExecution(
         json.dumps(
             {
-                "action": "discard",
-                "discard_reason": "输入不足以形成稳定项目。",
+                "action": "skip",
+                "skip_reason": "输入不足以形成稳定项目。",
                 "todo_changes": [],
                 "follow_up_drafts": [],
                 "follow_up_changes": [],
@@ -3439,8 +3439,8 @@ def test_task_agent_prompts_require_stable_follow_up_participants():
     prompt = build_task_agent_prompt(_work_item(), "无候选项目")
     rejected = TaskAgentDecision.model_validate(
         {
-            "action": "discard",
-            "discard_reason": "Previous follow-up draft lacked a stable participant.",
+            "action": "skip",
+            "skip_reason": "Previous follow-up draft lacked a stable participant.",
             "todo_changes": [],
             "follow_up_drafts": [],
             "follow_up_changes": [],
@@ -3520,7 +3520,7 @@ def test_task_agent_prompt_discards_non_actionable_reference_material():
 
     assert "Material-to-task boundary:" in prompt
     assert "document, script, presentation" in prompt
-    assert "return action=\"discard\"" in prompt
+    assert 'return action="skip"' in prompt
     assert "Never infer an owner from the author, speaker" in prompt
 
 
@@ -3947,8 +3947,8 @@ def test_discard_with_malformed_todo_change_marks_failed(tmp_path):
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     codex = FakeCodex(
         {
-            "action": "discard",
-            "discard_reason": "不是稳定任务。",
+            "action": "skip",
+            "skip_reason": "不是稳定任务。",
             "todo_changes": [{"action": "close", "title": "补齐来源链接"}],
             "follow_up_drafts": [],
             "follow_up_changes": [],
@@ -3981,8 +3981,8 @@ def test_process_work_item_accepts_none_session_id(tmp_path):
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     codex = FakeCodexWithoutSession(
         {
-            "action": "discard",
-            "discard_reason": "一次性对话。",
+            "action": "skip",
+            "skip_reason": "一次性对话。",
             "todo_changes": [],
             "follow_up_drafts": [],
             "follow_up_changes": [],
@@ -4009,8 +4009,8 @@ def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
         return (
             '{"type":"session_meta","payload":{"id":"session-task-1"}}\n'
             '{"item":{"type":"agent_message","text":"'
-            '{\\"action\\":\\"discard\\",'
-            '\\"discard_reason\\":\\"没有状态变化\\",'
+                '{\\"action\\":\\"skip\\",'
+            '\\"skip_reason\\":\\"没有状态变化\\",'
             '\\"todo_changes\\":[],'
             '\\"follow_up_drafts\\":[],'
             '\\"follow_up_changes\\":[],'
@@ -4028,7 +4028,7 @@ def test_task_agent_codex_runner_parses_jsonl_payload(tmp_path):
     )
     decision = runner.decide(prompt="x", workload_key="1")
 
-    assert decision.action == "discard"
+    assert decision.action == "skip"
     assert runner.last_session_id == "session-task-1"
 
 
@@ -4050,8 +4050,8 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
                                     "type": "output_text",
                                     "text": json.dumps(
                                         {
-                                            "action": "discard",
-                                            "discard_reason": "只是确认收到",
+                                            "action": "skip",
+                                            "skip_reason": "只是确认收到",
                                             "project": None,
                                             "todo_changes": [],
                                             "follow_up_drafts": [],
@@ -4079,8 +4079,8 @@ def test_task_agent_codex_runner_parses_response_item_output_text(tmp_path):
     )
     decision = runner.decide(prompt="x", workload_key="1")
 
-    assert decision.action == "discard"
-    assert decision.discard_reason == "只是确认收到"
+    assert decision.action == "skip"
+    assert decision.skip_reason == "只是确认收到"
     assert runner.last_session_id == "session-task-2"
 
 
@@ -4106,7 +4106,7 @@ def test_task_agent_decision_supports_follow_up_changes():
     decision = TaskAgentDecision.model_validate(
         {
             "action": "update_project",
-            "discard_reason": "",
+            "skip_reason": "",
             "project": {
                 "id": 372,
                 "title": "海外数据合规与中美开发隔离闭环",
@@ -4167,8 +4167,8 @@ def test_task_agent_decision_supports_follow_up_changes():
 def test_task_agent_decision_exposes_task_worthiness_risk_fields():
     decision = TaskAgentDecision.model_validate(
         {
-            "action": "discard",
-            "discard_reason": "只是一次性账号配置。",
+            "action": "skip",
+            "skip_reason": "只是一次性账号配置。",
             "project": None,
             "todo_changes": [],
             "follow_up_drafts": [],
@@ -4189,8 +4189,8 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
     routed = FakeRoutedTaskExecution(
         json.dumps(
             {
-                "action": "discard",
-                "discard_reason": "没有状态变化",
+                "action": "skip",
+                "skip_reason": "没有状态变化",
                 "todo_changes": [],
                 "follow_up_drafts": [],
                 "follow_up_changes": [],
@@ -4206,7 +4206,7 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
 
     decision = runner.decide(prompt="decide", workload_key="9")
 
-    assert decision.action == "discard"
+    assert decision.action == "skip"
     assert routed.calls[0]["workload_key"] == "9"
     assert routed.calls[0]["conversation_id"] is None
     assert routed.calls[0]["required_capabilities"] == frozenset(

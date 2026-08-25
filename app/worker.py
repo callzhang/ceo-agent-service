@@ -936,7 +936,7 @@ class DingTalkAutoReplyWorker:
                 candidate_unread_messages,
                 conversation_mentions,
             )
-            candidate_source_messages = self._discard_service_handoff_notifications(
+            candidate_source_messages = self._skip_service_handoff_notifications(
                 candidate_source_messages
             )
             candidates = self._candidate_messages(
@@ -4513,7 +4513,7 @@ class DingTalkAutoReplyWorker:
             key=lambda message: message.create_time,
         )
 
-    def _discard_service_handoff_notifications(
+    def _skip_service_handoff_notifications(
         self,
         messages: list[DingTalkMessage],
     ) -> list[DingTalkMessage]:

@@ -2387,7 +2387,7 @@ def test_process_work_items_command_discards_cross_project_follow_up_draft(
             """,
             (input_id,),
         ).fetchone()
-    assert row["status"] == "discarded"
+    assert row["status"] == "skipped"
     assert row["attempts"] == 1
     assert "does not belong to project" in row["error"]
 
@@ -2410,11 +2410,11 @@ def test_process_work_items_command_uses_task_agent_timeouts(
         def decide(self, *, prompt, workload_key=None, session_scope_id=None):
             return TaskAgentDecision.model_validate(
                 {
-                    "action": "discard",
+                    "action": "skip",
                     "todo_changes": [],
                     "follow_up_drafts": [],
                     "update_summary": "不是持续跟进事项。",
-                    "discard_reason": "一次性信息。",
+                    "skip_reason": "一次性信息。",
                     "failure_risk": "无持续业务风险。",
                     "failure_risk_score": 0.0,
                     "memory_recall_used": False,

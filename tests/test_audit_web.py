@@ -9219,15 +9219,15 @@ def test_render_log_list_renders_non_error_terminal_states_without_red_status(tm
         "1",
         '{"summary":"无需汇总"}',
     )
-    store.mark_work_summary_input_discarded(work_input_id, "not actionable")
+    store.mark_work_summary_input_skipped(work_input_id, "not actionable")
 
     html = render_log_list(store)
 
     assert skipped_id
     assert '<span class="pill status-skipped">skipped</span>' in html
-    assert '<span class="pill status-skipped">discarded</span>' in html
+    assert '<span class="pill status-skipped">skipped</span>' in html
     assert '<span class="pill status-active">skipped</span>' not in html
-    assert '<span class="pill status-active">discarded</span>' not in html
+    assert '<span class="pill status-active">skipped</span>' not in html
 
 
 def test_logs_route_renders_logs_and_errors_route_remains_compatible(tmp_path: Path):

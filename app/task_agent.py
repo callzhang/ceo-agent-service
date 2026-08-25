@@ -274,7 +274,7 @@ the source creation time or an earlier scheduled time as a future deadline.
 Memory connector status facts:
 {memory_status}
 
-Required evidence sequence for every non-discard decision:
+Required evidence sequence for every non-skip decision:
 - When memory_recall is available, call it with a focused query about the
   work item, project, prior commitments, and owner context before deciding.
   Set memory_recall_used=true only after that tool call is present in the
@@ -326,11 +326,11 @@ Material-to-task boundary:
   document, script, presentation, or other informational artifact is not a
   task merely because it has an author, speaker, or topic.
 - When the source does not establish a concrete commitment, owner, deadline,
-  progress change, or next step, return action="discard" with a clear reason.
+  progress change, or next step, return action="skip" with a clear reason.
   Do not create a project, TODO, or follow-up for material that lacks such a
   work signal.
 - Never infer an owner from the author, speaker, participants, or a matching
-  stored project. A non-discard decision may leave ownership empty only when
+  stored project. A non-skip decision may leave ownership empty only when
   the source establishes a real work update but does not assign an owner.
 
 TaskAgentDecision Pydantic JSON schema:
@@ -673,10 +673,10 @@ def process_work_item(
                 now=now,
                 _db=db,
             )
-            if decision.action == "discard":
-                store.mark_work_summary_input_discarded(
+            if decision.action == "skip":
+                store.mark_work_summary_input_skipped(
                     work_input.id,
-                    decision.discard_reason or decision.update_summary,
+                    decision.skip_reason or decision.update_summary,
                     _db=db,
                 )
             else:
@@ -742,7 +742,7 @@ def apply_task_agent_decision(
             memory_recall_used=decision.memory_recall_used,
         )
 
-    if decision.action == "discard":
+    if decision.action == "skip":
         return None
 
     _validate_follow_up_change_targets(store, decision.follow_up_changes)
@@ -920,7 +920,7 @@ def _validate_task_agent_decision(
             raise ValueError(
                 "follow_up_change.owner_user_id or owner_name is required for reassign"
             )
-    if decision.action == "discard":
+    if decision.action == "skip":
         return
     if (
         not memory_issue.strip()
@@ -928,14 +928,14 @@ def _validate_task_agent_decision(
         and not memory_runtime_unavailable
         and not decision.memory_recall_used
     ):
-        raise ValueError("non-discard task decision requires memory_recall_used")
+        raise ValueError("non-skip task decision requires memory_recall_used")
     if decision.project is None:
         raise ValueError(f"{decision.action} requires project")
     memory_context = decision.project.memory_context
     if not memory_context.query.strip() or (
         not memory_context.summary.strip() and not memory_context.memories
     ):
-        raise ValueError("non-discard task decision requires project.memory_context")
+        raise ValueError("non-skip task decision requires project.memory_context")
     if decision.action == "update_project" and decision.project.id is None:
         raise ValueError("update_project requires project.id")
 
@@ -1145,7 +1145,7 @@ def _validate_memory_recall_tool_event(
     memory_issue: str = "",
     memory_runtime_unavailable: bool = False,
 ) -> None:
-    if decision.action == "discard" or audit_tool_events is None:
+    if decision.action == "skip" or audit_tool_events is None:
         return
     if not isinstance(audit_tool_events, list):
         return
@@ -1155,7 +1155,7 @@ def _validate_memory_recall_tool_event(
         return
     if memory_issue.strip():
         return
-    raise ValueError("non-discard task decision requires memory_recall tool event")
+    raise ValueError("non-skip task decision requires memory_recall tool event")
 
 
 def _audit_events_include_memory_recall(audit_tool_events: object) -> bool:

@@ -2591,7 +2591,7 @@ def test_store_restores_wal_for_current_schema_database(tmp_path: Path):
         assert db.execute("pragma journal_mode").fetchone()[0] == "wal"
 
 
-def test_discard_unstarted_service_tasks_closes_only_no_effect_tasks(tmp_path: Path):
+def test_skip_unstarted_service_tasks_closes_only_no_effect_tasks(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     for message_id in ("service-1", "service-2"):
         assert store.enqueue_reply_task(
@@ -2618,22 +2618,22 @@ def test_discard_unstarted_service_tasks_closes_only_no_effect_tasks(tmp_path: P
         owner="worker-1",
     ).run
 
-    discarded = store.discard_unstarted_service_tasks(
+    skipped = store.skip_unstarted_service_tasks(
         [tasks[0].id, tasks[1].id],
         reason="The synthetic recovery source was invalid.",
     )
 
-    assert [task.status for task in discarded] == ["done", "done"]
-    assert all(task.error == "The synthetic recovery source was invalid." for task in discarded)
+    assert [task.status for task in skipped] == ["done", "done"]
+    assert all(task.error == "The synthetic recovery source was invalid." for task in skipped)
     failed_run = store.get_agent_run(run.id)
     assert failed_run is not None and failed_run.status == "failed"
     assert failed_run.side_effect_state == "none"
     assert json.loads(failed_run.structured_error_json)["code"] == (
-        "invalid_service_task_discarded"
+        "invalid_service_task_skipped"
     )
 
 
-def test_discard_unstarted_service_tasks_rejects_started_effect(tmp_path: Path):
+def test_skip_unstarted_service_tasks_rejects_started_effect(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     assert store.enqueue_reply_task(
         conversation_id="cid-service",
@@ -2659,13 +2659,13 @@ def test_discard_unstarted_service_tasks_rejects_started_effect(tmp_path: Path):
     )
 
     with pytest.raises(ValueError, match="started or uncertain effects"):
-        store.discard_unstarted_service_tasks(
+        store.skip_unstarted_service_tasks(
             [task.id],
             reason="The synthetic recovery source was invalid.",
         )
 
 
-def test_discard_unstarted_service_tasks_requires_exact_legacy_source(tmp_path: Path):
+def test_skip_unstarted_service_tasks_requires_exact_legacy_source(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     assert store.enqueue_reply_task(
         conversation_id="cid-service",
@@ -2682,18 +2682,18 @@ def test_discard_unstarted_service_tasks_requires_exact_legacy_source(tmp_path: 
     task = store.claim_reply_tasks(limit=1)[0]
 
     with pytest.raises(ValueError, match="not an explicit service task"):
-        store.discard_unstarted_service_tasks(
+        store.skip_unstarted_service_tasks(
             [task.id],
             reason="The synthetic recovery source was invalid.",
             expected_source="wrong_source",
         )
 
-    discarded = store.discard_unstarted_service_tasks(
+    skipped = store.skip_unstarted_service_tasks(
         [task.id],
         reason="The synthetic recovery source was invalid.",
         expected_source="oa_pending_scan",
     )
-    assert discarded[0].status == "done"
+    assert skipped[0].status == "done"
 
 
 def test_store_connections_can_use_short_busy_timeout(tmp_path: Path):
@@ -8284,7 +8284,7 @@ def test_recreating_okr_review_request_requeues_failed_request(tmp_path):
     assert json.loads(loaded.okr_source_json)["processed"]["okrRows"] == []
 
 
-def test_marking_okr_review_request_discarded_keeps_it_out_of_the_claim_queue(tmp_path):
+def test_okr_review_request_is_failed_for_feedback_instead_of_skipped(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
@@ -8299,11 +8299,11 @@ def test_marking_okr_review_request_discarded_keeps_it_out_of_the_claim_queue(tm
         okr_source_json='{"objectives":[]}',
     )
 
-    store.mark_okr_review_request_discarded(request_id, "not assigned to principal")
+    store.mark_okr_review_request_failed(request_id, "reviewer feedback required")
 
     loaded = store.get_okr_review_request(request_id)
-    assert loaded.status == "discarded"
-    assert loaded.error == "not assigned to principal"
+    assert loaded.status == "failed"
+    assert loaded.error == "reviewer feedback required"
     assert store.claim_okr_review_requests(limit=1) == []
 
 
@@ -11079,7 +11079,7 @@ def test_terminal_work_summary_input_resolves_its_own_error(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     input_id = store.enqueue_work_summary_input("local_file", "file:reference", "{}")
     [claimed] = store.claim_work_summary_inputs(1)
-    store.mark_work_summary_input_discarded(claimed.id, "no usable material")
+    store.mark_work_summary_input_skipped(claimed.id, "no usable material")
     store.record_error(
         "work_summary_input",
         str(input_id),

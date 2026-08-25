@@ -137,7 +137,7 @@ WORK_SUMMARY_TRANSIENT_ERROR_MARKERS = (
     "connection refused",
     "codex exec timed out",
     "task agent codex timed out",
-    "non-discard task decision requires memory_recall tool event",
+    "non-skip task decision requires memory_recall tool event",
     "unexpected status 401 unauthorized",
     "missing bearer or basic authentication",
 )
@@ -1104,8 +1104,8 @@ def process_work_items_command(settings: WorkerSettings) -> int:
                         work_input.attempts,
                     ),
                 )
-            elif _should_discard_work_summary_input(error):
-                store.mark_work_summary_input_discarded(work_input.id, error)
+            elif _should_skip_work_summary_input(error):
+                store.mark_work_summary_input_skipped(work_input.id, error)
             else:
                 store.mark_work_summary_input_failed(work_input.id, error)
             if not capacity_exhausted or opened_capacity_pause:
@@ -1151,7 +1151,7 @@ def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> b
     return any(marker in normalized for marker in WORK_SUMMARY_TRANSIENT_ERROR_MARKERS)
 
 
-def _should_discard_work_summary_input(error: str) -> bool:
+def _should_skip_work_summary_input(error: str) -> bool:
     normalized = error.lower()
     return any(
         all(marker in normalized for marker in markers)

@@ -162,7 +162,7 @@ class WorkSummaryStatus(StrEnum):
     PROCESSING = "processing"
     DONE = "done"
     FAILED = "failed"
-    DISCARDED = "discarded"
+    SKIPPED = "skipped"
 
 
 class WorkItemSource(BaseModel):
@@ -296,8 +296,8 @@ class FollowUpDraftChange(StrictTaskModel):
 
 
 class TaskAgentDecision(StrictTaskModel):
-    action: Literal["discard", "create_project", "update_project"]
-    discard_reason: str = ""
+    action: Literal["skip", "create_project", "update_project"]
+    skip_reason: str = ""
     project: TaskProjectPatch | None = None
     todo_changes: list[TodoChange] = Field(default_factory=list)
     follow_up_drafts: list[FollowUpDraftDecision] = Field(default_factory=list)

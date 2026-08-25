@@ -7288,7 +7288,7 @@ def _operation_status_class(status: str) -> str:
     normalized = status.strip().lower()
     if normalized.startswith(("resolved", "recovered")) or normalized in {"sent", "done", "completed"}:
         return "status-resolved"
-    if normalized in {"historical", "skipped", "discarded", "cancelled", "no_action"}:
+    if normalized in {"historical", "skipped", "skipped", "cancelled", "no_action"}:
         return "status-skipped"
     if normalized in {"pending", "processing", "pending_reconciliation", "dry_run"}:
         return "status-processing"
