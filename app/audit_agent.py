@@ -289,11 +289,16 @@ class AuditAgentRunner:
             # Consumer A for a fresh, typed proposal instead of leaving the
             # unknown run cycling forever.
             recovery_code = _audit_recovery_error_code(exc)
-            if recovery_code in {
-                "audit_recovery_action_not_authorized",
-                "audit_reconciliation_evidence_mismatch",
-                "audit_recovery_result_invalid",
-            } and claim.run.effect_started_count == 0:
+            if (
+                recovery_code == "audit_recovery_action_not_authorized"
+                and claim.run.effect_receipt_count == 0
+            ) or (
+                recovery_code in {
+                    "audit_reconciliation_evidence_mismatch",
+                    "audit_recovery_result_invalid",
+                }
+                and claim.run.effect_started_count == 0
+            ):
                 return self._requeue_for_consumer(
                     task,
                     claim.run,
