@@ -39,6 +39,10 @@
     <string>.</string>
     <key>PYTHONDONTWRITEBYTECODE</key>
     <string>1</string>
+    <key>CEO_TASK_CODEX_TIMEOUT_SECONDS</key>
+    <string>900</string>
+    <key>CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS</key>
+    <string>300</string>
   </dict>
 </dict>
 </plist>
