@@ -14,8 +14,8 @@ from app.native_cli_metadata import structured_target_identifiers
 DEFAULT_MCP_EFFECTS_PATH = (
     Path(__file__).resolve().parent.parent / "config" / "mcp-tool-effects.json"
 )
-TOTAL_TIMEOUT_SECONDS = 1200
-IDLE_TIMEOUT_SECONDS = 900
+TOTAL_TIMEOUT_SECONDS = int(os.getenv("CEO_TASK_CODEX_TIMEOUT_SECONDS", "1200"))
+IDLE_TIMEOUT_SECONDS = int(os.getenv("CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS", "900"))
 LEASE_SECONDS = TOTAL_TIMEOUT_SECONDS + IDLE_TIMEOUT_SECONDS + 300
 _SENSITIVE_KEY_NAMES = frozenset(
     {
