@@ -8578,7 +8578,7 @@ class AutoReplyStore:
                 "join reply_tasks on reply_tasks.id=agent_runs.reply_task_id "
                 "where agent_runs.status='unknown' "
                 "and agent_runs.role='audit' "
-                "and reply_tasks.status in ('processing', 'failed') "
+                "and reply_tasks.status in ('pending', 'processing', 'failed') "
                 "and reply_tasks.execution_generation=agent_runs.execution_generation "
                 "and agent_runs.reconciliation_suspended=0 "
                 "and (agent_runs.reconciliation_next_attempt_at='' "
@@ -8623,7 +8623,7 @@ class AutoReplyStore:
                   and exists (
                       select 1 from reply_tasks
                       where reply_tasks.id=agent_runs.reply_task_id
-                        and reply_tasks.status='processing'
+                        and reply_tasks.status in ('pending', 'processing', 'failed')
                         and reply_tasks.execution_generation=
                             agent_runs.execution_generation
                   )
