@@ -9667,6 +9667,11 @@ class AutoReplyStore:
                   and role='audit' and status='unknown'
                   and effect_started_count=0
                   and reconciliation_suspended=0
+                  and exists (
+                      select 1 from reply_tasks
+                      where reply_tasks.id=agent_runs.reply_task_id
+                        and reply_tasks.status='pending'
+                  )
                 limit 1
                 """,
                 (task_id, expected_execution_generation),
@@ -9682,7 +9687,8 @@ class AutoReplyStore:
                     force_new_decision=1,
                     execution_generation=?,
                     updated_at=current_timestamp
-                where id=? and status='processing' and execution_generation=?
+                where id=? and status in ('processing', 'pending')
+                  and execution_generation=?
                 """,
                 (
                     available_at,

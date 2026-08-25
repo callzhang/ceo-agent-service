@@ -3046,6 +3046,37 @@ def test_reply_task_execution_generation_defaults_and_survives_requeue(
     assert reclaimed.execution_generation == "initial"
 
 
+def test_requeue_pending_effect_free_unknown_rotates_generation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = _claim_audit_run(
+        store, task_id, task.execution_generation, owner="worker-1"
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "codex_result_invalid", "retryable": True},
+        owner="worker-1",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='pending', locked_at=null where id=?",
+            (task_id,),
+        )
+
+    store.requeue_reply_task(
+        task_id,
+        "unknown_agent_run_reconciliation",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    resumed = store.get_reply_task(task_id)
+    assert resumed is not None
+    assert resumed.status == "pending"
+    assert resumed.execution_generation != task.execution_generation
+
+
 def test_enqueue_reply_task_rejects_empty_execution_generation(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
