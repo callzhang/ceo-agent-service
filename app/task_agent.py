@@ -59,7 +59,10 @@ TASK_RUNTIME_CAPABILITIES = frozenset(
         "reviewed_read_tools",
     }
 )
-TASK_RESULT_CODEC = RoutedResultCodec.text(schema_id="task_agent.decision.v1")
+TASK_RESULT_CODEC = RoutedResultCodec.text(
+    schema_id="task_agent.decision.v1",
+    allow_evidence_source_refs=True,
+)
 
 
 class TaskCodex(Protocol):

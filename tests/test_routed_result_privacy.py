@@ -1,6 +1,9 @@
 import json
 
+import pytest
+
 from app.meeting_alignment_agent import _encode_meeting_alignment_result
+from app.agent_runtime_router import RoutedResultCodec
 from app.structured_agent import _encode_structured_result
 from app.task_agent import _encode_task_agent_result
 
@@ -108,3 +111,45 @@ def test_meeting_result_codec_persists_only_audit_references():
     )
 
     _assert_private_audit_material_is_not_persisted(encoded)
+
+
+def test_task_result_codec_allows_only_evidence_source_reference_paths(monkeypatch):
+    monkeypatch.setenv("CEO_FORBIDDEN_PATH_PREFIXES", "/Users/derek/")
+    codec = RoutedResultCodec.text(
+        schema_id="task_agent.test.v1",
+        allow_evidence_source_refs=True,
+    )
+    value = json.dumps(
+        {
+            "project": {
+                "evidence": {
+                    "source": "/Users/derek/Documents/memory/okr.md",
+                }
+            },
+            "description": "keep this decision durable",
+        },
+        ensure_ascii=False,
+    )
+
+    encoded = codec.encode(value)
+    assert codec.decode(encoded) == value
+
+    with pytest.raises(ValueError, match="sensitive runtime data"):
+        codec.encode(
+            json.dumps(
+                {"description": "/Users/derek/.codex/sessions/private.jsonl"},
+                ensure_ascii=False,
+            )
+        )
+
+
+def test_generic_result_codec_still_rejects_evidence_paths(monkeypatch):
+    monkeypatch.setenv("CEO_FORBIDDEN_PATH_PREFIXES", "/Users/derek/")
+    codec = RoutedResultCodec.text(schema_id="generic.test.v1")
+    with pytest.raises(ValueError, match="sensitive runtime data"):
+        codec.encode(
+            json.dumps(
+                {"source": "/Users/derek/Documents/memory/okr.md"},
+                ensure_ascii=False,
+            )
+        )

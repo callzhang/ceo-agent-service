@@ -669,9 +669,17 @@ class RoutedResultCodec[ResultT]:
 
     schema_id: str
     _kind: str
+    _allow_evidence_source_refs: bool
     _seal: object
 
-    def __init__(self, *, schema_id: str, kind: str, seal: object) -> None:
+    def __init__(
+        self,
+        *,
+        schema_id: str,
+        kind: str,
+        allow_evidence_source_refs: bool = False,
+        seal: object,
+    ) -> None:
         if seal is not _ROUTED_RESULT_CODEC_SEAL:
             raise ValueError("result codecs use named constructors")
         schema_id = schema_id.strip()
@@ -682,6 +690,11 @@ class RoutedResultCodec[ResultT]:
             raise ValueError("schema_id must be a versioned identifier")
         object.__setattr__(self, "schema_id", schema_id)
         object.__setattr__(self, "_kind", kind)
+        object.__setattr__(
+            self,
+            "_allow_evidence_source_refs",
+            allow_evidence_source_refs,
+        )
         object.__setattr__(self, "_seal", seal)
 
     @classmethod
@@ -689,8 +702,18 @@ class RoutedResultCodec[ResultT]:
         return cls(schema_id=schema_id, kind="integer", seal=_ROUTED_RESULT_CODEC_SEAL)
 
     @classmethod
-    def text(cls, *, schema_id: str) -> RoutedResultCodec[str]:
-        return cls(schema_id=schema_id, kind="text", seal=_ROUTED_RESULT_CODEC_SEAL)
+    def text(
+        cls,
+        *,
+        schema_id: str,
+        allow_evidence_source_refs: bool = False,
+    ) -> RoutedResultCodec[str]:
+        return cls(
+            schema_id=schema_id,
+            kind="text",
+            allow_evidence_source_refs=allow_evidence_source_refs,
+            seal=_ROUTED_RESULT_CODEC_SEAL,
+        )
 
     def encode(self, value: ResultT) -> str:
         self._validate(value)
@@ -701,7 +724,7 @@ class RoutedResultCodec[ResultT]:
         )
         if len(encoded.encode("utf-8")) > MAX_RUNTIME_RESULT_ENVELOPE_BYTES:
             raise RoutedResultEnvelopeTooLarge("result envelope exceeds size limit")
-        if contains_credential(encoded) or contains_local_runtime_leak(encoded):
+        if contains_credential(encoded) or self._contains_runtime_leak(value):
             raise ValueError("result envelope contains sensitive runtime data")
         return encoded
 
@@ -722,12 +745,45 @@ class RoutedResultCodec[ResultT]:
             raise ValueError("persisted result schema mismatch")
         value = envelope["value"]
         self._validate(value)
+        if contains_credential(encoded) or self._contains_runtime_leak(value):
+            raise ValueError("persisted result envelope contains sensitive runtime data")
         return value
+
+    def _contains_runtime_leak(self, value: object) -> bool:
+        if not self._allow_evidence_source_refs:
+            return contains_local_runtime_leak(json.dumps(value, ensure_ascii=False))
+        return _contains_local_runtime_leak_outside_evidence_refs(value)
 
     def _validate(self, value: object) -> None:
         valid = type(value) is int if self._kind == "integer" else type(value) is str
         if not valid:
             raise ValueError(f"result does not match {self._kind} codec")
+
+
+_EVIDENCE_SOURCE_REF_KEYS = frozenset({"source", "source_ref"})
+
+
+def _contains_local_runtime_leak_outside_evidence_refs(value: object) -> bool:
+    """Allow local paths only in explicit evidence source reference fields."""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return contains_local_runtime_leak(value)
+        return _contains_local_runtime_leak_outside_evidence_refs(parsed)
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if str(key).casefold() in _EVIDENCE_SOURCE_REF_KEYS:
+                continue
+            if _contains_local_runtime_leak_outside_evidence_refs(item):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(
+            _contains_local_runtime_leak_outside_evidence_refs(item)
+            for item in value
+        )
+    return False
 
 
 @dataclass(frozen=True, slots=True)
