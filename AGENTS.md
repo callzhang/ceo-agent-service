@@ -1,5 +1,9 @@
 # CEO Agent Service Instructions
 
+## Explicit approval for audit and safety behavior
+
+Do not add audit, review, authorization, confirmation, safety-gate, effect-reconciliation, or other safety-policy logic as an incidental part of an unrelated feature or bug fix. Any such logic must be proposed and confirmed as a separate, explicitly scoped change before implementation. Keep its code, tests, documentation, and commit separate from the surrounding functional change; do not hide or silently introduce it through shared helpers, routing, retry, or status handling.
+
 ## Local Service Reload
 
 This project is normally run by launchd as `com.ceo-agent-service.main`. Python code changes are not hot-reloaded by the running service process.
