@@ -9178,7 +9178,7 @@ def _attempt_detail_body(
         reply_title="生成回复",
         reply_text=_attempt_detail_reply_text(attempt),
         side_html=(
-            f"{_needs_human_decision_card(attempt, agent_runs)}"
+            f"{_needs_human_decision_card(attempt, agent_runs, reply_task)}"
             f"{_feedback_form(attempt)}"
             f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         ),
@@ -9703,8 +9703,15 @@ def _rerun_card(attempt: ReplyAttempt) -> str:
 def _needs_human_decision_card(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
+    reply_task: ReplyTask | None = None,
 ) -> str:
     if attempt.send_status != "needs_human" or attempt.channel != "dingtalk":
+        return ""
+    if (
+        reply_task is not None
+        and reply_task.manual_rerun_attempt_id == attempt.id
+        and reply_task.status in {"pending", "processing"}
+    ):
         return ""
     terminal_run = next(
         (run for run in agent_runs if run.id == attempt.agent_run_id),
@@ -10534,7 +10541,10 @@ def _attempt_status_card(
         ),
         "未记录事项摘要",
     )[:180]
-    decision_required = active_attempt.send_status == "needs_human"
+    decision_required = (
+        active_attempt.send_status == "needs_human"
+        and (attention is None or attention.kind == "needs_manager")
+    )
     decision_detail = ""
     if decision_required:
         decision_summary = (

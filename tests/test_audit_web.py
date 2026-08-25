@@ -8744,6 +8744,54 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
     assert "两个管理决策都会改变外部状态。" not in html
 
 
+def test_oa_manual_rerun_hides_old_human_choices_on_attempt_page(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-oa-rerun",
+        conversation_title="审批待办",
+        trigger_message_id="msg-oa-rerun",
+        trigger_sender="Derek OA",
+        trigger_text=(
+            "审批待办\n"
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+        ),
+        action="oa_approval",
+        sensitivity_kind="general",
+        audit_summary="旧审计曾要求选择同意或拒绝。",
+        send_status="needs_human",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_url=(
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+        ),
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="live_evidence_conflict",
+    )
+    store.enqueue_manual_rerun_reply_task(
+        conversation_id="cid-oa-rerun",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id="msg-oa-rerun",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办",
+        trigger_message_json="{}",
+        oa_url=(
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+        ),
+        attempt_id=attempt_id,
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "正在按钉钉 OA 审批技能重新读取当前审批" in html
+    assert "需要你的判断" not in html
+    assert "需要你决策：</strong>否" in html
+
+
 def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
