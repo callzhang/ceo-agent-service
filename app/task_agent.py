@@ -125,6 +125,29 @@ class TaskAgentRunner:
             session_scope_id=session_scope_id,
         )
 
+    def repair_validation(
+        self,
+        work_item: WorkItem,
+        candidate_prompt: str,
+        decision: TaskAgentDecision,
+        *,
+        validation_error: str,
+        memory_issue: str = "",
+        run_id: int,
+        session_scope_id: str,
+    ) -> TaskAgentDecision:
+        return self.codex.decide(
+            prompt=build_task_agent_validation_repair_prompt(
+                work_item,
+                candidate_prompt,
+                decision,
+                validation_error=validation_error,
+                memory_issue=memory_issue,
+            ),
+            workload_key=str(run_id),
+            session_scope_id=session_scope_id,
+        )
+
 
 class TaskAgentCodexRunner:
     def __init__(
@@ -381,7 +404,39 @@ Previous rejected decision JSON:
 
 TaskAgentDecision Pydantic JSON schema:
 {decision_schema}
+    """
+
+
+def build_task_agent_validation_repair_prompt(
+    work_item: WorkItem,
+    candidate_prompt: str,
+    decision: TaskAgentDecision,
+    *,
+    validation_error: str,
+    memory_issue: str = "",
+) -> str:
+    return (
+        build_task_agent_prompt(
+            work_item,
+            candidate_prompt,
+            memory_issue=memory_issue,
+        )
+        + f"""
+
+Validation repair:
+The previous decision was rejected before any project, TODO, follow-up, or
+external message was created because: {validation_error}
+
+This repair is read-only. Call memory_recall now with a focused query about
+this work item, its project, prior commitments, and owner context. Do not
+reuse the previous decision's memory_recall_used flag unless the new session
+receipt contains the tool call. Return a complete replacement decision after
+the tool call; do not send messages or perform writes.
+
+Previous rejected decision JSON:
+{decision.model_dump_json(indent=2)}
 """
+    )
 
 
 def render_follow_up_candidate_prompt(
@@ -495,19 +550,65 @@ def process_work_item(
             _audit_events_include_memory_tool_discovery(audit_tool_events)
             and _decision_reports_memory_runtime_unavailable(decision)
         )
-        _validate_memory_recall_tool_event(
-            decision,
-            audit_tool_events,
-            memory_issue=memory_issue,
-            memory_runtime_unavailable=memory_runtime_unavailable,
-        )
-        _validate_task_agent_decision(
-            decision,
-            memory_issue=memory_issue,
-            memory_recall_attempted=memory_recall_attempted,
-            memory_runtime_unavailable=memory_runtime_unavailable,
-            now=now,
-        )
+        try:
+            _validate_memory_recall_tool_event(
+                decision,
+                audit_tool_events,
+                memory_issue=memory_issue,
+                memory_runtime_unavailable=memory_runtime_unavailable,
+            )
+            _validate_task_agent_decision(
+                decision,
+                memory_issue=memory_issue,
+                memory_recall_attempted=memory_recall_attempted,
+                memory_runtime_unavailable=memory_runtime_unavailable,
+                now=now,
+            )
+        except ValueError as exc:
+            if str(exc) != "non-discard task decision requires memory_recall tool event":
+                raise
+            store.finish_task_agent_run(
+                active_run_id,
+                status="failed",
+                codex_session_id=codex_session_id,
+                decision_json=_json_dumps(decision.model_dump(mode="json")),
+                audit_summary=decision.update_summary,
+                memory_recall_used=decision.memory_recall_used,
+                error=str(exc),
+            )
+            active_run_id = store.begin_task_agent_run(work_input.id)
+            session_scope_id = f"task:{active_run_id}"
+            decision = runner.repair_validation(
+                work_item,
+                candidate_prompt,
+                decision,
+                validation_error=str(exc),
+                memory_issue=memory_issue,
+                run_id=active_run_id,
+                session_scope_id=session_scope_id,
+            )
+            codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
+            audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
+            memory_recall_attempted = _audit_events_include_memory_recall(
+                audit_tool_events
+            )
+            memory_runtime_unavailable = (
+                _audit_events_include_memory_tool_discovery(audit_tool_events)
+                and _decision_reports_memory_runtime_unavailable(decision)
+            )
+            _validate_memory_recall_tool_event(
+                decision,
+                audit_tool_events,
+                memory_issue=memory_issue,
+                memory_runtime_unavailable=memory_runtime_unavailable,
+            )
+            _validate_task_agent_decision(
+                decision,
+                memory_issue=memory_issue,
+                memory_recall_attempted=memory_recall_attempted,
+                memory_runtime_unavailable=memory_runtime_unavailable,
+                now=now,
+            )
         try:
             _validate_owner_changes(store, decision)
         except OwnerResolutionRequired as exc:

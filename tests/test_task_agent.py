@@ -3123,7 +3123,7 @@ def test_non_discard_decision_requires_memory_context(tmp_path):
         )
 
 
-def test_process_work_item_requires_actual_memory_recall_tool_event(
+def test_process_work_item_repairs_missing_memory_recall_tool_event(
     tmp_path,
     monkeypatch,
 ):
@@ -3136,8 +3136,7 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(
         payload_json=item.model_dump_json(),
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]
-    codex = FakeCodexWithAuditEvents(
-        {
+    payload = {
             "action": "create_project",
             "project": {
                 "title": "售前知识库建设",
@@ -3152,12 +3151,24 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(
             "merge_reason": "事项需要持续跟进。",
             "memory_recall_used": True,
             "confidence": 0.8,
-        },
-        audit_tool_events=[{"tool": "exec_command", "command": "rg 售前"}],
-    )
+    }
 
-    with pytest.raises(ValueError, match="memory_recall tool event"):
-        process_work_item(store, TaskAgentRunner(codex), work_input)
+    class RepairingCodex(FakeCodexWithAuditEvents):
+        def __init__(self):
+            super().__init__(payload, audit_tool_events=[])
+            self.calls = 0
+
+        def decide(self, **kwargs):
+            self.calls += 1
+            self.last_audit_tool_events = (
+                [{"tool": "exec_command", "command": "rg 售前"}]
+                if self.calls == 1
+                else [{"tool": "memory_recall", "query": "售前知识库"}]
+            )
+            return TaskAgentDecision.model_validate(self.payload)
+
+    codex = RepairingCodex()
+    process_work_item(store, TaskAgentRunner(codex), work_input)
 
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         input_row = db.execute(
@@ -3170,9 +3181,9 @@ def test_process_work_item_requires_actual_memory_recall_tool_event(
             from task_agent_runs
             """
         ).fetchone()
-    assert input_row[0] == "failed"
-    assert "memory_recall tool event" in input_row[1]
-    assert run_row == (input_id, "", "", 0)
+    assert input_row == ("done", "")
+    assert run_row == (input_id, "task-session-1", "创建项目。", 1)
+    assert codex.calls == 2
 
 
 def test_process_work_item_allows_memory_recall_runtime_failure_with_tool_event(
