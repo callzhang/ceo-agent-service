@@ -9718,8 +9718,7 @@ class AutoReplyStore:
                 """
                 select tasks.execution_generation, tasks.status as task_status,
                        runs.role as run_role, runs.status as run_status,
-                       runs.side_effect_state,
-                       runs.structured_error_json
+                       runs.side_effect_state
                 from reply_tasks as tasks
                 join agent_runs as runs on runs.reply_task_id=tasks.id
                 where tasks.id=? and runs.id=?
@@ -9735,18 +9734,12 @@ class AutoReplyStore:
             ).fetchone()
             retryable = False
             if row is not None:
-                try:
-                    structured_error = json.loads(row["structured_error_json"])
-                except json.JSONDecodeError:
-                    structured_error = {}
                 retryable = (
                     row["task_status"] == "failed"
                     and row["run_role"]
                     in {AgentRole.CONSUMER.value, AgentRole.AUDIT.value}
                     and row["run_status"] == "failed"
                     and row["side_effect_state"] == "none"
-                    and isinstance(structured_error, dict)
-                    and structured_error.get("retryable") is True
                 )
             unsafe_generation = None
             if row is not None:
@@ -9829,8 +9822,6 @@ class AutoReplyStore:
                   and runs.role='consumer'
                   and runs.status='failed'
                   and runs.side_effect_state='none'
-                  and json_valid(runs.structured_error_json)=1
-                  and json_extract(runs.structured_error_json, '$.retryable')=1
                   and not exists (
                       select 1
                       from agent_runs as generation_runs
@@ -9891,8 +9882,6 @@ class AutoReplyStore:
                   and runs.role='audit'
                   and runs.status='failed'
                   and runs.side_effect_state='none'
-                  and json_valid(runs.structured_error_json)=1
-                  and json_extract(runs.structured_error_json, '$.retryable')=1
                   and parents.reply_task_id=tasks.id
                   and parents.execution_generation=tasks.execution_generation
                   and parents.role='consumer'

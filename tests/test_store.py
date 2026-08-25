@@ -6352,7 +6352,7 @@ def test_recover_native_codex_auth_resumes_orphaned_recovery_lock(tmp_path):
 
 @pytest.mark.parametrize(
     ("retryable", "side_effect_state"),
-    ((False, "none"), (True, "unknown"), (True, "confirmed")),
+    ((True, "unknown"), (True, "confirmed")),
 )
 def test_retry_failed_reply_task_rejects_unsafe_runs(
     tmp_path: Path,
@@ -6401,6 +6401,44 @@ def test_retry_failed_reply_task_rejects_unsafe_runs(
         )
 
     assert store.get_reply_task(task_id).status == "failed"
+
+
+def test_retry_failed_reply_task_reopens_effect_free_failure_without_retryable_flag(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    claim = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    )
+    store.fail_agent_run(
+        claim.run.id,
+        {"code": "runtime_result_validation_failed"},
+        owner="worker-1",
+    )
+    store.fail_reply_task(
+        task_id,
+        "runtime_result_validation_failed",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    recovered = store.retry_failed_reply_task(
+        task_id,
+        claim.run.id,
+        reason="automatic_effect_free_consumer_retry",
+    )
+
+    assert recovered.status == "pending"
+    assert recovered.execution_generation == task.execution_generation
 
 
 def test_retry_failed_reply_task_rejects_exact_delivery_ledger(tmp_path: Path):
