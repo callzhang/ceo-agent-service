@@ -27,6 +27,14 @@
 
   <key>EnvironmentVariables</key>
   <dict>
+    <key>HTTP_PROXY</key>
+    <string>http://127.0.0.1:7897</string>
+    <key>HTTPS_PROXY</key>
+    <string>http://127.0.0.1:7897</string>
+    <key>ALL_PROXY</key>
+    <string>socks5h://127.0.0.1:7897</string>
+    <key>NO_PROXY</key>
+    <string>localhost,127.0.0.1,::1,*.local,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12</string>
     <key>CEO_SERVICE_ROOT</key>
     <string>/Users/derek/Documents/Projects/ceo-agent-service-release</string>
     <key>CEO_CONDA_PREFIX</key>
