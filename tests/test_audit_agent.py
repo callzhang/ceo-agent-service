@@ -1710,7 +1710,7 @@ def test_audit_rejects_malformed_nested_output_locally(setup):
         )
     )
 
-    with pytest.raises(ResultParseError, match="malformed or does not match"):
+    with pytest.raises(ResultParseError, match="no valid typed result JSON found in Codex JSONL"):
         AuditAgentRunner(
             store=store,
             workspace=Path("/workspace"),
