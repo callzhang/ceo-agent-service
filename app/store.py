@@ -9724,7 +9724,7 @@ class AutoReplyStore:
                 """
                 select tasks.execution_generation, tasks.status as task_status,
                        runs.role as run_role, runs.status as run_status,
-                       runs.side_effect_state, tasks.error as task_error
+                       runs.side_effect_state
                 from reply_tasks as tasks
                 join agent_runs as runs on runs.reply_task_id=tasks.id
                 where tasks.id=? and runs.id=?
@@ -9746,7 +9746,6 @@ class AutoReplyStore:
                     in {AgentRole.CONSUMER.value, AgentRole.AUDIT.value}
                     and row["run_status"] == "failed"
                     and row["side_effect_state"] == "none"
-                    and row["task_error"] == "image_dependency_unavailable"
                 )
             unsafe_generation = None
             if row is not None:
