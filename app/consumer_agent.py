@@ -101,6 +101,11 @@ converts it into a valid ConsumerAgentResult JSON object after strict validation
 Nested proposal data is supplied directly in the proposal field and is strictly
 validated before it can affect execution.
 
+An unavailable image is not by itself a failure. Continue using the trigger
+text and other readable materials whenever they are sufficient to decide and
+complete the requested task. Return a missing-information failure only when
+the requested decision genuinely cannot be made without the image content.
+
 Wire field encoding: proposal is an object only when outcome is proposal;
 otherwise it must be null. decision_options is an array containing two to four
 mutually exclusive options only when outcome is needs_human, and [] for every
