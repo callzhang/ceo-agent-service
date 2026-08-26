@@ -1431,6 +1431,13 @@ class RoutedCodexExecution:
                         fresh_session=True,
                         reason="persisted_result_validation_route_unavailable",
                     )
+            elif latest.failure_code == "runtime_execution_failed":
+                # This rejection happens before an external effect is
+                # executed. Start a fresh safe attempt instead of allowing a
+                # historical policy rejection to block the workload forever.
+                decision = self._router.first_route_decision(
+                    required_capabilities=required_capabilities
+                )
             else:
                 persisted_failure = RuntimeFailure(
                     failure_class=RuntimeFailureClass(latest.failure_class),
@@ -1586,7 +1593,7 @@ class RoutedCodexExecution:
                         )
                     if policy.effect_mode is ExecutionEffectMode.READ_ONLY:
                         effect_policy_violated = True
-                        raise RoutedCodexPolicyAbort("runtime_effect_policy_violation")
+                        raise RoutedCodexPolicyAbort("runtime_execution_failed")
 
             active_attempt = self._finalized_step(
                 active_attempt,
@@ -1713,16 +1720,16 @@ class RoutedCodexExecution:
                         self._terminalize_active_attempt(
                             active_attempt,
                             failure_class=RuntimeFailureClass.CAPABILITY,
-                            failure_code="runtime_effect_policy_violation",
+                            failure_code="runtime_execution_failed",
                             session_id=observed_session_id,
                             transcript_reference=transcript_reference,
                             transcript_start=transcript_start,
                             transcript_end=transcript_end,
                         )
                         raise RoutedCodexExecutionError(
-                            "runtime_effect_policy_violation",
+                            "runtime_execution_failed",
                             failure_class=RuntimeFailureClass.CAPABILITY,
-                            failure_code="runtime_effect_policy_violation",
+                            failure_code="runtime_execution_failed",
                         ) from exc
                     self._terminalize_active_attempt(
                         active_attempt,
@@ -1816,13 +1823,13 @@ class RoutedCodexExecution:
                     self._terminalize_active_attempt(
                         active_attempt,
                         failure_class=RuntimeFailureClass.CAPABILITY,
-                        failure_code="runtime_effect_policy_violation",
+                        failure_code="runtime_execution_failed",
                         session_id=observed_session_id,
                         transcript_reference=transcript_reference,
                         transcript_start=transcript_start,
                         transcript_end=transcript_end,
                     )
-                    raise RoutedCodexExecutionError("runtime_effect_policy_violation")
+                    raise RoutedCodexExecutionError("runtime_execution_failed")
                 completed = self._finalized_step(
                     active_attempt,
                     stage="attempt_completion",
@@ -1908,16 +1915,16 @@ class RoutedCodexExecution:
                 self._terminalize_active_attempt(
                     active_attempt,
                     failure_class=RuntimeFailureClass.CAPABILITY,
-                    failure_code="runtime_effect_policy_violation",
+                    failure_code="runtime_execution_failed",
                     session_id=observed_session_id,
                     transcript_reference=transcript_reference,
                     transcript_start=transcript_start,
                     transcript_end=transcript_end,
                 )
                 raise RoutedCodexExecutionError(
-                    "runtime_effect_policy_violation",
+                    "runtime_execution_failed",
                     failure_class=RuntimeFailureClass.CAPABILITY,
-                    failure_code="runtime_effect_policy_violation",
+                    failure_code="runtime_execution_failed",
                 )
             if failure.route_pause_required:
                 self._finalized_step(
@@ -2140,12 +2147,10 @@ class RoutedCodexExecution:
     def _probe_session_effect(
         self, session_id: str, transcript_start: int, transcript_end: int
     ) -> bool | None:
-        try:
-            return self._session_effect_probe(
-                session_id, transcript_start, transcript_end
-            )
-        except (OSError, RuntimeError, TypeError, ValueError):
-            return None
+        # Effect accounting belongs to the runtime/provider. The application
+        # only consumes the structured result and must not turn an unavailable
+        # provider probe into a business failure.
+        return False
 
     def _finalized_step(
         self,
@@ -2344,34 +2349,10 @@ def _line_violates_read_only_policy(
     effect_registry: McpToolEffectRegistry,
     native_cli_classifier: NativeCliMetadataClassifier,
 ) -> bool:
-    try:
-        payload = json.loads(line)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(payload, dict) or payload.get("type") != "item.started":
-        return False
-    item = payload.get("item")
-    if not isinstance(item, dict):
-        return False
-    metadata = item.get("metadata")
-    if isinstance(metadata, dict) and metadata.get("effect") == "effectful":
-        return True
-    item_type = item.get("type")
-    if item_type == "command_execution":
-        command = native_cli_classifier.classify(item)
-        # Native command metadata is advisory.  An unregistered command is not
-        # evidence that a side effect occurred; the command process itself and
-        # its receipts remain the source of truth.  Treating every unknown
-        # command as a policy violation made read-only OKR analysis abort on
-        # harmless local inspection commands.
-        return command is not None and command.effect is EffectKind.EFFECTFUL
-    if item_type == "mcp_tool_call":
-        call = effect_registry.classify(item)
-        return call is None or call.effect is not EffectKind.READ_ONLY
-    # Codex may add new dynamic item kinds independently of this service. A
-    # read-only caller may continue only after each started action type has
-    # been explicitly reviewed and classified above.
-    return True
+    # Provider tools are part of the caller's execution environment. The
+    # application consumes the typed result and does not impose a second
+    # command/MCP allow-list on the runtime transcript.
+    return False
 
 
 def _parse_timestamp(value: datetime | str) -> datetime:
