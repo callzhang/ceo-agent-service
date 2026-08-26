@@ -1616,22 +1616,25 @@ def _enum_value(value: object) -> object:
 
 def _task_decision_text_candidates(payload: object) -> list[str]:
     candidates: list[str] = []
-    if not isinstance(payload, dict):
-        return candidates
-    for key in ("message", "last_agent_message", "content", "text"):
-        value = payload.get(key)
+
+    def visit(value: object) -> None:
         if isinstance(value, str):
             candidates.append(value)
-        elif isinstance(value, list):
+            return
+        if isinstance(value, list):
             for item in value:
-                if isinstance(item, dict) and isinstance(item.get("text"), str):
-                    candidates.append(item["text"])
-    item = payload.get("item")
-    if isinstance(item, dict):
-        candidates.extend(_task_decision_text_candidates(item))
-    nested = payload.get("payload")
-    if isinstance(nested, dict):
-        candidates.extend(_task_decision_text_candidates(nested))
+                visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+        for key in ("message", "last_agent_message", "content", "text"):
+            if key in value:
+                visit(value[key])
+        for key in ("item", "payload"):
+            if key in value:
+                visit(value[key])
+
+    visit(payload)
     return candidates
 
 

@@ -12,8 +12,41 @@ from app.task_agent import (
     build_owner_resolution_prompt,
     build_task_agent_prompt,
     process_work_item,
+    _parse_task_agent_decision,
 )
 from app.task_models import TaskAgentDecision, WorkItem
+
+
+def test_task_agent_parser_uses_valid_result_after_failed_tool_event():
+    decision = {
+        "action": "skip",
+        "skip_reason": "No durable work was identified.",
+        "memory_recall_used": True,
+    }
+    raw = "\n".join(
+        [
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "item_completed",
+                        "item": {"type": "McpToolCall", "status": "failed"},
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "last_agent_message": json.dumps(decision),
+                    },
+                }
+            ),
+        ]
+    )
+
+    assert _parse_task_agent_decision(raw) == TaskAgentDecision.model_validate(decision)
 
 
 class FakeCodex:
