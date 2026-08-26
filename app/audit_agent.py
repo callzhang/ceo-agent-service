@@ -159,11 +159,16 @@ class AuditAgentRunner:
             return skill_failure
         recipient_type_mismatches = _typed_direct_recipient_mismatches(context)
         risk_control_mismatches = _external_boundary_mismatches(context)
-        if (recipient_type_mismatches or risk_control_mismatches) and not frozen_delivery_retry:
+        if risk_control_mismatches:
             return self._return_invalid_candidate(
                 claim.run,
                 recipient_type_mismatches=recipient_type_mismatches,
                 risk_control_mismatches=risk_control_mismatches,
+            )
+        if recipient_type_mismatches and not frozen_delivery_retry:
+            return self._return_invalid_candidate(
+                claim.run,
+                recipient_type_mismatches=recipient_type_mismatches,
             )
         executed = self._execute_claimed(
             task,
@@ -1232,6 +1237,23 @@ def _typed_direct_recipient_mismatches(
             continue
         if descriptor.target_identifiers.get("user") == open_dingtalk_id:
             mismatches.append(index)
+    return tuple(mismatches)
+
+
+def _external_boundary_mismatches(
+    context: AuditTurnContext,
+) -> tuple[tuple[int, tuple[str, ...]], ...]:
+    """Return marked actions whose exact outbound body omits a risk control."""
+
+    mismatches: list[tuple[int, tuple[str, ...]]] = []
+    for index, action in enumerate(context.proposal.actions):
+        boundary = action.external_boundary
+        if boundary is None:
+            continue
+        argv = native_command_argv({"type": "command_execution", **action.payload})
+        missing = missing_external_boundary_controls_from_argv(argv, boundary)
+        if missing:
+            mismatches.append((index, missing))
     return tuple(mismatches)
 
 
