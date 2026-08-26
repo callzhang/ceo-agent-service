@@ -48,7 +48,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
         {
             "type": "object",
             "properties": {
-                "outcome": {"const": "revision_required"},
+                "outcome": {"const": "feedback_provided"},
                 "side_effect_state": {"const": "none"},
                 "feedback": {"type": "object"},
                 "external_result": null_value,
@@ -57,8 +57,8 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
         {
             "type": "object",
             "properties": {
-                "outcome": {"const": "unknown"},
-                "side_effect_state": {"const": "unknown"},
+                "outcome": {"const": "failed"},
+                "side_effect_state": {"const": "none"},
                 "feedback": null_value,
                 "external_result": null_value,
             }
@@ -66,16 +66,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
         {
             "type": "object",
             "properties": {
-                "outcome": {"const": "reconciled"},
-                "side_effect_state": {"const": "unknown"},
-                "feedback": null_value,
-                "external_result": null_value,
-            }
-        },
-        {
-            "type": "object",
-            "properties": {
-                "outcome": {"enum": ["needs_human", "failed"]},
+                "outcome": {"const": "needs_human"},
                 "side_effect_state": {"const": "none"},
                 "feedback": null_value,
                 "external_result": null_value,
@@ -189,12 +180,15 @@ class ConsumerAgentResult(BaseModel):
 
 class AuditOutcome(StrEnum):
     EXECUTED = "executed"
-    REVISION_REQUIRED = "revision_required"
+    FEEDBACK_PROVIDED = "feedback_provided"
+    # Backward compatible Python alias. New wire and persisted results use
+    # feedback_provided so the outcome describes the action that occurred.
+    REVISION_REQUIRED = "feedback_provided"
     NEEDS_HUMAN = "needs_human"
     DRY_RUN = "dry_run"
     FAILED = "failed"
-    UNKNOWN = "unknown"
-    RECONCILED = "reconciled"
+    UNKNOWN = "failed"
+    RECONCILED = "failed"
 
 
 class ReconciliationDisposition(StrEnum):
@@ -253,6 +247,8 @@ class AuditAgentResult(BaseModel):
     @field_validator("outcome", mode="before")
     @classmethod
     def accept_json_outcome(cls, value: object) -> object:
+        if isinstance(value, str) and value == "revision_required":
+            value = "feedback_provided"
         return AuditOutcome(value) if isinstance(value, str) else value
 
     @field_validator("side_effect_state", mode="before")
@@ -272,9 +268,9 @@ class AuditAgentResult(BaseModel):
             raise ValueError("reconciliation action indexes must be unique")
         if self.outcome is AuditOutcome.REVISION_REQUIRED:
             if self.feedback is None or self.external_result is not None:
-                raise ValueError("revision_required needs feedback and no result")
+                raise ValueError("feedback_provided needs feedback and no result")
         elif self.feedback is not None:
-            raise ValueError("feedback is only valid for revision_required")
+            raise ValueError("feedback is only valid for feedback_provided")
         if self.outcome is AuditOutcome.EXECUTED:
             if (
                 self.external_result is None
@@ -283,14 +279,11 @@ class AuditAgentResult(BaseModel):
                 raise ValueError("executed needs confirmed external result")
         elif self.external_result is not None:
             raise ValueError("external result is only valid for executed")
-        if self.outcome in {AuditOutcome.UNKNOWN, AuditOutcome.RECONCILED}:
-            if self.side_effect_state is not SideEffectState.UNKNOWN:
-                raise ValueError("unknown/reconciled outcome needs unknown side effect")
-        elif self.outcome is not AuditOutcome.EXECUTED:
+        if self.outcome is not AuditOutcome.EXECUTED:
             if self.side_effect_state is not SideEffectState.NONE:
                 raise ValueError("non-executed result cannot claim a side effect")
-        if self.outcome is not AuditOutcome.RECONCILED and self.reconciliation:
-            raise ValueError("reconciliation entries are only valid for reconciled outcome")
+        if self.reconciliation:
+            raise ValueError("reconciliation entries are no longer part of the application result")
         if self.outcome is AuditOutcome.NEEDS_HUMAN:
             if not 2 <= len(self.decision_options) <= 4:
                 raise ValueError("needs_human requires two to four decision options")

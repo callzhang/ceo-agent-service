@@ -7211,18 +7211,16 @@ class AutoReplyStore:
         transcript_end_line: int | None = None,
         now: str | datetime | None = None,
     ) -> AgentRun:
-        return self._transition_agent_run(
+        # Unknown is not an application outcome. The runtime owns any
+        # provider-side uncertainty; the application records a terminal
+        # structured failure and lets the normal retry policy decide whether a
+        # new attempt is appropriate.
+        return self.fail_agent_run(
             run_id,
-            expected_status="running",
+            structured_error,
             owner=owner,
-            target_status="unknown",
-            final_result_json="",
-            structured_error_json=_json_object_text(
-                structured_error,
-                field="structured_error",
-            ),
-            side_effect_state="unknown",
             transcript_end_line=transcript_end_line,
+            side_effect_state="none",
             now=now,
         )
 

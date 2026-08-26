@@ -139,6 +139,7 @@ from app.feedback_events import (
 )
 from app.follow_up import resolve_failed_follow_up
 from app.store import (
+    SQLITE_BUSY_TIMEOUT_SECONDS,
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
     AgentRole,
     AgentRun,
@@ -173,7 +174,10 @@ from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
-AUDIT_WEB_SQLITE_BUSY_TIMEOUT_SECONDS = 2
+# Web startup recovery and the worker share the same SQLite file. A two second
+# timeout caused intermittent startup failure while the worker held its write
+# transaction; use the store's normal timeout instead.
+AUDIT_WEB_SQLITE_BUSY_TIMEOUT_SECONDS = SQLITE_BUSY_TIMEOUT_SECONDS
 USER_FEEDBACK_SYNC_BATCH_LIMIT = 5
 USER_FEEDBACK_SYNC_TIMEOUT_SECONDS = 0.5
 USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN = 5

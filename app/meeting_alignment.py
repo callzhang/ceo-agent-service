@@ -688,7 +688,7 @@ def _analyze_meeting_job(
             }
             or exc.code
             in {
-                "runtime_effect_policy_violation",
+                "runtime_execution_failed",
                 "runtime_result_validation_failed",
                 "runtime_result_validation_retry_consumed",
                 "runtime_session_conflict",

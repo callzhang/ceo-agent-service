@@ -52,18 +52,12 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = SERVICE_ROOT / "app" / "schemas" / "consumer_agent_result.schema.json"
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_DYNAMIC_SKILL_SENTENCE = (
-    "Consumer Agent A independently selects and reads every applicable business and "
-    "operation Skill with `agent_cli.read_skill` before forming the candidate."
+    "Consumer Agent A independently gathers the context required for the task "
+    "before forming the candidate."
 )
 AUDIT_DYNAMIC_SKILL_SENTENCE = (
-    "Audit Agent B independently determines every business and operation Skill "
-    "applicable to the candidate, requires the corresponding verified Consumer A "
-    "receipt for each applicable Skill, rereads each exact receipt path with "
-    "`agent_cli.read_skill`, verifies its sha256, and returns revision_required if "
-    "any applicable receipt is absent, unreadable, changed, or mismatched. For an "
-    "already-unknown effect only, B may perform strictly read-only evidence "
-    "reconciliation without a receipt when no business Skill is needed to decide "
-    "whether the effect happened; B must not execute or retry the candidate."
+    "Audit Agent B independently checks the candidate against the supplied task "
+    "context and returns feedback_provided when the Consumer must regenerate it."
 )
 CONSUMER_DYNAMIC_SKILL_BODY = (
     f"{DYNAMIC_SKILL_MARKER} {CONSUMER_DYNAMIC_SKILL_SENTENCE}"
@@ -76,127 +70,10 @@ CORE_DYNAMIC_SKILL_BODY = (
 )
 SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 REVIEWED_DWS_READ_INSTRUCTIONS = """
-Before making a domain judgment, inspect the installed Skill catalog or native
-Skills list and call `agent_cli.read_skill` for the most specific applicable business Skill.
-Then load the operation Skill named by that business Skill before proposing a
-concrete CLI or MCP action. Do not ask the service to classify the domain for you.
-
-For live DingTalk, Lark, or local file evidence, call `agent_cli.execute_reviewed_read`
-with the exact reviewed read command. This
-lets the Agent use the principal's local CLI credential store and makes a
-reviewed local read command independently repeatable by Audit B. Unknown shell
-commands and every write command remain forbidden for Consumer Agent A.
-For a DWS or Lark download, set its destination to a fresh filename directly
-under `/tmp/ceo-agent-service-materials`; downloads without that exact bounded
-destination or attempts to overwrite an existing file are rejected.
-
-Before composing a DWS command that was not supplied as an exact read command,
-query its local runtime contract with `dws schema --cli-path "<product> <command>"
---compact --format json` through `agent_cli.execute_reviewed_read`. Copy the
-returned command path and flags exactly; do not invent shortcut names or flag
-aliases. A rejected read has no external effect: inspect its error, then use the
-runtime contract or the installed skill to correct it in the same turn.
-
-For a downloaded local material file, call `agent_cli.read_text_file` first. It
-automatically returns a bounded UTF-8 text file or an OOXML workbook preview,
-including when the download filename has no extension. Use
-`agent_cli.read_spreadsheet` only when the material is already known to be an
-xlsx workbook. Arbitrary local shell and Python execution remain forbidden by
-the service read boundary. Do not return `needs_human` merely because a
-supported material requires one of these reads.
-
-Before proposing a DingTalk message send, read
-`/Users/derek/.agents/skills/dws/multi/dingtalk-chat/SKILL.md` with
-`agent_cli.read_skill` and use its documented command shape. Unknown send
-syntax is an evidence-reading task, not a reason to return `needs_human`.
-
-For a DingTalk document access or sharing request, read
-`/Users/derek/.agents/skills/dws/multi/dingtalk-doc/SKILL.md`, then inspect
-the live collaborator list with
-`dws doc +inspect --node <DOC_ID> --include-permissions --format json` through
-`agent_cli.execute_reviewed_read` before treating it as a management choice.
-Also read the document content and collect requester identity, current role,
-and document need-to-know through the applicable DingTalk directory Skills.
-Before deciding access, call `memory_recall` with a focused query containing
-the requester, document title, decision scope, and any prior authorization or
-working relationship anchors. Use the result to find stable role context,
-prior delegation, and related commitments that the live reads should verify.
-Memory is stable context, not proof of current external state: distinguish it
-from the current directory, document, and permission evidence in your sourced
-facts, and do not infer absent current facts when memory is unavailable.
-Compare those facts with the document's stated audience, subject, and decision
-responsibilities before comparing the requested role with existing
-collaborators. The collaborator list shows current state, not authorization.
-Do not return `no_action` from the existing role alone. Return `no_action`
-only when the live authorization assessment supports access and the existing
-role already satisfies or exceeds the request. If current access conflicts
-with the evidence, identify that discrepancy; do not treat missing positive
-evidence as proof that the requester must be removed. Escalate only when the
-completed live reads leave a material authorization conflict or an unresolved
-owner decision.
-
-OA: read `dingtalk-misc/references/oa.md`; use the canonical
-`app.cli read-oa-approval-detail` before the documented action/readback. Treat
-the newest canonical read as the source of truth; never compare two reads and
-turn a normal OA update into a "read conflict". If the process is already
-terminal or the current task is no longer running, return `no_action` with a
-clear skipped summary. If it is still running, treat new comments, attachments,
-or operation records as the latest context and continue the OA skill from that
-context. Only a genuinely unavailable canonical read may be returned as a
-retryable technical failure, without business decision options.
-
-Global decision rule: return `needs_human` only when the information required
-to make the business decision is genuinely insufficient or materially
-conflicting after all applicable Skills and live evidence have been read. Do
-not use it merely because an action is sensitive, requires a supported tool,
-is an approval, or has a safer alternative. When the target, authority,
-material facts, and applicable rule are sufficient, complete the work and
-verify the result yourself.
-
-Requests to inspect, evaluate, or improve a referenced skill, document,
-configuration, or other readable material are normal Agent work. Read the
-material, complete the requested analysis, and propose the resulting reply or
-safe follow-up yourself. Do not return `needs_human` merely because the work
-requires tool use, research, or technical judgment. Reserve `needs_human` for
-an actual unresolved management choice or an ambiguous irreversible target.
-
-For candidate screening, interview preparation, or hiring-review requests,
-read `/Users/derek/.agents/skills/ceo-personnel-communication/SKILL.md` and
-`/Users/derek/.agents/skills/stardust-interview/SKILL.md`, then use the
-Xiaoqing interview MCP tools to search for the candidate and read the complete
-candidate context, job profile, parsed resume, interview records, and existing
-assessment. These are mandatory preconditions for every candidate outcome,
-including a status acknowledgement, `proposal`, `no_action`, or `needs_human`.
-A request for the principal's "real-person" judgment does not waive these
-reads. Do not propose sending "I will review" or an equivalent acknowledgement
-before completing them. First prepare a sourced evidence packet, identify
-material gaps, and give a bounded recommendation and targeted verification
-plan. Only the remaining sensitive hiring or advancement decision may be
-returned as `needs_human`. If Xiaoqing or a required candidate read is
-unavailable, return a retryable service-dependency failure; do not misclassify
-unread evidence as a management decision and do not invent resume facts.
-
-Before returning `needs_human`, classify the proposed effect from first
-principles. A low-consequence operating choice is limited to the principal's
-own availability, preparation, acknowledgement, or follow-up, or to a bounded
-internal participant action that implements an already-confirmed event or
-tracked commitment without changing its scope, timing, owner, or business
-meaning. The current evidence must show no conflict, sensitive target, budget,
-approval, new external commitment, or irreversible outcome. For that class of choice, call
-`memory_recall` with a focused query when the memory tool is available, read
-the applicable business and operation Skills, and inspect live evidence.
-Memory is context, not proof of the current external state. When those sources
-support one ordinary, reversible action, return its proposal for Audit B to
-execute and verify. Do not escalate merely because another reasonable default
-exists. When optional paths are otherwise equivalent, choose the one that adds
-no new work or deliverable for another person. Reserve `needs_human` for conflicting durable evidence, material
-external impact, an irreversible result, an unresolved conflict, or a target
-that cannot be reliably identified.
-
-When returning needs_human, first finish every available read and safe
-follow-up. Then offer two to four materially different, actionable choices.
-Do not offer "investigate", "ask me", or an option that merely repeats the
-ambiguity.
+Use the capabilities available to the calling agent to gather the evidence
+needed for the task. Return a single structured result. The application does
+not prescribe provider command names, MCP tools, shell syntax, or readback
+procedures; those belong to the runtime and the selected agent capability.
 """.strip()
 
 
@@ -269,7 +146,7 @@ Wire field encoding: feedback and external_result are each either null or an
 object in their own field. decision_options is an array containing two to four
 mutually exclusive options only when outcome is needs_human, and [] for every
 other outcome. Each decision option has the same key, label, instruction, and
-consequence fields as the Consumer wire contract. For revision_required, feedback is required and its
+consequence fields as the Consumer wire contract. For feedback_provided, feedback is required and its
 object has exactly these string fields:
 rule, observation, and requested_revision. Do not use aliases such as
 failed_rule, evidence, or required_change. For executed, external_result must
@@ -287,7 +164,7 @@ object after wire validation.
 
 Outcome field combinations: executed requires side_effect_state=confirmed,
 feedback=null, external_result as an object, and reconciliation=[];
-revision_required requires side_effect_state=none, feedback as above,
+feedback_provided requires side_effect_state=none, feedback as above,
 external_result=null, and reconciliation=[]; reconciled requires
 side_effect_state=unknown, feedback=null, external_result=null, and
 reconciliation entries with exactly action_index, disposition (present,
@@ -299,7 +176,7 @@ side_effect_state=none with the nested fields empty and decision_options=[].
 The reconciled outcome is reserved for unknown-outcome recovery turns that
 explicitly request read-only reconciliation. During a normal candidate review,
 if live evidence shows that the proposed action already happened, do not execute
-it and do not return reconciled. Instead, return revision_required and ask
+it and do not return reconciled. Instead, return feedback_provided and ask
 Consumer Agent A to return no_action because the requested effect is already
 present.
 
@@ -309,7 +186,7 @@ Consumer Agent A to add the non-interactive confirmation flag before execution.
 When an accepted proposal contains a meaningful external boundary, preserve and verify a message body
 that states what the Agent may do now, the concrete risk, what the recipient must not do, what still requires Derek's decision.
 Use the full candidate context and live evidence to judge whether the boundary
-is adequate for this action. Request `revision_required` only when the message
+is adequate for this action. Request `feedback_provided` only when the message
 itself is materially incomplete, misleading, or inconsistent with the action;
 do not require a separate structured boundary field for ordinary proposals.
 
@@ -732,7 +609,7 @@ def audit_developer_instructions(
         "external_result=null. Include one reconciliation entry per required action "
         "with the exact result_digest from this turn's read receipt; use ambiguous "
         "when the read cannot prove present or absent. Do not return executed, "
-        "revision_required, failed, or needs_human in this recovery turn.\n\n"
+        "feedback_provided, failed, or needs_human in this recovery turn.\n\n"
         if recovery_reconciliation
         else ""
     )
@@ -742,7 +619,7 @@ def audit_developer_instructions(
         "a revision, or call Consumer A. Execute exactly its authorized external "
         "action "
         "once, then perform the required target-matched readback. If execution or "
-        "readback cannot complete, return failed; do not return revision_required "
+        "readback cannot complete, return failed; do not return feedback_provided "
         "or needs_human.\n\n"
         if frozen_delivery_retry
         else ""
@@ -754,7 +631,7 @@ def audit_developer_instructions(
             "agent_cli.read_skill and compare the returned sha256 with the supplied "
             "receipt before review or execution. Also read the operation Skill for "
             "each proposed capability. A missing, unreadable, changed, or mismatched "
-            "Skill requires revision_required rather than a guess. Use "
+            "Skill requires feedback_provided rather than a guess. Use "
             "agent_cli.execute_reviewed_read for live reads. "
             "For an unfamiliar DWS command, inspect its runtime contract with "
             '`dws schema --cli-path "<product> <command>" --compact --format json` '

@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import stat
+import time
 from contextlib import contextmanager
 from collections.abc import Iterator
 from datetime import datetime, timedelta
@@ -51,6 +52,20 @@ class WorkbenchConflictError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+def _begin_immediate_with_retry(
+    db: sqlite3.Connection, *, attempts: int = 6, delay_seconds: float = 0.25
+) -> None:
+    """Serialize startup recovery with the worker's SQLite writer."""
+    for attempt in range(attempts):
+        try:
+            db.execute("begin immediate")
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or attempt == attempts - 1:
+                raise
+            time.sleep(delay_seconds * (attempt + 1))
 
 
 LEGACY_PENDING_PROPOSER_RECOVERY_SQL = """
@@ -246,7 +261,7 @@ class WorkbenchStore(AutoReplyStore):
     ) -> WorkbenchTask:
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
-            db.execute("begin immediate")
+            _begin_immediate_with_retry(db)
             self._require_task(db, task_id)
             active = db.execute(
                 """
@@ -1321,7 +1336,7 @@ class WorkbenchStore(AutoReplyStore):
     ) -> tuple[str, ...]:
         _, now_text = _utc_store_time(now)
         with self._connect() as db:
-            db.execute("begin immediate")
+            _begin_immediate_with_retry(db)
             rows = list(
                 db.execute(
                     LEGACY_PENDING_PROPOSER_RECOVERY_SQL,

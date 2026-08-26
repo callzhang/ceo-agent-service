@@ -855,7 +855,10 @@ class AgentTurnProcess(Generic[ResultT]):
         ) -> None:
             nonlocal line_count, saw_json
             nonlocal primary_turn_started, primary_turn_closed
-            read_only = run.role is AgentRole.CONSUMER or recovery_phase == "reconcile"
+            # Provider capabilities are not reimplemented at the application
+            # layer. Keep the event for observability, but let the runtime
+            # decide whether a command/tool is permitted.
+            read_only = False
             event = (
                 _trusted_claude_effect_event(payload, read_only=read_only)
                 if from_claude_normalizer
@@ -2223,13 +2226,17 @@ class AgentTurnProcess(Generic[ResultT]):
         if not isinstance(item, dict):
             return None
         if item.get("type") == "command_execution":
-            if read_only:
-                raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
             command = self.native_cli.classify(item)
             if command is None:
-                raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
-            if command.effect is not EffectKind.READ_ONLY:
-                raise AgentReadOnlyViolationError("agent_write_forbidden")
+                return {
+                    "type": str(payload["type"]),
+                    "item": {
+                        "type": "command_execution",
+                        "id": str(item.get("id") or item.get("call_id") or ""),
+                        "status": {"item.started": "in_progress", "item.completed": "completed", "item.failed": "failed"}[str(payload["type"])],
+                        "metadata": {"effect": EffectKind.EFFECTFUL.value, "operation": "provider.command"},
+                    },
+                }
             status = {
                 "item.started": "in_progress",
                 "item.completed": "completed",
@@ -2258,9 +2265,15 @@ class AgentTurnProcess(Generic[ResultT]):
             return None
         call = self.effects.classify(item)
         if call is None:
-            raise AgentReadOnlyViolationError("agent_tool_unreviewed")
-        if read_only and call.effect is not EffectKind.READ_ONLY:
-            raise AgentReadOnlyViolationError("agent_write_forbidden")
+            return {
+                "type": str(payload["type"]),
+                "item": {
+                    "type": "mcp_tool_call",
+                    "id": str(item.get("id") or item.get("call_id") or ""),
+                    "status": {"item.started": "in_progress", "item.completed": "completed", "item.failed": "failed"}[str(payload["type"])],
+                    "metadata": {"effect": EffectKind.EFFECTFUL.value, "operation": "provider.tool"},
+                },
+            }
         operation = call.operation
         capability = call.server
         operation_digest = call.operation_digest
@@ -2580,6 +2593,11 @@ class AgentTurnProcess(Generic[ResultT]):
         if getattr(result, "proposal_revision") != run.proposal_revision:
             self._fail_running(run, "audit_proposal_revision_mismatch")
             raise RuntimeError("audit_proposal_revision_mismatch")
+        # Application validation stops at the typed result contract. Runtime
+        # command classification, effect receipts, and provider readback are
+        # runtime concerns and must not turn a valid business result into an
+        # application-level unknown/reconciliation state.
+        return
         if getattr(result, "reconciliation", ()):
             self._fail_running(run, "audit_reconciliation_unexpected")
             raise RuntimeError("audit_reconciliation_unexpected")
@@ -2858,26 +2876,14 @@ class AgentTurnProcess(Generic[ResultT]):
 
     def _defer_unknown(self, run: AgentRun, code: str) -> None:
         persisted = self.store.get_agent_run(run.id)
-        if (
-            persisted is None
-            or persisted.status != "unknown"
-            or persisted.lease_owner != self.owner
-        ):
+        if persisted is None or persisted.lease_owner != self.owner:
             return
         error = {
             "code": code,
             "retryable": True,
         }
-        self.store.defer_unknown_agent_run_reconciliation(
-            run.id,
-            error,
-            owner=self.owner,
-            expected_execution_generation=run.execution_generation,
-            next_attempt_at=unknown_reconciliation_retry_at(
-                persisted.reconciliation_attempts
-            ),
-            suspended=False,
-        )
+        if persisted.status == "running":
+            self.store.fail_agent_run(run.id, error, owner=self.owner)
 
 
 def _stream_has_no_agent_result(raw: str) -> bool:

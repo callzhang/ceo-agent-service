@@ -114,8 +114,8 @@ class _AuditExecutedWire(_AuditWireBase):
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
-class _AuditRevisionRequiredWire(_AuditWireBase):
-    outcome: Literal["revision_required"]
+class _AuditFeedbackProvidedWire(_AuditWireBase):
+    outcome: Literal["feedback_provided"]
     side_effect_state: Literal["none"]
     feedback: AuditFeedback
     external_result: None
@@ -154,34 +154,13 @@ class _AuditFailedWire(_AuditWireBase):
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
-class _AuditUnknownWire(_AuditWireBase):
-    outcome: Literal["unknown"]
-    side_effect_state: Literal["unknown"]
-    feedback: None
-    external_result: None
-    reconciliation: list[AuditReconciliation] = Field(max_length=0)
-    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
-
-
-class _AuditReconciledWire(_AuditWireBase):
-    outcome: Literal["reconciled"]
-    side_effect_state: Literal["unknown"]
-    feedback: None
-    external_result: None
-    reconciliation: list[AuditReconciliation] = Field(
-        json_schema_extra={"uniqueItems": True}
-    )
-    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
-
-
 AuditWirePayload = Annotated[
     _AuditExecutedWire
-    | _AuditRevisionRequiredWire
+    | _AuditFeedbackProvidedWire
     | _AuditNeedsHumanWire
     | _AuditDryRunWire
     | _AuditFailedWire
-    | _AuditUnknownWire
-    | _AuditReconciledWire,
+    ,
     Field(discriminator="outcome"),
 ]
 

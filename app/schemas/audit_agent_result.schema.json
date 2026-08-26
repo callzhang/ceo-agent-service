@@ -83,12 +83,13 @@
     "AuditOutcome": {
       "enum": [
         "executed",
-        "revision_required",
+        "feedback_provided",
+        "feedback_provided",
         "needs_human",
         "dry_run",
         "failed",
-        "unknown",
-        "reconciled"
+        "failed",
+        "failed"
       ],
       "title": "AuditOutcome",
       "type": "string"
@@ -195,7 +196,7 @@
     {
       "properties": {
         "outcome": {
-          "const": "revision_required"
+          "const": "feedback_provided"
         },
         "side_effect_state": {
           "const": "none"
@@ -212,10 +213,10 @@
     {
       "properties": {
         "outcome": {
-          "const": "unknown"
+          "const": "failed"
         },
         "side_effect_state": {
-          "const": "unknown"
+          "const": "none"
         },
         "feedback": {
           "type": "null"
@@ -229,27 +230,7 @@
     {
       "properties": {
         "outcome": {
-          "const": "reconciled"
-        },
-        "side_effect_state": {
-          "const": "unknown"
-        },
-        "feedback": {
-          "type": "null"
-        },
-        "external_result": {
-          "type": "null"
-        }
-      },
-      "type": "object"
-    },
-    {
-      "properties": {
-        "outcome": {
-          "enum": [
-            "needs_human",
-            "failed"
-          ]
+          "const": "needs_human"
         },
         "side_effect_state": {
           "const": "none"
