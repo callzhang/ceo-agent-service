@@ -1,5 +1,6 @@
 from pathlib import Path
 import plistlib
+import subprocess
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -39,7 +40,10 @@ def test_local_service_script_runs_single_main_service():
     assert "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS" not in content
     assert "CEO_TASK_DAILY_INTERVAL_SECONDS" not in content
     assert "CEO_OKR_LIVE_SOURCE_COMMAND" in content
-    assert "dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}" in content
+    assert "dingteam_okr_browser_source.py fetch --user-id " in content
+    assert "'{user_id}'" in content
+    assert "'{period_label}'" in content
+    assert 'if [[ -z "${CEO_OKR_LIVE_SOURCE_COMMAND:-}" ]]' in content
     assert "CEO_PRINCIPAL_NAME" not in content
     assert "CEO_MENTION_ALIASES" not in content
     assert "CEO_ASSISTANT_SIGNATURE" not in content
@@ -94,7 +98,24 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert "CEO_OKR_LIVE_SOURCE_COMMAND" in command[2]
     assert "CEO_CODEX_MODEL" not in command[2]
     assert "CEO_CODEX_MODEL_REASONING_EFFORT" not in command[2]
-    assert "dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}" in command[2]
+    assert "dingteam_okr_browser_source.py fetch --user-id " in command[2]
+    assert "'{user_id}'" in command[2]
+    assert "'{period_label}'" in command[2]
+    assert 'if [[ -z "${CEO_OKR_LIVE_SOURCE_COMMAND:-}" ]]' in command[2]
+    probe = subprocess.run(
+        [
+            "zsh",
+            "-fc",
+            command[2].split(" && exec ", 1)[0]
+            + '; print -r -- "$CEO_OKR_LIVE_SOURCE_COMMAND"',
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"HOME": "/tmp/ceo-test-home", "CEO_SERVICE_ROOT": "/tmp"},
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert "--user-id {user_id} --period-label {period_label}" in probe.stdout
     env = plist["EnvironmentVariables"]
     assert env["CEO_SERVICE_ROOT"] == (
         "/Users/derek/Documents/Projects/ceo-agent-service-release"
