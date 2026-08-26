@@ -9408,9 +9408,8 @@ def _attempt_reason_text(attempt: ReplyAttempt) -> str:
         "live_evidence_conflict",
         "oa_live_evidence_conflict",
     }:
-        return (
-            "审批所需的关键信息暂时不可用。系统没有执行同意、拒绝或退回；"
-            "请按钉钉 OA 审批技能重新读取当前详情和任务。"
+        raise RuntimeError(
+            f"unsupported legacy error code: {attempt.send_error.strip()}"
         )
     parts = []
     if attempt.audit_summary.strip():

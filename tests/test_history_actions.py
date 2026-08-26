@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.agent_contracts import DecisionOption
 from app.history import HistoryItem
 from app.history_actions import (
@@ -118,23 +120,19 @@ def test_internal_retry_code_is_rendered_as_readable_failure_reason():
     assert "consumer_retry_exhausted" not in state.reason
 
 
-def test_legacy_image_error_explains_text_fallback_and_sender_follow_up():
+def test_legacy_image_error_fails_loudly_instead_of_using_compatibility_mapping():
     attempt = _attempt(send_error="image_dependency_unavailable")
 
-    state = reply_history_attention(
-        attempt,
-        task=_task(status="failed", attempts=1),
-        decision_options=(),
-        side_effect_state="none",
-    )
-
-    assert state is not None
-    assert "图片暂时无法读取" in state.reason
-    assert "索要文字关键信息" in state.reason
-    assert "image_dependency_unavailable" not in state.reason
+    with pytest.raises(RuntimeError, match="unsupported legacy error code"):
+        reply_history_attention(
+            attempt,
+            task=_task(status="failed", attempts=1),
+            decision_options=(),
+            side_effect_state="none",
+        )
 
 
-def test_oa_evidence_conflict_is_rendered_as_automatic_recovery():
+def test_legacy_oa_conflict_fails_loudly_instead_of_using_compatibility_mapping():
     attempt = _attempt(
         action="oa_approval",
         oa_process_instance_id="proc-1",
@@ -149,17 +147,13 @@ def test_oa_evidence_conflict_is_rendered_as_automatic_recovery():
         available_at="2026-08-11 05:02:00",
     )
 
-    state = reply_history_attention(
-        attempt,
-        task=task,
-        decision_options=(),
-        side_effect_state="none",
-    )
-
-    assert state is not None
-    assert state.kind == "automatic_recovery"
-    assert state.reason == "审批所需的关键信息暂时不可用，系统没有执行审批动作。"
-    assert [action.key for action in state.actions] == ["details"]
+    with pytest.raises(RuntimeError, match="unsupported legacy error code"):
+        reply_history_attention(
+            attempt,
+            task=task,
+            decision_options=(),
+            side_effect_state="none",
+        )
 
 
 def test_manual_oa_rerun_replaces_old_human_choice_with_automatic_recovery():
