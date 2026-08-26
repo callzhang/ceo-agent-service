@@ -254,7 +254,11 @@ For an autonomous external action, the reply must state the risk control
 itself whenever the action has a meaningful boundary. The reply must state what the Agent may do now,
 the concrete risk, what the recipient must not do, and what still requires Derek's decision. State the
 exact boundary in the message body. Do not hide the boundary in a generic risk disclaimer. Audit B must
-preserve and verify it.
+preserve and verify it. For a meaningful boundary, set the proposal action's
+`external_boundary` object with exactly `allowed_now`, `concrete_risk`,
+`do_not`, and `decision_boundary`, then copy each field's exact text into the
+outbound message body. Do not set the object for read-only or ordinary internal
+actions that have no meaningful external boundary.
 """.strip()
 
 AUDIT_ROLE_BOUNDARY = """
@@ -305,6 +309,12 @@ present.
 
 Never execute a DWS write command without --yes. Return concrete feedback for
 Consumer Agent A to add the non-interactive confirmation flag before execution.
+
+When an accepted proposal contains a meaningful external boundary, preserve and verify a message body
+that states what the Agent may do now, the concrete risk, what the recipient must not do, what still requires Derek's decision.
+Compare the exact body with the candidate action's `external_boundary` fields;
+if any field is absent, return `revision_required` with the missing field named
+in `requested_revision` and do not execute the write.
 
 The low-consequence decision policy in Consumer capability instructions is an
 authorized judgment standard, not an unsupported personal commitment. When a

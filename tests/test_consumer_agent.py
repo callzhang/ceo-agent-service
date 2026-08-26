@@ -283,7 +283,7 @@ def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative
         dynamic_skill_body=CONSUMER_DYNAMIC_SKILL_BODY,
         audit_rules=audit_rules,
         context_facts=context_facts,
-        size_limit=32_000,
+        size_limit=36_000,
         require_runtime_safety_sections=True,
     )
     assert audit_rules in instructions
@@ -523,6 +523,10 @@ def test_consumer_instructions_require_reply_level_risk_controls_for_autonomous_
     assert "Do not escalate merely because another reasonable default" in instructions
     assert "exists. When optional paths are otherwise equivalent" in instructions
     assert "choose the one that adds\nno new work or deliverable" in instructions
+    assert "`external_boundary` object" in instructions
+    assert "allowed_now" in instructions
+    assert "concrete_risk" in instructions
+    assert "decision_boundary" in instructions
 
 
 def test_audit_instructions_accept_the_authorized_low_consequence_standard():

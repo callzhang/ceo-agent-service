@@ -19,6 +19,7 @@ from app.agent_contracts import (
     AuditOutcome,
     AuditReconciliation,
     ConsumerProposal,
+    ExternalBoundary,
     ProposedAction,
 )
 from app.agent_effects import EffectKind, McpToolEffectRegistry
@@ -446,6 +447,80 @@ def test_audit_composed_instructions_are_skill_first_and_schema_authoritative(se
     )
     assert audit_rules in instructions
     assert AUDIT_DYNAMIC_SKILL_BODY in instructions
+
+
+def test_audit_rejects_marked_external_boundary_before_write(setup):
+    store, task, audit_context, parent = setup
+    boundary = ExternalBoundary(
+        allowed_now="询问字段和价格",
+        concrete_risk="对方可能误解为采购意向",
+        do_not="不要报价承诺或购买",
+        decision_boundary="预算和采购仍由 Derek 决定",
+    )
+    action = audit_context.proposal.actions[0].model_copy(
+        update={"external_boundary": boundary}
+    )
+    context = replace(
+        audit_context,
+        proposal=audit_context.proposal.model_copy(update={"actions": (action,)}),
+    )
+    executor = CapturingExecutor(
+        _audit_jsonl("operation-1", session="session-boundary", write_text="done")
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert result.result.outcome is AuditOutcome.REVISION_REQUIRED
+    assert result.result.side_effect_state.value == "none"
+    assert not executor.commands
+    assert "external_boundary" in result.result.feedback.requested_revision
+    assert "allowed_now" in result.result.feedback.observation
+
+
+def test_audit_accepts_marked_external_boundary_when_body_preserves_controls(setup):
+    store, task, audit_context, parent = setup
+    boundary = ExternalBoundary(
+        allowed_now="询问字段和价格",
+        concrete_risk="对方可能误解为采购意向",
+        do_not="不要报价承诺或购买",
+        decision_boundary="预算和采购仍由 Derek 决定",
+    )
+    body = (
+        "询问字段和价格；对方可能误解为采购意向；"
+        "不要报价承诺或购买；预算和采购仍由 Derek 决定。"
+    )
+    action = audit_context.proposal.actions[0].model_copy(
+        update={
+            "external_boundary": boundary,
+            "payload": {
+                "argv": [
+                    "dws", "chat", "message", "send", "--group", "cid-agent",
+                    "--text", body, "--yes",
+                ]
+            },
+        }
+    )
+    context = replace(
+        audit_context,
+        proposal=audit_context.proposal.model_copy(update={"actions": (action,)}),
+    )
+    execution = _audit_jsonl(
+        "operation-1",
+        session="session-boundary-valid",
+        write_text=body,
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=CapturingExecutor(execution),
+    ).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    assert result.result.outcome is AuditOutcome.EXECUTED
 
 
 def test_recovery_prompt_defines_exact_wire_reconciliation_shape(setup):
