@@ -11,7 +11,6 @@ from app.agent_contracts import (
     AuditOutcome,
     ConsumerAgentResult,
     ConsumerOutcome,
-    ExternalBoundary,
     ProposedAction,
 )
 from app.agent_result import parse_typed_agent_result
@@ -72,46 +71,8 @@ def _decision_options() -> list[dict[str, str]]:
     ]
 
 
-def test_proposed_action_preserves_external_boundary_controls():
-    boundary = ExternalBoundary(
-        allowed_now="询问字段和价格",
-        concrete_risk="对方可能误解为采购意向",
-        do_not="不要报价承诺或购买",
-        decision_boundary="预算和采购仍由 Derek 决定",
-    )
-    action = ProposedAction(
-        description="Send a bounded inquiry",
-        capability="agent_cli.dws",
-        operation="chat message send",
-        target={"group": "cid-1"},
-        payload={"argv": ["dws", "chat", "message", "send"]},
-        expected_verification="Read the message back",
-        external_boundary=boundary,
-    )
-
-    assert action.model_dump(mode="json")["external_boundary"] == {
-        "allowed_now": "询问字段和价格",
-        "concrete_risk": "对方可能误解为采购意向",
-        "do_not": "不要报价承诺或购买",
-        "decision_boundary": "预算和采购仍由 Derek 决定",
-    }
-
-
-def test_external_boundary_rejects_missing_control():
-    with pytest.raises(ValidationError):
-        ProposedAction(
-            description="Send a bounded inquiry",
-            capability="agent_cli.dws",
-            operation="chat message send",
-            target={"group": "cid-1"},
-            payload={"argv": ["dws", "chat", "message", "send"]},
-            expected_verification="Read the message back",
-            external_boundary={
-                "allowed_now": "询问字段和价格",
-                "concrete_risk": "对方可能误解为采购意向",
-                "do_not": "不要报价承诺或购买",
-            },
-        )
+def test_proposed_action_does_not_require_deferred_structured_boundary_field():
+    assert "external_boundary" not in ProposedAction.model_fields
 
 
 def _consumer_wire_payload(**overrides: object) -> dict[str, object]:

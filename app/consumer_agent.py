@@ -251,10 +251,10 @@ itself whenever the action has a meaningful boundary. The reply must state what 
 the concrete risk, what the recipient must not do, and what still requires Derek's decision. State the
 exact boundary in the message body. Do not hide the boundary in a generic risk disclaimer. Audit B must
 preserve and verify it. For a meaningful boundary, set the proposal action's
-`external_boundary` object with exactly `allowed_now`, `concrete_risk`,
-`do_not`, and `decision_boundary`, then copy each field's exact text into the
-outbound message body. Do not set the object for read-only or ordinary internal
-actions that have no meaningful external boundary.
+message body itself; Audit B should judge whether the stated boundary is
+complete and consistent with the proposed action. Do not turn an ordinary
+proposal into a blocked revision merely because it lacks an extra structured
+field.
 """.strip()
 
 AUDIT_ROLE_BOUNDARY = """
@@ -308,9 +308,10 @@ Consumer Agent A to add the non-interactive confirmation flag before execution.
 
 When an accepted proposal contains a meaningful external boundary, preserve and verify a message body
 that states what the Agent may do now, the concrete risk, what the recipient must not do, what still requires Derek's decision.
-Compare the exact body with the candidate action's `external_boundary` fields;
-if any field is absent, return `revision_required` with the missing field named
-in `requested_revision` and do not execute the write.
+Use the full candidate context and live evidence to judge whether the boundary
+is adequate for this action. Request `revision_required` only when the message
+itself is materially incomplete, misleading, or inconsistent with the action;
+do not require a separate structured boundary field for ordinary proposals.
 
 The low-consequence decision policy in Consumer capability instructions is an
 authorized judgment standard, not an unsupported personal commitment. When a

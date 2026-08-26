@@ -44,7 +44,6 @@ from app.native_cli_metadata import (
     has_noninteractive_confirmation,
     native_command_argv,
 )
-from app.reply_risk_controls import missing_external_boundary_controls_from_argv
 from app.store import (
     AgentRole,
     AgentRun,
@@ -152,13 +151,6 @@ class AuditAgentRunner:
         ):
             return skill_failure
         recipient_type_mismatches = _typed_direct_recipient_mismatches(context)
-        risk_control_mismatches = _external_boundary_mismatches(context)
-        if risk_control_mismatches:
-            return self._return_invalid_candidate(
-                claim.run,
-                recipient_type_mismatches=recipient_type_mismatches,
-                risk_control_mismatches=risk_control_mismatches,
-            )
         if recipient_type_mismatches and not frozen_delivery_retry:
             return self._return_invalid_candidate(
                 claim.run,
@@ -683,7 +675,6 @@ class AuditAgentRunner:
         run: AgentRun,
         *,
         recipient_type_mismatches: tuple[int, ...],
-        risk_control_mismatches: tuple[tuple[int, tuple[str, ...]], ...] = (),
     ) -> AgentTurnRunResult[AuditAgentResult]:
         invalid_details: list[str] = []
         if recipient_type_mismatches:
@@ -691,43 +682,20 @@ class AuditAgentRunner:
             invalid_details.append(
                 f"Candidate action indexes {listed} use the trigger's open-DingTalk ID as a user ID."
             )
-        if risk_control_mismatches:
-            for index, missing in risk_control_mismatches:
-                invalid_details.append(
-                    f"Candidate action index {index} is missing exact outbound risk controls: "
-                    + ", ".join(missing)
-                    + "."
-                )
-        rule = (
-            "A bounded external reply must preserve every exact external_boundary "
-            "control in its outbound message body."
-            if risk_control_mismatches and not recipient_type_mismatches
-            else "The candidate must satisfy the typed recipient and reply-boundary contracts."
-        )
-        requested_revision = (
-            "Return the same intended operation with the `external_boundary` "
-            "object's exact allowed_now, "
-            "concrete_risk, do_not, and decision_boundary text copied into the "
-            "outbound message body; do not execute until all listed controls are present."
-            if risk_control_mismatches
-            else "Return the same intended operation with the correct recipient identifier. For a "
-            "single-chat recipient, use --user only with sender_user_id and "
-            "use --open-dingtalk-id with sender_open_dingtalk_id. Preserve the "
-            "business recipient and payload."
-        )
         result = AuditAgentResult(
             outcome=AuditOutcome.REVISION_REQUIRED,
-            summary=(
-                "The candidate is missing a typed reply boundary."
-                if risk_control_mismatches
-                else "The candidate uses an invalid typed recipient identifier."
-            ),
+            summary="The candidate uses an invalid typed recipient identifier.",
             proposal_revision=run.proposal_revision,
             side_effect_state=SideEffectState.NONE,
             feedback=AuditFeedback(
-                rule=rule,
+                rule="The candidate must use the correct typed recipient identifier.",
                 observation=" ".join(invalid_details),
-                requested_revision=requested_revision,
+                requested_revision=(
+                    "Return the same intended operation with the correct recipient identifier. For a "
+                    "single-chat recipient, use --user only with sender_user_id and "
+                    "use --open-dingtalk-id with sender_open_dingtalk_id. Preserve the "
+                    "business recipient and payload."
+                ),
             ),
             external_result=None,
             reconciliation=(),
@@ -1195,23 +1163,6 @@ def _typed_direct_recipient_mismatches(
             continue
         if descriptor.target_identifiers.get("user") == open_dingtalk_id:
             mismatches.append(index)
-    return tuple(mismatches)
-
-
-def _external_boundary_mismatches(
-    context: AuditTurnContext,
-) -> tuple[tuple[int, tuple[str, ...]], ...]:
-    """Return marked actions whose exact outbound body omits a risk control."""
-
-    mismatches: list[tuple[int, tuple[str, ...]]] = []
-    for index, action in enumerate(context.proposal.actions):
-        boundary = action.external_boundary
-        if boundary is None:
-            continue
-        argv = native_command_argv({"type": "command_execution", **action.payload})
-        missing = missing_external_boundary_controls_from_argv(argv, boundary)
-        if missing:
-            mismatches.append((index, missing))
     return tuple(mismatches)
 
 

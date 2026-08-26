@@ -1,5 +1,10 @@
 # Autonomous needs-human boundary and reply risk controls Implementation Plan
 
+> Decision update (2026-08-26): defer the structured `external_boundary` field
+> and exact-field gate. The current implementation keeps the natural-language
+> four-part reply requirement and lets Audit judge completeness from the full
+> candidate context; this plan remains a future design reference.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans (recommended for inline execution) to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make bounded external proposals carry explicit reply-level risk controls and make Audit reject a marked proposal when the exact outbound message body does not preserve those controls, while keeping technical runtime failures separate from `needs_human`.
@@ -266,4 +271,3 @@ until the readback is complete.
   check.
 - Runtime recovery remains separate: this change never maps a route failure to
   `needs_human`.
-

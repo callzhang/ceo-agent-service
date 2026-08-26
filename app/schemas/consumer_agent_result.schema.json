@@ -105,40 +105,6 @@
       "title": "DecisionOption",
       "type": "object"
     },
-    "ExternalBoundary": {
-      "additionalProperties": false,
-      "description": "Exact risk controls that must appear in a bounded outbound reply.",
-      "properties": {
-        "allowed_now": {
-          "minLength": 1,
-          "title": "Allowed Now",
-          "type": "string"
-        },
-        "concrete_risk": {
-          "minLength": 1,
-          "title": "Concrete Risk",
-          "type": "string"
-        },
-        "do_not": {
-          "minLength": 1,
-          "title": "Do Not",
-          "type": "string"
-        },
-        "decision_boundary": {
-          "minLength": 1,
-          "title": "Decision Boundary",
-          "type": "string"
-        }
-      },
-      "required": [
-        "allowed_now",
-        "concrete_risk",
-        "do_not",
-        "decision_boundary"
-      ],
-      "title": "ExternalBoundary",
-      "type": "object"
-    },
     "JsonValue": {},
     "ProposalFact": {
       "additionalProperties": false,
@@ -201,17 +167,6 @@
           "minLength": 1,
           "title": "Expected Verification",
           "type": "string"
-        },
-        "external_boundary": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ExternalBoundary"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         }
       },
       "required": [

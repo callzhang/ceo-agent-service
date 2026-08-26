@@ -100,17 +100,6 @@ class ConsumerOutcome(StrEnum):
     FAILED = "failed"
 
 
-class ExternalBoundary(BaseModel):
-    """Exact risk controls that must appear in a bounded outbound reply."""
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    allowed_now: str = Field(min_length=1)
-    concrete_risk: str = Field(min_length=1)
-    do_not: str = Field(min_length=1)
-    decision_boundary: str = Field(min_length=1)
-
-
 class ProposedAction(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -120,7 +109,6 @@ class ProposedAction(BaseModel):
     target: dict[str, JsonValue] = Field(min_length=1)
     payload: dict[str, JsonValue]
     expected_verification: str = Field(min_length=1)
-    external_boundary: ExternalBoundary | None = None
 
 
 
