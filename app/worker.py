@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import parse_qs, unquote, urlparse, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 from app.agent_context import (
     AgentContextMessage,
@@ -2877,7 +2878,16 @@ class DingTalkAutoReplyWorker:
     ) -> Path | None:
         kind = payload.get("kind")
         if kind == "url":
-            return None
+            image_url = payload.get("url", "").strip()
+            if not image_url.startswith(("https://", "http://")):
+                return None
+            request = Request(image_url, headers={"User-Agent": "ceo-agent-service/1"})
+            with urlopen(request, timeout=20) as response:
+                data = response.read(DOWNLOADED_IMAGE_MAX_BYTES + 1)
+            if len(data) > DOWNLOADED_IMAGE_MAX_BYTES:
+                raise DwsError("dingtalk_image_too_large")
+            suffix = self._decoded_image_suffix(data)
+            return self._write_message_image(task_id, message, suffix, data)
         elif kind == "media_id":
             download = self.dws.get_resource_download_url(
                 message.open_conversation_id,
