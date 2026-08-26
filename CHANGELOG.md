@@ -4,6 +4,9 @@
   `300s` idle) after Codex/DWS reads exceeded the previous `180s` idle bound;
   added recovery for orphaned task-agent runs whose parent input is no longer
   processing.
+- 2026-08-26: bounded external proposals now carry typed `external_boundary`
+  controls. Audit compares all four exact controls with the outbound message
+  body and returns `revision_required` before any write when one is missing.
 
 ## 2026-08-26
 
