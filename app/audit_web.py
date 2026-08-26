@@ -9404,12 +9404,13 @@ def _attempt_detail_reply_text(attempt: ReplyAttempt) -> str:
 def _attempt_reason_text(attempt: ReplyAttempt) -> str:
     """Keep both persisted decision rationale and audit explanation visible."""
     if attempt.send_error.strip() in {
+        "image_dependency_unavailable",
         "live_evidence_conflict",
         "oa_live_evidence_conflict",
     }:
         return (
-            "同一 OA 审批的两次读取结果不一致。系统没有执行同意、拒绝或退回；"
-            "应按钉钉 OA 审批技能重新读取当前详情和任务，系统会自动重试。"
+            "审批所需的关键信息暂时不可用。系统没有执行同意、拒绝或退回；"
+            "请按钉钉 OA 审批技能重新读取当前详情和任务。"
         )
     parts = []
     if attempt.audit_summary.strip():

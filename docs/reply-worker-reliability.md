@@ -429,7 +429,7 @@ second History item. Reconciliation attempts inherit the original Agent run and
 OA process/task identity so History aggregation remains on the same business item.
 If a required image is unavailable after either reconciliation or recovery
 execution claims the unknown run, the same formal deferral transition records
-`image_dependency_unavailable`, clears the recovery lease, and schedules the
+`critical_info_unavailable`, clears the recovery lease, and schedules the
 next attempt without invoking an Agent or external effect.
 
 Audit validates the mechanical command contract before starting an execution.
@@ -507,7 +507,7 @@ Agent turn. The same file path and SHA-256 are supplied through native Codex
 `--image` inputs to Consumer A and Audit B. Only an authenticated DingTalk media
 download or download-code response that produced a real `localPath` is a required
 image dependency. If it cannot produce an actual local file, Consumer A fails
-with `image_dependency_unavailable` before making a content judgment.
+with `critical_info_unavailable` before making a content judgment.
 The service never fetches chat-supplied image URLs. A URL is text metadata, not
 an attachment: it cannot block an otherwise text-complete task or be represented
 as inspected image content. Local attachment bytes must decode and fully load as
@@ -517,7 +517,7 @@ only the exact paths created for that task in a `finally` block after
 Consumer/Audit processing.
 Consumer and Audit apply the same required-image dependency invariant to their
 respective task contexts. If Audit context refresh cannot resolve an image that
-Consumer inspected, Audit fails with `image_dependency_unavailable` before any
+Consumer inspected, Audit fails with `critical_info_unavailable` before any
 review or external effect.
 
 An `agent_cli` command that returns a structured error receipt is recorded as a

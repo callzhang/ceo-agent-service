@@ -5126,7 +5126,7 @@ def test_audit_fails_closed_when_refreshed_image_is_unavailable(
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_error == "image_dependency_unavailable"
+    assert attempt.send_error == "critical_info_unavailable"
     assert len(executor.image_inspections) == 1
     assert executor.write_operations == []
     assert executor.external_readbacks == []
@@ -5135,7 +5135,7 @@ def test_audit_fails_closed_when_refreshed_image_is_unavailable(
     assert runs[1].status == "failed"
     assert runs[1].tool_events == []
     assert json.loads(runs[1].structured_error_json)["code"] == (
-        "image_dependency_unavailable"
+        "critical_info_unavailable"
     )
 
 
@@ -5180,7 +5180,7 @@ def test_invalid_image_fails_decode_before_agent_turn(
     assert worker.consume_once(max_tasks=1) == 0
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_error == "image_dependency_unavailable"
+    assert attempt.send_error == "critical_info_unavailable"
     assert executor.commands == []
 
 
@@ -5267,7 +5267,7 @@ def test_required_dws_image_without_local_path_is_never_fetched(
     assert worker.consume_once(max_tasks=1) == 0
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_error == "image_dependency_unavailable"
+    assert attempt.send_error == "critical_info_unavailable"
     assert executor.commands == []
     errors = worker.store.list_errors()
     assert len(errors) == 1

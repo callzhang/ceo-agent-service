@@ -6,10 +6,8 @@ from app.agent_contracts import AuditFeedback, ConsumerProposal
 from app.agent_result import AgentError
 from app.agent_skill_usage import LoadedSkillReceipt
 
-IMAGE_DEPENDENCY_UNAVAILABLE_CODE = "image_dependency_unavailable"
-IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY = (
-    "Referenced image content could not be supplied to the agent."
-)
+CRITICAL_INFO_UNAVAILABLE_CODE = "critical_info_unavailable"
+CRITICAL_INFO_UNAVAILABLE_SUMMARY = "关键信息暂时无法读取，未作出业务判断。"
 
 
 @dataclass(frozen=True)
@@ -77,7 +75,7 @@ class AgentTaskContext:
     def image_dependency_error(self) -> AgentError | None:
         if not self.unresolved_image_count:
             return None
-        return AgentError(code=IMAGE_DEPENDENCY_UNAVAILABLE_CODE, retryable=False)
+        return AgentError(code=CRITICAL_INFO_UNAVAILABLE_CODE, retryable=False)
 
     def render(
         self,

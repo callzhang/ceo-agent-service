@@ -8,8 +8,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent_context import (
-    IMAGE_DEPENDENCY_UNAVAILABLE_CODE,
-    IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY,
+    CRITICAL_INFO_UNAVAILABLE_CODE,
+    CRITICAL_INFO_UNAVAILABLE_SUMMARY,
     AuditTurnContext,
 )
 from app.agent_contracts import (
@@ -956,7 +956,7 @@ class AuditAgentRunner:
             raise RuntimeError(image_error.code)
         result = AuditAgentResult(
             outcome=AuditOutcome.FAILED,
-            summary=IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY,
+            summary=CRITICAL_INFO_UNAVAILABLE_SUMMARY,
             proposal_revision=run.proposal_revision,
             side_effect_state=SideEffectState.NONE,
             feedback=None,
@@ -1020,7 +1020,7 @@ def _audit_recovery_error_code(exc: Exception) -> str:
         "runtime_session_evidence_missing",
     }:
         return detail
-    if detail == IMAGE_DEPENDENCY_UNAVAILABLE_CODE:
+    if detail == CRITICAL_INFO_UNAVAILABLE_CODE:
         return detail
     if detail.startswith("audit_"):
         return detail

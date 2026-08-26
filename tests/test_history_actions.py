@@ -118,6 +118,21 @@ def test_internal_retry_code_is_rendered_as_readable_failure_reason():
     assert "consumer_retry_exhausted" not in state.reason
 
 
+def test_legacy_image_error_is_rendered_as_generic_critical_info_failure():
+    attempt = _attempt(send_error="image_dependency_unavailable")
+
+    state = reply_history_attention(
+        attempt,
+        task=_task(status="failed", attempts=1),
+        decision_options=(),
+        side_effect_state="none",
+    )
+
+    assert state is not None
+    assert state.reason == "关键信息暂时无法读取，系统没有作出业务判断。"
+    assert "image_dependency_unavailable" not in state.reason
+
+
 def test_oa_evidence_conflict_is_rendered_as_automatic_recovery():
     attempt = _attempt(
         action="oa_approval",
@@ -142,10 +157,7 @@ def test_oa_evidence_conflict_is_rendered_as_automatic_recovery():
 
     assert state is not None
     assert state.kind == "automatic_recovery"
-    assert state.reason == (
-        "同一 OA 审批的读取结果不一致，系统没有执行同意或拒绝，"
-        "会按 OA 规则自动重新读取并重试。"
-    )
+    assert state.reason == "审批所需的关键信息暂时不可用，系统没有执行审批动作。"
     assert [action.key for action in state.actions] == ["details"]
 
 

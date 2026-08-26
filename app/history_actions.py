@@ -20,13 +20,12 @@ _READABLE_FAILURE_REASONS = {
     "codex_result_invalid": "Agent 已返回结果，但结果不符合当前校验契约。",
     "codex_result_missing": "Agent 运行结束，但没有输出可验证结果。",
     "agent_read_only_violation": "Agent 在只读阶段尝试执行外部动作，系统已安全阻止。",
+    "image_dependency_unavailable": "关键信息暂时无法读取，系统没有作出业务判断。",
     "oa_live_evidence_conflict": (
-        "同一 OA 审批的读取结果不一致，系统没有执行同意或拒绝，"
-        "会按 OA 规则自动重新读取并重试。"
+        "审批所需的关键信息暂时不可用，系统没有执行审批动作。"
     ),
     "live_evidence_conflict": (
-        "同一 OA 审批的读取结果不一致，系统没有执行同意或拒绝，"
-        "会按 OA 规则自动重新读取并重试。"
+        "审批所需的关键信息暂时不可用，系统没有执行审批动作。"
     ),
 }
 
