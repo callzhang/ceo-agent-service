@@ -7,11 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
-from app.agent_context import (
-    CRITICAL_INFO_UNAVAILABLE_CODE,
-    CRITICAL_INFO_UNAVAILABLE_SUMMARY,
-    AuditTurnContext,
-)
+from app.agent_context import AuditTurnContext
 from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
@@ -147,8 +143,6 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        if image_failure := self._image_dependency_failure(claim.run, context):
-            return image_failure
         if skill_failure := self._skill_receipt_gate(
             task,
             context,
@@ -220,7 +214,6 @@ class AuditAgentRunner:
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
         try:
-            self._image_dependency_failure(claim.run, context)
             self._backfill_persisted_direct_delivery_receipt(
                 task,
                 context,
@@ -516,7 +509,6 @@ class AuditAgentRunner:
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
         try:
-            self._image_dependency_failure(claim.run, context)
             if skill_failure := self._skill_receipt_gate(
                 task,
                 context,
@@ -974,38 +966,6 @@ class AuditAgentRunner:
             ),
         )
 
-    def _image_dependency_failure(
-        self,
-        run: AgentRun,
-        context: AuditTurnContext,
-    ) -> AgentTurnRunResult[AuditAgentResult] | None:
-        image_error = context.task.image_dependency_error
-        if image_error is None:
-            return None
-        if run.status != "running":
-            raise RuntimeError(image_error.code)
-        result = AuditAgentResult(
-            outcome=AuditOutcome.FAILED,
-            summary=CRITICAL_INFO_UNAVAILABLE_SUMMARY,
-            proposal_revision=run.proposal_revision,
-            side_effect_state=SideEffectState.NONE,
-            feedback=None,
-            external_result=None,
-            reconciliation=(),
-            error=image_error,
-        )
-        failed = self.store.fail_agent_run(
-            run.id,
-            image_error.model_dump(mode="json"),
-            owner=self.owner,
-        )
-        return AgentTurnRunResult(
-            run_id=failed.id,
-            result=result,
-            transcript_start_line=failed.transcript_start_line,
-            transcript_end_line=failed.transcript_end_line,
-        )
-
     def _defer_claimed_unknown_recovery(
         self,
         run: AgentRun,
@@ -1049,8 +1009,6 @@ def _audit_recovery_error_code(exc: Exception) -> str:
         "runtime_unclassified",
         "runtime_session_evidence_missing",
     }:
-        return detail
-    if detail == CRITICAL_INFO_UNAVAILABLE_CODE:
         return detail
     if detail.startswith("audit_"):
         return detail

@@ -118,7 +118,7 @@ def test_internal_retry_code_is_rendered_as_readable_failure_reason():
     assert "consumer_retry_exhausted" not in state.reason
 
 
-def test_legacy_image_error_is_rendered_as_generic_critical_info_failure():
+def test_legacy_image_error_explains_text_fallback_and_sender_follow_up():
     attempt = _attempt(send_error="image_dependency_unavailable")
 
     state = reply_history_attention(
@@ -129,7 +129,8 @@ def test_legacy_image_error_is_rendered_as_generic_critical_info_failure():
     )
 
     assert state is not None
-    assert state.reason == "关键信息暂时无法读取，系统没有作出业务判断。"
+    assert "图片暂时无法读取" in state.reason
+    assert "索要文字关键信息" in state.reason
     assert "image_dependency_unavailable" not in state.reason
 
 

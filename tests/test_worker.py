@@ -10687,6 +10687,36 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     assert "resource download unavailable" in errors[0].detail
 
 
+def test_unavailable_supplemental_image_does_not_block_text_only_result(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message(
+        "@Alex Chen(明哥) 根据文字确认：明天 10 点开产品评审。附图仅供参考 "
+        "[图片消息](mediaId=@img-token-1)",
+        message_id="msg-image-supplemental-1",
+    )
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    dws.resource_download_urls[("cid-1", "msg-image-supplemental-1", "@img-token-1", "mediaId")] = (
+        DwsError("resource download unavailable")
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+    )
+    script_agent_result(
+        worker,
+        explicit_agent_result(ScriptOutcome.NO_ACTION, "文字信息足够，无需读取附图。"),
+    )
+
+    worker.run_once()
+
+    assert worker.store.get_reply_attempt(1).send_status == "skipped"
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    assert "Unavailable image inputs" in agent_prompt(worker)
+
+
 def test_dingtalk_doc_read_failure_setup_does_not_block_codex(
     tmp_path: Path, monkeypatch
 ):

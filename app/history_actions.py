@@ -20,7 +20,10 @@ _READABLE_FAILURE_REASONS = {
     "codex_result_invalid": "Agent 已返回结果，但结果不符合当前校验契约。",
     "codex_result_missing": "Agent 运行结束，但没有输出可验证结果。",
     "agent_read_only_violation": "Agent 在只读阶段尝试执行外部动作，系统已安全阻止。",
-    "image_dependency_unavailable": "关键信息暂时无法读取，系统没有作出业务判断。",
+    "image_dependency_unavailable": (
+        "图片暂时无法读取；Agent 已继续检查文字和其他材料，若判断确实依赖图片，"
+        "将向发信人索要文字关键信息或可查看版本。"
+    ),
     "oa_live_evidence_conflict": (
         "审批所需的关键信息暂时不可用，系统没有执行审批动作。"
     ),

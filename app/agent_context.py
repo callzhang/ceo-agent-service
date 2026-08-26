@@ -160,6 +160,23 @@ class AgentTaskContext:
                     ]
                 )
             )
+        if self.unresolved_image_count:
+            sections.append(
+                "Unavailable image inputs\n"
+                + _json(
+                    {
+                        "count": self.unresolved_image_count,
+                        "instruction": (
+                            "The referenced image could not be downloaded. "
+                            "Treat it as unavailable, never infer its contents. "
+                            "Continue from text and other readable materials when "
+                            "they are sufficient. If the requested judgment depends "
+                            "on the image, ask the sender to provide the relevant "
+                            "facts as text or resend a readable image."
+                        ),
+                    }
+                )
+            )
         if self.prior_receipts:
             sections.append(
                 "Safe prior execution receipts\n"

@@ -7,11 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
-from app.agent_context import (
-    _CONSUMER_AGENT_RULES,
-    IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY,
-    AgentTaskContext,
-)
+from app.agent_context import _CONSUMER_AGENT_RULES, AgentTaskContext
 from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
@@ -553,25 +549,6 @@ class ConsumerAgentRunner:
             native_cli_classifier=self.native_cli_classifier,
             refresh_runtime_capabilities=self.refresh_runtime_capabilities,
         )
-
-        if (image_error := context.image_dependency_error) is not None:
-            result = ConsumerAgentResult(
-                outcome=ConsumerOutcome.FAILED,
-                summary=IMAGE_DEPENDENCY_UNAVAILABLE_SUMMARY,
-                proposal=None,
-                error=image_error,
-            )
-            failed = self.store.fail_agent_run(
-                claim.run.id,
-                result.error.model_dump(mode="json"),
-                owner=self.owner,
-            )
-            return AgentTurnRunResult(
-                run_id=failed.id,
-                result=result,
-                transcript_start_line=failed.transcript_start_line,
-                transcript_end_line=failed.transcript_end_line,
-            )
 
         def renew_session_lock() -> None:
             if not self.store.renew_codex_session_lock(
