@@ -2359,7 +2359,12 @@ def _line_violates_read_only_policy(
     item_type = item.get("type")
     if item_type == "command_execution":
         command = native_cli_classifier.classify(item)
-        return command is None or command.effect is not EffectKind.READ_ONLY
+        # Native command metadata is advisory.  An unregistered command is not
+        # evidence that a side effect occurred; the command process itself and
+        # its receipts remain the source of truth.  Treating every unknown
+        # command as a policy violation made read-only OKR analysis abort on
+        # harmless local inspection commands.
+        return command is not None and command.effect is EffectKind.EFFECTFUL
     if item_type == "mcp_tool_call":
         call = effect_registry.classify(item)
         return call is None or call.effect is not EffectKind.READ_ONLY
