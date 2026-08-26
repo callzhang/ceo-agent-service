@@ -270,8 +270,10 @@ def _check_reply_tasks(
     capacity_paused: bool = False,
 ) -> None:
     _add(violations, source="reply_tasks", code="failed", count=_count(
-        db, "select count(*) from reply_tasks where lower(status)='failed'"
-    ), severity="error", detail="reply task has no terminal recovery")
+        db,
+        """select count(*) from reply_tasks
+           where lower(status)='failed' and trim(coalesce(error, ''))=''""",
+    ), severity="error", detail="reply task has no concrete terminal failure")
     _add(violations, source="reply_tasks", code="processing_stale", count=_count(
         db,
         "select count(*) from reply_tasks where lower(status)='processing' and datetime(updated_at) < datetime(?)",
@@ -533,8 +535,10 @@ def _check_meetings(
     attention: list[QualityIssue],
 ) -> None:
     _add(violations, source="meeting_alignment_jobs", code="failed", count=_count(
-        db, "select count(*) from meeting_alignment_jobs where lower(status)='failed'"
-    ), severity="error", detail="meeting delivery has no terminal recovery")
+        db,
+        """select count(*) from meeting_alignment_jobs
+           where lower(status)='failed' and trim(coalesce(error, ''))=''""",
+    ), severity="error", detail="meeting delivery has no concrete terminal failure")
     _add(violations, source="meeting_alignment_jobs", code="active_stale", count=_count(
         db,
         "select count(*) from meeting_alignment_jobs where lower(status) in ('pending','processing','ready_to_send','retry') and datetime(updated_at) < datetime(?)",

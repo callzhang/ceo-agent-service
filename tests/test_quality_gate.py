@@ -184,8 +184,9 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
     _insert_reply_task(store, status="processing", updated_at=stale)
     with store._connect() as db:
         db.execute(
-            """insert into meeting_alignment_jobs (meeting_id, status, updated_at)
-               values ('meeting', 'failed', ?)""",
+            """insert into meeting_alignment_jobs
+               (meeting_id, status, error, updated_at)
+               values ('meeting', 'failed', '', ?)""",
             (stale,),
         )
         db.execute(
@@ -213,6 +214,33 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
         ("work_summary_inputs", "failed"),
         ("errors", "recent_error"),
     }
+
+
+def test_quality_gate_accepts_explicit_terminal_failures(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    with store._connect() as db:
+        db.execute(
+            """insert into reply_tasks (
+                channel, conversation_id, conversation_title, single_chat,
+                trigger_message_id, trigger_create_time, trigger_sender,
+                trigger_text, status, error
+            ) values ('dingtalk', 'conversation', 'group', 0, 'message',
+                '2026-08-07 00:00:00', 'sender', 'trigger', 'failed',
+                'image_dependency_unavailable')"""
+        )
+        db.execute(
+            """insert into meeting_alignment_jobs
+               (meeting_id, status, error)
+               values ('meeting', 'failed', '{\"kind\":\"meeting_agent\",\"message\":\"runtime_route_unavailable\"}')"""
+        )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not [
+        issue for issue in report.violations
+        if issue.code == "failed"
+        and issue.source in {"reply_tasks", "meeting_alignment_jobs"}
+    ]
 
 
 def test_quality_gate_excludes_recent_error_recovered_by_later_attempt(tmp_path):
