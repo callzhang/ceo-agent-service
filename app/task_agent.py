@@ -547,8 +547,7 @@ def process_work_item(
             audit_tool_events
         )
         memory_runtime_unavailable = (
-            _audit_events_include_memory_tool_discovery(audit_tool_events)
-            and _decision_reports_memory_runtime_unavailable(decision)
+            _decision_reports_memory_runtime_unavailable(decision)
         )
         try:
             _validate_memory_recall_tool_event(
@@ -596,8 +595,7 @@ def process_work_item(
                 audit_tool_events
             )
             memory_runtime_unavailable = (
-                _audit_events_include_memory_tool_discovery(audit_tool_events)
-                and _decision_reports_memory_runtime_unavailable(decision)
+                _decision_reports_memory_runtime_unavailable(decision)
             )
             _validate_memory_recall_tool_event(
                 decision,
@@ -1196,7 +1194,11 @@ def _decision_reports_memory_runtime_unavailable(
     if decision.project is None:
         return False
     return any(
-        item.source == "memory_connector_runtime_unavailable"
+        item.source
+        in {
+            "memory_connector_runtime_unavailable",
+            "memory_recall_runtime_failure",
+        }
         for item in decision.project.memory_context.memories
     )
 
@@ -1639,11 +1641,25 @@ def _task_decision_text_candidates(payload: object) -> list[str]:
 
 
 def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
+    def validate_candidate(candidate: str) -> TaskAgentDecision | None:
+        try:
+            return TaskAgentDecision.model_validate_json(candidate)
+        except (ValueError, ValidationError):
+            # Some Codex JSONL adapters concatenate a complete object with a
+            # repeated continuation. Recover only the first complete object;
+            # Pydantic still enforces the full decision schema below.
+            try:
+                payload, _ = json.JSONDecoder().raw_decode(candidate.lstrip())
+            except json.JSONDecodeError:
+                return None
+            try:
+                return TaskAgentDecision.model_validate(payload)
+            except (ValueError, ValidationError):
+                return None
+
     stripped = raw.strip()
-    try:
-        return TaskAgentDecision.model_validate_json(stripped)
-    except (ValueError, ValidationError):
-        pass
+    if decision := validate_candidate(stripped):
+        return decision
 
     payloads: list[object] = []
     for line in stripped.splitlines():
@@ -1661,8 +1677,6 @@ def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
         except (ValueError, ValidationError):
             pass
         for text in _task_decision_text_candidates(payload):
-            try:
-                return TaskAgentDecision.model_validate_json(text)
-            except (ValueError, ValidationError):
-                continue
+            if decision := validate_candidate(text):
+                return decision
     raise ValueError("No TaskAgentDecision JSON found")

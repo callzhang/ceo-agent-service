@@ -49,6 +49,18 @@ def test_task_agent_parser_uses_valid_result_after_failed_tool_event():
     assert _parse_task_agent_decision(raw) == TaskAgentDecision.model_validate(decision)
 
 
+def test_task_agent_parser_recovers_complete_object_with_repeated_continuation():
+    decision = {
+        "action": "skip",
+        "skip_reason": "The source is informational only.",
+        "memory_recall_used": False,
+        "confidence": 0.99,
+    }
+    malformed = json.dumps(decision) + ',"todo_changes":[],"confidence":0.99}'
+
+    assert _parse_task_agent_decision(malformed) == TaskAgentDecision.model_validate(decision)
+
+
 class FakeCodex:
     last_session_id = "task-session-1"
     last_transcript_start_line = 1
@@ -325,7 +337,7 @@ def _decision_with_follow_up_change(
 ) -> TaskAgentDecision:
     return TaskAgentDecision.model_validate(
         {
-            "action": "update_project",
+            "action": "create_project",
             "skip_reason": "",
             "project": {
                 "id": project_id,
@@ -3349,6 +3361,55 @@ def test_process_work_item_allows_memory_tool_discovery_unavailable_evidence(
         ).fetchone()
     assert input_row == ("done", "")
     assert run_row == (input_id, 0)
+
+
+def test_process_work_item_allows_structured_memory_unavailable_without_audit_events(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item()
+    input_id = store.enqueue_work_summary_input(
+        source_type=item.source.type.value,
+        source_ref=item.source.ref,
+        payload_json=item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    codex = FakeCodexWithAuditEvents(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "既有项目",
+                "category": "sales",
+                "status": "active",
+                "memory_context": {
+                    "query": "项目上下文",
+                    "summary": "memory_recall 在当前运行时不可用，使用实时工作项证据。",
+                    "memories": [
+                        {
+                            "source": "memory_connector_runtime_unavailable",
+                            "summary": "memory_recall 未提供",
+                        }
+                    ],
+                },
+            },
+            "todo_changes": [],
+            "follow_up_drafts": [],
+            "follow_up_changes": [],
+            "update_summary": "补充当前证据。",
+            "memory_recall_used": False,
+            "confidence": 0.8,
+        },
+        audit_tool_events=[],
+    )
+
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        assert db.execute(
+            "select status from work_summary_inputs where id=?", (input_id,)
+        ).fetchone() == ("done",)
 
 
 def test_process_work_item_continues_when_memory_connector_unavailable(
