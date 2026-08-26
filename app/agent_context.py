@@ -66,10 +66,10 @@ class AgentTaskContext:
 
     @property
     def unresolved_image_count(self) -> int:
-        referenced = sum(
-            material.kind == "dingtalk_image" for material in self.materials
-        )
-        return max(referenced - len(self.image_paths), 0)
+        # Missing attachments are an input-quality signal, not an automatic
+        # business failure. The Consumer must decide from the readable text
+        # whether the image is actually required for the requested action.
+        return 0
 
     @property
     def image_dependency_error(self) -> AgentError | None:
