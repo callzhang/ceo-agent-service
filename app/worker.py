@@ -1573,6 +1573,17 @@ class DingTalkAutoReplyWorker:
             try:
                 completed = self._process_queued_task(conversation, task)
             except AgentRunLeaseLostError:
+                # A claimed task must never remain processing when its agent
+                # lease was lost before a terminal run was persisted. Requeue
+                # immediately so the normal retry path can make progress.
+                try:
+                    self.store.requeue_reply_task(
+                        task.id,
+                        "agent_run_lease_lost",
+                        expected_execution_generation=task.execution_generation,
+                    )
+                except AgentRunLeaseLostError:
+                    pass
                 continue
             except Exception as exc:
                 error = str(exc)
