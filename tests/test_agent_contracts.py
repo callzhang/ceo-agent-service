@@ -856,6 +856,34 @@ def test_parse_typed_agent_result_ignores_later_hook_turn_result():
     assert result.summary == "Notify the applicant."
 
 
+def test_parse_typed_agent_result_skips_later_malformed_candidate():
+    valid = {
+        "outcome": "proposal",
+        "summary": "Prepare the notice.",
+        "proposal": _proposal(),
+        "error": _error(),
+    }
+    raw = "\n".join(
+        json.dumps(event)
+        for event in (
+            {"type": "turn.started", "thread_id": "session-1"},
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": json.dumps(valid)},
+            },
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "not typed JSON"},
+            },
+            {"type": "turn.completed"},
+        )
+    )
+
+    result = parse_typed_agent_result(raw, ConsumerAgentResult)
+
+    assert result.outcome is ConsumerOutcome.PROPOSAL
+
+
 def test_consumer_wire_result_preserves_nested_proposal_fields():
     result = ConsumerAgentWireResult.model_validate(
         {

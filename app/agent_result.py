@@ -92,10 +92,10 @@ def parse_typed_agent_result(
         try:
             normalized = _normalize_result_text(candidate)
             return model_type.model_validate_json(normalized)
-        except (json.JSONDecodeError, ResultParseError, ValidationError) as exc:
-            raise ResultParseError(
-                "latest agent result candidate is malformed or does not match the strict schema"
-            ) from exc
+        except (json.JSONDecodeError, ResultParseError, ValidationError):
+            # Codex can emit more than one assistant message in a turn. A later
+            # malformed candidate must not hide an earlier valid typed result.
+            continue
     raise ResultParseError("no valid typed result JSON found in Codex JSONL")
 
 
