@@ -1411,6 +1411,39 @@ def test_get_resource_download_url_uses_local_file_when_success_stdout_is_not_js
     assert payload == {"localPath": str(tmp_path / "message-image")}
 
 
+def test_get_resource_download_url_keeps_file_when_dws_reports_secondary_error(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "message-image"
+
+    class TemporaryFile:
+        name = str(output_path)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_run(*args, **kwargs):
+        del args, kwargs
+        output_path.write_bytes(b"valid image bytes")
+        return subprocess.CompletedProcess(
+            args=["dws"], returncode=5, stdout="", stderr="HTTP 400"
+        )
+
+    monkeypatch.setattr(
+        dws_client.tempfile, "NamedTemporaryFile", lambda **_: TemporaryFile()
+    )
+    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+
+    payload = DwsClient(dws_bin="dws").get_resource_download_url(
+        "cid-1", "msg-1", "@img-token-1", "mediaId"
+    )
+
+    assert payload == {"localPath": str(output_path)}
+
+
 def test_download_robot_message_file_command_uses_official_download_api(monkeypatch):
     monkeypatch.setenv("CEO_DING_ROBOT_CODE", "ding-robot-1")
     client = DwsClient(dws_bin="dws")

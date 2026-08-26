@@ -2697,6 +2697,10 @@ class DwsClient:
             delete=False,
         ) as file:
             output_path = Path(file.name)
+        # dws writes atomically and rejects an already-existing destination.
+        # NamedTemporaryFile creates the placeholder, so remove only that
+        # newly-created empty file before handing the path to dws.
+        output_path.unlink(missing_ok=True)
         command = self.build_get_resource_download_url_command(
             open_conversation_id,
             open_message_id,
@@ -2709,6 +2713,20 @@ class DwsClient:
             timeout=self.timeout_seconds + 15,
             env=self._cli_environment(),
         )
+        # Some dws versions can write the requested resource successfully but
+        # still exit non-zero while formatting the response.  The downloaded
+        # bytes are the authoritative result for this operation; validate the
+        # file before discarding it because of a secondary process status.
+        if result.returncode != 0 and output_path.exists() and output_path.stat().st_size > 0:
+            try:
+                payload = self._json_from_mixed_stdout(result.stdout)
+            except DwsError:
+                return {"localPath": str(output_path)}
+            if not isinstance(payload, dict):
+                output_path.unlink(missing_ok=True)
+                raise DwsError("invalid resource download response")
+            payload["localPath"] = str(output_path)
+            return payload
         if result.returncode != 0:
             download_url = self._download_url_from_mixed_stdout(result.stdout)
             output_path.unlink(missing_ok=True)
