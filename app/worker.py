@@ -1797,15 +1797,9 @@ class DingTalkAutoReplyWorker:
                 elif task.status == "processing" and run.final_result_json:
                     continue
                 elif task.status == "processing" and (
-                    (
-                        run.reconciliation_attempts == 0
-                        and not run.final_result_json
-                    )
-                    or (
-                        run.lease_owner
-                        and run.lease_expires_at
-                        > self._sqlite_timestamp(self._now())
-                    )
+                    run.lease_owner
+                    and run.lease_expires_at
+                    > self._sqlite_timestamp(self._now())
                 ):
                     # A Consumer worker has already claimed this task.  With more
                     # than one Consumer loop, turning it back to pending here can

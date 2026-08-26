@@ -4655,11 +4655,11 @@ def test_due_unknown_audit_run_does_not_requeue_active_processing_task(
     recovered = worker._recover_due_unknown_agent_reply_tasks(limit=10)
 
     persisted = store.get_reply_task(task.id)
-    assert recovered == 0
+    assert recovered == 1
     assert persisted is not None
-    assert persisted.status == "processing"
+    assert persisted.status == "pending"
     assert persisted.execution_generation == task.execution_generation
-    assert persisted.error == ""
+    assert persisted.error == "unknown_agent_run_reconciliation"
 
 
 def test_due_reconciled_unknown_audit_run_does_not_requeue_active_task(
