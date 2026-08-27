@@ -20,10 +20,8 @@ from app.agent_contracts import (
     AuditAgentResult,
     AuditExternalResult,
     AuditOutcome,
-    AuditReconciliation,
     ConsumerAgentResult,
     ConsumerOutcome,
-    ReconciliationDisposition,
 )
 from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
@@ -40,7 +38,6 @@ from app.agent_result import (
     AgentError,
     EffectKind,
     ResultParseError,
-    SideEffectState,
 )
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
@@ -391,16 +388,12 @@ def _project_runtime_domain_result(
         "outcome": result.outcome.value,
         "summary": summary,
         "proposal_revision": result.proposal_revision,
-        "side_effect_state": result.side_effect_state.value,
         "feedback": (
             result.feedback.model_dump(mode="json")
             if result.feedback is not None
             else None
         ),
         "external_result": external_result,
-        "reconciliation": [
-            entry.model_dump(mode="json") for entry in result.reconciliation
-        ],
         "decision_options": [
             option.model_dump(mode="json") for option in result.decision_options
         ],
@@ -1858,7 +1851,7 @@ class AgentTurnProcess(Generic[ResultT]):
             else max(transcript_start + line_count, session_transcript_end)
         )
         outcome = getattr(result, "outcome")
-        side_effect_state = getattr(result, "side_effect_state", SideEffectState.NONE)
+        side_effect_state = "none"
         persisted = self.store.get_agent_run(run.id)
         assert persisted is not None
         if run.role is AgentRole.AUDIT and recovery_phase == "reconcile":
@@ -1935,7 +1928,6 @@ class AgentTurnProcess(Generic[ResultT]):
         claude_business_failure = outcome in {
             ConsumerOutcome.FAILED,
             AuditOutcome.FAILED,
-            AuditOutcome.UNKNOWN,
         } or (recovery_phase == "execute" and outcome is not AuditOutcome.EXECUTED)
         if (
             route.runtime_kind is RuntimeKind.CLAUDE_CLI
@@ -2016,7 +2008,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     domain_result if durable_consumer_result else None
                 ),
                 agent_run_final_side_effect_state=(
-                    side_effect_state.value if durable_consumer_result else "none"
+                    side_effect_state if durable_consumer_result else "none"
                 ),
                 agent_run_transcript_end=(
                     transcript_end if durable_consumer_result else None
@@ -2035,7 +2027,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     run.id,
                     result.model_dump(mode="json"),
                     owner=self.owner,
-                    side_effect_state=SideEffectState.CONFIRMED.value,
+                    
                     transcript_end_line=transcript_end,
                     expected_status="unknown",
                 )
@@ -2049,14 +2041,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 run.id,
                 getattr(result, "error").model_dump(mode="json"),
                 owner=self.owner,
-                side_effect_state=side_effect_state.value,
-                transcript_end_line=transcript_end,
-            )
-        elif outcome is AuditOutcome.UNKNOWN:
-            self.store.mark_agent_run_unknown(
-                run.id,
-                getattr(result, "error").model_dump(mode="json"),
-                owner=self.owner,
+                
                 transcript_end_line=transcript_end,
             )
         else:
@@ -2064,7 +2049,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 run.id,
                 result.model_dump(mode="json"),
                 owner=self.owner,
-                side_effect_state=side_effect_state.value,
+                
                 transcript_end_line=transcript_end,
             )
         completed = self.store.get_agent_run(run.id)
@@ -2611,10 +2596,10 @@ class AgentTurnProcess(Generic[ResultT]):
                 return
             code = (
                 "audit_execution_evidence_missing"
-                if persisted.side_effect_state == SideEffectState.NONE.value
+                if not _has_unclosed_effects(persisted)
                 else "audit_execution_evidence_mismatch"
             )
-            if persisted.side_effect_state != SideEffectState.NONE.value:
+            if _has_unclosed_effects(persisted):
                 self.store.mark_agent_run_unknown(
                     run.id,
                     {"code": code, "retryable": True},
@@ -2628,8 +2613,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             raise RuntimeError(code)
         if (
-            outcome is not AuditOutcome.UNKNOWN
-            and persisted.side_effect_state != SideEffectState.NONE.value
+            _has_unclosed_effects(persisted)
         ):
             self.store.mark_agent_run_unknown(
                 run.id,
@@ -2824,7 +2808,7 @@ class AgentTurnProcess(Generic[ResultT]):
     def _fail_running(self, run: AgentRun, code: str, *, detail: str = "") -> None:
         persisted = self.store.get_agent_run(run.id)
         if persisted is not None and persisted.status == "running":
-            if persisted.side_effect_state == SideEffectState.NONE.value:
+            if not _has_unclosed_effects(persisted):
                 terminal_auth_failure = _is_terminal_codex_auth_failure(code)
                 self.store.fail_agent_run(
                     run.id,
@@ -2844,7 +2828,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         **({"detail": detail} if detail else {}),
                     },
                     owner=self.owner,
-                    side_effect_state=SideEffectState.CONFIRMED.value,
+                    
                 )
             else:
                 self.store.mark_agent_run_unknown(
@@ -2863,6 +2847,17 @@ class AgentTurnProcess(Generic[ResultT]):
         }
         if persisted.status == "running":
             self.store.fail_agent_run(run.id, error, owner=self.owner)
+
+
+def _has_unclosed_effects(run: AgentRun) -> bool:
+    """Derive incomplete effect evidence from append-only event counters."""
+    return bool(
+        int(run.effect_unreviewed_count)
+        or int(run.effect_started_count)
+        > int(run.effect_completed_count)
+        + int(run.effect_failed_count)
+        + int(run.effect_receipt_count)
+    )
 
 
 def _stream_has_no_agent_result(raw: str) -> bool:
@@ -3242,7 +3237,6 @@ def _recovery_execution_result_from_receipts(
         outcome=AuditOutcome.EXECUTED,
         summary="Authorized recovery actions completed with controlled receipts.",
         proposal_revision=run.proposal_revision,
-        side_effect_state=SideEffectState.CONFIRMED,
         feedback=None,
         external_result=AuditExternalResult(
             operation_id=run.operation_id,
@@ -3252,7 +3246,6 @@ def _recovery_execution_result_from_receipts(
                 "evidence": "controlled_receipts",
             },
         ),
-        reconciliation=(),
         error=AgentError(),
     )
 
@@ -3297,7 +3290,6 @@ def _conservative_reconciliation_result_from_readbacks(
             "result could not safely classify the prior external action."
         ),
         proposal_revision=run.proposal_revision,
-        side_effect_state=SideEffectState.UNKNOWN,
         feedback=None,
         external_result=None,
         reconciliation=tuple(entries),

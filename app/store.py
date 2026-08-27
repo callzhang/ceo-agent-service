@@ -18,7 +18,6 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from app.agent_result import SideEffectState
 from app.agent_runtime_contracts import (
     CredentialMode,
     RuntimeFailureClass,
@@ -514,7 +513,6 @@ class AgentRun(BaseModel):
     final_result_json: str = ""
     structured_error_json: str = ""
     tool_events: list[dict[str, object]] = Field(default_factory=list)
-    side_effect_state: str = "none"
     effect_started_count: int = 0
     effect_completed_count: int = 0
     effect_failed_count: int = 0
@@ -3818,7 +3816,6 @@ class AutoReplyStore:
             final_result_json=row["final_result_json"],
             structured_error_json=row["structured_error_json"],
             tool_events=tool_events,
-            side_effect_state=row["side_effect_state"],
             effect_started_count=row["effect_started_count"],
             effect_completed_count=row["effect_completed_count"],
             effect_failed_count=row["effect_failed_count"],
@@ -5036,8 +5033,8 @@ class AutoReplyStore:
                         != run["task_execution_generation"]
                         or run["side_effect_state"]
                         not in {
-                            SideEffectState.UNKNOWN.value,
-                            SideEffectState.CONFIRMED.value,
+                            "unknown",
+                            "confirmed",
                         }
                         # A provider crash can happen after the runtime boundary
                         # was durably crossed but before a normalized tool event
@@ -5438,7 +5435,7 @@ class AutoReplyStore:
         if agent_run_final_result is not None:
             if not result_schema_id:
                 raise ValueError("agent run result reference requires result schema")
-            if agent_run_final_side_effect_state != SideEffectState.NONE.value:
+            if agent_run_final_side_effect_state != "none":
                 raise ValueError("Consumer Agent cannot persist side effects")
             if agent_run_transcript_end is None or agent_run_transcript_end < 0:
                 raise ValueError("agent run transcript end is required")
@@ -6635,7 +6632,7 @@ class AutoReplyStore:
             replace_session = (
                 allow_consumer_session_handoff
                 and current["role"] == AgentRole.CONSUMER.value
-                and current["side_effect_state"] == SideEffectState.NONE.value
+                and current["side_effect_state"] == "none"
                 and bool(current_session_id)
                 and current_session_id != codex_session_id
                 and db.execute(
@@ -7340,7 +7337,7 @@ class AutoReplyStore:
             if (
                 row["role"] != AgentRole.CONSUMER.value
                 or int(row["effect_started_count"]) != 0
-                or row["side_effect_state"] != SideEffectState.NONE.value
+                or row["side_effect_state"] != "none"
             ):
                 raise ValueError("completed result block requires effect-free Consumer")
             error_json = json.dumps(
