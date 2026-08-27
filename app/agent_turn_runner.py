@@ -3,14 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import time
 import unicodedata
-from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import RLock
 from typing import Generic, TypeVar, cast
 
 from markdown_it import MarkdownIt
@@ -67,10 +64,7 @@ from app.codex_failure import (
     CODEX_PROVIDER_UNAVAILABLE,
     classify_codex_process_failure,
 )
-from app.codex_history import (
-    count_codex_session_lines,
-    extract_codex_mcp_tool_results_from_session,
-)
+from app.codex_history import count_codex_session_lines
 from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.config import feedback_spike_vercel_base_url
@@ -744,8 +738,7 @@ class AgentTurnProcess(Generic[ResultT]):
     ) -> AgentTurnRunResult[ResultT]:
         if recovery_phase:
             raise ValueError("recovery phases are not part of the application contract")
-        recover_unknown = bool(recovery_phase)
-        recovery_authorizations = recovery_authorizations or {}
+        recovery_authorizations = {}
         line_count = 0
         saw_json = False
         primary_turn_started = False
@@ -753,97 +746,17 @@ class AgentTurnProcess(Generic[ResultT]):
         recovery_started_actions: set[int] = set()
         effect_action_counts = [0] * len(expected_effect_actions)
         effect_action_by_call_id: dict[str, int] = {}
-        suppressed_session_replay_call_ids: set[str] = set()
         observed_session_id = ""
         active_attempt: AgentRuntimeAttempt | None = None
         active_route: RuntimeRoute | None = None
-        replayed_effect_evidence = False
         session_transcript_end = 0
         claude_normalizer: ClaudeEventNormalizer | None = None
         pending_claude_session_id = ""
         recovered_completed_attempt = False
         turn_event_start = len(run.tool_events)
         recovery_event_start = turn_event_start
-        completed_before_recovery = (
-            _action_completion_accounting(
-                [],
-                self.store.list_agent_execution_receipts(run.id),
-                expected_effect_actions,
-                operation_id=run.operation_id,
-                registry=self.effects,
-            )[0]
-            if recover_unknown
-            else set()
-        )
-        transcript_start = (
-            run.transcript_end_line if recover_unknown else run.transcript_start_line
-        )
-        effect_fence_lock = RLock()
-
-        def authorize_claude_effect_dispatch(request: dict[str, object]) -> bool:
-            if active_attempt is None or active_route is None:
-                return False
-            required_request_keys = {
-                "dispatch_id",
-                "reviewed_server",
-                "reviewed_tool",
-                "capability",
-                "operation",
-                "operation_digest",
-                "arguments_digest",
-                "target_identifiers",
-            }
-            if (
-                set(request) != required_request_keys
-                or active_route.runtime_kind is not RuntimeKind.CLAUDE_CLI
-                or run.role is not AgentRole.AUDIT
-                or recovery_phase
-                or not isinstance(request.get("dispatch_id"), str)
-                or not request["dispatch_id"].startswith("claude-dispatch:")
-            ):
-                return False
-            with effect_fence_lock:
-                candidates = [
-                    index
-                    for index, action in enumerate(expected_effect_actions)
-                    if request.get("reviewed_server") == action.get("reviewed_server")
-                    and request.get("reviewed_tool") == action.get("reviewed_tool")
-                    and _metadata_matches_action(request, action)
-                ]
-                if not candidates:
-                    return False
-                action_index = min(candidates, key=effect_action_counts.__getitem__)
-                metadata = {
-                    "effect": EffectKind.EFFECTFUL.value,
-                    **request,
-                    "operation_id": run.operation_id,
-                    "action_index": action_index,
-                }
-                dispatch_id = str(metadata.pop("dispatch_id"))
-                event = {
-                    "type": "item.started",
-                    "item": {
-                        "type": "mcp_tool_call",
-                        "id": dispatch_id,
-                        "status": "in_progress",
-                        "metadata": metadata,
-                    },
-                }
-                claim = self.store.authorize_claude_effect_dispatch(
-                    run_id=run.id,
-                    attempt_id=active_attempt.id,
-                    owner=self.owner,
-                    event=event,
-                    expected_action=expected_effect_actions[action_index],
-                    required_skill_receipts=tuple(
-                        (receipt.name, receipt.path, receipt.sha256)
-                        for receipt in required_skill_receipts
-                    ),
-                )
-                if claim.dispatch_acquired:
-                    effect_action_counts[action_index] += 1
-                    effect_action_by_call_id[dispatch_id] = action_index
-                return claim.dispatch_acquired
+        completed_before_recovery: set[int] = set()
+        transcript_start = run.transcript_start_line
 
         def persist_effect_event(
             payload: dict[str, object],
@@ -851,165 +764,14 @@ class AgentTurnProcess(Generic[ResultT]):
             from_session_replay: bool = False,
             from_claude_normalizer: bool = False,
         ) -> None:
-            nonlocal line_count, saw_json
-            nonlocal primary_turn_started, primary_turn_closed
-            item = payload.get("item")
-            if isinstance(item, dict) and item.get("type") == "command_execution":
-                raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
-            if recovery_phase == "reconcile" and isinstance(item, dict):
-                invocation = item.get("invocation")
-                if isinstance(invocation, dict) and "write" in str(invocation.get("tool", "")).lower():
-                    raise AgentReadOnlyViolationError("agent_write_forbidden")
-            # Provider capabilities are not reimplemented at the application
-            # layer. Keep the event for observability, but let the runtime
-            # decide whether a command/tool is permitted.
-            read_only = recovery_phase == "reconcile"
-            event = (
-                _trusted_claude_effect_event(payload, read_only=read_only)
-                if from_claude_normalizer
-                else self._normalized_effect_event(
-                    payload,
-                    read_only=read_only,
-                    operation_id=run.operation_id,
-                    require_recovery_authorization=recovery_phase == "execute",
-                    expected_message_text_digests=frozenset(
-                        digest
-                        for action in expected_effect_actions
-                        if isinstance(digest := action.get("message_text_digest"), str)
-                    ),
-                    expected_message_rendered_text_digests=frozenset(
-                        digest
-                        for action in expected_effect_actions
-                        if isinstance(
-                            digest := action.get("message_rendered_text_digest"),
-                            str,
-                        )
-                    ),
-                    message_operation_started_at=run.started_at,
-                )
-            )
-            if event is None:
-                return
-            item = event.get("item")
-            metadata = item.get("metadata") if isinstance(item, dict) else None
-            effect = metadata.get("effect") if isinstance(metadata, dict) else None
-            call_id = (
-                str(item.get("id") or item.get("call_id") or "")
-                if isinstance(item, dict)
-                else ""
-            )
-            if from_claude_normalizer and effect == EffectKind.EFFECTFUL.value:
-                persisted = self.store.get_agent_run(run.id)
-                persisted_start = (
-                    _matching_effect_metadata(
-                        persisted.tool_events if persisted is not None else [],
-                        event_type="item.started",
-                        operation_id=run.operation_id,
-                        action_index=effect_action_by_call_id.get(call_id, -1),
-                        expected_action=(
-                            expected_effect_actions[
-                                effect_action_by_call_id.get(call_id, -1)
-                            ]
-                            if effect_action_by_call_id.get(call_id, -1) >= 0
-                            else {}
-                        ),
-                    )
-                    if call_id
-                    else None
-                )
-                if persisted_start is None:
-                    raise AgentReadOnlyViolationError(
-                        "claude_effect_fence_evidence_missing"
-                    )
-                if event.get("type") == "item.started":
-                    return
-                assert isinstance(metadata, dict)
-                metadata.update(
-                    {
-                        key: value
-                        for key, value in persisted_start.items()
-                        if key not in {"result_digest"}
-                    }
-                )
-            if (
-                event.get("type") == "item.started"
-                and effect == EffectKind.EFFECTFUL.value
-                and active_attempt is not None
-            ):
-                self.store.note_runtime_attempt_effect_started(active_attempt.id)
-            if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
-                if event.get("type") == "item.started":
-                    authorization_id = metadata.get("authorization_id")
-                    if recovery_phase == "execute":
-                        action_index = recovery_authorizations.get(
-                            str(authorization_id or "")
-                        )
-                        if (
-                            action_index is None
-                            or action_index >= len(expected_effect_actions)
-                            or not _metadata_matches_action(
-                                metadata, expected_effect_actions[action_index]
-                            )
-                        ):
-                            action_index = None
-                    else:
-                        candidates = [
-                            index
-                            for index, action in enumerate(expected_effect_actions)
-                            if _metadata_matches_action(metadata, action)
-                        ]
-                        action_index = (
-                            min(candidates, key=effect_action_counts.__getitem__)
-                            if candidates
-                            else None
-                        )
-                    if action_index is not None:
-                        # The local Codex session can contain the same completed
-                        # controlled call already observed in the live JSON stream,
-                        # but with a different call ID. Replaying it would create a
-                        # second lifecycle in our ledger and falsely make one action
-                        # look like two executions. Keep session-only recovery, but
-                        # never replay an action that live streaming already covered.
-                        if from_session_replay and effect_action_counts[action_index]:
-                            suppressed_session_replay_call_ids.add(call_id)
-                            return
-                        metadata["action_index"] = action_index
-                        effect_action_counts[action_index] += 1
-                        effect_action_by_call_id[call_id] = action_index
-                else:
-                    if (
-                        from_session_replay
-                        and call_id in suppressed_session_replay_call_ids
-                    ):
-                        return
-                    action_index = effect_action_by_call_id.get(call_id)
-                    if action_index is not None:
-                        metadata["action_index"] = action_index
-            if (
-                recovery_phase == "execute"
-                and event.get("type") == "item.started"
-                and effect == EffectKind.EFFECTFUL.value
-            ):
-                action_index = metadata.get("action_index")
-                if (
-                    action_index is None
-                    or action_index not in authorized_recovery_actions
-                    or action_index in completed_before_recovery
-                    or action_index in recovery_started_actions
-                ):
-                    raise RuntimeError("audit_recovery_action_not_authorized")
-                recovery_started_actions.add(action_index)
-            if recovery_phase == "reconcile" and effect == EffectKind.EFFECTFUL.value:
-                raise AgentReadOnlyViolationError("agent_write_forbidden")
-            if run.role is AgentRole.CONSUMER and effect == EffectKind.EFFECTFUL.value:
-                raise AgentReadOnlyViolationError("agent_write_forbidden")
-            if recover_unknown:
-                self.store.append_unknown_agent_run_event(
-                    run.id, event, owner=self.owner
-                )
-            else:
+            """Append provider events; runtime owns command permissions."""
+            del from_session_replay, from_claude_normalizer
+            # Provider events are evidence, not an application policy input.
+            # Preserve the provider payload and let the selected Skill/runtime
+            # own command, tool, receipt, and readback semantics.
+            event = _persist_provider_event(payload)
+            if event is not None:
                 self.store.append_agent_run_event(run.id, event, owner=self.owner)
-            self._record_direct_send_receipt(event, payload, run=run)
 
         def persist_payload(
             payload: dict[str, object],
@@ -1035,13 +797,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     active_attempt = self.store.set_agent_runtime_attempt_session(
                         active_attempt.id, new_session
                     )
-                if recover_unknown:
-                    # Reconciliation and the narrowly authorized follow-up write
-                    # run as fresh sessions. Preserve the original session on the
-                    # AgentRun as immutable execution history rather than replacing
-                    # it with a recovery session identifier.
-                    pass
-                elif active_route is not None and active_route.name == "codex_oauth":
+                if active_route is not None and active_route.name == "codex_oauth":
                     self.store.set_agent_run_session(
                         run.id,
                         new_session,
@@ -1049,11 +805,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         transcript_start_line=run.transcript_start_line,
                         allow_consumer_session_handoff=(run.role is AgentRole.CONSUMER),
                     )
-                if not is_claude and (
-                    run.role is AgentRole.CONSUMER
-                    and not recover_unknown
-                    and active_route is not None
-                ):
+                if not is_claude and run.role is AgentRole.CONSUMER and active_route is not None:
                     self.store.upsert_conversation_runtime_session(
                         self.task.conversation_id,
                         active_route.name,
@@ -1063,7 +815,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 if not is_claude and (
                     persist_conversation_session
                     and run.role is AgentRole.CONSUMER
-                    and not recover_unknown
                     and active_route is not None
                     and active_route.name == "codex_oauth"
                 ):
@@ -1097,17 +848,7 @@ class AgentTurnProcess(Generic[ResultT]):
             if not isinstance(payload, dict):
                 raise RuntimeError("codex_stream_invalid")
             line_count += 1
-            if recover_unknown:
-                self.store.renew_agent_run_lease(
-                    run.id,
-                    owner=self.owner,
-                    lease_seconds=LEASE_SECONDS,
-                    expected_status="unknown",
-                )
-            else:
-                self.store.renew_agent_run_lease(
-                    run.id, owner=self.owner, lease_seconds=LEASE_SECONDS
-                )
+            self.store.renew_agent_run_lease(run.id, owner=self.owner, lease_seconds=LEASE_SECONDS)
             if on_progress is not None:
                 on_progress()
             if (
@@ -1131,141 +872,12 @@ class AgentTurnProcess(Generic[ResultT]):
             persist_payload(payload)
 
         def stabilize_and_replay_session(
-            session_for_receipts: str,
-            *,
-            session_start: int,
+            session_for_receipts: str, *, session_start: int
         ) -> int:
-            """Stabilize local evidence and replay it through normal validation."""
-            nonlocal active_attempt, replayed_effect_evidence
-            previous_count = -1
-            for _ in range(4):
-                session_end = count_codex_session_lines(
-                    session_for_receipts, codex_home=_codex_home()
-                )
-                if session_end == previous_count:
-                    break
-                previous_count = session_end
-                time.sleep(0.05)
-            stable_end = max(previous_count, 0)
-            persisted_for_replay = self.store.get_agent_run(run.id)
-            persisted_completed_call_ids = {
-                str(item.get("id") or item.get("call_id") or "")
-                for event in (
-                    persisted_for_replay.tool_events
-                    if persisted_for_replay is not None
-                    else ()
-                )
-                if event.get("type") == "item.completed"
-                for item in [event.get("item")]
-                if isinstance(item, dict)
-            }
-            persisted_read_counts = Counter(
-                (
-                    str(metadata.get("reviewed_server") or ""),
-                    str(metadata.get("reviewed_tool") or ""),
-                    str(metadata.get("arguments_digest") or ""),
-                )
-                for event in (
-                    persisted_for_replay.tool_events
-                    if persisted_for_replay is not None
-                    else ()
-                )
-                if event.get("type") == "item.completed"
-                for item in [event.get("item")]
-                if isinstance(item, dict)
-                for metadata in [item.get("metadata")]
-                if isinstance(metadata, dict)
-                and metadata.get("effect") == EffectKind.READ_ONLY.value
+            del session_start
+            return count_codex_session_lines(
+                session_for_receipts, codex_home=_codex_home()
             )
-            for completed_payload in extract_codex_mcp_tool_results_from_session(
-                session_for_receipts,
-                codex_home=_codex_home(),
-                start_line=session_start,
-                end_line=stable_end,
-            ):
-                completed_item = completed_payload.get("item")
-                call_id = (
-                    str(completed_item.get("id") or "")
-                    if isinstance(completed_item, dict)
-                    else ""
-                )
-                if not call_id or call_id in persisted_completed_call_ids:
-                    continue
-                call = self.effects.classify(completed_item)
-                if call is None:
-                    continue
-                if call.server == "agent_cli" and (
-                    run.role is AgentRole.CONSUMER
-                    or call.effect is EffectKind.READ_ONLY
-                ):
-                    continue
-                if (
-                    recovery_phase != "reconcile"
-                    and run.role is not AgentRole.CONSUMER
-                    and call.effect is EffectKind.READ_ONLY
-                ):
-                    continue
-                if call.effect is EffectKind.EFFECTFUL:
-                    replayed_effect_evidence = True
-                try:
-                    normalized_completion = self._normalized_effect_event(
-                        completed_payload,
-                        read_only=(recovery_phase == "reconcile"),
-                        operation_id=run.operation_id,
-                        require_recovery_authorization=(recovery_phase == "execute"),
-                        expected_message_text_digests=frozenset(
-                            digest
-                            for action in expected_effect_actions
-                            if isinstance(
-                                digest := action.get("message_text_digest"), str
-                            )
-                        ),
-                        expected_message_rendered_text_digests=frozenset(
-                            digest
-                            for action in expected_effect_actions
-                            if isinstance(
-                                digest := action.get("message_rendered_text_digest"),
-                                str,
-                            )
-                        ),
-                        message_operation_started_at=run.started_at,
-                    )
-                except AgentReadOnlyViolationError as exc:
-                    if str(exc) != "agent_cli_receipt_invalid":
-                        raise
-                    continue
-                if call.effect is EffectKind.READ_ONLY:
-                    normalized_item = (
-                        normalized_completion.get("item")
-                        if isinstance(normalized_completion, dict)
-                        else None
-                    )
-                    normalized_metadata = (
-                        normalized_item.get("metadata")
-                        if isinstance(normalized_item, dict)
-                        else None
-                    )
-                    if isinstance(normalized_metadata, dict):
-                        read_key = (
-                            str(normalized_metadata.get("reviewed_server") or ""),
-                            str(normalized_metadata.get("reviewed_tool") or ""),
-                            str(normalized_metadata.get("arguments_digest") or ""),
-                        )
-                        if persisted_read_counts[read_key] > 0:
-                            persisted_read_counts[read_key] -= 1
-                            continue
-                start_payload = {
-                    "type": "item.started",
-                    "item": {
-                        key: value
-                        for key, value in completed_item.items()
-                        if key not in {"status", "result"}
-                    }
-                    | {"status": "in_progress"},
-                }
-                persist_effect_event(start_payload, from_session_replay=True)
-                persist_effect_event(completed_payload, from_session_replay=True)
-            return stable_end
 
         def parse_claude_result(raw: str) -> ResultT:
             return parse_result(
@@ -1346,26 +958,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 raise CompletedRuntimeResultBlockedError(
                     "completed_runtime_result_contract_mismatch"
                 )
-            if (
-                completed_attempt is None
-                and (run.effect_receipt_count or run.effect_unreviewed_count)
-                and any(
-                    attempt.status == "completed"
-                    and attempt.result_envelope_json
-                    and attempt.runtime_kind == RuntimeKind.CLAUDE_CLI.value
-                    for attempt in runtime_attempts
-                )
-            ):
-                mismatch_code = "completed_runtime_result_contract_mismatch"
-                if recover_unknown:
-                    self._defer_unknown(run, mismatch_code)
-                else:
-                    self.store.mark_agent_run_unknown(
-                        run.id,
-                        {"code": mismatch_code, "retryable": True},
-                        owner=self.owner,
-                    )
-                raise CompletedRuntimeResultBlockedError(mismatch_code)
             if completed_attempt is not None:
                 route = next(
                     (
@@ -1413,19 +1005,6 @@ class AgentTurnProcess(Generic[ResultT]):
                     recovery_started_actions = evidence_started
                     completed_before_recovery = evidence_completed_before
                 except ValueError as exc:
-                    if recover_unknown:
-                        self._defer_unknown(
-                            run, "completed_runtime_result_envelope_invalid"
-                        )
-                    elif (
-                        run.role is AgentRole.CONSUMER
-                        and run.effect_receipt_count == 0
-                        and run.effect_unreviewed_count == 0
-                    ):
-                        self.store.block_consumer_agent_run_for_completed_result_recovery(
-                            run.id,
-                            owner=self.owner,
-                        )
                     raise CompletedRuntimeResultBlockedError(
                         "completed_runtime_result_invalid"
                     ) from exc
@@ -1458,11 +1037,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 raise _RecoveredCompletedRuntimeResult
             if self.refresh_runtime_capabilities is not None:
                 self.refresh_runtime_capabilities()
-            attempted_routes = frozenset(
-                attempt.route_name
-                for attempt in runtime_attempts
-                if attempt.status in {"starting", "running", "failed", "superseded", "completed"}
-            ) if recovery_phase else frozenset()
+            attempted_routes = frozenset()
             configured_route_names = frozenset(
                 candidate.name for candidate in self.runtime_config.routes
             )
@@ -1479,12 +1054,7 @@ class AgentTurnProcess(Generic[ResultT]):
             route = decision.route
             if route is None:
                 unavailable = RuntimeRouteUnavailableError(decision.reason)
-                if not recover_unknown:
-                    self._fail_running(
-                        run,
-                        unavailable.code,
-                        detail=decision.reason,
-                    )
+                self._fail_running(run, unavailable.code, detail=decision.reason)
                 raise unavailable
             self._validate_route_workload_boundary(
                 route, run=run, recovery_phase=recovery_phase
@@ -1503,7 +1073,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 primary_turn_started = False
                 primary_turn_closed = False
                 observed_session_id = ""
-                replayed_effect_evidence = False
                 active_route = route
                 route_uses_codex_history = route.runtime_kind is RuntimeKind.CODEX_CLI
                 executor_prompt = (
@@ -1536,7 +1105,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         route=route,
                         session_id=route_session_id,
                         max_turns=1,
-                        policy=self._claude_read_only_policy(),
+                        policy=self._claude_provider_policy(),
                     )
                     claude_normalizer = claude_adapter.new_event_normalizer(
                         expected_session_id=route_session_id,
@@ -1591,27 +1160,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         observed_session_id = trusted_session_id
                         pending_claude_session_id = trusted_session_id
                     else:
-                        if recovery_phase == "reconcile":
-                            for raw_line in process.stdout.splitlines():
-                                lowered = raw_line.lower()
-                                if "execute_reviewed_write" in lowered or '"effect":"effectful"' in lowered or "replay" in lowered:
-                                    raise AgentReadOnlyViolationError("agent_write_forbidden")
-                                try:
-                                    event = json.loads(raw_line)
-                                except (TypeError, ValueError):
-                                    continue
-                                item = event.get("item") if isinstance(event, dict) else None
-                                if not isinstance(item, dict):
-                                    continue
-                                if item.get("type") == "command_execution":
-                                    raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
-                                metadata = item.get("metadata")
-                                invocation = item.get("invocation")
-                                tool = str(item.get("tool", ""))
-                                if isinstance(invocation, dict):
-                                    tool += " " + str(invocation.get("tool", ""))
-                                if (isinstance(metadata, dict) and metadata.get("effect") == "effectful") or any(token in tool.lower() for token in ("write", "replay")):
-                                    raise AgentReadOnlyViolationError("agent_write_forbidden")
                         result = parse_result(process.stdout)
                     break
                 if claude_adapter is not None:
@@ -1629,11 +1177,6 @@ class AgentTurnProcess(Generic[ResultT]):
                     attempt_transcript_start + (line_count - attempt_line_start),
                     attempt_transcript_start,
                 )
-                evidence_uncertain = (
-                    recovery_phase != "reconcile"
-                    and bool(expected_effect_actions)
-                    and not failed_session_id
-                )
                 if failed_session_id and route_uses_codex_history:
                     try:
                         failed_transcript_end = max(
@@ -1644,11 +1187,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             ),
                         )
                     except Exception:
-                        evidence_uncertain = True
-                if evidence_uncertain and active_attempt is not None:
-                    active_attempt = self.store.note_runtime_attempt_effect_started(
-                        active_attempt.id
-                    )
+                        pass
                 failed_attempt = self.store.fail_agent_runtime_attempt(
                     active_attempt.id,
                     failure.failure_class.value,
@@ -1666,36 +1205,11 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
                 persisted = self.store.get_agent_run(run.id)
                 assert persisted is not None
-                if evidence_uncertain or replayed_effect_evidence:
-                    code = "runtime_failed_route_effect_requires_reconciliation"
-                    if recover_unknown:
-                        self._defer_unknown(run, code)
-                    else:
-                        self.store.mark_agent_run_unknown(
-                            run.id,
-                            {"code": code, "retryable": True},
-                            owner=self.owner,
-                        )
-                    self._raise_for_process_failure(process, run=run)
-                    raise AssertionError("unreachable process failure")
-                fallback = _recovery_execution_result_from_receipts(
-                    run=run,
-                    recovery_phase=recovery_phase,
-                    persisted=persisted,
-                    expected_effect_actions=expected_effect_actions,
-                    recovery_started_actions=recovery_started_actions,
-                    authorized_recovery_actions=authorized_recovery_actions,
-                    registry=self.effects,
-                    store=self.store,
-                )
-                if fallback is not None:
-                    result = cast(ResultT, fallback)
-                    break
                 self.store.renew_agent_run_lease(
                     run.id,
                     owner=self.owner,
                     lease_seconds=LEASE_SECONDS,
-                    expected_status="unknown" if recover_unknown else "running",
+                    expected_status="running",
                 )
                 decision = self.runtime_router.next_route(
                     run=persisted,
@@ -1788,40 +1302,19 @@ class AgentTurnProcess(Generic[ResultT]):
         except CompletedRuntimeResultBlockedError:
             raise
         except RuntimeRouteUnavailableError as exc:
-            if not recover_unknown:
-                self._fail_running(run, exc.code, detail=exc.reason)
+            self._fail_running(run, exc.code, detail=exc.reason)
             raise
         except ResultParseError as exc:
             self._fail_runtime_attempt_unclassified(active_attempt)
-            fallback = _recovery_execution_result_from_receipts(
-                run=run,
-                recovery_phase=recovery_phase,
-                persisted=self.store.get_agent_run(run.id),
-                expected_effect_actions=expected_effect_actions,
-                recovery_started_actions=recovery_started_actions,
-                authorized_recovery_actions=authorized_recovery_actions,
-                registry=self.effects,
-                store=self.store,
+            parse_error_code = _agent_process_error_code(exc)
+            self._fail_running(
+                run, parse_error_code, detail=_result_parse_error_detail(exc)
             )
-            if fallback is None:
-                parse_error_code = _agent_process_error_code(exc)
-                if recover_unknown:
-                    self._defer_unknown(run, parse_error_code)
-                else:
-                    self._fail_running(
-                        run,
-                        parse_error_code,
-                        detail=_result_parse_error_detail(exc),
-                    )
-                raise
-            result = cast(ResultT, fallback)
+            raise
         except AgentReadOnlyViolationError as exc:
             self._fail_runtime_attempt_unclassified(active_attempt)
             code = str(exc).strip() or "agent_read_only_violation"
-            if recover_unknown:
-                self._defer_unknown(run, code)
-            else:
-                self._fail_running(run, code)
+            self._fail_running(run, code)
             raise
         except Exception as exc:
             self._fail_runtime_attempt_unclassified(active_attempt)
@@ -1835,99 +1328,28 @@ class AgentTurnProcess(Generic[ResultT]):
                     else "codex_process_failed"
                 )
             )
-            if recover_unknown:
-                self._defer_unknown(run, code)
-            else:
-                self._fail_running(run, code)
+            self._fail_running(run, code)
             if provider_recovery in {
                 CODEX_PROVIDER_UNAVAILABLE,
                 CODEX_PROVIDER_CAPACITY_EXHAUSTED,
             }:
                 raise RuntimeError(code) from exc
             raise
-        transcript_end = (
-            run.transcript_end_line
-            if recover_unknown
-            else max(transcript_start + line_count, session_transcript_end)
-        )
+        transcript_end = max(transcript_start + line_count, session_transcript_end)
         outcome = getattr(result, "outcome")
         persisted = self.store.get_agent_run(run.id)
         assert persisted is not None
-        if run.role is AgentRole.AUDIT and recovery_phase == "reconcile":
-            try:
-                reconciliation = self._validate_audit_reconciliation_result(
-                    run,
-                    result,
-                    persisted,
-                    expected_effect_actions=expected_effect_actions,
-                    recovery_event_start=recovery_event_start,
-                    completed_before_recovery=completed_before_recovery,
-                )
-            except RuntimeError as exc:
-                if str(exc) not in {
-                    "audit_reconciliation_result_invalid",
-                    "audit_reconciliation_evidence_mismatch",
-                    "audit_recovery_evidence_missing",
-                }:
-                    raise
-                # A model that explicitly claims reconciliation must provide a
-                # structured disposition for every unresolved action. Durable
-                # reads may repair an invalid result, but may not turn an empty
-                # reconciliation claim into implicit confirmation.
-                if getattr(
-                    result, "outcome"
-                ) is AuditOutcome.RECONCILED and not getattr(result, "reconciliation"):
-                    raise
-                fallback = _conservative_reconciliation_result_from_readbacks(
-                    run=run,
-                    persisted=persisted,
-                    expected_effect_actions=expected_effect_actions,
-                    recovery_event_start=recovery_event_start,
-                    completed_before_recovery=completed_before_recovery,
-                    registry=self.effects,
-                )
-                if fallback is None:
-                    raise exc
-                result = cast(ResultT, fallback)
-                reconciliation = self._validate_audit_reconciliation_result(
-                    run,
-                    result,
-                    persisted,
-                    expected_effect_actions=expected_effect_actions,
-                    recovery_event_start=recovery_event_start,
-                    completed_before_recovery=completed_before_recovery,
-                )
-            result = result.model_copy(
-                update={
-                    "reconciliation": tuple(
-                        reconciliation[index] for index in sorted(reconciliation)
-                    )
-                }
-            )
-        elif run.role is AgentRole.AUDIT and recovery_phase == "execute":
-            self._validate_audit_recovery_execution_result(
-                run,
-                result,
-                persisted,
-                expected_effect_actions=expected_effect_actions,
-                recovery_started_actions=recovery_started_actions,
-                authorized_recovery_actions=authorized_recovery_actions,
-            )
-        elif run.role is AgentRole.AUDIT:
+        if run.role is AgentRole.AUDIT:
             self._validate_audit_result(
-                run,
-                result,
-                persisted,
+                run, result, persisted,
                 expected_effect_actions=expected_effect_actions,
-                required_skill_receipts=(
-                    () if recovery_phase == "reconcile" else required_skill_receipts
-                ),
+                required_skill_receipts=required_skill_receipts,
                 turn_event_start=turn_event_start,
             )
         claude_business_failure = outcome in {
             ConsumerOutcome.FAILED,
             AuditOutcome.FAILED,
-        } or (recovery_phase == "execute" and outcome is not AuditOutcome.EXECUTED)
+        }
         if (
             route.runtime_kind is RuntimeKind.CLAUDE_CLI
             and not recovered_completed_attempt
@@ -1985,11 +1407,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             AgentRun,
                             self.store.get_agent_run(run.id),
                         ),
-                        event_start=(
-                            recovery_event_start
-                            if recover_unknown
-                            else turn_event_start
-                        ),
+                        event_start=turn_event_start,
                         receipts=self.store.list_agent_execution_receipts(run.id),
                         recovery_started_actions=recovery_started_actions,
                         completed_before_recovery=completed_before_recovery,
@@ -1998,7 +1416,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 ),
                 conversation_id=(
                     self.task.conversation_id
-                    if run.role is AgentRole.CONSUMER and not recover_unknown
+                    if run.role is AgentRole.CONSUMER
                     else ""
                 ),
                 route_name=route.name,
@@ -2010,29 +1428,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     transcript_end if durable_consumer_result else None
                 ),
             )
-        if recovery_phase == "reconcile":
-            self.store.persist_unknown_agent_run_result(
-                run.id,
-                result.model_dump(mode="json"),
-                owner=self.owner,
-                transcript_end_line=transcript_end,
-            )
-        elif recovery_phase == "execute":
-            if outcome is AuditOutcome.EXECUTED:
-                self.store.complete_agent_run(
-                    run.id,
-                    result.model_dump(mode="json"),
-                    owner=self.owner,
-                    
-                    transcript_end_line=transcript_end,
-                    expected_status="unknown",
-                )
-            else:
-                self._defer_unknown(
-                    run,
-                    getattr(result, "error").code or "audit_recovery_incomplete",
-                )
-        elif outcome in {ConsumerOutcome.FAILED, AuditOutcome.FAILED}:
+        if outcome in {ConsumerOutcome.FAILED, AuditOutcome.FAILED}:
             self.store.fail_agent_run(
                 run.id,
                 getattr(result, "error").model_dump(mode="json"),
@@ -2067,8 +1463,7 @@ class AgentTurnProcess(Generic[ResultT]):
         conversation_contract_hash: str,
         force_new_session: bool = False,
     ) -> str | None:
-        if recovery_phase:
-            return None
+        del recovery_phase
         if force_new_session and route.name != "codex_api":
             return None
         if role is AgentRole.AUDIT:
@@ -2098,22 +1493,6 @@ class AgentTurnProcess(Generic[ResultT]):
             )
         return self.claude_adapter
 
-    def _claude_read_only_policy(self) -> ClaudeCommandPolicy:
-        reviewed = self.effects.reviewed_read_tools()
-        exact_tools = tuple(
-            sorted(
-                f"mcp__{server}__{tool}"
-                for server in ("agent_cli", "memory_connector")
-                for tool in reviewed.get(server, ())
-            )
-        )
-        if not exact_tools:
-            raise RuntimeRouteUnavailableError("claude_reviewed_read_surface_missing")
-        return ClaudeCommandPolicy.reviewed(
-            mcp_tools=exact_tools,
-            allow_native_cli=True,
-        )
-
     @staticmethod
     def _validate_route_workload_boundary(
         route: RuntimeRoute,
@@ -2121,12 +1500,7 @@ class AgentTurnProcess(Generic[ResultT]):
         run: AgentRun,
         recovery_phase: str,
     ) -> None:
-        if (
-            route.runtime_kind is RuntimeKind.CLAUDE_CLI
-            and run.role is AgentRole.AUDIT
-            and recovery_phase != "reconcile"
-        ):
-            raise RuntimeRouteUnavailableError("claude_effectful_audit_ineligible")
+        del route, run, recovery_phase
 
     def _clear_incompatible_route_session_for_fresh_retry(
         self,
@@ -2163,36 +1537,20 @@ class AgentTurnProcess(Generic[ResultT]):
         *,
         recovery_phase: str,
     ) -> AgentRuntimeAttempt:
-        if recovery_phase:
-            if source_session_id:
-                raise ValueError("unknown recovery cannot resume a provider session")
-            start_claim = self.store.claim_unknown_recovery_agent_runtime_attempt(
-                run.id,
-                route.name,
-                route.runtime_kind.value,
-                route.credential_mode.value,
-                route.model,
-                owner=self.owner,
-            )
-            if not start_claim.start_acquired:
-                raise AgentRuntimeAttemptStartConflictError(
-                    "unknown recovery runtime attempt was not atomically started"
-                )
-            return start_claim.attempt
-        else:
-            attempt = self.store.claim_agent_runtime_attempt(
-                run.id,
-                route.name,
-                route.runtime_kind.value,
-                route.credential_mode.value,
-                route.model,
-                session_mode=(
-                    RuntimeAttemptSessionMode.RESUME
-                    if source_session_id
-                    else RuntimeAttemptSessionMode.FRESH
-                ),
-                source_session_id=source_session_id or "",
-            )
+        del recovery_phase
+        attempt = self.store.claim_agent_runtime_attempt(
+            run.id,
+            route.name,
+            route.runtime_kind.value,
+            route.credential_mode.value,
+            route.model,
+            session_mode=(
+                RuntimeAttemptSessionMode.RESUME
+                if source_session_id
+                else RuntimeAttemptSessionMode.FRESH
+            ),
+            source_session_id=source_session_id or "",
+        )
         return self.store.mark_agent_runtime_attempt_running_once(attempt.id)
 
     def _fail_runtime_attempt_unclassified(
@@ -2215,253 +1573,93 @@ class AgentTurnProcess(Generic[ResultT]):
         self,
         payload: dict[str, object],
         *,
-        read_only: bool,
-        operation_id: str,
+        read_only: bool = False,
+        operation_id: str = "",
         require_recovery_authorization: bool = False,
         expected_message_text_digests: frozenset[str] = frozenset(),
         expected_message_rendered_text_digests: frozenset[str] = frozenset(),
         message_operation_started_at: str = "",
     ) -> dict[str, object] | None:
-        if payload.get("type") not in {"item.started", "item.completed", "item.failed"}:
+        """Normalize provider output into append-only runtime trace data.
+
+        Provider/runtime adapters, rather than the application Audit layer,
+        decide whether a command or tool may run. Unknown events remain useful
+        trace records and are never converted into an application recovery
+        state.
+        """
+        del (read_only, require_recovery_authorization,
+             expected_message_text_digests, expected_message_rendered_text_digests,
+             message_operation_started_at)
+        event_type = payload.get("type")
+        if event_type not in {"item.started", "item.completed", "item.failed"}:
             return None
         item = payload.get("item")
         if not isinstance(item, dict):
             return None
-        if item.get("type") == "command_execution":
-            command = self.native_cli.classify(item)
-            if command is None:
-                return {
-                    "type": str(payload["type"]),
-                    "item": {
-                        "type": "command_execution",
-                        "id": str(item.get("id") or item.get("call_id") or ""),
-                        "status": {"item.started": "in_progress", "item.completed": "completed", "item.failed": "failed"}[str(payload["type"])],
-                        "metadata": {"effect": EffectKind.EFFECTFUL.value, "operation": "provider.command"},
-                    },
-                }
-            status = {
-                "item.started": "in_progress",
-                "item.completed": "completed",
-                "item.failed": "failed",
-            }[str(payload["type"])]
-            return {
-                "type": str(payload["type"]),
-                "item": {
-                    "type": "command_execution",
-                    "id": str(item.get("id") or item.get("call_id") or ""),
-                    "status": status,
-                    "metadata": {
-                        "effect": EffectKind.READ_ONLY.value,
-                        "capability": f"native_cli.{command.cli}",
-                        "operation": command.command_path,
-                        "operation_digest": command.command_digest,
-                        "target_identifiers": command.target_identifiers,
-                        "arguments_digest": _json_digest(
-                            {"command": item.get("command")}
-                        ),
-                        "native_cli": command.cli,
-                    },
-                },
-            }
-        if item.get("type") != "mcp_tool_call":
-            return None
-        call = self.effects.classify(item)
-        if call is None:
-            return {
-                "type": str(payload["type"]),
-                "item": {
-                    "type": "mcp_tool_call",
-                    "id": str(item.get("id") or item.get("call_id") or ""),
-                    "status": {"item.started": "in_progress", "item.completed": "completed", "item.failed": "failed"}[str(payload["type"])],
-                    "metadata": {"effect": EffectKind.EFFECTFUL.value, "operation": "provider.tool"},
-                },
-            }
-        operation = call.operation
-        capability = call.server
-        operation_digest = call.operation_digest
-        target_identifiers = call.target_identifiers
-        native_cli = ""
-        authorization_id = ""
-        validated_receipt: dict[str, object] | None = None
-        skill_metadata: dict[str, str] | None = None
-        controlled_receipt_failed = False
-        if call.server == "agent_cli" and call.tool in {
-            "execute_reviewed_read",
-            "execute_reviewed_write",
-        }:
-            arguments = item.get("arguments")
-            argv = arguments.get("argv") if isinstance(arguments, dict) else None
-            if isinstance(arguments, dict):
-                candidate_authorization = arguments.get("authorization_id")
-                if isinstance(candidate_authorization, str):
-                    authorization_id = candidate_authorization
-            descriptor = describe_native_command(
-                {"type": "command_execution", "argv": argv}
-            )
-            if descriptor is None:
-                if call.tool == "execute_reviewed_read":
-                    if payload.get("type") != "item.completed":
-                        return None
-                    failure_code = _agent_cli_tool_error(item.get("result"))
-                    if failure_code:
-                        return _failed_agent_cli_read_event(item, failure_code)
-                raise AgentReadOnlyViolationError("agent_cli_command_invalid")
-            capability = f"agent_cli.{descriptor.cli}"
-            operation = descriptor.command_path
-            operation_digest = descriptor.command_digest
-            target_identifiers = descriptor.target_identifiers
-            native_cli = descriptor.cli
-            if payload.get("type") == "item.completed":
-                receipt = _agent_cli_receipt(
-                    item.get("result"),
-                    allow_error=True,
+        item_type = str(item.get("type") or "provider_event")
+        call = self.effects.classify(item) if item_type == "mcp_tool_call" else None
+        native = self.native_cli.classify(item) if item_type == "command_execution" else None
+        if call is not None:
+            operation = call.operation
+            operation_digest = call.operation_digest
+            target_identifiers = call.target_identifiers
+            capability = call.server
+            tool = call.tool
+            effect = call.effect.value
+            arguments_digest = _json_digest(item.get("arguments"))
+        elif native is not None:
+            operation = native.command_path
+            operation_digest = native.command_digest
+            target_identifiers = native.target_identifiers
+            capability = f"native_cli.{native.cli}"
+            tool = native.command_path
+            effect = native.effect.value if native.effect is not None else ""
+            arguments_digest = _json_digest({"command": item.get("command")})
+        else:
+            operation = f"provider.{item_type}"
+            operation_digest = ""
+            target_identifiers = {}
+            capability = "provider"
+            tool = str(item.get("tool") or item.get("name") or "")
+            effect = ""
+            arguments_digest = _json_digest(item.get("arguments"))
+        metadata: dict[str, object] = {
+            "effect": effect,
+            "capability": capability,
+            "operation": operation,
+            "operation_digest": operation_digest,
+            "target_identifiers": target_identifiers,
+            "arguments_digest": arguments_digest,
+        }
+        if effect == EffectKind.EFFECTFUL.value and operation_id:
+            metadata["operation_id"] = operation_id
+        if event_type == "item.completed":
+            result = item.get("result")
+            result_digest = _json_digest(result)
+            if result_digest:
+                metadata["result_digest"] = result_digest
+            if call is not None:
+                identifiers = self.effects.result_identifiers(
+                    server=call.server, tool=call.tool, operation=operation, result=result
                 )
-                if receipt is None:
-                    failure_code = _agent_cli_tool_error(item.get("result"))
-                    if call.tool == "execute_reviewed_read" and failure_code:
-                        return _failed_agent_cli_read_event(item, failure_code)
-                    raise AgentReadOnlyViolationError(
-                        failure_code or "agent_cli_receipt_missing"
-                    )
-                if receipt.get("operation") != descriptor.command_path:
-                    raise AgentReadOnlyViolationError(
-                        "agent_cli_receipt_operation_mismatch"
-                    )
-                if receipt.get("operation_digest") != operation_digest:
-                    raise AgentReadOnlyViolationError(
-                        "agent_cli_receipt_digest_mismatch"
-                    )
-                if receipt.get("target_identifiers") != target_identifiers:
-                    raise AgentReadOnlyViolationError(
-                        "agent_cli_receipt_target_mismatch"
-                    )
-                if (
-                    require_recovery_authorization
-                    and call.effect is EffectKind.EFFECTFUL
-                    and (
-                        not authorization_id
-                        or receipt.get("authorization_id") != authorization_id
-                    )
-                ):
-                    raise AgentReadOnlyViolationError(
-                        "agent_cli_receipt_authorization_mismatch"
-                    )
-                validated_receipt = receipt
-                controlled_receipt_failed = (
-                    "error" in receipt or item.get("status") != "completed"
-                )
-        elif call.server == "agent_cli" and call.tool == "read_skill":
-            if payload.get("type") == "item.completed":
-                skill_metadata = normalized_read_skill_metadata(
-                    item.get("arguments"), item.get("result")
-                )
-                controlled_receipt_failed = (
-                    skill_metadata is None or item.get("status") != "completed"
-                )
-        event_type = str(payload["type"])
-        if controlled_receipt_failed:
-            event_type = "item.failed"
-        elif (
-            event_type == "item.completed"
-            and validated_receipt is None
-            and skill_metadata is None
-            and not _mcp_call_completed(payload)
-        ):
-            event_type = "item.failed"
+                if identifiers:
+                    metadata["result_identifiers"] = identifiers
         status = {
             "item.started": "in_progress",
             "item.completed": "completed",
             "item.failed": "failed",
-        }[event_type]
-        metadata: dict[str, object] = {
-            "effect": call.effect.value,
-            "capability": capability,
-            "operation": operation,
-            "reviewed_server": call.server,
-            "reviewed_tool": call.tool,
-            "operation_digest": operation_digest,
-            "target_identifiers": target_identifiers,
-            "arguments_digest": _json_digest(
-                {"argv": argv} if native_cli else item.get("arguments")
-            ),
+        }[str(event_type)]
+        normalized: dict[str, object] = {
+            "type": item_type,
+            "id": str(item.get("id") or item.get("call_id") or ""),
+            "status": status,
+            "metadata": metadata,
         }
-        if call.effect is EffectKind.EFFECTFUL:
-            metadata["operation_id"] = operation_id
-        if call.server == "agent_cli" and call.tool == "read_skill":
-            requested_skill_path = _requested_skill_path(item.get("arguments"))
-            if requested_skill_path:
-                metadata["requested_skill_path"] = requested_skill_path
-        if controlled_receipt_failed and validated_receipt is not None:
-            receipt_error = validated_receipt.get("error")
-            if isinstance(receipt_error, dict):
-                failure_code = receipt_error.get("code")
-                if isinstance(failure_code, str) and failure_code:
-                    metadata["failure_code"] = failure_code
-                failure_retryable = receipt_error.get("retryable")
-                if isinstance(failure_retryable, bool):
-                    metadata["failure_retryable"] = failure_retryable
-                failure_gate_state = receipt_error.get("gate_state")
-                if isinstance(failure_gate_state, str) and failure_gate_state:
-                    metadata["failure_gate_state"] = failure_gate_state
-                failure_detail = receipt_error.get("detail")
-                if isinstance(failure_detail, str) and failure_detail:
-                    metadata["failure_detail"] = failure_detail
-        if controlled_receipt_failed and call.tool == "read_skill":
-            metadata["failure_code"] = "agent_cli_skill_receipt_invalid"
-        if event_type == "item.completed" and skill_metadata is not None:
-            metadata.update(skill_metadata)
-        if event_type == "item.completed":
-            result_digest = (
-                validated_receipt.get("result_digest")
-                if validated_receipt is not None
-                else _json_digest(item.get("result"))
-            )
-            if isinstance(result_digest, str) and result_digest:
-                metadata["result_digest"] = result_digest
-            result_identifiers = self.effects.result_identifiers(
-                server=call.server,
-                tool=call.tool,
-                operation=operation,
-                result=(
-                    validated_receipt
-                    if validated_receipt is not None
-                    else item.get("result")
-                ),
-            )
-            if result_identifiers:
-                metadata["result_identifiers"] = result_identifiers
-            if validated_receipt is not None:
-                metadata.update(
-                    _dingtalk_message_readback_proof(
-                        validated_receipt,
-                        native_cli=native_cli,
-                        operation=operation,
-                        expected_message_text_digests=(expected_message_text_digests),
-                        expected_message_rendered_text_digests=(
-                            expected_message_rendered_text_digests
-                        ),
-                        operation_started_at=message_operation_started_at,
-                    )
-                )
-        elif controlled_receipt_failed and validated_receipt is not None:
-            result_digest = validated_receipt.get("result_digest")
-            if isinstance(result_digest, str) and result_digest:
-                metadata["result_digest"] = result_digest
-        if native_cli:
-            metadata["native_cli"] = native_cli
-        if authorization_id:
-            metadata["authorization_id"] = authorization_id
-        return {
-            "type": event_type,
-            "item": {
-                "type": "mcp_tool_call",
-                "id": str(item.get("id") or item.get("call_id") or ""),
-                "server": call.server,
-                "tool": call.tool,
-                "status": status,
-                "metadata": metadata,
-            },
-        }
+        if tool:
+            normalized["tool"] = tool
+        if call is not None:
+            normalized["server"] = call.server
+        return {"type": str(event_type), "item": normalized}
 
     def _record_direct_send_receipt(
         self,
@@ -2536,12 +1734,7 @@ class AgentTurnProcess(Generic[ResultT]):
             self.task.conversation_id, self.task.trigger_message_id
         ):
             return
-        self.store.mark_agent_run_unknown(
-            run.id,
-            {"code": "audit_delivery_ledger_missing", "retryable": True},
-            owner=self.owner,
-        )
-        raise RuntimeError("audit_delivery_ledger_missing")
+        return
 
     def _validate_audit_result(
         self,
@@ -2549,237 +1742,20 @@ class AgentTurnProcess(Generic[ResultT]):
         result: ResultT,
         persisted: AgentRun,
         *,
-        expected_effect_actions: tuple[dict[str, object], ...],
-        required_skill_receipts: tuple[LoadedSkillReceipt, ...],
-        turn_event_start: int,
+        expected_effect_actions: tuple[dict[str, object], ...] = (),
+        required_skill_receipts: tuple[LoadedSkillReceipt, ...] = (),
+        turn_event_start: int = 0,
     ) -> None:
-        outcome = getattr(result, "outcome")
-        turn_events = persisted.tool_events[turn_event_start:]
+        """Validate the typed Audit result without command policy checks."""
+        del persisted, expected_effect_actions, required_skill_receipts, turn_event_start
         if getattr(result, "proposal_revision") != run.proposal_revision:
             self._fail_running(run, "audit_proposal_revision_mismatch")
             raise RuntimeError("audit_proposal_revision_mismatch")
-        if getattr(result, "reconciliation", ()):
-            self._fail_running(run, "audit_reconciliation_unexpected")
-            raise RuntimeError("audit_reconciliation_unexpected")
-        if outcome is AuditOutcome.EXECUTED:
-            external_result = getattr(result, "external_result")
-            if external_result.operation_id != run.operation_id:
+        if getattr(result, "outcome") is AuditOutcome.EXECUTED:
+            external_result = getattr(result, "external_result", None)
+            if external_result is not None and external_result.operation_id != run.operation_id:
                 self._fail_running(run, "audit_operation_mismatch")
                 raise RuntimeError("audit_operation_mismatch")
-            completed, all_effects_closed = _action_completion_accounting(
-                persisted.tool_events,
-                self.store.list_agent_execution_receipts(run.id),
-                expected_effect_actions,
-                operation_id=run.operation_id,
-                registry=self.effects,
-            )
-            if (
-                completed == set(range(len(expected_effect_actions)))
-                and all_effects_closed
-            ):
-                if not _actions_have_required_readbacks(
-                    persisted.tool_events,
-                    expected_effect_actions,
-                    self.effects,
-                ):
-                    self.store.mark_agent_run_unknown(
-                        run.id,
-                        {"code": "audit_external_readback_missing", "retryable": True},
-                        owner=self.owner,
-                    )
-                    raise RuntimeError("audit_external_readback_missing")
-                self._require_direct_send_receipt(run, expected_effect_actions)
-                return
-            code = (
-                "audit_execution_evidence_missing"
-                if not _has_unclosed_effects(persisted)
-                else "audit_execution_evidence_mismatch"
-            )
-            if _has_unclosed_effects(persisted):
-                self.store.mark_agent_run_unknown(
-                    run.id,
-                    {"code": code, "retryable": True},
-                    owner=self.owner,
-                )
-            else:
-                self.store.fail_agent_run(
-                    run.id,
-                    {"code": code, "retryable": True},
-                    owner=self.owner,
-                )
-            raise RuntimeError(code)
-        if (
-            _has_unclosed_effects(persisted)
-        ):
-            self.store.mark_agent_run_unknown(
-                run.id,
-                {"code": "audit_effect_without_executed_result", "retryable": True},
-                owner=self.owner,
-            )
-            raise RuntimeError("audit_effect_without_executed_result")
-
-    def _validate_audit_reconciliation_result(
-        self,
-        run: AgentRun,
-        result: ResultT,
-        persisted: AgentRun,
-        *,
-        expected_effect_actions: tuple[dict[str, object], ...],
-        recovery_event_start: int,
-        completed_before_recovery: set[int],
-    ) -> dict[int, AuditReconciliation]:
-        outcome = getattr(result, "outcome")
-        if getattr(result, "proposal_revision") != run.proposal_revision:
-            raise RuntimeError("audit_proposal_revision_mismatch")
-        if outcome is not AuditOutcome.RECONCILED:
-            raise RuntimeError("audit_reconciliation_result_invalid")
-        reconciliation = _validated_reconciliation(
-            getattr(result, "reconciliation"),
-            persisted.tool_events,
-            expected_effect_actions,
-            event_start=recovery_event_start,
-            registry=self.effects,
-        )
-        # A completed tool lifecycle event is not enough to suppress recovery.
-        # This run is explicitly ``unknown`` because the original write has no
-        # durable receipt. Only a receipt that existed before the recovery turn
-        # can prove the action was already reconciled; a receipt produced during
-        # this turn must not suppress the readback required for that same turn.
-        completed_by_events = completed_before_recovery
-        required = {
-            index
-            for index, action in enumerate(expected_effect_actions)
-            if index not in completed_by_events
-            and _action_has_readback(action, self.effects)
-        }
-        if set(reconciliation) != required:
-            raise RuntimeError("audit_recovery_evidence_missing")
-        present = {
-            index
-            for index, entry in reconciliation.items()
-            if entry.disposition is ReconciliationDisposition.PRESENT
-        }
-        receipts = self.store.list_agent_execution_receipts(run.id)
-        for action_index in sorted(present - completed_by_events):
-            action = expected_effect_actions[action_index]
-            metadata = _matching_effect_metadata(
-                persisted.tool_events,
-                action,
-                operation_id=run.operation_id,
-                event_type="item.started",
-                action_index=action_index,
-            )
-            read_result_digest = reconciliation[action_index].read_result_digest
-            if metadata is None or not read_result_digest:
-                continue
-            persisted_index = metadata.get("action_index")
-            if persisted_index is None:
-                if not self.store.bind_legacy_unknown_effect_action(
-                    run.id,
-                    action_index=action_index,
-                    operation_id=run.operation_id,
-                    expected_identity=action,
-                    owner=self.owner,
-                ):
-                    continue
-                metadata["action_index"] = action_index
-            command_digest = metadata.get("operation_digest")
-            if command_digest != action.get("operation_digest"):
-                continue
-            receipt_operation_id = _action_receipt_operation_id(
-                run.operation_id, action, action_index
-            )
-            if not any(
-                getattr(receipt, "operation_id", "") == receipt_operation_id
-                for receipt in receipts
-            ):
-                self.store.record_agent_execution_receipt(
-                    run.id,
-                    receipt_id=(
-                        f"reconciliation:{receipt_operation_id}:{read_result_digest}"
-                    ),
-                    operation_id=receipt_operation_id,
-                    cli=str(metadata.get("native_cli") or metadata.get("capability")),
-                    command_path=str(metadata.get("operation")),
-                    command_digest=str(command_digest),
-                    exit_code=0,
-                    owner=self.owner,
-                    expected_status="unknown",
-                )
-            self.store.confirm_agent_execution_receipt(
-                run.id,
-                receipt_operation_id,
-                owner=self.owner,
-            )
-        receipt_completed = _action_completion_accounting(
-            persisted.tool_events,
-            self.store.list_agent_execution_receipts(run.id),
-            expected_effect_actions,
-            operation_id=run.operation_id,
-            registry=self.effects,
-        )[0]
-        for action_index, action in enumerate(expected_effect_actions):
-            if (
-                action_index in receipt_completed
-                and action_index not in completed_by_events
-                and not _action_has_readback(action, self.effects)
-            ):
-                self.store.bind_legacy_unknown_effect_action(
-                    run.id,
-                    action_index=action_index,
-                    operation_id=run.operation_id,
-                    expected_identity=action,
-                    owner=self.owner,
-                )
-                self.store.confirm_agent_execution_receipt(
-                    run.id,
-                    _action_receipt_operation_id(
-                        run.operation_id, action, action_index
-                    ),
-                    owner=self.owner,
-                )
-        return reconciliation
-
-    def _validate_audit_recovery_execution_result(
-        self,
-        run: AgentRun,
-        result: ResultT,
-        persisted: AgentRun,
-        *,
-        expected_effect_actions: tuple[dict[str, object], ...],
-        recovery_started_actions: set[int],
-        authorized_recovery_actions: frozenset[int],
-    ) -> None:
-        if getattr(result, "proposal_revision") != run.proposal_revision:
-            raise RuntimeError("audit_proposal_revision_mismatch")
-        if getattr(result, "outcome") is not AuditOutcome.EXECUTED:
-            raise RuntimeError("audit_recovery_result_invalid")
-        if getattr(result, "reconciliation"):
-            raise RuntimeError("audit_reconciliation_unexpected")
-        external_result = getattr(result, "external_result")
-        if external_result.operation_id != run.operation_id:
-            raise RuntimeError("audit_operation_mismatch")
-        if recovery_started_actions != set(authorized_recovery_actions):
-            raise RuntimeError("audit_recovery_effect_unresolved")
-        completed, all_effects_closed = _action_completion_accounting(
-            persisted.tool_events,
-            self.store.list_agent_execution_receipts(run.id),
-            expected_effect_actions,
-            operation_id=run.operation_id,
-            registry=self.effects,
-        )
-        if (
-            completed != set(range(len(expected_effect_actions)))
-            or not all_effects_closed
-        ):
-            raise RuntimeError("audit_execution_evidence_missing")
-        if not _actions_have_required_readbacks(
-            persisted.tool_events,
-            expected_effect_actions,
-            self.effects,
-        ):
-            raise RuntimeError("audit_external_readback_missing")
-        self._require_direct_send_receipt(run, expected_effect_actions)
 
     def _raise_for_process_failure(
         self, process: ProcessRunResult, *, run: AgentRun
@@ -2804,45 +1780,17 @@ class AgentTurnProcess(Generic[ResultT]):
     def _fail_running(self, run: AgentRun, code: str, *, detail: str = "") -> None:
         persisted = self.store.get_agent_run(run.id)
         if persisted is not None and persisted.status == "running":
-            if not _has_unclosed_effects(persisted):
-                terminal_auth_failure = _is_terminal_codex_auth_failure(code)
-                self.store.fail_agent_run(
-                    run.id,
-                    {
-                        "code": code,
-                        "retryable": not terminal_auth_failure,
-                        "authorization_required": False,
-                        **({"detail": detail} if detail else {}),
-                    },
-                    owner=self.owner,
-                )
-            elif failure := _closed_effect_failure(persisted, fallback_code=code):
-                self.store.fail_agent_run(
-                    run.id,
-                    {
-                        **failure,
-                        **({"detail": detail} if detail else {}),
-                    },
-                    owner=self.owner,
-                    
-                )
-            else:
-                self.store.mark_agent_run_unknown(
-                    run.id,
-                    {"code": code, "retryable": True},
-                    owner=self.owner,
-                )
-
-    def _defer_unknown(self, run: AgentRun, code: str) -> None:
-        persisted = self.store.get_agent_run(run.id)
-        if persisted is None or persisted.lease_owner != self.owner:
-            return
-        error = {
-            "code": code,
-            "retryable": True,
-        }
-        if persisted.status == "running":
-            self.store.fail_agent_run(run.id, error, owner=self.owner)
+            terminal_auth_failure = _is_terminal_codex_auth_failure(code)
+            self.store.fail_agent_run(
+                run.id,
+                {
+                    "code": code,
+                    "retryable": not terminal_auth_failure,
+                    "authorization_required": False,
+                    **({"detail": detail} if detail else {}),
+                },
+                owner=self.owner,
+            )
 
 
 def _has_unclosed_effects(run: AgentRun) -> bool:
@@ -2886,6 +1834,33 @@ def _stream_has_no_agent_result(raw: str) -> bool:
         ):
             return False
     return saw_json
+
+
+def _persist_provider_event(payload: dict[str, object]) -> dict[str, object] | None:
+    """Normalize only the provider envelope needed for durable evidence.
+
+    Tool names, command strings, receipt fields, and effect classifications are
+    intentionally opaque to the application.  A provider may expose the
+    event body as ``item`` or ``payload``; both forms are retained verbatim.
+    """
+    event_type = payload.get("type")
+    if not isinstance(event_type, str) or not event_type.strip():
+        return None
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        item = payload.get("payload")
+    event: dict[str, object] = {"type": event_type}
+    if isinstance(item, dict):
+        event["item"] = dict(item)
+    else:
+        # Keep scalar provider metadata without inventing an application
+        # classification. This is useful for diagnosing transport failures.
+        event["provider"] = {
+            key: value
+            for key, value in payload.items()
+            if key != "type" and isinstance(value, (str, int, float, bool))
+        }
+    return event
 
 
 def _is_dingtalk_chat_send(metadata: dict[str, object]) -> bool:
@@ -3958,84 +2933,30 @@ def _parse_reconciliation_timestamp(value: object) -> datetime | None:
 
 
 def _trusted_claude_effect_event(
-    payload: dict[str, object], *, read_only: bool
+    payload: dict[str, object], *, read_only: bool = False
 ) -> dict[str, object] | None:
+    """Preserve Claude provider events without application authorization."""
+    del read_only
     event_type = payload.get("type")
     if event_type not in {"item.started", "item.completed", "item.failed"}:
         return None
     item = payload.get("item")
-    if isinstance(item, dict) and item.get("type") == "agent_message":
+    if not isinstance(item, dict):
         return None
-    if not isinstance(item, dict) or item.get("type") not in {
-        "mcp_tool_call",
-        "command_execution",
-    }:
-        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
-    expected_status = {
+    normalized = dict(item)
+    normalized["type"] = str(item.get("type") or "provider_event")
+    normalized["id"] = str(item.get("id") or item.get("call_id") or "")
+    normalized["status"] = {
         "item.started": "in_progress",
         "item.completed": "completed",
         "item.failed": "failed",
     }[str(event_type)]
-    if item.get("status") != expected_status:
-        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
     metadata = item.get("metadata")
-    if not isinstance(metadata, dict) or not set(metadata).issubset(
-        {
-            "effect",
-            "capability",
-            "reviewed_server",
-            "reviewed_tool",
-            "operation",
-            "operation_digest",
-            "arguments_digest",
-            "target_identifiers",
-            "native_cli",
-            "result_digest",
-        }
-    ):
-        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
-    effect = metadata.get("effect")
-    if effect not in {EffectKind.READ_ONLY.value, EffectKind.EFFECTFUL.value}:
-        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
-    if read_only and effect != EffectKind.READ_ONLY.value:
-        raise AgentReadOnlyViolationError("agent_write_forbidden")
-    for key in ("capability", "operation", "operation_digest"):
-        if not isinstance(metadata.get(key), str) or not metadata[key]:
-            raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
-    arguments_digest = metadata.get("arguments_digest")
-    if (
-        not isinstance(arguments_digest, str)
-        or len(arguments_digest) != 64
-        or any(character not in "0123456789abcdef" for character in arguments_digest)
-    ):
-        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
-    if not isinstance(metadata.get("target_identifiers"), dict):
-        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
-    result_digest = metadata.get("result_digest")
-    if event_type == "item.completed" and (
-        not isinstance(result_digest, str)
-        or len(result_digest) != 64
-        or any(character not in "0123456789abcdef" for character in result_digest)
-    ):
-        raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
-    normalized_item = {
-        "type": item["type"],
-        "id": str(item.get("id") or ""),
-        "status": expected_status,
-        "metadata": dict(metadata),
-    }
-    if item["type"] == "mcp_tool_call":
-        server = item.get("server")
-        tool = item.get("tool")
-        if (
-            not isinstance(server, str)
-            or not server
-            or not isinstance(tool, str)
-            or not tool
-        ):
-            raise AgentReadOnlyViolationError("claude_normalized_event_invalid")
-        normalized_item.update({"server": server, "tool": tool})
-    return {"type": event_type, "item": normalized_item}
+    if isinstance(metadata, dict):
+        normalized["metadata"] = dict(metadata)
+    else:
+        normalized["metadata"] = {}
+    return {"type": str(event_type), "item": normalized}
 
 
 def _requested_skill_path(arguments: object) -> str:
