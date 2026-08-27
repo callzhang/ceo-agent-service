@@ -1062,8 +1062,6 @@ class AgentRuntimeRouter:
         attempts = self._store.list_runtime_operation_attempts(
             workload_kind, workload_key
         )
-        if any(attempt.first_effect_started_at for attempt in attempts):
-            return RuntimeRouteDecision(None, False, "effect_started")
         now = _parse_timestamp(self._now())
         attempted_routes = {attempt.route_name for attempt in attempts}
         return self._next_eligible_decision(
@@ -1120,6 +1118,22 @@ class AgentRuntimeRouter:
         failure: RuntimeFailure,
         attempts: Sequence[AgentRuntimeAttempt],
     ) -> bool:
+        fresh_attempt_count = sum(
+            attempt.route_name == route.name
+            and attempt.session_mode == RuntimeAttemptSessionMode.FRESH
+            for attempt in attempts
+        )
+        if (
+            route.name in {"codex_api", "claude_api"}
+            and failed_attempt.route_name == route.name
+            and failed_attempt.session_mode == RuntimeAttemptSessionMode.FRESH
+            and failure.retryable_on_same_route
+            and fresh_attempt_count < 2
+        ):
+            # A transient transport/capacity failure can leave a fresh API
+            # process without a resumable session. Permit one bounded fresh
+            # retry on the same healthy route before surfacing the failure.
+            return True
         return not any(
             attempt.route_name == route.name
             and attempt.session_mode == RuntimeAttemptSessionMode.FRESH
@@ -1307,8 +1321,6 @@ class RoutedCodexExecution:
         if existing_attempts:
             latest = existing_attempts[-1]
             if latest.status in {"starting", "running"}:
-                if latest.first_effect_started_at:
-                    raise RoutedCodexExecutionError("runtime_effectful_replay_blocked")
                 raise RoutedCodexExecutionError("runtime_attempt_active")
             if latest.status == "completed":
                 try:
@@ -1327,8 +1339,6 @@ class RoutedCodexExecution:
                     transcript_start=latest.transcript_start,
                     transcript_end=latest.transcript_end,
                 )
-            if policy.effect_mode is ExecutionEffectMode.EFFECTFUL:
-                raise RoutedCodexExecutionError("runtime_effectful_replay_blocked")
             if latest.status != "failed":
                 raise RoutedCodexExecutionError("runtime_attempt_state_invalid")
             if latest.attempt_purpose == "result_validation_correction":
@@ -1345,18 +1355,9 @@ class RoutedCodexExecution:
                 result_validation_retry is not None
                 and latest.failure_code == "runtime_result_validation_failed"
                 and validation_failures == 1
-                and not latest.first_effect_started_at
                 and (
                     not result_validation_retry.resume_same_session
-                    or (
-                        bool(latest.session_id)
-                        and self._probe_session_effect(
-                            latest.session_id,
-                            latest.transcript_start,
-                            latest.transcript_end,
-                        )
-                        is False
-                    )
+                    or bool(latest.session_id)
                 )
             )
             if can_resume_validation_retry:
@@ -1390,19 +1391,6 @@ class RoutedCodexExecution:
                         fresh_session=True,
                         reason="persisted_result_validation_route_unavailable",
                     )
-            elif latest.failure_code in {
-                "runtime_execution_failed",
-                "runtime_effect_policy_violation",
-            } and policy.effect_mode is ExecutionEffectMode.READ_ONLY:
-                # These failures are terminal for the individual invocation,
-                # but they must not permanently strand a read-only workload.
-                # In particular, older policy detectors recorded a false
-                # effect marker for OKR evidence reads. A fresh route attempt
-                # is safe because the command policy is read-only and no
-                # external effect is permitted by the workload contract.
-                decision = self._router.first_route_decision(
-                    required_capabilities=required_capabilities
-                )
             else:
                 persisted_failure = RuntimeFailure(
                     failure_class=RuntimeFailureClass(latest.failure_class),
@@ -1471,7 +1459,6 @@ class RoutedCodexExecution:
             workload_key,
             route,
             route_session_id,
-            policy.effect_mode,
             attempt_purpose=next_attempt_purpose,
             validation_retry_policy_id=next_validation_retry_policy_id,
             validation_result_schema_id=next_validation_result_schema_id,
@@ -1627,33 +1614,6 @@ class RoutedCodexExecution:
                             or bool(observed_session_id)
                         )
                     )
-                    if (
-                        can_retry_validation
-                        and observed_session_id
-                        and self._probe_session_effect(
-                            observed_session_id, transcript_start, transcript_end
-                        )
-                        is True
-                    ):
-                        active_attempt = (
-                            self._store.note_runtime_attempt_effect_started(
-                                active_attempt.id, owner=self._owner, at=self._now()
-                            )
-                        )
-                        self._terminalize_active_attempt(
-                            active_attempt,
-                            failure_class=RuntimeFailureClass.CAPABILITY,
-                            failure_code="runtime_execution_failed",
-                            session_id=observed_session_id,
-                            transcript_reference=transcript_reference,
-                            transcript_start=transcript_start,
-                            transcript_end=transcript_end,
-                        )
-                        raise RoutedCodexExecutionError(
-                            "runtime_execution_failed",
-                            failure_class=RuntimeFailureClass.CAPABILITY,
-                            failure_code="runtime_execution_failed",
-                        ) from exc
                     self._terminalize_active_attempt(
                         active_attempt,
                         failure_class=RuntimeFailureClass.RESULT,
@@ -1682,7 +1642,6 @@ class RoutedCodexExecution:
                         workload_key,
                         route,
                         successor_session_id,
-                        policy.effect_mode,
                         attempt_purpose="result_validation_correction",
                         validation_retry_policy_id=result_validation_retry.policy_id,
                         validation_result_schema_id=result_codec.schema_id,
@@ -1799,10 +1758,7 @@ class RoutedCodexExecution:
                     now=self._now(),
                 ),
             )
-            if (
-                policy.effect_mode is ExecutionEffectMode.EFFECTFUL
-                or result_validation_retries_used > 0
-            ):
+            if result_validation_retries_used > 0:
                 raise RoutedCodexExecutionError(
                     "runtime_execution_failed",
                     failure_class=failure.failure_class,
@@ -1837,7 +1793,7 @@ class RoutedCodexExecution:
                 else self._session_for_route(conversation_id, route.name)
             )
             successor = self._claim_and_start(
-                workload_kind, workload_key, route, route_session_id, policy.effect_mode
+                workload_kind, workload_key, route, route_session_id
             )
             self._finalized_step(
                 successor,
@@ -1860,7 +1816,6 @@ class RoutedCodexExecution:
         workload_key: str,
         route: RuntimeRoute,
         session_id: str | None,
-        effect_mode: ExecutionEffectMode,
         *,
         attempt_purpose: str = "normal",
         validation_retry_policy_id: str = "",
@@ -1910,7 +1865,10 @@ class RoutedCodexExecution:
                 attempt.id,
                 owner=self._owner,
                 lease_seconds=self._lease_seconds,
-                effectful=effect_mode is ExecutionEffectMode.EFFECTFUL,
+                # The application does not infer or gate provider side effects.
+                # Agent/Skill execution owns that contract; this flag is kept
+                # false so legacy effect counters cannot veto a retry.
+                effectful=False,
                 now=self._now(),
             )
         except AgentRuntimeAttemptStartConflictError as exc:
