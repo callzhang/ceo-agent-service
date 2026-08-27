@@ -9826,7 +9826,11 @@ def _needs_human_decision_card(
         "<p class=\"muted\">请选择一条可复用的处理规则。系统会按该规则重新核验、执行并回读；每个选项会说明是否产生外部动作。</p>"
         + option_forms
         if options
-        else ""
+        else (
+            "<p class=\"muted\">审核 Agent 会把审核意见反馈给执行 Agent 修订原任务。"
+            "只有当你发现一条可复用的 Skill 处理规则时，才需要在下方补充；"
+            "不需要确认‘是否已执行’或选择与当前对话无关的恢复动作。</p>"
+        )
     )
     return (
         '<section class="card needs-human-card"><h2>需要你的判断（用于迭代 Skill）</h2>'
@@ -10044,6 +10048,11 @@ def _needs_human_decision_options(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
 ) -> tuple[DecisionOption, ...]:
+    # This is the legacy execution-recovery marker, not a business decision.
+    # Do not surface its generic “occurred/not occurred/stop” choices for a
+    # conversation that needs audit feedback to the execution Agent instead.
+    if attempt.audit_summary.strip() == "audit_recovery_ambiguous":
+        return ()
     try:
         persisted_options = json.loads(attempt.human_decision_options_json)
         if persisted_options:
