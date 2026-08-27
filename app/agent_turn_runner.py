@@ -1023,7 +1023,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 recovery_started_actions.add(action_index)
             if recovery_phase == "reconcile" and effect == EffectKind.EFFECTFUL.value:
                 raise AgentReadOnlyViolationError("agent_write_forbidden")
-            if self.role is AgentRole.CONSUMER and effect == EffectKind.EFFECTFUL.value:
+            if run.role is AgentRole.CONSUMER and effect == EffectKind.EFFECTFUL.value:
                 raise AgentReadOnlyViolationError("agent_write_forbidden")
             if recover_unknown:
                 self.store.append_unknown_agent_run_event(
