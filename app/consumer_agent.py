@@ -324,7 +324,7 @@ class ConsumerAgentRunner:
                     task.conversation_id, route_name, route_session_id
                 )
                 route_sessions.pop(route_name)
-        conversation_session_id = route_sessions.get("codex_oauth")
+        conversation_session_id = next(iter(route_sessions.values()), None)
         if json.loads(SCHEMA_PATH.read_text(encoding="utf-8")) != (
             ConsumerAgentResult.model_json_schema()
         ):
