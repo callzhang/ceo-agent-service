@@ -11122,7 +11122,6 @@ def _history_approval_pills(
             "needs_human",
             "pending",
             "processing",
-            "pending_reconciliation",
             "dry_run",
         }
     ):
