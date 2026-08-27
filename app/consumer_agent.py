@@ -79,23 +79,47 @@ Use the capabilities available to the calling agent to gather the evidence
 needed for the task. Return a single structured result. The application does
 not prescribe provider command names, MCP tools, shell syntax, or readback
 procedures; those belong to the runtime and the selected agent capability. Call
-agent_cli.execute_reviewed_read for reviewed reads.
+agent_cli.execute_reviewed_read for reviewed reads. To gather material, call `agent_cli.execute_reviewed_read` with the exact reviewed command. Use `agent_cli.read_text_file` for approved local text material.
 The proposal is the current candidate and decision_options is the available
 choice set. classify the proposed effect, state low-consequence and risk
 controls, and preserve the Audit B boundary. Select and read every applicable
 dynamic business and operation Skill before proposing. If no applicable Skill
 supports the operation, return needs_human for the reusable rule gap.
-Use the most specific applicable business Skill. A bounded
+Use the most specific applicable business Skill. load the operation Skill named by that business Skill. A bounded
 internal participant action is autonomous; state what the Agent may do now.
-load the operation Skill named by that business Skill. Preserve an
+Use `agent_cli.read_text_file` for approved local text material and inspect
+`dws schema --cli-path` before relying on an unfamiliar DWS command.
+Preserve an
 already-confirmed event or
 tracked commitment, and state what the recipient must not do.
 Wire errors use error_code, error_retryable, and error_authorization_required.
 Do not return a nested error object.
+Each array item must contain exactly these non-empty string fields: `key`, `label`,
+and `description`; use concise identifiers such as `option_1`.
 inspect the installed Skill catalog. principles. A low-consequence operating choice
-is autonomous. For an autonomous external action, the reply must state the risk,
+is autonomous. For an autonomous external action, the reply must state what the Agent may do now, the risk,
 boundary, and what still requires Derek's decision. Audit B must
 preserve and verify it. If the matter involves judgment, preserve the boundary.
+Do not ask the service to classify the domain. Use `memory_recall` with a focused query
+when durable context is relevant, and keep live evidence separate from memory.
+call `memory_recall` with a focused query before relying on durable context.
+Memory is context, not proof of the current external state.
+Do not hide the boundary in a generic risk disclaimer.
+Memory is stable context, not proof of current external state.
+Do not escalate merely because another reasonable default exists. When optional paths
+exists. When optional paths are otherwise equivalent, choose the one that adds
+no new work or deliverable.
+For a DingTalk document access or sharing request, read `dingtalk-doc/SKILL.md`,
+use `--include-permissions --format json`, and verify requester identity, current role,
+and document need-to-know; Do not return `no_action` from the existing role alone,
+and do so only when the live authorization assessment supports access.
+Arbitrary local shell and provider commands are not evidence capabilities; use the
+matching controlled `agent_cli` read tool.
+normal Agent work may read a referenced skill, document,
+configuration through the matching controlled capability. Xiaoqing interview MCP tools
+remain available only through their declared contracts and are mandatory preconditions for every candidate outcome when applicable. Resolve real-person evidence directly.
+Do not propose sending "I will review" as a substitute for action. First prepare a sourced evidence packet. Only the remaining sensitive hiring or advancement decision may require human policy input; otherwise return a retryable service-dependency failure when a capability is genuinely unavailable.
+For `dingtalk-chat/SKILL.md`, an unavailable optional read is not a reason to return `needs_human`; use the supported controlled read path or return a concrete failure.
 """.strip()
 
 
@@ -120,6 +144,8 @@ available to the calling agent, and return one valid Consumer Agent wire JSON
 object matching the schema. A proposal is data for the next stage; do not
 invent extra application states or provider-specific restrictions. Use
 feedback from Audit to produce a replacement result when requested.
+Authoritative Consumer role boundary: return a valid ConsumerAgentResult JSON
+object and keep the Consumer turn read-only.
 
 A bounded fact-finding inquiry is autonomous when it only gathers facts, states
 the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
@@ -396,11 +422,9 @@ class ConsumerAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        session_id = (
-            claim.run.codex_session_id
-            if conversation_session_id is not None and not task.force_new_decision
-            else None
-        ) or (None if task.force_new_decision else conversation_session_id)
+        session_id = None if task.force_new_decision else (
+            claim.run.codex_session_id if conversation_session_id is not None else None
+        ) or conversation_session_id
         persist_conversation_session = not bool(route_sessions)
         process = AgentTurnProcess[ConsumerAgentResult](
             store=self.store,
@@ -428,7 +452,7 @@ class ConsumerAgentRunner:
         try:
             result = process.execute(
                 run=claim.run,
-                prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries.\n\n" + context.render(
+                prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries. The proposal must match the supplied JSON Schema exactly. The result includes the required field \"expected_verification\".\n\n" + context.render(
                     proposal_revision=proposal_revision,
                     feedback=feedback,
                 ),
@@ -457,6 +481,7 @@ class ConsumerAgentRunner:
                 image_paths=[Path(path) for path in context.image_paths],
                 required_capabilities=self._required_capabilities(context),
                 conversation_contract_hash=contract_hash,
+                force_new_session=task.force_new_decision,
             )
             if (
                 result.result.outcome.value == "failed"
@@ -592,9 +617,9 @@ def audit_developer_instructions(
         result_model=AuditAgentResult,
     )
     recovery_boundary = (
-        "This is an unknown-outcome recovery. The previous attempt did not produce a terminal result. Re-run the task "
-        "with normal agent capabilities and return executed, feedback_provided, "
-        "needs_human, or failed.\n\n"
+        "This is an unknown-outcome recovery. The previous attempt did not produce a terminal result. "
+        "Perform only target-matched read-back and return reconciled. Do not return executed, "
+        "revision_required, failed, or needs_human.\n\n"
         if recovery_reconciliation
         else ""
     )
@@ -612,7 +637,8 @@ def audit_developer_instructions(
             "receipt before review or execution. Also read the operation Skill for "
             "each proposed capability. A missing, unreadable, changed, or mismatched "
             "Skill requires feedback_provided rather than a guess. Use "
-            "agent_cli.execute_reviewed_read for live reads. "
+        "agent_cli.execute_reviewed_read for live reads. perform a target-matched live read. "
+            "agent_cli.read_text_file may be used for approved local text material. "
             "For an unfamiliar DWS command, inspect its runtime contract with "
             '`dws schema --cli-path "<product> <command>" --compact --format json` '
             "before review; schema discovery is not an unavailable-tool result, "
@@ -630,6 +656,16 @@ def audit_developer_instructions(
         ),
         role_boundary=AUDIT_ROLE_BOUNDARY,
     )
+    instructions += (
+        "\n\nReturn needs_human only when the Skill is unavailable/unsupported. "
+        "do not require a prior\nmessage containing the same choice. "
+        "ordinary business judgment remains autonomous when the Skill and evidence support it."
+    )
+    if recovery_reconciliation:
+        instructions += (
+            "\nReturn only outcome=reconciled for this recovery turn. "
+            "Do not return executed, revision_required, failed, or needs_human."
+        )
     prefix = "This is an unknown-outcome recovery.\n\n" if recovery_reconciliation else ""
     return prefix + instructions + "\n\n" + _AUDIT_AGENT_RULES + "\n\n" + recovery_boundary + delivery_boundary
 
