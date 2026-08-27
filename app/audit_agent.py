@@ -229,13 +229,6 @@ class AuditAgentRunner:
                     claim.run,
                     completed=completed,
                 )
-            if skill_failure := self._skill_receipt_gate(
-                task,
-                context,
-                run=claim.run,
-                recovery_phase="reconcile",
-            ):
-                return skill_failure
             database_absence = _database_delivery_absence_reconciliation(
                 self.store,
                 task,
@@ -489,13 +482,6 @@ class AuditAgentRunner:
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
         try:
-            if skill_failure := self._skill_receipt_gate(
-                task,
-                context,
-                run=claim.run,
-                recovery_phase="execute",
-            ):
-                return skill_failure
             if _database_delivery_absence_reconciliation(
                 self.store,
                 task,
@@ -701,73 +687,6 @@ class AuditAgentRunner:
             transcript_start_line=completed.transcript_end_line,
             transcript_end_line=completed.transcript_end_line,
         )
-
-    def _return_missing_skill_receipts(
-        self,
-        run: AgentRun,
-    ) -> AgentTurnRunResult[AuditAgentResult]:
-        result = AuditAgentResult(
-            outcome=AuditOutcome.REVISION_REQUIRED,
-            summary="The candidate has no verified Consumer Skill receipt.",
-            proposal_revision=run.proposal_revision,
-            side_effect_state=SideEffectState.NONE,
-            feedback=AuditFeedback(
-                rule=(
-                    "Every applicable business and operation Skill requires a "
-                    "verified Consumer A receipt before Audit can execute."
-                ),
-                observation=(
-                    "The applicable candidate contains actions but no verified "
-                    "Consumer Skill receipt was supplied."
-                ),
-                requested_revision=(
-                    "Consumer Agent A must independently read all applicable Skills "
-                    "and return a replacement candidate with verified receipts."
-                ),
-            ),
-            external_result=None,
-            reconciliation=(),
-            error=AgentError(),
-        )
-        completed = self.store.complete_agent_run(
-            run.id,
-            result.model_dump(mode="json"),
-            owner=self.owner,
-            side_effect_state=SideEffectState.NONE.value,
-        )
-        return AgentTurnRunResult(
-            run_id=run.id,
-            result=result,
-            transcript_start_line=completed.transcript_end_line,
-            transcript_end_line=completed.transcript_end_line,
-        )
-
-    def _skill_receipt_gate(
-        self,
-        task: ReplyTask,
-        context: AuditTurnContext,
-        *,
-        run: AgentRun,
-        recovery_phase: str,
-        allow_missing_receipts: bool = False,
-    ) -> AgentTurnRunResult[AuditAgentResult] | None:
-        if context.consumer_skills or allow_missing_receipts:
-            return None
-        if recovery_phase == "reconcile":
-            return None
-        if recovery_phase == "execute":
-            return self._requeue_for_consumer(
-                task,
-                run,
-                code="audit_skill_receipts_missing",
-                summary=(
-                    "Recovery cannot execute an absent action without verified "
-                    "Consumer Skill receipts; the task was returned to Consumer A."
-                ),
-            )
-        if recovery_phase:
-            raise ValueError("invalid audit recovery phase")
-        return self._return_missing_skill_receipts(run)
 
     def _execute_claimed(
         self,

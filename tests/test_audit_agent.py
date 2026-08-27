@@ -2657,7 +2657,10 @@ def test_execute_recovery_without_skill_receipts_defers_before_model_or_write(
 
     failed = store.get_agent_run(run.id)
     requeued = store.get_reply_task(task.id)
-    assert result.result.error.code == "audit_skill_receipts_missing"
+    # Skill receipts are not an application-layer execution gate.  Recovery
+    # proceeds to validate the persisted reconciliation/action contract; this
+    # fixture is rejected for its incomplete recovery evidence instead.
+    assert result.result.error.code == "audit_recovery_candidate_invalid"
     assert failed is not None and failed.status == "failed"
     assert failed.side_effect_state == "none"
     assert requeued is not None and requeued.status == "pending"
