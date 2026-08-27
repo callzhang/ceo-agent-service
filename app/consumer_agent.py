@@ -111,10 +111,10 @@ For a DingTalk document access or sharing request, read `dingtalk-doc/SKILL.md`,
 use `--include-permissions --format json`, and verify requester identity, current role,
 and document need-to-know; Do not return `no_action` from the existing role alone,
 and do so only when the live authorization assessment supports access.
-Arbitrary local shell and provider commands are not evidence capabilities; use the
-matching controlled `agent_cli` read tool.
-normal Agent work may read a referenced skill, document,
-configuration through the matching controlled capability. Xiaoqing interview MCP tools
+Provider capabilities and local files are accessed through the operation Skill;
+the application does not inspect or rewrite command syntax. Normal Agent work
+may read a referenced skill, document, or configuration through that capability.
+Xiaoqing interview MCP tools
 remain available only through their declared contracts and are mandatory preconditions for every candidate outcome when applicable. Resolve real-person evidence directly.
 Do not propose sending "I will review" as a substitute for action. First prepare a sourced evidence packet. Only the remaining sensitive hiring or advancement decision may require human policy input; otherwise return a retryable service-dependency failure when a capability is genuinely unavailable.
 For `dingtalk-chat/SKILL.md`, an unavailable optional read is not a reason to return `needs_human`; use the supported controlled read path or return a concrete failure.
@@ -143,7 +143,8 @@ object matching the schema. A proposal is data for the next stage; do not
 invent extra application states or provider-specific restrictions. Use
 feedback from Audit to produce a replacement result when requested.
 Authoritative Consumer role boundary: return a valid ConsumerAgentResult JSON
-object and keep the Consumer turn read-only.
+object. The application does not impose a command or read-only policy; use the
+selected Skill capabilities to gather facts and prepare the candidate.
 
 A bounded fact-finding inquiry is autonomous when it only gathers facts, states
 the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
@@ -280,14 +281,7 @@ class ConsumerAgentRunner:
         required = {
             "task_context",
             f"channel:{context.channel}",
-            "mcp:agent_cli:reviewed_read",
-            "native_cli:reviewed",
-            "mcp:memory_connector:read",
         }
-        if context.channel == "dingtalk":
-            required.add("native_cli:dws")
-        elif context.channel in {"lark", "feishu"}:
-            required.add("native_cli:lark")
         if context.image_paths:
             required.add("image_input")
         # Skill loading is part of the Agent execution environment.  The
@@ -595,7 +589,7 @@ def _developer_instructions(
         (
             f"## Audit Rules\n{audit_rules}",
             "## Runtime Invariants\n"
-            "1. [role_boundary] Role Boundary: Consumer Agent A is the user's read-only representative; Audit Agent B is the only role allowed to execute an accepted candidate.\n"
+            "1. [role_boundary] Consumer Agent A gathers facts and proposes a typed candidate; Audit Agent B applies the operation Skill and executes an accepted candidate.\n"
             "2. [output_contracts] Output Contracts: return the typed wire contract.\n"
             "3. [supported_facts] Supported Facts: use only supported facts.\n"
             "4. [meaning_preservation] Meaning Preservation: preserve candidate meaning.\n"
@@ -650,7 +644,6 @@ def _role_developer_instructions(
     instructions += (
         "\n\nThe shared-rules section above is the complete service-provided context "
         "for this turn. Do not reopen AGENT.md with shell, Python, or a native "
-        "command tool. Any additional permitted local file read must use the "
-        "matching controlled `agent_cli` read tool."
+        "command tool; use the selected Skill capability for additional material."
     )
     return instructions + "\n\n## Role Boundary\n" + role_boundary

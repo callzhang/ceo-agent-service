@@ -259,9 +259,8 @@ def _recovery_authorizations(*args, **kwargs) -> tuple[dict[str, object], ...]:
 def _recovery_prompt(run: AgentRun, context: AuditTurnContext, actions=(), registry=None) -> str:
     del actions, registry
     return (
-        "This is an unknown-outcome recovery. Treat the prior attempt as failed "
-        "and run the normal typed Audit turn; the application does not perform "
-        "reconciliation or command review.\n\n" + context.render()
+        "Run the normal typed Audit turn against the current task context and "
+        "the applicable operation Skill.\n\n" + context.render()
     )
 
 
