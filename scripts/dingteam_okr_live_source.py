@@ -71,6 +71,25 @@ on run argv
 end run
 """
 
+# Close only the Dingteam tab that this source opened for an interactive login.
+# The caller tracks whether OPEN_TAB_APPLESCRIPT created a tab, so an existing
+# user-owned OKR tab is never closed as part of auth recovery.
+CLOSE_DINGTEAM_TAB_APPLESCRIPT = """
+on run argv
+  tell application "Google Chrome"
+    repeat with w in windows
+      repeat with t in tabs of w
+        if (URL of t) starts with "https://dingokr.dingteam.com/" then
+          close t
+          return "closed"
+        end if
+      end repeat
+    end repeat
+  end tell
+  return "not-found"
+end run
+"""
+
 
 FOCUS_DINGTEAM_TAB_APPLESCRIPT = """
 on run argv
@@ -112,7 +131,7 @@ def main() -> int:
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     args = parser.parse_args()
 
-    _ensure_dingteam_tab()
+    opened_tab = _ensure_dingteam_tab()
 
     result_attribute = f"data-codex-dingteam-okr-live-{uuid.uuid4().hex}"
     page_script = _build_page_script(
@@ -120,27 +139,31 @@ def main() -> int:
         period_label=args.period_label,
         result_attribute=result_attribute,
     )
-    _execute_in_dingteam_tab(_inject_script(page_script))
+    try:
+        _execute_in_dingteam_tab(_inject_script(page_script))
 
-    deadline = time.monotonic() + args.timeout_seconds
-    while time.monotonic() < deadline:
-        raw = _execute_in_dingteam_tab(
-            "document.documentElement.getAttribute("
-            + json.dumps(result_attribute)
-            + ") || ''"
-        )
-        if raw:
-            result = json.loads(raw)
-            if not result.get("ok"):
-                detail = _format_page_error(result)
-                if _is_dingteam_login_error(detail):
-                    _prompt_dingteam_login()
-                raise RuntimeError(detail)
-            print(json.dumps(result["data"], ensure_ascii=False))
-            return 0
-        time.sleep(0.4)
+        deadline = time.monotonic() + args.timeout_seconds
+        while time.monotonic() < deadline:
+            raw = _execute_in_dingteam_tab(
+                "document.documentElement.getAttribute("
+                + json.dumps(result_attribute)
+                + ") || ''"
+            )
+            if raw:
+                result = json.loads(raw)
+                if not result.get("ok"):
+                    detail = _format_page_error(result)
+                    if _is_dingteam_login_error(detail):
+                        _prompt_dingteam_login()
+                    raise RuntimeError(detail)
+                print(json.dumps(result["data"], ensure_ascii=False))
+                return 0
+            time.sleep(0.4)
 
-    raise TimeoutError("Timed out waiting for Dingteam OKR live source result")
+        raise TimeoutError("Timed out waiting for Dingteam OKR live source result")
+    finally:
+        if opened_tab:
+            _close_opened_dingteam_tab()
 
 
 def _format_page_error(result: dict) -> str:
@@ -207,7 +230,7 @@ def _execute_in_dingteam_tab(script: str) -> str:
     return completed.stdout.strip()
 
 
-def _ensure_dingteam_tab(wait_seconds: float = 25.0) -> None:
+def _ensure_dingteam_tab(wait_seconds: float = 25.0) -> bool:
     """Ensure an authorized dingokr.dingteam.com tab exists; open one if not.
 
     Opening reuses the existing Chrome login session. If the user is not logged
@@ -223,7 +246,7 @@ def _ensure_dingteam_tab(wait_seconds: float = 25.0) -> None:
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or completed.stdout.strip())
     if completed.stdout.strip() == "exists":
-        return
+        return False
     # A new tab was opened; wait for the SPA page to finish loading before
     # injecting the same-origin API collector.
     deadline = time.monotonic() + wait_seconds
@@ -235,10 +258,21 @@ def _ensure_dingteam_tab(wait_seconds: float = 25.0) -> None:
                 "})()"
             )
             if ready == "ready":
-                return
+                return True
         except Exception:
             pass
-        time.sleep(1.0)
+    return True
+
+
+def _close_opened_dingteam_tab() -> None:
+    """Close the temporary auth tab after the live fetch reaches a terminal state."""
+
+    subprocess.run(
+        ["osascript", "-e", CLOSE_DINGTEAM_TAB_APPLESCRIPT],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def _inject_script(page_script: str) -> str:
