@@ -1016,9 +1016,7 @@ def _failed_audit_result(
         summary=error.code or "Audit Agent failed.",
         proposal_revision=run.proposal_revision,
         side_effect_state=(
-            SideEffectState.UNKNOWN
-            if outcome is AuditOutcome.UNKNOWN
-            else SideEffectState.NONE
+            SideEffectState.NONE
         ),
         feedback=None,
         external_result=None,
