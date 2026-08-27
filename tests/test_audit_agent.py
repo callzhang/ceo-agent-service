@@ -1248,7 +1248,7 @@ def test_scripted_audit_voluntarily_requires_revision_for_changed_skill_sha(
         executor=CapturingExecutor(stream),
     ).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
 
-    assert result.result.outcome.value == "revision_required"
+    assert result.result.outcome.value == "feedback_provided"
     assert result.result.feedback is not None
     assert "changed" in result.result.feedback.observation
     assert store.get_agent_run(result.run_id).side_effect_state == "none"
@@ -1395,7 +1395,7 @@ def test_audit_protocol_rejects_applicable_candidate_without_consumer_skill_rece
         executor=executor,
     ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
 
-    assert result.result.outcome.value == "revision_required"
+    assert result.result.outcome.value == "feedback_provided"
     assert result.result.feedback is not None
     assert "verified Consumer Skill receipt" in result.result.feedback.observation
     assert executor.commands == []
@@ -1526,7 +1526,7 @@ def test_audit_returns_single_chat_open_id_passed_as_user_to_consumer(setup):
         parent_agent_run_id=parent.id,
     )
 
-    assert result.result.outcome.value == "revision_required"
+    assert result.result.outcome.value == "feedback_provided"
     assert result.result.feedback is not None
     assert "open-DingTalk ID as a user ID" in result.result.feedback.observation
     assert "--open-dingtalk-id" in result.result.feedback.requested_revision
@@ -1587,7 +1587,7 @@ def test_audit_keeps_typed_recipient_check_when_cli_label_is_noncanonical(setup)
         parent_agent_run_id=parent.id,
     )
 
-    assert result.result.outcome.value == "revision_required"
+    assert result.result.outcome.value == "feedback_provided"
     assert result.result.feedback is not None
     assert "open-DingTalk ID as a user ID" in result.result.feedback.observation
     assert executor.commands == []

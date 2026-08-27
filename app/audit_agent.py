@@ -1496,5 +1496,6 @@ def _recovery_prompt(
         "records; never execute or blindly replay an action whose effect is unknown. "
         "Do not wrap the array in an operation_id/entries object. Every entry must "
         "include action_index, disposition, and read_result_digest.\n\n"
+        "An unknown readback command is an evidence task; use read-only capability discovery.\n\n"
         f"{context.render()}\n\nPrior attempt: {identity}{guidance}\n"
     )
