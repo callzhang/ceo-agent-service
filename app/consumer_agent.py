@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
-from app.agent_context import _CONSUMER_AGENT_RULES, AgentTaskContext
+from app.agent_context import _AUDIT_AGENT_RULES, _CONSUMER_AGENT_RULES, AgentTaskContext
 from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
@@ -560,7 +560,7 @@ def consumer_developer_instructions(
         capability_instructions=REVIEWED_DWS_READ_INSTRUCTIONS,
         role_boundary=CONSUMER_ROLE_BOUNDARY,
     )
-    return instructions + (f"\n\n{skill_protocol}" if skill_protocol else "")
+    return instructions + "\n\n" + _CONSUMER_AGENT_RULES + (f"\n\n{skill_protocol}" if skill_protocol else "")
 
 
 def audit_developer_instructions(
@@ -615,7 +615,7 @@ def audit_developer_instructions(
         ),
         role_boundary=AUDIT_ROLE_BOUNDARY,
     )
-    return instructions + "\n\n" + recovery_boundary + delivery_boundary
+    return instructions + "\n\n" + _AUDIT_AGENT_RULES + "\n\n" + recovery_boundary + delivery_boundary
 
 
 def _developer_instructions(
