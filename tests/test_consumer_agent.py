@@ -597,6 +597,8 @@ def test_consumer_instructions_pin_the_installed_oa_workflow():
     assert "comment on the original approval" in instructions
     assert "timestamp without a" in instructions
     assert "not a business conflict" in instructions
+    assert "interpret it as Asia/Shanghai" in instructions
+    assert "convert it to" in instructions
     assert "oa_live_evidence_conflict" not in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
 

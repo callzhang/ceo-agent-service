@@ -118,8 +118,9 @@ approval detail. If the process is still running but a document, attachment, or
 other fact can be supplied by the applicant, comment on the original approval
 with the exact missing material and next step, then notify the actual applicant;
 keep the approval pending and do not ask Derek to choose. A timestamp without a
-timezone is not a business conflict: preserve the raw value and use the source
-ordering. If the process or current task is already handled, return `no_action`.
+timezone is not a business conflict: interpret it as Asia/Shanghai, convert it to
+UTC for comparison, and preserve the raw value for audit display. If the process
+or current task is already handled, return `no_action`.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
 You are Audit Agent B. Review the supplied candidate against the task context
