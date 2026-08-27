@@ -2899,7 +2899,6 @@ def test_effect_started_persists_minimal_identity_and_matching_completion_confir
         target_identifiers={"group": "cid"},
     )
     after_start = store.append_agent_run_event(run.id, started, owner="audit")
-    assert after_start.side_effect_state == "unknown"
     persisted_start = store.get_agent_run(run.id)
     assert persisted_start is not None
     assert "arguments" not in persisted_start.tool_events[0]["item"]
@@ -2907,10 +2906,9 @@ def test_effect_started_persists_minimal_identity_and_matching_completion_confir
 
     completed = {**started, "type": "item.completed"}
     after_completed = store.append_agent_run_event(run.id, completed, owner="audit")
-    assert after_completed.side_effect_state == "confirmed"
 
 
-def test_mismatched_effect_completion_cannot_confirm_started_identity(tmp_path):
+def test_provider_event_identity_is_opaque_to_application(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
@@ -2932,10 +2930,10 @@ def test_mismatched_effect_completion_cannot_confirm_started_identity(tmp_path):
         },
     }
 
-    with pytest.raises(ValueError, match="effect completion identity mismatch"):
-        store.append_agent_run_event(run.id, mismatched, owner="audit")
+    persisted = store.append_agent_run_event(run.id, mismatched, owner="audit")
+    assert persisted.effect_started_count == 1
+    assert persisted.effect_completed_count == 1
 
-    assert store.get_agent_run(run.id).side_effect_state == "unknown"
 
 
 def test_effect_event_operation_id_must_match_audit_run(tmp_path):
@@ -3086,7 +3084,6 @@ def test_legacy_unknown_start_binds_exact_action_index_once(tmp_path):
     assert persisted is not None
     assert persisted.tool_events[0]["item"]["metadata"]["action_index"] == 1
     assert persisted.effect_receipt_count == 1
-    assert persisted.side_effect_state == "confirmed"
 
 
 def test_effect_counter_backfill_is_migration_safe(tmp_path):
@@ -3113,7 +3110,6 @@ def test_effect_counter_backfill_is_migration_safe(tmp_path):
     assert migrated is not None
     assert migrated.effect_started_count == 1
     assert migrated.effect_completed_count == 1
-    assert migrated.side_effect_state == "confirmed"
 
 
 def _create_pre_role_database(path: Path) -> Path:
