@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from app.agent_contracts import DecisionOption
 from app.history import HistoryItem
 from app.history_actions import (

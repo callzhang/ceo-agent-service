@@ -10014,6 +10014,36 @@ def _send_status_action(attempt: ReplyAttempt) -> tuple[str, str]:
     return f"💬 {_display_action_state(send_status)}", send_status
 
 
+def _attempt_action_pills(
+    attempt: ReplyAttempt,
+    *,
+    recovery_state: str = "",
+    closed_after_review: bool = False,
+) -> str:
+    labels = []
+    if closed_after_review:
+        labels.append(("◌ 已核验结案", "skipped"))
+    else:
+        label, state = _send_status_action(attempt)
+        labels.append((label, state))
+    if attempt.oa_action.strip():
+        labels.append((f"🧾 {attempt.oa_action.strip()}", attempt.oa_action))
+    if attempt.calendar_response_status.strip():
+        labels.append(
+            (
+                f"📆 {_display_action_state(attempt.calendar_response_status)}",
+                attempt.calendar_response_status,
+            )
+        )
+    if recovery_state:
+        labels.append(("↻ Recovery", recovery_state))
+    return "".join(
+        f'<span class="pill status-action {_action_state_class(state)}">'
+        f"{escape(label)}</span>"
+        for label, state in labels
+    )
+
+
 def _needs_human_decision_options(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
@@ -10924,3 +10954,250 @@ def _excerpt(text: str, length: int) -> str:
     if len(normalized) <= length:
         return normalized
     return f"{normalized[:length]}..."
+
+
+def _quality_warning_card(attempt: ReplyAttempt) -> str:
+    warnings = _quality_warnings(attempt)
+    if not warnings:
+        return ""
+    items = "".join(f"<li>{escape(warning)}</li>" for warning in warnings)
+    return (
+        "<section class=\"card quality-warning\"><h2>Audit quality warnings</h2>"
+        f"<ul>{items}</ul></section>"
+    )
+
+def _context_only_info_card(attempt: ReplyAttempt) -> str:
+    info_icon = _attempt_info_icon(attempt)
+    if not info_icon:
+        return ""
+    return (
+        "<section class=\"card compact-card\">"
+        f"<h2 class=\"context-only-info\">Audit context {info_icon}</h2>"
+        "</section>"
+    )
+
+def _attempt_warning_summary(attempt: ReplyAttempt) -> str:
+    warnings = _quality_warnings(attempt)
+    if not warnings:
+        return ""
+    if len(warnings) == 1:
+        return f"Quality warning: {warnings[0]}"
+    return f"Quality warnings: {len(warnings)}"
+def _feedback_event_html(event: FeedbackEvent) -> str:
+    rating = event.rating_label or event.rating or "feedback"
+    comment = event.comment.strip() or "未填写评语"
+    return (
+        "<article class=\"feedback-event\">"
+        "<div class=\"feedback-event-head\">"
+        f"<span class=\"feedback-rating\">{escape(rating)}</span>"
+        f"<time class=\"attempt-time\">{escape(_format_local_time(event.received_at or event.updated_at))}</time>"
+        "</div>"
+        f"<div class=\"feedback-comment\">{escape(comment)}</div>"
+        f"<p class=\"muted\">source: {escape(event.source)}</p>"
+        "</article>"
+    )
+
+def _agent_review_panel(
+    pills_html: str,
+    trigger_title: str,
+    trigger_text: str,
+    reason_title: str,
+    reason_text: str,
+    reply_title: str,
+    reply_text: str,
+    side_html: str,
+) -> str:
+    return (
+        "<section class=\"review-grid\">"
+        "<div class=\"card\">"
+        "<div class=\"reply-meta\">"
+        f"{pills_html}"
+        "</div>"
+        f"<h2>{escape(trigger_title)}</h2>"
+        f"<pre class=\"trigger-pre\">{escape(trigger_text)}</pre>"
+        f"<h2>{escape(reason_title)}</h2>"
+        f"<div class=\"codex-reason\">{escape(reason_text)}</div>"
+        f"<h2>{escape(reply_title)}</h2>"
+        f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
+        "</div>"
+        "<div class=\"review-side\">"
+        f"{side_html}"
+        "</div>"
+        "</section>"
+    )
+
+def _oa_metadata_card(attempt: ReplyAttempt) -> str:
+    if not any(
+        value.strip()
+        for value in (
+            attempt.oa_process_instance_id,
+            attempt.oa_task_id,
+            attempt.oa_url,
+            attempt.oa_action,
+            attempt.oa_remark,
+            attempt.oa_action_result_json,
+        )
+    ):
+        return ""
+    process_instance_path = quote(attempt.oa_process_instance_id.strip(), safe="")
+    detail_link = (
+        "<div class=\"muted\">history</div>"
+        f"<div><a class=\"review-link\" href=\"/oa-approvals/{escape(process_instance_path)}\">查看同一审批历史</a></div>"
+        if attempt.oa_process_instance_id.strip()
+        else ""
+    )
+    rows = "".join(
+        f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
+        for label, value in (
+            ("process instance", attempt.oa_process_instance_id),
+            ("task id", attempt.oa_task_id),
+            ("url", attempt.oa_url),
+            ("action", attempt.oa_action),
+            ("remark", attempt.oa_remark),
+        )
+    )
+    return (
+        "<section class=\"card compact-card\"><h2>OA approval</h2>"
+        f"<div class=\"grid\">{rows}{detail_link}</div></section>"
+        f"{_json_card('OA action result', attempt.oa_action_result_json)}"
+    )
+
+def _calendar_metadata_card(attempt: ReplyAttempt) -> str:
+    if not any(
+        value.strip()
+        for value in (
+            attempt.calendar_event_id,
+            attempt.calendar_response_status,
+            attempt.calendar_response_result_json,
+        )
+    ):
+        return ""
+    rows = "".join(
+        f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
+        for label, value in (
+            ("event id", attempt.calendar_event_id),
+            ("response", attempt.calendar_response_status),
+        )
+    )
+    return (
+        "<section class=\"card compact-card\"><h2>Calendar response</h2>"
+        f"<div class=\"grid\">{rows}</div></section>"
+        + (
+            _json_card(
+                "Calendar response result",
+                attempt.calendar_response_result_json,
+            )
+            if attempt.calendar_response_result_json.strip()
+            else ""
+        )
+    )
+
+def _history_approval_pills(
+    attempt: ReplyAttempt,
+    result: ApprovalHistoryResult,
+    *,
+    recovery_state: str,
+) -> str:
+    pills = [_history_approval_result_pill(result)]
+    if recovery_state:
+        label, state = _recovery_action(recovery_state)
+        pills.append(
+            f'<span class="pill status-action {_action_state_class(state)}">'
+            f"{escape(label)}</span>"
+        )
+    elif (
+        result
+        in {
+            ApprovalHistoryResult.APPROVED,
+            ApprovalHistoryResult.RETURNED,
+            ApprovalHistoryResult.REJECTED,
+            ApprovalHistoryResult.COMMENTED_PENDING,
+            ApprovalHistoryResult.NO_ACTION,
+            ApprovalHistoryResult.UNKNOWN,
+        }
+        and attempt.send_status.strip().lower()
+        in {
+            "failed",
+            "blocked",
+            "needs_human",
+            "pending",
+            "processing",
+            "pending_reconciliation",
+            "dry_run",
+        }
+    ):
+        label, state = _send_status_action(attempt)
+        pills.append(
+            f'<span class="pill status-action {_action_state_class(state)}">'
+            f"{escape(label)}</span>"
+        )
+    return "".join(pills)
+
+def _attempt_recovery_display_state(
+    store: AutoReplyStore,
+    attempt: ReplyAttempt,
+    task_cache: dict[tuple[str, str, str], ReplyTask | None],
+) -> str:
+    if attempt.send_status.strip().lower() != "failed":
+        return ""
+    task = _reply_task_for_attempt(store, attempt, task_cache)
+    if task is None:
+        return ""
+    if task.status == "done":
+        return "recovered"
+    if task.status == "pending":
+        return "queued"
+    if task.status == "processing":
+        return "processing"
+    return ""
+
+def _reply_task_for_attempt(
+    store: AutoReplyStore,
+    attempt: ReplyAttempt,
+    task_cache: dict[tuple[str, str, str], ReplyTask | None],
+) -> ReplyTask | None:
+    task_key = (
+        attempt.channel,
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+    )
+    task = task_cache.get(task_key)
+    if task_key not in task_cache:
+        task = store.get_reply_task_for_message(
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+            channel=attempt.channel,
+        )
+        task_cache[task_key] = task
+    return task
+
+def _agent_runs_for_attempt(
+    store: AutoReplyStore,
+    attempt: ReplyAttempt,
+    cache: dict[tuple[int, str], list[AgentRun]],
+) -> list[AgentRun]:
+    if not attempt.agent_run_id:
+        return []
+    terminal_run = store.get_agent_run(attempt.agent_run_id)
+    if terminal_run is None:
+        return []
+    key = (terminal_run.reply_task_id, terminal_run.execution_generation)
+    if key not in cache:
+        cache[key] = store.list_agent_runs_for_task_generation(*key)
+    return cache[key]
+def _history_approval_result_pill(result: ApprovalHistoryResult) -> str:
+    label, state = {
+        ApprovalHistoryResult.APPROVED: ("✓ 已同意", "approved"),
+        ApprovalHistoryResult.RETURNED: ("↩ 已退回", "returned"),
+        ApprovalHistoryResult.REJECTED: ("× 已拒绝", "rejected"),
+        ApprovalHistoryResult.COMMENTED_PENDING: ("✎ 已留言，仍待审批", "commented"),
+        ApprovalHistoryResult.NO_ACTION: ("无需处理", "skipped"),
+        ApprovalHistoryResult.NEEDS_HUMAN: ("待你处理", "needs-human"),
+        ApprovalHistoryResult.PROCESSING: ("处理中", "processing"),
+        ApprovalHistoryResult.FAILED: ("处理失败", "failed"),
+        ApprovalHistoryResult.UNKNOWN: ("结果未知", "unknown"),
+    }[result]
+    return (
+        f'<span class="pill status-action history-approval-result '
+        f'action-state-{state}">{escape(label)}</span>'
+    )
