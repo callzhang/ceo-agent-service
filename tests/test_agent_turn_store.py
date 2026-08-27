@@ -9,7 +9,7 @@ import pytest
 
 from app.agent_contracts import AuditAgentResult, AuditExternalResult, AuditOutcome
 from app.agent_effects import McpToolEffectRegistry
-from app.agent_result import AgentError, EffectKind, SideEffectState
+from app.agent_result import AgentError, EffectKind
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import (
     CredentialMode,
@@ -1465,7 +1465,7 @@ def test_runtime_domain_result_codec_rejects_business_document_reference(tmp_pat
         outcome=AuditOutcome.EXECUTED,
         summary="Confirmed.",
         proposal_revision=0,
-        side_effect_state=SideEffectState.CONFIRMED,
+        side_effect_state="confirmed",
         feedback=None,
         external_result=AuditExternalResult(
             operation_id="operation-0",
@@ -1954,7 +1954,7 @@ def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spa
             outcome=AuditOutcome.RECONCILED,
             summary="Live readback reconciled the action.",
             proposal_revision=0,
-            side_effect_state=SideEffectState.UNKNOWN,
+            side_effect_state="unknown",
             feedback=None,
             external_result=None,
             reconciliation=(
@@ -2003,7 +2003,7 @@ def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spa
             outcome=AuditOutcome.EXECUTED,
             summary="The authorized recovery action completed.",
             proposal_revision=0,
-            side_effect_state=SideEffectState.CONFIRMED,
+            side_effect_state="confirmed",
             feedback=None,
             external_result=AuditExternalResult(
                 operation_id=run.operation_id,
@@ -2340,7 +2340,7 @@ def test_runtime_attempt_process_start_is_claimed_exactly_once(tmp_path):
         store.mark_agent_runtime_attempt_running_once(attempt.id)
 
 
-def test_role_runtime_capabilities_include_policy_and_exact_action_tools(tmp_path):
+def test_role_runtime_capabilities_use_execution_surfaces_only(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     consumer = _claim_consumer(store, task).run
@@ -2354,7 +2354,6 @@ def test_role_runtime_capabilities_include_policy_and_exact_action_tools(tmp_pat
         {
             "structured_output",
             "local_schema_validation",
-            "consumer_read_only_enforcement",
             "reviewed_read_tools",
         }
     )
@@ -2366,8 +2365,6 @@ def test_role_runtime_capabilities_include_policy_and_exact_action_tools(tmp_pat
         {
             "structured_output",
             "local_schema_validation",
-            "consumer_read_only_enforcement",
-            "reconciliation_read_only",
             "reviewed_read_tools",
         }
     )
@@ -2420,28 +2417,28 @@ def test_consumer_turn_cannot_persist_a_side_effect(tmp_path):
         )
 
 
-def test_consumer_turn_rejects_effectful_tool_events(tmp_path):
+def test_consumer_turn_persists_provider_events_opaquely(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_consumer(store, task).run
 
-    with pytest.raises(ValueError, match="Consumer Agent cannot persist side effects"):
-        store.append_agent_run_event(
-            run.id,
-            {
-                "type": "item.started",
-                "item": {
-                    "type": "mcp_tool_call",
-                    "id": "call-1",
-                    "server": "business",
-                    "tool": "write",
-                    "metadata": {"effect": "effectful"},
-                },
+    persisted = store.append_agent_run_event(
+        run.id,
+        {
+            "type": "item.started",
+            "item": {
+                "type": "mcp_tool_call",
+                "id": "call-1",
+                "server": "business",
+                "tool": "write",
+                "metadata": {"effect": "effectful"},
             },
-            owner="consumer",
-        )
+        },
+        owner="consumer",
+    )
 
-    assert store.get_agent_run(run.id).side_effect_state == "none"
+    assert persisted.tool_events[-1]["item"]["tool"] == "write"
+    assert not hasattr(persisted, "side_effect_state")
 
 
 def test_unknown_reconciliation_event_limit_defers_the_next_read_only_window(tmp_path):
