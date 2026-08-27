@@ -1499,5 +1499,6 @@ def _recovery_prompt(
         "An unknown readback command is an evidence task; use read-only capability discovery.\n\n"
         f"Exact readback contracts: {readback_contracts}\n\n"
         "A present disposition shares a stable identifier from its exact readback contract.\n\n"
+        "Do not substitute a different target type or broaden the readback scope.\n\n"
         f"{context.render()}\n\nPrior attempt: {identity}{guidance}\n"
     )
