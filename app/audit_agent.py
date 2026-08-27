@@ -1494,6 +1494,7 @@ def _recovery_prompt(
         "performing reconciliation; Do not return executed from read-only recovery. "
         "reconciled). reconciliation must be an array of per-action readback "
         "records; never execute or blindly replay an action whose effect is unknown. "
-        "Do not wrap the array in an operation_id/entries object.\n\n"
+        "Do not wrap the array in an operation_id/entries object. Every entry must "
+        "include action_index, disposition, and read_result_digest.\n\n"
         f"{context.render()}\n\nPrior attempt: {identity}{guidance}\n"
     )
