@@ -1505,6 +1505,7 @@ def _recovery_prompt(
         "If evidence is incomplete, use the ambiguous disposition.\n\n"
         "For chat readback use dws chat +chat-messages with a bounded window.\n\n"
         "Perform a target-matched live read before assigning a present disposition.\n\n"
+        "perform a target-matched live read for every action.\n\n"
         "An exact full message text match is required for present.\n\n"
         "Use a window no wider than two hours and require complete pagination.\n\n"
         "(this value is UTC; do not reinterpret it as local time)\n\n"

@@ -78,7 +78,8 @@ REVIEWED_DWS_READ_INSTRUCTIONS = """
 Use the capabilities available to the calling agent to gather the evidence
 needed for the task. Return a single structured result. The application does
 not prescribe provider command names, MCP tools, shell syntax, or readback
-procedures; those belong to the runtime and the selected agent capability.
+procedures; those belong to the runtime and the selected agent capability. Call
+agent_cli.execute_reviewed_read for reviewed reads.
 The proposal is the current candidate and decision_options is the available
 choice set. classify the proposed effect, state low-consequence and risk
 controls, and preserve the Audit B boundary. Select and read every applicable
@@ -86,6 +87,9 @@ dynamic business and operation Skill before proposing. If no applicable Skill
 supports the operation, return needs_human for the reusable rule gap.
 Use the most specific applicable business Skill. A bounded
 internal participant action is autonomous; state what the Agent may do now.
+load the operation Skill named by that business Skill. Preserve an
+already-confirmed event or
+tracked commitment, and state what the recipient must not do.
 Wire errors use error_code, error_retryable, and error_authorization_required.
 Do not return a nested error object.
 inspect the installed Skill catalog. principles. A low-consequence operating choice
@@ -187,6 +191,7 @@ Use the authorized judgment standard and return needs_human only when the Skill
 is unavailable/unsupported; otherwise make the decision autonomously.
 Do not require a prior
 message containing the same choice; needs_human is only for unsupported rules.
+Return needs_human only when the Skill is unavailable/unsupported.
 """.strip()
 
 
