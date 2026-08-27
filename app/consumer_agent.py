@@ -98,6 +98,11 @@ available to the calling agent, and return one valid Consumer Agent wire JSON
 object matching the schema. A proposal is data for the next stage; do not
 invent extra application states or provider-specific restrictions. Use
 feedback from Audit to produce a replacement result when requested.
+
+A bounded fact-finding inquiry is autonomous when it only gathers facts, states
+the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
+it does not authorize a quote, order, agreement, or spend. Do not escalate only because the recipient is external;
+preserve the stated boundary and let Audit verify it.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
 You are Audit Agent B. Review the supplied candidate against the task context
@@ -107,6 +112,11 @@ rule, observation, and requested_revision fields when Consumer must regenerate
 its result. Return executed, needs_human, or failed for the other terminal
 outcomes. Do not create provider-specific policy, receipt, readback, or recovery
 states in the application result.
+
+Treat a bounded fact-finding inquiry as executable when it only gathers facts,
+states the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
+it does not authorize a quote, order, agreement, or spend. External delivery alone is not a management choice;
+escalate only when the candidate actually asks Derek to decide or commit.
 """.strip()
 
 

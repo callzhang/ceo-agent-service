@@ -1206,6 +1206,29 @@ def test_unknown_audit_is_recovered_in_same_session_and_revision(
     ]
 
 
+def test_normal_audit_recovery_ambiguous_result_is_retried_without_human_escalation(store):
+    task = _task(store)
+    audit = ScriptedAudit(
+        store,
+        _audit_result("needs_human", 0, code="audit_recovery_ambiguous"),
+        _audit_result("executed", 0),
+    )
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=ScriptedConsumer(
+                store, _consumer_result("proposal", "candidate-0")
+            ),
+            audit=audit,
+        ),
+        task,
+    )
+
+    assert result.status == "executed"
+    assert len(audit.calls) == 2
+
+
 def test_invalid_audit_result_with_unknown_effect_recovers_instead_of_failing_task(store):
     pending = _task(store)
     task = store.claim_reply_task(pending.id)

@@ -539,6 +539,21 @@ class AgentOrchestrator:
                     continue
                 return _audit_terminal("executed", latest, audit_state, revision)
             if audit_state.outcome is AuditOutcome.NEEDS_HUMAN:
+                # A normal Audit turn can occasionally emit the recovery-only
+                # sentinel after a malformed/partial model response even though
+                # no recovery is being performed. That is not a real management
+                # decision. Give Audit one bounded fresh attempt before exposing
+                # needs_human; the per-process role-attempt cap prevents loops.
+                if (
+                    audit_state.error.code == "audit_recovery_ambiguous"
+                    and latest.side_effect_state == SideEffectState.NONE.value
+                ):
+                    return _NextAudit(
+                        revision,
+                        latest.turn_attempt + 1,
+                        consumer.id,
+                        consumer_state.proposal,
+                    )
                 return _audit_terminal("needs_human", latest, audit_state, revision)
             if audit_state.outcome is AuditOutcome.DRY_RUN:
                 return _audit_terminal("dry_run", latest, audit_state, revision)

@@ -532,12 +532,26 @@ def test_consumer_instructions_leave_boundary_assessment_to_audit_model():
     assert "external_boundary` object" not in instructions
 
 
+def test_consumer_instructions_allow_bounded_fact_finding_without_purchase_commitment():
+    instructions = consumer_developer_instructions("Verify every supported fact.")
+
+    assert "bounded fact-finding inquiry" in instructions
+    assert "does not make a purchase, budget, or partnership commitment" in instructions
+
+
 def test_audit_instructions_accept_the_authorized_low_consequence_standard():
     instructions = audit_developer_instructions("Verify every supported fact.")
 
     assert "authorized judgment standard" in instructions
     assert "minimum reversible path" in instructions
     assert "do not require a prior\nmessage containing the same choice" in instructions
+
+
+def test_audit_instructions_allow_bounded_fact_finding_without_purchase_commitment():
+    instructions = audit_developer_instructions("Verify every supported fact.")
+
+    assert "bounded fact-finding inquiry" in instructions
+    assert "does not make a purchase, budget, or partnership commitment" in instructions
 
 
 def test_audit_recovery_instructions_override_normal_audit_outcomes():
