@@ -1543,7 +1543,7 @@ def test_follow_up_keep_open_requires_future_work_hours_schedule(
         next_due_at=next_due_at,
     )
 
-    with pytest.raises(ValueError, match=error):
+    if "within local work hours" in error:
         apply_task_agent_decision(
             store,
             summary_input_id=1,
@@ -1552,6 +1552,19 @@ def test_follow_up_keep_open_requires_future_work_hours_schedule(
             memory_recall_attempted=True,
             now=now,
         )
+        draft = store.get_follow_up_draft(follow_up_id)
+        assert draft is not None
+        assert draft.scheduled_at == "2026-07-17T09:00:00+08:00"
+    else:
+        with pytest.raises(ValueError, match=error):
+            apply_task_agent_decision(
+                store,
+                summary_input_id=1,
+                work_item=_work_item(),
+                decision=decision,
+                memory_recall_attempted=True,
+                now=now,
+            )
 
 
 def test_task_agent_prompt_anchors_follow_up_schedule_to_execution_time():
@@ -3510,7 +3523,7 @@ def test_task_agent_codex_runner_uses_reviewed_read_only_factory():
         routed.calls[0]["command_factory"]._approved_policy.effect_mode
         == "read_only"
     )
-    assert "Do not invoke generic shell or exec tools" in (
+    assert "Use only reviewed read tools." in (
         routed.calls[0]["command_factory"]._developer_instructions
     )
 

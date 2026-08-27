@@ -541,6 +541,7 @@ def process_work_item(
             run_id=active_run_id,
             session_scope_id=session_scope_id,
         )
+        decision = _normalize_follow_up_change_times(decision)
         codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
         audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
         memory_recall_attempted = _audit_events_include_memory_recall(
@@ -589,6 +590,7 @@ def process_work_item(
                 run_id=active_run_id,
                 session_scope_id=session_scope_id,
             )
+            decision = _normalize_follow_up_change_times(decision)
             codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
             audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
             memory_recall_attempted = _audit_events_include_memory_recall(
@@ -632,6 +634,7 @@ def process_work_item(
                 run_id=active_run_id,
                 session_scope_id=session_scope_id,
             )
+            decision = _normalize_follow_up_change_times(decision)
             codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
             audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
             memory_recall_attempted = (
@@ -725,6 +728,7 @@ def apply_task_agent_decision(
     now: str = "",
     _db: sqlite3.Connection | None = None,
 ) -> int | None:
+    decision = _normalize_follow_up_change_times(decision)
     _validate_task_agent_decision(
         decision,
         memory_issue=memory_issue,
@@ -984,6 +988,22 @@ def _validate_future_follow_up_time(value: str, *, now: str) -> None:
     )
     if local_scheduled.astimezone(timezone.utc) <= current_aware:
         raise ValueError("follow_up_change.next_due_at must be in the future")
+
+
+def _normalize_follow_up_change_times(decision: TaskAgentDecision) -> TaskAgentDecision:
+    """Move reversible follow-up scheduling requests into the next work window."""
+    changes = []
+    changed = False
+    for change in decision.follow_up_changes:
+        if change.action in {"reschedule", "keep_open"} and change.next_due_at:
+            normalized = _normalize_follow_up_time(change.next_due_at)
+            if normalized != change.next_due_at:
+                change = change.model_copy(update={"next_due_at": normalized})
+                changed = True
+        changes.append(change)
+    if not changed:
+        return decision
+    return decision.model_copy(update={"follow_up_changes": changes})
 
 
 def _json_object(value: str) -> dict[str, object]:
