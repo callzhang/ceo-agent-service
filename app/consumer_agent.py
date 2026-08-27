@@ -152,6 +152,7 @@ reconciled requires
 side_effect_state=unknown. Each entry has action_index, disposition (present,
 absent, or ambiguous), and read_result_digest.
 reconciled outcome is reserved for unknown-outcome recovery.
+Wire errors use error_code, error_retryable, and error_authorization_required.
 
 Treat a bounded fact-finding inquiry as executable when it only gathers facts,
 states the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
