@@ -1378,15 +1378,15 @@ def test_weekly_command_bounds_unresponsive_codex_wait(tmp_path, monkeypatch):
         dws_transient_retry_attempts=1,
         dws_transient_retry_delay_seconds=0.1,
         workspace=tmp_path,
-        codex_timeout_seconds=1200,
-        codex_idle_timeout_seconds=900,
+        codex_timeout_seconds=2400,
+        codex_idle_timeout_seconds=2400,
         dry_run=True,
     )
 
     weekly_okr_report_module.weekly_okr_report_command(settings, force=True)
 
-    assert captured["agent"].timeout_seconds == 900
-    assert captured["agent"].idle_timeout_seconds == 900
+    assert captured["agent"].timeout_seconds == 1800
+    assert captured["agent"].idle_timeout_seconds == 1800
 
 
 def test_codex_agent_delegates_route_model_selection_to_runtime_adapter(tmp_path):
