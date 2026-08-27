@@ -214,6 +214,12 @@ def build_production_routed_codex_execution(
     }
     if executor is not None:
         kwargs["executor"] = executor
+    refresher = build_production_runtime_refresher(
+        store=store,
+        codex_bin=codex_bin,
+        executor=executor,
+    )
+    kwargs["refresh_runtime_capabilities"] = lambda: refresher.refresh_expired()
     return RoutedCodexExecution(**kwargs)
 
 

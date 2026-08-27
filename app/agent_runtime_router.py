@@ -1247,6 +1247,7 @@ class RoutedCodexExecution:
         owner: str | None = None,
         lease_seconds: int | None = None,
         allow_legacy_oauth_bootstrap: bool = False,
+        refresh_runtime_capabilities: Callable[[], object] | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._store = store
@@ -1277,6 +1278,7 @@ class RoutedCodexExecution:
         )
         self._lease_seconds = max(configured_lease, int(total_timeout_seconds) + 60)
         self._allow_legacy_oauth_bootstrap = bool(allow_legacy_oauth_bootstrap)
+        self._refresh_runtime_capabilities = refresh_runtime_capabilities
         self._now = now or (lambda: datetime.now(UTC))
 
     def execute(
@@ -1292,6 +1294,8 @@ class RoutedCodexExecution:
         required_capabilities: frozenset[str] = frozenset(),
         result_validation_retry: RoutedResultValidationRetry | None = None,
     ) -> RoutedCodexExecutionResult[ResultT]:
+        if self._refresh_runtime_capabilities is not None:
+            self._refresh_runtime_capabilities()
         if type(command_factory) is not ApprovedCodexCommandFactory:
             raise ValueError("command_factory must be approved")
         policy = command_factory._approved_policy
