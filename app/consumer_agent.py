@@ -52,8 +52,7 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = SERVICE_ROOT / "app" / "schemas" / "consumer_agent_result.schema.json"
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_DYNAMIC_SKILL_SENTENCE = (
-    "Consumer Agent A independently gathers the context required for the task "
-    "before forming the candidate."
+    "Consumer Agent A independently selects and reads every applicable business and operation Skill with `agent_cli.read_skill` before forming the candidate."
 )
 AUDIT_DYNAMIC_SKILL_SENTENCE = (
     "Audit Agent B independently determines every business and operation Skill "
@@ -86,6 +85,7 @@ controls, and preserve the Audit B boundary. Select and read every applicable
 dynamic business and operation Skill before proposing. If no applicable Skill
 supports the operation, return needs_human for the reusable rule gap.
 Wire errors use error_code, error_retryable, and error_authorization_required.
+Do not return a nested error object.
 """.strip()
 
 
