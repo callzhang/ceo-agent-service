@@ -2574,6 +2574,8 @@ class DingTalkAutoReplyWorker:
                         or source_attempt.draft_reply_text.strip()
                         or source_attempt.final_reply_text.strip()
                     ),
+                    feedback_scope=source_attempt.feedback_scope or "one_time",
+                    skill_update_requested=source_attempt.skill_update_requested,
                 )
         return AgentTaskContext(
             task_id=task.id,

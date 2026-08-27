@@ -7938,11 +7938,23 @@ def handle_needs_human_decision_post(
         return 404, {}, render_page("Attempt not found", "Attempt not found")
     parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
     instruction = parsed.get("instruction", [""])[0].strip()
+    feedback_scope = parsed.get("feedback_scope", ["one_time"])[0].strip()
+    skill_update_requested = parsed.get("skill_update_requested", [""])[0].strip() in {
+        "1",
+        "true",
+        "on",
+    }
     if not instruction:
         return (
             400,
             {},
             render_page("Decision required", "<p>请填写你的判断或处理指令。</p>"),
+        )
+    if feedback_scope not in {"one_time", "reusable_policy"}:
+        return (
+            400,
+            {},
+            render_page("Decision required", "<p>反馈范围无效。</p>"),
         )
     reviewer_feedback = (
         f"Human decision for source attempt #{source.id}: {instruction}\n\n"
@@ -7963,14 +7975,69 @@ def handle_needs_human_decision_post(
             {},
             render_page("Decision unavailable", "<p>该 attempt 已选择其他处理方式。</p>"),
         )
+    # An unknown external effect is a reconciliation boundary, not a normal
+    # feedback-driven rerun.  Do not rotate the generation while the latest
+    # Audit run still has an unresolved side effect; doing so could duplicate
+    # an action whose receipt is not known.
+    current_task = store.get_reply_task_for_message(
+        source.conversation_id,
+        source.trigger_message_id,
+        channel=source.channel or "dingtalk",
+    )
+    if current_task is not None:
+        current_runs = store.list_agent_runs_for_task_generation(
+            current_task.id,
+            current_task.execution_generation,
+        )
+        if current_runs:
+            latest_run = max(current_runs, key=lambda run: run.id)
+            try:
+                structured_error = json.loads(latest_run.structured_error_json or "{}")
+            except (TypeError, json.JSONDecodeError):
+                structured_error = {}
+            unknown_effect_code = (
+                isinstance(structured_error, dict)
+                and str(structured_error.get("code") or "")
+                in {"effect_completion_missing", "unknown_external_effect"}
+            )
+            if (
+                latest_run.role is AgentRole.AUDIT
+                and (
+                    (
+                        latest_run.status == "unknown"
+                        and latest_run.side_effect_state == "unknown"
+                    )
+                    or unknown_effect_code
+                )
+            ):
+                return (
+                    409,
+                    {},
+                    render_page(
+                        "Decision unavailable",
+                        "<p>外部动作结果未知，必须先完成审计核对，不能直接按反馈重跑。</p>",
+                    ),
+                )
     try:
-        handle_reviewed_message_reply(
+        result = handle_reviewed_message_reply(
             store,
             attempt_id=source.id,
             reply_text="",
             reviewer_feedback=reviewer_feedback,
             actionable_source_attempt_id=source.id,
         )
+        selected_attempt_id = int(result["attempt_id"])
+        store.update_reply_attempt(
+            source.id,
+            feedback_scope=feedback_scope,
+            skill_update_requested=skill_update_requested,
+        )
+        if selected_attempt_id != source.id:
+            store.update_reply_attempt(
+                selected_attempt_id,
+                feedback_scope=feedback_scope,
+                skill_update_requested=skill_update_requested,
+            )
     except ValueError as exc:
         return 409, {}, render_page("Decision unavailable", f"<p>{escape(str(exc))}</p>")
     return 303, {"Location": _safe_action_return_to(return_to, source.id)}, ""
@@ -9789,6 +9856,9 @@ def _needs_human_decision_card(
     option_forms = "".join(
         "<form method=\"post\" action=\"%s\">"
         "<input type=\"hidden\" name=\"instruction\" value=\"%s\">"
+        "<input type=\"hidden\" name=\"feedback_scope\" value=\"one_time\">"
+        "<label class=\"feedback-skill-toggle\"><input type=\"checkbox\" "
+        "name=\"skill_update_requested\" value=\"1\"> 同时把这条反馈沉淀为 Skill 规则</label>"
         "<button class=\"needs-human-option\" type=\"submit\">"
         "<strong>%s. %s</strong><span>%s</span></button></form>"
         % (
@@ -9808,12 +9878,16 @@ def _needs_human_decision_card(
     )
     return (
         '<section class="card needs-human-card"><h2>需要你的判断（用于迭代 Skill）</h2>'
-        '<p class="muted">这是当前 Skill 尚未覆盖的一类处理规则，不是把这个具体任务交给你代做。'
+        '<p class="muted">这是当前 Skill 尚未覆盖的一类处理规则；这是无法由服务自动消除的管理分歧时，'
+        '也只需要反馈处理规则，不是把这个具体任务交给你代做。'
         '请从下方中文选项中选择一条可复用的处理规则；系统会据此重跑当前事项并沿用到同类任务。'
         '已核验事实见本页“审计摘要”。</p>'
         f"{choice_section}"
         f'<form method="post" action="{action}" class="needs-human-custom">'
-        '<label>其他处理指令</label>'
+        '<label>其他处理指令（默认仅本次）</label>'
+        '<input type="hidden" name="feedback_scope" value="one_time">'
+        '<label class="feedback-skill-toggle"><input type="checkbox" '
+        'name="skill_update_requested" value="1"> 同时把这条反馈沉淀为 Skill 规则</label>'
         '<textarea name="instruction" required placeholder="例如：采用方案二，并说明交付边界"></textarea>'
         '<button type="submit">执行并发布</button></form>'
         '</section>'

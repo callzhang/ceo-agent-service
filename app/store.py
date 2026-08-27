@@ -245,6 +245,8 @@ class ReplyAttempt(BaseModel):
     reviewed_at: str | None = None
     reviewer_feedback: str = ""
     corrected_reply_text: str = ""
+    feedback_scope: str = "one_time"
+    skill_update_requested: bool = False
     channel: str = "dingtalk"
     created_at: str
     updated_at: str
@@ -2387,6 +2389,8 @@ class AutoReplyStore:
                 ("mail_action_result_json", "text not null default ''"),
                 ("reaction_action_result_json", "text not null default ''"),
                 ("document_action_result_json", "text not null default ''"),
+                ("feedback_scope", "text not null default 'one_time'"),
+                ("skill_update_requested", "integer not null default 0"),
             ):
                 if column not in reply_attempt_columns:
                     try:
@@ -14625,6 +14629,8 @@ class AutoReplyStore:
         send_status: str | None = None,
         send_error: str | None = None,
         retry_count: int | None = None,
+        feedback_scope: str | None = None,
+        skill_update_requested: bool | None = None,
     ) -> None:
         updates = self._reply_attempt_update_values(
             action=action,
@@ -14655,6 +14661,12 @@ class AutoReplyStore:
             send_status=send_status,
             send_error=send_error,
             retry_count=retry_count,
+            feedback_scope=feedback_scope,
+            skill_update_requested=(
+                int(skill_update_requested)
+                if skill_update_requested is not None
+                else None
+            ),
         )
         if not updates:
             return
@@ -15153,6 +15165,8 @@ class AutoReplyStore:
             "send_status",
             "send_error",
             "retry_count",
+            "feedback_scope",
+            "skill_update_requested",
         }
         unknown = set(updates) - allowed_columns
         if unknown:

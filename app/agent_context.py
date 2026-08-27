@@ -39,6 +39,8 @@ class ManualRerunInstruction:
     source_attempt_id: int
     reviewer_feedback: str = ""
     suggested_reply_text: str = ""
+    feedback_scope: str = "one_time"
+    skill_update_requested: bool = False
 
 
 @dataclass(frozen=True)
@@ -200,6 +202,8 @@ class AgentTaskContext:
                         "source_attempt_id": self.manual_rerun.source_attempt_id,
                         "reviewer_feedback": self.manual_rerun.reviewer_feedback,
                         "suggested_reply_text": self.manual_rerun.suggested_reply_text,
+                        "feedback_scope": self.manual_rerun.feedback_scope,
+                        "skill_update_requested": self.manual_rerun.skill_update_requested,
                     }
                 )
             )

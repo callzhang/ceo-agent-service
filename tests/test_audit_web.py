@@ -8032,7 +8032,7 @@ def test_history_human_decision_accepts_failed_attempt_and_redirects_to_history(
     status, headers, body = handle_needs_human_decision_post(
         store,
         source_id,
-        "instruction=暂不处理".encode(),
+        "instruction=暂不处理&feedback_scope=reusable_policy&skill_update_requested=1".encode(),
         return_to="/",
     )
 
@@ -8042,6 +8042,8 @@ def test_history_human_decision_accepts_failed_attempt_and_redirects_to_history(
     assert headers["Location"] == "/"
     assert body == ""
     assert source is not None and source.send_status == "decision_selected"
+    assert source.feedback_scope == "reusable_policy"
+    assert source.skill_update_requested is True
     assert requeued is not None and requeued.id == task.id
     assert requeued.status == "pending"
 
@@ -8674,6 +8676,7 @@ def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
     assert "按当前事实继续处理并发布" not in html
     assert "先追问一个具体澄清问题并发布" not in html
     assert "其他处理指令" in html
+    assert "同时把这条反馈沉淀为 Skill 规则" in html
 
     status, headers, body = handle_needs_human_decision_post(
         store,
