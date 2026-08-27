@@ -89,8 +89,8 @@
         "needs_human",
         "dry_run",
         "failed",
-        "failed",
-        "failed"
+        "unknown",
+        "reconciled"
       ],
       "title": "AuditOutcome",
       "type": "string"

@@ -7266,16 +7266,22 @@ class AutoReplyStore:
         transcript_end_line: int | None = None,
         now: str | datetime | None = None,
     ) -> AgentRun:
-        # Unknown is not an application outcome. The runtime owns any
-        # provider-side uncertainty; the application records a terminal
-        # structured failure and lets the normal retry policy decide whether a
-        # new attempt is appropriate.
-        return self.fail_agent_run(
+        # Preserve the recovery boundary for an Audit run whose provider
+        # effect may have started before the process stopped.  This is an
+        # internal persistence state; the wire contract still exposes only
+        # structured terminal results.
+        return self._transition_agent_run(
             run_id,
-            structured_error,
+            expected_status="running",
             owner=owner,
+            target_status="unknown",
+            final_result_json="",
+            structured_error_json=_json_object_text(
+                structured_error,
+                field="structured_error",
+            ),
+            side_effect_state="unknown",
             transcript_end_line=transcript_end_line,
-            side_effect_state="none",
             now=now,
         )
 

@@ -188,8 +188,8 @@ class AuditOutcome(StrEnum):
     POLICY_REVIEW = "needs_human"
     DRY_RUN = "dry_run"
     FAILED = "failed"
-    UNKNOWN = "failed"
-    RECONCILED = "failed"
+    UNKNOWN = "unknown"
+    RECONCILED = "reconciled"
 
 
 class ReconciliationDisposition(StrEnum):
@@ -280,10 +280,13 @@ class AuditAgentResult(BaseModel):
                 raise ValueError("executed needs confirmed external result")
         elif self.external_result is not None:
             raise ValueError("external result is only valid for executed")
-        if self.outcome is not AuditOutcome.EXECUTED:
+        if self.outcome in {AuditOutcome.UNKNOWN, AuditOutcome.RECONCILED}:
+            if self.side_effect_state is not SideEffectState.UNKNOWN:
+                raise ValueError(f"{self.outcome.value} requires unknown side effect state")
+        elif self.outcome is not AuditOutcome.EXECUTED:
             if self.side_effect_state is not SideEffectState.NONE:
                 raise ValueError("non-executed result cannot claim a side effect")
-        if self.reconciliation:
+        if self.reconciliation and self.outcome is not AuditOutcome.RECONCILED:
             raise ValueError("reconciliation entries are no longer part of the application result")
         if self.outcome is AuditOutcome.NEEDS_HUMAN:
             if not 2 <= len(self.decision_options) <= 4:
