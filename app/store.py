@@ -9790,10 +9790,11 @@ class AutoReplyStore:
                 """
                 update reply_tasks
                 set status='pending', attempts=max(attempts - 1, 0),
-                    locked_at=null, available_at='', error=?, recovery_code=?, updated_at=?
+                    locked_at=null, available_at='', error=?, recovery_code=?,
+                    execution_generation=?, updated_at=?
                 where id=? and status='failed' and execution_generation=?
                 """,
-                (reason, recovery_code.strip(), now_text, task_id, row["execution_generation"]),
+                (reason, recovery_code.strip(), uuid4().hex, now_text, task_id, row["execution_generation"]),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
