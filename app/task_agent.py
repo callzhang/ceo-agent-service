@@ -12,6 +12,8 @@ from app.agent_runtime_router import (
     RoutedCodexExecution,
     RoutedCodexExecutionError,
     RoutedResultCodec,
+    RoutedResultValidationError,
+    RoutedResultValidationRetry,
 )
 from app.codex_runner import memory_connector_config_issue
 from app.config import repo_root
@@ -197,6 +199,9 @@ class TaskAgentCodexRunner:
                 result_codec=TASK_RESULT_CODEC,
                 conversation_id=session_scope_id,
                 required_capabilities=TASK_RUNTIME_CAPABILITIES,
+                result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
+                    correction_prompt=_task_result_validation_repair_prompt
+                ),
             )
         except RoutedCodexExecutionError as exc:
             if not exc.retryable_external_dependency:
@@ -225,7 +230,7 @@ def _encode_task_agent_result(raw: str) -> str:
     from app.codex_decision import extract_codex_audit_events
 
     decision = _parse_task_agent_decision(raw)
-    return json.dumps(
+    encoded = json.dumps(
         {
             "decision": decision.model_dump(mode="json"),
             "audit_tool_events": audit_references_from_full_events(
@@ -235,6 +240,25 @@ def _encode_task_agent_result(raw: str) -> str:
         },
         ensure_ascii=False,
         separators=(",", ":"),
+    )
+    try:
+        TASK_RESULT_CODEC.encode(encoded)
+    except ValueError as exc:
+        raise RoutedResultValidationError(
+            "task result contains a runtime path outside an evidence source field",
+            raw_output=raw,
+        ) from exc
+    return encoded
+
+
+def _task_result_validation_repair_prompt(_raw_output: str) -> str:
+    return (
+        "Resume the same task decision and return exactly one valid "
+        "TaskAgentDecision JSON object. Do not include local filesystem paths, "
+        "session paths, lock paths, credentials, or runtime diagnostics in any "
+        "business field. A source path may appear only in an evidence field "
+        "whose key is exactly source or source_ref; summarize read failures "
+        "without copying the runtime path."
     )
 
 
@@ -320,6 +344,13 @@ Follow-up draft participant contract:
 - If you cannot reliably identify at least one participant, do not emit a
   follow_up_draft. You may retain a supported project update, but must omit the
   owner-dependent TODO or follow-up rather than guessing an identity.
+
+Runtime-data boundary:
+- Do not copy local filesystem paths, session paths, lock paths, credentials, or
+  other runtime diagnostics into business descriptions, summaries, titles,
+  reasons, or risks. A source path may appear only in an evidence field whose
+  key is exactly source or source_ref; describe failed reads without repeating
+  the runtime path.
 
 Material-to-task boundary:
 - Decide first whether the source records a durable work update. A reference
