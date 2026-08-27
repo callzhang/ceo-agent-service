@@ -2269,7 +2269,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
     assert row["available_at"] == ""
 
 
-def test_process_work_items_command_backoffs_missing_memory_recall_tool_event(
+def test_process_work_items_command_fails_missing_memory_recall_tool_event(
     tmp_path,
     monkeypatch,
     capsys,
@@ -2325,10 +2325,10 @@ def test_process_work_items_command_backoffs_missing_memory_recall_tool_event(
             """,
             (input_id,),
         ).fetchone()
-    assert row["status"] == "pending"
+    assert row["status"] == "failed"
     assert row["attempts"] == 1
     assert "memory_recall tool event" in row["error"]
-    assert row["available_at"] > ""
+    assert row["available_at"] == ""
 
 
 def test_process_work_items_command_discards_cross_project_follow_up_draft(
