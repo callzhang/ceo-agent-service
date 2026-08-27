@@ -162,7 +162,7 @@ class _AuditReconciledWire(_AuditWireBase):
     side_effect_state: Literal["unknown"]
     feedback: None
     external_result: None
-    reconciliation: list[AuditReconciliation] = Field(min_length=1)
+    reconciliation: list[AuditReconciliation] = Field(default_factory=list)
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 

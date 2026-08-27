@@ -858,7 +858,7 @@ class AgentTurnProcess(Generic[ResultT]):
             # Provider capabilities are not reimplemented at the application
             # layer. Keep the event for observability, but let the runtime
             # decide whether a command/tool is permitted.
-            read_only = False
+            read_only = recovery_phase == "reconcile"
             event = (
                 _trusted_claude_effect_event(payload, read_only=read_only)
                 if from_claude_normalizer
