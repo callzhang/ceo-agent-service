@@ -7204,6 +7204,40 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
+        return self._agent_run_from_row(updated, db=db)
+
+    def update_agent_run_projection(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        final_result_json: str = "",
+        structured_error_json: str = "",
+        side_effect_state: str = "none",
+        owner: str,
+        now: str | datetime | None = None,
+    ) -> AgentRun:
+        """Update the run's current projection while retaining append-only facts."""
+        if status not in {"completed", "failed", "unknown"}:
+            raise ValueError("invalid projection status")
+        if side_effect_state not in {"none", "confirmed", "unknown"}:
+            raise ValueError("invalid side_effect_state")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
+            if row is None:
+                raise ValueError("agent run does not exist")
+            self._require_current_agent_run_write_access(
+                db, run_id, owner=owner, now_text=now_text, expected_status=row["status"]
+            )
+            db.execute(
+                "update agent_runs set status=?, final_result_json=?, structured_error_json=?, side_effect_state=?, completed_at=?, updated_at=? where id=?",
+                (status, final_result_json, structured_error_json, side_effect_state, now_text if status != "unknown" else "", now_text, run_id),
+            )
+            db.execute(
+                "insert into agent_run_state_events(agent_run_id, phase, structured_error_json, created_at) values (?, 'projection_update', ?, ?)",
+                (run_id, structured_error_json, now_text),
+            )
+            updated = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
             return self._agent_run_from_row(updated, db=db)
 
     def complete_agent_run(

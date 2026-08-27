@@ -49,7 +49,7 @@ pending -> running -> done
 - 所有任务都不得使用 `discard` 动作。
 - 所有任务都不得写入 `discarded` 状态。
 - 不得用“丢弃”代替审核反馈、修正原 run、重新排队、人工升级或失败记录。
-- 已产生的 run 不可被覆盖；修正版必须创建新的 revision，并通过父 run 或反馈关系关联原结果。
+- 业务 run 的 current projection 可以由 recovery 或重跑更新；原始失败/未知状态作为 append-only state event 保留。proposal 版本、revision lineage、session、runtime attempt、tool event、receipt 和 readback 不得覆盖。
 - 只有外部系统回读确认成功，任务才能进入 `sent`。
 
 如果任务确定无需执行，应进入 `done`，并在 trace 写入 `agent_output/no_action`；如果结果需要修改，写入 `audit_feedback` 并保持 `running`；如果处理失败，应进入 `failed`。
