@@ -88,7 +88,6 @@ class ConsumerOutcome(StrEnum):
     PROPOSAL = "proposal"
     NO_ACTION = "no_action"
     NEEDS_HUMAN = "needs_human"  # legacy wire name; semantically a policy gap
-    POLICY_REVIEW = "needs_human"
     FAILED = "failed"
 
 
