@@ -52,7 +52,7 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = SERVICE_ROOT / "app" / "schemas" / "consumer_agent_result.schema.json"
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_DYNAMIC_SKILL_SENTENCE = (
-    "Consumer Agent A independently selects and reads every applicable business and operation Skill with `agent_cli.read_skill` before forming the candidate."
+    "Consumer Agent A independently selects and reads every applicable business and operation Skill with `agent_cli.read_skill` before forming the candidate. For any dingokr.dingteam.com link or OKR review request, this explicitly includes dingtang-okr-review/SKILL.md and its live-source references; use the Dingteam live source and record its read receipt before proposing an action."
 )
 AUDIT_DYNAMIC_SKILL_SENTENCE = (
     "Audit Agent B independently determines every business and operation Skill "
