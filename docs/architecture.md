@@ -41,6 +41,30 @@ pending -> running -> done
 
 完整状态和恢复说明见 [`docs/runtime-mechanism.md`](runtime-mechanism.md)。
 
+## History 语义与无效入口边界
+
+History 是执行历史的单一展示入口，不把同一次执行拆成多行，也不把队列请求状态
+混入执行结果状态。筛选条件的业务含义固定如下：
+
+- `status` 只筛选执行状态；不再使用含糊的 `type` 名称。
+- `task_type` 只筛选任务类型；多选通过重复的 `task_type` 参数表达，不再使用
+  `object_type` 名称。
+- 任务类型包括 `replay`、`wechat`、`approval`、`task`、`meeting` 和
+  `okr_review`。OKR 评审优先依据明确的 `action='okr_review'` 识别，其次依据与
+  `okr_review_requests` 的会话和触发消息关联识别；同一执行记录只能归入一个类型。
+- `okr_review_requests` 的队列状态不能覆盖对应执行记录的 History 状态。若未来需要
+  展示队列生命周期，应设计独立视图，不能在 History 中制造第二行或混合两种状态。
+
+History 不承诺旧查询参数或旧 URL 的兼容别名；接口和页面使用当前语义，历史数据只
+通过当前代码的分类规则重新解释。
+
+“待处理服务修复”不是运行时能力：它没有生产者、处理动作、修复执行器或闭环，不能
+作为服务健康状态或执行队列的一部分。移除该死入口时，范围包括导航、History 卡片、
+页面和路由，以及仅服务于该入口的模型、存储 API、初始化表和索引；`feedback_events`
+和真正的反馈流程必须保留。删除已有 `service_bugfix_candidates` 表属于独立的数据库
+迁移，必须先做并校验 SQLite 在线备份，再小批量迁移、读回表已删除且反馈数据未变化；
+迁移必须幂等，不能通过旧路由别名或重新建表恢复该入口。
+
 ## 设计目标
 
 CEO Agent Service 是本地优先的企业消息处理服务。它发现需要 Derek 处理的消息、
@@ -315,7 +339,6 @@ session 指针读取 JSONL，并只向普通用户展示业务结果；内部角
 | `failed` | 当前 run 失败；错误说明是否可重试。 |
 | `unknown` | 写操作可能发生但尚未确认，必须在原 B session 中先读回。 |
 | `quarantined` | 没有可验证回执的旧投递；保留证据、停止重发，并单独展示为提醒。 |
-| `discarded` | 已确认不属于 Derek 当前职责的请求；保留原因，不再进入执行队列。 |
 
 只有诊断、没有完成用户要求的动作时，不能标记为 `executed`。如果缺的是参与者可以回答的
 事实，正确动作是发送一个具体澄清问题，而不是 `needs_human`。
