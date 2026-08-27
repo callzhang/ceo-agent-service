@@ -1506,5 +1506,6 @@ def _recovery_prompt(
         "For chat readback use dws chat +chat-messages with a bounded window.\n\n"
         "An exact full message text match is required for present.\n\n"
         "Use a window no wider than two hours and require complete pagination.\n\n"
+        "(this value is UTC; do not reinterpret it as local time)\n\n"
         f"{context.render()}\n\nPrior attempt: {identity}{guidance}\n"
     )
