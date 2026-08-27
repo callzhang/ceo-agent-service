@@ -7204,7 +7204,7 @@ class AutoReplyStore:
                 "select * from agent_runs where id=?",
                 (run_id,),
             ).fetchone()
-        return self._agent_run_from_row(updated, db=db)
+            return self._agent_run_from_row(updated, db=db)
 
     def update_agent_run_projection(
         self,
@@ -7238,7 +7238,8 @@ class AutoReplyStore:
                 (run_id, structured_error_json, now_text),
             )
             updated = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
-            return self._agent_run_from_row(updated, db=db)
+            projection = self._agent_run_from_row(updated, db=db, load_events=False)
+        return self.get_agent_run(projection.id) or projection
 
     def complete_agent_run(
         self,
