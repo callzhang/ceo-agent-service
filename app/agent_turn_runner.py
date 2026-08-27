@@ -15,7 +15,6 @@ from pydantic import ValidationError
 
 from app.agent_contracts import (
     AuditAgentResult,
-    AuditExternalResult,
     AuditOutcome,
     ConsumerAgentResult,
     ConsumerOutcome,
@@ -28,11 +27,9 @@ from app.agent_effects import (
     _controlled_cli_receipt,
     _is_sensitive_key,
     _is_signed_url,
-    _mcp_call_completed,
     _normalized_key,
 )
 from app.agent_result import (
-    AgentError,
     EffectKind,
     ResultParseError,
 )
@@ -45,11 +42,8 @@ from app.agent_runtime_contracts import (
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_skill_usage import (
     LoadedSkillReceipt,
-    loaded_skill_receipts,
-    normalized_read_skill_metadata,
 )
 from app.claude_runtime_adapter import (
-    ClaudeCommandPolicy,
     ClaudeEventNormalizer,
     ClaudeRuntimeAdapter,
     require_claude_session_id,
@@ -78,7 +72,6 @@ from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
     dingtalk_message_text,
-    describe_native_command,
     native_command_argv,
 )
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
@@ -746,8 +739,6 @@ class AgentTurnProcess(Generic[ResultT]):
         primary_turn_started = False
         primary_turn_closed = False
         recovery_started_actions: set[int] = set()
-        effect_action_counts = [0] * len(expected_effect_actions)
-        effect_action_by_call_id: dict[str, int] = {}
         observed_session_id = ""
         active_attempt: AgentRuntimeAttempt | None = None
         active_route: RuntimeRoute | None = None
@@ -756,7 +747,6 @@ class AgentTurnProcess(Generic[ResultT]):
         pending_claude_session_id = ""
         recovered_completed_attempt = False
         turn_event_start = len(run.tool_events)
-        recovery_event_start = turn_event_start
         completed_before_recovery: set[int] = set()
         transcript_start = run.transcript_start_line
 
@@ -1003,7 +993,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         raise ValueError("runtime_result_evidence_mismatch")
                     result = cast(ResultT, decoded.result)
                     turn_event_start = cast(int, evidence["event_start"])
-                    recovery_event_start = turn_event_start
                     recovery_started_actions = evidence_started
                     completed_before_recovery = evidence_completed_before
                 except ValueError as exc:
