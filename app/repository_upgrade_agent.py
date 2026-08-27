@@ -256,26 +256,12 @@ def _contains_suggestion_payload(value: object) -> bool:
 
 
 def _harden_read_only_command(command: list[str]) -> list[str]:
-    hardened: list[str] = []
-    index = 0
-    while index < len(command):
-        if (
-            command[index] == "-c"
-            and index + 1 < len(command)
-            and command[index + 1].startswith("mcp_servers.")
-        ):
-            index += 2
-            continue
-        hardened.append(command[index])
-        index += 1
-
+    hardened = list(command)
     insertion_index = len(hardened) - 1 if hardened[-1:] == ["-"] else len(hardened)
     hardened[insertion_index:insertion_index] = [
         "--ephemeral",
         "--sandbox",
         "read-only",
-        "-c",
-        "mcp_servers={}",
     ]
     return hardened
 

@@ -250,7 +250,7 @@ def test_change_summary_rejects_control_character_injection(
         )
 
 
-def test_agent_command_is_read_only_and_preserves_local_cli_auth(
+def test_agent_command_is_read_only_and_preserves_local_cli_auth_and_mcp_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     codex_home = tmp_path / "codex-home"
@@ -287,11 +287,8 @@ def test_agent_command_is_read_only_and_preserves_local_cli_auth(
     assert command[command.index("--sandbox") + 1] == "read-only"
     assert "--output-schema" in command
     config_values = _config_values(command)
-    assert [value for value in config_values if value.startswith("mcp_servers")] == [
-        "mcp_servers={}"
-    ]
-    assert config_values[-1] == "mcp_servers={}"
-    assert command[-3:] == ["-c", "mcp_servers={}", "-"]
+    assert not any(value.startswith("mcp_servers") for value in config_values)
+    assert command[-1] == "-"
     assert kwargs["env"]["CODEX_API_KEY"] == "local-cli-secret"
     assert kwargs["prompt"]
 
