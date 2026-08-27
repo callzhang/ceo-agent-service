@@ -918,16 +918,25 @@ def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
 
 
 @pytest.mark.parametrize(
-    ("run_update", "attempt_update", "failure", "receipt", "recovery_phase", "reason"),
+    (
+        "run_update",
+        "attempt_update",
+        "failure",
+        "receipt",
+        "recovery_phase",
+        "expected_safe",
+        "reason",
+    ),
     [
-        ({}, {}, failover_failure(), False, "reconciliation", "recovery_pinned"),
-        ({}, {}, failover_failure(), True, "", "confirmed_receipt"),
+        ({}, {}, failover_failure(), False, "reconciliation", False, "recovery_pinned"),
+        ({}, {}, failover_failure(), True, "", False, "confirmed_receipt"),
         (
             {"side_effect_state": "unknown"},
             {},
             failover_failure(),
             False,
             "",
+            False,
             "side_effect_state",
         ),
         (
@@ -936,6 +945,7 @@ def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
             failover_failure(),
             False,
             "",
+            True,
             "safe",
         ),
         (
@@ -944,6 +954,7 @@ def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
             failover_failure(),
             False,
             "",
+            False,
             "effect_started",
         ),
         (
@@ -957,6 +968,7 @@ def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
             ),
             False,
             "",
+            False,
             "failure_not_eligible",
         ),
     ],
@@ -969,6 +981,7 @@ def test_failover_safety_uses_only_persisted_evidence(
     failure,
     receipt,
     recovery_phase,
+    expected_safe,
     reason,
 ):
     run = store.get_agent_run(running_attempt.agent_run_id).model_copy(
@@ -984,7 +997,7 @@ def test_failover_safety_uses_only_persisted_evidence(
         recovery_phase=recovery_phase,
     )
 
-    assert (safe, result_reason) == (False, reason)
+    assert (safe, result_reason) == (expected_safe, reason)
 
 
 def test_router_uses_configured_route_order(store, running_attempt):
