@@ -9904,7 +9904,7 @@ def _reply_history_attention_actions(
     )
     items: list[str] = []
     help_items: list[str] = []
-    for action in attention.actions:
+    for action_index, action in enumerate(attention.actions, 1):
         if action.key == "retry":
             items.append(
                 f'<form method="post" action="{detail_href}/rerun?return_to={return_to_query}" '

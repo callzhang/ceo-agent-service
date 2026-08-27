@@ -5895,7 +5895,7 @@ def test_historical_needs_human_detail_shows_later_automatic_resolution(tmp_path
     status, html = render_attempt_detail(store, old_id)
 
     assert status == 200
-    assert f"后续自动处理已结案" in html
+    assert "后续自动处理已结案" in html
     assert f"#{later_id}" in html
     assert "需要你的判断" not in html
 
@@ -6457,8 +6457,8 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
 
     html = render_attempt_list(store, include_chart=False)
 
-    assert "A. 同意当前方案" in html
-    assert "B. 要求补充材料" in html
+    assert "1. 同意当前方案" in html
+    assert "2. 要求补充材料" in html
     assert f'action="/attempts/{attempt_id}/human-decision?return_to=/history"' in html
 
 
@@ -8895,8 +8895,8 @@ def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
 
     html = audit_web_module._needs_human_decision_card(attempt, [run])
 
-    assert "A. 恢复到已确认位置" in html
-    assert "B. 保持当前状态" in html
+    assert "1. 恢复到已确认位置" in html
+    assert "2. 保持当前状态" in html
     assert "不会执行新的外部动作。" in html
 
 
@@ -8936,8 +8936,8 @@ def test_needs_human_detail_prefers_options_persisted_on_actionable_attempt(
 
     html = audit_web_module._needs_human_decision_card(attempt, [])
 
-    assert "A. 恢复已确认状态" in html
-    assert "B. 保持当前状态" in html
+    assert "1. 恢复已确认状态" in html
+    assert "2. 保持当前状态" in html
     assert "不会执行新的外部动作。" in html
 
 
