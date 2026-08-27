@@ -107,6 +107,7 @@ def deliver_meeting_alignment(
     recent_messages: list[DingTalkMessage] = []
     direct_user_id = ""
     direct_open_dingtalk_id = ""
+    target_title = source.title
     if target is None:
         if participant_count > 2:
             raise MeetingDeliveryRetry("multi-party meeting has no sendable group")
@@ -126,17 +127,26 @@ def deliver_meeting_alignment(
                 "group delivery must use the first ranked target candidate"
             )
         info = dws.get_conversation_info(target.conversation_id)
-        if not _sendable_group_info(info, target.conversation_id):
+        group_state = _group_delivery_state(info, target.conversation_id)
+        if group_state == "unsendable":
+            direct_user_id, direct_open_dingtalk_id, target_title = (
+                _creator_direct_identity(source, dws)
+            )
+            target_kind = "direct"
+            target_id = direct_user_id or direct_open_dingtalk_id
+        elif group_state == "incomplete":
             raise MeetingDeliveryRetry("selected target is not a sendable group")
-        conversation = DingTalkConversation(
-            open_conversation_id=target.conversation_id,
-            title=str(info.get("title") or target.title),
-            single_chat=False,
-            unread_point=0,
-        )
-        recent_messages = dws.read_recent_messages(conversation, limit=50)
-        target_kind = "group"
-        target_id = target.conversation_id
+        else:
+            conversation = DingTalkConversation(
+                open_conversation_id=target.conversation_id,
+                title=str(info.get("title") or target.title),
+                single_chat=False,
+                unread_point=0,
+            )
+            recent_messages = dws.read_recent_messages(conversation, limit=50)
+            target_kind = "group"
+            target_id = target.conversation_id
+            target_title = target.title
     else:
         counterpart = _direct_target_participant(source, target)
         if counterpart.user_id:
@@ -195,7 +205,7 @@ def deliver_meeting_alignment(
                 message_text,
                 at_open_dingtalk_ids=mention_ids,
                 at_open_dingtalk_names=mention_display_names,
-                title=target.title if target is not None else source.title,
+                title=target_title,
             )
         else:
             direct_target = (
@@ -207,14 +217,14 @@ def deliver_meeting_alignment(
                 None,
                 message_text,
                 **direct_target,
-                title=target.title if target is not None else source.title,
+                title=target_title,
             )
     except (DwsError, subprocess.TimeoutExpired, TimeoutError) as exc:
         result = MeetingDeliveryResult(
             status="ambiguous",
             target_kind=target_kind,
             target_id=target_id,
-            target_title=target.title if target is not None else source.title,
+            target_title=target_title,
             resolved_mentions=resolved_mentions,
             unresolved_mention_names=unresolved_names,
             send_result={},
@@ -244,7 +254,7 @@ def deliver_meeting_alignment(
         status=result_status,
         target_kind=target_kind,
         target_id=target_id,
-        target_title=target.title if target is not None else source.title,
+        target_title=target_title,
         resolved_mentions=resolved_mentions,
         unresolved_mention_names=unresolved_names,
         send_result=send_result,
@@ -259,6 +269,47 @@ def deliver_meeting_alignment(
         "meeting send outcome is ambiguous; do not send again immediately",
         result=result,
     )
+
+
+def _group_delivery_state(
+    info: dict[str, Any], conversation_id: str
+) -> Literal["sendable", "unsendable", "incomplete"]:
+    if info.get("openConversationId") != conversation_id:
+        return "incomplete"
+    single_chat = info.get("singleChat")
+    member_count = info.get("memberCount")
+    if single_chat is True:
+        return "unsendable"
+    if single_chat is not False:
+        return "incomplete"
+    if not isinstance(member_count, int) or isinstance(member_count, bool):
+        return "incomplete"
+    if member_count == 0:
+        return "unsendable"
+    if member_count > 0:
+        return "sendable"
+    return "incomplete"
+
+
+def _creator_direct_identity(
+    source: MeetingSource,
+    dws: MeetingDeliveryDws,
+) -> tuple[str, str, str]:
+    creator = source.creator
+    if creator is None or not creator.name.strip():
+        raise MeetingDeliveryRetry("meeting creator identity is unresolved")
+    if creator.user_id.strip():
+        return creator.user_id.strip(), "", creator.name.strip()
+    if creator.open_dingtalk_id.strip():
+        return "", creator.open_dingtalk_id.strip(), creator.name.strip()
+    profile = _resolve_profile(creator.name, creator, dws, [])
+    if profile is None:
+        raise MeetingDeliveryRetry("meeting creator identity is unresolved")
+    if profile.user_id.strip():
+        return profile.user_id.strip(), "", creator.name.strip()
+    if profile.open_dingtalk_id and profile.open_dingtalk_id.strip():
+        return "", profile.open_dingtalk_id.strip(), creator.name.strip()
+    raise MeetingDeliveryRetry("meeting creator identity is unresolved")
 
 
 def _sendable_group_info(info: dict[str, Any], conversation_id: str) -> bool:

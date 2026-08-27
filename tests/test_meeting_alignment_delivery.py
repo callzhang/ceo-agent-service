@@ -315,10 +315,15 @@ def test_group_must_be_sendable_through_conversation_info():
     dws = FakeDws()
     dws.conversation_info["singleChat"] = True
 
-    with pytest.raises(MeetingDeliveryRetry, match="sendable group"):
-        deliver_meeting_alignment(send_decision(), meeting_source(), dws)
+    result = deliver_meeting_alignment(
+        send_decision(mention_names=[]), meeting_source(), dws
+    )
 
-    assert dws.sent == []
+    assert result.status == "sent"
+    assert result.target_kind == "direct"
+    assert result.target_id == "u-a"
+    assert dws.sent[0]["conversation_id"] is None
+    assert dws.sent[0]["user_id"] == "u-a"
 
 
 def test_unresolved_decision_can_reach_agent_selected_business_group():

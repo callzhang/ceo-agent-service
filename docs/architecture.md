@@ -41,6 +41,14 @@ pending -> running -> done
 
 完整状态和恢复说明见 [`docs/runtime-mechanism.md`](runtime-mechanism.md)。
 
+### 多人会议投递目标
+
+多人会议默认仍要求 Meeting Alignment Agent 明确选择首个候选群；没有选择目标时，服务不会替
+Agent 猜测目标。服务读取所选群的权威会话信息后，仅在明确证明该会话不可发送（例如
+`singleChat=true` 或成员数为零）时，才使用会议创建人的已解析身份发送私信。会话元数据缺失、
+不一致或身份无法唯一解析时，保留 `MeetingDeliveryRetry`，不发送也不猜测。该回退不适用于
+一对一会议，也不改变已确认可发送群的投递路径。
+
 ## History 语义与无效入口边界
 
 History 是执行历史的单一展示入口，不把同一次执行拆成多行，也不把队列请求状态
