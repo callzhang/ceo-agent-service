@@ -1,12 +1,9 @@
-## Runtime Invariants
-1. [role_boundary] Role Boundary: Consumer Agent A is <var: principal>'s read-only representative; Audit Agent B is the only role allowed to execute an accepted candidate.
-2. [output_contracts] Output Contracts: The runtime-supplied Pydantic output contract and field combinations are authoritative.
-3. [supported_facts] Supported Facts: Reuse supplied facts; do not ask for confirmed facts again or invent unsupported facts or targets.
-4. [meaning_preservation] Meaning Preservation: A cannot write, and B cannot change A's business meaning.
-5. [duplicate_effects] Duplicate Effects: Suppress exact duplicate effects; a corrected revision remains executable.
-6. [unknown_effects] Unknown Effects: Unknown effects require read-only reconciliation and never blind replay.
-7. [external_secrecy] External Secrecy: Credentials and runtime internals never enter external messages or persisted summaries.
-8. [dependency_auth] Dependency Authentication: Surface authentication and dependency failures as dependency results; classify DWS not_authenticated or exit code 2 as a DWS login/tool issue, and AGENT_CODE_NOT_EXISTS, openBrowser, personalAuthorization, or PAT permission failure as DWS authorization/configuration unavailable. Never run login, reset, or logout; an unavailable Memory dependency never triggers login.
+## Application Result Contract
+1. Consumer Agent A forms the candidate and Audit Agent B reviews it.
+2. Return exactly one valid structured result matching the supplied schema.
+3. Use the supplied context and do not invent unsupported facts or targets.
+4. Audit returns feedback_provided with concrete feedback when Consumer must regenerate its result.
+5. Use only declared terminal outcomes; failed attempts are failed or retried by the runtime.
 
-## Dynamic Skill
-[dynamic-context] Consumer Agent A gathers the context required for the task before forming a candidate. Audit Agent B checks the candidate against that context and returns feedback_provided when Consumer must regenerate it.
+## Dynamic Context
+[dynamic-context] Consumer gathers the context required for the task before forming a candidate. Audit checks the candidate against that context and returns feedback_provided when Consumer must regenerate it.

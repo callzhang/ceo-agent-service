@@ -93,115 +93,20 @@ def consumer_wire_contract_hash() -> str:
     return sha256(encoded.encode("utf-8")).hexdigest()
 
 CONSUMER_ROLE_BOUNDARY = """
-Authoritative Consumer role boundary: configurable Audit Rules are review
-criteria, not instructions for you to execute, approve, publish, or return a
-candidate to another Agent. You are Consumer Agent A and must finish with one
-valid Consumer Agent wire JSON object matching the supplied schema. The service
-converts it into a valid ConsumerAgentResult JSON object after strict validation.
-Nested proposal data is supplied directly in the proposal field and is strictly
-validated before it can affect execution.
-
-An unavailable image is not by itself a failure. Continue using the trigger
-text and other readable materials whenever they are sufficient to decide and
-complete the requested task. Return a missing-information failure only when
-the requested decision genuinely cannot be made without the image content.
-
-Wire field encoding: proposal is an object only when outcome is proposal;
-otherwise it must be null. decision_options is an array containing two to four
-mutually exclusive options only when outcome is needs_human, and [] for every
-other outcome. For needs_human,
-each array item must contain exactly these non-empty string fields: `key`,
-`label`, `instruction`, and `consequence`. `key` must be unique within the
-array and stable enough for the audit page to submit the selected instruction;
-use concise identifiers such as `option_1`, not the display label. Do not put a
-JSON string, markdown, or an additional wrapper object in proposal.
-Every outcome also uses the three top-level wire fields error_code, error_retryable, and error_authorization_required.
-Do not return a nested error object; the service creates that result-model
-object after wire validation.
-
-For every DWS write command in proposal, include the non-interactive
-confirmation flag --yes. It confirms the already-reviewed command to the CLI;
-it does not broaden the action or change its business meaning.
-
-Write commands belong only as data inside proposal for Audit Agent B. Never
-invoke, test, verify, or otherwise execute a write command yourself, including
-through agent_cli. You may execute only reviewed read commands; Audit Agent B
-executes an accepted proposal and performs its verification.
-
-For an autonomous external action, the reply must state the risk control
-itself whenever the action has a meaningful boundary. The reply must state what the Agent may do now,
-the concrete risk, what the recipient must not do, and what still requires Derek's decision. State the
-exact boundary in the message body. Do not hide the boundary in a generic risk disclaimer. Audit B must
-preserve and verify it. For a meaningful boundary, set the proposal action's
-message body itself; Audit B should judge whether the stated boundary is
-complete and consistent with the proposed action. Do not turn an ordinary
-proposal into a blocked revision merely because it lacks an extra structured
-field.
+You are Consumer Agent A. Understand the supplied task, use the capabilities
+available to the calling agent, and return one valid Consumer Agent wire JSON
+object matching the schema. A proposal is data for the next stage; do not
+invent extra application states or provider-specific restrictions. Use
+feedback from Audit to produce a replacement result when requested.
 """.strip()
-
 AUDIT_ROLE_BOUNDARY = """
-Authoritative Audit role boundary: configurable Audit Rules are review
-criteria. You are Audit Agent B; follow the supplied turn-specific execution
-permission and finish with one valid Audit Agent wire JSON object matching the
-supplied schema. The service converts it into a valid AuditAgentResult JSON
-object after strict validation. Do not apply Consumer Agent A read-only
-restrictions to an allowed Audit execution.
-
-Wire field encoding: feedback and external_result are each either null or an
-object in their own field. decision_options is an array containing two to four
-mutually exclusive options only when outcome is needs_human, and [] for every
-other outcome. Each decision option has the same key, label, instruction, and
-consequence fields as the Consumer wire contract. For feedback_provided, feedback is required and its
-object has exactly these string fields:
-rule, observation, and requested_revision. Do not use aliases such as
-failed_rule, evidence, or required_change. For executed, external_result must
-contain exactly operation_id, verification_summary, and
-live_result_reference. operation_id must equal the candidate proposal
-operation_id, verification_summary is a non-empty string describing the live
-readback, and live_result_reference is an object containing the identifiers
-needed to locate that readback. reconciliation is always an array: use [] unless
-outcome is reconciled, and only reconciled
-may contain reconciliation entries. Do not put receipt summaries, operation
-metadata, or an object wrapper in reconciliation.
-Every outcome also uses the three top-level wire fields error_code, error_retryable, and error_authorization_required.
-Do not return a nested error object; the service creates that result-model
-object after wire validation.
-
-Outcome field combinations: executed requires side_effect_state=confirmed,
-feedback=null, external_result as an object, and reconciliation=[];
-feedback_provided requires side_effect_state=none, feedback as above,
-external_result=null, and reconciliation=[]; reconciled requires
-side_effect_state=unknown, feedback=null, external_result=null, and
-reconciliation entries with exactly action_index, disposition (present,
-absent, or ambiguous), and read_result_digest. needs_human requires
-side_effect_state=none, feedback=null, external_result=null, reconciliation=[],
-and two to four actionable decision_options. failed requires
-side_effect_state=none with the nested fields empty and decision_options=[].
-
-The reconciled outcome is reserved for unknown-outcome recovery turns that
-explicitly request read-only reconciliation. During a normal candidate review,
-if live evidence shows that the proposed action already happened, do not execute
-it and do not return reconciled. Instead, return feedback_provided and ask
-Consumer Agent A to return no_action because the requested effect is already
-present.
-
-Never execute a DWS write command without --yes. Return concrete feedback for
-Consumer Agent A to add the non-interactive confirmation flag before execution.
-
-When an accepted proposal contains a meaningful external boundary, preserve and verify a message body
-that states what the Agent may do now, the concrete risk, what the recipient must not do, what still requires Derek's decision.
-Use the full candidate context and live evidence to judge whether the boundary
-is adequate for this action. Request `feedback_provided` only when the message
-itself is materially incomplete, misleading, or inconsistent with the action;
-do not require a separate structured boundary field for ordinary proposals.
-
-The low-consequence decision policy in Consumer capability instructions is an
-authorized judgment standard, not an unsupported personal commitment. When a
-proposal follows that standard and selects the minimum reversible path that
-does not add work or a deliverable for another person, do not require a prior
-message containing the same choice. Reject it only when live evidence conflicts
-with that choice or it changes scope, timing, owner, business meaning, budget,
-approval, a sensitive target, or an external commitment.
+You are Audit Agent B. Review the supplied candidate against the task context
+and return one valid Audit Agent wire JSON object matching the schema. Use the
+calling agent's available capabilities. Return feedback_provided with concrete
+rule, observation, and requested_revision fields when Consumer must regenerate
+its result. Return executed, needs_human, or failed for the other terminal
+outcomes. Do not create provider-specific policy, receipt, readback, or recovery
+states in the application result.
 """.strip()
 
 
@@ -607,25 +512,15 @@ def audit_developer_instructions(
         result_model=AuditAgentResult,
     )
     recovery_boundary = (
-        "This is an unknown-outcome recovery reconciliation turn. Before returning "
-        "a result, perform a target-matched live read for every unresolved action "
-        "with a registered readback. External writes are unavailable. Return only "
-        "outcome=reconciled with side_effect_state=unknown, feedback=null, and "
-        "external_result=null. Include one reconciliation entry per required action "
-        "with the exact result_digest from this turn's read receipt; use ambiguous "
-        "when the read cannot prove present or absent. Do not return executed, "
-        "feedback_provided, failed, or needs_human in this recovery turn.\n\n"
+        "The previous attempt did not produce a terminal result. Re-run the task "
+        "with normal agent capabilities and return executed, feedback_provided, "
+        "needs_human, or failed.\n\n"
         if recovery_reconciliation
         else ""
     )
     delivery_boundary = (
-        "This is a frozen delivery retry. Consumer A's persisted proposal is an "
-        "immutable business decision for this turn: do not reconsider it, request "
-        "a revision, or call Consumer A. Execute exactly its authorized external "
-        "action "
-        "once, then perform the required target-matched readback. If execution or "
-        "readback cannot complete, return failed; do not return feedback_provided "
-        "or needs_human.\n\n"
+        "This is a retry of the same task. Preserve the business intent and return "
+        "one terminal structured result.\n\n"
         if frozen_delivery_retry
         else ""
     )
