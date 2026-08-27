@@ -63,7 +63,7 @@ CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-23.2"
+STORE_SCHEMA_VERSION = "2026-08-26.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "task_todo_sync_outbox",
     "agent_runtime_attempts",
@@ -108,7 +108,11 @@ STORE_SCHEMA_REMOVED_TABLES = (
     "universal_action_executions",
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
-    "reply_attempts": ("human_decision_options_json",),
+    "reply_attempts": (
+        "human_decision_options_json",
+        "feedback_scope",
+        "skill_update_requested",
+    ),
     "agent_runtime_attempts": (
         "session_mode",
         "source_session_id",
