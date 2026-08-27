@@ -9796,7 +9796,7 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update reply_tasks
-                set status='pending', attempts=max(attempts - 1, 0),
+                set status='pending', attempts=0,
                     locked_at=null, available_at='', error=?, recovery_code=?,
                     execution_generation=?, updated_at=?
                 where id=? and status='failed' and execution_generation=?
