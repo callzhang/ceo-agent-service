@@ -1532,9 +1532,6 @@ class DingTalkAutoReplyWorker:
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
         self._backfill_confirmed_direct_reply_ledgers(limit=limit)
-        self.store.suspend_exhausted_unknown_agent_runs()
-        self._recover_due_unknown_agent_reply_tasks(limit=limit)
-        self.store.suspend_exhausted_unknown_agent_runs()
         self._recover_stale_agent_reply_tasks()
         # Startup recovery can requeue effect-free work.  Bound repeated
         # restart/retry loops so a task cannot remain pending indefinitely.
@@ -1544,11 +1541,6 @@ class DingTalkAutoReplyWorker:
         )
         for channel in ("dingtalk", "wechat"):
             recover_native_codex_auth_failures(self.store, channel=channel)
-            self.store.recover_failed_effect_free_consumer_tasks(channel=channel)
-            self.store.recover_failed_effect_free_audit_tasks(channel=channel)
-            self.store.recover_terminal_sessionless_audit_deliveries(
-                channel=channel
-            )
         if self.store.active_codex_capacity_pause(now=self._now()):
             return 0
         claimed_tasks = 0
@@ -1803,45 +1795,9 @@ class DingTalkAutoReplyWorker:
         return processed_tasks
 
     def _recover_due_unknown_agent_reply_tasks(self, *, limit: int) -> int:
-        recovered = self.store.settle_unknown_audit_runs_with_sent_reply(
-            limit=limit
-        )
-        for run in self.store.list_unknown_agent_runs(limit=limit):
-            task = self.store.get_reply_task(run.reply_task_id)
-            if task is None:
-                continue
-            try:
-                if task.status == "failed":
-                    self.store.requeue_failed_unknown_audit_reconciliation(
-                        task.id,
-                        run.id,
-                        reason="unknown_agent_run_reconciliation",
-                    )
-                elif task.status == "processing" and run.final_result_json:
-                    continue
-                elif task.status == "processing" and (
-                    run.lease_owner
-                    and run.lease_expires_at
-                    > self._sqlite_timestamp(self._now())
-                ):
-                    # A Consumer worker has already claimed this task.  With more
-                    # than one Consumer loop, turning it back to pending here can
-                    # repeatedly steal an active unknown-effect reconciliation
-                    # before Audit acquires its own run lease.  Startup recovery
-                    # and stale-processing recovery handle a genuinely orphaned
-                    # processing task; this scheduler must leave an active one
-                    # to its owner.
-                    continue
-                else:
-                    self.store.requeue_reply_task(
-                        task.id,
-                        "unknown_agent_run_reconciliation",
-                        expected_execution_generation=run.execution_generation,
-                    )
-            except (AgentRunLeaseLostError, ValueError):
-                continue
-            recovered += 1
-        return recovered
+        """Compatibility hook; unknown-effect recovery is no longer scheduled."""
+        del limit
+        return 0
 
     def _recover_stale_agent_reply_tasks(self) -> None:
         stale_tasks = self.store.list_stale_processing_reply_tasks(
@@ -2013,16 +1969,15 @@ class DingTalkAutoReplyWorker:
     def _pending_reply_task_candidates(
         self, *, page_size: int, now: str, max_id: int | None
     ) -> Iterator[ReplyTask]:
+        """Yield the ordinary pending queue in id order.
+
+        Legacy ``unknown``/``pending_reconciliation`` records remain visible
+        as historical failures, but they do not form a second scheduling
+        queue.  A retry is represented by a normal pending task and therefore
+        follows the same path as every other failed task.
+        """
         if max_id is None:
             return
-        reconciliation_tasks = self.store.peek_pending_reconciliation_reply_tasks(
-            page_size,
-            now=now,
-            channel="dingtalk",
-            max_id=max_id,
-        )
-        reconciliation_task_ids = {task.id for task in reconciliation_tasks}
-        yield from reconciliation_tasks
         after_id: int | None = None
         while True:
             page = self.store.peek_reply_tasks(
@@ -2034,9 +1989,7 @@ class DingTalkAutoReplyWorker:
             )
             if not page:
                 return
-            yield from (
-                task for task in page if task.id not in reconciliation_task_ids
-            )
+            yield from page
             after_id = page[-1].id
 
     def _reply_task_retry_available_at(self, attempts: int) -> str:
@@ -2266,7 +2219,11 @@ class DingTalkAutoReplyWorker:
         elif result.status == "needs_human":
             send_error = send_error or "needs_human"
         elif result.status == "unknown":
-            send_error = send_error or "agent_side_effect_unknown"
+            # Legacy typed results used ``unknown`` for an interrupted
+            # provider action.  The current contract has no unknown outcome
+            # state: persist the turn as an ordinary retryable failure and let
+            # the next Consumer turn inspect current provider state.
+            send_error = send_error or "agent_result_failed"
         elif result.status in {"failed_retryable", "failed_terminal"}:
             send_error = send_error or "agent_failed"
 
