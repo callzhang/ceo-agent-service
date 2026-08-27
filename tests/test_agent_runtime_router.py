@@ -12,10 +12,31 @@ from app.agent_runtime_contracts import (
     RuntimeRoute,
     RuntimeRouteSurfaceManifest,
 )
-from app.agent_runtime_router import AgentRuntimeRouter, failover_is_safe
+from app.agent_runtime_router import (
+    AgentRuntimeRouter,
+    failover_is_safe,
+    local_codex_session_effect_probe,
+)
 from app.store import AgentRole, AutoReplyStore
 
 NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
+
+
+def test_effect_probe_reports_inconclusive_evidence_without_classifying_as_effect(
+    tmp_path, monkeypatch
+):
+    session = tmp_path / "session.jsonl"
+    session.write_text('{"type":"item.started","item":{"type":"new_event"}}\n')
+    monkeypatch.setattr(
+        "app.agent_runtime_router.find_codex_session_path",
+        lambda _session_id, codex_home=None: session,
+    )
+
+    probe = local_codex_session_effect_probe(codex_home=tmp_path)
+
+    # An unrecognised transcript item is inconclusive.  Callers must only
+    # block when the probe positively observes an effect (True).
+    assert probe("session-1", 0, 1) is None
 
 
 def route(name: str) -> RuntimeRoute:

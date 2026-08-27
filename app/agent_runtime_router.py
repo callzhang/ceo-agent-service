@@ -1709,7 +1709,7 @@ class RoutedCodexExecution:
                         and self._probe_session_effect(
                             observed_session_id, transcript_start, transcript_end
                         )
-                        is not False
+                        is True
                     ):
                         active_attempt = (
                             self._store.note_runtime_attempt_effect_started(
@@ -1814,7 +1814,7 @@ class RoutedCodexExecution:
                     and self._probe_session_effect(
                         observed_session_id, transcript_start, transcript_end
                     )
-                    is not False
+                        is True
                 ):
                     active_attempt = self._store.note_runtime_attempt_effect_started(
                         active_attempt.id, owner=self._owner, at=self._now()
@@ -1883,7 +1883,7 @@ class RoutedCodexExecution:
                 and self._probe_session_effect(
                     observed_session_id, transcript_start, transcript_end
                 )
-                is not False
+                is True
             ):
                 persisted = self._store.get_agent_runtime_attempt(active_attempt.id)
                 if persisted is not None and not persisted.first_effect_started_at:
