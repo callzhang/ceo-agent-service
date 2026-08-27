@@ -87,7 +87,8 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
 class ConsumerOutcome(StrEnum):
     PROPOSAL = "proposal"
     NO_ACTION = "no_action"
-    NEEDS_HUMAN = "needs_human"
+    NEEDS_HUMAN = "needs_human"  # legacy wire name; semantically a policy gap
+    POLICY_REVIEW = "needs_human"
     FAILED = "failed"
 
 
@@ -184,7 +185,8 @@ class AuditOutcome(StrEnum):
     # Backward compatible Python alias. New wire and persisted results use
     # feedback_provided so the outcome describes the action that occurred.
     REVISION_REQUIRED = "feedback_provided"
-    NEEDS_HUMAN = "needs_human"
+    NEEDS_HUMAN = "needs_human"  # legacy wire name; semantically a policy gap
+    POLICY_REVIEW = "needs_human"
     DRY_RUN = "dry_run"
     FAILED = "failed"
     UNKNOWN = "failed"
