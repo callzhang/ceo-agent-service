@@ -708,12 +708,12 @@ class AgentOrchestrator:
                 error=AgentError(),
             )
             status = "executed"
-        completed = self.store.complete_agent_run(
+        completed = self.store.update_agent_run_projection(
             run.id,
-            result.model_dump(mode="json"),
+            status="completed" if status == "executed" else "failed",
+            final_result_json=json.dumps(result.model_dump(mode="json"), ensure_ascii=False),
             owner=owner,
             side_effect_state=side_effect_state,
-            expected_status="unknown",
         )
         return _audit_terminal(status, completed, result, feedback_cycles)
 
