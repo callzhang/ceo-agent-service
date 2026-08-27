@@ -1610,6 +1610,9 @@ class AgentTurnProcess(Generic[ResultT]):
                     else:
                         if recovery_phase == "reconcile":
                             for raw_line in process.stdout.splitlines():
+                                lowered = raw_line.lower()
+                                if "execute_reviewed_write" in lowered or '"effect":"effectful"' in lowered or "replay" in lowered:
+                                    raise AgentReadOnlyViolationError("agent_write_forbidden")
                                 try:
                                     event = json.loads(raw_line)
                                 except (TypeError, ValueError):
