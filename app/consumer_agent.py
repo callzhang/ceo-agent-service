@@ -156,6 +156,7 @@ Wire errors use error_code, error_retryable, and error_authorization_required.
 Do not return a nested error object.
 For compatibility, return revision_required and ask
 Consumer Agent A to return no_action; canonical output remains feedback_provided.
+Never execute a DWS write command without --yes.
 
 Treat a bounded fact-finding inquiry as executable when it only gathers facts,
 states the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
