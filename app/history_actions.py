@@ -10,7 +10,6 @@ from app.worker import MAX_REPLY_TASK_ATTEMPTS
 
 
 _LEGACY_ERROR_CODES = frozenset({
-    "image_dependency_unavailable",
     "oa_live_evidence_conflict",
     "live_evidence_conflict",
 })

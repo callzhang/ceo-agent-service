@@ -9408,7 +9408,6 @@ def _attempt_detail_reply_text(attempt: ReplyAttempt) -> str:
 def _attempt_reason_text(attempt: ReplyAttempt) -> str:
     """Keep both persisted decision rationale and audit explanation visible."""
     if attempt.send_error.strip() in {
-        "image_dependency_unavailable",
         "live_evidence_conflict",
         "oa_live_evidence_conflict",
     }:
