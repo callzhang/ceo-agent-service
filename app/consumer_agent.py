@@ -140,6 +140,7 @@ to the formal feedback_provided output.
 reconciliation is always an array of per-action records.
 use [] unless
 outcome is reconciled.
+Do not use an object wrapper in reconciliation.
 
 Treat a bounded fact-finding inquiry as executable when it only gathers facts,
 states the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
