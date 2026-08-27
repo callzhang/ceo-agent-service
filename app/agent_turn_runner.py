@@ -563,13 +563,9 @@ def _required_runtime_capabilities(
     explicit_capabilities: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
     required = set(_COMMON_RUNTIME_CAPABILITIES)
-    if run.role is AgentRole.CONSUMER:
-        required.update(_CONSUMER_RUNTIME_CAPABILITIES)
-    elif recovery_phase == "reconcile":
-        required.update(_RECONCILIATION_RUNTIME_CAPABILITIES)
-        required.add("reviewed_read_tools")
-    else:
-        required.update(_AUDIT_RUNTIME_CAPABILITIES)
+    # Provider/runtime owns execution surfaces. The application only requires
+    # structured result and local schema validation; it does not impose
+    # read-only, reviewed-tool, or reconciliation capabilities by role.
     if recovery_phase != "reconcile":
         for action in expected_effect_actions:
             capability = action.get("capability")

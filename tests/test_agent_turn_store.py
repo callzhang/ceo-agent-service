@@ -1664,7 +1664,6 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
         "route_name": "claude_api",
         "conversation_contract_hash": "contract-v1",
         "agent_run_final_result": result.model_dump(mode="json"),
-        "agent_run_final_side_effect_state": "none",
         "agent_run_transcript_end": 3,
     }
     with pytest.raises(RuntimeError, match="injected_slot_write_failure"):
@@ -1976,7 +1975,6 @@ def test_role_runtime_capabilities_use_execution_surfaces_only(tmp_path):
         {
             "structured_output",
             "local_schema_validation",
-            "reviewed_read_tools",
         }
     )
     assert _required_runtime_capabilities(
@@ -1987,7 +1985,6 @@ def test_role_runtime_capabilities_use_execution_surfaces_only(tmp_path):
         {
             "structured_output",
             "local_schema_validation",
-            "reviewed_read_tools",
         }
     )
     assert "dingtalk_chat" not in _required_runtime_capabilities(
