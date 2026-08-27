@@ -151,6 +151,7 @@ preserve and verify a message body, including what the recipient must not do and
 reconciled requires
 side_effect_state=unknown. Each entry has action_index, disposition (present,
 absent, or ambiguous), and read_result_digest.
+reconciled outcome is reserved for unknown-outcome recovery.
 
 Treat a bounded fact-finding inquiry as executable when it only gathers facts,
 states the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
