@@ -917,8 +917,9 @@ class AgentRuntimeRouter:
             if route.name in excluded_routes:
                 ineligible.append(f"{route.name}=already_attempted")
                 continue
-            if self._store.active_runtime_route_pause(route.name, now=now) is not None:
-                ineligible.append(f"{route.name}=paused")
+            pause_code = self._store.active_runtime_route_pause(route.name, now=now)
+            if pause_code is not None:
+                ineligible.append(f"{route.name}=paused:{pause_code}")
                 continue
             if self._snapshot_is_current_and_eligible(
                 route=route,
@@ -1864,7 +1865,10 @@ class RoutedCodexExecution:
                     now=self._now(),
                 )
         except RuntimeRoutePausedError as exc:
-            raise RoutedCodexExecutionError("runtime_route_unavailable") from exc
+            raise RoutedCodexExecutionError(
+                "runtime_route_unavailable",
+                f"{route.name}_paused",
+            ) from exc
         try:
             running = self._store.mark_agent_runtime_attempt_running_once(
                 attempt.id,

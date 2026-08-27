@@ -152,6 +152,8 @@ class RuntimeRouteUnavailableError(RuntimeError):
 
     def __init__(self, reason: str) -> None:
         self.reason = reason
+        # Keep the stable top-level code for compatibility while exposing an
+        # actionable reason such as `codex_api_paused` or `api_not_reachable`.
         if "missing_capabilities:" in reason or "surface_missing:" in reason:
             self.code = "runtime_capability_missing"
         super().__init__(self.code)
