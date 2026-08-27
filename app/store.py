@@ -9178,12 +9178,13 @@ class AutoReplyStore:
                 select tasks.*
                 from reply_tasks as tasks
                 where tasks.status='processing'
+                  and tasks.channel='wechat'
                   and exists (
                       select 1
                       from agent_runs as runs
                       where runs.reply_task_id=tasks.id
                         and runs.execution_generation=tasks.execution_generation
-                        and runs.status='running'
+                      and runs.status in ('running', 'failed')
                         and runs.side_effect_state='none'
                   )
                   and not exists (
@@ -9212,11 +9213,18 @@ class AutoReplyStore:
                 db.execute(
                     """
                     update agent_runs
-                    set status='failed', structured_error_json=?,
+                    set status='failed', structured_error_json=case
+                            when status='running' then ?
+                            else structured_error_json
+                        end,
                         lease_owner='', lease_expires_at='',
-                        completed_at=current_timestamp, updated_at=current_timestamp
+                        completed_at=case
+                            when status='running' then current_timestamp
+                            else completed_at
+                        end,
+                        updated_at=current_timestamp
                     where reply_task_id=? and execution_generation=?
-                      and status='running' and side_effect_state='none'
+                      and status in ('running', 'failed') and side_effect_state='none'
                     """,
                     (error_json, task_id, generation),
                 )

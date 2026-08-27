@@ -5803,6 +5803,42 @@ def test_recover_failed_effect_free_consumer_task_requeues_once_without_age_limi
     assert store.recover_failed_effect_free_consumer_tasks(channel="dingtalk") == []
 
 
+def test_recover_processing_task_with_failed_effect_free_run_after_restart(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    with store._connect() as db:
+        db.execute("update reply_tasks set channel='wechat' where id=?", (task_id,))
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    claimed = task
+    run = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="worker-1",
+    )
+    store.fail_agent_run(
+        run.run.id,
+        {"code": "runtime_result_validation_failed", "retryable": True},
+        owner="worker-1",
+    )
+
+    recovered = store.recover_no_effect_agent_runs_after_service_restart()
+
+    assert [item.id for item in recovered] == [claimed.id]
+    updated = store.get_reply_task(task_id)
+    assert updated is not None
+    assert updated.status == "pending"
+    assert updated.execution_generation != task.execution_generation
+    assert updated.error == "service_restart_before_effect"
+
+
 def test_recover_failed_effect_free_audit_reuses_completed_consumer_decision(
     tmp_path: Path,
 ):
