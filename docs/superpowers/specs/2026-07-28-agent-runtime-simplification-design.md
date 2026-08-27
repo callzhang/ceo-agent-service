@@ -1,5 +1,11 @@
 # Agent Runtime Simplification Design
 
+> **Historical specification.** The application-level effect state and
+> reconciliation sections in this document are superseded by
+> `docs/superpowers/specs/2026-08-27-application-audit-boundary.md` and
+> `docs/runtime-mechanism.md`. They remain here only to explain older records;
+> new code must not create or route through those states.
+
 ## Goal
 
 Replace the current planner, validator, action-array, and service-owned business

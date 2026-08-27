@@ -6420,76 +6420,18 @@ class AutoReplyStore:
                 or row["operation_id"] != operation_id
             ):
                 raise ValueError("conflicting agent turn identity")
-            has_completed_receipt = db.execute(
-                """
-                select 1
-                from agent_execution_receipts
-                where agent_run_id=? and completed=1 and persisted=1
-                  and safe_to_confirm=1
-                limit 1
-                """,
-                (row["id"],),
-            ).fetchone() is not None
             if (
                 not claimed
                 and row["status"] == "running"
-                and row["lease_expires_at"] <= now_text
-                and (
-                    row["side_effect_state"] == "confirmed"
-                    or has_completed_receipt
-                )
-            ):
-                error_json = json.dumps(
-                    {"code": "confirmed_effect_requires_reconciliation"},
-                    separators=(",", ":"),
-                )
-                transitioned = db.execute(
-                    """
-                    update agent_runs
-                    set status='unknown', side_effect_state='unknown',
-                        structured_error_json=?, lease_owner='',
-                        lease_expires_at='', updated_at=?
-                    where id=? and status='running' and lease_expires_at<=?
-                    """,
-                    (
-                        error_json,
-                        now_text,
-                        row["id"],
-                        now_text,
-                    ),
-                )
-                if transitioned.rowcount == 1:
-                    db.execute(
-                        "insert into agent_run_state_events ("
-                        "agent_run_id, phase, structured_error_json, created_at"
-                        ") values (?, 'initial_unknown', ?, ?)",
-                        (row["id"], error_json, now_text),
-                    )
-                row = db.execute(
-                    "select * from agent_runs where id=?",
-                    (row["id"],),
-                ).fetchone()
-            if (
-                not claimed
-                and row["status"] == "running"
-                and row["side_effect_state"] == "none"
                 and row["lease_expires_at"] <= now_text
             ):
                 reclaimed = db.execute(
-                    """
-                    update agent_runs
-                    set lease_owner=?, lease_expires_at=?, updated_at=?
-                    where id=? and status='running'
-                      and side_effect_state='none'
-                      and lease_expires_at<=?
-                    """,
+                    """update agent_runs set lease_owner=?, lease_expires_at=?, updated_at=?
+                    where id=? and status='running' and lease_expires_at<=?""",
                     (owner, lease_expires_at, now_text, row["id"], now_text),
                 )
                 claimed = reclaimed.rowcount == 1
-                row = db.execute(
-                    "select * from agent_runs where id=?",
-                    (row["id"],),
-                ).fetchone()
+                row = db.execute("select * from agent_runs where id=?", (row["id"],)).fetchone()
             if (
                 not claimed
                 and role is AgentRole.AUDIT
@@ -6715,30 +6657,6 @@ class AutoReplyStore:
                 now_text=now_text,
                 status_error="cannot append event to terminal agent run",
             )
-            if (
-                run_row["role"] == AgentRole.CONSUMER.value
-                and (
-                    effect_kind in {"effectful", "unreviewed"}
-                    or bool(receipt_operation_id)
-                )
-            ):
-                raise ValueError("Consumer Agent cannot persist side effects")
-            if effect_kind == "effectful":
-                identity = _agent_effect_identity(normalized_event)
-                if (
-                    isinstance(identity, dict)
-                    and identity.get("operation_id") is not None
-                    and identity.get("operation_id") != run_row["operation_id"]
-                ):
-                    raise ValueError("effect operation identity mismatch")
-            self._validate_agent_effect_event_identity(
-                db,
-                run_id,
-                normalized_event,
-                event_type=event_type,
-                call_id=call_id,
-                effect_kind=effect_kind,
-            )
             sequence = db.execute(
                 "select coalesce(max(sequence), 0) + 1 from agent_run_events "
                 "where agent_run_id=?",
@@ -6819,43 +6737,15 @@ class AutoReplyStore:
                     run_id,
                 ),
             )
-            counts = db.execute(
-                """
-                select effect_started_count, effect_completed_count,
-                       effect_failed_count, effect_receipt_count,
-                       effect_unreviewed_count
-                from agent_runs where id=?
-                """,
-                (run_id,),
-            ).fetchone()
-            side_effect_state = _agent_effect_state_from_counts(counts)
-            intent_states = db.execute(
-                "select "
-                "sum(case when state='dispatched' then 1 else 0 end) as dispatched, "
-                "sum(case when state='acknowledged' then 1 else 0 end) as acknowledged "
-                "from agent_effect_intents where agent_run_id=?",
-                (run_id,),
-            ).fetchone()
-            if int(intent_states["dispatched"] or 0):
-                side_effect_state = "unknown"
-            elif int(intent_states["acknowledged"] or 0):
-                side_effect_state = "confirmed"
             cursor = db.execute(
                 """
                 update agent_runs
-                set side_effect_state=?,
-                    transcript_end_line=transcript_end_line + 1,
+                set transcript_end_line=transcript_end_line + 1,
                     updated_at=?
                 where id=? and status='running' and lease_owner=?
                   and lease_expires_at>?
                 """,
-                (
-                    side_effect_state,
-                    now_text,
-                    run_id,
-                    owner,
-                    now_text,
-                ),
+                (now_text, run_id, owner, now_text),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")

@@ -1,5 +1,9 @@
 # Meeting Scope Filter and Controlled Replay Design
 
+> **Historical specification.** Application-level unknown-effect replay and
+> readback gating are no longer part of the runtime contract. See
+> `docs/superpowers/specs/2026-08-27-application-audit-boundary.md`.
+
 Date: 2026-07-15
 
 ## Goal

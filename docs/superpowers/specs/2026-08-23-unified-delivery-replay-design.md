@@ -1,5 +1,10 @@
 # Unified Delivery Replay Design
 
+> **Historical specification.** The application-owned replay and
+> reconciliation state described below is retained as historical context only.
+> Current runs use the ordinary failed/retry contract documented in
+> `docs/runtime-mechanism.md`.
+
 **Date:** 2026-08-23  
 **Status:** Implemented  
 **Runtime commits:** `b0515b2`, `ebc970a`, `f7e4b27`, `911d57d`, `b6e8331`
