@@ -147,7 +147,7 @@ Do not use an object wrapper in reconciliation.
 feedback_provided.feedback must contain exactly these string fields:
 rule, observation, and requested_revision.
 On failed review, describe failed_rule, evidence, or required_change.
-Preserve and verify a message body, including what the recipient must not do and what still requires Derek's decision.
+preserve and verify a message body, including what the recipient must not do and what still requires Derek's decision. feedback is required when the candidate must change.
 reconciled requires
 side_effect_state=unknown. Each entry has action_index, disposition (present,
 absent, or ambiguous), and read_result_digest.
