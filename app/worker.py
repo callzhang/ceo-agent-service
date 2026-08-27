@@ -468,6 +468,8 @@ class DingTalkAutoReplyWorker:
         )
         self._pass_channel_results: dict[str, ChannelGateResult] = {}
         self._task_image_paths: dict[int, set[Path]] = {}
+        self._task_image_source_paths: dict[int, dict[str, Path]] = {}
+        self._task_image_source_errors: dict[int, set[str]] = {}
         self._sqlite_lock_failures: dict[str, int] = {}
         self.agent_orchestrator = agent_orchestrator
         self.agent_runtime = agent_runtime
@@ -2832,6 +2834,8 @@ class DingTalkAutoReplyWorker:
     ) -> list[Path]:
         image_paths: list[Path] = []
         seen_sources: set[str] = set()
+        cached_sources = self._task_image_source_paths.setdefault(task_id, {})
+        failed_sources = self._task_image_source_errors.setdefault(task_id, set())
         for message in self._referenced_document_messages(
             [trigger],
             context_messages,
@@ -2840,9 +2844,16 @@ class DingTalkAutoReplyWorker:
                 if source_key in seen_sources:
                     continue
                 seen_sources.add(source_key)
+                cached_path = cached_sources.get(source_key)
+                if cached_path is not None and cached_path.is_file():
+                    image_paths.append(cached_path)
+                    continue
+                if source_key in failed_sources:
+                    continue
                 try:
                     path = self._resolve_message_image(task_id, message, payload)
                 except Exception as exc:
+                    failed_sources.add(source_key)
                     self.store.record_error(
                         message.open_conversation_id,
                         message.open_message_id,
@@ -2851,6 +2862,7 @@ class DingTalkAutoReplyWorker:
                     )
                     continue
                 if path is None:
+                    failed_sources.add(source_key)
                     self.store.record_error(
                         message.open_conversation_id,
                         message.open_message_id,
@@ -2862,6 +2874,7 @@ class DingTalkAutoReplyWorker:
                         ),
                     )
                     continue
+                cached_sources[source_key] = path
                 image_paths.append(path)
         return image_paths
 
@@ -2976,6 +2989,8 @@ class DingTalkAutoReplyWorker:
 
     def _cleanup_task_image_paths(self, task_id: int) -> None:
         paths = self._task_image_paths.pop(task_id, set())
+        self._task_image_source_paths.pop(task_id, None)
+        self._task_image_source_errors.pop(task_id, None)
         directories = {path.parent for path in paths}
         for path in paths:
             path.unlink(missing_ok=True)
@@ -4887,10 +4902,11 @@ class DingTalkAutoReplyWorker:
                 or DINGTALK_SHANJI_DOC_SELECTOR_PATTERN.search(text)
                 or DINGTALK_MINUTES_LINK_PATTERN.search(text)
                 or LARK_DOC_URL_PATTERN.search(text)
+                or IMAGE_MESSAGE_MEDIA_ID_PATTERN.search(text)
                 or cls._file_name_from_message_text(text)
             ):
                 return True
-        return False
+        return bool(cls._download_codes_from_payload(message.raw_payload))
 
     @staticmethod
     def _coalesced_messages(message: DingTalkMessage) -> list[DingTalkMessage]:

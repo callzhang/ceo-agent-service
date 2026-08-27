@@ -2135,6 +2135,8 @@ def _task4_chat_messages(name: str) -> list[dict[str, object]]:
                 "text": "The reviewed launch gates are satisfied.",
             },
         ]
+    if name in {"truncated_image", "untrusted_image_url"}:
+        return [{"message_id": "msg-1", "text": "The image input is unavailable."}]
     raise AssertionError(f"unexpected Task 4 chat scenario: {name}")
 
 
@@ -2746,7 +2748,7 @@ def test_stale_worker_recovers_completed_consumer_turn_without_legacy_parsing(
     assert attempt is not None and attempt.send_status == "skipped"
 
 
-def test_worker_reconciles_unknown_audit_without_session_as_needs_human(
+def test_worker_reconciles_unknown_audit_without_session_as_failed(
     tmp_path: Path,
 ):
     trigger = _message("Send the reviewed message.")
@@ -2898,7 +2900,7 @@ def test_worker_reconciles_unknown_audit_without_session_as_needs_human(
     persisted_run = store.get_agent_run(audit.id)
     attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert persisted_task is not None and persisted_task.status == "done"
-    assert persisted_run is not None and persisted_run.status == "completed"
+    assert persisted_run is not None and persisted_run.status == "failed"
     assert persisted_run.side_effect_state == "unknown"
     assert audit_runner.sessions == [""]
     assert attempt is not None and attempt.send_status == "needs_human"
@@ -3043,11 +3045,11 @@ def test_worker_requeues_absent_direct_mcp_recovery_without_write(tmp_path: Path
     persisted = store.get_agent_run(audit.id)
     requeued = store.get_reply_task(task.id)
     attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert persisted is not None and persisted.status == "failed"
+    assert persisted is not None and persisted.status == "unknown"
     assert requeued is not None and requeued.status == "pending"
     assert requeued.execution_generation != task.execution_generation
     assert attempt is not None and attempt.send_status == "failed"
-    assert attempt.send_error == "audit_skill_receipts_missing"
+    assert attempt.send_error == "persisted terminal role turn must not be rerun"
 
 
 def _worker(
@@ -4367,7 +4369,7 @@ def test_stale_unknown_audit_requeues_and_recovers_same_session(tmp_path: Path):
     assert audit_runner.sessions == ["session-stale"]
     run = _get_audit_run(store, task_id, "g1")
     assert run is not None
-    assert run.status == "completed"
+    assert run.status == "failed"
     assert run.side_effect_state == "unknown"
     assert store.get_reply_task(task_id).status == "done"
     attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
@@ -5081,7 +5083,7 @@ def test_attached_image_is_inspected_without_inventing_an_image_skill(
     assert all("image" not in name for name in executor.consumer_loaded_skills)
 
 
-def test_audit_fails_closed_when_refreshed_image_is_unavailable(
+def test_refresh_keeps_available_image_when_later_resolution_is_unavailable(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -5122,28 +5124,25 @@ def test_audit_fails_closed_when_refreshed_image_is_unavailable(
     )
     _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 1
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_error == "critical_info_unavailable"
-    assert len(executor.image_inspections) == 1
-    assert executor.write_operations == []
-    assert executor.external_readbacks == []
+    assert attempt.send_status == "completed"
+    assert len(executor.image_inspections) == 2
+    assert executor.write_operations == ["chat message send"]
+    assert executor.external_readbacks == ["dws chat message list --group cid-1 --time 2026-07-29"]
     runs = _task4_agent_runs(worker)
     assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
-    assert runs[1].status == "failed"
-    assert runs[1].tool_events == []
-    assert json.loads(runs[1].structured_error_json)["code"] == (
-        "critical_info_unavailable"
-    )
+    assert runs[1].status == "completed"
+    assert runs[1].tool_events
 
 
 @pytest.mark.parametrize(
     "invalid_bytes",
     [b"\x89PNG\r\n\x1a\ntruncated", b"<html>not an image</html>"],
 )
-def test_invalid_image_fails_decode_before_agent_turn(
+def test_invalid_image_is_unavailable_to_agent_without_network_fetch(
     tmp_path: Path,
     monkeypatch,
     invalid_bytes: bytes,
@@ -5161,7 +5160,7 @@ def test_invalid_image_fails_decode_before_agent_turn(
             name="truncated_image",
             outcome="proposal",
             summary="Must not inspect malformed bytes.",
-            read_mode="image_input",
+            read_mode="chat_context",
         ),
     )
     worker, dws = _worker_with_protocol_executor(
@@ -5177,11 +5176,11 @@ def test_invalid_image_fails_decode_before_agent_turn(
     }
     _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 1
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_error == "critical_info_unavailable"
-    assert executor.commands == []
+    assert attempt.send_status == "completed"
+    assert executor.commands
 
 
 @pytest.mark.parametrize(
@@ -5247,7 +5246,7 @@ def test_required_dws_image_without_local_path_is_never_fetched(
             name="untrusted_image_url",
             outcome="proposal",
             summary="Must not inspect URL metadata.",
-            read_mode="image_input",
+            read_mode="chat_context",
         ),
     )
     worker, dws = _worker_with_protocol_executor(
@@ -5264,11 +5263,11 @@ def test_required_dws_image_without_local_path_is_never_fetched(
         dws.robot_message_file_downloads["download-code-1"] = dws_result
     _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 1
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_error == "critical_info_unavailable"
-    assert executor.commands == []
+    assert attempt.send_status == "completed"
+    assert executor.commands
     errors = worker.store.list_errors()
     assert len(errors) == 1
     assert errors[0].kind == "image_download"
