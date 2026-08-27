@@ -9792,15 +9792,16 @@ def _needs_human_decision_card(
         for option in options
     )
     choice_section = (
-        "<p class=\"muted\">请选择一项明确处理。系统会重新核验、执行并回读；每个选项会说明是否产生外部动作。</p>"
+        "<p class=\"muted\">请选择一条可复用的处理规则。系统会按该规则重新核验、执行并回读；每个选项会说明是否产生外部动作。</p>"
         + option_forms
         if options
         else ""
     )
     return (
-        '<section class="card needs-human-card"><h2>需要你的判断</h2>'
-        '<p class="muted">这是无法由服务自动消除的管理分歧，不是技术报错。'
-        '请根据下方的中文选项决定如何处理；已核验事实见本页“审计摘要”。</p>'
+        '<section class="card needs-human-card"><h2>需要你的判断（用于迭代 Skill）</h2>'
+        '<p class="muted">这是当前 Skill 尚未覆盖的一类处理规则，不是把这个具体任务交给你代做。'
+        '请从下方中文选项中选择一条可复用的处理规则；系统会据此重跑当前事项并沿用到同类任务。'
+        '已核验事实见本页“审计摘要”。</p>'
         f"{choice_section}"
         f'<form method="post" action="{action}" class="needs-human-custom">'
         '<label>其他处理指令</label>'

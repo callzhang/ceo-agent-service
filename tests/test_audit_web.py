@@ -8667,6 +8667,8 @@ def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
     status, html = render_attempt_detail(store, attempt_id)
     assert status == 200
     assert "需要你的判断" in html
+    assert "用于迭代 Skill" in html
+    assert "可复用的处理规则" in html
     assert "事项：</strong>这个应该怎么处理？" in html
     assert "目标和范围存在实际歧义" in html
     assert "按当前事实继续处理并发布" not in html
