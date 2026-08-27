@@ -6682,8 +6682,17 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         attempt.trigger_message_id,
         channel=attempt.channel,
     )
+    later_terminal_attempt = _later_terminal_attempt(store, attempt)
+    display_attempt = attempt
+    if later_terminal_attempt is not None and attempt.send_status == "needs_human":
+        # Keep the original row and audit explanation intact, but do not show a
+        # stale decision form after a later terminal generation settled the same
+        # trigger. The resolution card links to the authoritative newer row.
+        display_attempt = attempt.model_copy(
+            update={"send_status": "skipped", "send_error": ""}
+        )
     attention = reply_history_attention(
-        attempt,
+        display_attempt,
         task=reply_task,
         decision_options=_needs_human_decision_options(attempt, agent_runs),
         side_effect_state=(
@@ -6696,7 +6705,7 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
     return 200, render_page(
         f"Attempt #{attempt.id}",
         _attempt_detail_body(
-            attempt,
+            display_attempt,
             sent_reply,
             codex_session_id,
             feedback_events,
@@ -6704,10 +6713,35 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
             attention,
             reply_task,
             [item for run in agent_runs for item in store.list_agent_runtime_attempts(run.id)],
+            historical_resolution=later_terminal_attempt,
         ),
         active_nav="history",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
+
+
+def _later_terminal_attempt(
+    store: AutoReplyStore,
+    attempt: ReplyAttempt,
+) -> ReplyAttempt | None:
+    """Find a newer terminal result for the same trigger without rewriting history."""
+    latest = store.get_latest_reply_attempt_for_trigger(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+    )
+    if latest is None or latest.id <= attempt.id:
+        return None
+    if latest.send_status.strip().lower() not in {
+        "calendar",
+        "commented",
+        "completed",
+        "document",
+        "reacted",
+        "sent",
+        "skipped",
+    }:
+        return None
+    return latest
 
 
 def render_oa_approval_detail(
@@ -9118,6 +9152,7 @@ def _attempt_detail_body(
     attention: HistoryAttention | None = None,
     reply_task: ReplyTask | None = None,
     runtime_attempts: list[object] | None = None,
+    historical_resolution: ReplyAttempt | None = None,
 ) -> str:
     agent_runs = agent_runs or []
     closed_after_review = (
@@ -9187,6 +9222,7 @@ def _attempt_detail_body(
             f"{_counterparty_feedback_card(sent_reply, feedback_events)}"
         ),
         extra_cards=(
+            f"{_historical_resolution_card(attempt, historical_resolution)}"
             f"{_route_failure_recovery_card(attempt, reply_task)}"
             f"{_agent_failure_reason_card(attempt, agent_runs)}"
             f"{_quality_warning_card(attempt)}"
@@ -9198,6 +9234,23 @@ def _attempt_detail_body(
             f"{_text_card('Draft reply (raw Codex reply)', attempt.draft_reply_text)}"
             f"{_runtime_attempt_evidence_card(runtime_attempts or [])}"
         ),
+    )
+
+
+def _historical_resolution_card(
+    attempt: ReplyAttempt,
+    later_attempt: ReplyAttempt | None,
+) -> str:
+    if later_attempt is None:
+        return ""
+    return (
+        '<section class="card recovery-card historical-resolution-card">'
+        "<h2>后续自动处理已结案</h2>"
+        f"<p>这条历史记录 #{attempt.id} 当时曾请求人工判断；同一触发消息的后续记录 "
+        f"#{later_attempt.id} 已以“{escape(later_attempt.send_status)}”结束。"
+        "原始审计说明保留在本页，但当前无需再做人工决策。</p>"
+        f'<p><a class="review-link" href="/attempts/{later_attempt.id}">查看最新处理结果</a></p>'
+        "</section>"
     )
 
 

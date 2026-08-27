@@ -5864,6 +5864,42 @@ def test_terminal_later_attempt_does_not_replace_original_detail_fields(tmp_path
     assert "audit_recovery_failed" in html
 
 
+def test_historical_needs_human_detail_shows_later_automatic_resolution(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_id = store.record_reply_attempt(
+        conversation_id="cid-history-recovered",
+        conversation_title="事实询问",
+        trigger_message_id="msg-history-recovered",
+        trigger_sender="韩露",
+        trigger_text="是否先做一轮事实询问？",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+    )
+    store.update_reply_attempt(old_id, send_error="management_decision_required")
+    later_id = store.record_reply_attempt(
+        conversation_id="cid-history-recovered",
+        conversation_title="事实询问",
+        trigger_message_id="msg-history-recovered",
+        trigger_sender="韩露",
+        trigger_text="是否先做一轮事实询问？",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="skipped",
+    )
+    store.update_reply_attempt(
+        later_id,
+        send_error="stale_unresolved_request_no_current_action",
+    )
+
+    status, html = render_attempt_detail(store, old_id)
+
+    assert status == 200
+    assert f"后续自动处理已结案" in html
+    assert f"#{later_id}" in html
+    assert "需要你的判断" not in html
+
+
 def test_render_attempt_detail_marks_closed_blocked_work_as_historical(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     assert store.enqueue_reply_task(
