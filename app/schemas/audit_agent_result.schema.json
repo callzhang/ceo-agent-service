@@ -142,6 +142,11 @@
           "type": "object"
         }
       },
+      "required": [
+        "outcome",
+        "feedback",
+        "external_result"
+      ],
       "type": "object"
     },
     {
@@ -156,6 +161,11 @@
           "type": "null"
         }
       },
+      "required": [
+        "outcome",
+        "feedback",
+        "external_result"
+      ],
       "type": "object"
     },
     {
@@ -170,6 +180,11 @@
           "type": "null"
         }
       },
+      "required": [
+        "outcome",
+        "feedback",
+        "external_result"
+      ],
       "type": "object"
     },
     {
@@ -182,8 +197,19 @@
         },
         "external_result": {
           "type": "null"
+        },
+        "decision_options": {
+          "maxItems": 4,
+          "minItems": 2,
+          "type": "array"
         }
       },
+      "required": [
+        "outcome",
+        "feedback",
+        "external_result",
+        "decision_options"
+      ],
       "type": "object"
     },
     {
@@ -198,6 +224,11 @@
           "type": "null"
         }
       },
+      "required": [
+        "outcome",
+        "feedback",
+        "external_result"
+      ],
       "type": "object"
     }
   ],

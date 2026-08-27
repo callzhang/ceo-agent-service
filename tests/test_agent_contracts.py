@@ -94,10 +94,8 @@ def _audit_wire_payload(**overrides: object) -> dict[str, object]:
         "outcome": "failed",
         "summary": "The dependency failed.",
         "proposal_revision": 0,
-        "side_effect_state": "none",
         "feedback": None,
         "external_result": None,
-        "reconciliation": [],
         "decision_options": [],
         "error_code": "dependency_failed",
         "error_retryable": True,
@@ -121,14 +119,12 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
         "outcome": "revision_required",
         "summary": "Candidate adds a management commitment.",
         "proposal_revision": 0,
-        "side_effect_state": "none",
         "feedback": {
             "rule": "Do not publish a new commitment without authority.",
             "observation": "No source authorizes a recurring review promise.",
             "requested_revision": "Remove that promise and retain the final result.",
         },
         "external_result": None,
-        "reconciliation": [],
         "decision_options": [],
         "error": _error(),
     }
@@ -159,7 +155,6 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
             AuditAgentWireResult,
             _audit_wire_payload(
                 outcome="executed",
-                side_effect_state="confirmed",
                 external_result={
                     "operation_id": "op-1",
                     "verification_summary": "The effect was read back.",
@@ -194,24 +189,6 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
             ),
         ),
         (AuditAgentWireResult, _audit_wire_payload(outcome="failed")),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(outcome="unknown", side_effect_state="unknown"),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="reconciled",
-                side_effect_state="unknown",
-                reconciliation=[
-                    {
-                        "action_index": 0,
-                        "disposition": "present",
-                        "read_result_digest": "digest-1",
-                    }
-                ],
-            ),
-        ),
     ),
 )
 def test_generated_wire_schema_acceptance_always_converts(model, payload):
@@ -321,10 +298,7 @@ def test_wire_schema_is_discriminated_and_contains_only_nested_fields(model):
         ),
         (
             AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="unknown",
-                side_effect_state="none",
-            ),
+            _audit_wire_payload(outcome="unknown"),
         ),
         (
             AuditAgentWireResult,
@@ -335,10 +309,7 @@ def test_wire_schema_is_discriminated_and_contains_only_nested_fields(model):
         ),
         (
             AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="needs_human",
-                reconciliation=[{"action_index": 0}],
-            ),
+            _audit_wire_payload(outcome="needs_human", reconciliation=[{"action_index": 0}]),
         ),
     ),
 )
@@ -524,17 +495,16 @@ def test_audit_dry_run_is_non_effectful_and_cannot_be_a_human_decision():
 def test_audit_revision_feedback_is_concrete_and_non_effectful():
     result = AuditAgentResult.model_validate(_audit_payload())
 
-    assert result.outcome is AuditOutcome.REVISION_REQUIRED
+    assert result.outcome is AuditOutcome.FEEDBACK_PROVIDED
     assert result.feedback is not None
     assert result.external_result is None
 
 
-def test_audit_executed_requires_confirmed_external_result():
+def test_audit_executed_requires_external_result():
     result = AuditAgentResult.model_validate(
         _audit_payload(
             outcome="executed",
             summary="Message sent and read back.",
-            side_effect_state="confirmed",
             feedback=None,
             external_result={
                 "operation_id": "op-1",
@@ -549,43 +519,21 @@ def test_audit_executed_requires_confirmed_external_result():
     assert result.external_result.operation_id == "op-1"
 
 
-def test_audit_reconciliation_is_strict_structured_per_action():
-    result = AuditAgentResult.model_validate(
-        _audit_payload(
-            outcome="reconciled",
-            side_effect_state="unknown",
-            feedback=None,
-            reconciliation=[
-                {
-                    "action_index": 0,
-                    "disposition": "ambiguous",
-                    "read_result_digest": "digest-1",
-                }
-            ],
+def test_audit_result_does_not_accept_reconciliation_application_field():
+    with pytest.raises(ValidationError, match="reconciliation"):
+        AuditAgentResult.model_validate(
+            _audit_payload(
+                outcome="failed",
+                feedback=None,
+                reconciliation=[
+                    {
+                        "action_index": 0,
+                        "disposition": "ambiguous",
+                        "read_result_digest": "digest-1",
+                    }
+                ],
+            )
         )
-    )
-
-    assert result.reconciliation[0].action_index == 0
-    assert result.reconciliation[0].disposition.value == "ambiguous"
-
-
-def test_audit_reconciliation_accepts_superseded_target_context():
-    result = AuditAgentResult.model_validate(
-        _audit_payload(
-            outcome="reconciled",
-            side_effect_state="unknown",
-            feedback=None,
-            reconciliation=[
-                {
-                    "action_index": 0,
-                    "disposition": "superseded",
-                    "read_result_digest": "later-target-message",
-                }
-            ],
-        )
-    )
-
-    assert result.reconciliation[0].disposition.value == "superseded"
 
 
 @pytest.mark.parametrize(
@@ -606,7 +554,7 @@ def test_audit_reconciliation_accepts_superseded_target_context():
         ],
     ),
 )
-def test_audit_reconciliation_rejects_missing_digest_or_duplicate_action(
+def test_audit_result_rejects_reconciliation_application_field(
     reconciliation,
 ):
     with pytest.raises(ValidationError):
@@ -633,17 +581,7 @@ def test_audit_reconciliation_rejects_missing_digest_or_duplicate_action(
         _audit_payload(
             outcome="executed",
             feedback=None,
-            side_effect_state="none",
-            external_result={
-                "operation_id": "op-1",
-                "verification_summary": "not confirmed",
-                "live_result_reference": {},
-            },
-        ),
-        _audit_payload(
-            outcome="unknown",
-            feedback=None,
-            side_effect_state="none",
+            external_result=None,
         ),
         _audit_payload(
             outcome="failed",
@@ -695,7 +633,6 @@ def test_contract_schemas_match_models_and_do_not_enumerate_business_actions():
             _audit_payload(
                 outcome="executed",
                 feedback=None,
-                side_effect_state="none",
             ),
         ),
         (
@@ -703,7 +640,6 @@ def test_contract_schemas_match_models_and_do_not_enumerate_business_actions():
             _audit_payload(
                 outcome="needs_human",
                 feedback=None,
-                side_effect_state="confirmed",
             ),
         ),
     ],
@@ -716,32 +652,12 @@ def test_committed_schemas_reject_cross_field_mismatches(schema_name, payload):
         Draft202012Validator(schema).validate(payload)
 
 
-@pytest.mark.parametrize(
-    ("outcome", "side_effect_state"),
-    [
-        ("revision_required", "confirmed"),
-        ("failed", "unknown"),
-        ("needs_human", "confirmed"),
-        ("needs_human", "unknown"),
-    ],
-)
-def test_nonexecuted_audit_outcomes_cannot_claim_side_effects(
-    outcome,
-    side_effect_state,
-):
-    payload = _audit_payload(
-        outcome=outcome,
-        feedback=(
-            _audit_payload()["feedback"] if outcome == "revision_required" else None
-        ),
-        side_effect_state=side_effect_state,
-    )
-
-    with pytest.raises(ValidationError):
-        AuditAgentResult.model_validate(payload)
+def test_agent_results_reject_removed_side_effect_state_field():
+    with pytest.raises(ValidationError, match="side_effect_state"):
+        AuditAgentResult.model_validate(_audit_payload(side_effect_state="none"))
 
 
-def test_nested_legacy_error_state_is_consistent_for_python_and_json_inputs():
+def test_nested_removed_error_state_is_rejected_for_python_and_json_inputs():
     payload = {
         "outcome": "no_action",
         "summary": "Nothing to do.",
@@ -749,11 +665,10 @@ def test_nested_legacy_error_state_is_consistent_for_python_and_json_inputs():
         "error": {**_error(), "side_effect_state": "confirmed"},
     }
 
-    python_result = ConsumerAgentResult.model_validate(payload)
-    json_result = ConsumerAgentResult.model_validate_json(json.dumps(payload))
-
-    assert python_result.error.side_effect_state.value == "confirmed"
-    assert json_result.error.side_effect_state.value == "confirmed"
+    with pytest.raises(ValidationError, match="side_effect_state"):
+        ConsumerAgentResult.model_validate(payload)
+    with pytest.raises(ValidationError, match="side_effect_state"):
+        ConsumerAgentResult.model_validate_json(json.dumps(payload))
 
 
 def test_parse_typed_agent_result_uses_current_codex_output_shape():
@@ -868,10 +783,8 @@ def test_audit_wire_result_preserves_nested_result_fields():
             "outcome": "needs_human",
             "summary": "A decision is required.",
             "proposal_revision": 0,
-            "side_effect_state": "none",
             "feedback": None,
             "external_result": None,
-            "reconciliation": [],
             "decision_options": _decision_options(),
             "error_code": "decision_required",
             "error_retryable": False,
@@ -890,20 +803,18 @@ def test_audit_wire_result_preserves_revision_feedback_fields():
             "outcome": "revision_required",
             "summary": "The command needs confirmation.",
             "proposal_revision": 0,
-            "side_effect_state": "none",
             "feedback": {
                 "rule": "DWS writes require --yes.",
                 "observation": "The proposed argv omitted --yes.",
                 "requested_revision": "Add --yes without changing the action.",
             },
             "external_result": None,
-            "reconciliation": [],
             "error_code": "dws_write_missing_yes",
             "error_retryable": True,
             "error_authorization_required": False,
         }
     ).to_result()
 
-    assert result.outcome is AuditOutcome.REVISION_REQUIRED
+    assert result.outcome is AuditOutcome.FEEDBACK_PROVIDED
     assert result.feedback is not None
     assert result.feedback.requested_revision == "Add --yes without changing the action."

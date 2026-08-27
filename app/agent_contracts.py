@@ -42,7 +42,8 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "executed"},
                 "feedback": null_value,
                 "external_result": {"type": "object"},
-            }
+            },
+            "required": ["outcome", "feedback", "external_result"],
         },
         {
             "type": "object",
@@ -50,7 +51,8 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "feedback_provided"},
                 "feedback": {"type": "object"},
                 "external_result": null_value,
-            }
+            },
+            "required": ["outcome", "feedback", "external_result"],
         },
         {
             "type": "object",
@@ -58,7 +60,8 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "failed"},
                 "feedback": null_value,
                 "external_result": null_value,
-            }
+            },
+            "required": ["outcome", "feedback", "external_result"],
         },
         {
             "type": "object",
@@ -66,7 +69,9 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "needs_human"},
                 "feedback": null_value,
                 "external_result": null_value,
-            }
+                "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
+            },
+            "required": ["outcome", "feedback", "external_result", "decision_options"],
         },
         {
             "type": "object",
@@ -74,7 +79,8 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
                 "outcome": {"const": "dry_run"},
                 "feedback": null_value,
                 "external_result": null_value,
-            }
+            },
+            "required": ["outcome", "feedback", "external_result"],
         },
     ]
 
