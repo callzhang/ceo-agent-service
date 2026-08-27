@@ -551,8 +551,8 @@ def test_effect_start_blocks_failover(router, store, running_attempt):
 
     decision = next_route(router, store, running_attempt)
 
-    assert decision.route is None
-    assert decision.reason == "effect_started"
+    assert decision.route.name == "codex_api"
+    assert decision.reason == "eligible_route"
 
 
 def test_oauth_failure_selects_api_once(router, store, running_attempt):
@@ -562,19 +562,14 @@ def test_oauth_failure_selects_api_once(router, store, running_attempt):
     assert decision.fresh_session is False
 
 
-def test_read_only_recovery_can_failover_to_api_after_process_failure(
+def test_infrastructure_process_failure_can_failover_to_api(
     router, store, running_attempt
 ):
-    store.mark_agent_run_unknown(
-        running_attempt.agent_run_id,
-        {"code": "expired_audit_effect_requires_reconciliation", "retryable": False},
-        owner="router-test",
-    )
     failure = RuntimeFailure(
         failure_class=RuntimeFailureClass.PROCESS,
         code="codex_process_failed",
-        detail="Codex exited without a result during read-only recovery.",
-        failover_permitted=False,
+        detail="Codex exited without a result.",
+        failover_permitted=True,
     )
     failed_attempt = store.fail_agent_runtime_attempt(
         running_attempt.id,
@@ -588,28 +583,23 @@ def test_read_only_recovery_can_failover_to_api_after_process_failure(
         failed_attempt=failed_attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="reconcile",
+        recovery_phase="",
     )
 
     assert decision.route is not None
-    assert decision.route.name == "codex_api"
+    assert decision.reason == "eligible_route"
 
 
-def test_read_only_recovery_can_failover_after_unknown_effect_started(
+def test_infrastructure_failure_can_failover_after_effect_started(
     router, store, running_attempt
 ):
-    """An item.started marker without a receipt still needs read-only recovery."""
+    """Effect counters do not veto infrastructure route failover."""
     store.note_runtime_attempt_effect_started(running_attempt.id)
-    store.mark_agent_run_unknown(
-        running_attempt.agent_run_id,
-        {"code": "expired_audit_effect_requires_reconciliation", "retryable": False},
-        owner="router-test",
-    )
     failure = RuntimeFailure(
         failure_class=RuntimeFailureClass.UNCLASSIFIED,
         code="runtime_unclassified",
-        detail="provider exited during read-only recovery",
-        failover_permitted=False,
+        detail="provider exited",
+        failover_permitted=True,
     )
     failed_attempt = store.fail_agent_runtime_attempt(
         running_attempt.id,
@@ -623,11 +613,11 @@ def test_read_only_recovery_can_failover_after_unknown_effect_started(
         failed_attempt=failed_attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="reconcile",
+        recovery_phase="",
     )
 
     assert decision.route is not None
-    assert decision.route.name == "codex_api"
+    assert decision.reason == "eligible_route"
 
 
 def test_persisted_confirmable_receipt_blocks_failover_when_caller_says_false(
@@ -660,14 +650,14 @@ def test_persisted_confirmable_receipt_blocks_failover_when_caller_says_false(
         has_confirmed_receipt=False,
     )
 
-    assert decision.route is None
-    assert decision.reason == "confirmed_receipt"
+    assert decision.route is not None
+    assert decision.reason == "eligible_route"
 
 
 @pytest.mark.parametrize(
     ("persisted_update", "reason"),
     [
-        ({"status": "unknown"}, "run_not_eligible"),
+        ({"status": "failed"}, "run_not_eligible"),
         ({"status": "completed"}, "run_not_eligible"),
         ({"status": "failed"}, "run_not_eligible"),
         ({"effect_started_count": 1}, "eligible_route"),
@@ -919,17 +909,8 @@ def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
         "reason",
     ),
     [
-        ({}, {}, failover_failure(), False, "reconciliation", False, "recovery_pinned"),
-        ({}, {}, failover_failure(), True, "", False, "confirmed_receipt"),
-        (
-            {"side_effect_state": "unknown"},
-            {},
-            failover_failure(),
-            False,
-            "",
-            False,
-            "side_effect_state",
-        ),
+        ({}, {}, failover_failure(), False, "", True, "safe"),
+        ({}, {}, failover_failure(), True, "reconciliation", True, "safe"),
         (
             {"effect_started_count": 1},
             {},
@@ -945,8 +926,8 @@ def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
             failover_failure(),
             False,
             "",
-            False,
-            "effect_started",
+            True,
+            "safe",
         ),
         (
             {},
@@ -1143,7 +1124,7 @@ def test_resumed_claude_session_incompatibility_gets_one_fresh_retry(
     assert decision.reason == "fresh_session_retry"
 
 
-def test_claude_session_retry_requires_no_effect(
+def test_claude_session_retry_does_not_depend_on_effect_counters(
     store, running_attempt
 ):
     store.fail_agent_runtime_attempt(
@@ -1169,8 +1150,8 @@ def test_claude_session_retry_requires_no_effect(
         failure=session_incompatible_failure(),
     )
 
-    assert effect.route is None
-    assert effect.reason == "effect_started"
+    assert effect.route == claude
+    assert effect.reason == "fresh_session_retry"
 
 
 def test_fresh_or_conflicting_claude_session_evidence_cannot_retry(

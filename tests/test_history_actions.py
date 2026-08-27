@@ -69,7 +69,6 @@ def test_pending_retry_uses_persisted_backoff_without_human_actions():
         attempt,
         task=task,
         decision_options=(),
-        side_effect_state="none",
     )
 
     assert state is not None
@@ -89,7 +88,6 @@ def test_exhausted_failure_requires_manager_and_offers_safe_choices():
         attempt,
         task=task,
         decision_options=(),
-        side_effect_state="none",
     )
 
     assert state is not None
@@ -110,7 +108,6 @@ def test_internal_retry_code_is_rendered_as_readable_failure_reason():
         attempt,
         task=_task(status="failed", attempts=3),
         decision_options=(),
-        side_effect_state="none",
     )
 
     assert state is not None
@@ -127,7 +124,6 @@ def test_historical_image_error_remains_recoverable():
         attempt,
         task=_task(status="pending", attempts=1, available_at="2026-08-11 05:02:00"),
         decision_options=(),
-        side_effect_state="none",
     )
 
     assert state is not None
@@ -154,7 +150,6 @@ def test_historical_oa_conflict_remains_recoverable():
         attempt,
         task=task,
         decision_options=(),
-        side_effect_state="none",
     )
 
     assert state is not None
@@ -196,7 +191,6 @@ def test_manual_oa_rerun_replaces_old_human_choice_with_automatic_recovery():
                 consequence="审批结束",
             ),
         ),
-        side_effect_state="none",
     )
 
     assert state is not None
@@ -229,7 +223,6 @@ def test_agent_supplied_choices_are_preserved_for_general_needs_human():
         attempt,
         task=None,
         decision_options=options,
-        side_effect_state="none",
     )
 
     assert state is not None
@@ -238,19 +231,18 @@ def test_agent_supplied_choices_are_preserved_for_general_needs_human():
     assert state.actions[0].instruction == "Use plan A"
 
 
-def test_unknown_external_effect_never_offers_replay():
-    attempt = _attempt(audit_summary="Execution receipt is unknown")
+def test_failed_external_effect_uses_current_result_without_replay_choice():
+    attempt = _attempt(audit_summary="Execution did not complete")
 
     state = reply_history_attention(
         attempt,
         task=None,
         decision_options=(),
-        side_effect_state="unknown",
     )
 
     assert state is not None
-    assert state.external_effect == "执行结果未知，不能安全重放"
-    assert [action.key for action in state.actions] == ["manual", "details"]
+    assert state.external_effect == "外部动作是否完成由当前结果和业务系统状态决定"
+    assert [action.key for action in state.actions] == ["retry", "defer", "manual", "details"]
 
 
 def test_confirmed_external_effect_only_keeps_agent_choices_and_read_only_actions():
@@ -277,12 +269,13 @@ def test_confirmed_external_effect_only_keeps_agent_choices_and_read_only_action
         attempt,
         task=None,
         decision_options=options,
-        side_effect_state="confirmed",
     )
 
     assert state is not None
-    assert state.external_effect == "已确认产生外部动作"
-    assert [action.key for action in state.actions] == ["A", "B", "manual", "details"]
+    assert state.external_effect == "外部动作是否完成由当前结果和业务系统状态决定"
+    assert [action.key for action in state.actions] == [
+        "A", "B", "defer", "manual", "details"
+    ]
 
 
 def test_retrying_meeting_uses_persisted_retry_plan():
