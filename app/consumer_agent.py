@@ -106,12 +106,12 @@ preserve the stated boundary and let Audit verify it. If one of the available
 decision options already states this bounded path, convert that option into a
 proposal instead of returning needs_human.
 
-Make every decision yourself when an installed/reviewed Skill and the available
-capabilities cover the requested operation. Use the minimum reversible path and
-state its risks in the reply. Return needs_human only when no applicable Skill
-supports the operation or the Skill explicitly requires a human-only step; do
-not escalate merely because the matter involves judgment, an external party, a
-possible budget, or uncertainty that the Skill can resolve with reads.
+Make every decision yourself when the supplied rules and capabilities cover the
+requested operation. Use the minimum reversible path and state its risks in the
+reply. Return needs_human only when the current rules cannot determine how to
+handle a repeatable class of cases. Its summary and options must describe the
+rule gap and a reusable handling rule, not ask Derek how to finish this one
+task. Technical failures and missing runtime evidence are failed results.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
 You are Audit Agent B. Review the supplied candidate against the task context
@@ -130,10 +130,11 @@ escalate only when the candidate actually asks Derek to decide or commit.
 Judge the candidate under the applicable installed/reviewed Skill. Every
 decision that the Skill and available capabilities support belongs to the Agent,
 including choosing a minimum reversible path and stating risks in the reply.
-Return needs_human only when the Skill is unavailable/unsupported for the
-requested operation or explicitly requires a human-only step; do not treat
-ordinary business judgment, external delivery, possible budget, or uncertainty
-as a human boundary when the Skill provides a rule and the required reads.
+Return needs_human only for a reusable policy gap: the existing rules cannot
+determine how this class of cases should be handled. Describe the rule key,
+the observed recurring pattern, and mutually exclusive policy choices. Do not
+turn one task's technical failure, missing read, or execution problem into a
+human task decision.
 """.strip()
 
 

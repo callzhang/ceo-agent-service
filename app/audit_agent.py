@@ -850,16 +850,13 @@ class AuditAgentRunner:
             turn_prompt += _write_authorization_prompt(write_authorizations)
         turn_prompt += (
             "\n\n### Needs Human Display Contract\n"
-            "Return needs_human only when no applicable installed/reviewed Skill "
-            "supports the requested operation or that Skill explicitly requires "
-            "a human-only step. Do not escalate merely for a Derek management "
-            "decision, external delivery, possible budget, ordinary business "
-            "judgment, or uncertainty that the Skill can resolve with reads. Its "
-            "summary and every decision option label, instruction, and consequence "
-            "must be concise Simplified Chinese that state the exact decision, "
-            "verified facts, Agent action, and external effect. Do not expose "
-            "technical state names or convert an unavailable dependency or dry-run "
-            "setting into needs_human."
+            "Return needs_human only for a reusable policy gap: existing rules "
+            "cannot determine how this class of cases should be handled. Its "
+            "summary and every decision option must describe the rule key, the "
+            "recurring pattern, and mutually exclusive policy choices in concise "
+            "Simplified Chinese. Do not ask Derek how to finish this one task, "
+            "and do not convert a technical failure or missing runtime evidence "
+            "into needs_human."
         )
         if self.dry_run:
             turn_prompt += (
@@ -1459,8 +1456,7 @@ def _recovery_prompt(
     if unavailable:
         guidance = (
             "\nAutomatic readback is unavailable for action indexes "
-            f"{unavailable}. Do not execute or replay these actions. Unless an exact "
-            "persisted receipt already confirms them, return needs_human."
+            f"{unavailable}. Do not execute or replay these actions. return failed with the concrete capability reason; do not turn a technical limitation into a policy decision."
         )
     chat_guidance = ""
     if context.task.channel == "dingtalk":
