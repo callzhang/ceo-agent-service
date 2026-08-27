@@ -98,6 +98,38 @@ def test_production_factory_requires_preinitialized_api_snapshot(tmp_path, monke
     assert "snapshot_missing" in decision.reason
 
 
+def test_production_runtime_probe_matches_task_idle_timeout_by_default(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
+    calls = []
+
+    def executor(*_args, **kwargs):
+        calls.append(kwargs["idle_timeout_seconds"])
+        stdout = "\n".join(
+            json.dumps(payload)
+            for payload in (
+                {"type": "thread.started", "thread_id": "probe-session"},
+                {"type": "turn.started"},
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": '{"ok":true}'},
+                },
+                {"type": "turn.completed"},
+            )
+        )
+        return ProcessRunResult(0, stdout, "")
+
+    refresher = build_production_runtime_refresher(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        executor=executor,
+    )
+
+    refresher.refresh_expired(force=True)
+
+    assert calls == [300.0]
+
+
 def test_capability_registry_rejects_mismatched_key():
     with pytest.raises(ValueError, match="key mismatch"):
         RuntimeCapabilityRegistry({"codex_api": _snapshot("codex_oauth")})

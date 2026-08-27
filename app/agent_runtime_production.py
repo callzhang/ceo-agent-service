@@ -248,8 +248,11 @@ def build_production_runtime_refresher(
             "total_timeout_seconds": float(
                 os.getenv("CEO_RUNTIME_PROBE_TIMEOUT_SECONDS", "120")
             ),
+            # The probe uses the same provider path as a real turn.  A shorter
+            # default falsely pauses a healthy route while the model is still
+            # producing its first event.
             "idle_timeout_seconds": float(
-                os.getenv("CEO_RUNTIME_PROBE_IDLE_TIMEOUT_SECONDS", "30")
+                os.getenv("CEO_RUNTIME_PROBE_IDLE_TIMEOUT_SECONDS", "300")
             ),
     }
     if executor is not None:
