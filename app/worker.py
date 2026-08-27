@@ -1954,7 +1954,6 @@ class DingTalkAutoReplyWorker:
             run.transcript_end_line,
             run.final_result_json,
             run.structured_error_json,
-            run.side_effect_state,
             run.completed_at,
             run.updated_at,
         )
@@ -2451,10 +2450,7 @@ class DingTalkAutoReplyWorker:
         external_result = audit_result.external_result
         if proposal is None or external_result is None:
             return None
-        if (
-            audit_result.outcome.value != "executed"
-            or audit_result.side_effect_state.value != "confirmed"
-        ):
+        if audit_result.outcome.value != "executed":
             return None
         reference = external_result.live_result_reference
         conversation_id = reference.get("conversation_id")
