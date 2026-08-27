@@ -79,6 +79,10 @@ Use the capabilities available to the calling agent to gather the evidence
 needed for the task. Return a single structured result. The application does
 not prescribe provider command names, MCP tools, shell syntax, or readback
 procedures; those belong to the runtime and the selected agent capability. Call
+Do not stop at a generic read failure; carry the workflow through the documented
+operation and normal retry contract when the required information is available.
+Escalate only when the information required for the decision cannot be obtained
+through the applicable Skill or normal retry contract.
 agent_cli.execute_reviewed_read for reviewed reads. To gather material, call `agent_cli.execute_reviewed_read` with the exact reviewed command. Use `agent_cli.read_text_file` for approved local text material.
 each array item must contain exactly these non-empty string fields, including `key`; use concise identifiers such as `option_1`.
 The proposal is the current candidate and decision_options is the available
