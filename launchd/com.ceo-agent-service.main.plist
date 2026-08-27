@@ -36,7 +36,9 @@
     <key>NO_PROXY</key>
     <string>localhost,127.0.0.1,::1,*.local,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12</string>
     <key>CEO_SERVICE_ROOT</key>
-    <string>/Users/derek/Documents/Projects/ceo-agent-service-release</string>
+    <string>/Users/derek/Documents/Projects/ceo-agent-service</string>
+    <key>CEO_AUDIT_WEB_RELOAD</key>
+    <string>0</string>
     <key>CEO_CONDA_PREFIX</key>
     <string>/Users/derek/miniforge3</string>
     <key>CEO_OKR_BROWSER_STORAGE_STATE</key>
