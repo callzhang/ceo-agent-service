@@ -90,6 +90,35 @@ def test_existing_database_adds_agent_runs_without_rewriting_reply_tasks(
     assert "idx_agent_runs_status" in indexes
 
 
+def test_complete_agent_run_returns_after_transaction_connection_closes(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    task_id = store.enqueue_reply_task(
+        conversation_id="cid-terminal-run",
+        conversation_title="Terminal run",
+        single_chat=False,
+        trigger_message_id="msg-terminal-run",
+        trigger_create_time="2026-08-27 00:00:00",
+        trigger_sender="Derek",
+        trigger_text="Complete this run",
+        execution_generation="generation-terminal",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    assert task.id == task_id
+    claim = _claim_audit_run(store, task.id, task.execution_generation, owner="worker-1")
+
+    completed = store.complete_agent_run(
+        claim.run.id,
+        {"outcome": "no_action"},
+        owner="worker-1",
+    )
+
+    assert completed.status == "completed"
+    assert completed.id == claim.run.id
+    assert store.get_agent_run(claim.run.id).status == "completed"
+
+
 def test_channel_identity_migration_accepts_quoted_index_names(tmp_path: Path):
     db_path = tmp_path / "task.sqlite3"
     with sqlite3.connect(db_path) as db:
