@@ -56,8 +56,11 @@ CONSUMER_DYNAMIC_SKILL_SENTENCE = (
     "before forming the candidate."
 )
 AUDIT_DYNAMIC_SKILL_SENTENCE = (
-    "Audit Agent B independently checks the candidate against the supplied task "
-    "context and returns feedback_provided when the Consumer must regenerate it."
+    "Audit Agent B independently determines every business and operation Skill "
+    "applicable to the candidate, requires the corresponding verified Consumer A "
+    "receipt for each applicable Skill, rereads each exact receipt path with `agent_cli.read_skill`, "
+    "verifies its sha256, and returns feedback_provided if any applicable receipt is absent, unreadable, changed, or mismatched. "
+    "For an already-unknown effect only, B may perform strictly read-only evidence reconciliation without a receipt when no business Skill is needed to decide whether the effect happened; B must not execute or retry the candidate."
 )
 CONSUMER_DYNAMIC_SKILL_BODY = (
     f"{DYNAMIC_SKILL_MARKER} {CONSUMER_DYNAMIC_SKILL_SENTENCE}"
@@ -134,6 +137,7 @@ contain exactly its typed fields: operation_id, verification_summary, and
 live_result_reference. operation_id must equal the candidate proposal
 operation_id. Legacy revision_required input is normalized
 to the formal feedback_provided output.
+The reconciliation is always an array of per-action records.
 
 Treat a bounded fact-finding inquiry as executable when it only gathers facts,
 states the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;

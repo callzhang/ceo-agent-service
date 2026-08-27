@@ -855,6 +855,9 @@ class AgentTurnProcess(Generic[ResultT]):
         ) -> None:
             nonlocal line_count, saw_json
             nonlocal primary_turn_started, primary_turn_closed
+            item = payload.get("item")
+            if isinstance(item, dict) and item.get("type") == "command_execution":
+                raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
             # Provider capabilities are not reimplemented at the application
             # layer. Keep the event for observability, but let the runtime
             # decide whether a command/tool is permitted.
