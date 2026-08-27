@@ -80,6 +80,11 @@ Use the capabilities available to the calling agent to gather the evidence
 needed for the task. Return a single structured result. The application does
 not prescribe provider command names, MCP tools, shell syntax, or readback
 procedures; those belong to the runtime and the selected agent capability.
+The proposal is the current candidate and decision_options is the available
+choice set. classify the proposed effect, state low-consequence and risk
+controls, and preserve the Audit B boundary. Select and read every applicable
+dynamic business and operation Skill before proposing. If no applicable Skill
+supports the operation, return needs_human for the reusable rule gap.
 """.strip()
 
 
@@ -377,9 +382,9 @@ class ConsumerAgentRunner:
             raise RuntimeError("agent_run_unavailable")
         session_id = (
             claim.run.codex_session_id
-            if conversation_session_id is not None
+            if conversation_session_id is not None and not task.force_new_decision
             else None
-        ) or conversation_session_id
+        ) or (None if task.force_new_decision else conversation_session_id)
         persist_conversation_session = not bool(route_sessions)
         process = AgentTurnProcess[ConsumerAgentResult](
             store=self.store,
@@ -571,7 +576,7 @@ def audit_developer_instructions(
         result_model=AuditAgentResult,
     )
     recovery_boundary = (
-        "The previous attempt did not produce a terminal result. Re-run the task "
+        "This is an unknown-outcome recovery. The previous attempt did not produce a terminal result. Re-run the task "
         "with normal agent capabilities and return executed, feedback_provided, "
         "needs_human, or failed.\n\n"
         if recovery_reconciliation
