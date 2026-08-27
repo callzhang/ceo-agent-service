@@ -591,12 +591,12 @@ def test_audit_recovery_instructions_override_normal_audit_outcomes():
 def test_consumer_instructions_pin_the_installed_oa_workflow():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
-    assert "OA: read" in instructions
     assert "dingtalk-misc" in instructions
     assert "references/oa.md" in instructions
-    assert "newest canonical read as the source of truth" in instructions
-    assert "never compare two reads" in instructions
     assert 'return `no_action`' in instructions
+    assert "comment on the original approval" in instructions
+    assert "timestamp without a" in instructions
+    assert "not a business conflict" in instructions
     assert "oa_live_evidence_conflict" not in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
 

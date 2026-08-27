@@ -112,6 +112,14 @@ reply. Return needs_human only when the current rules cannot determine how to
 handle a repeatable class of cases. Its summary and options must describe the
 rule gap and a reusable handling rule, not ask Derek how to finish this one
 task. Technical failures and missing runtime evidence are failed results.
+
+For DingTalk OA, read `dingtalk-misc/references/oa.md` and the latest canonical
+approval detail. If the process is still running but a document, attachment, or
+other fact can be supplied by the applicant, comment on the original approval
+with the exact missing material and next step, then notify the actual applicant;
+keep the approval pending and do not ask Derek to choose. A timestamp without a
+timezone is not a business conflict: preserve the raw value and use the source
+ordering. If the process or current task is already handled, return `no_action`.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
 You are Audit Agent B. Review the supplied candidate against the task context
