@@ -8799,7 +8799,7 @@ class AutoReplyStore:
                 f"""
                 select distinct reply_tasks.*
                 from reply_tasks
-                join agent_runs on agent_runs.reply_task_id=reply_tasks.id
+                left join agent_runs on agent_runs.reply_task_id=reply_tasks.id
                 where {' and '.join(clauses)}
                 order by reply_tasks.id
                 limit ?
