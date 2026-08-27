@@ -5407,7 +5407,6 @@ class AutoReplyStore:
         route_name: str = "",
         conversation_contract_hash: str = "",
         agent_run_final_result: dict[str, object] | None = None,
-        agent_run_final_side_effect_state: str = "none",
         agent_run_transcript_end: int | None = None,
         now: str | datetime | None = None,
     ) -> AgentRuntimeAttempt:
@@ -5435,8 +5434,6 @@ class AutoReplyStore:
         if agent_run_final_result is not None:
             if not result_schema_id:
                 raise ValueError("agent run result reference requires result schema")
-            if agent_run_final_side_effect_state != "none":
-                raise ValueError("Consumer Agent cannot persist side effects")
             if agent_run_transcript_end is None or agent_run_transcript_end < 0:
                 raise ValueError("agent run transcript end is required")
             agent_run_final_result_json = _json_object_text(
@@ -5537,7 +5534,7 @@ class AutoReplyStore:
                     """
                     update agent_runs
                     set status='completed', final_result_json=?,
-                        structured_error_json='', side_effect_state='none',
+                        structured_error_json='',
                         transcript_end_line=?, lease_owner='', lease_expires_at='',
                         completed_at=?, updated_at=?
                     where id=? and status='running' and lease_owner=?

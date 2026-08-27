@@ -1851,7 +1851,6 @@ class AgentTurnProcess(Generic[ResultT]):
             else max(transcript_start + line_count, session_transcript_end)
         )
         outcome = getattr(result, "outcome")
-        side_effect_state = "none"
         persisted = self.store.get_agent_run(run.id)
         assert persisted is not None
         if run.role is AgentRole.AUDIT and recovery_phase == "reconcile":
@@ -2006,9 +2005,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 conversation_contract_hash=conversation_contract_hash,
                 agent_run_final_result=(
                     domain_result if durable_consumer_result else None
-                ),
-                agent_run_final_side_effect_state=(
-                    side_effect_state if durable_consumer_result else "none"
                 ),
                 agent_run_transcript_end=(
                     transcript_end if durable_consumer_result else None
