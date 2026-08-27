@@ -875,8 +875,12 @@ def failover_is_safe(
         if not failure.failover_permitted:
             return False, "failure_not_eligible"
         return True, "safe_read_only_reconciliation"
-    if run.side_effect_state != "none":
-        return False, "side_effect_state"
+    if (
+        run.effect_started_count
+        > run.effect_completed_count + run.effect_failed_count + run.effect_receipt_count
+        or run.effect_unreviewed_count
+    ):
+        return False, "effect_incomplete"
     if (
         run.effect_receipt_count
         or run.effect_unreviewed_count
