@@ -12,7 +12,6 @@ from app.agent_contracts import (
     AuditAgentResult,
     AuditFeedback,
     ConsumerAgentResult,
-    ConsumerOutcome,
     ProposedAction,
 )
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry

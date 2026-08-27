@@ -5038,7 +5038,7 @@ def _follow_up_resolution_actions(
 ) -> str:
     items: list[str] = []
     help_items: list[str] = []
-    for action in attention.actions:
+    for action_index, action in enumerate(attention.actions, 1):
         if (
             action.key in {"repair_follow_up", "cancel_follow_up"}
         ):
@@ -9816,11 +9816,11 @@ def _needs_human_decision_card(
         % (
             action,
             escape(option.instruction, quote=True),
-            escape(option.key),
+            index,
             escape(option.label),
             escape(option.consequence),
         )
-        for option in options
+        for index, option in enumerate(options, 1)
     )
     choice_section = (
         "<p class=\"muted\">请选择一条可复用的处理规则。系统会按该规则重新核验、执行并回读；每个选项会说明是否产生外部动作。</p>"
@@ -9927,11 +9927,7 @@ def _reply_history_attention_actions(
             )
             help_items.append("技术详情只查看执行记录，不会触发外部动作")
             continue
-        label = (
-            action.label
-            if action.key == "defer"
-            else f"{action.key}. {action.label}"
-        )
+        label = action.label if action.key == "defer" else f"{action_index}. {action.label}"
         items.append(
             f'<form method="post" action="{detail_href}/human-decision?return_to={return_to_query}">'
             f'<input type="hidden" name="instruction" value="{escape(action.instruction, quote=True)}">'
