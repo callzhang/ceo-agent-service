@@ -25,7 +25,7 @@ pending -> running -> done
 - `revision_pending`：修正版已排队；修正版必须有新的 revision 标识，并保留原结果和反馈的关联。
 - `done`：逻辑完成且结果已持久化。
 - `sent`：历史兼容名称；新任务以 `done` 表示完成，发送与回读保存在 trace。
-- `needs_human`：无法由证据读取、参与者澄清或有限反馈周期解决，需要人工判断。
+- `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；技术读取或 provider 失败使用 `failed`。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
 ## 审核反馈闭环
@@ -42,15 +42,15 @@ pending -> running -> done
                   -> 超过内容反馈上限：needs_human
 ```
 
-反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和外部回执之间的关系。同一任务最多允许两个内容反馈周期；基础设施失败不消耗内容反馈周期。
+反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许两个内容反馈周期；基础设施失败不消耗内容反馈周期。
 
 ## 统一禁止事项
 
 - 所有任务都不得使用 `discard` 动作。
 - 所有任务都不得写入 `discarded` 状态。
 - 不得用“丢弃”代替审核反馈、修正原 run、重新排队、人工升级或失败记录。
-- 业务 run 的 current projection 可以由 recovery 或重跑更新；原始失败/未知状态作为 append-only state event 保留。proposal 版本、revision lineage、session、runtime attempt、tool event、receipt 和 readback 不得覆盖。
-- 只有外部系统回读确认成功，任务才能进入 `sent`。
+- 业务 run 的 current projection 可以由重跑更新；原始失败作为 append-only state event 保留。proposal 版本、revision lineage、session、runtime attempt 和 tool event 不得覆盖。provider 返回的 `operation`、`target`、稳定 result identifier 作为最小去重事实保存。
+- Audit 返回 `executed` 后任务即可进入 `done`；外部结果的读取与判断由 Agent 按业务 Skill 完成。
 
 如果任务确定无需执行，应进入 `done`，并在 trace 写入 `agent_output/no_action`；如果结果需要修改，写入 `audit_feedback` 并保持 `running`；如果处理失败，应进入 `failed`。
 
@@ -59,8 +59,20 @@ pending -> running -> done
 - 生产入口是 launchd 管理的 `com.ceo-agent-service.main`，由 supervisor 管理 worker 和 audit-web。
 - 同一 `conversation_id` 同时只能有一个执行 Agent 持有 Codex session lock。
 - 每个执行/审核 run 都有独立 lease、revision 和 transcript 范围。
-- 重启时，未开始外部动作的 run 可以恢复；已经开始外部动作但结果未知的审核 run 只能进行匹配的只读回读，不得直接重放写入。
-- 外部动作没有精确回执时，状态必须保持未知或失败，不能推断为成功。
+- 重启时，未完成的 Agent turn 统一按 `failed` 重试；服务不创建 unknown/reconciliation 状态，也不依据工具事件决定是否重放。下一次 Agent turn 按业务 Skill 读取当前外部状态，再自行判断后续动作。
+- 外部动作的 operation、target 和 provider result identifier（若 provider 返回）会保留用于去重；缺少标识属于 provider/Agent 失败，不转换为额外状态。
+
+### 应用层边界
+
+应用层不审核 Agent 使用的命令、MCP 工具、Skill、读写模式或工具名称，也不维护
+`side_effect_state`、`unknown`、`reconciled` 等业务状态。应用层只校验最终 typed result 的形状，
+推进 `done`、`failed`、`needs_feedback` 和 `needs_human`，并保存去重所需的最小外部事实：
+`operation`、`target`、provider 稳定结果标识。纯读取不需要 receipt；写入中断时由下一次 Agent turn
+按业务 Skill 读取目标状态，服务不启动专门的只读 reconciliation，也不因“未知工具”阻断执行。
+
+历史数据库中已经存在的 `unknown`、`reconciled` 或 `side_effect_state` 值仅作为不可变历史事实展示，
+不得由新代码写入，也不参与当前状态迁移。旧 spec/plan 中描述这些状态机的内容属于历史设计，
+不应作为实现依据。
 
 ## 任务类型
 

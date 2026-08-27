@@ -56,7 +56,7 @@ Agent 运行时，文本会逐段出现，工具调用会显示开始和完成�
 | `failed` | runtime 或执行链报告失败 | 根据当前任务时间线和检查器中的原始错误排查后再决定是否重试 |
 
 “停止”是对当前 runtime 的一次幂等取消请求：重复点击不会重复发送停止信号，终态只记录一次。停止不会撤销
-已经完成的外部动作；如果写操作结果不明确，系统必须先只读核对，不能把停止当作“确定没有发生”。
+已经完成的外部动作；后续 Agent turn 按当前业务 Skill 读取目标状态，服务不创建专门的只读核对流程。
 
 ### 自动执行与历史确认
 
@@ -326,19 +326,18 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 | `terminal blocked` | 已确认无法执行，例如任务不属于当前用户 | 不重放 |
 | `failed` | Agent、工具、数据或发送失败 | 先查根因，再决定是否重跑 |
 | `processing` | 正在执行 | 超过正常时长才排查 |
-| `unknown` | 写操作可能已发生，但缺少可靠回执 | 只读核对，禁止直接重放 |
+| `quarantined` | 历史数据中的旧投影标签 | 仅查看历史，不由新任务写入 |
 
 ### 重跑原则
 
 重跑前先确认：
 
 1. 同一 trigger 没有更新的成功结果。
-2. 没有 `sent_replies` 或外部系统已成功的证据。
-3. 当前 generation 没有未知副作用。
-4. 原消息仍然有效。
+2. 没有同一 operation/target 的 provider result identifier。
+3. 原消息仍然有效。
 
-不要直接手改数据库把任务标成 `done`。work-summary 输入应通过现有扫描和处理流程重新排队；外部写操作未知时
-先核对外部状态。
+不要直接手改数据库把任务标成 `done`。work-summary 输入应通过现有扫描和处理流程重新排队；外部动作中断时
+由下一次 Agent turn 按业务 Skill 读取目标状态后决定是否继续。
 
 ## 8. 常见问题
 
@@ -372,5 +371,5 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 - DWS/Lark/Codex/MCP gate 均已验证。
 - 已完成一条 dry-run 和一条受控 live E2E。
 - History 中能核对 trigger、Agent 结果、工具事件和外部回执。
-- 没有 unresolved `failed`、`processing` 或 `unknown` backlog。
+- 没有 unresolved `failed` 或 `processing` backlog。
 - launchd 重启后服务仍可恢复，且不会重复发送或重复审批。

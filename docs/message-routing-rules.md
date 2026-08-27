@@ -14,9 +14,8 @@ Service 只负责：
 - 识别消息来自群聊、私聊、机器人、日程/OA 等稳定平台结构；
 - 应用群聊明确 @、私聊入口、系统自身回执过滤和 exact source revision 去重；
 - 传递原始消息、上下文、平台 ID、链接、材料引用和精确读取命令；
-- 校验 A/B 结果结构，保存队列和恢复状态；
-- 从现有 tool events 生成 verified Skill receipts，并要求 B 重读；
-- 对已确认的完全相同外部动作去重，对 unknown 结果先只读核对。
+- 校验 A/B 结果结构，保存队列和失败重试状态；
+- 对已确认的完全相同外部动作去重，记录 provider 返回的 operation、target 和稳定 result identifier。
 
 Service 不负责：
 
@@ -93,24 +92,20 @@ A 决定是否调用、是否继续展开以及证据是否充分。A 读取失�
 
 ## Audit B 与执行
 
-Service 只接受 completed `agent_cli.read_skill` events 形成的 receipt。B 必须按 receipt 重读 A 使用的
-每个业务 Skill 和操作 Skill，然后核对实时事实、Audit Rules、目标和最小必要内容。合格候选由 B
-执行并读回；需要改变业务含义时，B 通过反馈消息让 A 产生新 revision，不自行偷偷改写。
+B 根据候选和 Audit Rules 独立判断，必要时读取 Skill 和实时事实；service 不要求 Skill receipt，
+也不审核命令、工具或读取模式。合格候选由 B 执行；需要改变业务含义时，B 通过反馈消息让 A 产生新
+revision，不自行偷偷改写。
 
 完全相同的 trigger/generation/revision 外部效果只执行一次。反馈后正文或参数变化形成新 revision，
-可以继续执行。结果未知时，原 B session 只读 reconciliation；没有证据不得重放。受控群消息发送的
-reconciliation 只接受同一群的 `chat +chat-messages` 或 `chat +search-msg` 读回；这只能保留
-`unknown` 或标记明确结果，不能凭群级读取确认发送成功。
-
-Unknown recovery 使用独立的只读 Audit 协议：它必须先对每个有读回契约的动作做目标匹配的实时读取，
-然后仅返回 `reconciled`。正常 Audit 的 `executed`、`revision_required`、`failed` 和
-`needs_human` 结果在这个阶段均无效，不能挤掉恢复协议。
+可以继续执行。若执行中断，下一次 Agent turn 按当前业务 Skill 读取目标状态后决定是否继续；服务不
+启动专门的 unknown/reconciliation 流程。provider 返回的 operation、target 和稳定 result identifier
+（若有）随原任务保存，仅用于关联和去重。
 
 ## Task extraction 与 follow-up
 
 任务提取不是消息 router 的副产品，follow-up 也不是独立发送器。`ceo-work-tracking` 负责从证据中
 识别事项、关联项目/TODO、确定 owner 和完成标准、到期追问、读取回复/外部状态并关闭。每条
-follow-up 候选仍走 A/B 审阅与执行，使用同一 revision、receipt 和恢复语义。
+follow-up 候选仍走 A/B 审阅与执行，使用同一 revision 和 provider 去重事实。
 
 ## 结果
 

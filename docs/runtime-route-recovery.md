@@ -3,18 +3,18 @@
 ## Scope
 
 This document covers retryable `runtime_route_unavailable` failures before an
-Agent turn starts external work. It is separate from Audit `unknown` recovery:
-an unknown Audit run may have dispatched an external action and is reconciled
-read-only, whereas a runtime-route failure with `side_effect_state=none` has
-not crossed the effect boundary.
+Agent turn starts. Route recovery is ordinary retry scheduling; it is not an
+Audit reconciliation flow and does not inspect tool names or external-effect
+state. If an Agent turn was interrupted after an external call, the next turn
+uses the current business Skill and any persisted provider identifier to decide
+what to do. The service does not create a separate unknown-outcome state.
 
 ## Invariant
 
 The first route-unavailable result is deferred so a single worker pass cannot
 spin through new runtime processes. On a later worker pass, a task may start
 one fresh Consumer or Audit turn only when either the task still records the
-same deferred error or it was explicitly reopened by the effect-free recovery
-API. The fresh turn must independently pass current route health and capability
+same deferred error or it was explicitly reopened by the retry API. The fresh turn must independently pass current route health and capability
 selection; it is not an authorization to ignore a route pause.
 
 `reply_tasks.error` records the operator-visible recovery reason after an
@@ -34,6 +34,8 @@ capability-incomplete routes.
 ## Verification
 
 Regression coverage exercises both Consumer and Audit paths: a safely reopened
-route-unavailable run creates one new turn and then completes. The recovery API
-rejects any generation with a running or unknown run, non-`none` side-effect
-state, completed execution receipt, or recorded send.
+route-unavailable run creates one new turn and then completes. The retry API only
+checks lease ownership, generation, and whether the requested retry is still
+current. A provider result identifier, when present, is carried with the same
+operation and target so the Agent can avoid duplicate work; it is not converted
+into an application-level state.

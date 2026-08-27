@@ -5,7 +5,7 @@
 
 ## 当前任务运行机制
 
-本节是所有任务类型的统一运行契约。每个任务都遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务只能替换输入、工具权限和外部回读方式，不能改变这条基本链路。
+本节是所有任务类型的统一运行契约。每个任务都遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务只能替换输入和工具能力，不能改变这条基本链路。外部系统的读取、写入和重试由 Agent 按业务 Skill 完成，服务只保存结果投影和去重所需的事实。
 
 ```text
 pending -> running -> done
@@ -19,7 +19,7 @@ pending -> running -> done
 - `revision_pending`：修正版已排队；必须有新的 revision，并保留原 run、反馈、session 和外部回执的关系。
 - `done`：任务逻辑完成且结果已持久化。
 - `sent`：历史兼容名称；新任务以 `done` 表示完成，发送与回读保存在 trace。
-- `needs_human`：有限反馈周期和证据读取无法解决，需要人工判断。
+- `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；不是技术读取失败的兜底状态。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败，并保留失败阶段和原因。
 
 审核闭环如下：
@@ -102,9 +102,7 @@ launchd 和本地启动脚本都设置 `PYTHONDONTWRITEBYTECODE=1`。worker 与�
 跨 worker、审计页面和服务重启的竞争由 SQLite 会话锁、Agent run lease 和结果回读处理；
 同一会话顺序不依赖共享的进程级锁。
 
-服务重启时，未开始外部动作的运行会创建新的执行代次；已完成 Agent 回合会从持久化结果继续。
-若 Audit 已进入外部动作而在收尾中断，服务立即将其切换为同一代次的只读核对，读取外部状态后
-再决定完成、补发或阻塞，绝不等待旧租约到期或直接重放该动作。
+服务重启时，未完成的 Agent turn 按普通失败重试；已完成 Agent 回合会从持久化结果继续。服务不创建独立的 unknown/reconciliation 状态机，也不根据工具事件替 Agent 判断外部动作结果。下一次 Agent turn 按当前业务 Skill 读取外部状态，再决定是否继续。
 
 ### Schema 初始化竞争
 
@@ -118,16 +116,15 @@ worker 与审计页面会各自打开 SQLite。它们先取得同一个初始化
 `locked` 或 `busy` 进行有限次数重试；非锁异常或超过上限的锁仍按服务错误处理。这样一次并发
 写入不会使审计页直接启动失败，也不会吞掉持续的数据库异常。
 
-### 未知 Audit 的受控对账
+### 外部动作结果与重试
 
-Audit 已启动外部动作但缺少可验证回执时，服务只允许执行与原动作匹配的只读回读，绝不重放写入。
-对账同时受读取事件数和连续对账次数约束；任一上限达到后，任务以保留外部副作用未知状态的失败记录
-收口，并提供确认已执行、确认未执行或停止处理的人工入口。普通无外部副作用的 Consumer 失败不受该规则
-影响，仍可按安全重试策略恢复。
+服务不维护 `unknown`、`reconciled` 或 `side_effect_state` 状态机，也不启动专门的只读 recovery 回合。
+外部动作中断、回执缺失、读取失败和结果解析失败都按普通 `failed` 记录，并由下一次 Agent turn 依据当前
+业务 Skill 重新读取目标状态后继续处理。Agent 自己负责判断动作是否已完成，不得盲目重复执行。
 
-恢复回合的模型结果只是对回读的解释，不是外部副作用的证据。若同一回合已经为每个目标持久化匹配的受控
-只读回读，但模型返回的恢复 JSON 不适用于该阶段或引用了错误摘要，服务会将结果保守地规范为 `ambiguous`。
-这只保留未知状态，不会确认已执行、推断未执行或重放写入；缺少任一目标匹配回读时，恢复仍按失败处理。
+服务仅在 provider 返回时保存三个最小事实：`operation`、`target` 和稳定的 provider result identifier。
+这些字段用于把后续业务处理关联到同一外部对象，并在重试前提供去重依据；它们不是业务审核结论，也不触发
+任何命令、工具或读取权限检查。原始 stdout、工具调用和详细外部响应仍属于 Agent/runtime 的执行记录。
 
 ### 运行结果与外部写入标识
 
@@ -145,7 +142,7 @@ trigger/context/material references
   -> A reads operation Skill(s) and proposes an exact action
   -> Consumer/Audit return a typed business result
   -> B reviews, executes, and reads back
-  -> service persists the existing run/attempt/receipt state
+  -> service persists the existing run/attempt/provider identifier
 ```
 
 Producer 只根据消息来源、会话类型、明确的 @、稳定卡片类型和去重标识决定是否创建任务。
@@ -163,7 +160,7 @@ Service 也不读取正文后替 Agent 解释业务材料。它只传递 trigger
 
 Skill 加载属于 Agent 执行环境，service 不要求或校验普通 Consumer/Audit 结果中的 Skill receipt。
 仅当发生外部写入时，SQLite 保留 provider 返回的操作标识，用于重试时识别已完成动作并避免重复写入。
-SQLite 继续保存既有 task/run/attempt/effect receipt 状态；系统**不建立平行的 Skill 审计数据库**，详细工具轨迹
+SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；系统**不建立平行的 Skill 审计数据库**，详细工具轨迹
 仍以 Codex session JSONL 为准。
 
 ### 动态 Skill 分层
@@ -215,10 +212,9 @@ B 不是 Derek 的第二个写作分身，而是独立审计与执行者。B 会
 3. 检查 A 的候选是否有事实依据、目标准确、内容最小、权限合适且符合当前规则。
 4. 候选合格时按原样执行，并从外部系统读回结果。
 5. 业务含义需要变化时返回具体反馈，由 A 生成新 revision；B 不自行改写候选。
-6. 外部写入结果未知时不直接重放；仅根据同一目标的 provider 结果标识或外部状态判断是否已经完成。
+6. 外部动作中断时由下一次 Agent turn 按当前业务 Skill 读取目标状态并决定是否继续；服务不创建专门的恢复回合。
 
-每个候选 revision 使用一个新的 B session。只有同一个候选的未知结果恢复会复用原 B
-session，以保留该次执行的工具上下文和操作身份。
+每个候选 revision 使用一个新的 B session。后续失败重试沿用任务、generation 和 revision 关系。
 
 ## 会话与反馈周期
 
@@ -256,7 +252,7 @@ Audit Rules 是 A 和 B 共享的可见业务规则：
 
 可配置内容包括表达、信息最小化、审批材料要求、特定业务风险和需要升级给 Derek 的判断。
 以下边界不可配置：A 只负责读取/判断并提出候选、B 独占 accepted action 的正式执行职责、精确 revision 去重、最多两个内容反馈周期、
-未知结果先读回以及敏感凭证不进入提示词和审计页面。
+外部动作标识去重以及敏感凭证不进入提示词和审计页面。
 
 ## 能力与配置
 
@@ -271,8 +267,8 @@ allowlist。安装用户配置中的 MCP 可能同时公开读写工具；servic
 不能作为 service 的已完成结果。
 
 服务仍保留职责边界：A 生成候选并按共享 Audit Rules 自检；B 独立审阅并执行被接受的外部动作。
-两者都可以使用用户安装的工具和 skills。服务只负责 DWS/Lark channel gate、任务去重、发送回读、
-未知结果核对与持久化；Agent 不执行 `auth login`、`reset` 或 `logout`。某个 MCP 实际返回未授权时，
+两者都可以使用用户安装的工具和 skills。服务只负责 DWS/Lark channel gate、任务去重和结果持久化；
+Agent 不执行 `auth login`、`reset` 或 `logout`。某个 MCP 实际返回未授权时，
 任务如实记录该依赖不可用，不把认证失败伪装成材料缺失。
 
 ## 重复执行与恢复
@@ -285,28 +281,14 @@ allowlist。安装用户配置中的 MCP 可能同时公开读写工具；servic
 OA pending 扫描会先读取当前审批记录。只有最新有效记录来自其他参与者时才生成 review
 任务；如果 Derek 已在该外部更新之后完成评论、审批或其他处理，扫描不再把同一审批重新入队。
 History 中的每条 attempt 始终显示自己的真实状态和错误，不以另一条 attempt 改写为“已恢复”
-或“已由后续处理”。
+或“已由后续处理”。历史数据中的旧 unknown/reconciled 标签只按历史事实展示，不参与当前状态迁移。
 
-### 无副作用 Consumer 恢复
+### Agent 失败重试
 
-Consumer 失败不等于外部动作失败，因为 Consumer 只读取和提出候选。服务会自动重新入队每个
-当前 generation 中一次、可重试且无副作用的 Consumer 失败，不按任务年龄设截止窗口。恢复前
-要求最新 run 为 failed、没有发送回执，也不存在 running 或 unknown run；同一 generation 只自动
-恢复一次。Audit 失败不使用这条路径：只要 Audit 可能已写入外部系统，就必须先做只读回查，不能
-自动重放。
-
-### 未知外部结果
-
-如果 B 已开始写操作但没有得到确定结果，run 进入 `unknown`：
-
-1. 保留原 operation ID、候选 revision 和 B session。
-2. 在同一 B session 中只读查询目标系统。
-3. 已存在：记录确认结果，不再执行。
-4. 明确不存在：仅对通过固定能力边界且可精确绑定的原动作继续恢复执行。
-5. 无法判断：保持 `unknown` 或转 `needs_human`，禁止猜测和盲目重放。
-
-本地微信投递使用同一原则：发送动作已开始但没有界面确认时，恢复仅从该动作的持久化开始时间
-对同一会话做只读回查。只有精确命中出站内容才确认 `sent`；无命中仍是 `unknown`，不会重发。
+Consumer 或 Audit 的运行、依赖、解析和外部系统错误统一进入 `failed`，由 Agent 在下一次 turn 中按当前
+业务 Skill 读取必要事实并决定是否重试。服务不区分“有副作用失败”和“无副作用失败”，也不维护专门的
+reconciliation 队列。重试仍绑定原任务、generation 和 revision；若 provider 已返回稳定结果标识，Agent
+必须先使用该标识或读取目标状态避免重复动作。
 
 服务重启后，仍有有效租约的 run 不会被 stale recovery 抢占；租约过期且没有活动进程的
 run 才能被持久队列恢复。
@@ -318,8 +300,9 @@ Codex 原生 session JSONL 是详细审计来源，保存每个 Agent turn 的�
 
 - task/generation、角色、proposal revision 和父子 run 关系；
 - A/B session ID 与 transcript 行范围；
-- operation ID、run 状态、租约和下一次可用时间；
-- 结构化最终结果、外部结果状态和精确去重键。
+- operation、target、provider result identifier（仅在 provider 返回时保存）；
+- run 状态、租约和下一次可用时间；
+- 结构化最终结果和精确去重键。
 - 当前业务 turn 的受审工具生命周期元数据，包括 capability、operation 和参数/结果摘要；
   原始参数与工具结果仍只保留在 Codex session JSONL。若原生 MCP 事件只出现在 session
   JSONL，运行器会在进程结束后按 turn ID 回放这些元数据，并排除随后执行的 hook turn。
@@ -337,8 +320,7 @@ session 指针读取 JSONL，并只向普通用户展示业务结果；内部角
 | `revision_required` | B 给出结构化反馈，等待 A 生成下一 revision。 |
 | `needs_human` | 只能由 Derek 作出的不可约管理判断；不是普通材料不足。结果必须提供 2 至 4 个互斥、可执行的选项；每项包含唯一稳定的 key、显示标签、执行指令和后果。 |
 | `failed` | 当前 run 失败；错误说明是否可重试。 |
-| `unknown` | 写操作可能发生但尚未确认，必须在原 B session 中先读回。 |
-| `quarantined` | 没有可验证回执的旧投递；保留证据、停止重发，并单独展示为提醒。 |
+| `quarantined` | 历史数据中的旧投影标签，仅用于历史展示；新执行不得写入。 |
 
 只有诊断、没有完成用户要求的动作时，不能标记为 `executed`。如果缺的是参与者可以回答的
 事实，正确动作是发送一个具体澄清问题，而不是 `needs_human`。
@@ -351,11 +333,11 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 | 模块 | 职责 |
 | --- | --- |
 | `app.worker.DingTalkAutoReplyWorker` | 领取任务、构造上下文、调用编排器并映射终态。 |
-| `app.agent_orchestrator.AgentOrchestrator` | 在 A、B、反馈和未知结果恢复之间推进状态机。 |
+| `app.agent_orchestrator.AgentOrchestrator` | 在 A、B、反馈和失败重试之间推进状态机。 |
 | `app.business_skills` | 清点并安装七个 service-managed 业务 Skill；不参与业务路由。 |
 | `app.agent_skill_usage` | 提供 Agent 执行环境所需的 Skill 读取辅助；不参与普通业务结果审核。 |
 | `app.consumer_agent.ConsumerAgentRunner` | 复用对话 A session，按 read-oriented 角色协议读取、判断并提出候选。 |
-| `app.audit_agent.AuditAgentRunner` | 新建 B 审计 session，执行合格候选并处理未知结果。 |
+| `app.audit_agent.AuditAgentRunner` | 新建 B 审计 session，执行合格候选并处理失败重试。 |
 | `app.agent_contracts` | 严格定义 A proposal 与 B audit result。 |
 | `app.audit_rules` | 保存、校验并分别渲染共享 Audit Rules。 |
 | `app.codex_runner.CodexRunner` | 以原生 `codex exec` 启动并继承安装用户的 Codex 配置。 |
@@ -398,9 +380,9 @@ Derek 选择。已有相同目的且已确认的评论或通知不得重复写�
 OA 内容重新运行 Skill。已有后续终态时只读对账。
 
 重试复用同一个正式任务和审批实例，不创建替代审批事项。瞬态故障进入 exponential
-backoff；终态失败必须说明根因、已尝试动作、外部副作用状态、下一步和重试条件。
-DWS/OA 技术错误不得直接暴露给申请人，所有“已评论”“已通知”“已完成”都必须有
-真实外部回执和读回证据。
+backoff；终态失败必须说明根因、已尝试动作、provider 标识（若有）、下一步和重试条件。
+DWS/OA 技术错误不得直接暴露给申请人，所有“已评论”“已通知”“已完成”都必须由 Agent
+根据外部系统结果确认。
 
 Codex Agent 可以通过 `agent_cli.read_skill` 读取 Skill；Skill 读取属于 Agent 执行环境，
 不是应用层业务结果的前置 receipt。launchd 业务服务不是 Skill 可读性的前置条件。

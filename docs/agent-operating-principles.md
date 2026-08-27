@@ -9,14 +9,15 @@ flows. They are product behavior, not optional safety policy.
 - A failed attempt is retryable by default. Retry the same task through a new
   execution generation until it reaches a verified success or a concrete,
   documented terminal failure.
-- Do not leave work in `pending_reconciliation`, `needs_human`, or an unexplained
-  `processing` state when the agent can read the required data and act through
-  the Skill. A retry exhaustion error is a failure to recover, not a successful
-  terminal state.
-- Before an external write retry, use the Skill's readback and the persisted
-  idempotency/receipt records to avoid duplicating an already confirmed write.
-  An unknown result is reconciled by read-only checks first; it is not silently
-  declared successful.
+- Do not leave work in `pending_reconciliation` or an unexplained `processing`
+  state when the agent can read the required data and act through the Skill.
+  A retry exhaustion error is a failure to recover, not a successful terminal
+  state. `pending_reconciliation` is a historical label and must not be written
+  by current code.
+- Before an external write retry, the Agent uses the Skill's normal read path
+  and any persisted `operation`, `target`, and provider result identifier to
+  avoid duplicating an already confirmed write. The service does not run a
+  separate read-only reconciliation state machine.
 - Immutable, low-risk artifacts (for example interview comments, summaries, and
   ordinary notifications) may reuse the existing artifact and retry delivery.
   Re-generation is needed only when the input or decision itself is invalid.
@@ -53,6 +54,6 @@ to escalate to the user.
 
 - Task state, attempt history, audit records, logs, and external readback must
   describe the same outcome.
-- Never rewrite a failure or unknown record merely to make a quality gate green.
-  Report the sanitized root cause, actions attempted, external-effect status,
+- Never rewrite a failure merely to make a quality gate green. Report the
+  sanitized root cause, actions attempted, provider identifiers when available,
   and the next retryable step until the task reaches a verified terminal state.

@@ -16,15 +16,13 @@ MCP allowlist，也没有为 A/B 建立两阶段 MCP permission profile；继承
 2. Service 保存精确 source revision，并向 Consumer A 传递上下文和材料引用，不解释业务正文。
 3. A 通过原生 Skill discovery 选择并读取一个或多个 CEO 业务 Skill。
 4. A 再读取需要的操作 Skill，按其命令读取证据，提出一个精确候选或返回终态。
-5. Service 从已完成的 `agent_cli.read_skill` tool event 提取路径与 SHA-256 receipt。
-6. Audit B 根据 receipts 重读同一组业务/操作 Skill，核对实时事实和 Audit Rules。
-7. B 接受候选后执行并读回；不接受时把具体反馈发回同一对话的 A session 生成新 revision。
-8. Service 在现有 task/run/attempt/receipt 状态中记录结果并推进恢复。
+5. B 根据候选和 Audit Rules 作出独立判断；Skill 和命令调用属于 Agent 执行环境，不生成应用层 receipt 门禁。
+6. B 接受候选后执行；不接受时把具体反馈发回同一对话的 A session 生成新 revision。
+7. Service 保存 typed result，以及 provider 返回的 `operation`、`target`、稳定 result identifier（若有），用于去重。
 
 系统没有按关键词选择业务处理器的 router，也没有把文档正文预读后塞入 prompt 的 service-side
 业务解释层。Service 可以验证材料来源、文件类型、大小、路径和完整性，但“哪个材料相关、应展开
-哪一层、材料说明了什么”由 Agent 决定。系统也不维护单独的 Skill audit DB；详细 Skill 调用以
-Codex session JSONL 为准，SQLite 只保存恢复所需 receipt 和状态指针。
+哪一层、材料说明了什么”由 Agent 决定。系统也不维护单独的 Skill audit DB；详细 Skill 调用以 Codex session JSONL 为准，SQLite 只保存任务状态和 provider 去重事实，不保存 Skill receipt。
 
 ## 七个业务 Skill
 
@@ -75,7 +73,7 @@ source evidence
 
 `ceo-work-tracking` 负责整个业务判断。Service 只保存项目、TODO、revision、lease、发送状态和外部 ID。
 Follow-up 候选继续走 A/B 执行链；完全相同且已送达的 revision 不再发送，经过反馈改正的 revision
-仍可执行。外部结果未知时只读 reconciliation，不能盲目重发。
+仍可执行。重试前由 Agent 按当前 Skill 读取外部状态；服务不维护 unknown/reconciliation 状态机，也不盲目自动重发。
 
 发送失败也按同一 follow-up 生命周期处理。若回执明确消息未发送，History 和 Task 详情直接展示
 可读原因、外部副作用和两个互斥动作：让 Agent 重新核验活跃负责人并修复原 follow-up，或取消
@@ -104,7 +102,7 @@ Follow-up 候选继续走 A/B 执行链；完全相同且已送达的 revision �
 - `revision_required`：B 的反馈已返回 A，等待新 revision。
 - `needs_human`：需要 Derek 的不可约判断。
 - `failed`：当前 run 失败并记录是否可重试。
-- `unknown`：外部动作可能发生，必须在原 B session 中先只读核对。
+- `quarantined`：历史数据中的旧投影标签，仅用于历史展示；新执行不得写入。
 
 诊断不等于完成。要求执行的任务只有在外部结果可核对后才能标记 `executed`。同一 source
 revision 的同一动作不会发送两次；不同正文或参数的新 revision 不受旧动作限制。
