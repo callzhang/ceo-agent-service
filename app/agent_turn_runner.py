@@ -78,7 +78,11 @@ from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.config import feedback_spike_vercel_base_url
 from app.feedback_spike import sanitize_configured_feedback_links
-from app.leak_check import contains_credential, contains_local_runtime_leak
+from app.leak_check import (
+    contains_credential,
+    contains_local_runtime_leak,
+    redact_forbidden_leak_markers,
+)
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliMetadataClassifier,
@@ -743,6 +747,7 @@ class AgentTurnProcess(Generic[ResultT]):
         required_skill_receipts: tuple[LoadedSkillReceipt, ...] = (),
         required_capabilities: frozenset[str] = frozenset(),
         conversation_contract_hash: str = "",
+        force_new_session: bool = False,
     ) -> AgentTurnRunResult[ResultT]:
         if recovery_phase not in {"", "reconcile", "execute"}:
             raise ValueError("invalid recovery phase")
@@ -1517,6 +1522,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 requested_session_id=session_id,
                 recovery_phase=recovery_phase,
                 conversation_contract_hash=conversation_contract_hash,
+                force_new_session=force_new_session,
             )
             attempt_is_preclaimed = False
             while True:
@@ -2098,8 +2104,11 @@ class AgentTurnProcess(Generic[ResultT]):
         requested_session_id: str | None,
         recovery_phase: str,
         conversation_contract_hash: str,
+        force_new_session: bool = False,
     ) -> str | None:
         if recovery_phase:
+            return None
+        if force_new_session and route.name != "codex_api":
             return None
         if role is AgentRole.AUDIT:
             return None
@@ -4220,18 +4229,23 @@ def _validate_runtime_reference_domain_result(
     *,
     allow_configured_feedback_links: bool = False,
 ) -> None:
-    domain_result = result.model_dump(mode="json")
-    _project_runtime_domain_result(result)
-    _validate_runtime_reference_text_bounds(domain_result)
-    sensitive_projection = domain_result
+    domain_result = _project_runtime_domain_result(result)
     if allow_configured_feedback_links:
-        sensitive_projection = cast(
+        domain_result = cast(
             dict[str, object],
             sanitize_configured_feedback_links(
                 domain_result,
                 vercel_base_url=feedback_spike_vercel_base_url(),
             ),
         )
+    _redact_local_runtime_values(domain_result)
+    # Local paths can be accidentally echoed by an agent while describing
+    # read-only evidence.  They are not a valid external side effect and must
+    # never make an otherwise safe, structured result impossible to persist.
+    # Redact only the serialized domain fields; effect receipts and sensitive
+    # values remain subject to their existing hard rejection checks below.
+    _validate_runtime_reference_text_bounds(domain_result)
+    sensitive_projection = domain_result
     if _contains_sensitive_value(sensitive_projection):
         raise ValueError("agent_result_contains_sensitive_value")
     if _contains_local_runtime_value(domain_result):
@@ -4244,6 +4258,21 @@ def _validate_runtime_reference_domain_result(
     )
     if len(encoded.encode("utf-8")) > _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES:
         raise ValueError("runtime_result_reference_too_large")
+
+
+def _redact_local_runtime_values(value: object) -> None:
+    if isinstance(value, dict):
+        for key, item in list(value.items()):
+            if isinstance(item, str):
+                value[key] = redact_forbidden_leak_markers(item)
+            else:
+                _redact_local_runtime_values(item)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            if isinstance(item, str):
+                value[index] = redact_forbidden_leak_markers(item)
+            else:
+                _redact_local_runtime_values(item)
 
 
 def _contains_sensitive_argv(value: dict[object, object]) -> bool:

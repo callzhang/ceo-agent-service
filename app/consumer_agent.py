@@ -95,7 +95,7 @@ already-confirmed event or
 tracked commitment, and state what the recipient must not do.
 Wire errors use error_code, error_retryable, and error_authorization_required.
 Do not return a nested error object.
-Each array item must contain exactly these non-empty string fields: `key`, `label`,
+each array item must contain exactly these non-empty string fields: `key`, `label`,
 and `description`; use concise identifiers such as `option_1`.
 inspect the installed Skill catalog. principles. A low-consequence operating choice
 is autonomous. For an autonomous external action, the reply must state what the Agent may do now, the risk,
