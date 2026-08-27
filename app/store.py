@@ -4280,7 +4280,7 @@ class AutoReplyStore:
         if expected_status not in {"running", "unknown"}:
             raise ValueError("invalid execution receipt run status")
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            self._require_current_agent_run_write_access(
+            run_row = self._require_current_agent_run_write_access(
                 db,
                 run_id,
                 owner=owner,
@@ -4407,7 +4407,7 @@ class AutoReplyStore:
             ).fetchone()
             if run_row is None or run_row["status"] not in {"running", "unknown"}:
                 raise ValueError("effect intents require an active Audit run")
-            self._require_current_agent_run_write_access(
+            run_row = self._require_current_agent_run_write_access(
                 db,
                 run_id,
                 owner=owner,
@@ -6650,7 +6650,7 @@ class AutoReplyStore:
             _agent_event_columns(normalized_event)
         )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            run_row = self._require_current_agent_run_write_access(
+            self._require_current_agent_run_write_access(
                 db,
                 run_id,
                 owner=owner,
