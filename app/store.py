@@ -9851,6 +9851,27 @@ class AutoReplyStore:
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
         with self._connect() as db:
+            stale_run_error = json.dumps(
+                {
+                    "authorization_required": False,
+                    "code": "stale_agent_turn_recovery",
+                    "retryable": True,
+                },
+                separators=(",", ":"),
+            )
+            db.execute(
+                """
+                update agent_runs
+                set status='failed', structured_error_json=?,
+                    lease_owner='', lease_expires_at='',
+                    completed_at=current_timestamp, updated_at=current_timestamp
+                where reply_task_id=? and execution_generation=?
+                  and status='running' and side_effect_state='none'
+                  and lease_expires_at<>''
+                  and lease_expires_at<=current_timestamp
+                """,
+                (stale_run_error, task_id, expected_execution_generation),
+            )
             unknown = db.execute(
                 """
                 select 1 from agent_runs

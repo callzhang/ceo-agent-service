@@ -4228,6 +4228,8 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     assert failed_task is not None and failed_task.status == "pending"
     assert failed_task.error == "stale_agent_turn_recovery"
     assert failed_task.attempts == 2
+    stale_run = worker.store.get_agent_run(second_claim.run.id)
+    assert stale_run is not None and stale_run.status == "failed"
     assert notifications == []
 
 
