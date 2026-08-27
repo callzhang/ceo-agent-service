@@ -232,7 +232,7 @@ def test_unknown_recovery_attempt_requires_owned_persisted_effect_evidence(
         _runtime_effect_started_event(run.operation_id),
         owner="runtime-attempt",
     )
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": True},
         owner="runtime-attempt",
@@ -303,7 +303,7 @@ def test_unknown_recovery_attempt_requires_owned_persisted_effect_evidence(
 def test_unknown_recovery_attempt_rejects_unknown_run_without_effect(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "runtime-recovery-no-effect.sqlite3")
     run = _claimed_runtime_agent_run(store)
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "unknown_without_effect", "retryable": True},
         owner="runtime-attempt",
@@ -339,7 +339,7 @@ def test_unknown_recovery_never_takes_over_an_active_ordinary_attempt(
         _runtime_effect_started_event(run.operation_id),
         owner="runtime-attempt",
     )
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": True},
         owner="runtime-attempt",
@@ -378,7 +378,7 @@ def test_concurrent_unknown_recovery_claims_grant_exactly_one_start(tmp_path: Pa
         _runtime_effect_started_event(run.operation_id),
         owner="runtime-attempt",
     )
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": True},
         owner="runtime-attempt",
@@ -427,7 +427,7 @@ def test_expired_effect_free_recovery_lease_is_reclaimed_once(tmp_path: Path):
         _runtime_effect_started_event(run.operation_id),
         owner="runtime-attempt",
     )
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": True},
         owner="runtime-attempt",
@@ -558,7 +558,7 @@ def test_expired_recovery_with_effect_evidence_is_never_replayed(tmp_path: Path)
         _runtime_effect_started_event(run.operation_id),
         owner="runtime-attempt",
     )
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": True},
         owner="runtime-attempt",
@@ -607,7 +607,7 @@ def test_restarted_reconciler_reclaims_effect_free_expired_recovery(tmp_path: Pa
         _runtime_effect_started_event(run.operation_id),
         owner="runtime-attempt",
     )
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": True},
         owner="runtime-attempt",
@@ -3088,7 +3088,7 @@ def test_requeue_pending_effect_free_unknown_rotates_generation(tmp_path: Path):
     run = _claim_audit_run(
         store, task_id, task.execution_generation, owner="worker-1"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "codex_result_invalid", "retryable": True},
         owner="worker-1",
@@ -3630,7 +3630,7 @@ def test_service_restart_releases_pending_unknown_audit_reconciliation_lease(
     run = _claim_audit_run(
         store, task.id, task.execution_generation, owner="stopped-worker"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": True},
         owner="stopped-worker",
@@ -3666,7 +3666,7 @@ def test_service_restart_releases_failed_unknown_audit_reconciliation_lease(
         task.execution_generation,
         owner="stopped-worker",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": True},
         owner="stopped-worker",
@@ -3742,7 +3742,7 @@ def test_finalize_closed_failed_audit_run_repairs_completed_unknown_state(
         },
     ):
         store.append_agent_run_event(run.id, event, owner="worker-1")
-    unknown = store.mark_agent_run_unknown(
+    unknown = store.fail_agent_run(
         run.id,
         {"code": "codex_process_failed", "retryable": True},
         owner="worker-1",
@@ -3787,7 +3787,7 @@ def test_reconciliation_defer_rejects_stale_generation_even_with_live_lease(
         owner="worker-1",
         now="2026-07-29 09:00:00",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -4104,7 +4104,7 @@ def test_stale_unknown_effect_without_session_is_recoverable_by_orchestrator(
         "initial",
         owner="failed-worker",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": False},
         owner="failed-worker",
@@ -4126,7 +4126,7 @@ def test_stale_task_waits_for_active_unknown_recovery_lease(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="failed-worker").run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": False},
         owner="failed-worker",
@@ -4382,7 +4382,7 @@ def test_reclaimed_agent_run_rejects_every_stale_owner_mutation(tmp_path: Path):
             owner="worker-a",
             now="2026-07-29 00:30:02",
         ),
-        lambda: store.mark_agent_run_unknown(
+        lambda: store.fail_agent_run(
             first.run.id,
             {"code": "stale"},
             owner="worker-a",
@@ -4482,7 +4482,7 @@ def test_expired_lease_blocks_writes_until_session_recovery(tmp_path: Path):
             owner="worker-a",
             now="2026-07-29 00:30:01",
         ),
-        lambda: store.mark_agent_run_unknown(
+        lambda: store.fail_agent_run(
             first.run.id,
             {"code": "expired"},
             owner="worker-a",
@@ -4949,7 +4949,7 @@ def test_effect_intent_is_one_shot_and_ack_survives_run_becoming_unknown(
             now="2026-08-22 00:00:03",
         )
 
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "codex_result_missing", "retryable": True},
         owner="worker-1",
@@ -5001,7 +5001,7 @@ def test_effect_intent_is_one_shot_across_initial_and_recovery_owners(
         owner="initial-owner",
         now="2026-08-22 00:00:01",
     )
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "runtime_disconnected", "retryable": True},
         owner="initial-owner",
@@ -5241,7 +5241,7 @@ def test_unknown_error_history_preserves_initial_and_reconciliation_causes(
         store, task_id, generation, owner="worker-1",
         now="2026-08-21 00:00:00",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "audit_external_readback_missing", "retryable": True},
         owner="worker-1",
@@ -5480,7 +5480,7 @@ def test_unknown_agent_run_resolves_atomically_and_cannot_return_to_running(
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
     unknown_error = {"code": "effect_completion_missing", "call_id": "c1"}
 
-    unknown = store.mark_agent_run_unknown(
+    unknown = store.fail_agent_run(
         run.id,
         unknown_error,
         owner="worker-1",
@@ -5503,7 +5503,7 @@ def test_unknown_agent_run_resolves_atomically_and_cannot_return_to_running(
     assert [item.id for item in listed] == [run.id]
     assert completed.status == "completed"
     with pytest.raises(ValueError, match="transition from completed"):
-        store.mark_agent_run_unknown(
+        store.fail_agent_run(
             run.id,
             unknown_error,
             owner="worker-1",
@@ -5523,7 +5523,7 @@ def test_done_unknown_audit_with_legacy_sent_reply_is_settled_from_delivery_ledg
         task.execution_generation,
         owner="worker-1",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -5558,7 +5558,7 @@ def test_pending_unknown_audit_with_exact_sent_reply_is_settled_atomically(
         task.execution_generation,
         owner="worker-1",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -5609,7 +5609,7 @@ def test_pending_unknown_audit_rejects_inexact_sent_reply_binding(
         task.execution_generation,
         owner="worker-1",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -5641,7 +5641,7 @@ def test_unknown_agent_run_uses_explicit_reconciliation_event_path(tmp_path: Pat
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing", "call_id": "c1"},
         owner="worker-1",
@@ -6527,7 +6527,7 @@ def test_requeue_failed_unknown_audit_reconciliation_preserves_generation(
         task.execution_generation,
         owner="worker-1",
     ).run
-    unknown = store.mark_agent_run_unknown(
+    unknown = store.fail_agent_run(
         run.id,
         {"code": "codex_result_invalid", "retryable": True},
         owner="worker-1",
@@ -6617,7 +6617,7 @@ def test_unknown_agent_run_confirmed_absent_rotates_task(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing", "call_id": "c1"},
         owner="worker-1",
@@ -6649,7 +6649,7 @@ def test_unknown_reconciliation_claim_is_atomic_and_stale_owner_cannot_append(
         owner="worker-1",
         now="2026-07-29 09:00:00",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing", "call_id": "c1"},
         owner="worker-1",
@@ -6686,7 +6686,7 @@ def test_confirmed_reconciliation_atomically_completes_run_and_reply_task(tmp_pa
     run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -6721,7 +6721,7 @@ def test_absent_reconciliation_atomically_fails_run_and_rotates_pending_task(
     run = _claim_audit_run(store,
         task_id, original_generation, owner="worker-1", now="2026-07-29 09:00:00"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -6920,7 +6920,7 @@ def test_suspended_unknown_run_requires_structured_manual_resolution(
     run = _claim_audit_run(store,
         task_id, original_generation, owner="worker-1", now="2026-07-29 09:00:00"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -6970,7 +6970,7 @@ def test_manual_resolution_closes_suspended_unknown_run_requeued_pending(tmp_pat
     run = _claim_audit_run(
         store, task_id, task.execution_generation, owner="worker-1"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -7009,7 +7009,7 @@ def test_suspended_unknown_run_remains_visible_until_manual_resolution(tmp_path:
     run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -7133,7 +7133,7 @@ def test_manual_resolution_rolls_back_run_task_and_attempt_on_insert_failure(
     run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -7187,7 +7187,7 @@ def test_automatic_reconciliation_rolls_back_terminal_state_when_attempt_fails(
     run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -7271,7 +7271,7 @@ def test_completed_reconciliation_atomically_finishes_processing_task(
     run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -7305,7 +7305,7 @@ def test_unknown_reconciliation_must_finish_before_generation_rotation(
     run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -7410,7 +7410,7 @@ def test_rotation_request_keeps_unknown_run_due_and_claimable(tmp_path: Path):
     run = _claim_audit_run(store,
         task_id, "initial", owner="worker-1", now="2026-07-29 09:00:00"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -7533,7 +7533,7 @@ def test_unknown_event_append_is_bounded_and_does_not_reload_agent_run(
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -7583,7 +7583,7 @@ def test_reconciliation_event_limit_excludes_direct_run_history(
             },
             owner="worker-1",
         )
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker-1",
@@ -7618,7 +7618,7 @@ def test_reconciliation_event_limit_uses_incremental_run_counter(tmp_path: Path)
     store = TracedStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id, {"code": "effect_completion_missing"}, owner="worker-1"
     )
     store.claim_unknown_agent_run(run.id, owner="reconciler-1")
@@ -7782,7 +7782,7 @@ def test_peek_pending_reconciliation_reply_tasks_prioritizes_unknown_audit(
         priority.execution_generation,
         owner="crashed-audit",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="crashed-audit",
@@ -7811,7 +7811,7 @@ def test_peek_pending_reconciliation_reply_tasks_respects_run_backoff(
         task.execution_generation,
         owner="crashed-audit",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="crashed-audit",
@@ -7860,7 +7860,7 @@ def test_due_unknown_reconciliation_bypasses_unrelated_task_retry_backoff(
         task.execution_generation,
         owner="crashed-audit",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="crashed-audit",
@@ -10803,7 +10803,7 @@ def test_recover_orphaned_processing_reply_tasks_is_generation_aware(
         unknown_task.execution_generation,
         owner="unknown-worker",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         unknown_run.id,
         {"code": "effect_completion_missing"},
         owner="unknown-worker",
@@ -10891,7 +10891,7 @@ def test_service_restart_keeps_unknown_or_effectful_agent_turns_for_recovery(
     run = _claim_audit_run(
         store, task.id, task.execution_generation, owner="stopped-worker"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": False},
         owner="stopped-worker",
@@ -10912,7 +10912,7 @@ def test_service_restart_releases_unknown_audit_reconciliation_lease(
     run = _claim_audit_run(
         store, task.id, task.execution_generation, owner="stopped-worker"
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_unknown", "retryable": True},
         owner="stopped-worker",
@@ -11130,7 +11130,7 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
             row["name"]
             for row in db.execute("pragma table_info(agent_runtime_attempts)")
         }
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-26.1"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-26.2"
     assert {
         "lease_owner",
         "lease_expires_at",

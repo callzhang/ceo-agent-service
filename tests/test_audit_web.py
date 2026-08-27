@@ -8032,7 +8032,7 @@ def test_history_human_decision_accepts_failed_attempt_and_redirects_to_history(
     status, headers, body = handle_needs_human_decision_post(
         store,
         source_id,
-        "instruction=暂不处理&feedback_scope=reusable_policy&skill_update_requested=1".encode(),
+        "instruction=暂不处理".encode(),
         return_to="/",
     )
 
@@ -8042,8 +8042,6 @@ def test_history_human_decision_accepts_failed_attempt_and_redirects_to_history(
     assert headers["Location"] == "/"
     assert body == ""
     assert source is not None and source.send_status == "decision_selected"
-    assert source.feedback_scope == "reusable_policy"
-    assert source.skill_update_requested is True
     assert requeued is not None and requeued.id == task.id
     assert requeued.status == "pending"
 
@@ -8078,7 +8076,7 @@ def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
     )
     task = store.claim_reply_tasks(limit=1)[0]
     run = _claim_audit_run(store, task).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "effect_completion_missing"},
         owner="worker",
@@ -8130,7 +8128,7 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
     )
     task = store.claim_reply_tasks(1)[0]
     run = _claim_audit_run(store, task).run
-    store.mark_agent_run_unknown(run.id, {"code": "unknown"}, owner="worker")
+    store.fail_agent_run(run.id, {"code": "unknown"}, owner="worker")
     store.claim_unknown_agent_run(run.id, owner="reconciler")
     store.defer_unknown_agent_run_reconciliation(
         run.id,
@@ -8180,7 +8178,7 @@ def test_exhausted_unknown_run_stays_available_for_automatic_readback(
     )
     task = store.claim_reply_tasks(limit=1)[0]
     run = _claim_audit_run(store, task).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
         owner="worker",
@@ -8350,7 +8348,7 @@ def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
     )
     task = store.claim_reply_tasks(1)[0]
     run = _claim_audit_run(store, task).run
-    store.mark_agent_run_unknown(run.id, {"code": "unknown"}, owner="worker")
+    store.fail_agent_run(run.id, {"code": "unknown"}, owner="worker")
     store.claim_unknown_agent_run(run.id, owner="reconciler")
     store.defer_unknown_agent_run_reconciliation(
         run.id,

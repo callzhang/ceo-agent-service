@@ -138,6 +138,7 @@ from app.feedback_events import (
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
 from app.follow_up import resolve_failed_follow_up
+from app.skill_feedback import SkillFeedbackUpdateError, apply_skill_feedback_update
 from app.store import (
     SQLITE_BUSY_TIMEOUT_SECONDS,
     FAST_PATH_UNREAD_BACKOFF_TASK_ERROR,
@@ -8018,6 +8019,21 @@ def handle_needs_human_decision_post(
                         "<p>外部动作结果未知，必须先完成审计核对，不能直接按反馈重跑。</p>",
                     ),
                 )
+    skill_receipts_json = source.skill_update_receipts_json or "[]"
+    if skill_update_requested:
+        try:
+            receipts = apply_skill_feedback_update(
+                events_json=source.audit_tool_events_json,
+                feedback=instruction,
+                source_attempt_id=source.id,
+            )
+        except SkillFeedbackUpdateError as exc:
+            return 409, {}, render_page("Skill update unavailable", f"<p>{escape(str(exc))}</p>")
+        skill_receipts_json = json.dumps(
+            [receipt.__dict__ for receipt in receipts],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     try:
         result = handle_reviewed_message_reply(
             store,
@@ -8031,12 +8047,14 @@ def handle_needs_human_decision_post(
             source.id,
             feedback_scope=feedback_scope,
             skill_update_requested=skill_update_requested,
+            skill_update_receipts_json=skill_receipts_json,
         )
         if selected_attempt_id != source.id:
             store.update_reply_attempt(
                 selected_attempt_id,
                 feedback_scope=feedback_scope,
                 skill_update_requested=skill_update_requested,
+                skill_update_receipts_json=skill_receipts_json,
             )
     except ValueError as exc:
         return 409, {}, render_page("Decision unavailable", f"<p>{escape(str(exc))}</p>")

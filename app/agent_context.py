@@ -41,6 +41,7 @@ class ManualRerunInstruction:
     suggested_reply_text: str = ""
     feedback_scope: str = "one_time"
     skill_update_requested: bool = False
+    skill_update_receipts_json: str = "[]"
 
 
 @dataclass(frozen=True)
@@ -204,6 +205,7 @@ class AgentTaskContext:
                         "suggested_reply_text": self.manual_rerun.suggested_reply_text,
                         "feedback_scope": self.manual_rerun.feedback_scope,
                         "skill_update_requested": self.manual_rerun.skill_update_requested,
+                        "skill_update_receipts_json": self.manual_rerun.skill_update_receipts_json,
                     }
                 )
             )

@@ -63,7 +63,7 @@ CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-26.1"
+STORE_SCHEMA_VERSION = "2026-08-26.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "task_todo_sync_outbox",
     "agent_runtime_attempts",
@@ -112,6 +112,7 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
         "human_decision_options_json",
         "feedback_scope",
         "skill_update_requested",
+        "skill_update_receipts_json",
     ),
     "agent_runtime_attempts": (
         "session_mode",
@@ -251,6 +252,7 @@ class ReplyAttempt(BaseModel):
     corrected_reply_text: str = ""
     feedback_scope: str = "one_time"
     skill_update_requested: bool = False
+    skill_update_receipts_json: str = "[]"
     channel: str = "dingtalk"
     created_at: str
     updated_at: str
@@ -2395,6 +2397,7 @@ class AutoReplyStore:
                 ("document_action_result_json", "text not null default ''"),
                 ("feedback_scope", "text not null default 'one_time'"),
                 ("skill_update_requested", "integer not null default 0"),
+                ("skill_update_receipts_json", "text not null default '[]'"),
             ):
                 if column not in reply_attempt_columns:
                     try:
@@ -14723,6 +14726,7 @@ class AutoReplyStore:
         retry_count: int | None = None,
         feedback_scope: str | None = None,
         skill_update_requested: bool | None = None,
+        skill_update_receipts_json: str | None = None,
     ) -> None:
         updates = self._reply_attempt_update_values(
             action=action,
@@ -14759,6 +14763,7 @@ class AutoReplyStore:
                 if skill_update_requested is not None
                 else None
             ),
+            skill_update_receipts_json=skill_update_receipts_json,
         )
         if not updates:
             return
@@ -15259,6 +15264,7 @@ class AutoReplyStore:
             "retry_count",
             "feedback_scope",
             "skill_update_requested",
+            "skill_update_receipts_json",
         }
         unknown = set(updates) - allowed_columns
         if unknown:
