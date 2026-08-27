@@ -85,6 +85,7 @@ choice set. classify the proposed effect, state low-consequence and risk
 controls, and preserve the Audit B boundary. Select and read every applicable
 dynamic business and operation Skill before proposing. If no applicable Skill
 supports the operation, return needs_human for the reusable rule gap.
+Wire errors use error_code, error_retryable, and error_authorization_required.
 """.strip()
 
 
