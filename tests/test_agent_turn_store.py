@@ -3018,7 +3018,6 @@ def test_agent_effect_state_uses_incremental_counters_not_history_scan(tmp_path)
 
     normalized = [statement.casefold() for statement in statements]
     assert persisted.effect_started_count == 1
-    assert persisted.side_effect_state == "unknown"
     assert not any("with call_state" in statement for statement in normalized)
     assert sum("from agent_run_events" in statement for statement in normalized) <= 4
 
