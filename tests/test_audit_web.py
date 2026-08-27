@@ -8041,7 +8041,7 @@ def test_history_human_decision_accepts_failed_attempt_and_redirects_to_history(
     assert status == 303
     assert headers["Location"] == "/"
     assert body == ""
-    assert source is not None and source.send_status == "decision_selected"
+    assert source is not None and source.send_status == "pending"
     assert requeued is not None and requeued.id == task.id
     assert requeued.status == "pending"
 
@@ -8689,12 +8689,13 @@ def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
     assert status == 303
     assert body == ""
     assert source is not None
-    assert source.send_status == "decision_selected"
+    assert source.send_status == "pending"
     assert "Human decision for source attempt" in source.reviewer_feedback
     assert task is not None
     assert task.status == "pending"
     assert task.oa_url == "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
     assert selected_attempt is not None
+    assert selected_attempt.id == source.id
     assert selected_attempt.reviewer_feedback == source.reviewer_feedback
     assert "采用方案二并说明交付边界" in selected_attempt.reviewer_feedback
 

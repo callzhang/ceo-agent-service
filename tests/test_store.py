@@ -4011,10 +4011,11 @@ def test_actionable_attempt_decision_resolves_source_and_requeues_same_task(
     selected = store.get_reply_attempt(selected_id)
     assert requeued.id == task.id
     assert requeued.status == "pending"
-    assert source is not None and source.send_status == "decision_selected"
+    assert source is not None and source.send_status == "pending"
     assert source.reviewer_feedback == feedback
-    assert selected is not None and selected.reviewer_feedback == feedback
-    assert repeated_id == selected_id
+    assert selected_id == source_id
+    assert selected is not None and selected.id == source_id
+    assert repeated_id == source_id
     assert repeated_task.execution_generation == requeued.execution_generation
 
 

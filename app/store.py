@@ -15368,8 +15368,70 @@ class AutoReplyStore:
                 if source_status == "decision_selected":
                     if str(source_row["reviewer_feedback"] or "") != feedback:
                         raise ValueError("attempt decision was already selected")
-                elif source_status not in {"failed", "needs_human"}:
+                elif source_status not in {"failed", "needs_human", "pending"}:
                     raise ValueError("attempt no longer requires a decision")
+                # A reviewed decision rewrites the source attempt in place.
+                # The execution generation changes on the task, but the
+                # business attempt id and Codex conversation session remain
+                # stable; do not create a second reply_attempt row.
+                audit_summary = (
+                    "Reviewer feedback: "
+                    + feedback
+                    + "\nSuggested response: "
+                    + suggestion
+                ).strip()
+                db.execute(
+                    """
+                    update reply_attempts
+                    set action='send_reply',
+                        codex_reason='reviewed_message_reply',
+                        draft_reply_text=?,
+                        audit_tool_events_json=?,
+                        audit_summary=?,
+                        reviewer_feedback=?,
+                        corrected_reply_text=?,
+                        reviewed_at=current_timestamp,
+                        send_status='pending',
+                        send_error='',
+                        updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (
+                        suggestion,
+                        json.dumps(
+                            [{"tool": "audit_review", "result": "queued"}],
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        audit_summary,
+                        feedback,
+                        suggestion,
+                        source_attempt_id,
+                    ),
+                )
+                revision_key = self._manual_rerun_revision_key(
+                    db, source_attempt_id
+                )
+                task = self._enqueue_manual_rerun_reply_task_in_connection(
+                    db,
+                    conversation_id=conversation_id,
+                    conversation_title=conversation_title,
+                    single_chat=single_chat,
+                    trigger_message_id=trigger_message_id,
+                    trigger_create_time=trigger_create_time,
+                    trigger_sender=trigger_sender,
+                    trigger_text=trigger_text,
+                    trigger_message_json=trigger_message_json,
+                    oa_url=oa_url,
+                    attempt_id=source_attempt_id,
+                    revision_key=revision_key,
+                    channel=channel,
+                )
+                if task is None:
+                    raise ValueError(
+                        "agent side effect reconciliation required before rotation"
+                    )
+                return source_attempt_id, task
             existing = db.execute(
                 """
                 select attempts.id as attempt_id, tasks.*

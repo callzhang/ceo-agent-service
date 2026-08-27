@@ -7957,11 +7957,24 @@ def handle_needs_human_decision_post(
             {},
             render_page("Decision required", "<p>反馈范围无效。</p>"),
         )
-    reviewer_feedback = (
-        f"Human decision for source attempt #{source.id}: {instruction}\n\n"
-        f"Original ambiguity summary:\n{source.audit_summary or source.codex_reason}"
-    )
-    if source.send_status not in {"failed", "needs_human", "decision_selected"}:
+    if (
+        source.send_status == "pending"
+        and source.codex_reason == "reviewed_message_reply"
+        and source.reviewer_feedback.strip()
+    ):
+        # The source attempt was already rewritten.  Reusing the persisted
+        # feedback keeps repeated POSTs idempotent instead of rotating another
+        # generation for the same decision.
+        reviewer_feedback = source.reviewer_feedback
+    else:
+        reviewer_feedback = (
+            f"Human decision for source attempt #{source.id}: {instruction}\n\n"
+            f"Original ambiguity summary:\n{source.audit_summary or source.codex_reason}"
+        )
+    if source.send_status not in {"failed", "needs_human", "decision_selected"} and not (
+        source.send_status == "pending"
+        and source.codex_reason == "reviewed_message_reply"
+    ):
         return (
             409,
             {},
