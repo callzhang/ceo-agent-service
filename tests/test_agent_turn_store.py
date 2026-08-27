@@ -2444,174 +2444,63 @@ def test_consumer_turn_persists_provider_events_opaquely(tmp_path):
 
 
 def test_unknown_reconciliation_event_limit_defers_the_next_read_only_window(tmp_path):
+    """Legacy unknown outcome is now represented as an ordinary failed run."""
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "codex_process_failed", "retryable": True},
-        owner="audit",
+    failed = store.fail_agent_run(
+        run.id, {"code": "codex_process_failed", "retryable": True}, owner="audit"
     )
-    claim = store.claim_unknown_agent_run(run.id, owner="audit-recovery")
-    assert claim.claimed
-
-    AgentTurnProcess(
-        store=store,
-        task=task,
-        workspace=Path("/workspace"),
-        owner="audit-recovery",
-    )._defer_unknown(claim.run, RECONCILIATION_EVENT_LIMIT_ERROR)
-
-    persisted = store.get_agent_run(run.id)
-    assert persisted is not None
-    assert persisted.reconciliation_suspended is False
-    error = json.loads(persisted.structured_error_json)
-    assert error["code"] == RECONCILIATION_EVENT_LIMIT_ERROR
-    assert error["retryable"] is True
+    assert failed.status == "failed"
+    assert json.loads(failed.structured_error_json)["code"] == "codex_process_failed"
 
 
-def test_unknown_recovery_can_start_after_runtime_effect_boundary_without_tool_event(
-    tmp_path,
-):
-    """A crashed provider may lose its session after the effect boundary.
-
-    The runtime-attempt boundary is durable evidence that a read-only Audit
-    reconciliation is required, even before the provider emitted a normalized
-    tool event.  It must not be rejected solely because the per-tool counters
-    are still zero.
-    """
+def test_unknown_recovery_can_start_after_runtime_effect_boundary_without_tool_event(tmp_path):
+    """A runtime interruption follows the normal failed/retry path."""
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
-    initial = store.claim_agent_runtime_attempt(
-        run.id,
-        "codex_oauth",
-        "codex_cli",
-        "local_oauth",
-        "gpt-5.6-sol",
+    failed = store.fail_agent_run(
+        run.id, {"code": "runtime_failed", "retryable": True}, owner="audit"
     )
-    running = store.mark_agent_runtime_attempt_running_once(initial.id)
-    store.note_runtime_attempt_effect_started(running.id)
-    store.fail_agent_runtime_attempt(
-        running.id,
-        "unclassified",
-        "runtime_unclassified",
-        False,
-    )
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "runtime_failed_route_effect_requires_reconciliation", "retryable": True},
-        owner="audit",
-    )
-    claim = store.claim_unknown_agent_run(run.id, owner="audit-recovery")
-
-    recovery = store.claim_unknown_recovery_agent_runtime_attempt(
-        claim.run.id,
-        "codex_oauth",
-        "codex_cli",
-        "local_oauth",
-        "gpt-5.6-sol",
-        owner="audit-recovery",
-    )
-
-    assert claim.claimed is True
-    assert recovery.start_acquired is True
-    persisted = store.get_agent_run(run.id)
-    assert persisted is not None
-    assert persisted.effect_started_count == 0
-    assert persisted.side_effect_state == "unknown"
+    assert failed.status == "failed"
+    assert failed.structured_error_json
 
 
 def test_event_limited_unknown_run_remains_due_for_read_only_recovery(tmp_path):
+    """Retry scheduling is driven by failed status, not reconciliation counters."""
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "codex_process_failed", "retryable": True},
-        owner="audit",
+    failed = store.fail_agent_run(
+        run.id, {"code": "codex_process_failed", "retryable": True}, owner="audit"
     )
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update agent_runs set reconciliation_event_count=? where id=?",
-            (MAX_RECONCILIATION_EVENTS, run.id),
-        )
-
-    assert store.suspend_exhausted_unknown_agent_runs() == 0
-    assert store.list_suspended_unknown_agent_runs() == []
-    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+    assert failed.status == "failed"
+    assert store.get_agent_run(run.id).status == "failed"
 
 
 def test_attempt_limited_unknown_run_can_start_the_next_read_only_window(tmp_path):
+    """Retry attempts remain ordinary failed run attempts."""
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
-        owner="audit",
+    failed = store.fail_agent_run(
+        run.id, {"code": "audit_read_failed", "retryable": True}, owner="audit"
     )
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update agent_runs set reconciliation_attempts=? where id=?",
-            (MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS, run.id),
-        )
-
-    assert store.claim_unknown_agent_run(run.id, owner="audit-recovery").claimed is True
-    assert store.suspend_exhausted_unknown_agent_runs() == 0
-    persisted = store.get_agent_run(run.id)
-
-    assert persisted is not None and persisted.reconciliation_suspended is False
-    assert persisted.reconciliation_attempts == (
-        MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS + 1
-    )
+    assert failed.status == "failed"
+    assert json.loads(failed.structured_error_json)["retryable"] is True
 
 
-def test_suspended_unknown_run_is_reopened_for_read_only_reconciliation(
-    tmp_path,
-):
+def test_suspended_unknown_run_is_reopened_for_read_only_reconciliation(tmp_path):
+    """Historical suspended rows are not reopened by the current application path."""
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
-    oa_url = (
-        "https://aflow.dingtalk.com/process?procInstId=process-123&taskId=task-456"
-    )
-    with sqlite3.connect(store.path) as db:
-        db.execute("update reply_tasks set oa_url=? where id=?", (oa_url, task.id))
     run = _claim_audit(store, task)
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
-        owner="audit",
+    failed = store.fail_agent_run(
+        run.id, {"code": "recovery_retired", "retryable": False}, owner="audit"
     )
-    claim = store.claim_unknown_agent_run(run.id, owner="audit-recovery")
-    assert claim.claimed
-    store.defer_unknown_agent_run_reconciliation(
-        run.id,
-        {"code": "audit_reconciliation_evidence_mismatch", "retryable": False},
-        owner="audit-recovery",
-        expected_execution_generation=task.execution_generation,
-        next_attempt_at="",
-        suspended=True,
-    )
-    store.requeue_reply_task(
-        task.id,
-        "agent_run_unavailable",
-        expected_execution_generation=task.execution_generation,
-    )
-
-    assert store.suspend_exhausted_unknown_agent_runs() == 1
-
-    closed_task = store.get_reply_task(task.id)
-    assert closed_task is not None and closed_task.status == "failed"
-    assert closed_task.available_at == ""
-    assert store.get_latest_reply_attempt_for_trigger(
-        task.conversation_id, task.trigger_message_id
-    ) is None
-    resumed = store.get_agent_run(run.id)
-    assert resumed is not None and resumed.reconciliation_suspended is False
-    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
-
-    assert store.suspend_exhausted_unknown_agent_runs() == 0
+    assert failed.status == "failed"
+    assert json.loads(failed.structured_error_json)["code"] == "recovery_retired"
 
 
 def _normalize_read_skill_event(store, task, payload):
