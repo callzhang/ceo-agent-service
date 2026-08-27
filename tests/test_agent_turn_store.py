@@ -1403,7 +1403,6 @@ def test_runtime_domain_result_codec_rejects_business_document_reference(tmp_pat
         outcome=AuditOutcome.EXECUTED,
         summary="Confirmed.",
         proposal_revision=0,
-        side_effect_state="confirmed",
         feedback=None,
         external_result=AuditExternalResult(
             operation_id="operation-0",
@@ -1413,7 +1412,6 @@ def test_runtime_domain_result_codec_rejects_business_document_reference(tmp_pat
                 "document_content": {"confidential": document_marker},
             },
         ),
-        reconciliation=(),
         error=AgentError(),
     )
 
