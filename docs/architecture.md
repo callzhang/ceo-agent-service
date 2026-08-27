@@ -364,3 +364,24 @@ launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'
 
 安装和配置细节见 [agent-installation-runbook.md](agent-installation-runbook.md)，任务恢复细节见
 [reply-worker-reliability.md](reply-worker-reliability.md)。
+
+## OA 审批处理原则
+
+审批 Agent 必须先读取最新 OA `detail`、`tasks`、`records`，按
+`oa_process_instance_id` 去重；History 按审批事项归并展示，不能让旧 attempt 的
+Failed 覆盖后续真实状态。无时区时间按 `Asia/Shanghai` 解释，比较时转换为 UTC，
+同时保留 OA 原始时间字符串用于审计；缺少时区不得产生冲突错误。
+
+审批实例和当前 task 仍为 `RUNNING` 且材料可由申请人补充时，Agent 必须在原审批中
+评论具体缺失材料、读回评论、通知实际申请人并读回通知，保持审批待处理，不得让
+Derek 选择。已有相同目的且已确认的评论或通知不得重复写入；新材料出现后基于最新
+OA 内容重新运行 Skill。已有后续终态时只读对账。
+
+重试复用同一个正式任务和审批实例，不创建替代审批事项。瞬态故障进入 exponential
+backoff；终态失败必须说明根因、已尝试动作、外部副作用状态、下一步和重试条件。
+DWS/OA 技术错误不得直接暴露给申请人，所有“已评论”“已通知”“已完成”都必须有
+真实外部回执和读回证据。
+
+Codex Agent 通过 `agent_cli.read_skill` 读取 Skill；launchd 业务服务不是 Skill 可读性
+的前置条件。重启 launchd 只刷新业务服务的 Python 模块、prompt 和 worker；修改 Skill
+后必须在新的 Agent turn 中重新读取并校验 Skill receipt/hash。
