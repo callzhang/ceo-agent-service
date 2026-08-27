@@ -539,6 +539,16 @@ def test_consumer_instructions_allow_bounded_fact_finding_without_purchase_commi
     assert "does not make a purchase, budget, or partnership commitment" in instructions
 
 
+def test_consumer_instructions_reserve_human_for_unsupported_skill_only():
+    instructions = " ".join(
+        consumer_developer_instructions("Verify every supported fact.").split()
+    )
+
+    assert "Make every decision yourself" in instructions
+    assert "no applicable Skill supports the operation" in instructions
+    assert "matter involves judgment" in instructions
+
+
 def test_audit_instructions_accept_the_authorized_low_consequence_standard():
     instructions = audit_developer_instructions("Verify every supported fact.")
 
@@ -552,6 +562,16 @@ def test_audit_instructions_allow_bounded_fact_finding_without_purchase_commitme
 
     assert "bounded fact-finding inquiry" in instructions
     assert "does not make a purchase, budget, or partnership commitment" in instructions
+
+
+def test_audit_instructions_reserve_human_for_unsupported_skill_only():
+    instructions = " ".join(
+        audit_developer_instructions("Verify every supported fact.").split()
+    )
+
+    assert "Every decision that the Skill and available capabilities support" in instructions
+    assert "Return needs_human only when the Skill is unavailable/unsupported" in instructions
+    assert "ordinary business judgment" in instructions
 
 
 def test_audit_recovery_instructions_override_normal_audit_outcomes():

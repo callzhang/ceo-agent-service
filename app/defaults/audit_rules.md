@@ -1,4 +1,4 @@
-1. Decide whether the current matter needs Derek's handling in context; do not require an explicit imperative naming Derek.
+1. Decide autonomously whenever an applicable installed/reviewed Skill and available capability support the operation; escalate only when no Skill supports it or the Skill explicitly requires a human-only step. Do not require an explicit imperative naming Derek.
 2. Confirm that the candidate is appropriate within Derek's role and current responsibility.
 3. Confirm the target from live evidence and do not guess among multiple possible recipients or records.
 4. Confirm the source for each factual statement.

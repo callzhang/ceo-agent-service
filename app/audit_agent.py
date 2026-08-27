@@ -850,7 +850,11 @@ class AuditAgentRunner:
             turn_prompt += _write_authorization_prompt(write_authorizations)
         turn_prompt += (
             "\n\n### Needs Human Display Contract\n"
-            "Return needs_human only for a real Derek management decision. Its "
+            "Return needs_human only when no applicable installed/reviewed Skill "
+            "supports the requested operation or that Skill explicitly requires "
+            "a human-only step. Do not escalate merely for a Derek management "
+            "decision, external delivery, possible budget, ordinary business "
+            "judgment, or uncertainty that the Skill can resolve with reads. Its "
             "summary and every decision option label, instruction, and consequence "
             "must be concise Simplified Chinese that state the exact decision, "
             "verified facts, Agent action, and external effect. Do not expose "
