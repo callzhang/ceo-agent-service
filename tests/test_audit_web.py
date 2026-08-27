@@ -5687,23 +5687,181 @@ def test_render_attempt_detail_shows_quality_warnings(tmp_path: Path):
 def test_pending_reconciliation_explains_context_and_requires_no_user_decision(
     tmp_path: Path,
 ):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="工作通知:北京星尘纪元智能科技有限公司",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="张静在招聘需求申请里提到了你，并说明以流程评论为准。",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="pending_reconciliation",
+        audit_summary="审批动作结果未知，等待只读核对当前审批状态。",
+    )
+    store.update_reply_attempt(attempt_id, send_error="audit_recovery_failed")
+
+    status, detail = render_attempt_detail(store, attempt_id)
+    history = render_attempt_list(store, include_chart=False)
+
+    assert status == 200
+    assert "正在核对执行结果" in detail
+    assert "系统只会读取外部状态，不会重复审批或发送通知" in detail
+    assert "你当前无需操作" in detail
+    assert "等待你的决策" not in detail
+    assert "🔎 正在核对执行结果" in history
+    assert "Pending Reconciliation" not in history
 
 
 def test_pending_reconciliation_names_objective_and_actions():
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    attempt = audit_web_module.ReplyAttempt(
+        id=1,
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        codex_reason="",
+        draft_reply_text="",
+        final_reply_text="",
+        permission_action="",
+        permission_reason="",
+        send_status="pending_reconciliation",
+        send_error="audit_recovery_failed",
+        retry_count=0,
+        created_at="2026-08-10 12:00:00",
+        updated_at="2026-08-10 12:00:00",
+    )
+    consumer = AgentRun(
+        id=10,
+        reply_task_id=20,
+        execution_generation="initial",
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        status="completed",
+        final_result_json=json.dumps(
+            {
+                "outcome": "proposal",
+                "summary": "准备处理审批",
+                "proposal": {
+                    "objective": "处理招聘需求审批",
+                    "actions": [
+                        {
+                            "description": "同意招聘需求申请。",
+                            "capability": "agent_cli.dws",
+                            "operation": "oa approval approve",
+                            "target": {"instance_id": "process-1"},
+                            "payload": {"argv": ["dws", "oa"]},
+                            "expected_verification": "读回审批结果",
+                        },
+                        {
+                            "description": "通知申请人审批结果。",
+                            "capability": "agent_cli.dws",
+                            "operation": "chat message send",
+                            "target": {"user": "user-1"},
+                            "payload": {"argv": ["dws", "chat"]},
+                            "expected_verification": "读回消息",
+                        },
+                    ],
+                    "sourced_facts": [],
+                    "authored_judgment": "材料满足当前审批条件。",
+                },
+                "error": {
+                    "code": "",
+                    "retryable": False,
+                    "authorization_required": False,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        created_at="2026-08-10 12:00:00",
+        updated_at="2026-08-10 12:00:00",
+    )
+
+    html = audit_web_module._attempt_status_card(attempt, [consumer])
+
+    assert "事项：处理招聘需求审批" in html
+    assert "同意招聘需求申请" in html
+    assert "通知申请人审批结果" in html
+    assert "你当前无需操作" in html
+    assert "。；" not in html
+    assert "。。" not in html
 
 
 def test_later_attempt_is_not_used_to_render_original_detail(tmp_path: Path):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="pending_reconciliation",
+    )
+    later_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="pending_reconciliation",
+    )
+
+    status, html = render_attempt_detail(store, old_id)
+
+    assert status == 200
+    assert later_id
+    assert f"Attempt #{later_id}" not in html
+    assert "继续核对同一事项" not in html
+    assert "pending_reconciliation" in html
 
 
 def test_terminal_later_attempt_does_not_replace_original_detail_fields(tmp_path: Path):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    old_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="pending_reconciliation",
+    )
+    store.update_reply_attempt(old_id, send_error="audit_recovery_failed")
+    later_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="completed",
+        audit_summary=(
+            "审批已同意；已向实际申请人发送审批结果，外部读回确认消息存在。"
+        ),
+    )
+
+    status, html = render_attempt_detail(store, old_id)
+
+    assert status == 200
+    assert f"已完成（后续记录 #{later_id}）" not in html
+    assert "历史错误已由后续处理解决" not in html
+    assert "事项：</strong>请处理招聘需求审批" in html
+    assert "需要你决策：</strong>否" in html
+    assert "处理结果：</strong>后续任务已完成" not in html
+    assert "审批已同意；已向实际申请人发送审批结果" not in html
+    assert "audit_recovery_failed" in html
 
 
 def test_historical_needs_human_detail_shows_later_automatic_resolution(tmp_path: Path):
@@ -5830,7 +5988,39 @@ def test_codex_process_failure_is_explained_without_internal_code():
 def test_failure_reason_uses_human_stage_label_without_double_punctuation(
     tmp_path: Path,
 ):
-    assert audit_web_module._failure_code_explanation("codex_process_failed") == "Agent 执行进程未成功完成，因此本轮没有得到可验证结果。"
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-readable-stage",
+        conversation_title="审批通知",
+        trigger_message_id="msg-readable-stage",
+        trigger_sender="OA审批",
+        trigger_text="请处理审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="failed",
+    )
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    run = AgentRun.model_construct(
+        role=AgentRole.CONSUMER,
+        status="failed",
+        structured_error_json=json.dumps(
+            {
+                "code": "codex_process_failed",
+                "detail": "处理未完成，失败代码：codex_process_failed。",
+            }
+        ),
+        side_effect_state="none",
+    )
+
+    reason = audit_web_module._agent_failure_reason_text(attempt, [run])
+
+    assert reason == (
+        "生成回复阶段：Agent 执行进程未成功完成，因此本轮没有得到可验证结果；"
+        "未执行外部操作。"
+    )
+    assert "consumer:" not in reason
+    assert "。；" not in reason
 
 
 def test_render_attempt_detail_suppresses_quality_warnings_for_skipped_attempts(
@@ -6084,8 +6274,33 @@ def test_render_attempt_list_uses_failed_action_pill_color(tmp_path: Path):
 
 
 def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Path):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-actionable",
+        conversation_title="HR",
+        trigger_message_id="msg-actionable",
+        trigger_sender="Mina",
+        trigger_text="Please review this.",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="Current task did not complete",
+        send_status="failed",
+    )
+
+    html = render_attempt_list(store, include_chart=False)
+
+    assert "状态：</strong>需要你处理" in html
+    assert "原因：</strong>Current task did not complete" in html
+    assert "外部副作用：</strong>未执行任何外部动作" in html
+    assert f'action="/attempts/{attempt_id}/rerun?return_to=/history"' in html
+    assert ">重试当前任务</button>" in html
+    assert ">暂不处理</button>" in html
+    assert ">人工处理</a>" in html
+    assert ">技术详情</a>" in html
+    assert "你需要做什么：</strong>请选择一种处理方式" in html
+    assert "重试会沿用同一任务，不会创建新的业务事项" in html
+    assert '<span class="attempt-label">答</span>' not in html
+    assert '<span class="attempt-label">结果</span>' not in html
 
 
 def test_history_failed_attempts_do_not_hide_each_other(tmp_path: Path):
@@ -6250,8 +6465,27 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
 def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
     tmp_path: Path,
 ):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-detail-attention",
+        conversation_title="Operations",
+        trigger_message_id="msg-detail-attention",
+        trigger_sender="Mina",
+        trigger_text="Please complete this task.",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="Current task did not complete",
+        send_status="failed",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "事项：</strong>Please complete this task." in html
+    assert "需要你决策：</strong>否" in html
+    assert "状态：</strong>需要你处理" in html
+    assert "原因：</strong>Current task did not complete" in html
+    assert "外部副作用：</strong>未执行任何外部动作" in html
 
 
 def test_retrying_meeting_shows_persisted_plan_without_manager_actions(
@@ -6428,8 +6662,43 @@ def test_confirmed_not_sent_follow_up_has_inline_actions_on_same_draft(
 def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     tmp_path: Path,
 ):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-recovered",
+        conversation_title="Recovery",
+        single_chat=False,
+        trigger_message_id="msg-recovered",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Recover this reply.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    payload = build_worker_status_payload(store)
+    reply_queue = next(
+        queue for queue in payload["queues"] if queue["name"] == "Reply attempts"
+    )
+    html = render_attempt_list(store)
+
+    assert reply_queue["failed"] == 0
+    assert reply_queue["counts"]["recovered"] == 1
+    assert all(row["category"] != "Reply" for row in payload["attention_rows"])
+    assert 'class="pill status-action action-state-recovered">↻ Recovered</span>' in html
+    assert 'class="pill status-action action-state-failed">💬 Failed</span>' not in html
 
 
 def test_runtime_route_failure_detail_shows_later_task_recovery(tmp_path: Path):
@@ -7794,20 +8063,138 @@ def test_history_human_decision_accepts_failed_attempt_and_redirects_to_history(
 
 
 def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-unknown-decision",
+        conversation_title="Operations",
+        single_chat=False,
+        trigger_message_id="msg-unknown-decision",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please decide.",
+        trigger_message_json="{}",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    run = _claim_audit_run(store, task).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker",
+    )
+    source_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=run.id,
+        task_status="failed",
+        task_error="effect completion unknown",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="effect completion unknown",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="effect completion unknown",
+        send_status="failed",
+        send_error="effect completion unknown",
+        channel="dingtalk",
+    )
+
+    status, _, _ = handle_needs_human_decision_post(
+        store,
+        source_id,
+        "instruction=暂不处理".encode(),
+        return_to="/",
+    )
+
+    assert status == 409
+    assert store.get_reply_attempt(source_id).send_status == "failed"
 
 
 def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: Path):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-07-29 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="请处理",
+    )
+    task = store.claim_reply_tasks(1)[0]
+    run = _claim_audit_run(store, task).run
+    store.fail_agent_run(run.id, {"code": "unknown"}, owner="worker")
+    store.claim_unknown_agent_run(run.id, owner="reconciler")
+    store.defer_unknown_agent_run_reconciliation(
+        run.id,
+        {"code": "needs_human", "retryable": False},
+        owner="reconciler",
+        expected_execution_generation=task.execution_generation,
+        next_attempt_at="",
+        suspended=True,
+    )
+    client = TestClient(
+        create_audit_app(store.path),
+        client=("127.0.0.1", 50000),
+        headers={"Host": "127.0.0.1:8765"},
+    )
+
+    response = client.post(
+        f"/agent-runs/{run.id}/resolution",
+        json={
+            "execution_generation": task.execution_generation,
+            "resolution": "confirmed_occurred",
+            "reason": "已核对执行回执",
+            "actor": "untrusted-client-value",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["resolution"] == "confirmed_occurred"
+    assert store.get_reply_task(task.id).status == "done"
+    attempt = store.get_reply_attempt(response.json()["attempt_id"])
+    assert attempt is not None
+    assert "untrusted-client-value" not in attempt.audit_summary
 
 
 def test_exhausted_unknown_run_stays_available_for_automatic_readback(
     tmp_path: Path,
 ):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-suspended",
+        conversation_title="Operations",
+        single_chat=False,
+        trigger_message_id="msg-suspended",
+        trigger_create_time="2026-08-17 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="请处理并确认结果。",
+        trigger_message_json="{}",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    run = _claim_audit_run(store, task).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
+        owner="worker",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set reconciliation_event_count=? where id=?",
+            (MAX_RECONCILIATION_EVENTS, run.id),
+        )
+
+    assert store.suspend_exhausted_unknown_agent_runs() == 0
+    assert store.get_latest_reply_attempt_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    ) is None
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+    assert store.get_reply_task(task.id).status == "processing"
 
 
 def test_agent_run_resolution_handler_rejects_free_text_without_enum(tmp_path: Path):
@@ -7949,8 +8336,46 @@ def test_audit_mutation_accepts_loopback_origin(tmp_path: Path, monkeypatch):
 
 
 def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "audit.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-07-29 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="请处理",
+    )
+    task = store.claim_reply_tasks(1)[0]
+    run = _claim_audit_run(store, task).run
+    store.fail_agent_run(run.id, {"code": "unknown"}, owner="worker")
+    store.claim_unknown_agent_run(run.id, owner="reconciler")
+    store.defer_unknown_agent_run_reconciliation(
+        run.id,
+        {"code": "needs_human", "retryable": False},
+        owner="reconciler",
+        expected_execution_generation=task.execution_generation,
+        next_attempt_at="",
+        suspended=True,
+    )
+    app = create_audit_app(db_path=store.path)
+
+    response = TestClient(
+        app,
+        client=("127.0.0.1", 50000),
+        headers={"Host": "127.0.0.1:8765"},
+    ).post(
+        f"/agent-runs/{run.id}/resolution",
+        json={
+            "execution_generation": "stale-generation",
+            "resolution": "confirmed_not_occurred",
+            "reason": "operator verified no effect",
+            "actor": "operator@example.com",
+        },
+    )
+
+    assert response.status_code == 409
+    assert store.get_agent_run(run.id).status == "unknown"
 
 
 def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation(
@@ -8293,18 +8718,186 @@ def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
 
 
 def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-choice",
+        conversation_title="管理群",
+        trigger_message_id="msg-choice",
+        trigger_sender="Mina",
+        trigger_text="这个事项请确认。",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="两个管理决策都会改变外部状态。",
+        send_status="needs_human",
+    )
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    run = AgentRun.model_validate(
+        {
+            "id": 1,
+            "reply_task_id": 1,
+            "execution_generation": "initial",
+            "role": "consumer",
+            "proposal_revision": 0,
+            "turn_attempt": 0,
+            "parent_agent_run_id": None,
+            "operation_id": "",
+            "status": "completed",
+            "final_result_json": json.dumps(
+                {
+                    "outcome": "needs_human",
+                    "summary": "需要管理判断。",
+                    "proposal": None,
+                    "decision_options": [
+                        {
+                            "key": "A",
+                            "label": "同意当前方案",
+                            "instruction": "同意已核验方案并发布。",
+                            "consequence": "会执行已审计的外部动作。",
+                        },
+                        {
+                            "key": "B",
+                            "label": "要求补充材料",
+                            "instruction": "要求补充材料并发布。",
+                            "consequence": "当前外部动作不会执行。",
+                        },
+                    ],
+                    "error": {
+                        "code": "decision_required",
+                        "retryable": False,
+                        "authorization_required": False,
+                    },
+                }
+            ),
+            "created_at": "2026-08-11 10:00:00",
+            "updated_at": "2026-08-11 10:00:00",
+        }
+    )
+
+    html = audit_web_module._needs_human_decision_card(attempt, [run])
+
+    assert "A. 同意当前方案" in html
+    assert "B. 要求补充材料" in html
+    assert "会执行已审计的外部动作。" in html
+    assert 'name="instruction" value="同意已核验方案并发布。"' in html
+    assert "这是无法由服务自动消除的管理分歧" in html
+    assert "两个管理决策都会改变外部状态。" not in html
 
 
 def test_oa_manual_rerun_hides_old_human_choices_on_attempt_page(tmp_path: Path):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-oa-rerun",
+        conversation_title="审批待办",
+        trigger_message_id="msg-oa-rerun",
+        trigger_sender="Derek OA",
+        trigger_text=(
+            "审批待办\n"
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+        ),
+        action="oa_approval",
+        sensitivity_kind="general",
+        audit_summary="旧审计曾要求选择同意或拒绝。",
+        send_status="needs_human",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_url=(
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+        ),
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="live_evidence_conflict",
+    )
+    store.enqueue_manual_rerun_reply_task(
+        conversation_id="cid-oa-rerun",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id="msg-oa-rerun",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办",
+        trigger_message_json="{}",
+        oa_url=(
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+        ),
+        attempt_id=attempt_id,
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "正在按钉钉 OA 审批技能重新读取当前审批" in html
+    assert "需要你的判断" not in html
+    assert "需要你决策：</strong>否" in html
 
 
 def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
-    """Retired reconciliation behavior is represented as ordinary current projection/history."""
-    assert True
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-audit-choice",
+        conversation_title="管理群",
+        trigger_message_id="msg-audit-choice",
+        trigger_sender="Mina",
+        trigger_text="这个执行冲突请确认。",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_summary="实时状态与此前回执冲突，需要管理判断。",
+        send_status="needs_human",
+    )
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    run = AgentRun.model_validate(
+        {
+            "id": 2,
+            "reply_task_id": 1,
+            "execution_generation": "initial",
+            "role": "audit",
+            "proposal_revision": 0,
+            "turn_attempt": 0,
+            "parent_agent_run_id": 1,
+            "operation_id": "op-1",
+            "status": "completed",
+            "final_result_json": json.dumps(
+                {
+                    "outcome": "needs_human",
+                    "summary": "实时状态与此前回执冲突，需要管理判断。",
+                    "proposal_revision": 0,
+                    "side_effect_state": "none",
+                    "feedback": None,
+                    "external_result": None,
+                    "reconciliation": [],
+                    "decision_options": [
+                        {
+                            "key": "A",
+                            "label": "恢复到已确认位置",
+                            "instruction": "把材料恢复到此前已确认的位置。",
+                            "consequence": "会执行一次经过审计的位置调整。",
+                        },
+                        {
+                            "key": "B",
+                            "label": "保持当前状态",
+                            "instruction": "保持当前状态并结束本事项。",
+                            "consequence": "不会执行新的外部动作。",
+                        },
+                    ],
+                    "error": {
+                        "code": "live_state_conflict",
+                        "retryable": False,
+                        "authorization_required": False,
+                    },
+                }
+            ),
+            "created_at": "2026-08-18 10:00:00",
+            "updated_at": "2026-08-18 10:00:00",
+        }
+    )
+
+    html = audit_web_module._needs_human_decision_card(attempt, [run])
+
+    assert "1. 恢复到已确认位置" in html
+    assert "2. 保持当前状态" in html
+    assert "不会执行新的外部动作。" in html
 
 
 def test_needs_human_detail_prefers_options_persisted_on_actionable_attempt(
