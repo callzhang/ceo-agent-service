@@ -2936,27 +2936,22 @@ def test_provider_event_identity_is_opaque_to_application(tmp_path):
 
 
 
-def test_effect_event_operation_id_must_match_audit_run(tmp_path):
+def test_provider_operation_id_is_persisted_without_application_rewrite(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_audit(store, task)
 
-    with pytest.raises(ValueError, match="effect operation identity mismatch"):
-        store.append_agent_run_event(
-            run.id,
-            {
-                "type": "item.started",
-                "item": {
-                    "type": "mcp_tool_call",
-                    "id": "write-1",
-                    "metadata": {
-                        "effect": "effectful",
-                        "operation_id": "operation-other",
-                    },
-                },
-            },
-            owner="audit",
-        )
+    persisted = store.append_agent_run_event(
+        run.id,
+        {
+            "type": "item.started",
+            "item": {"type": "mcp_tool_call", "id": "write-1", "metadata": {"effect": "effectful", "operation_id": "operation-other"}},
+        },
+        owner="audit",
+    )
+    refreshed = store.get_agent_run(run.id)
+    assert refreshed is not None
+    assert refreshed.tool_events[-1]["item"]["metadata"]["operation_id"] == "operation-other"
 
 
 def test_failed_effect_closes_started_identity_without_confirmation(tmp_path):
