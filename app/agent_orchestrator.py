@@ -36,7 +36,9 @@ def _bounded_fact_finding_feedback(
         "询问", "确认", "调研", "核实", "fact-finding", "fact finding", "inquir", "gather"
     )
     boundary_markers = (
-        "不构成采购", "不构成预算", "不构成合作", "不得下单", "不得付款",
+        "不构成采购", "不构成预算", "不构成合作", "不代表公司作出采购",
+        "不代表公司作出预算", "不代表公司作出合作", "不作出采购",
+        "不作出预算", "不作出合作", "不得下单", "不得付款",
         "no purchase", "no budget", "no partnership", "without.*commit",
     )
     for option in result.decision_options:
