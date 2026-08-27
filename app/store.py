@@ -5717,6 +5717,50 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def recover_stale_runtime_attempts(
+        self,
+        *,
+        stale_after_seconds: int,
+        now: str | datetime | None = None,
+    ) -> int:
+        """Close runtime attempts that can no longer be active.
+
+        A runtime attempt is an execution record, not a business result.  Once
+        its lease has expired, it has no live owner; an attempt whose parent
+        run is already terminal is stale for the same reason.  Closing these
+        records keeps startup and monitoring state truthful without trying to
+        infer or replay any provider action.
+        """
+        if stale_after_seconds <= 0:
+            raise ValueError("stale_after_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
+            stale_before = (
+                now_value - timedelta(seconds=stale_after_seconds)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            cursor = db.execute(
+                """
+                update agent_runtime_attempts as attempt
+                set status='failed', failure_class='process',
+                    failure_code='runtime_lease_expired', failover_permitted=1,
+                    lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
+                where attempt.status in ('starting', 'running')
+                  and (
+                    (attempt.lease_expires_at!='' and attempt.lease_expires_at<=?)
+                    or (attempt.lease_expires_at='' and attempt.updated_at<=?)
+                    or (
+                      attempt.agent_run_id is not null
+                      and exists (
+                        select 1 from agent_runs parent
+                        where parent.id=attempt.agent_run_id
+                          and parent.status in ('completed', 'failed')
+                      )
+                    )
+                  )
+                """,
+                (now_text, now_text, now_text, stale_before),
+            )
+            return cursor.rowcount
+
     def set_agent_runtime_attempt_session(
         self,
         attempt_id: int,

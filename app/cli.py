@@ -2944,9 +2944,17 @@ def _recover_processing_work_summary_inputs_on_service_start(
 ) -> int:
     store = AutoReplyStore(settings.db_path)
     recovered_runs = store.recover_orphaned_task_agent_runs()
+    recovered_runtime_attempts = store.recover_stale_runtime_attempts(
+        stale_after_seconds=_work_summary_processing_stale_seconds(settings),
+    )
     recovered_attempts = store.recover_expired_terminal_task_runtime_attempts()
     recovered_inputs = store.reset_processing_work_summary_inputs()
-    return recovered_runs + recovered_attempts + len(recovered_inputs)
+    return (
+        recovered_runs
+        + recovered_runtime_attempts
+        + recovered_attempts
+        + len(recovered_inputs)
+    )
 
 
 def _normalize_user_rejected_wechat_deliveries_on_service_start(

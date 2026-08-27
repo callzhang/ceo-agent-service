@@ -11174,6 +11174,63 @@ def test_terminalize_exhausted_pending_reply_tasks_closes_restart_retry_loop(
     assert updated.error.endswith("retry_deadline_exhausted")
 
 
+def test_recover_stale_runtime_attempts_closes_terminal_parent_and_expired_lease(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "stale-runtime-attempts.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="stale-runtime-conversation",
+        conversation_title="Operations",
+        single_chat=False,
+        trigger_message_id="stale-runtime-message",
+        trigger_create_time="2026-08-27 05:00:00",
+        trigger_sender="Derek",
+        trigger_text="stale runtime test",
+        trigger_message_json="{}",
+    )
+    task = store.get_reply_task_for_message(
+        "stale-runtime-conversation", "stale-runtime-message"
+    )
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            "insert into agent_runs (reply_task_id, execution_generation, role, status) "
+            "values (?, 'generation', 'consumer', 'completed')",
+            (task.id,),
+        )
+        parent_id = int(db.execute("select last_insert_rowid()").fetchone()[0])
+        db.execute(
+            "insert into agent_runtime_attempts "
+            "(agent_run_id, workload_kind, workload_key, attempt_number, route_name, "
+            "runtime_kind, credential_mode, model, status, lease_expires_at, updated_at) "
+            "values (?, 'agent_run', ?, 1, 'codex_oauth', 'codex_cli', 'oauth', 'model', "
+            "'running', '', '2020-01-01 00:00:00')",
+            (parent_id, str(parent_id)),
+        )
+        db.execute(
+            "insert into agent_runtime_attempts "
+            "(workload_kind, workload_key, attempt_number, route_name, runtime_kind, "
+            "credential_mode, model, status, lease_owner, lease_expires_at) "
+            "values ('meeting', 'stale-meeting', 1, 'codex_oauth', 'codex_cli', "
+            "'oauth', 'model', 'running', 'stale-owner', '2020-01-01 00:00:00')"
+        )
+
+    closed = store.recover_stale_runtime_attempts(
+        stale_after_seconds=60,
+        now="2026-08-27 06:00:00",
+    )
+
+    assert closed == 2
+    with store._connect() as db:
+        rows = db.execute(
+            "select status, failure_code from agent_runtime_attempts order by id"
+        ).fetchall()
+    assert [(row["status"], row["failure_code"]) for row in rows] == [
+        ("failed", "runtime_lease_expired"),
+        ("failed", "runtime_lease_expired"),
+    ]
+
+
 def test_current_schema_reopens_and_adds_agent_run_recovery_index(
     tmp_path: Path,
 ):
