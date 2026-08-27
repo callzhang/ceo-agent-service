@@ -489,6 +489,28 @@ class AgentOrchestrator:
                     previous_result.feedback,
                 )
             consumer_state = self._consumer_state(task, consumer, revision)
+            # A route/process failure can leave a durable proposal from an
+            # earlier Consumer run in the same revision. Reuse that proposal
+            # and continue with Audit instead of regenerating Consumer output.
+            if (
+                isinstance(consumer_state, ConsumerAgentResult)
+                and consumer_state.outcome is ConsumerOutcome.FAILED
+                and consumer_state.error.code
+                in {"runtime_route_unavailable", "codex_process_failed", "service_restart_before_effect"}
+            ):
+                prior = [
+                    run for run in consumer_turns[:-1]
+                    if run.status == "completed"
+                ]
+                for candidate in reversed(prior):
+                    candidate_state = self._consumer_state(task, candidate, revision)
+                    if (
+                        isinstance(candidate_state, ConsumerAgentResult)
+                        and candidate_state.proposal is not None
+                    ):
+                        consumer = candidate
+                        consumer_state = candidate_state
+                        break
             if not isinstance(consumer_state, ConsumerAgentResult):
                 return consumer_state
             if consumer_state.outcome is ConsumerOutcome.NO_ACTION:
