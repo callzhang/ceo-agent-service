@@ -129,7 +129,8 @@ rule, observation, and requested_revision fields when Consumer must regenerate
 its result. Return executed, needs_human, or failed for the other terminal
 outcomes. Do not create provider-specific policy, receipt, readback, or recovery
 states in the application result. external_result must
-contain exactly its typed fields. Legacy revision_required input is normalized
+contain exactly its typed fields: operation_id, verification_summary, and
+live_result_reference. Legacy revision_required input is normalized
 to the formal feedback_provided output.
 
 Treat a bounded fact-finding inquiry as executable when it only gathers facts,
