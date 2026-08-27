@@ -108,13 +108,9 @@ class AuditAgentRunner:
             required.add("image_input")
         if recovery_phase != "reconcile":
             required.add("mcp:agent_cli:reviewed_write")
-        # Reconciliation answers only whether an already-unknown effect
-        # happened.  It must be able to run with persisted operation context
-        # even when an old Consumer Skill receipt has since changed.  The
-        # recovery command remains strictly read-only.
-        if recovery_phase != "reconcile":
-            for receipt in context.consumer_skills:
-                required.add(f"reviewed_skill:{receipt.name}:{receipt.sha256}")
+        # Skill loading is an Agent concern.  Audit consumes the typed result
+        # and must not require a receipt proving which Skill or command was
+        # used to produce it.
         return frozenset(required)
 
     def run(
@@ -142,14 +138,6 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        if skill_failure := self._skill_receipt_gate(
-            task,
-            context,
-            run=claim.run,
-            recovery_phase="",
-            allow_missing_receipts=frozen_delivery_retry,
-        ):
-            return skill_failure
         recipient_type_mismatches = _typed_direct_recipient_mismatches(context)
         if recipient_type_mismatches and not frozen_delivery_retry:
             return self._return_invalid_candidate(
@@ -924,11 +912,8 @@ class AuditAgentRunner:
             },
             allow_effectful_tools=(not self.dry_run and recovery_phase != "reconcile"),
             image_paths=[Path(path) for path in context.task.image_paths],
-            required_skill_receipts=(
-                ()
-                if recovery_phase == "reconcile" or frozen_delivery_retry
-                else context.consumer_skills
-            ),
+            # Skill provenance is not an application-layer Audit gate.
+            required_skill_receipts=(),
             required_capabilities=self._required_capabilities(
                 context,
                 recovery_phase=recovery_phase,
