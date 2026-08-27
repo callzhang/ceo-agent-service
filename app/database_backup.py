@@ -9,6 +9,24 @@ BACKUP_DIRECTORY_NAME = "backups"
 BACKUP_CHECK_INTERVAL_SECONDS = 60 * 60
 
 
+def create_database_backup(db_path: Path, destination: Path) -> Path:
+    """Create and integrity-check a consistent SQLite backup atomically."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp")
+    try:
+        with sqlite3.connect(db_path) as source, sqlite3.connect(temporary) as target:
+            source.execute("pragma busy_timeout = 30000")
+            source.backup(target)
+            target.execute("pragma journal_mode = delete")
+            integrity = target.execute("pragma integrity_check").fetchone()
+            if integrity is None or integrity[0] != "ok":
+                raise RuntimeError(f"database backup integrity check failed: {integrity}")
+        os.replace(temporary, destination)
+        return destination
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def backup_database_if_due(
     db_path: Path,
     *,
@@ -26,18 +44,7 @@ def backup_database_if_due(
         )
         return None
 
-    temporary = backup_dir / f".{destination.name}.{uuid4().hex}.tmp"
-    try:
-        with sqlite3.connect(db_path) as source, sqlite3.connect(temporary) as target:
-            source.execute("pragma busy_timeout = 30000")
-            source.backup(target)
-            target.execute("pragma journal_mode = delete")
-            integrity = target.execute("pragma integrity_check").fetchone()
-            if integrity is None or integrity[0] != "ok":
-                raise RuntimeError(f"database backup integrity check failed: {integrity}")
-        os.replace(temporary, destination)
-    finally:
-        temporary.unlink(missing_ok=True)
+    create_database_backup(db_path, destination)
 
     prune_database_backups(
         backup_dir,
