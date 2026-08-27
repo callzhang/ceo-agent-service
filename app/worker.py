@@ -1531,6 +1531,12 @@ class DingTalkAutoReplyWorker:
         self._recover_due_unknown_agent_reply_tasks(limit=limit)
         self.store.suspend_exhausted_unknown_agent_runs()
         self._recover_stale_agent_reply_tasks()
+        # Startup recovery can requeue effect-free work.  Bound repeated
+        # restart/retry loops so a task cannot remain pending indefinitely.
+        self.store.terminalize_exhausted_pending_reply_tasks(
+            max_attempts=self.max_task_attempts,
+            limit=limit,
+        )
         for channel in ("dingtalk", "wechat"):
             recover_native_codex_auth_failures(self.store, channel=channel)
             self.store.recover_failed_effect_free_consumer_tasks(channel=channel)

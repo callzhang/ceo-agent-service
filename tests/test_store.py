@@ -11143,6 +11143,37 @@ def test_current_schema_reopens_and_repairs_old_runtime_attempt_execution_shape(
     assert reopened._schema_is_current() is True
 
 
+def test_terminalize_exhausted_pending_reply_tasks_closes_restart_retry_loop(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "retry-deadline.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-retry-deadline",
+        conversation_title="Operations",
+        single_chat=False,
+        trigger_message_id="msg-retry-deadline",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please handle.",
+        trigger_message_json="{}",
+    )
+    task = store.get_reply_task_for_message("cid-retry-deadline", "msg-retry-deadline")
+    assert task is not None
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='pending', attempts=3, error='consumer_retry_exhausted' where id=?",
+            (task.id,),
+        )
+
+    closed = store.terminalize_exhausted_pending_reply_tasks(max_attempts=3)
+
+    assert closed == [task.id]
+    updated = store.get_reply_task(task.id)
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.error.endswith("retry_deadline_exhausted")
+
+
 def test_current_schema_reopens_and_adds_agent_run_recovery_index(
     tmp_path: Path,
 ):

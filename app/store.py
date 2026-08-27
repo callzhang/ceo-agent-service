@@ -9667,6 +9667,50 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
+    def terminalize_exhausted_pending_reply_tasks(
+        self,
+        *,
+        max_attempts: int,
+        limit: int = 100,
+    ) -> list[int]:
+        """Close retry-loop sentinels once their bounded budget is exhausted.
+
+        Startup recovery intentionally requeues effect-free work, but a service
+        that repeatedly restarts must not leave those rows pending forever.
+        Only known retry-exhaustion/restart markers are terminalized; ordinary
+        provider waits and user-actionable tasks remain eligible.
+        """
+        if max_attempts <= 0 or limit <= 0:
+            return []
+        markers = (
+            "service_restart_%",
+            "consumer_retry_exhausted",
+            "audit_retry_exhausted",
+        )
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select id
+                from reply_tasks
+                where status='pending' and attempts>=?
+                  and (error like ? or error=? or error=?)
+                order by id
+                limit ?
+                """,
+                (max_attempts, markers[0], markers[1], markers[2], limit),
+            ).fetchall()
+            ids = [int(row["id"]) for row in rows]
+            if not ids:
+                return []
+            placeholders = ",".join("?" for _ in ids)
+            db.execute(
+                f"update reply_tasks set status='failed', available_at='', "
+                f"locked_at=null, error=error || '; retry_deadline_exhausted', "
+                f"updated_at=current_timestamp where status='pending' and id in ({placeholders})",
+                ids,
+            )
+            return ids
+
     def requeue_reply_task(
         self,
         task_id: int,

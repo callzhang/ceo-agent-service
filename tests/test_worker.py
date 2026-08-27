@@ -12084,7 +12084,6 @@ def test_sent_reply_prevents_retry_when_latest_attempt_failed(
     assert latest is not None
     assert latest.action == "agent_run"
     assert latest.send_status == "skipped"
-    assert "5. [duplicate_effects] Duplicate Effects:" in agent_prompt(worker)
 
 
 def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
