@@ -102,7 +102,9 @@ feedback from Audit to produce a replacement result when requested.
 A bounded fact-finding inquiry is autonomous when it only gathers facts, states
 the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
 it does not authorize a quote, order, agreement, or spend. Do not escalate only because the recipient is external;
-preserve the stated boundary and let Audit verify it.
+preserve the stated boundary and let Audit verify it. If one of the available
+decision options already states this bounded path, convert that option into a
+proposal instead of returning needs_human.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
 You are Audit Agent B. Review the supplied candidate against the task context

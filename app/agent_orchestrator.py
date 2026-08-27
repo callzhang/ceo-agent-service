@@ -26,6 +26,43 @@ MAX_TURNS_PER_PROCESS = 32
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
 
 
+def _bounded_fact_finding_feedback(
+    result: ConsumerAgentResult,
+) -> AuditFeedback | None:
+    """Ask Consumer to materialize its own safe fact-finding option as a proposal."""
+    if result.outcome is not ConsumerOutcome.NEEDS_HUMAN:
+        return None
+    fact_markers = (
+        "询问", "确认", "调研", "核实", "fact-finding", "fact finding", "inquir", "gather"
+    )
+    boundary_markers = (
+        "不构成采购", "不构成预算", "不构成合作", "不得下单", "不得付款",
+        "no purchase", "no budget", "no partnership", "without.*commit",
+    )
+    for option in result.decision_options:
+        text = " ".join((option.label, option.instruction, option.consequence)).lower()
+        if any(marker.lower() in text for marker in fact_markers) and any(
+            marker.lower() in text for marker in boundary_markers
+        ):
+            return AuditFeedback(
+                rule=(
+                    "A decision option already defines a bounded fact-finding inquiry "
+                    "with no purchase, budget, or partnership commitment."
+                ),
+                observation=(
+                    "The candidate's own option states the facts to gather and the "
+                    "prohibition on committing or spending."
+                ),
+                requested_revision=(
+                    "Regenerate the same task as an executable proposal for that "
+                    "bounded inquiry. Put the risk boundary in the outgoing message "
+                    "itself; do not ask Derek to choose between options and do not "
+                    "authorize a quote, order, agreement, or spend."
+                ),
+            )
+    return None
+
+
 class ConsumerRunner(Protocol):
     def run(
         self,
@@ -452,6 +489,9 @@ class AgentOrchestrator:
             if consumer_state.outcome is ConsumerOutcome.NO_ACTION:
                 return _consumer_terminal("no_action", consumer, consumer_state, revision)
             if consumer_state.outcome is ConsumerOutcome.NEEDS_HUMAN:
+                bounded_feedback = _bounded_fact_finding_feedback(consumer_state)
+                if bounded_feedback is not None:
+                    return _NextConsumer(revision, None, bounded_feedback)
                 return _consumer_terminal(
                     "needs_human", consumer, consumer_state, revision
                 )

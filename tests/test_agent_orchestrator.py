@@ -66,6 +66,35 @@ def _consumer_result(outcome: str, label: str = "candidate") -> ConsumerAgentRes
     )
 
 
+def _bounded_needs_human_result() -> ConsumerAgentResult:
+    return ConsumerAgentResult.model_validate(
+        {
+            "outcome": "needs_human",
+            "summary": "possible external inquiry",
+            "proposal": None,
+            "decision_options": [
+                {
+                    "key": "fact_finding",
+                    "label": "仅作事实调研",
+                    "instruction": "仅询问字段和价格，不构成采购、预算或合作承诺，不得下单或付款。",
+                    "consequence": "补齐事实后再决定。",
+                },
+                {
+                    "key": "stop",
+                    "label": "暂停",
+                    "instruction": "暂不联系。",
+                    "consequence": "等待后续确认。",
+                },
+            ],
+            "error": {
+                "code": "management_decision_required",
+                "retryable": False,
+                "authorization_required": True,
+            },
+        }
+    )
+
+
 def _audit_result(
     outcome: str,
     revision: int,
@@ -1227,6 +1256,27 @@ def test_normal_audit_recovery_ambiguous_result_is_retried_without_human_escalat
 
     assert result.status == "executed"
     assert len(audit.calls) == 2
+
+
+def test_bounded_fact_finding_option_is_regenerated_without_human_escalation(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(
+        store,
+        _bounded_needs_human_result(),
+        _consumer_result("proposal", "candidate-0"),
+    )
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=consumer,
+            audit=ScriptedAudit(store, _audit_result("executed", 0)),
+        ),
+        task,
+    )
+
+    assert result.status == "executed"
+    assert len(consumer.calls) == 2
 
 
 def test_invalid_audit_result_with_unknown_effect_recovers_instead_of_failing_task(store):
