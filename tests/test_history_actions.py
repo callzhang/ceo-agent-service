@@ -120,19 +120,22 @@ def test_internal_retry_code_is_rendered_as_readable_failure_reason():
     assert "consumer_retry_exhausted" not in state.reason
 
 
-def test_legacy_image_error_fails_loudly_instead_of_using_compatibility_mapping():
+def test_historical_image_error_remains_recoverable():
     attempt = _attempt(send_error="image_dependency_unavailable")
 
-    with pytest.raises(RuntimeError, match="unsupported legacy error code"):
-        reply_history_attention(
-            attempt,
-            task=_task(status="failed", attempts=1),
-            decision_options=(),
-            side_effect_state="none",
-        )
+    state = reply_history_attention(
+        attempt,
+        task=_task(status="pending", attempts=1, available_at="2026-08-11 05:02:00"),
+        decision_options=(),
+        side_effect_state="none",
+    )
+
+    assert state is not None
+    assert state.kind == "automatic_recovery"
+    assert state.reason == "image_dependency_unavailable"
 
 
-def test_legacy_oa_conflict_fails_loudly_instead_of_using_compatibility_mapping():
+def test_historical_oa_conflict_remains_recoverable():
     attempt = _attempt(
         action="oa_approval",
         oa_process_instance_id="proc-1",
@@ -147,13 +150,18 @@ def test_legacy_oa_conflict_fails_loudly_instead_of_using_compatibility_mapping(
         available_at="2026-08-11 05:02:00",
     )
 
-    with pytest.raises(RuntimeError, match="unsupported legacy error code"):
-        reply_history_attention(
-            attempt,
-            task=task,
-            decision_options=(),
-            side_effect_state="none",
-        )
+    state = reply_history_attention(
+        attempt,
+        task=task,
+        decision_options=(),
+        side_effect_state="none",
+    )
+
+    assert state is not None
+    assert state.kind == "automatic_recovery"
+    assert state.reason == (
+        "DWS 与审计读取结果存在冲突，需要 Derek 选择同意或拒绝。"
+    )
 
 
 def test_manual_oa_rerun_replaces_old_human_choice_with_automatic_recovery():

@@ -9,11 +9,6 @@ from app.store import ReplyAttempt, ReplyTask
 from app.worker import MAX_REPLY_TASK_ATTEMPTS
 
 
-_LEGACY_ERROR_CODES = frozenset({
-    "oa_live_evidence_conflict",
-    "live_evidence_conflict",
-})
-
 _READABLE_FAILURE_REASONS = {
     "consumer_retry_exhausted": (
         "Agent 生成回复连续重试后仍未得到可验证结果，已达到本轮重试上限。"
@@ -66,18 +61,17 @@ def reply_history_attention(
     status = attempt.send_status.strip().lower()
     persisted_code = attempt.send_error.strip()
     reason = ""
-    if persisted_code not in _LEGACY_ERROR_CODES:
-        reason = (
-            persisted_code
-            if persisted_code in _READABLE_FAILURE_REASONS
-            else (
-                attempt.audit_summary
-                or attempt.codex_reason
-                or persisted_code
-                or "处理未完成"
-            )
-        ).strip()
-        reason = _readable_failure_reason(reason)
+    reason = (
+        persisted_code
+        if persisted_code in _READABLE_FAILURE_REASONS
+        else (
+            attempt.audit_summary
+            or attempt.codex_reason
+            or persisted_code
+            or "处理未完成"
+        )
+    ).strip()
+    reason = _readable_failure_reason(reason)
     external_effect = external_effects[side_effect_state]
 
     if (
@@ -100,9 +94,6 @@ def reply_history_attention(
             retry_at=task.available_at,
             actions=(HistoryAction("details", "技术详情"),),
         )
-
-    if persisted_code in _LEGACY_ERROR_CODES:
-        raise RuntimeError(f"unsupported legacy error code: {persisted_code}")
 
     if (
         status == "failed"
@@ -299,6 +290,4 @@ def _json_dict(value: str) -> dict[str, object]:
 
 def _readable_failure_reason(reason: str) -> str:
     normalized = reason.strip()
-    if normalized in _LEGACY_ERROR_CODES:
-        raise RuntimeError(f"unsupported legacy error code: {normalized}")
     return _READABLE_FAILURE_REASONS.get(normalized, normalized)
