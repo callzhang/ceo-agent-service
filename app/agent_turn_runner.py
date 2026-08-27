@@ -46,6 +46,7 @@ from app.agent_skill_usage import (
 from app.claude_runtime_adapter import (
     ClaudeEventNormalizer,
     ClaudeRuntimeAdapter,
+    ClaudeCommandPolicy,
     require_claude_session_id,
 )
 from app.codex_capacity import (
@@ -667,6 +668,9 @@ def _claude_input_contract(*, prompt: str, developer_instructions: str) -> str:
 
 
 class AgentTurnProcess(Generic[ResultT]):
+    def _claude_provider_policy(self) -> ClaudeCommandPolicy:
+        """Use the provider default; application Audit does not review tools."""
+        return ClaudeCommandPolicy.no_tools()
     def __init__(
         self,
         *,
@@ -1092,7 +1096,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         route=route,
                         session_id=route_session_id,
                         max_turns=1,
-                        policy=self._claude_provider_policy(),
                     )
                     claude_normalizer = claude_adapter.new_event_normalizer(
                         expected_session_id=route_session_id,
@@ -1446,8 +1449,8 @@ class AgentTurnProcess(Generic[ResultT]):
         *,
         role: AgentRole,
         requested_session_id: str | None,
-        recovery_phase: str,
-        conversation_contract_hash: str,
+        recovery_phase: str = "",
+        conversation_contract_hash: str = "",
         force_new_session: bool = False,
     ) -> str | None:
         del recovery_phase
