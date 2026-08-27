@@ -3,7 +3,6 @@ from enum import StrEnum
 from typing import TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
-from pydantic.json_schema import SkipJsonSchema
 
 
 def _strict_agent_error_json_schema(schema: dict[str, object]) -> None:
@@ -16,12 +15,6 @@ def _strict_agent_error_json_schema(schema: dict[str, object]) -> None:
     schema["required"] = list(properties)
 
 
-class SideEffectState(StrEnum):
-    NONE = "none"
-    CONFIRMED = "confirmed"
-    UNKNOWN = "unknown"
-
-
 class AgentError(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -32,17 +25,6 @@ class AgentError(BaseModel):
     code: str = ""
     retryable: bool = False
     authorization_required: bool = False
-    side_effect_state: SkipJsonSchema[SideEffectState] = Field(
-        default=SideEffectState.NONE,
-        exclude=True,
-    )
-
-    @field_validator("side_effect_state", mode="before")
-    @classmethod
-    def accept_json_side_effect_state(cls, value: object) -> object:
-        return SideEffectState(value) if isinstance(value, str) else value
-
-
 class EffectKind(StrEnum):
     READ_ONLY = "read_only"
     EFFECTFUL = "effectful"

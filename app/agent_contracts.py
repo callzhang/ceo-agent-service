@@ -9,7 +9,7 @@ from pydantic import (
     model_validator,
 )
 
-from app.agent_result import AgentError, SideEffectState
+from app.agent_result import AgentError
 
 
 def _consumer_result_json_schema(schema: dict[str, object]) -> None:
@@ -40,7 +40,6 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
             "type": "object",
             "properties": {
                 "outcome": {"const": "executed"},
-                "side_effect_state": {"const": "confirmed"},
                 "feedback": null_value,
                 "external_result": {"type": "object"},
             }
@@ -49,7 +48,6 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
             "type": "object",
             "properties": {
                 "outcome": {"const": "feedback_provided"},
-                "side_effect_state": {"const": "none"},
                 "feedback": {"type": "object"},
                 "external_result": null_value,
             }
@@ -58,7 +56,6 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
             "type": "object",
             "properties": {
                 "outcome": {"const": "failed"},
-                "side_effect_state": {"const": "none"},
                 "feedback": null_value,
                 "external_result": null_value,
             }
@@ -67,7 +64,6 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
             "type": "object",
             "properties": {
                 "outcome": {"const": "needs_human"},
-                "side_effect_state": {"const": "none"},
                 "feedback": null_value,
                 "external_result": null_value,
             }
@@ -76,7 +72,6 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
             "type": "object",
             "properties": {
                 "outcome": {"const": "dry_run"},
-                "side_effect_state": {"const": "none"},
                 "feedback": null_value,
                 "external_result": null_value,
             }
@@ -181,35 +176,10 @@ class ConsumerAgentResult(BaseModel):
 class AuditOutcome(StrEnum):
     EXECUTED = "executed"
     FEEDBACK_PROVIDED = "feedback_provided"
-    # Backward compatible Python alias. New wire and persisted results use
-    # feedback_provided so the outcome describes the action that occurred.
-    REVISION_REQUIRED = "feedback_provided"
     NEEDS_HUMAN = "needs_human"  # legacy wire name; semantically a policy gap
     POLICY_REVIEW = "needs_human"
     DRY_RUN = "dry_run"
     FAILED = "failed"
-    UNKNOWN = "unknown"
-    RECONCILED = "reconciled"
-
-
-class ReconciliationDisposition(StrEnum):
-    PRESENT = "present"
-    ABSENT = "absent"
-    SUPERSEDED = "superseded"
-    AMBIGUOUS = "ambiguous"
-
-
-class AuditReconciliation(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    action_index: int = Field(ge=0)
-    disposition: ReconciliationDisposition
-    read_result_digest: str = Field(min_length=1)
-
-    @field_validator("disposition", mode="before")
-    @classmethod
-    def accept_json_disposition(cls, value: object) -> object:
-        return ReconciliationDisposition(value) if isinstance(value, str) else value
 
 
 class AuditFeedback(BaseModel):
@@ -238,10 +208,8 @@ class AuditAgentResult(BaseModel):
     outcome: AuditOutcome
     summary: str = Field(min_length=1)
     proposal_revision: int = Field(ge=0)
-    side_effect_state: SideEffectState
     feedback: AuditFeedback | None
     external_result: AuditExternalResult | None
-    reconciliation: tuple[AuditReconciliation, ...] = ()
     decision_options: tuple[DecisionOption, ...] = ()
     error: AgentError
 
@@ -252,42 +220,23 @@ class AuditAgentResult(BaseModel):
             value = "feedback_provided"
         return AuditOutcome(value) if isinstance(value, str) else value
 
-    @field_validator("side_effect_state", mode="before")
-    @classmethod
-    def accept_json_side_effect_state(cls, value: object) -> object:
-        return SideEffectState(value) if isinstance(value, str) else value
-
-    @field_validator("reconciliation", "decision_options", mode="before")
+    @field_validator("decision_options", mode="before")
     @classmethod
     def accept_json_arrays(cls, value: object) -> object:
         return tuple(value) if isinstance(value, list) else value
 
     @model_validator(mode="after")
     def validate_outcome_payload(self) -> "AuditAgentResult":
-        indexes = [entry.action_index for entry in self.reconciliation]
-        if len(indexes) != len(set(indexes)):
-            raise ValueError("reconciliation action indexes must be unique")
-        if self.outcome is AuditOutcome.REVISION_REQUIRED:
+        if self.outcome is AuditOutcome.FEEDBACK_PROVIDED:
             if self.feedback is None or self.external_result is not None:
                 raise ValueError("feedback_provided needs feedback and no result")
         elif self.feedback is not None:
             raise ValueError("feedback is only valid for feedback_provided")
         if self.outcome is AuditOutcome.EXECUTED:
-            if (
-                self.external_result is None
-                or self.side_effect_state is not SideEffectState.CONFIRMED
-            ):
-                raise ValueError("executed needs confirmed external result")
+            if self.external_result is None:
+                raise ValueError("executed needs external result")
         elif self.external_result is not None:
             raise ValueError("external result is only valid for executed")
-        if self.outcome in {AuditOutcome.UNKNOWN, AuditOutcome.RECONCILED}:
-            if self.side_effect_state is not SideEffectState.UNKNOWN:
-                raise ValueError(f"{self.outcome.value} requires unknown side effect state")
-        elif self.outcome is not AuditOutcome.EXECUTED:
-            if self.side_effect_state is not SideEffectState.NONE:
-                raise ValueError("non-executed result cannot claim a side effect")
-        if self.reconciliation and self.outcome is not AuditOutcome.RECONCILED:
-            raise ValueError("reconciliation entries are no longer part of the application result")
         if self.outcome is AuditOutcome.NEEDS_HUMAN:
             if not 2 <= len(self.decision_options) <= 4:
                 raise ValueError("needs_human requires two to four decision options")

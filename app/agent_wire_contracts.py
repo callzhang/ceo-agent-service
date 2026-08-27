@@ -13,7 +13,6 @@ from app.agent_contracts import (
     AuditAgentResult,
     AuditExternalResult,
     AuditFeedback,
-    AuditReconciliation,
     ConsumerAgentResult,
     ConsumerProposal,
     DecisionOption,
@@ -107,10 +106,8 @@ class _AuditWireBase(_WireBase):
 
 class _AuditExecutedWire(_AuditWireBase):
     outcome: Literal["executed"]
-    side_effect_state: Literal["confirmed"]
     feedback: None
     external_result: AuditExternalResult
-    reconciliation: list[AuditReconciliation] = Field(max_length=0)
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
@@ -119,19 +116,15 @@ class _AuditFeedbackProvidedWire(_AuditWireBase):
     # at the transport boundary; AuditAgentResult normalizes it to the
     # canonical ``feedback_provided`` outcome.
     outcome: Literal["feedback_provided", "revision_required"]
-    side_effect_state: Literal["none"]
     feedback: AuditFeedback
     external_result: None
-    reconciliation: list[AuditReconciliation] = Field(max_length=0)
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
 class _AuditNeedsHumanWire(_AuditWireBase):
     outcome: Literal["needs_human"]
-    side_effect_state: Literal["none"]
     feedback: None
     external_result: None
-    reconciliation: list[AuditReconciliation] = Field(max_length=0)
     decision_options: list[DecisionOption] = Field(
         min_length=2,
         max_length=4,
@@ -141,37 +134,15 @@ class _AuditNeedsHumanWire(_AuditWireBase):
 
 class _AuditDryRunWire(_AuditWireBase):
     outcome: Literal["dry_run"]
-    side_effect_state: Literal["none"]
     feedback: None
     external_result: None
-    reconciliation: list[AuditReconciliation] = Field(max_length=0)
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
 class _AuditFailedWire(_AuditWireBase):
     outcome: Literal["failed"]
-    side_effect_state: Literal["none"]
     feedback: None
     external_result: None
-    reconciliation: list[AuditReconciliation] = Field(max_length=0)
-    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
-
-
-class _AuditReconciledWire(_AuditWireBase):
-    outcome: Literal["reconciled"]
-    side_effect_state: Literal["unknown"]
-    feedback: None
-    external_result: None
-    reconciliation: list[AuditReconciliation] = Field(default_factory=list)
-    decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
-
-
-class _AuditUnknownWire(_AuditWireBase):
-    outcome: Literal["unknown"]
-    side_effect_state: Literal["unknown"]
-    feedback: None
-    external_result: None
-    reconciliation: list[AuditReconciliation] = Field(default_factory=list, max_length=0)
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=0)
 
 
@@ -181,8 +152,6 @@ AuditWirePayload = Annotated[
     | _AuditNeedsHumanWire
     | _AuditDryRunWire
     | _AuditFailedWire
-    | _AuditReconciledWire
-    | _AuditUnknownWire
     ,
     Field(discriminator="outcome"),
 ]
@@ -203,10 +172,8 @@ class AuditAgentWireResult(RootModel[AuditWirePayload]):
                 "outcome": payload.outcome,
                 "summary": payload.summary,
                 "proposal_revision": payload.proposal_revision,
-                "side_effect_state": payload.side_effect_state,
                 "feedback": payload.feedback,
                 "external_result": payload.external_result,
-                "reconciliation": payload.reconciliation,
                 "decision_options": payload.decision_options,
                 "error": payload.error_payload(),
             }

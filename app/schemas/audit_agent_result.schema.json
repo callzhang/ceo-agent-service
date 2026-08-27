@@ -84,41 +84,13 @@
       "enum": [
         "executed",
         "feedback_provided",
-        "feedback_provided",
         "needs_human",
         "needs_human",
         "dry_run",
-        "failed",
-        "unknown",
-        "reconciled"
+        "failed"
       ],
       "title": "AuditOutcome",
       "type": "string"
-    },
-    "AuditReconciliation": {
-      "additionalProperties": false,
-      "properties": {
-        "action_index": {
-          "minimum": 0,
-          "title": "Action Index",
-          "type": "integer"
-        },
-        "disposition": {
-          "$ref": "#/$defs/ReconciliationDisposition"
-        },
-        "read_result_digest": {
-          "minLength": 1,
-          "title": "Read Result Digest",
-          "type": "string"
-        }
-      },
-      "required": [
-        "action_index",
-        "disposition",
-        "read_result_digest"
-      ],
-      "title": "AuditReconciliation",
-      "type": "object"
     },
     "DecisionOption": {
       "additionalProperties": false,
@@ -154,26 +126,7 @@
       "title": "DecisionOption",
       "type": "object"
     },
-    "JsonValue": {},
-    "ReconciliationDisposition": {
-      "enum": [
-        "present",
-        "absent",
-        "superseded",
-        "ambiguous"
-      ],
-      "title": "ReconciliationDisposition",
-      "type": "string"
-    },
-    "SideEffectState": {
-      "enum": [
-        "none",
-        "confirmed",
-        "unknown"
-      ],
-      "title": "SideEffectState",
-      "type": "string"
-    }
+    "JsonValue": {}
   },
   "additionalProperties": false,
   "anyOf": [
@@ -181,9 +134,6 @@
       "properties": {
         "outcome": {
           "const": "executed"
-        },
-        "side_effect_state": {
-          "const": "confirmed"
         },
         "feedback": {
           "type": "null"
@@ -199,9 +149,6 @@
         "outcome": {
           "const": "feedback_provided"
         },
-        "side_effect_state": {
-          "const": "none"
-        },
         "feedback": {
           "type": "object"
         },
@@ -215,9 +162,6 @@
       "properties": {
         "outcome": {
           "const": "failed"
-        },
-        "side_effect_state": {
-          "const": "none"
         },
         "feedback": {
           "type": "null"
@@ -233,9 +177,6 @@
         "outcome": {
           "const": "needs_human"
         },
-        "side_effect_state": {
-          "const": "none"
-        },
         "feedback": {
           "type": "null"
         },
@@ -249,9 +190,6 @@
       "properties": {
         "outcome": {
           "const": "dry_run"
-        },
-        "side_effect_state": {
-          "const": "none"
         },
         "feedback": {
           "type": "null"
@@ -277,9 +215,6 @@
       "title": "Proposal Revision",
       "type": "integer"
     },
-    "side_effect_state": {
-      "$ref": "#/$defs/SideEffectState"
-    },
     "feedback": {
       "anyOf": [
         {
@@ -300,14 +235,6 @@
         }
       ]
     },
-    "reconciliation": {
-      "default": [],
-      "items": {
-        "$ref": "#/$defs/AuditReconciliation"
-      },
-      "title": "Reconciliation",
-      "type": "array"
-    },
     "decision_options": {
       "default": [],
       "items": {
@@ -324,7 +251,6 @@
     "outcome",
     "summary",
     "proposal_revision",
-    "side_effect_state",
     "feedback",
     "external_result",
     "error"
