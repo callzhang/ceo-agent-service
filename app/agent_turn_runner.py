@@ -1023,6 +1023,8 @@ class AgentTurnProcess(Generic[ResultT]):
                 recovery_started_actions.add(action_index)
             if recovery_phase == "reconcile" and effect == EffectKind.EFFECTFUL.value:
                 raise AgentReadOnlyViolationError("agent_write_forbidden")
+            if self.role is AgentRole.CONSUMER and effect == EffectKind.EFFECTFUL.value:
+                raise AgentReadOnlyViolationError("agent_write_forbidden")
             if recover_unknown:
                 self.store.append_unknown_agent_run_event(
                     run.id, event, owner=self.owner
@@ -2327,7 +2329,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 {"type": "command_execution", "argv": argv}
             )
             if descriptor is None:
-                if read_only and call.tool == "execute_reviewed_read":
+                if call.tool == "execute_reviewed_read":
                     if payload.get("type") != "item.completed":
                         return None
                     failure_code = _agent_cli_tool_error(item.get("result"))
@@ -2346,11 +2348,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
                 if receipt is None:
                     failure_code = _agent_cli_tool_error(item.get("result"))
-                    if (
-                        read_only
-                        and call.tool == "execute_reviewed_read"
-                        and failure_code
-                    ):
+                    if call.tool == "execute_reviewed_read" and failure_code:
                         return _failed_agent_cli_read_event(item, failure_code)
                     raise AgentReadOnlyViolationError(
                         failure_code or "agent_cli_receipt_missing"
