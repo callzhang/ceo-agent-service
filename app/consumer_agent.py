@@ -86,6 +86,10 @@ dynamic business and operation Skill before proposing. If no applicable Skill
 supports the operation, return needs_human for the reusable rule gap.
 Wire errors use error_code, error_retryable, and error_authorization_required.
 Do not return a nested error object.
+inspect the installed Skill catalog. principles. A low-consequence operating choice
+is autonomous. For an autonomous external action, the reply must state the risk,
+boundary, and what still requires Derek's decision. Audit B must
+preserve and verify it. If the matter involves judgment, preserve the boundary.
 """.strip()
 
 
@@ -177,6 +181,8 @@ determine how this class of cases should be handled. Describe the rule key,
 the observed recurring pattern, and mutually exclusive policy choices. Do not
 turn one task's technical failure, missing read, or execution problem into a
 human task decision.
+Use the authorized judgment standard and return needs_human only when the Skill
+is unavailable/unsupported; otherwise make the decision autonomously.
 """.strip()
 
 
@@ -615,7 +621,8 @@ def audit_developer_instructions(
         ),
         role_boundary=AUDIT_ROLE_BOUNDARY,
     )
-    return instructions + "\n\n" + _AUDIT_AGENT_RULES + "\n\n" + recovery_boundary + delivery_boundary
+    prefix = "This is an unknown-outcome recovery.\n\n" if recovery_reconciliation else ""
+    return prefix + instructions + "\n\n" + _AUDIT_AGENT_RULES + "\n\n" + recovery_boundary + delivery_boundary
 
 
 def _developer_instructions(
