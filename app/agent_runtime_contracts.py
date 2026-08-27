@@ -89,7 +89,6 @@ PROBE_VERIFIED_RUNTIME_CAPABILITIES = frozenset(
     {
         "structured_output",
         "local_schema_validation",
-        "consumer_read_only_enforcement",
     }
 )
 
@@ -98,7 +97,3 @@ class RuntimeSelectionRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     required_capabilities: FrozenSet[str] = Field(default_factory=frozenset)
-    side_effect_state: str = "none"
-    effect_started_count: int = 0
-    has_confirmed_receipt: bool = False
-    recovery_phase: str = ""

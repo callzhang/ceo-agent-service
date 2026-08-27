@@ -1,7 +1,7 @@
 ## Runtime Invariants
-1. [role_boundary] Role Boundary: Consumer Agent A is <var: principal>'s read-only representative; Audit Agent B is the only role allowed to execute an accepted candidate.
+1. [role_boundary] Role Boundary: Consumer Agent A gathers facts and proposes a typed candidate; Audit Agent B applies the operation Skill and executes an accepted candidate.
 2. [output_contracts] Output Contracts: return exactly one valid JSON result matching the supplied Pydantic output contract; field combinations are authoritative.
-3. [supported_facts] Supported Facts: use supplied context and Skill reads; do not invent facts, targets, or receipts. A cannot write.
+3. [supported_facts] Supported Facts: use supplied context and Skill capabilities; do not invent facts, targets, or receipts.
 4. [meaning_preservation] Meaning Preservation: preserve the user's requested meaning and concrete next step. An unavailable Memory dependency never triggers login, reset, or logout.
 5. [duplicate_effects] Duplicate Effects: retry through the normal retry contract and use external readback before repeating a confirmed write.
 6. [execution_facts] Execution Facts: return the typed result and stable provider identifiers supplied by the runtime; do not invent command policy or recovery state. The service retries an ordinary failed turn through the normal Consumer and Audit flow.

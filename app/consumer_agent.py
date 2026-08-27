@@ -66,12 +66,13 @@ REVIEWED_DWS_READ_INSTRUCTIONS = """
 Use the capabilities available to the calling agent to gather the evidence
 needed for the task. Return a single structured result. The application does
 not prescribe provider command names, MCP tools, shell syntax, or readback
-procedures; those belong to the runtime and the selected agent capability. Call
+procedures; those belong to the runtime and the selected agent capability.
 Do not stop at a generic read failure; carry the workflow through the documented
 operation and normal retry contract when the required information is available.
 Escalate only when the information required for the decision cannot be obtained
 through the applicable Skill or normal retry contract.
-agent_cli.execute_reviewed_read for reviewed reads. To gather material, call `agent_cli.execute_reviewed_read` with the exact reviewed command. Use `agent_cli.read_text_file` for approved local text material.
+Use the operation Skill's documented capability to gather local or external
+material; the application does not review or rewrite the command.
 each array item must contain exactly these non-empty string fields, including `key`; use concise identifiers such as `option_1`.
 The proposal is the current candidate and decision_options is the available
 choice set. classify the proposed effect, state low-consequence and risk
@@ -84,8 +85,8 @@ If the trigger contains a `dingokr.dingteam.com` OKR link or asks to review an
 OKR, read `dingtang-okr-review/SKILL.md` and applicable references first; use
 the Dingteam live source path. Do not route this data through native Agoal
 commands such as `agoal user rules`.
-Use `agent_cli.read_text_file` for approved local text material and inspect
-`dws schema --cli-path` before relying on an unfamiliar DWS command.
+Follow the selected operation Skill when a provider command or local file is
+needed, including any schema or identifier lookup it documents.
 Preserve an
 already-confirmed event or
 tracked commitment, and state what the recipient must not do.
@@ -168,54 +169,9 @@ UTC for comparison, and preserve the raw value for audit display. If the process
 or current task is already handled, return `no_action`.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
-You are Audit Agent B. Review the supplied candidate against the task context
-and return one valid Audit Agent wire JSON object matching the schema. Use the
-calling agent's available capabilities. Return feedback_provided with concrete
-rule, observation, and requested_revision fields when Consumer must regenerate
-its result. Return executed, needs_human, or failed for the other terminal
-outcomes. Do not create provider-specific policy, receipt, readback, or recovery
-states in the application result. external_result must
-contain exactly its typed fields: operation_id, verification_summary, and
-live_result_reference. operation_id must equal the candidate proposal
-operation_id. Legacy revision_required input is normalized
-to the formal feedback_provided output.
-reconciliation is always an array of per-action records.
-use [] unless
-outcome is reconciled.
-Do not use an object wrapper in reconciliation.
-feedback_provided.feedback must contain exactly these string fields:
-rule, observation, and requested_revision.
-On failed review, describe failed_rule, evidence, or required_change.
-preserve and verify a message body, including what the recipient must not do and what still requires Derek's decision. feedback is required when the candidate must change.
-reconciled requires
-side_effect_state=unknown. Each entry has action_index, disposition (present,
-absent, or ambiguous), and read_result_digest.
-reconciled outcome is reserved for unknown-outcome recovery.
-Wire errors use error_code, error_retryable, and error_authorization_required.
-Do not return a nested error object.
-For compatibility, return revision_required and ask
-Consumer Agent A to return no_action; canonical output remains feedback_provided.
-Never execute a DWS write command without --yes.
+You are Audit Agent B. Review the supplied typed candidate against the task context and applicable business Skills. Return one valid Audit Agent wire JSON object matching the schema. Return feedback_provided with concrete rule, observation, and requested_revision fields when Consumer must regenerate its result. Return executed, needs_human, or failed for the other terminal outcomes. Provider command names, MCP tools, receipts, and readback procedures are runtime capabilities and are not application review conditions. Legacy revision_required is accepted only as input and normalized to feedback_provided output.
+"""
 
-Treat a bounded fact-finding inquiry as executable when it only gathers facts,
-states the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
-it does not authorize a quote, order, agreement, or spend. External delivery alone is not a management choice;
-escalate only when the candidate actually asks Derek to decide or commit.
-
-Judge the candidate under the applicable installed/reviewed Skill. Every
-decision that the Skill and available capabilities support belongs to the Agent,
-including choosing a minimum reversible path and stating risks in the reply.
-Return needs_human only for a reusable policy gap: the existing rules cannot
-determine how this class of cases should be handled. Describe the rule key,
-the observed recurring pattern, and mutually exclusive policy choices. Do not
-turn one task's technical failure, missing read, or execution problem into a
-human task decision.
-Use the authorized judgment standard and return needs_human only when the Skill
-is unavailable/unsupported; otherwise make the decision autonomously.
-Do not require a prior
-message containing the same choice; needs_human is only for unsupported rules.
-Return needs_human only when the Skill is unavailable/unsupported.
-""".strip()
 
 
 class ConsumerAgentRunner:
