@@ -1502,5 +1502,6 @@ def _recovery_prompt(
         "Do not substitute a different target type or broaden the readback scope.\n\n"
         "Do not start with an unbounded read; scope every read to the exact target contract.\n\n"
         "an incomplete window cannot prove absence.\n\n"
+        "If evidence is incomplete, use the ambiguous disposition.\n\n"
         f"{context.render()}\n\nPrior attempt: {identity}{guidance}\n"
     )

@@ -1624,8 +1624,10 @@ class AgentTurnProcess(Generic[ResultT]):
                                     raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
                                 metadata = item.get("metadata")
                                 invocation = item.get("invocation")
-                                tool = str(invocation.get("tool", "")) if isinstance(invocation, dict) else ""
-                                if (isinstance(metadata, dict) and metadata.get("effect") == "effectful") or "write" in tool.lower() or "replay" in tool.lower():
+                                tool = str(item.get("tool", ""))
+                                if isinstance(invocation, dict):
+                                    tool += " " + str(invocation.get("tool", ""))
+                                if (isinstance(metadata, dict) and metadata.get("effect") == "effectful") or any(token in tool.lower() for token in ("write", "replay")):
                                     raise AgentReadOnlyViolationError("agent_write_forbidden")
                         result = parse_result(process.stdout)
                     break
