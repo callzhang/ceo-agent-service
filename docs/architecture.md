@@ -105,15 +105,13 @@ Audit 已启动外部动作但缺少可验证回执时，服务只允许执行�
 只读回读，但模型返回的恢复 JSON 不适用于该阶段或引用了错误摘要，服务会将结果保守地规范为 `ambiguous`。
 这只保留未知状态，不会确认已执行、推断未执行或重放写入；缺少任一目标匹配回读时，恢复仍按失败处理。
 
-### 受控命令回执
+### 运行结果与外部写入标识
 
-Agent 的 DWS、Lark 和本地读取都通过受控 CLI 执行并回传可校验回执。DWS Runtime Schema 是
-本地只读的命令契约查询，供 Agent 按已安装 skill 选择命令；它可在 Consumer 中使用，但任何实际
-写入仍只能由 Audit 的已批准调用执行。若 MCP 返回受控错误，运行时保存该错误码，而不把它笼统
-改写成“回执缺失”。被拒绝的只读查询没有外部副作用，错误会回传给同一 Agent 回合，使其可用
-Runtime Schema 或 Skill 修正命令；写入及未受控命令仍会立即拒绝。
-受控本地读取同样保留其稳定目标标识，因此带 `--instance-id`、`--task-id` 等参数的只读核验可
-准确对应同一目标的受控写入；无目标或目标冲突的读取不能作为送达或审批结果的证据。
+Skill、CLI 和 MCP 的具体调用属于 Agent/runtime 执行环境，不是应用层业务审核条件。应用层不
+审核命令名称、命令参数或 Skill receipt，也不因读取命令未登记而否定一个结构化业务结果。
+纯读取结果不要求额外 receipt。只有发生外部写入时，才保留 provider 返回的最小
+`operation`、`target` 和稳定结果标识，用于识别同一动作是否已经完成并避免重放；这不是对
+Agent 如何执行命令的二次审核。
 
 ## Skill-first 权威处理流
 
@@ -188,12 +186,12 @@ Derek 作出的管理判断。
 
 B 不是 Derek 的第二个写作分身，而是独立审计与执行者。B 会：
 
-1. 根据 verified Skill receipts 重读 A 使用过的业务 Skill 和操作 Skill。
+1. 根据候选内容和当前上下文独立判断适用的业务规则。
 2. 重新读取执行前的实时事实和 Audit Rules。
 3. 检查 A 的候选是否有事实依据、目标准确、内容最小、权限合适且符合当前规则。
 4. 候选合格时按原样执行，并从外部系统读回结果。
 5. 业务含义需要变化时返回具体反馈，由 A 生成新 revision；B 不自行改写候选。
-6. 外部结果未知时不直接重放，而是在原 B session 内先做只读读回。
+6. 外部写入结果未知时不直接重放；仅根据同一目标的 provider 结果标识或外部状态判断是否已经完成。
 
 每个候选 revision 使用一个新的 B session。只有同一个候选的未知结果恢复会复用原 B
 session，以保留该次执行的工具上下文和操作身份。
@@ -332,7 +330,7 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 | `app.worker.DingTalkAutoReplyWorker` | 领取任务、构造上下文、调用编排器并映射终态。 |
 | `app.agent_orchestrator.AgentOrchestrator` | 在 A、B、反馈和未知结果恢复之间推进状态机。 |
 | `app.business_skills` | 清点并安装七个 service-managed 业务 Skill；不参与业务路由。 |
-| `app.agent_skill_usage` | 从已完成的 Codex tool events 生成 verified Skill receipts。 |
+| `app.agent_skill_usage` | 提供 Agent 执行环境所需的 Skill 读取辅助；不参与普通业务结果审核。 |
 | `app.consumer_agent.ConsumerAgentRunner` | 复用对话 A session，按 read-oriented 角色协议读取、判断并提出候选。 |
 | `app.audit_agent.AuditAgentRunner` | 新建 B 审计 session，执行合格候选并处理未知结果。 |
 | `app.agent_contracts` | 严格定义 A proposal 与 B audit result。 |
@@ -381,6 +379,5 @@ backoff；终态失败必须说明根因、已尝试动作、外部副作用状�
 DWS/OA 技术错误不得直接暴露给申请人，所有“已评论”“已通知”“已完成”都必须有
 真实外部回执和读回证据。
 
-Codex Agent 通过 `agent_cli.read_skill` 读取 Skill；launchd 业务服务不是 Skill 可读性
-的前置条件。重启 launchd 只刷新业务服务的 Python 模块、prompt 和 worker；修改 Skill
-后必须在新的 Agent turn 中重新读取并校验 Skill receipt/hash。
+Codex Agent 可以通过 `agent_cli.read_skill` 读取 Skill；Skill 读取属于 Agent 执行环境，
+不是应用层业务结果的前置 receipt。launchd 业务服务不是 Skill 可读性的前置条件。
