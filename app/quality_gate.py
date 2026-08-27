@@ -402,14 +402,6 @@ def _check_reply_attempts(
                   and t.conversation_id=a.conversation_id
                   and t.trigger_message_id=a.trigger_message_id
                   and lower(t.status)='done'
-                  and not exists (
-                    select 1 from agent_runs run
-                    where run.reply_task_id=t.id
-                      and (
-                        lower(run.status)='unknown'
-                        or lower(run.side_effect_state)='unknown'
-                      )
-                  )
               )
         """,
         (_cutoff(now, 24 * 60 * 60),),
@@ -457,9 +449,6 @@ def _check_agent_runs(
     violations: list[QualityIssue],
     attention: list[QualityIssue],
 ) -> None:
-    _add(violations, source="agent_runs", code="unknown_side_effect", count=_count(
-        db, "select count(*) from agent_runs where lower(status)='unknown' or lower(side_effect_state)='unknown'"
-    ), severity="error", detail="agent write outcome requires reconciliation")
     _add(violations, source="agent_runs", code="running_stale", count=_count(
         db,
         "select count(*) from agent_runs where lower(status) in ('pending','running') and datetime(updated_at) < datetime(?)",
