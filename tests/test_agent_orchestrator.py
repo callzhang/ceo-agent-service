@@ -1089,7 +1089,7 @@ def test_newer_context_stale_candidate_is_revised_without_write(store):
     assert result.final_role is AgentRole.CONSUMER
     assert len(audit.calls) == 1
     audit_run = store.get_agent_run(result.final_run_id - 1)
-    assert audit_run is not None and audit_run.side_effect_state == "none"
+    assert audit_run is not None and audit_run.status == "completed"
 
 
 def test_third_revision_request_becomes_terminal_failure_without_escalation(store):

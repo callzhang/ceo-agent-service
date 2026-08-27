@@ -707,7 +707,7 @@ class AgentOrchestrator:
         if parent is None or parent.role is not AgentRole.AUDIT or parent.status != "completed":
             return None
         result = _audit_result(parent)
-        if result.outcome is not AuditOutcome.REVISION_REQUIRED:
+        if result.outcome is not AuditOutcome.FEEDBACK_PROVIDED:
             return None
         return result.feedback
 
@@ -728,7 +728,7 @@ class AgentOrchestrator:
             return None
         latest = audits[-1]
         result = _audit_result(latest)
-        return latest if result.outcome is AuditOutcome.REVISION_REQUIRED else None
+        return latest if result.outcome is AuditOutcome.FEEDBACK_PROVIDED else None
 
     def _feedback_cycles(self, task: ReplyTask) -> int:
         return max(
