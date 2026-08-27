@@ -342,10 +342,9 @@ class ConsumerAgentRunner:
             required.add("native_cli:lark")
         if context.image_paths:
             required.add("image_input")
-        required.update(
-            f"reviewed_skill:{receipt.name}:{receipt.sha256}"
-            for receipt in context.required_reviewed_skills
-        )
+        # Skill loading is part of the Agent execution environment.  The
+        # application consumes the typed result and does not make a receipt
+        # for the loaded Skill a route or business-result prerequisite.
         return frozenset(required)
 
     def run(

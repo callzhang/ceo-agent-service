@@ -944,26 +944,6 @@ class AgentTurnProcess(Generic[ResultT]):
                 and active_attempt is not None
             ):
                 self.store.note_runtime_attempt_effect_started(active_attempt.id)
-            if (
-                event.get("type") == "item.started"
-                and effect == EffectKind.EFFECTFUL.value
-                and required_skill_receipts
-                and recovery_phase != "reconcile"
-            ):
-                current_run = self.store.get_agent_run(run.id)
-                persisted_events = (
-                    current_run.tool_events[turn_event_start:] if current_run else ()
-                )
-                observed = {
-                    (receipt.name, receipt.path, receipt.sha256)
-                    for receipt in loaded_skill_receipts(persisted_events)
-                }
-                required = {
-                    (receipt.name, receipt.path, receipt.sha256)
-                    for receipt in required_skill_receipts
-                }
-                if not required.issubset(observed):
-                    raise AgentReadOnlyViolationError("audit_skill_reread_missing")
             if effect == EffectKind.EFFECTFUL.value and isinstance(metadata, dict):
                 if event.get("type") == "item.started":
                     authorization_id = metadata.get("authorization_id")
@@ -2594,39 +2574,6 @@ class AgentTurnProcess(Generic[ResultT]):
     ) -> None:
         outcome = getattr(result, "outcome")
         turn_events = persisted.tool_events[turn_event_start:]
-        observed_receipts = loaded_skill_receipts(turn_events)
-        observed_by_identity = {
-            (receipt.name, receipt.path): receipt.sha256
-            for receipt in observed_receipts
-        }
-        missing_receipts = tuple(
-            receipt
-            for receipt in required_skill_receipts
-            if (receipt.name, receipt.path) not in observed_by_identity
-        )
-        mismatched_receipts = tuple(
-            receipt
-            for receipt in required_skill_receipts
-            if observed_by_identity.get((receipt.name, receipt.path))
-            not in {None, receipt.sha256}
-        )
-        attempted_paths = _attempted_skill_paths(turn_events)
-        unreadable_receipts = tuple(
-            receipt for receipt in missing_receipts if receipt.path in attempted_paths
-        )
-        absent_receipts = tuple(
-            receipt
-            for receipt in missing_receipts
-            if receipt.path not in attempted_paths
-        )
-        if absent_receipts or (
-            unreadable_receipts and outcome is not AuditOutcome.REVISION_REQUIRED
-        ):
-            self._fail_running(run, "audit_skill_reread_missing")
-            raise AgentReadOnlyViolationError("audit_skill_reread_missing")
-        if mismatched_receipts and outcome is not AuditOutcome.REVISION_REQUIRED:
-            self._fail_running(run, "audit_skill_reread_mismatch")
-            raise AgentReadOnlyViolationError("audit_skill_reread_mismatch")
         if getattr(result, "proposal_revision") != run.proposal_revision:
             self._fail_running(run, "audit_proposal_revision_mismatch")
             raise RuntimeError("audit_proposal_revision_mismatch")

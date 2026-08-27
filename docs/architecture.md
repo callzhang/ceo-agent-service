@@ -121,8 +121,7 @@ Runtime Schema 或 Skill 修正命令；写入及未受控命令仍会立即拒�
 trigger/context/material references
   -> Consumer A discovers and reads business Skill(s)
   -> A reads operation Skill(s) and proposes an exact action
-  -> service derives verified Skill receipts from existing tool events
-  -> Audit B rereads the same business Skill(s) and operation Skill(s)
+  -> Consumer/Audit return a typed business result
   -> B reviews, executes, and reads back
   -> service persists the existing run/attempt/receipt state
 ```
@@ -140,9 +139,9 @@ Service 也不读取正文后替 Agent 解释业务材料。它只传递 trigger
 链接、本地受控材料引用和可执行的精确读取命令。文档、文件夹、图片、表格、日历、听记和 OA
 材料是否相关、是否需要继续展开以及它们支持什么结论，都由 A 判断；B 在执行前独立复核。
 
-Skill 使用证明来自现有 Codex tool events：只有已完成的 `agent_cli.read_skill` 调用才会生成包含
-Skill 路径和 SHA-256 的 verified receipt。B 必须按 receipt 重读同一份 Skill。SQLite 继续保存
-既有 task/run/attempt/effect receipt 状态；系统**不建立平行的 Skill 审计数据库**，详细工具轨迹
+Skill 加载属于 Agent 执行环境，service 不要求或校验普通 Consumer/Audit 结果中的 Skill receipt。
+仅当发生外部写入时，SQLite 保留 provider 返回的操作标识，用于重试时识别已完成动作并避免重复写入。
+SQLite 继续保存既有 task/run/attempt/effect receipt 状态；系统**不建立平行的 Skill 审计数据库**，详细工具轨迹
 仍以 Codex session JSONL 为准。
 
 ### 动态 Skill 分层
