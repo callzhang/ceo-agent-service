@@ -1396,6 +1396,11 @@ class RoutedCodexExecution:
                     failure_class=RuntimeFailureClass(latest.failure_class),
                     code=latest.failure_code,
                     detail="persisted runtime failure",
+                    retryable_on_same_route=latest.failure_class
+                    in {
+                        RuntimeFailureClass.CAPACITY.value,
+                        RuntimeFailureClass.TRANSPORT.value,
+                    },
                     failover_permitted=latest.failover_permitted,
                 )
                 terminal_failure = persisted_failure
