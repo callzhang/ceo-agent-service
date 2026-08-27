@@ -8406,7 +8406,16 @@ def create_audit_app(
         default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
         worker_status_cache.refresh_in_background(render_worker_status_payload)
         try:
-            executor.recover()
+            # Recovery is best-effort at startup.  The worker may hold the
+            # SQLite write lock while the web child is being restarted; a
+            # transient lock must not make the supervisor tear down the web
+            # process (which in turn interrupts active reply leases).
+            try:
+                executor.recover()
+            except sqlite3.OperationalError as exc:
+                message = str(exc).casefold()
+                if "database is locked" not in message and "database is busy" not in message:
+                    raise
             if workbench_lifecycle is None:
                 raise RuntimeError("workbench lifecycle is unavailable")
             workbench_lifecycle.start()
