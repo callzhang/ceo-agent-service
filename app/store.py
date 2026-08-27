@@ -9225,6 +9225,44 @@ class AutoReplyStore:
                 recovered.append(self._reply_task_from_row(updated))
             return recovered
 
+    def retry_failed_service_restart_tasks(self, *, limit: int = 100) -> list[ReplyTask]:
+        """Immediately reopen failed no-effect tasks caused by a service restart."""
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks tasks
+                where tasks.status='failed'
+                  and tasks.error like 'service_restart_before_effect%'
+                  and not exists (
+                    select 1 from agent_runs runs
+                    where runs.reply_task_id=tasks.id
+                      and runs.execution_generation=tasks.execution_generation
+                      and (runs.status in ('running','unknown')
+                           or runs.side_effect_state<>'none')
+                  )
+                order by tasks.id limit ?
+                """, (limit,),
+            ).fetchall()
+            recovered = []
+            for row in rows:
+                generation = str(row["execution_generation"])
+                cursor = db.execute(
+                    """update reply_tasks set status='pending', attempts=0,
+                       locked_at=null, available_at='',
+                       error='service_restart_immediate_retry',
+                       execution_generation=?, updated_at=current_timestamp
+                       where id=? and status='failed' and execution_generation=?""",
+                    (uuid4().hex, row["id"], generation),
+                )
+                if cursor.rowcount:
+                    recovered.append(self._reply_task_from_row(
+                        db.execute("select * from reply_tasks where id=?", (row["id"],)).fetchone()
+                    ))
+            return recovered
+
     def recover_effectful_audit_runs_after_service_restart(
         self,
         *,
@@ -9901,7 +9939,7 @@ class AutoReplyStore:
                     execution_generation=?, updated_at=?
                 where id=? and status='failed' and execution_generation=?
                 """,
-                (reason, recovery_code.strip(), uuid4().hex, now_text, task_id, row["execution_generation"]),
+                (reason, recovery_code.strip(), row["execution_generation"], now_text, task_id, row["execution_generation"]),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")

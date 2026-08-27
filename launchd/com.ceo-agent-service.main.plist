@@ -51,8 +51,6 @@
     <string>900</string>
     <key>CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS</key>
     <string>300</string>
-    <key>CEO_AGENT_RUNTIME_ROUTES</key>
-    <string>codex_oauth</string>
   </dict>
 </dict>
 </plist>
