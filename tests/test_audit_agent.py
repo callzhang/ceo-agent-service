@@ -1343,18 +1343,8 @@ def test_audit_protocol_rejects_applicable_candidate_without_consumer_skill_rece
 
 def test_audit_instructions_require_dynamic_skill_reread_before_execution():
     instructions = audit_developer_instructions("test rules")
-
-    assert (
-        "[dynamic-skill] Audit Agent B independently determines every business and "
-        "operation Skill applicable to the candidate, requires the corresponding "
-        "verified Consumer A receipt for each applicable Skill, rereads each exact "
-        "receipt path with `agent_cli.read_skill`, verifies its sha256, and returns "
-        "revision_required if any applicable receipt is absent, unreadable, changed, "
-        "or mismatched. For an already-unknown effect only, B may perform strictly "
-        "read-only evidence reconciliation without a receipt when no business Skill "
-        "is needed to decide whether the effect happened; B must not execute or retry "
-        "the candidate."
-    ) in instructions
+    assert AUDIT_DYNAMIC_SKILL_BODY in instructions
+    assert "verified Consumer A receipt" not in instructions
     assert instructions.count("[dynamic-skill]") == 1
     assert "feedback_json" not in instructions
     assert "external_result_json" not in instructions

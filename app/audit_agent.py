@@ -646,7 +646,7 @@ class AuditAgentRunner:
                 f"Candidate action indexes {listed} use the trigger's open-DingTalk ID as a user ID."
             )
         result = AuditAgentResult(
-            outcome=AuditOutcome.REVISION_REQUIRED,
+            outcome=AuditOutcome.FEEDBACK_PROVIDED,
             summary="The candidate uses an invalid typed recipient identifier.",
             proposal_revision=run.proposal_revision,
             feedback=AuditFeedback(
