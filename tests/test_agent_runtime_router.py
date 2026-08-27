@@ -16,10 +16,17 @@ from app.agent_runtime_router import (
     AgentRuntimeRouter,
     failover_is_safe,
     local_codex_session_effect_probe,
+    _parse_timestamp,
 )
 from app.store import AgentRole, AutoReplyStore
 
 NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
+
+
+def test_parse_timestamp_interprets_naive_values_as_beijing_time():
+    assert _parse_timestamp("2026-08-20 10:00:00") == datetime(
+        2026, 8, 20, 2, 0, tzinfo=UTC
+    )
 
 
 def test_effect_probe_reports_inconclusive_evidence_without_classifying_as_effect(

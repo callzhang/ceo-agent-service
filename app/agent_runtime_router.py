@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import TypeVar
+from zoneinfo import ZoneInfo
 
 from app.agent_effects import (
     IDLE_TIMEOUT_SECONDS,
@@ -2186,6 +2187,9 @@ def _classify_session_effect_item(
     return None
 
 
+_DEFAULT_NAIVE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
+
+
 def _parse_timestamp(value: datetime | str) -> datetime:
     if isinstance(value, datetime):
         parsed = value
@@ -2194,7 +2198,7 @@ def _parse_timestamp(value: datetime | str) -> datetime:
     else:
         raise ValueError("timestamp must be a non-empty ISO value")
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
+        return parsed.replace(tzinfo=_DEFAULT_NAIVE_TIME_ZONE).astimezone(UTC)
     return parsed.astimezone(UTC)
 
 
