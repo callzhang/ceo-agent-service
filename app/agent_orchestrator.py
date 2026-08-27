@@ -42,11 +42,13 @@ def _bounded_fact_finding_feedback(
         "不得确认订单", "不得确认预算", "不得确认合作", "不得下单", "不得付款",
         "no purchase", "no budget", "no partnership", "without.*commit",
     )
+    commitment_terms = ("采购", "预算", "合作", "下单", "付款", "承诺", "purchase", "budget", "partnership", "commit")
     for option in result.decision_options:
         text = " ".join((option.label, option.instruction, option.consequence)).lower()
-        if any(marker.lower() in text for marker in fact_markers) and any(
-            marker.lower() in text for marker in boundary_markers
-        ):
+        has_boundary = any(marker.lower() in text for marker in boundary_markers) or (
+            "不得" in text and any(term.lower() in text for term in commitment_terms)
+        )
+        if any(marker.lower() in text for marker in fact_markers) and has_boundary:
             return AuditFeedback(
                 rule=(
                     "A decision option already defines a bounded fact-finding inquiry "
