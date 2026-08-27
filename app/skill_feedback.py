@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 from pathlib import Path
 
 from app.agent_skill_usage import (
@@ -19,7 +20,11 @@ _MAX_RULE_LENGTH = 1200
 _RULE_MARKER = "## Feedback-derived policy rules"
 
 
-def skill_paths_from_events(events_json: str) -> tuple[Path, ...]:
+def skill_paths_from_events(
+    events_json: str,
+    *,
+    allow_existing_attempt_id: int = 0,
+) -> tuple[Path, ...]:
     try:
         events = json.loads(events_json or "[]")
     except (TypeError, json.JSONDecodeError):
@@ -41,10 +46,28 @@ def skill_paths_from_events(events_json: str) -> tuple[Path, ...]:
         if not isinstance(metadata, dict):
             continue
         raw_path = metadata.get("skill_path")
-        if not isinstance(raw_path, str) or not raw_path.strip():
+        raw_digest = metadata.get("skill_sha256")
+        raw_name = metadata.get("skill_name")
+        if (
+            not isinstance(raw_path, str)
+            or not raw_path.strip()
+            or not isinstance(raw_digest, str)
+            or not isinstance(raw_name, str)
+        ):
             continue
         try:
-            paths.add(resolve_authorized_skill_path(raw_path).path)
+            resolved = resolve_authorized_skill_path(raw_path).path
+            if resolved.parent.name != raw_name:
+                continue
+            if hashlib.sha256(resolved.read_bytes()).hexdigest() != raw_digest:
+                if (
+                    allow_existing_attempt_id <= 0
+                    or f"Attempt #{allow_existing_attempt_id}:" not in resolved.read_text(
+                        encoding="utf-8"
+                    )
+                ):
+                    continue
+            paths.add(resolved)
         except Exception:  # noqa: BLE001 - invalid receipts are ignored
             continue
     return tuple(sorted(paths))
@@ -66,7 +89,10 @@ def apply_skill_feedback_update(
     rule = " ".join(feedback.split())[:_MAX_RULE_LENGTH].strip()
     if not rule:
         raise SkillFeedbackUpdateError("skill update requires non-empty feedback")
-    paths = skill_paths_from_events(events_json)
+    paths = skill_paths_from_events(
+        events_json,
+        allow_existing_attempt_id=source_attempt_id,
+    )
     if not paths:
         raise SkillFeedbackUpdateError("skill update could not identify a reviewed Skill")
     receipts: list[LoadedSkillReceipt] = []
@@ -84,8 +110,6 @@ def apply_skill_feedback_update(
             path.write_text(content, encoding="utf-8")
         except OSError as exc:
             raise SkillFeedbackUpdateError(f"skill update write failed: {path}") from exc
-        import hashlib
-
         receipts.append(
             LoadedSkillReceipt(
                 name=path.parent.name,

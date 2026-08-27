@@ -27,7 +27,12 @@ def test_apply_skill_feedback_update_is_idempotent_and_returns_new_receipt(
     ]
     # A real read_skill receipt includes the path and name; the updater only
     # needs the reviewed path and revalidates it against the authorized root.
-    events[0]["item"]["metadata"].update({"skill_name": "dingtalk-calendar"})
+    events[0]["item"]["metadata"].update(
+        {
+            "skill_name": "dingtalk-calendar",
+            "skill_sha256": hashlib.sha256(skill_path.read_bytes()).hexdigest(),
+        }
+    )
 
     receipts = skill_feedback.apply_skill_feedback_update(
         events_json=json.dumps(events),
