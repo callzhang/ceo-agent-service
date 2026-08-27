@@ -115,7 +115,10 @@ class _AuditExecutedWire(_AuditWireBase):
 
 
 class _AuditFeedbackProvidedWire(_AuditWireBase):
-    outcome: Literal["feedback_provided"]
+    # ``revision_required`` is the legacy wire spelling.  Keep accepting it
+    # at the transport boundary; AuditAgentResult normalizes it to the
+    # canonical ``feedback_provided`` outcome.
+    outcome: Literal["feedback_provided", "revision_required"]
     side_effect_state: Literal["none"]
     feedback: AuditFeedback
     external_result: None
