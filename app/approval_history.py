@@ -221,7 +221,7 @@ def _confirmed_structured_results(
         if run.role is not AgentRole.AUDIT:
             continue
         try:
-            audit = AuditAgentResult.model_validate_json(run.final_result_json)
+            audit = _parse_persisted_audit_result(run.final_result_json)
         except (TypeError, ValueError, ValidationError, json.JSONDecodeError):
             continue
         if (
@@ -252,6 +252,23 @@ def _confirmed_structured_results(
                 approval_actions.append(result)
         results.update(approval_actions)
     return results
+
+
+def _parse_persisted_audit_result(raw: str) -> AuditAgentResult:
+    """Read historical audit rows without widening the current wire contract."""
+    try:
+        return AuditAgentResult.model_validate_json(raw)
+    except ValidationError:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise
+        historical_only = {"reconciliation", "side_effect_state"}
+        if not historical_only.intersection(payload):
+            raise
+        normalized = {
+            key: value for key, value in payload.items() if key not in historical_only
+        }
+        return AuditAgentResult.model_validate(normalized)
 
 
 def _structured_action_result(
