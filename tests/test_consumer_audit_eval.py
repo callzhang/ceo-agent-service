@@ -105,7 +105,7 @@ def _audit_result(case: EvalCase, operation_id: str) -> AuditAgentResult:
                 "live_result_reference": {"operation_id": operation_id},
             },
         )
-    elif case.audit_outcome == "feedback_provided":
+    elif case.audit_outcome == "revision_required":
         payload["feedback"] = {
             "rule": "authority boundary",
             "observation": case.reason,
@@ -234,7 +234,7 @@ def _contains_production_identifier(value: str) -> bool:
 def test_eval_fixture_has_complete_sanitized_authority_expectation(case: EvalCase):
     assert case.id and case.trigger and case.candidate and case.reason
     assert case.consumer_outcome in {"proposal", "needs_human", "no_action"}
-    assert case.audit_outcome in {"executed", "feedback_provided", "needs_human"}
+    assert case.audit_outcome in {"executed", "revision_required", "needs_human"}
     assert not _contains_production_identifier(json.dumps(case.__dict__, ensure_ascii=False))
     assert case.operation in {
         "dingtalk_send", "oa_action", "oa_comment", "document_edit",

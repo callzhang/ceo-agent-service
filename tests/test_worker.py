@@ -217,7 +217,7 @@ class FakeAgentResultRunner:
                 owner=self.owner,
             )
         if result.error.side_effect_state is SideEffectState.UNKNOWN:
-            run = self.store.fail_agent_run(
+            run = self.store.mark_agent_run_unknown(
                 run.id,
                 result.error.model_dump(mode="json"),
                 owner=self.owner,
@@ -495,6 +495,27 @@ def fixed_worker_now() -> datetime:
     return datetime(2026, 5, 13, 10, 0, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
 
 
+def test_worker_recovery_runtime_config_reads_environment(monkeypatch):
+    monkeypatch.setenv("MESSAGE_RECOVERY_INTERVAL", "15m")
+    monkeypatch.setenv("FAST_PATH_UNREAD_BACKOFF", "2m")
+    monkeypatch.setenv("SINGLE_CHAT_READ_RECOVERY_WINDOW", "6h")
+    monkeypatch.setenv("SINGLE_CHAT_READ_RECOVERY_LIMIT", "11")
+
+    importlib.reload(worker_module)
+
+    assert worker_module.MESSAGE_RECOVERY_INTERVAL == timedelta(minutes=15)
+    assert worker_module.FAST_PATH_UNREAD_BACKOFF == timedelta(minutes=2)
+    assert worker_module.SINGLE_CHAT_READ_RECOVERY_WINDOW == timedelta(hours=6)
+    assert worker_module.SINGLE_CHAT_READ_RECOVERY_LIMIT == 11
+    for name in (
+        "MESSAGE_RECOVERY_INTERVAL",
+        "FAST_PATH_UNREAD_BACKOFF",
+        "SINGLE_CHAT_READ_RECOVERY_WINDOW",
+        "SINGLE_CHAT_READ_RECOVERY_LIMIT",
+    ):
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("FAST_PATH_UNREAD_BACKOFF", "0s")
+    importlib.reload(worker_module)
 
 
 class FakeDws:
@@ -2507,6 +2528,39 @@ def test_mark_dws_auth_healthy_records_safe_coordinator_state(
     assert state["started_at"] == "2026-05-13T16:00:00+00:00"
 
 
+def test_produce_once_continues_when_mention_recovery_fails(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [trigger]},
+        mentioned_error=DwsError("list mentions failed"),
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert worker.store.count_errors() == 1
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert dws.unread_message_reads[0] == "cid-1"
+    assert notifications == [
+        {
+            "title": "CEO read mentioned messages failed",
+            "message": "list mentions failed",
+            "url": None,
+        }
+    ]
+    assert codex.calls == []
 
 
 def test_produce_once_enqueues_candidate_without_calling_codex(
@@ -3778,10 +3832,109 @@ def test_produce_once_fast_path_skips_unread_conversations_unchanged_since_last_
     assert dws.recent_message_reads == []
 
 
+def test_produce_once_skips_recent_conversation_recovery_between_hourly_fallbacks(
+    tmp_path: Path, monkeypatch
+):
+    recovered_conversation = DingTalkConversation(
+        open_conversation_id="cid-recovered",
+        title="最近处理过的单聊",
+        single_chat=True,
+        unread_point=0,
+    )
+    dws = FakeDws([], {"cid-recovered": [message("补充一下", message_id="msg-new")]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation(
+        conversation_id=recovered_conversation.open_conversation_id,
+        title=recovered_conversation.title,
+        single_chat=True,
+        codex_session_id=None,
+    )
+    worker.store.mark_seen("msg-seen", recovered_conversation.open_conversation_id)
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T16:30:00+00:00",
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 0
+    assert dws.recent_message_reads == []
+    assert dws.unread_message_reads == []
+    assert worker.store.count_reply_tasks(status="pending") == 0
 
 
+def test_produce_once_runs_recent_conversation_recovery_once_per_hour(
+    tmp_path: Path, monkeypatch
+):
+    recovered_conversation = DingTalkConversation(
+        open_conversation_id="cid-recovered",
+        title="最近处理过的单聊",
+        single_chat=True,
+        unread_point=0,
+    )
+    old_message = message("之前处理过", message_id="msg-seen", single_chat=True)
+    new_message = message("补充一下", message_id="msg-new", single_chat=True)
+    new_message.create_time = "2026-05-13 18:05:00"
+    dws = FakeDws([], {"cid-recovered": [old_message, new_message]})
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation(
+        conversation_id=recovered_conversation.open_conversation_id,
+        title=recovered_conversation.title,
+        single_chat=True,
+        codex_session_id=None,
+    )
+    worker.store.mark_seen("msg-seen", recovered_conversation.open_conversation_id)
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T15:30:00+00:00",
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 1
+    assert dws.recent_message_reads == ["cid-recovered"]
+    assert dws.unread_message_reads == []
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert (
+        worker.store.get_service_state("message_recovery_checked_at")
+        == "2026-05-13T17:00:00+00:00"
+    )
 
 
+def test_produce_once_does_not_recover_recent_group_conversations(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {"cid-group": [message("群里补充一下")]})
+    dws.read_errors["cid-group"] = DwsError("forbidden request", code="1001")
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation(
+        conversation_id="cid-group",
+        title="最近处理过的群聊",
+        single_chat=False,
+        codex_session_id=None,
+    )
+    worker.store.mark_seen("msg-seen-group", "cid-group")
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T15:30:00+00:00",
+    )
+
+    queued = worker.produce_once()
+
+    assert queued == 0
+    assert dws.recent_message_reads == []
+    assert dws.unread_message_reads == []
+    assert worker.store.list_errors() == []
+    assert worker.store.count_reply_tasks(status="pending") == 0
 
 
 def test_current_user_candidate_filter_uses_only_local_identity_cache(
@@ -4373,14 +4526,241 @@ def test_consume_once_processes_queued_task(tmp_path: Path, monkeypatch):
     assert final_sent(dws) == []
 
 
+def test_consume_once_prioritizes_pending_reconciliation(
+    tmp_path: Path, monkeypatch
+):
+    first = message("@Alex Chen(明哥) 先处理这条")
+    second = message("@Alex Chen(明哥) 先对账这条")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [first, second]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="unused")),
+        monkeypatch,
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id=first.open_conversation_id,
+        conversation_title=first.conversation_title,
+        single_chat=first.single_chat,
+        trigger_message_id=first.open_message_id,
+        trigger_create_time=first.create_time,
+        trigger_sender=first.sender_name,
+        trigger_text=first.content,
+        trigger_message_json=first.model_dump_json(),
+    )
+    worker.store.enqueue_reply_task(
+        conversation_id=second.open_conversation_id,
+        conversation_title=second.conversation_title,
+        single_chat=second.single_chat,
+        trigger_message_id=second.open_message_id,
+        trigger_create_time=second.create_time,
+        trigger_sender=second.sender_name,
+        trigger_text=second.content,
+        trigger_message_json=second.model_dump_json(),
+    )
+    priority = worker.store.peek_reply_tasks(limit=10)[-1]
+    claimed_task_ids: list[int] = []
+    monkeypatch.setattr(
+        worker.store,
+        "peek_pending_reconciliation_reply_tasks",
+        lambda *args, **kwargs: [priority],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_process_queued_task",
+        lambda _conversation, task: claimed_task_ids.append(task.id) or True,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 1
+
+    assert claimed_task_ids == [priority.id]
 
 
+def test_consume_once_suspends_exhausted_runs_before_and_after_recovery(
+    tmp_path: Path, monkeypatch
+):
+    worker = make_worker(
+        tmp_path,
+        FakeDws([], {}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="unused")),
+        monkeypatch,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        worker,
+        "_backfill_confirmed_direct_reply_ledgers",
+        lambda *, limit: calls.append("backfill") or 0,
+    )
+    monkeypatch.setattr(
+        worker,
+        "_recover_due_unknown_agent_reply_tasks",
+        lambda *, limit: calls.append("recover") or 0,
+    )
+    monkeypatch.setattr(
+        worker.store,
+        "suspend_exhausted_unknown_agent_runs",
+        lambda: calls.append("suspend") or 0,
+    )
+    monkeypatch.setattr(worker, "_recover_stale_agent_reply_tasks", lambda: None)
+    monkeypatch.setattr(
+        worker_module,
+        "recover_native_codex_auth_failures",
+        lambda *args, **kwargs: 0,
+    )
+    monkeypatch.setattr(
+        worker.store,
+        "active_codex_capacity_pause",
+        lambda **kwargs: True,
+    )
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert calls == ["backfill", "suspend", "recover", "suspend"]
 
 
+def test_due_unknown_audit_run_does_not_requeue_active_processing_task(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-reconcile",
+        conversation_title="Reconcile",
+        single_chat=False,
+        trigger_message_id="msg-reconcile",
+        trigger_create_time="2026-08-10 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Check external result",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="crashed-audit",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="crashed-audit",
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([], {}),
+        codex=FakeCodex(
+            CodexDecision(action=CodexAction.NO_REPLY, audit_summary="unused")
+        ),
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
+    )
+
+    recovered = worker._recover_due_unknown_agent_reply_tasks(limit=10)
+
+    persisted = store.get_reply_task(task.id)
+    assert recovered == 1
+    assert persisted is not None
+    assert persisted.status == "pending"
+    assert persisted.execution_generation == task.execution_generation
+    assert persisted.error == "unknown_agent_run_reconciliation"
 
 
+def test_due_reconciled_unknown_audit_run_does_not_requeue_active_task(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-reconcile-finalize",
+        conversation_title="Reconcile finalize",
+        single_chat=False,
+        trigger_message_id="msg-reconcile-finalize",
+        trigger_create_time="2026-08-10 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Check external result",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="crashed-audit",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="crashed-audit",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="reconciler")
+    assert claim.claimed
+    store.persist_unknown_agent_run_result(
+        run.id,
+        {"outcome": "reconciled"},
+        owner="reconciler",
+        transcript_end_line=0,
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([], {}),
+        codex=FakeCodex(
+            CodexDecision(action=CodexAction.NO_REPLY, audit_summary="unused")
+        ),
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
+    )
+
+    recovered = worker._recover_due_unknown_agent_reply_tasks(limit=10)
+
+    persisted = store.get_reply_task(task.id)
+    assert recovered == 0
+    assert persisted is not None
+    assert persisted.status == "processing"
 
 
+def test_due_unknown_audit_run_requeues_failed_task_without_rotating_generation(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-reconcile-failed",
+        conversation_title="Reconcile failed",
+        single_chat=False,
+        trigger_message_id="msg-reconcile-failed",
+        trigger_create_time="2026-08-10 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Check persisted effect evidence",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="crashed-audit",
+    ).run
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="crashed-audit",
+    )
+    store.fail_reply_task(
+        task.id,
+        "reconciliation event limit exceeded",
+        expected_execution_generation=task.execution_generation,
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([], {}),
+        codex=FakeCodex(
+            CodexDecision(action=CodexAction.NO_REPLY, audit_summary="unused")
+        ),
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
+    )
+
+    recovered = worker._recover_due_unknown_agent_reply_tasks(limit=10)
+
+    persisted = store.get_reply_task(task.id)
+    assert recovered == 1
+    assert persisted is not None
+    assert persisted.status == "pending"
+    assert persisted.execution_generation == task.execution_generation
+    assert persisted.error == "unknown_agent_run_reconciliation"
 
 
 def test_consumer_does_not_claim_task_when_required_gate_is_not_ready(
@@ -5755,6 +6135,64 @@ def test_consumer_cycle_does_not_requeue_task_claimed_by_another_worker(
     assert current.execution_generation == orphan.execution_generation
 
 
+def test_consume_once_does_not_recover_older_single_chat_claim(
+    tmp_path: Path,
+    monkeypatch,
+):
+    old_message = message("我先补充第一点", message_id="msg-single-1", single_chat=True)
+    old_message.create_time = "2026-05-13 18:00:00"
+    new_message = message(
+        "我已经算出来了，按这个回复", message_id="msg-single-2", single_chat=True
+    )
+    new_message.create_time = "2026-05-13 18:01:00"
+    dws = FakeDws(
+        [conversation(single_chat=True)],
+        {"cid-1": [new_message, old_message]},
+        unread_messages={"cid-1": [new_message, old_message]},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到，按第二条处理。")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id=old_message.open_message_id,
+        trigger_create_time=old_message.create_time,
+        trigger_sender=old_message.sender_name,
+        trigger_text=old_message.content,
+        trigger_message_json=old_message.model_dump_json(),
+    )
+    old_task = worker.store.claim_reply_tasks(limit=1)[0]
+    worker.store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        single_chat=True,
+        trigger_message_id=new_message.open_message_id,
+        trigger_create_time=new_message.create_time,
+        trigger_sender=new_message.sender_name,
+        trigger_text=new_message.content,
+        trigger_message_json=new_message.model_dump_json(),
+    )
+
+    script_no_action(worker)
+    assert worker.consume_once(max_tasks=1) == 1
+
+    tasks = {
+        task.trigger_message_id: task
+        for task in worker.store.list_reply_tasks(
+            statuses=("done", "pending", "processing")
+        )
+    }
+    assert tasks["msg-single-1"].id == old_task.id
+    assert tasks["msg-single-1"].status == "processing"
+    assert tasks["msg-single-1"].locked_at is not None
+    assert tasks["msg-single-2"].status == "done"
+    assert worker.store.count_reply_tasks(status="processing") == 1
+    assert not any(
+        error.kind == "reply_task_superseded" for error in worker.store.list_errors()
+    )
 
 
 def test_consume_once_authorization_failure_waits_without_final_failure(
@@ -5796,8 +6234,99 @@ def test_consume_once_authorization_failure_waits_without_final_failure(
     assert gates["dingtalk"].calls == 2
 
 
+def test_consume_once_codex_provider_auth_failure_fails_without_auth_recovery(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+
+    failure = (
+        "unexpected status 401 Unauthorized: invalid api key, "
+        "url: https://api.example.invalid/v1/responses"
+    )
+
+    codex = FakeCodex([])
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=3,
+        scripted_runner=FailingTaskRunner(failure),
+    )
+    monkeypatch.setattr(
+        "app.worker.send_browser_notification",
+        lambda **kwargs: notifications.append(kwargs) or True,
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        attempts, error, available_at = db.execute(
+            "select attempts, error, available_at from reply_tasks"
+        ).fetchone()
+    assert attempts == 1
+    assert error.startswith("codex_provider_auth_failed:")
+    assert "configured Codex model provider rejected its API key" in error
+    assert available_at == ""
+    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
+    assert "reply_task_authorization" not in error_kinds
+    assert "reply_task_retry" not in error_kinds
+    assert len(notifications) == 1
+    assert notifications[0]["title"].startswith("CEO 待处理：")
+    assert "状态：failed" in notifications[0]["message"]
+    assert "等待授权" not in notifications[0]["message"]
 
 
+def test_consume_once_native_codex_missing_auth_header_fails_without_recovery(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+
+    failure = (
+        "unexpected status 401 Unauthorized: Missing bearer or basic "
+        "authentication in header, url: "
+        "https://api.openai.com/v1/responses"
+    )
+
+    codex = FakeCodex([])
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=3,
+        scripted_runner=FailingTaskRunner(failure),
+    )
+    monkeypatch.setattr(
+        "app.worker.send_browser_notification",
+        lambda **kwargs: notifications.append(kwargs) or True,
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        attempts, error, available_at = db.execute(
+            "select attempts, error, available_at from reply_tasks"
+        ).fetchone()
+    assert attempts == 1
+    assert error.startswith("codex_provider_auth_failed:")
+    assert "without a bearer/basic auth header" in error
+    assert available_at == ""
+    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
+    assert "reply_task_provider_recovery" not in error_kinds
+    assert "reply_task_authorization" not in error_kinds
+    assert len(notifications) == 1
+    assert notifications[0]["title"].startswith("CEO 待处理：")
+    assert "状态：failed" in notifications[0]["message"]
+    assert "等待授权" not in notifications[0]["message"]
 
 
 def test_explicit_codex_provider_missing_auth_header_is_terminal_auth_failure(
@@ -5822,8 +6351,91 @@ def test_embeddings_invalid_api_key_is_not_codex_provider_auth_failure():
     assert worker_module._normalize_codex_stop_error_reason(reason) == reason
 
 
+def test_consume_once_chatgpt_codex_forbidden_fails_without_auth_recovery(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+
+    failure = (
+        "unexpected status 403 Forbidden: <html>blocked</html>, "
+        "url: https://chatgpt.com/backend-api/codex/responses, "
+        "cf-ray: a17c9a26aeb585e3-HKG"
+    )
+
+    codex = FakeCodex([])
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=3,
+        scripted_runner=FailingTaskRunner(failure),
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        attempts, error, available_at = db.execute(
+            "select attempts, error, available_at from reply_tasks"
+        ).fetchone()
+    assert attempts == 1
+    assert error.startswith("codex_provider_auth_failed:")
+    assert "ChatGPT Codex backend rejected the service session" in error
+    assert available_at == ""
+    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
+    assert "reply_task_authorization" not in error_kinds
+    assert "reply_task_retry" not in error_kinds
 
 
+def test_consume_once_codex_provider_transport_failure_waits_for_recovery(
+    tmp_path: Path, monkeypatch
+):
+    notifications = []
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+
+    failure = (
+        "stream disconnected before completion: error sending request "
+        "for url (https://api.openai.com/v1/responses)"
+    )
+
+    codex = FakeCodex([])
+    worker = make_worker(
+        tmp_path,
+        dws,
+        codex,
+        monkeypatch,
+        max_task_attempts=3,
+        scripted_runner=FailingTaskRunner(failure),
+    )
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+    worker.produce_once()
+
+    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 0
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        attempts, error, available_at = db.execute(
+            "select attempts, error, available_at from reply_tasks"
+        ).fetchone()
+    assert attempts == 0
+    assert error.startswith("codex_provider_unavailable:")
+    assert "disconnected before completion" in error
+    assert available_at == "2026-05-13 17:01:00"
+    error_kinds = [error.kind for error in worker.store.list_errors(limit=10)]
+    assert "reply_task_provider_recovery" in error_kinds
+    assert "reply_task_authorization" not in error_kinds
+    assert any(
+        notification["title"] == "CEO task waiting for Codex provider recovery: Friday"
+        for notification in notifications
+    )
 
 
 def test_consume_once_codex_capacity_exhaustion_pauses_without_browser_notice(
@@ -12634,8 +13246,104 @@ def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
     assert attempts[0].trigger_message_id == "msg-new-peer-2"
 
 
+def test_single_chat_recovery_processes_unseen_gap_before_later_seen_anchor(
+    tmp_path: Path, monkeypatch
+):
+    handled = message("前面已经处理过", message_id="msg-seen-old", single_chat=True)
+    handled.create_time = "2026-05-13 16:50:00"
+    missed = message(
+        "这条如果窗口开着也要处理",
+        message_id="msg-missed-gap",
+        single_chat=True,
+    )
+    missed.create_time = "2026-05-13 17:10:00"
+    manual_context = principal_message(
+        "后面我手动说了另一件事",
+        message_id="msg-principal-after-gap",
+        create_time="2026-05-13 17:20:00",
+    )
+    later_seen = message(
+        "后面这条已经处理", message_id="msg-seen-new", single_chat=True
+    )
+    later_seen.create_time = "2026-05-13 17:30:00"
+    dws = FakeDws(
+        [],
+        {
+            "cid-1": [
+                later_seen,
+                manual_context,
+                missed,
+                handled,
+            ]
+        },
+        unread_messages={"cid-1": []},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我会处理这条。")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    worker.store.upsert_conversation("cid-1", "韩露", True, None)
+    worker.store.mark_seen("msg-seen-old", "cid-1")
+    worker.store.mark_seen("msg-seen-new", "cid-1")
+
+    script_no_action(worker)
+    worker.run_once()
+
+    assert len(agent_runner(worker).calls) == 1
+    runner = worker._test_agent_runner
+    assert isinstance(runner, FakeAgentResultRunner)
+    context = runner.calls[0][2]
+    assert context.trigger_text == "这条如果窗口开着也要处理"
+    attempts = worker.store.list_reply_attempts(limit=10)
+    assert attempts[0].trigger_message_id == "msg-missed-gap"
 
 
+def test_single_chat_recovery_does_not_coalesce_across_current_user_context(
+    tmp_path: Path, monkeypatch
+):
+    seen_anchor = message("已经处理过", message_id="msg-seen-anchor", single_chat=True)
+    seen_anchor.create_time = "2026-05-13 16:50:00"
+    first_missed = message(
+        "第一段要处理", message_id="msg-first-missed", single_chat=True
+    )
+    first_missed.create_time = "2026-05-13 17:10:00"
+    current_user = principal_message(
+        "中间我说了另一件事",
+        message_id="msg-current-user-between",
+        create_time="2026-05-13 17:20:00",
+    )
+    second_missed = message(
+        "第二段也要处理", message_id="msg-second-missed", single_chat=True
+    )
+    second_missed.create_time = "2026-05-13 17:30:00"
+    dws = FakeDws(
+        [],
+        {
+            "cid-1": [
+                second_missed,
+                current_user,
+                first_missed,
+                seen_anchor,
+            ]
+        },
+        unread_messages={"cid-1": []},
+    )
+    worker = make_worker(
+        tmp_path,
+        dws,
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
+        monkeypatch,
+    )
+    worker.store.upsert_conversation("cid-1", "韩露", True, None)
+    worker.store.mark_seen("msg-seen-anchor", "cid-1")
+
+    assert worker.produce_once() == 2
+
+    tasks = sorted(worker.store.list_reply_tasks(limit=10), key=lambda task: task.id)
+    assert [task.trigger_message_id for task in tasks] == [
+        "msg-first-missed",
+        "msg-second-missed",
+    ]
 
 
 def test_single_chat_empty_unread_without_seen_anchor_does_not_process_old_context(
@@ -12953,6 +13661,44 @@ def test_group_unread_without_principal_mention_reads_unread_tail_but_does_not_q
     assert final_sent(dws) == []
 
 
+def test_recovery_due_group_unread_without_principal_mention_reads_unread_tail_but_does_not_queue(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    latest = message(
+        "无关同步",
+        message_id="msg-unmentioned",
+    )
+    latest.create_time = "2026-05-13 18:10:00"
+    group = conversation()
+    group.title = "无关群"
+    group.single_chat = False
+    group.unread_point = 1
+    dws = FakeDws(
+        [group],
+        {"cid-1": [latest]},
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=dws,
+        codex=codex,
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
+    )
+    worker.store.set_service_state(
+        "message_recovery_checked_at",
+        "2026-05-13T15:30:00+00:00",
+    )
+
+    worker.run_once()
+
+    assert dws.unread_message_reads == ["cid-1"]
+    assert store.list_errors() == []
+    assert codex.calls == []
+    assert final_sent(dws) == []
 
 
 def test_dry_run_group_unread_without_principal_mention_is_ignored(
@@ -14750,8 +15496,92 @@ def test_provider_capacity_failure_stays_pending_after_retry_limit(
     assert worker.store.active_codex_capacity_pause(now=fixed_worker_now()) > ""
 
 
+def test_capacity_recovery_process_failures_remain_retryable_after_one_day(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    script_agent_result(
+        worker,
+        explicit_agent_result(
+            ScriptOutcome.FAILED,
+            "Codex provider capacity is temporarily unavailable.",
+            code="codex_provider_capacity_exhausted",
+            retryable=True,
+        ),
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+
+    worker.run_once()
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+
+    next_day = fixed_worker_now() + timedelta(days=1, minutes=1)
+    worker.now_provider = lambda: next_day
+    script_agent_result(
+        worker,
+        explicit_agent_result(
+            ScriptOutcome.FAILED,
+            "Codex exited before returning a result.",
+            code="codex_process_failed",
+            retryable=True,
+        ),
+    )
+
+    worker.run_once()
+
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.attempts == 0
+    assert task.error == "codex_provider_capacity_exhausted"
+    assert datetime.fromisoformat(task.available_at) > next_day.replace(tzinfo=None)
 
 
+def test_capacity_recovery_completes_when_codex_recovers_next_day(
+    tmp_path: Path, monkeypatch
+):
+    trigger = message("@Alex Chen(明哥) 这个怎么处理？")
+    worker = make_worker(
+        tmp_path,
+        FakeDws([conversation()], {"cid-1": [trigger]}),
+        FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
+        monkeypatch,
+        max_task_attempts=1,
+    )
+    script_agent_result(
+        worker,
+        explicit_agent_result(
+            ScriptOutcome.FAILED,
+            "Codex provider capacity is temporarily unavailable.",
+            code="codex_provider_capacity_exhausted",
+            retryable=True,
+        ),
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_: None)
+    worker.run_once()
+
+    worker.now_provider = lambda: fixed_worker_now() + timedelta(days=1, minutes=1)
+    script_agent_result(
+        worker,
+        explicit_agent_result(ScriptOutcome.NO_ACTION, "无需回复"),
+    )
+
+    worker.run_once()
+
+    task = worker.store.get_reply_task(1)
+    assert task is not None
+    assert task.status == "done"
+    assert task.error == ""
+    assert worker.store.codex_capacity_failure_count() == 0
 
 
 def test_capacity_retry_backoff_grows_and_caps(tmp_path: Path, monkeypatch):

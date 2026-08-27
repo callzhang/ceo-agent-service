@@ -977,6 +977,252 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
     ) == claude_session
 
 
+@pytest.mark.parametrize(
+    "codex_failure",
+    [
+        "missing bearer or basic authentication for /v1/responses",
+        "workspace is out of credits",
+        "stream disconnected before completion",
+    ],
+)
+def test_read_only_audit_reconcile_pre_session_failure_reaches_claude(
+    tmp_path,
+    codex_failure,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    owner = "audit-reconcile"
+    run = _claim_audit(store, task)
+    action = {
+        "capability": "mcp:write.send",
+        "reviewed_server": "write",
+        "reviewed_tool": "send",
+        "operation": "send",
+        "operation_digest": "operation-digest",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {"uuid": "target-1"},
+    }
+    store.append_agent_run_event(run.id, _effect_event(**action), owner="audit")
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "effect_completion_unknown", "retryable": True},
+        owner="audit",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner=owner)
+    assert claim.claimed
+    run = claim.run
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,claude_api",
+            "CEO_CODEX_API_KEY": "test-openai-secret",
+            "CEO_CLAUDE_API_KEY": "test-anthropic-secret",
+            "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
+        }
+    )
+    now = datetime.now(UTC)
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=frozenset(
+                {
+                    "structured_output",
+                    "local_schema_validation",
+                    "consumer_read_only_enforcement",
+                }
+            ),
+            healthy=True,
+            checked_at=now.isoformat(),
+            expires_at=(now + timedelta(minutes=5)).isoformat(),
+        )
+        for route in config.routes
+    }
+    surfaces = {
+        route.name: RuntimeRouteSurfaceManifest(
+            route_name=route.name,
+            capabilities=frozenset(
+                {"reviewed_read_tools", "reconciliation_read_only"}
+            ),
+        )
+        for route in config.routes
+    }
+    router = AgentRuntimeRouter(
+        routes=config.routes,
+        store=store,
+        snapshots=snapshots,
+        surface_manifests=surfaces,
+    )
+    registry = McpToolEffectRegistry(
+        {
+            ("write", "send"): EffectKind.EFFECTFUL,
+            ("memory_connector", "memory_get"): EffectKind.READ_ONLY,
+        },
+        readbacks={
+            ("memory_connector", "memory_get"): {("write", "send")}
+        },
+        readback_target_modes={
+            ("memory_connector", "memory_get", "write", "send"): "shared"
+        },
+        readback_operation_modes={
+            ("memory_connector", "memory_get", "write", "send"): "registered"
+        },
+        readback_operation_relations={
+            ("memory_connector", "memory_get", "write", "send"): {
+                ("memory_get", "send")
+            },
+        },
+    )
+    read_result = json.dumps(
+        {
+            "content": [{"type": "text", "text": "synthetic readback"}],
+            "isError": False,
+        },
+        separators=(",", ":"),
+    )
+    read_digest = hashlib.sha256(
+        json.dumps(
+            read_result,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    result_json = json.dumps(
+        {
+            "outcome": "reconciled",
+            "summary": "Readback proves the original action is absent.",
+            "proposal_revision": 0,
+            "side_effect_state": "unknown",
+            "feedback": None,
+            "external_result": None,
+            "reconciliation": [
+                {
+                    "action_index": 0,
+                    "disposition": "absent",
+                    "read_result_digest": read_digest,
+                }
+            ],
+            "error_code": "",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        },
+        separators=(",", ":"),
+    )
+    claude_session = "claude-reconcile-session"
+    claude_stream = "\n".join(
+        json.dumps(event, separators=(",", ":"))
+        for event in (
+            {"type": "system", "subtype": "init", "session_id": claude_session},
+            {
+                "type": "assistant",
+                "session_id": claude_session,
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "readback-1",
+                            "name": "mcp__memory_connector__memory_get",
+                            "input": {"uuid": "target-1"},
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "user",
+                "session_id": claude_session,
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "readback-1",
+                            "content": read_result,
+                            "is_error": False,
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "assistant",
+                "session_id": claude_session,
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": result_json}],
+                },
+            },
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": claude_session,
+                "result": result_json,
+            },
+        )
+    )
+    commands = []
+
+    def executor(command, *, on_stdout_line, **kwargs):
+        commands.append(command)
+        if command[0] != "claude-test":
+            return ProcessRunResult(1, "", codex_failure)
+        for line in claude_stream.splitlines():
+            on_stdout_line(line)
+        return ProcessRunResult(0, claude_stream, "")
+
+    result = AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=tmp_path,
+        owner=owner,
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
+        claude_adapter=ClaudeRuntimeAdapter(
+            workspace=tmp_path,
+            config=config,
+            claude_bin="claude-test",
+            effect_registry=registry,
+            service_mcp_servers=(
+                ServiceMcpServer(
+                    name="memory_connector", url="http://127.0.0.1:9/mcp"
+                ),
+            ),
+        ),
+        mcp_effect_registry=registry,
+    ).execute(
+        run=run,
+        prompt="Reconcile by readback only.",
+        session_id=None,
+        developer_instructions="Never execute the original action.",
+        configure_command=lambda command: None,
+        parse_result=parse_audit_agent_wire_result,
+        persist_conversation_session=False,
+        expected_effect_actions=(action,),
+        recovery_phase="reconcile",
+    )
+
+    assert result.result.outcome is AuditOutcome.RECONCILED
+    assert [command[0] for command in commands] == [
+        "codex-test",
+        "codex-test",
+        "claude-test",
+    ]
+    attempts = store.list_agent_runtime_attempts(run.id)
+    assert [attempt.route_name for attempt in attempts] == [
+        "codex_oauth",
+        "codex_api",
+        "claude_api",
+    ]
+    assert all(not attempt.first_effect_started_at for attempt in attempts)
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None and persisted.effect_started_count == 1
+    recovery_events = persisted.tool_events[len(run.tool_events) :]
+    assert recovery_events
+    assert all(
+        event["item"]["metadata"]["effect"] == "read_only"
+        for event in recovery_events
+    )
 
 
 def test_missing_claude_skill_is_not_a_route_preflight_requirement(tmp_path):
@@ -1645,7 +1891,7 @@ def _unknown_audit_recovery_fixture(store, task, *, owner):
         _effect_event(**action),
         owner="audit",
     )
-    store.fail_agent_run(
+    store.mark_agent_run_unknown(
         run.id,
         {"code": "effect_completion_unknown", "retryable": True},
         owner="audit",
@@ -1655,8 +1901,363 @@ def _unknown_audit_recovery_fixture(store, task, *, owner):
     return claim.run, action
 
 
+@pytest.mark.parametrize(
+    ("recovery_phase", "rotate_authorization"),
+    (("reconcile", False), ("execute", False), ("execute", True)),
+)
+def test_completed_claude_audit_recovery_rebuilds_persisted_evidence_without_spawn(
+    tmp_path,
+    recovery_phase,
+    rotate_authorization,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    owner = f"audit-{recovery_phase}"
+    run, action = _unknown_audit_recovery_fixture(store, task, owner=owner)
+    actions = (action,)
+    registry = McpToolEffectRegistry(
+        {
+            ("write", "send"): EffectKind.EFFECTFUL,
+            ("read", "get"): EffectKind.READ_ONLY,
+        },
+        readbacks={("read", "get"): {("write", "send")}},
+    )
+    event_start = len(run.tool_events)
+    recovery_started_actions: set[int] = set()
+    completed_before_recovery: set[int] = set()
+    persisted_authorizations = (
+        {"authorization-old": 0} if recovery_phase == "execute" else {}
+    )
+    if recovery_phase == "reconcile":
+        store.append_unknown_agent_run_event(
+            run.id,
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "id": "read-1",
+                    "status": "completed",
+                    "metadata": {
+                        "effect": "read_only",
+                        "operation_id": run.operation_id,
+                        "reviewed_server": "read",
+                        "reviewed_tool": "get",
+                        "operation": "get",
+                        "target_identifiers": {"id": "target-1"},
+                        "result_digest": "read-result-digest",
+                    },
+                },
+            },
+            owner=owner,
+        )
+        result = AuditAgentResult(
+            outcome=AuditOutcome.RECONCILED,
+            summary="Live readback reconciled the action.",
+            proposal_revision=0,
+            side_effect_state=SideEffectState.UNKNOWN,
+            feedback=None,
+            external_result=None,
+            reconciliation=(
+                {
+                    "action_index": 0,
+                    "disposition": "present",
+                    "read_result_digest": "read-result-digest",
+                },
+            ),
+            error=AgentError(),
+        )
+    else:
+        recovery_started_actions = {0}
+        for event_type in ("item.started", "item.completed"):
+            event = _effect_event(
+                event_type=event_type, action_index=0, **action
+            )
+            event["item"]["id"] = "write-recovery"
+            store.append_unknown_agent_run_event(
+                run.id,
+                event,
+                owner=owner,
+            )
+        store.append_unknown_agent_run_event(
+            run.id,
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "mcp_tool_call",
+                    "id": "read-after-write",
+                    "status": "completed",
+                    "metadata": {
+                        "effect": "read_only",
+                        "operation_id": run.operation_id,
+                        "reviewed_server": "read",
+                        "reviewed_tool": "get",
+                        "operation": "get",
+                        "target_identifiers": {"id": "target-1"},
+                        "result_digest": "execute-read-result-digest",
+                    },
+                },
+            },
+            owner=owner,
+        )
+        result = AuditAgentResult(
+            outcome=AuditOutcome.EXECUTED,
+            summary="The authorized recovery action completed.",
+            proposal_revision=0,
+            side_effect_state=SideEffectState.CONFIRMED,
+            feedback=None,
+            external_result=AuditExternalResult(
+                operation_id=run.operation_id,
+                verification_summary="Persisted tool evidence confirms completion.",
+                live_result_reference={"id": "receipt-1"},
+            ),
+            reconciliation=(),
+            error=AgentError(),
+        )
+
+    prompt = f"Recover {recovery_phase}"
+    developer = "Use only persisted reviewed evidence."
+    schema_id = _runtime_result_schema_for_test(
+        run,
+        prompt=prompt,
+        developer_instructions=developer,
+        recovery_phase=recovery_phase,
+        expected_effect_actions=actions,
+        recovery_authorizations=persisted_authorizations,
+    )
+    validator = AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=tmp_path,
+        owner=owner,
+        mcp_effect_registry=registry,
+    )
+    persisted_before_completion = store.get_agent_run(run.id)
+    assert persisted_before_completion is not None
+    if recovery_phase == "reconcile":
+        validated = validator._validate_audit_reconciliation_result(
+            run,
+            result,
+            persisted_before_completion,
+            expected_effect_actions=actions,
+            recovery_event_start=event_start,
+            completed_before_recovery=completed_before_recovery,
+        )
+        result = result.model_copy(
+            update={
+                "reconciliation": tuple(
+                    validated[index] for index in sorted(validated)
+                )
+            }
+        )
+    else:
+        validator._validate_audit_recovery_execution_result(
+            run,
+            result,
+            persisted_before_completion,
+            expected_effect_actions=actions,
+            recovery_started_actions=recovery_started_actions,
+            authorized_recovery_actions=frozenset({0}),
+        )
+    attempt = store.claim_unknown_recovery_agent_runtime_attempt(
+        run.id,
+        "claude_api",
+        "claude_cli",
+        "service_api",
+        "claude-sonnet-4-5",
+        owner=owner,
+    ).attempt
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    envelope = _encode_runtime_domain_result(
+        schema_id=schema_id,
+        role=AgentRole.AUDIT,
+        recovery_phase=recovery_phase,
+        result=result,
+        evidence=_runtime_result_evidence(
+            run=persisted,
+            event_start=event_start,
+            receipts=store.list_agent_execution_receipts(run.id),
+            recovery_started_actions=recovery_started_actions,
+            completed_before_recovery=completed_before_recovery,
+            recovery_authorizations=persisted_authorizations,
+        ),
+    )
+    store.complete_agent_runtime_attempt(
+        attempt.id,
+        "claude-recovery-session",
+        "",
+        0,
+        3,
+        result_schema_id=schema_id,
+        result_envelope_json=envelope,
+    )
+
+    executor_calls = 0
+
+    def must_not_execute(*args, **kwargs):
+        nonlocal executor_calls
+        executor_calls += 1
+        raise AssertionError("completed recovery must not spawn")
+
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+            "CEO_CLAUDE_API_KEY": "test-claude-secret",
+            "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
+        }
+    )
+    process = AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=tmp_path,
+        owner=owner,
+        executor=must_not_execute,
+        runtime_config=config,
+        runtime_router=object(),
+        mcp_effect_registry=registry,
+    )
+    execute_kwargs = {
+        "run": store.get_agent_run(run.id),
+        "prompt": prompt,
+        "session_id": None,
+        "developer_instructions": developer,
+        "configure_command": lambda command: None,
+        "parse_result": lambda raw: (_ for _ in ()).throw(
+            AssertionError("completed recovery must not parse provider output")
+        ),
+        "persist_conversation_session": False,
+        "expected_effect_actions": actions,
+        "recovery_phase": recovery_phase,
+        "authorized_recovery_actions": (
+            frozenset({0}) if recovery_phase == "execute" else frozenset()
+        ),
+        "recovery_authorizations": (
+            {"authorization-new": 0}
+            if rotate_authorization
+            else persisted_authorizations
+        ),
+    }
+    if rotate_authorization:
+        with pytest.raises(
+            ValueError, match="completed_runtime_result_contract_mismatch"
+        ):
+            process.execute(**execute_kwargs)
+        assert executor_calls == 0
+        blocked = store.get_agent_run(run.id)
+        assert blocked is not None and blocked.status == "unknown"
+        assert blocked.lease_owner == ""
+        return
+    recovered = process.execute(**execute_kwargs)
+
+    assert executor_calls == 0
+    assert recovered.result.outcome is result.outcome
+    final_run = store.get_agent_run(run.id)
+    assert final_run is not None
+    assert final_run.status == (
+        "completed" if recovery_phase == "execute" else "unknown"
+    )
+    assert final_run.lease_owner == ""
+    final_task = store.get_reply_task(task.id)
+    assert final_task is not None and final_task.status == "processing"
 
 
+def test_completed_claude_result_contract_mismatch_with_effect_never_spawns(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    store.append_agent_run_event(
+        run.id,
+        _effect_event(
+            capability="agent_cli.dws",
+            operation="chat message send",
+            operation_digest="command-digest",
+            arguments_digest="arguments-digest",
+            target_identifiers={"group": "cid"},
+        ),
+        owner="audit",
+    )
+    attempt = store.claim_agent_runtime_attempt(
+        run.id,
+        "claude_api",
+        "claude_cli",
+        "service_api",
+        "claude-sonnet-4-5",
+    )
+    attempt = store.mark_agent_runtime_attempt_running_once(attempt.id)
+    old_schema = "old-execution-contract"
+    store.complete_agent_runtime_attempt(
+        attempt.id,
+        "claude-session",
+        "",
+        0,
+        3,
+        result_schema_id=old_schema,
+        result_envelope_json=json.dumps(
+            {"schema_id": old_schema, "version": 1, "result": {}}
+        ),
+    )
+
+    class MustNotRoute:
+        def first_route_decision(self, **kwargs):
+            raise AssertionError("stale effectful result must fail before routing")
+
+    executor_calls = 0
+
+    def must_not_execute(*args, **kwargs):
+        nonlocal executor_calls
+        executor_calls += 1
+        raise AssertionError("stale effectful result must not spawn")
+
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+            "CEO_CLAUDE_API_KEY": "test-claude-secret",
+            "CEO_CLAUDE_MODEL": "claude-sonnet-4-5",
+        }
+    )
+    with pytest.raises(ValueError, match="completed_runtime_result_contract_mismatch"):
+        AgentTurnProcess(
+            store=store,
+            task=task,
+            workspace=tmp_path,
+            owner="audit",
+            executor=must_not_execute,
+            runtime_config=config,
+            runtime_router=MustNotRoute(),
+        ).execute(
+            run=store.get_agent_run(run.id),
+            prompt="NEW business context",
+            session_id=None,
+            developer_instructions="NEW reviewed rules",
+            configure_command=lambda command: None,
+            parse_result=lambda raw: (_ for _ in ()).throw(
+                AssertionError("stale result must not be parsed")
+            ),
+            persist_conversation_session=False,
+            expected_effect_actions=(
+                {
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "operation_digest": "command-digest",
+                    "arguments_digest": "arguments-digest",
+                    "target_identifiers": {"group": "cid"},
+                },
+            ),
+        )
+
+    assert executor_calls == 0
+    blocked_run = store.get_agent_run(run.id)
+    assert blocked_run is not None
+    assert blocked_run.status == "unknown"
+    assert blocked_run.lease_owner == ""
+    assert json.loads(blocked_run.structured_error_json)["code"] == (
+        "completed_runtime_result_contract_mismatch"
+    )
+    blocked_task = store.get_reply_task(task.id)
+    assert blocked_task is not None
+    assert blocked_task.status == "processing"
 
 
 def _effect_event(event_type="item.started", **metadata):
@@ -1843,14 +2444,175 @@ def test_consumer_turn_rejects_effectful_tool_events(tmp_path):
     assert store.get_agent_run(run.id).side_effect_state == "none"
 
 
+def test_unknown_reconciliation_event_limit_defers_the_next_read_only_window(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="audit",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="audit-recovery")
+    assert claim.claimed
+
+    AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=Path("/workspace"),
+        owner="audit-recovery",
+    )._defer_unknown(claim.run, RECONCILIATION_EVENT_LIMIT_ERROR)
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.reconciliation_suspended is False
+    error = json.loads(persisted.structured_error_json)
+    assert error["code"] == RECONCILIATION_EVENT_LIMIT_ERROR
+    assert error["retryable"] is True
 
 
+def test_unknown_recovery_can_start_after_runtime_effect_boundary_without_tool_event(
+    tmp_path,
+):
+    """A crashed provider may lose its session after the effect boundary.
+
+    The runtime-attempt boundary is durable evidence that a read-only Audit
+    reconciliation is required, even before the provider emitted a normalized
+    tool event.  It must not be rejected solely because the per-tool counters
+    are still zero.
+    """
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    initial = store.claim_agent_runtime_attempt(
+        run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+    )
+    running = store.mark_agent_runtime_attempt_running_once(initial.id)
+    store.note_runtime_attempt_effect_started(running.id)
+    store.fail_agent_runtime_attempt(
+        running.id,
+        "unclassified",
+        "runtime_unclassified",
+        False,
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "runtime_failed_route_effect_requires_reconciliation", "retryable": True},
+        owner="audit",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="audit-recovery")
+
+    recovery = store.claim_unknown_recovery_agent_runtime_attempt(
+        claim.run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+        owner="audit-recovery",
+    )
+
+    assert claim.claimed is True
+    assert recovery.start_acquired is True
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.effect_started_count == 0
+    assert persisted.side_effect_state == "unknown"
 
 
+def test_event_limited_unknown_run_remains_due_for_read_only_recovery(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "codex_process_failed", "retryable": True},
+        owner="audit",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set reconciliation_event_count=? where id=?",
+            (MAX_RECONCILIATION_EVENTS, run.id),
+        )
+
+    assert store.suspend_exhausted_unknown_agent_runs() == 0
+    assert store.list_suspended_unknown_agent_runs() == []
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
 
 
+def test_attempt_limited_unknown_run_can_start_the_next_read_only_window(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    run = _claim_audit(store, task)
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
+        owner="audit",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set reconciliation_attempts=? where id=?",
+            (MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS, run.id),
+        )
+
+    assert store.claim_unknown_agent_run(run.id, owner="audit-recovery").claimed is True
+    assert store.suspend_exhausted_unknown_agent_runs() == 0
+    persisted = store.get_agent_run(run.id)
+
+    assert persisted is not None and persisted.reconciliation_suspended is False
+    assert persisted.reconciliation_attempts == (
+        MAX_UNKNOWN_AUDIT_RECONCILIATION_ATTEMPTS + 1
+    )
 
 
+def test_suspended_unknown_run_is_reopened_for_read_only_reconciliation(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    oa_url = (
+        "https://aflow.dingtalk.com/process?procInstId=process-123&taskId=task-456"
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute("update reply_tasks set oa_url=? where id=?", (oa_url, task.id))
+    run = _claim_audit(store, task)
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
+        owner="audit",
+    )
+    claim = store.claim_unknown_agent_run(run.id, owner="audit-recovery")
+    assert claim.claimed
+    store.defer_unknown_agent_run_reconciliation(
+        run.id,
+        {"code": "audit_reconciliation_evidence_mismatch", "retryable": False},
+        owner="audit-recovery",
+        expected_execution_generation=task.execution_generation,
+        next_attempt_at="",
+        suspended=True,
+    )
+    store.requeue_reply_task(
+        task.id,
+        "agent_run_unavailable",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    assert store.suspend_exhausted_unknown_agent_runs() == 1
+
+    closed_task = store.get_reply_task(task.id)
+    assert closed_task is not None and closed_task.status == "failed"
+    assert closed_task.available_at == ""
+    assert store.get_latest_reply_attempt_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    ) is None
+    resumed = store.get_agent_run(run.id)
+    assert resumed is not None and resumed.reconciliation_suspended is False
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+
+    assert store.suspend_exhausted_unknown_agent_runs() == 0
 
 
 def _normalize_read_skill_event(store, task, payload):
@@ -1862,6 +2624,55 @@ def _normalize_read_skill_event(store, task, payload):
     )._normalized_effect_event(payload, read_only=True, operation_id="")
 
 
+def test_normal_audit_write_receipt_does_not_require_recovery_authorization(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    argv = [
+        "dws", "chat", "+messages-send", "--open-dingtalk-id", "recipient-1",
+        "--text", "done", "--yes", "--format", "json",
+    ]
+    descriptor = describe_native_command(
+        {"type": "command_execution", "argv": argv}
+    )
+    assert descriptor is not None
+    payload = {
+        "type": "item.completed",
+        "item": {
+            "id": "write-1",
+            "type": "mcp_tool_call",
+            "server": "agent_cli",
+            "tool": "execute_reviewed_write",
+            "arguments": {"argv": argv, "authorization_id": "not-a-recovery-id"},
+            "status": "completed",
+            "result": {
+                "structuredContent": {
+                    "cli": "dws",
+                    "operation": descriptor.command_path,
+                    "operation_digest": descriptor.command_digest,
+                    "target_identifiers": descriptor.target_identifiers,
+                    "result_digest": "result-digest",
+                    "stdout": "{}",
+                },
+                "isError": False,
+            },
+        },
+    }
+
+    event = AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=Path("/workspace"),
+        owner="audit",
+    )._normalized_effect_event(
+        payload,
+        read_only=False,
+        operation_id="operation-1",
+    )
+
+    assert event is not None
+    assert event["type"] == "item.completed"
 
 
 def test_completed_dingtalk_message_read_persists_content_proof_without_plaintext(
@@ -2265,6 +3076,26 @@ def test_failed_effect_closes_started_identity_without_confirmation(tmp_path):
     assert closed.side_effect_state == "none"
 
 
+def test_two_same_call_starts_with_one_completion_remains_unknown(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    run = _claim_audit(store, _task(store))
+    started = _effect_event(
+        operation_digest="same",
+        arguments_digest="same-arguments",
+        target_identifiers={"group": "cid"},
+    )
+
+    store.append_agent_run_event(run.id, started, owner="audit")
+    store.append_agent_run_event(run.id, started, owner="audit")
+    persisted = store.append_agent_run_event(
+        run.id,
+        {**started, "type": "item.completed"},
+        owner="audit",
+    )
+
+    assert persisted.side_effect_state == "unknown"
+    assert persisted.effect_started_count == 2
+    assert persisted.effect_completed_count == 1
 
 
 def test_agent_effect_state_uses_incremental_counters_not_history_scan(tmp_path):
@@ -2293,6 +3124,71 @@ def test_agent_effect_state_uses_incremental_counters_not_history_scan(tmp_path)
     assert sum("from agent_run_events" in statement for statement in normalized) <= 4
 
 
+def test_legacy_unknown_start_binds_exact_action_index_once(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    run = _claim_audit(store, _task(store))
+    identity = {
+        "capability": "agent_cli.dws",
+        "operation": "chat message send",
+        "operation_digest": "command-digest",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers": {"group": "cid-one"},
+    }
+    store.append_agent_run_event(
+        run.id,
+        _effect_event(**identity),
+        owner="audit",
+    )
+    store.mark_agent_run_unknown(
+        run.id,
+        {"code": "crash_after_write"},
+        owner="audit",
+    )
+    assert store.claim_unknown_agent_run(run.id, owner="recovery").claimed
+
+    assert store.bind_legacy_unknown_effect_action(
+        run.id,
+        action_index=1,
+        operation_id="operation-0",
+        expected_identity=identity,
+        owner="recovery",
+    )
+    assert not store.bind_legacy_unknown_effect_action(
+        run.id,
+        action_index=1,
+        operation_id="operation-0",
+        expected_identity=identity,
+        owner="recovery",
+    )
+    receipt_operation_id = (
+        '{"action_index":1,"arguments_digest":"arguments-digest",'
+        '"capability":"agent_cli.dws","operation":"chat message send",'
+        '"operation_digest":"command-digest",'
+        '"proposal_operation_id":"operation-0"}'
+    )
+    store.record_agent_execution_receipt(
+        run.id,
+        receipt_id="legacy-present",
+        operation_id=receipt_operation_id,
+        cli="dws",
+        command_path="chat message send",
+        command_digest="command-digest",
+        exit_code=0,
+        owner="recovery",
+        expected_status="unknown",
+    )
+    store.confirm_agent_execution_receipt(
+        run.id, receipt_operation_id, owner="recovery"
+    )
+    store.confirm_agent_execution_receipt(
+        run.id, receipt_operation_id, owner="recovery"
+    )
+
+    persisted = store.get_agent_run(run.id)
+    assert persisted is not None
+    assert persisted.tool_events[0]["item"]["metadata"]["action_index"] == 1
+    assert persisted.effect_receipt_count == 1
+    assert persisted.side_effect_state == "confirmed"
 
 
 def test_effect_counter_backfill_is_migration_safe(tmp_path):
@@ -2516,8 +3412,66 @@ def test_agent_run_migration_rolls_back_before_commit_on_foreign_key_failure(
     assert orphan == (999,)
 
 
+def test_absent_reconciliation_supersedes_other_running_turns(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    consumer = _claim_consumer(store, task).run
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="operation-0",
+        owner="audit",
+        now="2026-08-06 10:00:00",
+    ).run
+    store.mark_agent_run_unknown(
+        audit.id,
+        {"code": "outcome_unknown"},
+        owner="audit",
+        now="2026-08-06 10:00:01",
+    )
+    assert store.claim_unknown_agent_run(
+        audit.id,
+        owner="reconciler",
+        now="2026-08-06 10:00:02",
+    ).claimed
+
+    store.resolve_unknown_agent_run_absent(
+        audit.id,
+        task.id,
+        code="effect_absent",
+        owner="reconciler",
+        now="2026-08-06 10:00:03",
+    )
+
+    assert store.get_agent_run(consumer.id).status == "failed"
 
 
+def test_consumer_unknown_rows_are_not_reconciliation_candidates(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    consumer = _claim_consumer(store, task).run
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """
+            update agent_runs
+            set status='unknown', side_effect_state='unknown',
+                reconciliation_suspended=1
+            where id=?
+            """,
+            (consumer.id,),
+        )
+
+    assert store.list_suspended_unknown_agent_runs() == []
+    assert store.list_unknown_agent_runs() == []
+    with pytest.raises(AgentRunLeaseLostError):
+        store.resume_suspended_unknown_agent_run(
+            consumer.id,
+            expected_execution_generation=task.execution_generation,
+        )
 
 
 def test_single_chat_trigger_replacement_supersedes_running_turn(tmp_path):

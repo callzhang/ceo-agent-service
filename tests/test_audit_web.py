@@ -473,6 +473,9 @@ def test_format_local_time_converts_iso_timestamp_with_timezone():
     ) == "2026-06-03 17:55:59"
 
 
+def test_format_local_time_preserves_empty_or_unknown_value():
+    assert audit_web_module._format_local_time("") == ""
+    assert audit_web_module._format_local_time("not-a-time") == "not-a-time"
 
 
 def test_render_attempt_list_shows_history_rows(tmp_path: Path):
@@ -690,6 +693,55 @@ def test_history_batches_structured_approval_run_summaries_once(
     assert agent_run_calls == []
 
 
+def test_history_approval_cards_show_direct_return_and_unknown_results(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    returned_id = store.record_reply_attempt(
+        conversation_id="cid-history-direct-return",
+        conversation_title="Direct return approval",
+        trigger_message_id="msg-history-direct-return",
+        trigger_sender="Mina",
+        trigger_text="Return this approval.",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-direct-return",
+        oa_action="退回",
+        oa_action_result_json='{"errcode": 0}',
+        send_status="commented",
+    )
+    unknown_id = store.record_reply_attempt(
+        conversation_id="cid-history-unknown-approval",
+        conversation_title="Unknown approval",
+        trigger_message_id="msg-history-unknown-approval",
+        trigger_sender="Mina",
+        trigger_text="Review this approval.",
+        action="oa_approval",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-unknown",
+        oa_action="review",
+        send_status="completed",
+    )
+
+    html = render_attempt_list(
+        store,
+        include_chart=False,
+        search_object_type="approval",
+    )
+    returned_card = _history_attempt_card(html, returned_id)
+    unknown_card = _history_attempt_card(html, unknown_id)
+
+    assert "✎ 已留言，仍待审批" in returned_card
+    assert "结果未知" in unknown_card
+    assert "🧾" not in returned_card
+    assert "🧾" not in unknown_card
+    assert (
+        '<span class="pill status-action history-approval-result '
+        'action-state-unknown">结果未知</span>'
+    ) in unknown_card
+    assert "style=" not in unknown_card
+    assert (
+        ".action-state-unknown{background:var(--surface);color:var(--stone);"
+        "border-color:var(--hairline)}"
+    ) in html
 
 
 def test_history_approval_cards_merge_business_evidence_with_latest_system_state(
@@ -973,6 +1025,49 @@ def test_history_pins_only_current_unresolved_needs_human_attempts(tmp_path: Pat
     assert "待人工决策" in pinned
 
 
+def test_history_recovered_approval_keeps_business_and_recovery_pills(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-history-recovered-approval",
+        conversation_title="Recovered approval",
+        single_chat=False,
+        trigger_message_id="msg-history-recovered-approval",
+        trigger_create_time="2026-08-18 10:00:00",
+        trigger_sender="Mina",
+        trigger_text="Recover this approval.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc-history-recovered-approval",
+        oa_action="review",
+        send_status="failed",
+    )
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    card = _history_attempt_card(
+        render_attempt_list(
+            store,
+            include_chart=False,
+            search_object_type="approval",
+        ),
+        attempt_id,
+    )
+
+    assert "处理失败" in card
+    assert "↻ Recovered" in card
+    assert "🧾 review" not in card
 
 
 def test_history_approval_keeps_its_own_status_without_later_attempt_link(
@@ -4275,6 +4370,25 @@ def test_render_config_page_shows_dedicated_agent_runtime_settings_without_token
     assert "CEO_CODEX_MODEL" not in html
 
 
+def test_system_config_hides_and_rejects_unknown_env_keys(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_WORKSPACE=/tmp/memory\nPRIVATE_SERVICE_TOKEN=do-not-render\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    html = render_config_page(active_tab="system")
+    status, _, _ = handle_system_config_post(
+        b"system_key=PRIVATE_SERVICE_TOKEN&system_value=changed"
+    )
+
+    assert status == 303
+    assert "PRIVATE_SERVICE_TOKEN" not in html
+    assert "do-not-render" not in html
+    assert "PRIVATE_SERVICE_TOKEN=do-not-render" in env_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_render_config_page_shows_channel_doctor(tmp_path, monkeypatch):
@@ -4805,6 +4919,121 @@ def test_browser_notifications_page_shows_only_current_unresolved_problems(
     assert f"Attempt #{superseded_failure}" not in response.text
 
 
+def test_browser_notifications_exclude_active_and_provider_recovery_tasks(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-active",
+        conversation_title="Active task",
+        single_chat=False,
+        trigger_message_id="msg-active",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Active task.",
+    )
+    [active_task] = store.claim_reply_tasks(limit=1)
+    active_attempt = store.record_reply_attempt(
+        conversation_id=active_task.conversation_id,
+        conversation_title=active_task.conversation_title,
+        trigger_message_id=active_task.trigger_message_id,
+        trigger_sender=active_task.trigger_sender,
+        trigger_text=active_task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    active_decision = store.record_reply_attempt(
+        conversation_id=active_task.conversation_id,
+        conversation_title=active_task.conversation_title,
+        trigger_message_id=active_task.trigger_message_id,
+        trigger_sender=active_task.trigger_sender,
+        trigger_text=active_task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+    )
+
+    store.enqueue_reply_task(
+        conversation_id="cid-provider",
+        conversation_title="Provider recovery",
+        single_chat=False,
+        trigger_message_id="msg-provider",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Provider recovery.",
+    )
+    [provider_task] = store.claim_reply_tasks(limit=1)
+    store.defer_reply_task(
+        provider_task.id,
+        "codex_provider_unavailable",
+        expected_execution_generation=provider_task.execution_generation,
+        available_at="2026-08-08 02:00:00",
+    )
+    provider_attempt = store.record_reply_attempt(
+        conversation_id=provider_task.conversation_id,
+        conversation_title=provider_task.conversation_title,
+        trigger_message_id=provider_task.trigger_message_id,
+        trigger_sender=provider_task.trigger_sender,
+        trigger_text=provider_task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+
+    store.enqueue_reply_task(
+        conversation_id="cid-rerun",
+        conversation_title="Rerun in progress",
+        single_chat=False,
+        trigger_message_id="msg-rerun",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Rerun task.",
+    )
+    rerun_attempt = store.record_reply_attempt(
+        conversation_id="cid-rerun",
+        conversation_title="Rerun in progress",
+        trigger_message_id="msg-rerun",
+        trigger_sender="System",
+        trigger_text="Rerun task.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+
+    store.enqueue_reply_task(
+        conversation_id="cid-completed",
+        conversation_title="Completed task",
+        single_chat=False,
+        trigger_message_id="msg-completed",
+        trigger_create_time="2026-08-08 01:00:00",
+        trigger_sender="System",
+        trigger_text="Completed task.",
+    )
+    [completed_task] = store.claim_reply_tasks(limit=1)
+    store.complete_reply_task(
+        completed_task.id,
+        expected_execution_generation=completed_task.execution_generation,
+    )
+    completed_attempt = store.record_reply_attempt(
+        conversation_id=completed_task.conversation_id,
+        conversation_title=completed_task.conversation_title,
+        trigger_message_id=completed_task.trigger_message_id,
+        trigger_sender=completed_task.trigger_sender,
+        trigger_text=completed_task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="blocked",
+    )
+
+    html = audit_web_module.render_browser_notifications_page(store)
+
+    assert f"Attempt #{active_attempt}" not in html
+    assert f"Attempt #{active_decision}" not in html
+    assert f"Attempt #{provider_attempt}" not in html
+    assert f"Attempt #{rerun_attempt}" not in html
+    assert f"Attempt #{completed_attempt}" not in html
+    assert store.count_current_unresolved_problem_attempts() == 0
 
 
 def test_browser_notification_post_accepts_stable_inbox_notification(tmp_path: Path):
@@ -5455,8 +5684,113 @@ def test_render_attempt_detail_shows_quality_warnings(tmp_path: Path):
     )
 
 
+def test_pending_reconciliation_explains_context_and_requires_no_user_decision(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-oa",
+        conversation_title="工作通知:北京星尘纪元智能科技有限公司",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="张静在招聘需求申请里提到了你，并说明以流程评论为准。",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        send_status="pending_reconciliation",
+        audit_summary="审批动作结果未知，等待只读核对当前审批状态。",
+    )
+    store.update_reply_attempt(attempt_id, send_error="audit_recovery_failed")
+
+    status, detail = render_attempt_detail(store, attempt_id)
+    history = render_attempt_list(store, include_chart=False)
+
+    assert status == 200
+    assert "正在核对执行结果" in detail
+    assert "系统只会读取外部状态，不会重复审批或发送通知" in detail
+    assert "你当前无需操作" in detail
+    assert "等待你的决策" not in detail
+    assert "🔎 正在核对执行结果" in history
+    assert "Pending Reconciliation" not in history
 
 
+def test_pending_reconciliation_names_objective_and_actions():
+    attempt = audit_web_module.ReplyAttempt(
+        id=1,
+        conversation_id="cid-oa",
+        conversation_title="审批通知",
+        trigger_message_id="msg-oa",
+        trigger_sender="OA审批",
+        trigger_text="请处理招聘需求审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        codex_reason="",
+        draft_reply_text="",
+        final_reply_text="",
+        permission_action="",
+        permission_reason="",
+        send_status="pending_reconciliation",
+        send_error="audit_recovery_failed",
+        retry_count=0,
+        created_at="2026-08-10 12:00:00",
+        updated_at="2026-08-10 12:00:00",
+    )
+    consumer = AgentRun(
+        id=10,
+        reply_task_id=20,
+        execution_generation="initial",
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        status="completed",
+        final_result_json=json.dumps(
+            {
+                "outcome": "proposal",
+                "summary": "准备处理审批",
+                "proposal": {
+                    "objective": "处理招聘需求审批",
+                    "actions": [
+                        {
+                            "description": "同意招聘需求申请。",
+                            "capability": "agent_cli.dws",
+                            "operation": "oa approval approve",
+                            "target": {"instance_id": "process-1"},
+                            "payload": {"argv": ["dws", "oa"]},
+                            "expected_verification": "读回审批结果",
+                        },
+                        {
+                            "description": "通知申请人审批结果。",
+                            "capability": "agent_cli.dws",
+                            "operation": "chat message send",
+                            "target": {"user": "user-1"},
+                            "payload": {"argv": ["dws", "chat"]},
+                            "expected_verification": "读回消息",
+                        },
+                    ],
+                    "sourced_facts": [],
+                    "authored_judgment": "材料满足当前审批条件。",
+                },
+                "error": {
+                    "code": "",
+                    "retryable": False,
+                    "authorization_required": False,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        created_at="2026-08-10 12:00:00",
+        updated_at="2026-08-10 12:00:00",
+    )
+
+    html = audit_web_module._attempt_status_card(attempt, [consumer])
+
+    assert "事项：处理招聘需求审批" in html
+    assert "同意招聘需求申请" in html
+    assert "通知申请人审批结果" in html
+    assert "你当前无需操作" in html
+    assert "。；" not in html
+    assert "。。" not in html
 
 
 def test_later_attempt_is_not_used_to_render_original_detail(tmp_path: Path):
@@ -6367,6 +6701,44 @@ def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' not in html
 
 
+def test_runtime_route_failure_detail_shows_later_task_recovery(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-route-recovery",
+        conversation_title="Runtime recovery",
+        single_chat=False,
+        trigger_message_id="msg-route-recovery",
+        trigger_create_time="2026-08-22 07:00:00",
+        trigger_sender="System",
+        trigger_text="Recover this routed task.",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        codex_reason="runtime_route_unavailable",
+        send_status="failed",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="runtime_route_unavailable",
+    )
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "后续路由恢复" in html
+    assert f"任务 #{task.id} 已完成" in html
+    assert "原始失败记录仍保留" in html
 
 
 def test_worker_attention_collapses_reply_attempt_into_matching_reply_task(
@@ -7690,6 +8062,57 @@ def test_history_human_decision_accepts_failed_attempt_and_redirects_to_history(
     assert repeated_task.execution_generation == generation
 
 
+def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-unknown-decision",
+        conversation_title="Operations",
+        single_chat=False,
+        trigger_message_id="msg-unknown-decision",
+        trigger_create_time="2026-08-11 05:00:00",
+        trigger_sender="Mina",
+        trigger_text="Please decide.",
+        trigger_message_json="{}",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    run = _claim_audit_run(store, task).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "effect_completion_missing"},
+        owner="worker",
+    )
+    source_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=run.id,
+        task_status="failed",
+        task_error="effect completion unknown",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="effect completion unknown",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="effect completion unknown",
+        send_status="failed",
+        send_error="effect completion unknown",
+        channel="dingtalk",
+    )
+
+    status, _, _ = handle_needs_human_decision_post(
+        store,
+        source_id,
+        "instruction=暂不处理".encode(),
+        return_to="/",
+    )
+
+    assert status == 409
+    assert store.get_reply_attempt(source_id).send_status == "failed"
 
 
 def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: Path):
@@ -7739,6 +8162,39 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
     assert "untrusted-client-value" not in attempt.audit_summary
 
 
+def test_exhausted_unknown_run_stays_available_for_automatic_readback(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-suspended",
+        conversation_title="Operations",
+        single_chat=False,
+        trigger_message_id="msg-suspended",
+        trigger_create_time="2026-08-17 09:00:00",
+        trigger_sender="Mina",
+        trigger_text="请处理并确认结果。",
+        trigger_message_json="{}",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    run = _claim_audit_run(store, task).run
+    store.fail_agent_run(
+        run.id,
+        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
+        owner="worker",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update agent_runs set reconciliation_event_count=? where id=?",
+            (MAX_RECONCILIATION_EVENTS, run.id),
+        )
+
+    assert store.suspend_exhausted_unknown_agent_runs() == 0
+    assert store.get_latest_reply_attempt_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    ) is None
+    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+    assert store.get_reply_task(task.id).status == "processing"
 
 
 def test_agent_run_resolution_handler_rejects_free_text_without_enum(tmp_path: Path):

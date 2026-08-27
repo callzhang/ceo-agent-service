@@ -84,8 +84,11 @@
       "enum": [
         "executed",
         "feedback_provided",
+        "feedback_provided",
         "needs_human",
         "dry_run",
+        "failed",
+        "failed",
         "failed"
       ],
       "title": "AuditOutcome",

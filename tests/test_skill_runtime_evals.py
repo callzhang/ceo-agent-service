@@ -52,7 +52,7 @@ def _rejected_audit_result(outcome: str = "failed") -> dict[str, object]:
             "authorization_required": False,
         },
     }
-    if outcome == "feedback_provided":
+    if outcome == "revision_required":
         result["feedback"] = {
             "rule": "fixture_contract",
             "observation": "The candidate needs revision.",
@@ -861,7 +861,7 @@ def test_live_terminal_outcome_does_not_invoke_audit(
     assert len(invocations) == 1
 
 
-@pytest.mark.parametrize("audit_outcome", ["failed", "feedback_provided"])
+@pytest.mark.parametrize("audit_outcome", ["failed", "revision_required"])
 def test_every_recorded_case_rejects_unacceptable_audit_outcome(
     audit_outcome: str,
 ):

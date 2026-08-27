@@ -7494,7 +7494,7 @@ class AutoReplyStore:
             row = db.execute("select * from agent_runs where id=?", (run_id,)).fetchone()
             return self._agent_run_from_row(row, db=db)
 
-    def fail_expired_audit_run(
+    def mark_expired_agent_run_unknown(
         self,
         run_id: int,
         structured_error: dict[str, object],
@@ -7502,7 +7502,12 @@ class AutoReplyStore:
         expected_execution_generation: str,
         now: str | datetime | None = None,
     ) -> AgentRun:
-        """Close an expired Audit lease as a normal retryable failure."""
+        """Close an expired run as a terminal application failure.
+
+        The method name remains for database/API compatibility with older
+        callers, but expired runs no longer enter an unknown reconciliation
+        state.
+        """
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
         error_json = _json_object_text(structured_error, field="structured_error")
