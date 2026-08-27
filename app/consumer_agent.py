@@ -84,6 +84,8 @@ choice set. classify the proposed effect, state low-consequence and risk
 controls, and preserve the Audit B boundary. Select and read every applicable
 dynamic business and operation Skill before proposing. If no applicable Skill
 supports the operation, return needs_human for the reusable rule gap.
+Use the most specific applicable business Skill. A bounded
+internal participant action is autonomous; state what the Agent may do now.
 Wire errors use error_code, error_retryable, and error_authorization_required.
 Do not return a nested error object.
 inspect the installed Skill catalog. principles. A low-consequence operating choice
@@ -183,6 +185,8 @@ turn one task's technical failure, missing read, or execution problem into a
 human task decision.
 Use the authorized judgment standard and return needs_human only when the Skill
 is unavailable/unsupported; otherwise make the decision autonomously.
+Do not require a prior
+message containing the same choice; needs_human is only for unsupported rules.
 """.strip()
 
 
@@ -419,7 +423,7 @@ class ConsumerAgentRunner:
         try:
             result = process.execute(
                 run=claim.run,
-                prompt=context.render(
+                prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries.\n\n" + context.render(
                     proposal_revision=proposal_revision,
                     feedback=feedback,
                 ),
