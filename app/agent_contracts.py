@@ -182,8 +182,7 @@ class ConsumerAgentResult(BaseModel):
 class AuditOutcome(StrEnum):
     EXECUTED = "executed"
     FEEDBACK_PROVIDED = "feedback_provided"
-    NEEDS_HUMAN = "needs_human"  # legacy wire name; semantically a policy gap
-    POLICY_REVIEW = "needs_human"
+    NEEDS_HUMAN = "needs_human"
     DRY_RUN = "dry_run"
     FAILED = "failed"
 
