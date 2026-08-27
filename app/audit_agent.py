@@ -1498,6 +1498,6 @@ def _recovery_prompt(
         "include action_index, disposition, and read_result_digest.\n\n"
         "An unknown readback command is an evidence task; use read-only capability discovery.\n\n"
         f"Exact readback contracts: {readback_contracts}\n\n"
-        "A present disposition must share a stable identifier from its exact readback contract.\n\n"
+        "A present disposition shares a stable identifier from its exact readback contract.\n\n"
         f"{context.render()}\n\nPrior attempt: {identity}{guidance}\n"
     )
