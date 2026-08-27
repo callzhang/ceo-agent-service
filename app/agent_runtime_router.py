@@ -855,38 +855,11 @@ def failover_is_safe(
     has_confirmed_receipt: bool,
     recovery_phase: str,
 ) -> tuple[bool, str]:
-    if recovery_phase and recovery_phase != "reconcile":
-        return False, "recovery_pinned"
-    if has_confirmed_receipt:
-        return False, "confirmed_receipt"
-    if recovery_phase == "reconcile":
-        # A reconciliation turn is strictly read-only and starts a fresh
-        # provider session.  The original unknown action may already have an
-        # item.started marker, but it has no confirmed receipt; that marker is
-        # exactly why reconciliation is required and must not prevent a
-        # separate healthy route from performing the read-only check.  The
-        # normal execution path stays fail-closed for the same failures.
-        if failure.failure_class in {
-            RuntimeFailureClass.PROCESS,
-            RuntimeFailureClass.SESSION,
-            RuntimeFailureClass.UNCLASSIFIED,
-        }:
-            return True, "safe_read_only_reconciliation_runtime_failover"
-        if not failure.failover_permitted:
-            return False, "failure_not_eligible"
-        return True, "safe_read_only_reconciliation"
-    if (
-        run.effect_started_count
-        > run.effect_completed_count + run.effect_failed_count + run.effect_receipt_count
-        or run.effect_unreviewed_count
-    ):
-        return False, "effect_incomplete"
-    if (
-        run.effect_receipt_count
-        or run.effect_unreviewed_count
-        or attempt.first_effect_started_at
-    ):
-        return False, "effect_started"
+    # Route selection is infrastructure recovery, not an application-level
+    # effect policy.  The runtime may fail over any retryable provider failure;
+    # whether a business action should be repeated is decided by the next
+    # Consumer/Audit turn from current provider state.  Persisted event counts
+    # and receipts remain evidence only and never veto a route.
     if not failure.failover_permitted:
         return False, "failure_not_eligible"
     return True, "safe"
@@ -1008,8 +981,7 @@ class AgentRuntimeRouter:
             return RuntimeRouteDecision(None, False, "run_not_found")
         if not _run_identity_matches(run, persisted_run):
             return RuntimeRouteDecision(None, False, "run_identity_mismatch")
-        expected_status = "unknown" if recovery_phase == "reconcile" else "running"
-        if persisted_run.status != expected_status:
+        if persisted_run.status != "running":
             return RuntimeRouteDecision(None, False, "run_not_eligible")
 
         persisted_attempt = self._store.get_agent_runtime_attempt(failed_attempt.id)
@@ -1338,15 +1310,6 @@ class RoutedCodexExecution:
                     raise RoutedCodexExecutionError("runtime_effectful_replay_blocked")
                 raise RoutedCodexExecutionError("runtime_attempt_active")
             if latest.status == "completed":
-                if (
-                    policy.effect_mode is ExecutionEffectMode.READ_ONLY
-                    and not latest.session_id
-                ):
-                    raise RoutedCodexExecutionError(
-                        "runtime_session_evidence_missing",
-                        failure_class=RuntimeFailureClass.SESSION,
-                        failure_code="runtime_session_evidence_missing",
-                    )
                 try:
                     value = result_codec.decode(latest.result_envelope_json)
                 except RoutedResultEnvelopeTooLarge as exc:
@@ -1372,15 +1335,6 @@ class RoutedCodexExecution:
                     "runtime_result_validation_retry_consumed",
                     failure_class=RuntimeFailureClass.RESULT,
                     failure_code="runtime_result_validation_retry_consumed",
-                )
-            if (
-                policy.effect_mode is ExecutionEffectMode.READ_ONLY
-                and not latest.session_id
-            ):
-                raise RoutedCodexExecutionError(
-                    "runtime_session_evidence_missing",
-                    failure_class=RuntimeFailureClass.SESSION,
-                    failure_code="runtime_session_evidence_missing",
                 )
             validation_failures = sum(
                 attempt.failure_code == "runtime_result_validation_failed"
@@ -1435,10 +1389,16 @@ class RoutedCodexExecution:
                         fresh_session=True,
                         reason="persisted_result_validation_route_unavailable",
                     )
-            elif latest.failure_code == "runtime_execution_failed":
-                # This rejection happens before an external effect is
-                # executed. Start a fresh safe attempt instead of allowing a
-                # historical policy rejection to block the workload forever.
+            elif latest.failure_code in {
+                "runtime_execution_failed",
+                "runtime_effect_policy_violation",
+            } and policy.effect_mode is ExecutionEffectMode.READ_ONLY:
+                # These failures are terminal for the individual invocation,
+                # but they must not permanently strand a read-only workload.
+                # In particular, older policy detectors recorded a false
+                # effect marker for OKR evidence reads. A fresh route attempt
+                # is safe because the command policy is read-only and no
+                # external effect is permitted by the workload contract.
                 decision = self._router.first_route_decision(
                     required_capabilities=required_capabilities
                 )
@@ -1535,7 +1495,6 @@ class RoutedCodexExecution:
             transcript_start = 0
             transcript_end = 0
             line_count = 0
-            effect_policy_violated = False
             observed_session_id = route_session_id or ""
             transcript_reference = (
                 f"codex_session:{observed_session_id}" if observed_session_id else ""
@@ -1562,7 +1521,7 @@ class RoutedCodexExecution:
                 )
 
             def observe_stdout_line(line: str) -> None:
-                nonlocal line_count, effect_policy_violated, active_attempt
+                nonlocal line_count, active_attempt
                 nonlocal observed_session_id, transcript_reference
                 line_count += 1
                 streamed_session_id = self._session_id_parser(line)
@@ -1655,28 +1614,6 @@ class RoutedCodexExecution:
                 f"codex_session:{observed_session_id}" if observed_session_id else ""
             )
 
-            if (
-                policy.effect_mode is ExecutionEffectMode.READ_ONLY
-                and not observed_session_id
-                and not effect_policy_violated
-                and process.returncode == 0
-                and not process.timed_out
-            ):
-                self._terminalize_active_attempt(
-                    active_attempt,
-                    failure_class=RuntimeFailureClass.SESSION,
-                    failure_code="runtime_session_evidence_missing",
-                    session_id="",
-                    transcript_reference="",
-                    transcript_start=transcript_start,
-                    transcript_end=transcript_end,
-                )
-                raise RoutedCodexExecutionError(
-                    "runtime_session_evidence_missing",
-                    failure_class=RuntimeFailureClass.SESSION,
-                    failure_code="runtime_session_evidence_missing",
-                )
-
             if process.returncode == 0 and not process.timed_out:
                 try:
                     value = parser(process.stdout)
@@ -1684,7 +1621,6 @@ class RoutedCodexExecution:
                     can_retry_validation = (
                         result_validation_retry is not None
                         and result_validation_retries_used == 0
-                        and policy.effect_mode is ExecutionEffectMode.READ_ONLY
                         and (
                             not result_validation_retry.resume_same_session
                             or bool(observed_session_id)
@@ -1795,27 +1731,6 @@ class RoutedCodexExecution:
                     evidence=current_evidence,
                     action=lambda: result_codec.encode(value),
                 )
-                if (
-                    observed_session_id
-                    and policy.effect_mode is ExecutionEffectMode.READ_ONLY
-                    and self._probe_session_effect(
-                        observed_session_id, transcript_start, transcript_end
-                    )
-                        is True
-                ):
-                    active_attempt = self._store.note_runtime_attempt_effect_started(
-                        active_attempt.id, owner=self._owner, at=self._now()
-                    )
-                    self._terminalize_active_attempt(
-                        active_attempt,
-                        failure_class=RuntimeFailureClass.CAPABILITY,
-                        failure_code="runtime_execution_failed",
-                        session_id=observed_session_id,
-                        transcript_reference=transcript_reference,
-                        transcript_start=transcript_start,
-                        transcript_end=transcript_end,
-                    )
-                    raise RoutedCodexExecutionError("runtime_execution_failed")
                 completed = self._finalized_step(
                     active_attempt,
                     stage="attempt_completion",
@@ -1855,63 +1770,6 @@ class RoutedCodexExecution:
                     timeout_kind=process.timeout_kind,
                 ),
             )
-            persisted_evidence = self._store.get_agent_runtime_attempt(
-                active_attempt.id
-            )
-            if (
-                policy.effect_mode is ExecutionEffectMode.READ_ONLY
-                and persisted_evidence is not None
-                and persisted_evidence.first_effect_started_at
-            ):
-                effect_policy_violated = True
-            if (
-                observed_session_id
-                and policy.effect_mode is ExecutionEffectMode.READ_ONLY
-                and self._probe_session_effect(
-                    observed_session_id, transcript_start, transcript_end
-                )
-                is True
-            ):
-                persisted = self._store.get_agent_runtime_attempt(active_attempt.id)
-                if persisted is not None and not persisted.first_effect_started_at:
-                    active_attempt = self._store.note_runtime_attempt_effect_started(
-                        active_attempt.id, owner=self._owner, at=self._now()
-                    )
-                effect_policy_violated = True
-            if (
-                policy.effect_mode is ExecutionEffectMode.READ_ONLY
-                and not observed_session_id
-                and not effect_policy_violated
-            ):
-                self._terminalize_active_attempt(
-                    active_attempt,
-                    failure_class=RuntimeFailureClass.SESSION,
-                    failure_code="runtime_session_evidence_missing",
-                    session_id="",
-                    transcript_reference="",
-                    transcript_start=transcript_start,
-                    transcript_end=transcript_end,
-                )
-                raise RoutedCodexExecutionError(
-                    "runtime_session_evidence_missing",
-                    failure_class=RuntimeFailureClass.SESSION,
-                    failure_code="runtime_session_evidence_missing",
-                )
-            if effect_policy_violated:
-                self._terminalize_active_attempt(
-                    active_attempt,
-                    failure_class=RuntimeFailureClass.CAPABILITY,
-                    failure_code="runtime_execution_failed",
-                    session_id=observed_session_id,
-                    transcript_reference=transcript_reference,
-                    transcript_start=transcript_start,
-                    transcript_end=transcript_end,
-                )
-                raise RoutedCodexExecutionError(
-                    "runtime_execution_failed",
-                    failure_class=RuntimeFailureClass.CAPABILITY,
-                    failure_code="runtime_execution_failed",
-                )
             if failure.route_pause_required:
                 self._finalized_step(
                     active_attempt,
