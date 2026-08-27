@@ -1490,6 +1490,7 @@ def _recovery_prompt(
         "The previous attempt did not produce a valid terminal structured result. "
         "RECOVERY MODE OVERRIDES NORMAL AUDIT EXECUTION. Perform strictly read-only recovery and return one terminal structured "
         "result (executed, feedback_provided, needs_human, failed, unknown, or "
+        "reconciled). The only valid outcome for this turn is reconciled when "
         "reconciled). reconciliation must be an array of per-action readback "
         "records; never execute or blindly replay an action whose effect is unknown.\n\n"
         f"{context.render()}\n\nPrior attempt: {identity}{guidance}\n"

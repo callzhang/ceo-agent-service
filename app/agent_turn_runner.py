@@ -2593,11 +2593,6 @@ class AgentTurnProcess(Generic[ResultT]):
         if getattr(result, "proposal_revision") != run.proposal_revision:
             self._fail_running(run, "audit_proposal_revision_mismatch")
             raise RuntimeError("audit_proposal_revision_mismatch")
-        # Application validation stops at the typed result contract. Runtime
-        # command classification, effect receipts, and provider readback are
-        # runtime concerns and must not turn a valid business result into an
-        # application-level unknown/reconciliation state.
-        return
         if getattr(result, "reconciliation", ()):
             self._fail_running(run, "audit_reconciliation_unexpected")
             raise RuntimeError("audit_reconciliation_unexpected")

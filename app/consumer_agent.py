@@ -128,7 +128,9 @@ calling agent's available capabilities. Return feedback_provided with concrete
 rule, observation, and requested_revision fields when Consumer must regenerate
 its result. Return executed, needs_human, or failed for the other terminal
 outcomes. Do not create provider-specific policy, receipt, readback, or recovery
-states in the application result.
+states in the application result. external_result must
+contain exactly its typed fields. Legacy revision_required input is normalized
+to the formal feedback_provided output.
 
 Treat a bounded fact-finding inquiry as executable when it only gathers facts,
 states the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
@@ -595,7 +597,15 @@ def _developer_instructions(
     return "\n\n".join(
         (
             f"## Audit Rules\n{audit_rules}",
-            "## Runtime Invariants\nPreserve structured outcomes and read-only recovery for unknown external effects.",
+            "## Runtime Invariants\n"
+            "1. [role_boundary] Role Boundary: Consumer Agent A is the user's read-only representative; Audit Agent B is the only role allowed to execute an accepted candidate.\n"
+            "2. [output_contracts] Output Contracts: return the typed wire contract.\n"
+            "3. [supported_facts] Supported Facts: use only supported facts.\n"
+            "4. [meaning_preservation] Meaning Preservation: preserve candidate meaning.\n"
+            "5. [duplicate_effects] Duplicate Effects: prevent duplicate external effects.\n"
+            "6. [unknown_effects] Unknown Effects: keep unknown effects read-only.\n"
+            "7. [external_secrecy] External Secrecy: do not expose secrets.\n"
+            "8. [dependency_auth] Dependency Authentication: verify dependency evidence.",
             f"## Dynamic Skill\n{skill_instruction}",
             f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
             f"## Pydantic Result Contract\n{_schema_json(result_model)}",
