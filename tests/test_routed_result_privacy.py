@@ -74,18 +74,18 @@ def test_structured_result_codec_persists_only_audit_references():
 def test_task_result_codec_persists_only_audit_references():
     encoded = _encode_task_agent_result(
         _raw_with_sensitive_audit_event(
-            {
-                "action": "discard",
-                "discard_reason": "no durable task",
-                "project": None,
-                "todo_changes": [],
-                "follow_up_drafts": [],
-                "follow_up_changes": [],
-                "update_summary": "discarded",
-                "merge_reason": "",
-                "memory_recall_used": False,
-                "confidence": 0.8,
-            }
+                {
+                    "action": "skip",
+                    "skip_reason": "no durable task",
+                    "project": None,
+                    "todo_changes": [],
+                    "follow_up_drafts": [],
+                    "follow_up_changes": [],
+                    "update_summary": "skipped",
+                    "merge_reason": "",
+                    "memory_recall_used": False,
+                    "confidence": 0.8,
+                }
         )
     )
 
