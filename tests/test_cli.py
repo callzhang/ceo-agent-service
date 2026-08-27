@@ -341,113 +341,10 @@ def test_quality_check_help_names_the_default_live_channel_gates():
     assert "DingTalk and WeChat" not in help_text
 
 
-def test_service_start_releases_unknown_audit_reconciliation_lease(tmp_path: Path):
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
-    store = AutoReplyStore(settings.db_path)
-    enqueue_trigger_task(store)
-    task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="operation-1",
-        owner="stopped-worker",
-    ).run
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "effect_completion_unknown", "retryable": True},
-        owner="stopped-worker",
-    )
-    assert store.claim_unknown_agent_run(run.id, owner="stopped-reconciler").claimed
-
-    assert cli._recover_orphaned_reply_tasks_on_service_start(settings) == 1
-
-    persisted = store.get_agent_run(run.id)
-    assert persisted is not None
-    assert persisted.lease_owner == ""
-    assert persisted.lease_expires_at == ""
 
 
-def test_service_start_settles_done_unknown_audit_with_delivery_ledger(
-    tmp_path: Path,
-):
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
-    store = AutoReplyStore(settings.db_path)
-    enqueue_trigger_task(store)
-    task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="operation-1",
-        owner="stopped-worker",
-    ).run
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "effect_completion_unknown", "retryable": True},
-        owner="stopped-worker",
-    )
-    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "delivered")
-    with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
-
-    assert cli._recover_orphaned_reply_tasks_on_service_start(settings) == 1
-
-    persisted = store.get_agent_run(run.id)
-    assert persisted is not None
-    assert persisted.status == "completed"
-    assert persisted.side_effect_state == "confirmed"
 
 
-def test_service_start_settles_processing_unknown_audit_with_exact_delivery(
-    tmp_path: Path,
-):
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
-    store = AutoReplyStore(settings.db_path)
-    enqueue_trigger_task(store)
-    task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="operation-1",
-        owner="stopped-worker",
-    ).run
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "effect_completion_unknown", "retryable": True},
-        owner="stopped-worker",
-    )
-    assert store.claim_unknown_agent_run(run.id, owner="stopped-reconciler").claimed
-    store.record_sent_reply(
-        task.conversation_id,
-        task.trigger_message_id,
-        "delivered",
-        send_result_json=json.dumps(
-            {"agent_run_id": run.id, "operation_id": run.operation_id},
-            separators=(",", ":"),
-        ),
-    )
-
-    assert cli._recover_orphaned_reply_tasks_on_service_start(settings) == 2
-
-    persisted_run = store.get_agent_run(run.id)
-    persisted_task = store.get_reply_task(task.id)
-    assert persisted_run is not None
-    assert persisted_run.status == "completed"
-    assert persisted_run.side_effect_state == "confirmed"
-    assert persisted_task is not None
-    assert persisted_task.status == "done"
-    assert persisted_task.error == ""
 
 
 def test_parser_requires_structured_agent_run_resolution():
@@ -486,7 +383,7 @@ def test_resolve_agent_run_command_records_manual_resolution(tmp_path, capsys):
         operation_id=f"direct-agent:{task.id}:{task.execution_generation}",
         owner="worker",
     ).run
-    store.mark_agent_run_unknown(
+    store.fail_agent_run(
         run.id,
         {"code": "unknown"},
         owner="worker",
@@ -4399,19 +4296,6 @@ def test_rerun_message_command_treats_naive_context_time_as_dingtalk_time(
     assert "rerun-message processed conversation_id=cid-1" in capsys.readouterr().out
 
 
-def test_rerun_message_command_fails_for_unknown_conversation(tmp_path):
-    settings = WorkerSettings(
-        workspace=tmp_path / "workspace",
-        db_path=tmp_path / "worker.sqlite3",
-        corpus_dir=tmp_path / "corpus",
-    )
-
-    with pytest.raises(SystemExit, match="conversation not found: cid-missing"):
-        rerun_message_command(
-            settings,
-            conversation_id="cid-missing",
-            message_id="msg-1",
-        )
 
 
 def test_rerun_message_command_reports_missing_message(monkeypatch, tmp_path):

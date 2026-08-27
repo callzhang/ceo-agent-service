@@ -585,7 +585,7 @@ def test_audit_recovery_instructions_override_normal_audit_outcomes():
     assert "perform a target-matched live read" in instructions
     assert "External writes are unavailable" in instructions
     assert "Return only outcome=reconciled" in instructions
-    assert "Do not return executed, revision_required, failed, or needs_human" in instructions
+    assert "Do not return executed, feedback_provided, failed, or needs_human" in instructions
 
 
 def test_consumer_instructions_pin_the_installed_oa_workflow():

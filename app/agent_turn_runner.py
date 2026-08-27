@@ -1371,7 +1371,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 if recover_unknown:
                     self._defer_unknown(run, mismatch_code)
                 else:
-                    self.store.mark_agent_run_unknown(
+                    self.store.fail_agent_run(
                         run.id,
                         {"code": mismatch_code, "retryable": True},
                         owner=self.owner,
@@ -1660,7 +1660,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     if recover_unknown:
                         self._defer_unknown(run, code)
                     else:
-                        self.store.mark_agent_run_unknown(
+                        self.store.fail_agent_run(
                             run.id,
                             {"code": code, "retryable": True},
                             owner=self.owner,
@@ -1866,7 +1866,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 # reconciliation claim into implicit confirmation.
                 if getattr(
                     result, "outcome"
-                ) is AuditOutcome.RECONCILED and not getattr(result, "reconciliation"):
+                ) is AuditOutcome.FAILED and not getattr(result, "reconciliation"):
                     raise
                 fallback = _conservative_reconciliation_result_from_readbacks(
                     run=run,
@@ -1917,7 +1917,7 @@ class AgentTurnProcess(Generic[ResultT]):
         claude_business_failure = outcome in {
             ConsumerOutcome.FAILED,
             AuditOutcome.FAILED,
-            AuditOutcome.UNKNOWN,
+            AuditOutcome.FAILED,
         } or (recovery_phase == "execute" and outcome is not AuditOutcome.EXECUTED)
         if (
             route.runtime_kind is RuntimeKind.CLAUDE_CLI
@@ -2034,8 +2034,8 @@ class AgentTurnProcess(Generic[ResultT]):
                 side_effect_state=side_effect_state.value,
                 transcript_end_line=transcript_end,
             )
-        elif outcome is AuditOutcome.UNKNOWN:
-            self.store.mark_agent_run_unknown(
+        elif outcome is AuditOutcome.FAILED:
+            self.store.fail_agent_run(
                 run.id,
                 getattr(result, "error").model_dump(mode="json"),
                 owner=self.owner,
@@ -2538,7 +2538,7 @@ class AgentTurnProcess(Generic[ResultT]):
             self.task.conversation_id, self.task.trigger_message_id
         ):
             return
-        self.store.mark_agent_run_unknown(
+        self.store.fail_agent_run(
             run.id,
             {"code": "audit_delivery_ledger_missing", "retryable": True},
             owner=self.owner,
@@ -2583,11 +2583,11 @@ class AgentTurnProcess(Generic[ResultT]):
             if receipt.path not in attempted_paths
         )
         if absent_receipts or (
-            unreadable_receipts and outcome is not AuditOutcome.REVISION_REQUIRED
+            unreadable_receipts and outcome is not AuditOutcome.FEEDBACK_PROVIDED
         ):
             self._fail_running(run, "audit_skill_reread_missing")
             raise AgentReadOnlyViolationError("audit_skill_reread_missing")
-        if mismatched_receipts and outcome is not AuditOutcome.REVISION_REQUIRED:
+        if mismatched_receipts and outcome is not AuditOutcome.FEEDBACK_PROVIDED:
             self._fail_running(run, "audit_skill_reread_mismatch")
             raise AgentReadOnlyViolationError("audit_skill_reread_mismatch")
         if getattr(result, "proposal_revision") != run.proposal_revision:
@@ -2622,7 +2622,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     expected_effect_actions,
                     self.effects,
                 ):
-                    self.store.mark_agent_run_unknown(
+                    self.store.fail_agent_run(
                         run.id,
                         {"code": "audit_external_readback_missing", "retryable": True},
                         owner=self.owner,
@@ -2636,7 +2636,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 else "audit_execution_evidence_mismatch"
             )
             if persisted.side_effect_state != SideEffectState.NONE.value:
-                self.store.mark_agent_run_unknown(
+                self.store.fail_agent_run(
                     run.id,
                     {"code": code, "retryable": True},
                     owner=self.owner,
@@ -2649,10 +2649,10 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             raise RuntimeError(code)
         if (
-            outcome is not AuditOutcome.UNKNOWN
+            outcome is not AuditOutcome.FAILED
             and persisted.side_effect_state != SideEffectState.NONE.value
         ):
-            self.store.mark_agent_run_unknown(
+            self.store.fail_agent_run(
                 run.id,
                 {"code": "audit_effect_without_executed_result", "retryable": True},
                 owner=self.owner,
@@ -2672,7 +2672,7 @@ class AgentTurnProcess(Generic[ResultT]):
         outcome = getattr(result, "outcome")
         if getattr(result, "proposal_revision") != run.proposal_revision:
             raise RuntimeError("audit_proposal_revision_mismatch")
-        if outcome is not AuditOutcome.RECONCILED:
+        if outcome is not AuditOutcome.FAILED:
             raise RuntimeError("audit_reconciliation_result_invalid")
         reconciliation = _validated_reconciliation(
             getattr(result, "reconciliation"),
@@ -2868,7 +2868,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     side_effect_state=SideEffectState.CONFIRMED.value,
                 )
             else:
-                self.store.mark_agent_run_unknown(
+                self.store.fail_agent_run(
                     run.id,
                     {"code": code, "retryable": True},
                     owner=self.owner,
@@ -3312,7 +3312,7 @@ def _conservative_reconciliation_result_from_readbacks(
     if not entries:
         return None
     return AuditAgentResult(
-        outcome=AuditOutcome.RECONCILED,
+        outcome=AuditOutcome.FAILED,
         summary=(
             "Controlled target-matched live readbacks completed, but the recovery "
             "result could not safely classify the prior external action."

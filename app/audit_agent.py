@@ -683,7 +683,7 @@ class AuditAgentRunner:
                 f"Candidate action indexes {listed} use the trigger's open-DingTalk ID as a user ID."
             )
         result = AuditAgentResult(
-            outcome=AuditOutcome.REVISION_REQUIRED,
+            outcome=AuditOutcome.FEEDBACK_PROVIDED,
             summary="The candidate uses an invalid typed recipient identifier.",
             proposal_revision=run.proposal_revision,
             side_effect_state=SideEffectState.NONE,
@@ -719,7 +719,7 @@ class AuditAgentRunner:
         run: AgentRun,
     ) -> AgentTurnRunResult[AuditAgentResult]:
         result = AuditAgentResult(
-            outcome=AuditOutcome.REVISION_REQUIRED,
+            outcome=AuditOutcome.FEEDBACK_PROVIDED,
             summary="The candidate has no verified Consumer Skill receipt.",
             proposal_revision=run.proposal_revision,
             side_effect_state=SideEffectState.NONE,

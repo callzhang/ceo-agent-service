@@ -181,15 +181,9 @@ class ConsumerAgentResult(BaseModel):
 class AuditOutcome(StrEnum):
     EXECUTED = "executed"
     FEEDBACK_PROVIDED = "feedback_provided"
-    # Backward compatible Python alias. New wire and persisted results use
-    # feedback_provided so the outcome describes the action that occurred.
-    REVISION_REQUIRED = "feedback_provided"
-    NEEDS_HUMAN = "needs_human"  # legacy wire name; semantically a policy gap
-    POLICY_REVIEW = "needs_human"
+    NEEDS_HUMAN = "needs_human"
     DRY_RUN = "dry_run"
     FAILED = "failed"
-    UNKNOWN = "failed"
-    RECONCILED = "failed"
 
 
 class ReconciliationDisposition(StrEnum):
@@ -248,8 +242,6 @@ class AuditAgentResult(BaseModel):
     @field_validator("outcome", mode="before")
     @classmethod
     def accept_json_outcome(cls, value: object) -> object:
-        if isinstance(value, str) and value == "revision_required":
-            value = "feedback_provided"
         return AuditOutcome(value) if isinstance(value, str) else value
 
     @field_validator("side_effect_state", mode="before")
@@ -267,7 +259,7 @@ class AuditAgentResult(BaseModel):
         indexes = [entry.action_index for entry in self.reconciliation]
         if len(indexes) != len(set(indexes)):
             raise ValueError("reconciliation action indexes must be unique")
-        if self.outcome is AuditOutcome.REVISION_REQUIRED:
+        if self.outcome is AuditOutcome.FEEDBACK_PROVIDED:
             if self.feedback is None or self.external_result is not None:
                 raise ValueError("feedback_provided needs feedback and no result")
         elif self.feedback is not None:

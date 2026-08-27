@@ -248,16 +248,6 @@ def test_initial_route_rejects_expired_or_missing_capability_evidence(store):
     assert router.first_eligible_route(required_capabilities=required) is None
 
 
-def test_initial_recovery_route_skips_already_attempted_provider(store):
-    routes = (route("codex_oauth"), route("codex_api"))
-    router = make_router(store, routes=routes)
-
-    decision = router.first_route_decision(
-        required_capabilities=frozenset({"structured_output"}),
-        excluded_routes=frozenset({"codex_oauth"}),
-    )
-
-    assert decision.route == routes[1]
 
 
 def test_operation_failover_uses_persisted_identity_failure_and_capabilities(store):
@@ -550,72 +540,8 @@ def test_oauth_failure_selects_api_once(router, store, running_attempt):
     assert decision.fresh_session is False
 
 
-def test_read_only_recovery_can_failover_to_api_after_process_failure(
-    router, store, running_attempt
-):
-    store.mark_agent_run_unknown(
-        running_attempt.agent_run_id,
-        {"code": "expired_audit_effect_requires_reconciliation", "retryable": False},
-        owner="router-test",
-    )
-    failure = RuntimeFailure(
-        failure_class=RuntimeFailureClass.PROCESS,
-        code="codex_process_failed",
-        detail="Codex exited without a result during read-only recovery.",
-        failover_permitted=False,
-    )
-    failed_attempt = store.fail_agent_runtime_attempt(
-        running_attempt.id,
-        failure.failure_class.value,
-        failure.code,
-        failure.failover_permitted,
-    )
-
-    decision = router.next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
-        failed_attempt=failed_attempt,
-        failure=failure,
-        required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="reconcile",
-    )
-
-    assert decision.route is not None
-    assert decision.route.name == "codex_api"
 
 
-def test_read_only_recovery_can_failover_after_unknown_effect_started(
-    router, store, running_attempt
-):
-    """An item.started marker without a receipt still needs read-only recovery."""
-    store.note_runtime_attempt_effect_started(running_attempt.id)
-    store.mark_agent_run_unknown(
-        running_attempt.agent_run_id,
-        {"code": "expired_audit_effect_requires_reconciliation", "retryable": False},
-        owner="router-test",
-    )
-    failure = RuntimeFailure(
-        failure_class=RuntimeFailureClass.UNCLASSIFIED,
-        code="runtime_unclassified",
-        detail="provider exited during read-only recovery",
-        failover_permitted=False,
-    )
-    failed_attempt = store.fail_agent_runtime_attempt(
-        running_attempt.id,
-        failure.failure_class.value,
-        failure.code,
-        failure.failover_permitted,
-    )
-
-    decision = router.next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
-        failed_attempt=failed_attempt,
-        failure=failure,
-        required_capabilities=frozenset({"structured_output"}),
-        recovery_phase="reconcile",
-    )
-
-    assert decision.route is not None
-    assert decision.route.name == "codex_api"
 
 
 def test_persisted_confirmable_receipt_blocks_failover_when_caller_says_false(

@@ -15,7 +15,7 @@
     "candidate": "State the result, add three new formal goals, and promise recurring reviews.",
     "operation": "dingtalk_send",
     "consumer_outcome": "proposal",
-    "audit_outcome": "revision_required",
+    "audit_outcome": "feedback_provided",
     "allows_write": false,
     "reason": "New goals and recurring commitments are not supported by the supplied decision."
   },
@@ -117,7 +117,7 @@
     "candidate": "Act as Derek.",
     "operation": "oa_action",
     "consumer_outcome": "proposal",
-    "audit_outcome": "revision_required",
+    "audit_outcome": "feedback_provided",
     "allows_write": false,
     "requires_oa_live_detail": true,
     "requires_applicant_notification": false,

@@ -118,7 +118,7 @@ def _validate_wire_schema(
 
 def _audit_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
-        "outcome": "revision_required",
+        "outcome": "feedback_provided",
         "summary": "Candidate adds a management commitment.",
         "proposal_revision": 0,
         "side_effect_state": "none",
@@ -170,7 +170,7 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
         (
             AuditAgentWireResult,
             _audit_wire_payload(
-                outcome="revision_required",
+                outcome="feedback_provided",
                 feedback={
                     "rule": "Use verified Skill receipts.",
                     "observation": "A receipt is missing.",
@@ -194,24 +194,6 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
             ),
         ),
         (AuditAgentWireResult, _audit_wire_payload(outcome="failed")),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(outcome="unknown", side_effect_state="unknown"),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="reconciled",
-                side_effect_state="unknown",
-                reconciliation=[
-                    {
-                        "action_index": 0,
-                        "disposition": "present",
-                        "read_result_digest": "digest-1",
-                    }
-                ],
-            ),
-        ),
     ),
 )
 def test_generated_wire_schema_acceptance_always_converts(model, payload):
@@ -317,14 +299,7 @@ def test_wire_schema_is_discriminated_and_contains_only_nested_fields(model):
         ),
         (
             AuditAgentWireResult,
-            _audit_wire_payload(outcome="revision_required", feedback=None),
-        ),
-        (
-            AuditAgentWireResult,
-            _audit_wire_payload(
-                outcome="unknown",
-                side_effect_state="none",
-            ),
+            _audit_wire_payload(outcome="feedback_provided", feedback=None),
         ),
         (
             AuditAgentWireResult,
@@ -521,12 +496,21 @@ def test_audit_dry_run_is_non_effectful_and_cannot_be_a_human_decision():
         )
 
 
-def test_audit_revision_feedback_is_concrete_and_non_effectful():
+def test_audit_feedback_is_concrete_and_non_effectful():
     result = AuditAgentResult.model_validate(_audit_payload())
 
-    assert result.outcome is AuditOutcome.REVISION_REQUIRED
+    assert result.outcome is AuditOutcome.FEEDBACK_PROVIDED
     assert result.feedback is not None
     assert result.external_result is None
+
+
+def test_audit_contract_rejects_removed_legacy_outcomes():
+    with pytest.raises(ValidationError):
+        AuditAgentResult.model_validate(_audit_payload(outcome="revision_required"))
+    with pytest.raises(ValidationError):
+        AuditAgentWireResult.model_validate(
+            _audit_wire_payload(outcome="revision_required")
+        )
 
 
 def test_audit_executed_requires_confirmed_external_result():
@@ -547,45 +531,6 @@ def test_audit_executed_requires_confirmed_external_result():
     assert result.outcome is AuditOutcome.EXECUTED
     assert result.external_result is not None
     assert result.external_result.operation_id == "op-1"
-
-
-def test_audit_reconciliation_is_strict_structured_per_action():
-    result = AuditAgentResult.model_validate(
-        _audit_payload(
-            outcome="reconciled",
-            side_effect_state="unknown",
-            feedback=None,
-            reconciliation=[
-                {
-                    "action_index": 0,
-                    "disposition": "ambiguous",
-                    "read_result_digest": "digest-1",
-                }
-            ],
-        )
-    )
-
-    assert result.reconciliation[0].action_index == 0
-    assert result.reconciliation[0].disposition.value == "ambiguous"
-
-
-def test_audit_reconciliation_accepts_superseded_target_context():
-    result = AuditAgentResult.model_validate(
-        _audit_payload(
-            outcome="reconciled",
-            side_effect_state="unknown",
-            feedback=None,
-            reconciliation=[
-                {
-                    "action_index": 0,
-                    "disposition": "superseded",
-                    "read_result_digest": "later-target-message",
-                }
-            ],
-        )
-    )
-
-    assert result.reconciliation[0].disposition.value == "superseded"
 
 
 @pytest.mark.parametrize(
@@ -719,7 +664,7 @@ def test_committed_schemas_reject_cross_field_mismatches(schema_name, payload):
 @pytest.mark.parametrize(
     ("outcome", "side_effect_state"),
     [
-        ("revision_required", "confirmed"),
+        ("feedback_provided", "confirmed"),
         ("failed", "unknown"),
         ("needs_human", "confirmed"),
         ("needs_human", "unknown"),
@@ -732,7 +677,7 @@ def test_nonexecuted_audit_outcomes_cannot_claim_side_effects(
     payload = _audit_payload(
         outcome=outcome,
         feedback=(
-            _audit_payload()["feedback"] if outcome == "revision_required" else None
+            _audit_payload()["feedback"] if outcome == "feedback_provided" else None
         ),
         side_effect_state=side_effect_state,
     )
@@ -884,10 +829,10 @@ def test_audit_wire_result_preserves_nested_result_fields():
     assert result.decision_options[0].key == "A"
 
 
-def test_audit_wire_result_preserves_revision_feedback_fields():
+def test_audit_wire_result_preserves_feedback_fields():
     result = AuditAgentWireResult.model_validate(
         {
-            "outcome": "revision_required",
+            "outcome": "feedback_provided",
             "summary": "The command needs confirmation.",
             "proposal_revision": 0,
             "side_effect_state": "none",
@@ -904,6 +849,6 @@ def test_audit_wire_result_preserves_revision_feedback_fields():
         }
     ).to_result()
 
-    assert result.outcome is AuditOutcome.REVISION_REQUIRED
+    assert result.outcome is AuditOutcome.FEEDBACK_PROVIDED
     assert result.feedback is not None
     assert result.feedback.requested_revision == "Add --yes without changing the action."

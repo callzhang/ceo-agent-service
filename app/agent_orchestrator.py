@@ -91,23 +91,6 @@ class AuditRunner(Protocol):
         frozen_delivery_retry: bool = False,
     ) -> AgentTurnRunResult[AuditAgentResult]: ...
 
-    def recover(
-        self,
-        task: ReplyTask,
-        context: AuditTurnContext,
-        *,
-        run: AgentRun,
-    ) -> AgentTurnRunResult[AuditAgentResult]: ...
-
-    def execute_recovery(
-        self,
-        task: ReplyTask,
-        context: AuditTurnContext,
-        *,
-        run: AgentRun,
-    ) -> AgentTurnRunResult[AuditAgentResult]: ...
-
-
 @dataclass(frozen=True)
 class OrchestrationResult:
     status: str
@@ -139,18 +122,6 @@ class _NextAudit:
     authorization_error_code: str = ""
     deferred_error_code: str = ""
     frozen_delivery_retry: bool = False
-
-
-@dataclass(frozen=True)
-class _RecoverAudit:
-    run: AgentRun
-    proposal: ConsumerProposal
-
-
-@dataclass(frozen=True)
-class _ExecuteAuditRecovery:
-    run: AgentRun
-    proposal: ConsumerProposal
 
 
 @dataclass(frozen=True)
@@ -234,27 +205,10 @@ class AgentOrchestrator:
                         feedback=state.feedback,
                     )
                 else:
-                    if isinstance(state, (_RecoverAudit, _ExecuteAuditRecovery)):
-                        phase = "reconcile" if isinstance(state, _RecoverAudit) else "execute"
-                        attempt_key = (AgentRole.AUDIT, state.run.proposal_revision, phase)
-                        if role_attempts.get(attempt_key, 0) >= 1:
-                            result = _failed_audit_result(
-                                state.run,
-                                AuditOutcome.UNKNOWN,
-                                _run_error(state.run),
-                            )
-                            return _audit_terminal(
-                                "unknown",
-                                state.run,
-                                result,
-                                self._feedback_cycles(task),
-                            )
-                    else:
-                        attempt_key = (AgentRole.AUDIT, state.proposal_revision, "run")
+                    attempt_key = (AgentRole.AUDIT, state.proposal_revision, "run")
                     max_attempts = (
                         1
-                        if isinstance(state, (_RecoverAudit, _ExecuteAuditRecovery))
-                        or state.authorization_error_code
+                        if state.authorization_error_code
                         or state.deferred_error_code
                         else MAX_ROLE_ATTEMPTS_PER_PROCESS
                     )
@@ -299,63 +253,26 @@ class AgentOrchestrator:
                                 detail=_context_refresh_failure_detail(exc),
                             )
                         )
-                    if isinstance(state, _ExecuteAuditRecovery):
-                        consumer_skills = self._consumer_skills(
-                            task,
-                            state.run.parent_agent_run_id,
-                            state.run.proposal_revision,
-                        )
-                        self.audit.execute_recovery(
-                            task,
-                            AuditTurnContext(
-                                task=audit_task_context,
-                                proposal_revision=state.run.proposal_revision,
-                                operation_id=state.run.operation_id,
-                                proposal=state.proposal,
-                                audit_rules="",
-                                consumer_skills=consumer_skills,
-                            ),
-                            run=state.run,
-                        )
-                    elif isinstance(state, _RecoverAudit):
-                        consumer_skills = self._consumer_skills(
-                            task,
-                            state.run.parent_agent_run_id,
-                            state.run.proposal_revision,
-                        )
-                        self.audit.recover(
-                            task,
-                            AuditTurnContext(
-                                task=audit_task_context,
-                                proposal_revision=state.run.proposal_revision,
-                                operation_id=state.run.operation_id,
-                                proposal=state.proposal,
-                                audit_rules="",
-                                consumer_skills=consumer_skills,
-                            ),
-                            run=state.run,
-                        )
-                    else:
-                        consumer_skills = self._consumer_skills(
-                            task,
-                            state.parent_run_id,
-                            state.proposal_revision,
-                        )
-                        audit_context = AuditTurnContext(
-                            task=audit_task_context,
-                            proposal_revision=state.proposal_revision,
-                            operation_id=_operation_id(task, state.proposal_revision),
-                            proposal=state.proposal,
-                            audit_rules="",
-                            consumer_skills=consumer_skills,
-                        )
-                        run_kwargs = {
-                            "turn_attempt": state.turn_attempt,
-                            "parent_agent_run_id": state.parent_run_id,
-                        }
-                        if state.frozen_delivery_retry:
-                            run_kwargs["frozen_delivery_retry"] = True
-                        self.audit.run(task, audit_context, **run_kwargs)
+                    consumer_skills = self._consumer_skills(
+                        task,
+                        state.parent_run_id,
+                        state.proposal_revision,
+                    )
+                    audit_context = AuditTurnContext(
+                        task=audit_task_context,
+                        proposal_revision=state.proposal_revision,
+                        operation_id=_operation_id(task, state.proposal_revision),
+                        proposal=state.proposal,
+                        audit_rules="",
+                        consumer_skills=consumer_skills,
+                    )
+                    run_kwargs = {
+                        "turn_attempt": state.turn_attempt,
+                        "parent_agent_run_id": state.parent_run_id,
+                    }
+                    if state.frozen_delivery_retry:
+                        run_kwargs["frozen_delivery_retry"] = True
+                    self.audit.run(task, audit_context, **run_kwargs)
             except (RuntimeError, ResultParseError) as exc:
                 if str(exc) in {
                     "agent_run_unavailable",
@@ -372,7 +289,7 @@ class AgentOrchestrator:
                 next_state = self._derive_state(task)
                 if isinstance(
                     next_state,
-                    (_NextConsumer, _NextAudit, _RecoverAudit, _ExecuteAuditRecovery),
+                    (_NextConsumer, _NextAudit),
                 ):
                     continue
                 if isinstance(next_state, _Deferred):
@@ -409,7 +326,7 @@ class AgentOrchestrator:
     def _derive_state(
         self,
         task: ReplyTask,
-    ) -> OrchestrationResult | _NextConsumer | _NextAudit | _RecoverAudit | _ExecuteAuditRecovery | _Deferred:
+    ) -> OrchestrationResult | _NextConsumer | _NextAudit | _Deferred:
         runs = self.store.list_agent_runs_for_task_generation(
             task.id,
             task.execution_generation,
@@ -523,48 +440,18 @@ class AgentOrchestrator:
                 )
             latest = audits[-1]
             if latest.status == "unknown":
-                if latest.final_result_json:
-                    reconciled = _audit_result(latest)
-                    if reconciled.outcome is AuditOutcome.RECONCILED:
-                        if any(
-                            entry.disposition.value == "superseded"
-                            for entry in reconciled.reconciliation
-                        ):
-                            return self._finalize_reconciled_audit(
-                                latest,
-                                reconciled,
-                                feedback_cycles=revision,
-                                needs_human=False,
-                                superseded=True,
-                            )
-                        if any(
-                            entry.disposition.value == "ambiguous"
-                            for entry in reconciled.reconciliation
-                        ):
-                            return self._finalize_reconciled_audit(
-                                latest,
-                                reconciled,
-                                feedback_cycles=revision,
-                                needs_human=True,
-                            )
-                        if any(
-                            entry.disposition.value == "absent"
-                            for entry in reconciled.reconciliation
-                        ):
-                            return _ExecuteAuditRecovery(
-                                latest, consumer_state.proposal
-                            )
-                        return self._finalize_reconciled_audit(
-                            latest,
-                            reconciled,
-                            feedback_cycles=revision,
-                            needs_human=(
-                                not reconciled.reconciliation
-                                and latest.side_effect_state
-                                != SideEffectState.CONFIRMED.value
-                            ),
-                        )
-                return _RecoverAudit(latest, consumer_state.proposal)
+                # Unknown is a migrated legacy status.  Historical rows are
+                # terminal failures; never reopen them into a recovery loop.
+                return _audit_terminal(
+                    "failed_terminal",
+                    latest,
+                    _failed_audit_result(
+                        latest,
+                        AuditOutcome.FAILED,
+                        _run_error(latest),
+                    ),
+                    revision,
+                )
             audit_state = self._audit_state(task, latest, revision)
             if isinstance(audit_state, _NextAudit):
                 return _NextAudit(
@@ -602,8 +489,6 @@ class AgentOrchestrator:
                 return _audit_terminal("needs_human", latest, audit_state, revision)
             if audit_state.outcome is AuditOutcome.DRY_RUN:
                 return _audit_terminal("dry_run", latest, audit_state, revision)
-            if audit_state.outcome is AuditOutcome.UNKNOWN:
-                return _audit_terminal("unknown", latest, audit_state, revision)
             if audit_state.outcome is AuditOutcome.FAILED:
                 return _audit_terminal(
                     _failure_status(audit_state.error),
@@ -635,65 +520,6 @@ class AgentOrchestrator:
                     MAX_CONTENT_FEEDBACK_CYCLES,
                 )
         return _Deferred(None, "agent_turn_state_incomplete", 0)
-
-    def _finalize_reconciled_audit(
-        self,
-        run: AgentRun,
-        reconciled: AuditAgentResult,
-        *,
-        feedback_cycles: int,
-        needs_human: bool,
-        superseded: bool = False,
-    ) -> OrchestrationResult | _Deferred:
-        owner = f"agent-orchestrator-reconciled-{run.id}"
-        claim = self.store.claim_unknown_agent_run(run.id, owner=owner)
-        if not claim.claimed:
-            return _Deferred(run, "agent_run_unavailable", feedback_cycles)
-        if needs_human:
-            result = _failed_audit_result(
-                claim.run,
-                AuditOutcome.NEEDS_HUMAN,
-                AgentError(code="audit_recovery_ambiguous", retryable=False),
-            )
-            status = "needs_human"
-            side_effect_state = SideEffectState.UNKNOWN.value
-        else:
-            summary = reconciled.summary
-            side_effect_state = SideEffectState.CONFIRMED.value
-            if superseded:
-                summary = (
-                    "A later target-scoped message resolved the trigger; the "
-                    "unconfirmed prior action was not replayed."
-                )
-                side_effect_state = SideEffectState.NONE.value
-            result = AuditAgentResult(
-                outcome=AuditOutcome.EXECUTED,
-                summary=summary,
-                proposal_revision=run.proposal_revision,
-                side_effect_state=SideEffectState(side_effect_state),
-                feedback=None,
-                external_result={
-                    "operation_id": run.operation_id,
-                    "verification_summary": summary,
-                    "live_result_reference": {
-                        "reconciliation": [
-                            entry.model_dump(mode="json")
-                            for entry in reconciled.reconciliation
-                        ]
-                    },
-                },
-                reconciliation=(),
-                error=AgentError(),
-            )
-            status = "executed"
-        completed = self.store.complete_agent_run(
-            run.id,
-            result.model_dump(mode="json"),
-            owner=owner,
-            side_effect_state=side_effect_state,
-            expected_status="unknown",
-        )
-        return _audit_terminal(status, completed, result, feedback_cycles)
 
     def _consumer_state(
         self,
@@ -792,8 +618,8 @@ class AgentOrchestrator:
             return _audit_result(run)
         if run.status == "unknown":
             error = _run_error(run)
-            result = _failed_audit_result(run, AuditOutcome.UNKNOWN, error)
-            return _audit_terminal("unknown", run, result, feedback_cycles)
+            result = _failed_audit_result(run, AuditOutcome.FAILED, error)
+            return _audit_terminal("failed_terminal", run, result, feedback_cycles)
         error = _run_error(run)
         if run.status == "failed" and error.authorization_required:
             if task.error == error.code:
@@ -841,20 +667,20 @@ class AgentOrchestrator:
             if self.store.agent_run_lease_is_active(run.id):
                 return _Deferred(run, "agent_run_active", feedback_cycles)
             if run.side_effect_state != SideEffectState.NONE.value:
-                run = self.store.mark_expired_agent_run_unknown(
+                # A stale Audit lease is an infrastructure failure.  The next
+                # normal Audit attempt owns the decision; no application-level
+                # unknown/reconciliation state is created.
+                run = self.store.fail_expired_audit_run(
                     run.id,
-                    {
-                        "code": "expired_audit_effect_requires_reconciliation",
-                        "retryable": False,
-                    },
+                    {"code": "audit_lease_expired", "retryable": True},
                     expected_execution_generation=task.execution_generation,
                 )
                 result = _failed_audit_result(
                     run,
-                    AuditOutcome.UNKNOWN,
-                    AgentError(code="expired_audit_effect_requires_reconciliation"),
+                    AuditOutcome.FAILED,
+                    AgentError(code="audit_lease_expired", retryable=True),
                 )
-                return _audit_terminal("unknown", run, result, feedback_cycles)
+                return _audit_terminal(_failure_status(result.error), run, result, feedback_cycles)
             return _NextAudit(
                 run.proposal_revision,
                 run.turn_attempt,
@@ -871,7 +697,7 @@ class AgentOrchestrator:
         if parent is None or parent.role is not AgentRole.AUDIT or parent.status != "completed":
             return None
         result = _audit_result(parent)
-        if result.outcome is not AuditOutcome.REVISION_REQUIRED:
+        if result.outcome is not AuditOutcome.FEEDBACK_PROVIDED:
             return None
         return result.feedback
 
@@ -892,7 +718,7 @@ class AgentOrchestrator:
             return None
         latest = audits[-1]
         result = _audit_result(latest)
-        return latest if result.outcome is AuditOutcome.REVISION_REQUIRED else None
+        return latest if result.outcome is AuditOutcome.FEEDBACK_PROVIDED else None
 
     def _feedback_cycles(self, task: ReplyTask) -> int:
         return max(
