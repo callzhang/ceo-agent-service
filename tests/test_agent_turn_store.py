@@ -2970,7 +2970,9 @@ def test_failed_effect_closes_started_identity_without_confirmation(tmp_path):
     failed = {**started, "type": "item.failed"}
     closed = store.append_agent_run_event(run.id, failed, owner="audit")
 
-    assert closed.side_effect_state == "none"
+    assert closed.effect_started_count == 1
+    assert closed.effect_failed_count == 1
+    assert not hasattr(closed, "side_effect_state")
 
 
 def test_two_same_call_starts_with_one_completion_remains_unknown(tmp_path):
@@ -2990,7 +2992,7 @@ def test_two_same_call_starts_with_one_completion_remains_unknown(tmp_path):
         owner="audit",
     )
 
-    assert persisted.side_effect_state == "unknown"
+    assert persisted.status == "running"
     assert persisted.effect_started_count == 2
     assert persisted.effect_completed_count == 1
 
