@@ -489,6 +489,8 @@ def test_consumer_instructions_require_dynamic_business_and_operation_skill_read
     assert "load the operation Skill named by that business Skill" in instructions
     assert "Do not ask the service to classify the domain" in instructions
     assert "dws schema --cli-path" in instructions
+    assert "dingtang-okr-review/SKILL.md" in instructions
+    assert "Do not route this data through native Agoal" in instructions
     assert "DingTalk document access or sharing request" in instructions
     assert "dingtalk-doc/SKILL.md" in instructions
     assert "--include-permissions --format json" in instructions

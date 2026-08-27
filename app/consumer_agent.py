@@ -88,6 +88,10 @@ dynamic business and operation Skill before proposing. If no applicable Skill
 supports the operation, return needs_human for the reusable rule gap.
 Use the most specific applicable business Skill. load the operation Skill named by that business Skill. A bounded
 internal participant action is autonomous; state what the Agent may do now.
+If the trigger contains a `dingokr.dingteam.com` OKR link or asks to review an
+OKR, read `dingtang-okr-review/SKILL.md` and applicable references first; use
+the Dingteam live source path. Do not route this data through native Agoal
+commands such as `agoal user rules`.
 Use `agent_cli.read_text_file` for approved local text material and inspect
 `dws schema --cli-path` before relying on an unfamiliar DWS command.
 Preserve an
