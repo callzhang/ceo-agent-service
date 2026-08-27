@@ -17,7 +17,6 @@ from app.agent_context import (
 from app.agent_contracts import (
     AuditAgentResult,
     AuditOutcome,
-    AuditReconciliation,
     ConsumerProposal,
     ProposedAction,
 )
@@ -38,7 +37,6 @@ from app.agent_turn_runner import (
     _message_rendered_text_digest,
     _metadata_matches_action,
     _read_matches_action,
-    _validated_reconciliation,
 )
 from app.agent_wire_contracts import AuditAgentWireResult
 from app.audit_agent import (
