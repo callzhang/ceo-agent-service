@@ -438,3 +438,60 @@ def test_consumer_error_keeps_trigger_identity(fake_codex, consumer, store):
     assert task is not None
     assert task.status == "pending"
     assert task.error == "wechat_decision_failed"
+
+
+def test_duplicate_wechat_worker_does_not_leave_processing_task_or_emit_error(
+    fake_codex, consumer, store
+):
+    [claimed] = store.claim_reply_tasks(1, channel="wechat")
+    store.mark_wechat_read_only_decision_started(
+        claimed.id, expected_execution_generation=claimed.execution_generation
+    )
+    store.claim_agent_run(
+        claimed.id,
+        claimed.execution_generation,
+        role="consumer",
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="existing-wechat-worker",
+    )
+
+    consumer.process(claimed)
+
+    task = store.get_reply_task(claimed.id)
+    assert task is not None
+    assert task.status == "processing"
+    assert task.error == "wechat_read_only_decision_running"
+
+
+def test_terminal_duplicate_wechat_run_is_requeued_for_normal_processing(
+    fake_codex, consumer, store
+):
+    [claimed] = store.claim_reply_tasks(1, channel="wechat")
+    store.mark_wechat_read_only_decision_started(
+        claimed.id, expected_execution_generation=claimed.execution_generation
+    )
+    run = store.claim_agent_run(
+        claimed.id,
+        claimed.execution_generation,
+        role="consumer",
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="completed-wechat-worker",
+    )
+    store.complete_agent_run(
+        run.run.id,
+        {"action": "no_reply"},
+        owner="completed-wechat-worker",
+    )
+
+    consumer.process(claimed)
+
+    task = store.get_reply_task(claimed.id)
+    assert task is not None
+    assert task.status == "pending"
+    assert task.error == "wechat_decision_agent_run_already_terminal"

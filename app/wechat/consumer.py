@@ -146,7 +146,19 @@ class WechatReplyConsumer:
             lease_seconds=max(1800, int(self.retry_delay.total_seconds()) + 60),
         )
         if not run_claim.claimed:
-            raise RuntimeError("wechat decision agent run is already active")
+            # A duplicate worker must not turn a recoverable task into a
+            # permanent processing row.  Keep ownership with a live run; if
+            # the persisted run is already terminal, requeue this generation
+            # so the normal worker path can derive the next state.
+            if run_claim.run.status == "running":
+                return
+            self.store.requeue_reply_task(
+                task.id,
+                "wechat_decision_agent_run_already_terminal",
+                expected_execution_generation=task.execution_generation,
+                available_at=self._retry_available_at(),
+            )
+            return
         try:
             decision = self.runner.decide(prompt, None, run_id=run_claim.run.id)
         except Exception as exc:
