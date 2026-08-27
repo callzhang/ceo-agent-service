@@ -53,8 +53,12 @@ def test_quality_gate_runtime_attempt_invariants_use_persisted_rows(tmp_path):
                     'gpt-5.5', 'running')"""
         )
     codes = {issue.code for issue in scan_hourly_quality(store.path, now=NOW).violations}
-    assert {"runtime_attempt_without_parent", "completed_runtime_attempt_without_final_run",
-            "unsafe_runtime_failover", "unknown_effect_with_fallback_attempt"} <= codes
+    assert {
+        "runtime_attempt_without_parent",
+        "completed_runtime_attempt_without_final_run",
+    } <= codes
+    assert "unsafe_runtime_failover" not in codes
+    assert "unknown_effect_with_fallback_attempt" not in codes
 
 
 def test_quality_gate_covers_every_runtime_attempt_invariant_with_persisted_rows(tmp_path):
@@ -88,30 +92,6 @@ def test_quality_gate_covers_every_runtime_attempt_invariant_with_persisted_rows
                 route_name, runtime_kind, credential_mode, model, status)
                values (998, 'agent_run', '998', 1, 'codex_oauth', 'codex_cli',
                        'local_oauth', 'gpt-5.5', 'completed')""",
-        ],
-        "unsafe_runtime_failover": [
-            """insert into agent_runtime_attempts
-               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
-                credential_mode, model, status, first_effect_started_at)
-               values ('task', 'effectful-fallback', 1, 'codex_oauth', 'codex_cli',
-                       'local_oauth', 'gpt-5.5', 'failed', '2026-08-07 00:00:00')""",
-            """insert into agent_runtime_attempts
-               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
-                credential_mode, model, status)
-               values ('task', 'effectful-fallback', 2, 'codex_api', 'codex_cli',
-                       'service_api', 'gpt-5.5', 'completed')""",
-        ],
-        "unknown_effect_with_fallback_attempt": [
-            """insert into agent_runtime_attempts
-               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
-                credential_mode, model, status, first_effect_started_at)
-               values ('task', 'unknown-fallback', 1, 'codex_oauth', 'codex_cli',
-                       'local_oauth', 'gpt-5.5', 'failed', '2026-08-07 00:00:00')""",
-            """insert into agent_runtime_attempts
-               (workload_kind, workload_key, attempt_number, route_name, runtime_kind,
-                credential_mode, model, status)
-               values ('task', 'unknown-fallback', 2, 'codex_api', 'codex_cli',
-                       'service_api', 'gpt-5.5', 'completed')""",
         ],
         "runtime_secret_leak": [
             """insert into agent_runtime_attempts

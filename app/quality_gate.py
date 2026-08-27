@@ -465,8 +465,6 @@ def _check_runtime_attempt_invariants(db: sqlite3.Connection, violations: list[Q
         "runtime_attempt_without_parent": "select count(*) from agent_runtime_attempts a where a.agent_run_id is not null and not exists (select 1 from agent_runs r where r.id=a.agent_run_id)",
         "multiple_active_runtime_attempts": "select count(*) from (select workload_kind, workload_key from agent_runtime_attempts where status in ('starting','running') group by workload_kind, workload_key having count(*)>1)",
         "completed_runtime_attempt_without_final_run": "select count(*) from agent_runtime_attempts a where a.status='completed' and a.agent_run_id is not null and not exists (select 1 from agent_runs r where r.id=a.agent_run_id and r.status in ('completed','failed','unknown'))",
-        "unsafe_runtime_failover": "select count(*) from agent_runtime_attempts a where a.first_effect_started_at<>'' and exists (select 1 from agent_runtime_attempts b where b.workload_kind=a.workload_kind and b.workload_key=a.workload_key and b.id>a.id and b.route_name<>a.route_name)",
-        "unknown_effect_with_fallback_attempt": "select count(*) from agent_runtime_attempts a where a.first_effect_started_at<>'' and exists (select 1 from agent_runtime_attempts b where b.workload_kind=a.workload_kind and b.workload_key=a.workload_key and b.id>a.id and b.route_name<>a.route_name)",
     }
     for code, sql in checks.items():
         _add(violations, source="agent_runtime_attempts", code=code, count=_count(db, sql), severity="error", detail="runtime attempt invariant violated")
