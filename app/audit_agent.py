@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
@@ -12,43 +11,25 @@ from app.agent_contracts import (
     AuditOutcome,
 )
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
-from app.agent_result import AgentError, EffectKind, ResultParseError
+from app.agent_result import AgentError
 from app.agent_runtime_config import AgentRuntimeConfig
-from app.agent_runtime_contracts import RuntimeKind
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import (
     AgentTurnProcess,
     AgentTurnRunResult,
     ProcessExecutor,
-    _action_completion_accounting,
-    _action_receipt_operation_id,
-    _actions_have_required_readbacks,
-    _agent_process_error_code,
-    _message_rendered_text_digest,
-    _metadata_matches_action,
-    _result_parse_error_detail,
-    unknown_reconciliation_retry_at,
 )
 from app.agent_wire_contracts import parse_audit_agent_wire_result
 from app.audit_rules import render_audit_rules
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
-from app.codex_history import extract_codex_mcp_tool_results_from_session
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
-from app.native_cli_metadata import (
-    AgentReadOnlyViolationError,
-    dingtalk_message_text,
-    describe_native_command,
-    has_noninteractive_confirmation,
-    native_command_argv,
-)
 from app.store import (
     AgentRole,
     AgentRun,
     AutoReplyStore,
     ReplyTask,
 )
-from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
 
 RECOVERY_WRITE_ALLOWLIST_ENV = "CEO_AGENT_RECOVERY_WRITE_ALLOWLIST"
 EFFECT_INTENT_CONTEXT_ENV = "CEO_AGENT_EFFECT_INTENT_CONTEXT"
@@ -128,47 +109,12 @@ class AuditAgentRunner:
         )
         if not claim.claimed:
             raise RuntimeError("agent_run_unavailable")
-        mismatches = _typed_direct_recipient_mismatches(context)
-        if mismatches and not frozen_delivery_retry:
-            return self._return_invalid_candidate(claim.run, mismatches)
         return self._execute_claimed(
             task,
             context,
             run=claim.run,
             rendered_rules=render_audit_rules(AgentRole.AUDIT),
             frozen_delivery_retry=frozen_delivery_retry,
-        )
-
-    def _return_invalid_candidate(
-        self,
-        run: AgentRun,
-        mismatches: tuple[int, ...],
-    ) -> AgentTurnRunResult[AuditAgentResult]:
-        listed = ", ".join(str(index) for index in mismatches)
-        result = AuditAgentResult(
-            outcome=AuditOutcome.FEEDBACK_PROVIDED,
-            summary="The candidate uses an invalid typed recipient identifier.",
-            proposal_revision=run.proposal_revision,
-            feedback=AuditFeedback(
-                rule="The candidate must use the correct typed recipient identifier.",
-                observation=f"Candidate action indexes {listed} use an open-DingTalk ID as a user ID.",
-                requested_revision=(
-                    "Return the same intended operation with the correct recipient identifier. "
-                    "For a single chat use --open-dingtalk-id with the typed recipient. "
-                    "Preserve the business recipient and payload."
-                ),
-            ),
-            external_result=None,
-            error=AgentError(),
-        )
-        completed = self.store.complete_agent_run(
-            run.id, result.model_dump(mode="json"), owner=self.owner
-        )
-        return AgentTurnRunResult(
-            run_id=run.id,
-            result=result,
-            transcript_start_line=completed.transcript_end_line,
-            transcript_end_line=completed.transcript_end_line,
         )
 
     def _execute_claimed(
@@ -234,7 +180,8 @@ def _audit_recovery_error_code(exc: Exception) -> str:
 
 
 def _json_digest(value: object) -> str:
-    import hashlib, json
+    import hashlib
+    import json
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -263,15 +210,3 @@ def _recovery_prompt(run: AgentRun, context: AuditTurnContext, actions=(), regis
         "the applicable operation Skill.\n\n" + context.render()
     )
 
-
-def _typed_direct_recipient_mismatches(context: AuditTurnContext) -> tuple[int, ...]:
-    """Validate the typed recipient fields without reviewing execution commands."""
-    if not context.task.single_chat or not context.task.trigger_sender_open_dingtalk_id:
-        return ()
-    expected = context.task.trigger_sender_open_dingtalk_id
-    mismatches: list[int] = []
-    for index, action in enumerate(context.proposal.actions):
-        descriptor = describe_native_command({"type": "command_execution", **action.payload})
-        if descriptor is not None and descriptor.target_identifiers.get("user") == expected:
-            mismatches.append(index)
-    return tuple(mismatches)
