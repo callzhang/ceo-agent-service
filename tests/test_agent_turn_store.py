@@ -2403,18 +2403,27 @@ def test_turn_operation_identity_is_role_specific(tmp_path):
         )
 
 
-def test_consumer_turn_cannot_persist_a_side_effect(tmp_path):
+def test_consumer_turn_can_complete_typed_result_without_side_effect_state(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     run = _claim_consumer(store, task).run
 
-    with pytest.raises(ValueError, match="Consumer Agent cannot persist side effects"):
-        store.complete_agent_run(
-            run.id,
-            {"outcome": "proposal"},
-            owner="consumer",
-            side_effect_state="confirmed",
-        )
+    completed = store.complete_agent_run(
+        run.id,
+        {
+            "outcome": "no_action",
+            "summary": "No external action is required.",
+            "proposal": None,
+            "decision_options": [],
+            "error_code": "",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        },
+        owner="consumer",
+    )
+
+    assert completed.status == "completed"
+    assert not hasattr(completed, "side_effect_state")
 
 
 def test_consumer_turn_persists_provider_events_opaquely(tmp_path):
