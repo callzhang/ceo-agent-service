@@ -130,7 +130,8 @@ its result. Return executed, needs_human, or failed for the other terminal
 outcomes. Do not create provider-specific policy, receipt, readback, or recovery
 states in the application result. external_result must
 contain exactly its typed fields: operation_id, verification_summary, and
-live_result_reference. Legacy revision_required input is normalized
+live_result_reference. operation_id must equal the candidate proposal
+operation_id. Legacy revision_required input is normalized
 to the formal feedback_provided output.
 
 Treat a bounded fact-finding inquiry as executable when it only gathers facts,
