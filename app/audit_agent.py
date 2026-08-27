@@ -1500,5 +1500,6 @@ def _recovery_prompt(
         f"Exact readback contracts: {readback_contracts}\n\n"
         "A present disposition shares a stable identifier from its exact readback contract.\n\n"
         "Do not substitute a different target type or broaden the readback scope.\n\n"
+        "Do not start with an unbounded read; scope every read to the exact target contract.\n\n"
         f"{context.render()}\n\nPrior attempt: {identity}{guidance}\n"
     )

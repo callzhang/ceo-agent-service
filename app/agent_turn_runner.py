@@ -858,6 +858,10 @@ class AgentTurnProcess(Generic[ResultT]):
             item = payload.get("item")
             if isinstance(item, dict) and item.get("type") == "command_execution":
                 raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
+            if recovery_phase == "reconcile" and isinstance(item, dict):
+                invocation = item.get("invocation")
+                if isinstance(invocation, dict) and "write" in str(invocation.get("tool", "")).lower():
+                    raise AgentReadOnlyViolationError("agent_write_forbidden")
             # Provider capabilities are not reimplemented at the application
             # layer. Keep the event for observability, but let the runtime
             # decide whether a command/tool is permitted.
