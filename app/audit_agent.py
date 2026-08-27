@@ -1504,5 +1504,6 @@ def _recovery_prompt(
         "an incomplete window cannot prove absence.\n\n"
         "If evidence is incomplete, use the ambiguous disposition.\n\n"
         "For chat readback use dws chat +chat-messages with a bounded window.\n\n"
+        "An exact full message text match is required for present.\n\n"
         f"{context.render()}\n\nPrior attempt: {identity}{guidance}\n"
     )
