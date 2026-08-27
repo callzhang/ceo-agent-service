@@ -138,6 +138,8 @@ live_result_reference. operation_id must equal the candidate proposal
 operation_id. Legacy revision_required input is normalized
 to the formal feedback_provided output.
 The reconciliation is always an array of per-action records.
+Use [] unless
+outcome is reconciled.
 
 Treat a bounded fact-finding inquiry as executable when it only gathers facts,
 states the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;

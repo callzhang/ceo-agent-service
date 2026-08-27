@@ -1608,6 +1608,22 @@ class AgentTurnProcess(Generic[ResultT]):
                         observed_session_id = trusted_session_id
                         pending_claude_session_id = trusted_session_id
                     else:
+                        if recovery_phase == "reconcile":
+                            for raw_line in process.stdout.splitlines():
+                                try:
+                                    event = json.loads(raw_line)
+                                except (TypeError, ValueError):
+                                    continue
+                                item = event.get("item") if isinstance(event, dict) else None
+                                if not isinstance(item, dict):
+                                    continue
+                                if item.get("type") == "command_execution":
+                                    raise AgentReadOnlyViolationError("agent_shell_execution_forbidden")
+                                metadata = item.get("metadata")
+                                invocation = item.get("invocation")
+                                tool = str(invocation.get("tool", "")) if isinstance(invocation, dict) else ""
+                                if (isinstance(metadata, dict) and metadata.get("effect") == "effectful") or "write" in tool.lower() or "replay" in tool.lower():
+                                    raise AgentReadOnlyViolationError("agent_write_forbidden")
                         result = parse_result(process.stdout)
                     break
                 if claude_adapter is not None:
