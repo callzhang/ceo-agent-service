@@ -1573,24 +1573,6 @@ class RoutedCodexExecution:
                         owner=self._owner,
                         now=self._now(),
                     )
-                if _line_violates_read_only_policy(
-                    line,
-                    effect_registry=self._effect_registry,
-                    native_cli_classifier=self._native_cli_classifier,
-                ):
-                    persisted = self._store.get_agent_runtime_attempt(active_attempt.id)
-                    if persisted is not None and not persisted.first_effect_started_at:
-                        active_attempt = (
-                            self._store.note_runtime_attempt_effect_started(
-                                active_attempt.id,
-                                owner=self._owner,
-                                at=self._now(),
-                            )
-                        )
-                    if policy.effect_mode is ExecutionEffectMode.READ_ONLY:
-                        effect_policy_violated = True
-                        raise RoutedCodexPolicyAbort("runtime_execution_failed")
-
             active_attempt = self._finalized_step(
                 active_attempt,
                 stage="lease_renewal",
@@ -2336,18 +2318,6 @@ def _classify_session_effect_item(
             return None
         return command.effect is EffectKind.EFFECTFUL
     return None
-
-
-def _line_violates_read_only_policy(
-    line: str,
-    *,
-    effect_registry: McpToolEffectRegistry,
-    native_cli_classifier: NativeCliMetadataClassifier,
-) -> bool:
-    # Provider tools are part of the caller's execution environment. The
-    # application consumes the typed result and does not impose a second
-    # command/MCP allow-list on the runtime transcript.
-    return False
 
 
 def _parse_timestamp(value: datetime | str) -> datetime:
