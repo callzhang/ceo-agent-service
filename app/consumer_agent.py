@@ -555,7 +555,7 @@ def audit_developer_instructions(
         if frozen_delivery_retry
         else ""
     )
-    return recovery_boundary + delivery_boundary + _role_developer_instructions(
+    instructions = _role_developer_instructions(
         core,
         capability_instructions=(
             "Reread every verified Skill path supplied from Consumer A with "
@@ -581,6 +581,7 @@ def audit_developer_instructions(
         ),
         role_boundary=AUDIT_ROLE_BOUNDARY,
     )
+    return instructions + "\n\n" + recovery_boundary + delivery_boundary
 
 
 def _developer_instructions(
@@ -594,6 +595,7 @@ def _developer_instructions(
     return "\n\n".join(
         (
             f"## Audit Rules\n{audit_rules}",
+            "## Runtime Invariants\nPreserve structured outcomes and read-only recovery for unknown external effects.",
             f"## Dynamic Skill\n{skill_instruction}",
             f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
             f"## Pydantic Result Contract\n{_schema_json(result_model)}",

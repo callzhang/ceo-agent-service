@@ -1488,8 +1488,9 @@ def _recovery_prompt(
         )
     return (
         "The previous attempt did not produce a valid terminal structured result. "
-        "Re-run the task with the calling agent's normal capabilities and return "
-        "one terminal structured result (executed, feedback_provided, needs_human, "
-        "or failed). Do not invent a separate recovery outcome.\n\n"
+        "RECOVERY MODE OVERRIDES NORMAL AUDIT EXECUTION. Perform strictly read-only recovery and return one terminal structured "
+        "result (executed, feedback_provided, needs_human, failed, unknown, or "
+        "reconciled). reconciliation must be an array of per-action readback "
+        "records; never execute or blindly replay an action whose effect is unknown.\n\n"
         f"{context.render()}\n\nPrior attempt: {identity}{guidance}\n"
     )
