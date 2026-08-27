@@ -15482,6 +15482,19 @@ class AutoReplyStore:
                     + "\nSuggested response: "
                     + suggestion
                 ).strip()
+                # The attempt row is the current projection, but its audit
+                # events are historical evidence.  Keep the prior events and
+                # append the review enqueue marker instead of replacing the
+                # evidence captured by the original run.
+                try:
+                    prior_events = json.loads(
+                        str(source_row["audit_tool_events_json"] or "[]")
+                    )
+                except (TypeError, json.JSONDecodeError):
+                    prior_events = []
+                if not isinstance(prior_events, list):
+                    prior_events = []
+                queued_events = [*prior_events, {"tool": "audit_review", "result": "queued"}]
                 db.execute(
                     """
                     update reply_attempts
@@ -15501,7 +15514,7 @@ class AutoReplyStore:
                     (
                         suggestion,
                         json.dumps(
-                            [{"tool": "audit_review", "result": "queued"}],
+                            queued_events,
                             ensure_ascii=False,
                             separators=(",", ":"),
                         ),

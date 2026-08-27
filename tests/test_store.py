@@ -3957,6 +3957,42 @@ def test_reviewed_reply_rerun_allows_changed_feedback_to_rotate_generation(
     assert revised_task.execution_generation != first_task.execution_generation
 
 
+def test_reviewed_reply_rerun_preserves_prior_audit_events(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-history-preserve",
+        conversation_title="Review",
+        trigger_message_id="msg-history-preserve",
+        trigger_sender="ET",
+        trigger_text="请处理",
+        action="agent_run",
+        sensitivity_kind="general",
+        audit_tool_events_json='[{"tool":"original_read","result":"ok"}]',
+        send_status="failed",
+    )
+
+    store.record_reviewed_reply_rerun(
+        conversation_id="cid-history-preserve",
+        conversation_title="Review",
+        single_chat=False,
+        trigger_message_id="msg-history-preserve",
+        trigger_create_time="2026-07-29 10:00:00",
+        trigger_sender="ET",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+        suggested_reply_text="建议内容",
+        reviewer_feedback="审核意见",
+        source_attempt_id=attempt_id,
+    )
+
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt is not None
+    assert json.loads(attempt.audit_tool_events_json) == [
+        {"tool": "original_read", "result": "ok"},
+        {"tool": "audit_review", "result": "queued"},
+    ]
+
+
 def test_actionable_attempt_decision_resolves_source_and_requeues_same_task(
     tmp_path: Path,
 ) -> None:
