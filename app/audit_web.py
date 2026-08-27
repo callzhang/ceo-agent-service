@@ -10014,6 +10014,39 @@ def _send_status_action(attempt: ReplyAttempt) -> tuple[str, str]:
     return f"💬 {_display_action_state(send_status)}", send_status
 
 
+def _needs_human_decision_options(
+    attempt: ReplyAttempt,
+    agent_runs: list[AgentRun],
+) -> tuple[DecisionOption, ...]:
+    try:
+        persisted_options = json.loads(attempt.human_decision_options_json)
+        if persisted_options:
+            return tuple(
+                DecisionOption.model_validate(item) for item in persisted_options
+            )
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    matching_runs = [run for run in agent_runs if run.id == attempt.agent_run_id]
+    for run in matching_runs or list(reversed(agent_runs)):
+        if not run.final_result_json.strip():
+            continue
+        if run.role is AgentRole.CONSUMER:
+            try:
+                result = ConsumerAgentResult.model_validate_json(run.final_result_json)
+            except ValueError:
+                continue
+            if result.outcome is ConsumerOutcome.NEEDS_HUMAN:
+                return result.decision_options
+        elif run.role is AgentRole.AUDIT:
+            try:
+                result = AuditAgentResult.model_validate_json(run.final_result_json)
+            except ValueError:
+                continue
+            if result.outcome is AuditOutcome.NEEDS_HUMAN:
+                return result.decision_options
+    return ()
+
+
 def _action_state_class(value: str) -> str:
     normalized = value.strip().lower().replace("_", "-")
     mapped = {
