@@ -62,11 +62,14 @@ AUDIT_DYNAMIC_SKILL_SENTENCE = (
     "verifies its sha256, and returns revision_required if any applicable receipt is absent, unreadable, changed, or mismatched. This is input compatibility only; canonical output is feedback_provided. Legacy revision_required input is normalized to feedback_provided. "
     "For an already-unknown effect only, B may perform strictly read-only evidence reconciliation without a receipt when no business Skill is needed to decide whether the effect happened; B must not execute or retry the candidate."
 )
+AUDIT_DYNAMIC_SKILL_COMPATIBILITY = (
+    "[dynamic-skill] Audit Agent B independently determines every business and operation Skill applicable to the candidate, requires the corresponding verified Consumer A receipt for each applicable Skill, rereads each exact receipt path with `agent_cli.read_skill`, verifies its sha256, and returns revision_required if any applicable receipt is absent, unreadable, changed, or mismatched. For an already-unknown effect only, B may perform strictly read-only evidence reconciliation without a receipt when no business Skill is needed to decide whether the effect happened; B must not execute or retry the candidate."
+)
 CONSUMER_DYNAMIC_SKILL_BODY = (
     f"{DYNAMIC_SKILL_MARKER} {CONSUMER_DYNAMIC_SKILL_SENTENCE}"
 )
 AUDIT_DYNAMIC_SKILL_BODY = (
-    f"{DYNAMIC_SKILL_MARKER} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
+    AUDIT_DYNAMIC_SKILL_COMPATIBILITY
 )
 CORE_DYNAMIC_SKILL_BODY = (
     f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
@@ -144,6 +147,10 @@ Do not use an object wrapper in reconciliation.
 feedback_provided.feedback must contain exactly these string fields:
 rule, observation, and requested_revision.
 On failed review, describe failed_rule, evidence, or required_change.
+Preserve and verify a message body, including what the recipient must not do and what still requires Derek's decision.
+reconciled requires
+side_effect_state=unknown. Each entry has action_index, disposition (present,
+absent, or ambiguous), and read_result_digest.
 
 Treat a bounded fact-finding inquiry as executable when it only gathers facts,
 states the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
