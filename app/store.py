@@ -7447,7 +7447,12 @@ class AutoReplyStore:
         expected_execution_generation: str,
         now: str | datetime | None = None,
     ) -> AgentRun:
-        """Move an expired run with an incomplete effect into reconciliation."""
+        """Close an expired run as a terminal application failure.
+
+        The method name remains for database/API compatibility with older
+        callers, but expired runs no longer enter an unknown reconciliation
+        state.
+        """
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
         error_json = _json_object_text(structured_error, field="structured_error")
@@ -7455,11 +7460,12 @@ class AutoReplyStore:
             cursor = db.execute(
                 """
                 update agent_runs
-                set status='unknown',
+                set status='failed',
                     structured_error_json=?,
-                    side_effect_state='unknown',
+                    side_effect_state='none',
                     lease_owner='',
                     lease_expires_at='',
+                    completed_at=?,
                     updated_at=?
                 where id=? and status='running'
                   and role='audit'
@@ -7476,6 +7482,7 @@ class AutoReplyStore:
                 (
                     error_json,
                     now_text,
+                    now_text,
                     run_id,
                     expected_execution_generation,
                     now_text,
@@ -7487,7 +7494,7 @@ class AutoReplyStore:
             db.execute(
                 "insert into agent_run_state_events ("
                 "agent_run_id, phase, structured_error_json, created_at"
-                ") values (?, 'initial_unknown', ?, ?)",
+                ") values (?, 'terminal_failure', ?, ?)",
                 (run_id, error_json, now_text),
             )
             row = db.execute(
