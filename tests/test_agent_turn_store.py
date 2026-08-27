@@ -2437,8 +2437,10 @@ def test_consumer_turn_persists_provider_events_opaquely(tmp_path):
         owner="consumer",
     )
 
-    assert persisted.tool_events[-1]["item"]["tool"] == "write"
-    assert not hasattr(persisted, "side_effect_state")
+    refreshed = store.get_agent_run(run.id)
+    assert refreshed is not None
+    assert refreshed.tool_events[-1]["item"]["tool"] == "write"
+    assert not hasattr(refreshed, "side_effect_state")
 
 
 def test_unknown_reconciliation_event_limit_defers_the_next_read_only_window(tmp_path):
