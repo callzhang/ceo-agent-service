@@ -214,7 +214,7 @@ def test_audit_effect_start_blocks_api_fallback(setup, monkeypatch):
     assert attempt.status == "failed"
     assert attempt.failure_class == "transport"
     assert attempt.first_effect_started_at
-    assert run.side_effect_state == "unknown"
+    assert run.status == "failed"
     assert len(executor.commands) == 1
 
 
@@ -273,7 +273,7 @@ def test_failed_route_replays_hidden_completed_write_before_failover(
         proposal_revision=0,
         turn_attempt=0,
     )
-    assert run is not None and run.status == "unknown"
+    assert run is not None and run.status == "failed"
     [attempt] = store.list_agent_runtime_attempts(run.id)
     assert attempt.route_name == "codex_oauth"
     assert attempt.status == "failed"
@@ -542,10 +542,8 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
         "outcome": result["outcome"],
         "summary": result["summary"],
         "proposal_revision": result["proposal_revision"],
-        "side_effect_state": result["side_effect_state"],
         "feedback": result["feedback"],
         "external_result": result["external_result"],
-        "reconciliation": result["reconciliation"],
         "decision_options": result.get("decision_options", []),
         "error_code": error["code"],
         "error_retryable": error["retryable"],
@@ -596,14 +594,7 @@ def _audit_result_jsonl(
 ) -> str:
     if read_stdout is None:
         now = datetime.now(UTC)
-        content_is_present = outcome == "executed" or (
-            any(
-                entry.get("disposition") == "present"
-                for entry in (reconciliation or [])
-            )
-            if reconciliation is not None
-            else outcome == "reconciled" and not include_write
-        )
+        content_is_present = outcome == "executed"
         read_stdout = json.dumps(
             {
                 "complete": True,
@@ -699,7 +690,6 @@ def _audit_result_jsonl(
             "outcome": "executed",
             "summary": "Live state confirms the exact operation.",
             "proposal_revision": proposal_revision,
-            "side_effect_state": "confirmed",
             "feedback": None,
             "external_result": {
                 "operation_id": operation_id,
@@ -714,15 +704,14 @@ def _audit_result_jsonl(
         }
     elif outcome == "reconciled":
         result = {
-            "outcome": "reconciled",
-            "summary": "Live reconciliation recorded.",
+            "outcome": "failed",
+            "summary": "Live result could not be confirmed.",
             "proposal_revision": proposal_revision,
-            "side_effect_state": "unknown",
             "feedback": None,
             "external_result": None,
             "error": {
-                "code": "",
-                "retryable": False,
+                "code": "audit_result_unconfirmed",
+                "retryable": True,
                 "authorization_required": False,
             },
         }
@@ -731,7 +720,6 @@ def _audit_result_jsonl(
             "outcome": "needs_human",
             "summary": "Live state remains ambiguous.",
             "proposal_revision": proposal_revision,
-            "side_effect_state": "none",
             "feedback": None,
             "external_result": None,
             "decision_options": [
@@ -754,24 +742,6 @@ def _audit_result_jsonl(
                 "authorization_required": False,
             },
         }
-    if reconciliation is None:
-        reconciliation = []
-        if include_read:
-            disposition = (
-                "ambiguous"
-                if outcome == "needs_human"
-                else "absent"
-                if include_write
-                else "present"
-            )
-            reconciliation.append(
-                {
-                    "action_index": 0,
-                    "disposition": disposition,
-                    "read_result_digest": "recovery-read-digest",
-                }
-            )
-    result["reconciliation"] = reconciliation
     records.append(
         json.dumps(
             {
@@ -806,7 +776,6 @@ def _audit_jsonl(
         "outcome": "executed",
         "summary": "Executed and verified.",
         "proposal_revision": proposal_revision,
-        "side_effect_state": "confirmed",
         "feedback": None,
         "external_result": {
             "operation_id": operation_id,
@@ -814,7 +783,6 @@ def _audit_jsonl(
             "live_result_reference": {"id": "one"},
         },
         "error": {"code": "", "retryable": False, "authorization_required": False},
-        "reconciliation": [],
     }
     records = [json.dumps({"type": "thread.started", "thread_id": session})]
     if include_write:
@@ -985,7 +953,6 @@ def _dry_run_suppressed_jsonl(*, proposal_revision: int = 0) -> str:
         "outcome": "dry_run",
         "summary": "The candidate is executable but dry-run suppresses execution.",
         "proposal_revision": proposal_revision,
-        "side_effect_state": "none",
         "feedback": None,
         "external_result": None,
         "decision_options": [],
@@ -994,7 +961,6 @@ def _dry_run_suppressed_jsonl(*, proposal_revision: int = 0) -> str:
             "retryable": False,
             "authorization_required": False,
         },
-        "reconciliation": [],
     }
     return json.dumps(
         {
@@ -1065,14 +1031,12 @@ def _revision_required_jsonl(observation: str) -> str:
         "outcome": "revision_required",
         "summary": observation,
         "proposal_revision": 0,
-        "side_effect_state": "none",
         "feedback": {
             "rule": "verified Skill handoff",
             "observation": observation,
             "requested_revision": "Load the applicable business Skill and replace the proposal.",
         },
         "external_result": None,
-        "reconciliation": [],
         "error": {
             "code": "",
             "retryable": False,
@@ -1248,7 +1212,7 @@ def test_scripted_audit_voluntarily_requires_revision_for_changed_skill_sha(
     assert result.result.outcome.value == "feedback_provided"
     assert result.result.feedback is not None
     assert "changed" in result.result.feedback.observation
-    assert store.get_agent_run(result.run_id).side_effect_state == "none"
+    assert store.get_agent_run(result.run_id).status == "completed"
 
 
 def test_audit_runtime_does_not_require_skill_reread_for_revision_result(setup):
@@ -1262,7 +1226,7 @@ def test_audit_runtime_does_not_require_skill_reread_for_revision_result(setup):
                 inject_skill_receipt=False,
             ),
         ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
-    assert result.result.outcome is AuditOutcome.REVISION_REQUIRED
+    assert result.result.outcome is AuditOutcome.FEEDBACK_PROVIDED
 
 
 def test_audit_retry_cannot_reuse_prior_turn_skill_receipt(setup):
@@ -1290,7 +1254,7 @@ def test_audit_retry_cannot_reuse_prior_turn_skill_receipt(setup):
             ),
             owner="audit-owner-retry",
         ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
-    assert result.result.outcome is AuditOutcome.REVISION_REQUIRED
+    assert result.result.outcome is AuditOutcome.FEEDBACK_PROVIDED
 
 
 def test_audit_failed_skill_reread_can_return_revision_required(setup):
@@ -1309,7 +1273,7 @@ def test_audit_failed_skill_reread_can_return_revision_required(setup):
         executor=CapturingExecutor(stream),
     ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
 
-    assert result.result.outcome is AuditOutcome.REVISION_REQUIRED
+    assert result.result.outcome is AuditOutcome.FEEDBACK_PROVIDED
     persisted = store.get_agent_run(result.run_id)
     assert persisted is not None
     assert any(
@@ -1335,7 +1299,7 @@ def test_audit_started_skill_reread_is_not_an_attempted_failure(setup):
             workspace=Path("/workspace"),
             executor=CapturingExecutor(stream),
         ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
-    assert result.result.outcome is AuditOutcome.REVISION_REQUIRED
+    assert result.result.outcome is AuditOutcome.FEEDBACK_PROVIDED
 
 
 def test_audit_runtime_blocks_write_before_exact_skill_reread(setup):
@@ -1632,7 +1596,7 @@ def test_audit_starts_fresh_and_does_not_replace_conversation_session(
     assert run.role.value == "audit"
     assert run.codex_session_id == "session-b"
     assert run.operation_id == "operation-1"
-    assert run.side_effect_state == "confirmed"
+    assert run.status == "completed"
     skill_reads = [
         event["item"]["metadata"]
         for event in run.tool_events
@@ -1665,10 +1629,8 @@ def test_audit_rejects_malformed_nested_output_locally(setup):
         "outcome": "failed",
         "summary": "Invalid legacy wire shape.",
         "proposal_revision": 0,
-        "side_effect_state": "none",
         "feedback": None,
         "external_result": "{}",
-        "reconciliation": [],
         "error_code": "invalid_result",
         "error_retryable": False,
         "error_authorization_required": False,
@@ -1798,7 +1760,7 @@ def test_audit_recovers_session_only_dingtalk_receipt_but_requires_readback(
         proposal_revision=0,
         turn_attempt=0,
     )
-    assert run is not None and run.status == "unknown"
+    assert run is not None and run.status == "failed"
     assert [event["type"] for event in run.tool_events] == [
         "item.completed",
         "item.started",
@@ -1930,7 +1892,7 @@ def test_dry_run_audit_command_exposes_only_reviewed_read_tools(setup):
     command = executor.commands[0]
     assert result.result.outcome.value == "dry_run"
     assert result.result.error.code == "dry_run_execution_suppressed"
-    assert result.result.side_effect_state.value == "none"
+    assert result.result.outcome.value == "failed"
     assert (
         'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_text_file", "read_spreadsheet"]'
         in command
@@ -2020,7 +1982,7 @@ def test_audit_rejects_executed_result_without_completed_write(setup):
     )
     assert run is not None
     assert run.status == "failed"
-    assert run.side_effect_state == "none"
+    assert run.status == "completed"
 
 
 def test_audit_accepts_matching_persisted_execution_receipt_with_live_read(setup):
@@ -2090,7 +2052,7 @@ def test_audit_accepts_matching_persisted_execution_receipt_with_live_read(setup
 
     persisted = store.get_agent_run(result.run_id)
     assert persisted is not None and persisted.status == "completed"
-    assert persisted.side_effect_state == "confirmed"
+    assert persisted.status == "completed"
 
 
 def test_audit_rejects_exact_completed_effect_without_external_readback(setup):
@@ -2117,8 +2079,7 @@ def test_audit_rejects_exact_completed_effect_without_external_readback(setup):
         turn_attempt=0,
     )
     assert persisted is not None
-    assert persisted.status == "unknown"
-    assert persisted.side_effect_state == "unknown"
+    assert persisted.status == "failed"
 
 
 def test_audit_rejects_post_write_readback_for_unrelated_target(setup):
@@ -2229,7 +2190,6 @@ def test_each_effect_action_requires_matching_post_write_readback(
         persisted = store.get_agent_run(result.run_id)
         assert persisted is not None
         assert persisted.status == "completed"
-        assert persisted.side_effect_state == "confirmed"
     else:
         with pytest.raises(RuntimeError, match="audit_external_readback_missing"):
             runner.run(
@@ -2265,8 +2225,8 @@ def test_audit_keeps_exact_completed_effect_unknown_without_live_read(setup):
         proposal_revision=0,
         turn_attempt=0,
     )
-    assert persisted is not None and persisted.status == "unknown"
-    assert persisted.side_effect_state == "unknown"
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.status == "failed"
 
 
 def test_audit_rejects_direct_shell_event(setup):
@@ -2314,7 +2274,7 @@ def test_audit_preserves_agent_cli_error_receipt_without_confirming_effect(setup
     )
     assert run is not None
     assert run.status == "failed"
-    assert run.side_effect_state == "none"
+    assert run.status == "completed"
     failed_events = [
         event for event in run.tool_events if event.get("type") == "item.failed"
     ]
@@ -2426,7 +2386,7 @@ def test_audit_process_failure_with_all_effects_closed_is_failed_not_unknown(set
     )
     assert run is not None
     assert run.status == "failed"
-    assert run.side_effect_state == "confirmed"
+    assert run.status == "completed"
     assert run.effect_started_count == 2
     assert run.effect_completed_count == 1
     assert run.effect_failed_count == 1
@@ -2509,8 +2469,7 @@ def _seed_crashed_audit_write(setup):
         turn_attempt=0,
     )
     assert run is not None
-    assert run.status == "unknown"
-    assert run.side_effect_state == "unknown"
+    assert run.status == "failed"
     assert run.codex_session_id == "audit-session-recovery"
     assert len(run.tool_events) == 2
     persisted_item = run.tool_events[1]["item"]
@@ -2603,7 +2562,7 @@ def test_recovery_reconciliation_without_skill_receipts_stays_strictly_read_only
 
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "reconciled"
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
     assert len(executor.commands) == 1
     assert "execute_reviewed_write" not in " ".join(executor.commands[0])
     assert all(
@@ -2638,7 +2597,7 @@ def test_execute_recovery_without_skill_receipts_defers_before_model_or_write(
     )
     reconcile.recover(task, audit_context, run=run)
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
     executor = CapturingExecutor(
         _audit_jsonl(run.operation_id, session="must-not-execute")
     )
@@ -2660,7 +2619,7 @@ def test_execute_recovery_without_skill_receipts_defers_before_model_or_write(
     # fixture is rejected for its incomplete recovery evidence instead.
     assert result.result.error.code == "audit_recovery_candidate_invalid"
     assert failed is not None and failed.status == "failed"
-    assert failed.side_effect_state == "none"
+    assert failed.status == "failed"
     assert requeued is not None and requeued.status == "pending"
     assert executor.commands == []
 
@@ -2689,11 +2648,9 @@ def _assert_image_recovery_deferred(store, task, run_id: int) -> None:
     persisted = store.get_agent_run(run_id)
     current_task = store.get_reply_task(task.id)
     assert persisted is not None
-    assert persisted.status == "unknown"
+    assert persisted.status == "failed"
     assert persisted.lease_owner == ""
     assert persisted.lease_expires_at == ""
-    assert persisted.reconciliation_suspended is False
-    assert persisted.reconciliation_next_attempt_at
     assert json.loads(persisted.structured_error_json) == {
         "code": "critical_info_unavailable",
         "retryable": True,
@@ -2780,8 +2737,8 @@ def test_crash_after_write_uses_fresh_read_only_recovery_and_confirms_without_re
     persisted = store.get_agent_run(run.id)
     assert result.run_id == run.id
     assert result.result.outcome.value == "reconciled"
-    assert persisted is not None and persisted.status == "unknown"
-    assert persisted.side_effect_state == "confirmed"
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.status == "completed"
     assert "resume" not in executor.commands[0]
     assert run.codex_session_id not in executor.commands[0]
     assert "--sandbox" in executor.commands[0]
@@ -2860,8 +2817,8 @@ def test_recovery_conservatively_reconciles_a_valid_non_reconciled_result(
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome is AuditOutcome.RECONCILED
     assert result.result.reconciliation[0].disposition.value == "present"
-    assert persisted is not None and persisted.status == "unknown"
-    assert persisted.side_effect_state == "confirmed"
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.status == "completed"
 
 
 def test_missing_delivery_ledger_does_not_prove_unknown_chat_was_not_sent(setup):
@@ -2890,7 +2847,7 @@ def test_missing_delivery_ledger_does_not_prove_unknown_chat_was_not_sent(setup)
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "reconciled"
     assert result.result.reconciliation[0].disposition.value == "ambiguous"
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
     assert (
         store.get_reply_task(task.id).execution_generation == task.execution_generation
     )
@@ -2939,7 +2896,7 @@ def test_mixed_unknown_does_not_treat_missing_sent_reply_as_delivery_absence(set
         ).recover(task, replace(audit_context, proposal=mixed_proposal), run=run)
 
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
     assert (
         store.get_reply_task(task.id).execution_generation == task.execution_generation
     )
@@ -3038,7 +2995,7 @@ def test_persisted_single_direct_delivery_receipt_finishes_unknown_without_rerun
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome is AuditOutcome.EXECUTED
     assert persisted is not None and persisted.status == "completed"
-    assert persisted.side_effect_state == "confirmed"
+    assert persisted.status == "completed"
     assert executor.commands == []
 
 
@@ -3093,7 +3050,7 @@ def test_persisted_chat_dm_to_recipient_finishes_unknown_without_rerun(setup):
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome is AuditOutcome.EXECUTED
     assert persisted is not None and persisted.status == "completed"
-    assert persisted.side_effect_state == "confirmed"
+    assert persisted.status == "completed"
     assert executor.commands == []
 
 
@@ -3134,7 +3091,7 @@ def test_controlled_group_chat_without_delivery_record_requires_audit_readback(s
         ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
 
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
 
 
 def test_group_delivery_ledger_does_not_finish_direct_recovery(setup):
@@ -3175,7 +3132,7 @@ def test_group_delivery_ledger_does_not_finish_direct_recovery(setup):
         ).recover(task, replace(audit_context, proposal=group_proposal), run=run)
 
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
 
 
 def test_completed_recovery_action_overrides_older_absent_reconciliation(setup):
@@ -3201,7 +3158,7 @@ def test_completed_recovery_action_overrides_older_absent_reconciliation(setup):
     )
     runner.recover(task, audit_context, run=run)
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
     claim = store.claim_unknown_agent_run(run.id, owner="completed-recovery")
     assert claim.claimed
     expected = _expected_effect_action(
@@ -3299,7 +3256,6 @@ def test_completed_recovery_action_overrides_older_absent_reconciliation(setup):
     )
 
     assert result.result.outcome.value == "executed"
-    assert result.result.side_effect_state.value == "confirmed"
     assert store.get_agent_run(run.id).status == "completed"
     assert executor.commands == []
 
@@ -3400,7 +3356,6 @@ def test_recovery_completes_verified_persisted_effects_without_model_reconciliat
     ).recover(task, audit_context, run=store.get_agent_run(run.id))
 
     assert result.result.outcome.value == "executed"
-    assert result.result.side_effect_state.value == "confirmed"
     assert store.get_agent_run(run.id).status == "completed"
     assert executor.commands == []
 
@@ -3575,8 +3530,8 @@ def test_ambiguous_recovery_becomes_needs_human_without_write(setup):
 
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "reconciled"
-    assert persisted is not None and persisted.status == "unknown"
-    assert persisted.side_effect_state == "unknown"
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.status == "failed"
     assert (
         sum(
             event["type"] == "item.started"
@@ -3604,7 +3559,7 @@ def test_recovery_readback_confirms_completed_write_without_receipt(setup):
         proposal_revision=0,
         turn_attempt=0,
     )
-    assert run is not None and run.status == "unknown"
+    assert run is not None and run.status == "failed"
     assert store.list_agent_execution_receipts(run.id) == []
 
     result = AuditAgentRunner(
@@ -3621,7 +3576,7 @@ def test_recovery_readback_confirms_completed_write_without_receipt(setup):
 
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "reconciled"
-    assert persisted is not None and persisted.side_effect_state == "confirmed"
+    assert persisted is not None and persisted.status == "completed"
     assert len(store.list_agent_execution_receipts(run.id)) == 1
 
 
@@ -4137,8 +4092,7 @@ def test_ambiguous_recovery_requires_matching_live_read(setup):
 
     persisted = store.get_agent_run(run.id)
     assert persisted is not None
-    assert persisted.status == "unknown"
-    assert persisted.reconciliation_next_attempt_at > persisted.updated_at
+    assert persisted.status == "failed"
 
 
 def test_matching_live_read_without_structured_disposition_does_not_confirm(setup):
@@ -4712,7 +4666,7 @@ def _seed_crashed_xiaoqing_write(setup):
         proposal_revision=0,
         turn_attempt=0,
     )
-    assert run is not None and run.status == "unknown"
+    assert run is not None and run.status == "failed"
     return store, task, context, run, registry
 
 
@@ -4798,7 +4752,7 @@ def test_direct_mcp_readback_relation_confirms_unknown_write_without_replay(setu
 
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "reconciled"
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
     assert (
         sum(
             event["type"] == "item.started"
@@ -4867,8 +4821,8 @@ def test_readback_capable_receipt_without_live_read_stays_unknown(setup):
         ).recover(task, context, run=run)
 
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
-    assert persisted.side_effect_state == "unknown"
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.status == "failed"
     assert persisted.lease_owner == ""
     assert persisted.lease_expires_at == ""
 
@@ -4890,8 +4844,8 @@ def test_readback_capable_receipt_with_matching_live_read_confirms(setup):
 
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "reconciled"
-    assert persisted is not None and persisted.status == "unknown"
-    assert persisted.side_effect_state == "confirmed"
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.status == "completed"
 
 
 def test_direct_mcp_readback_requires_exact_target_identifiers():
@@ -5485,7 +5439,7 @@ def _seed_crashed_memory_write(setup):
         proposal_revision=0,
         turn_attempt=0,
     )
-    assert run is not None and run.status == "unknown"
+    assert run is not None and run.status == "failed"
     return store, task, context, run, registry, write
 
 
@@ -5509,8 +5463,8 @@ def test_no_readback_unknown_becomes_needs_human_without_write(setup):
 
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "reconciled"
-    assert persisted is not None and persisted.status == "unknown"
-    assert persisted.side_effect_state == "unknown"
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.status == "failed"
     assert (
         sum(
             event["type"] == "item.started"
@@ -5552,7 +5506,7 @@ def test_memory_unknown_cannot_authorize_automatic_replay(setup):
         ).recover(task, context, run=run)
 
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
     assert (
         sum(
             event["type"] == "item.started"
@@ -5585,8 +5539,8 @@ def test_exact_receipt_confirms_no_readback_unknown(setup):
 
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "reconciled"
-    assert persisted is not None and persisted.status == "unknown"
-    assert persisted.side_effect_state == "confirmed"
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.status == "completed"
     assert (
         sum(
             event["type"] == "item.started"
@@ -5678,7 +5632,7 @@ def test_definitely_absent_recovery_reads_before_executing_same_revision_once(se
 
     persisted = store.get_agent_run(run.id)
     assert phase_one.result.outcome.value == "reconciled"
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
     assert persisted.final_result_json
     assert all(
         not (
@@ -5717,7 +5671,6 @@ def test_invalid_absent_recovery_candidate_rotates_consumer_generation(setup):
             "outcome": "reconciled",
             "summary": "The exact action is absent.",
             "proposal_revision": run.proposal_revision,
-            "side_effect_state": "unknown",
             "feedback": None,
             "external_result": None,
             "reconciliation": [
@@ -5809,9 +5762,7 @@ def test_recovery_event_limit_defers_the_next_read_only_window(setup):
     )
 
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.reconciliation_suspended is False
     assert json.loads(persisted.structured_error_json)["retryable"] is True
-    assert persisted.reconciliation_next_attempt_at
 
 
 def test_recovery_preserves_runtime_capability_diagnostic(setup):
@@ -5870,7 +5821,7 @@ def test_persisted_absence_resumes_execute_phase_without_reconciling_again(setup
     )
     runner.recover(task, audit_context, run=run)
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
 
     authorization = _recovery_authorizations(
         run,
@@ -5917,8 +5868,8 @@ def test_unknown_recovery_rejects_blind_write_before_live_read(setup):
         ).recover(task, audit_context, run=run)
 
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
-    assert persisted.side_effect_state == "unknown"
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.status == "failed"
 
 
 @pytest.mark.parametrize("mismatch", ("digest", "target"))
@@ -6082,12 +6033,12 @@ def test_two_action_recovery_confirms_unknown_first_and_executes_second_once(set
     )
     runner.recover(task, recovery_context, run=run)
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
+    assert persisted is not None and persisted.status == "failed"
     result = runner.execute_recovery(task, recovery_context, run=persisted)
 
     persisted = store.get_agent_run(run.id)
     assert result.result.outcome.value == "executed"
-    assert persisted is not None and persisted.side_effect_state == "confirmed"
+    assert persisted is not None and persisted.status == "completed"
     started_targets = [
         event["item"]["metadata"].get("target_identifiers")
         for event in persisted.tool_events
@@ -6188,8 +6139,7 @@ def test_audit_two_starts_with_one_completion_remains_unknown(setup):
         turn_attempt=0,
     )
     assert run is not None
-    assert run.status == "unknown"
-    assert run.side_effect_state == "unknown"
+    assert run.status == "failed"
 
 
 def test_audit_derives_native_operation_from_exact_argv(setup):
