@@ -13,7 +13,6 @@ from app.agent_contracts import (
     ConsumerOutcome,
     ProposedAction,
 )
-from app.agent_result import SideEffectState
 from app.legacy_receipt import legacy_receipt_has_explicit_failure
 from app.native_cli_metadata import describe_native_command, native_command_argv
 from app.store import AgentRole, AgentRun, ReplyAttempt
@@ -228,7 +227,6 @@ def _confirmed_structured_results(
         if (
             _normalize(run.status) != "completed"
             or audit.outcome is not AuditOutcome.EXECUTED
-            or audit.side_effect_state is not SideEffectState.CONFIRMED
             or run.parent_agent_run_id not in consumer_results
         ):
             continue
