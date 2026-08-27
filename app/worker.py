@@ -133,7 +133,10 @@ XIAOQING_CRITICAL_INFO_UNAVAILABLE_MARKER = (
 )
 DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
 SPLIT_PERSON_SIGNATURE = assistant_signature()
-STALE_PROCESSING_TASK_SECONDS = 30 * 60
+# A task without an active agent lease must be released shortly after the
+# bounded agent turn timeout; keeping this at 30 minutes leaves route failures
+# stranded long after their owner is gone.
+STALE_PROCESSING_TASK_SECONDS = 10 * 60
 MAX_REPLY_TASK_ATTEMPTS = 3
 REPLY_TASK_RETRY_BASE_DELAY_SECONDS = 60
 ACTIVE_RECOVERY_RETRY_DELAY_SECONDS = 5

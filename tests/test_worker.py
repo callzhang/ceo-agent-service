@@ -6054,6 +6054,44 @@ def test_stale_wechat_read_only_decision_requeues_with_precise_reason(
     assert notifications == []
 
 
+def test_stale_processing_without_agent_run_is_recovered_after_short_window(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-stale",
+        conversation_title="Friday",
+        single_chat=False,
+        trigger_message_id="msg-stale",
+        trigger_create_time="2026-05-29 11:26:41",
+        trigger_sender="ET",
+        trigger_text="请处理这个任务",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-11 minutes') where id=?",
+            (task.id,),
+        )
+    worker = DingTalkAutoReplyWorker(
+        store=store,
+        dws=FakeDws([], {}),
+        codex=FakeCodex(
+            CodexDecision(action=CodexAction.NO_REPLY, audit_summary="unused")
+        ),
+        now_provider=fixed_worker_now,
+        channel_gates=fixed_channel_gates(),
+    )
+    monkeypatch.setattr("app.worker.send_macos_notification", lambda **_kwargs: None)
+
+    worker._recover_stale_agent_reply_tasks()
+
+    recovered = store.get_reply_task(task.id)
+    assert recovered is not None
+    assert recovered.status == "pending"
+    assert recovered.error == "stale_before_agent_start"
+
+
 def test_consume_once_does_not_requeue_stale_task_with_live_agent_lease(
     tmp_path: Path, monkeypatch
 ):
