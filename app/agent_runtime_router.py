@@ -1057,7 +1057,6 @@ class AgentRuntimeRouter:
         failed_attempt: AgentRuntimeAttempt,
         failure: RuntimeFailure,
         required_capabilities: frozenset[str],
-        read_only_policy_proven: bool,
     ) -> RuntimeRouteDecision:
         """Select a bounded fallback for one persisted non-Agent operation."""
         if not self._store.runtime_operation_parent_is_runnable(
@@ -1080,8 +1079,6 @@ class AgentRuntimeRouter:
             return RuntimeRouteDecision(None, False, "attempt_not_failed")
         if not _failure_matches_persisted_attempt(failure, persisted_attempt):
             return RuntimeRouteDecision(None, False, "failure_mismatch")
-        if not read_only_policy_proven:
-            return RuntimeRouteDecision(None, False, "read_only_policy_unproven")
         if not failure.failover_permitted:
             return RuntimeRouteDecision(None, False, "failure_not_eligible")
 
@@ -2123,7 +2120,6 @@ class RoutedCodexExecution:
                 failed_attempt=failed_attempt,
                 failure=failure,
                 required_capabilities=required_capabilities,
-                read_only_policy_proven=True,
             )
         run = self._store.get_agent_run(agent_run_id)
         if run is None:

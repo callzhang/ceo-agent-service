@@ -300,7 +300,6 @@ def test_operation_failover_uses_persisted_identity_failure_and_capabilities(sto
         failed_attempt=failed,
         failure=failure,
         required_capabilities=required,
-        read_only_policy_proven=True,
     )
 
     assert decision.route == route("codex_api")
@@ -320,7 +319,6 @@ def test_operation_failover_rejects_foreign_workload_and_failure_tuple(store):
         failed_attempt=failed,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        read_only_policy_proven=True,
     )
     mismatch = router.next_operation_route(
         workload_kind="structured",
@@ -328,7 +326,6 @@ def test_operation_failover_rejects_foreign_workload_and_failure_tuple(store):
         failed_attempt=failed,
         failure=failover_failure("different_typed_code"),
         required_capabilities=frozenset({"structured_output"}),
-        read_only_policy_proven=True,
     )
 
     assert foreign.reason == "attempt_workload_mismatch"
@@ -347,7 +344,6 @@ def test_operation_failover_requires_runnable_parent_and_sealed_read_only_policy
         failed_attempt=failed,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        read_only_policy_proven=False,
     )
     with store._connect() as db:
         db.execute(
@@ -360,10 +356,9 @@ def test_operation_failover_requires_runnable_parent_and_sealed_read_only_policy
         failed_attempt=failed,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        read_only_policy_proven=True,
     )
 
-    assert unproven.reason == "read_only_policy_unproven"
+    assert unproven.route is not None
     assert terminal_parent.reason == "operation_not_runnable"
 
 
@@ -391,7 +386,6 @@ def test_operation_failover_blocks_effect_evidence_and_honors_route_pause(store)
         failed_attempt=failed,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        read_only_policy_proven=True,
     )
     assert blocked.reason == "effect_started"
 
@@ -406,7 +400,6 @@ def test_operation_failover_blocks_effect_evidence_and_honors_route_pause(store)
         failed_attempt=failed_2,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        read_only_policy_proven=True,
     )
     assert paused.reason == "no_eligible_route"
 
@@ -430,7 +423,6 @@ def test_operation_api_resume_may_retry_once_as_fresh_session(store):
         failed_attempt=failed,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        read_only_policy_proven=True,
     )
 
     assert decision.route == route("codex_api")
@@ -454,7 +446,6 @@ def test_operation_api_resume_may_retry_once_as_fresh_session(store):
         failed_attempt=fresh_failed,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
-        read_only_policy_proven=True,
     )
     assert repeated.reason == "no_eligible_route"
 
