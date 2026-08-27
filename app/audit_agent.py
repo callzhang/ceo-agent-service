@@ -14,7 +14,7 @@ from app.agent_contracts import (
     AuditOutcome,
 )
 from app.agent_effects import LEASE_SECONDS, McpToolEffectRegistry
-from app.agent_result import AgentError, EffectKind, ResultParseError, SideEffectState
+from app.agent_result import AgentError, EffectKind, ResultParseError
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -370,7 +370,6 @@ class AuditAgentRunner:
             outcome=AuditOutcome.EXECUTED,
             summary="A persisted direct-delivery receipt matches the approved action.",
             proposal_revision=run.proposal_revision,
-            side_effect_state=SideEffectState.CONFIRMED,
             feedback=None,
             external_result={
                 "operation_id": run.operation_id,
@@ -382,14 +381,12 @@ class AuditAgentRunner:
                     "evidence": "persisted_direct_delivery_receipt",
                 },
             },
-            reconciliation=(),
             error=AgentError(),
         )
         completed = self.store.complete_agent_run(
             run.id,
             result.model_dump(mode="json"),
             owner=self.owner,
-            side_effect_state=SideEffectState.CONFIRMED.value,
             transcript_end_line=run.transcript_end_line,
             expected_status="unknown",
         )
@@ -416,7 +413,6 @@ class AuditAgentRunner:
                 "every approved action."
             ),
             proposal_revision=run.proposal_revision,
-            side_effect_state=SideEffectState.CONFIRMED,
             feedback=None,
             external_result={
                 "operation_id": run.operation_id,
@@ -429,14 +425,12 @@ class AuditAgentRunner:
                     "evidence": "completed_tool_events_and_readbacks",
                 },
             },
-            reconciliation=(),
             error=AgentError(),
         )
         completed_run = self.store.complete_agent_run(
             run.id,
             result.model_dump(mode="json"),
             owner=self.owner,
-            side_effect_state=SideEffectState.CONFIRMED.value,
             transcript_end_line=run.transcript_end_line,
             expected_status="unknown",
         )
@@ -520,7 +514,6 @@ class AuditAgentRunner:
                         "and required readbacks."
                     ),
                     proposal_revision=claim.run.proposal_revision,
-                    side_effect_state=SideEffectState.CONFIRMED,
                     feedback=None,
                     external_result={
                         "operation_id": claim.run.operation_id,
@@ -533,14 +526,12 @@ class AuditAgentRunner:
                             "evidence": "completed_tool_events_receipts_and_readbacks",
                         },
                     },
-                    reconciliation=(),
                     error=AgentError(),
                 )
                 completed_run = self.store.complete_agent_run(
                     claim.run.id,
                     result.model_dump(mode="json"),
                     owner=self.owner,
-                    side_effect_state=SideEffectState.CONFIRMED.value,
                     transcript_end_line=claim.run.transcript_end_line,
                     expected_status="unknown",
                 )
@@ -631,10 +622,8 @@ class AuditAgentRunner:
             outcome=AuditOutcome.FAILED,
             summary=summary,
             proposal_revision=run.proposal_revision,
-            side_effect_state=SideEffectState.NONE,
             feedback=None,
             external_result=None,
-            reconciliation=(),
             error=AgentError(code=code, retryable=True),
         )
         return AgentTurnRunResult(
@@ -660,7 +649,6 @@ class AuditAgentRunner:
             outcome=AuditOutcome.REVISION_REQUIRED,
             summary="The candidate uses an invalid typed recipient identifier.",
             proposal_revision=run.proposal_revision,
-            side_effect_state=SideEffectState.NONE,
             feedback=AuditFeedback(
                 rule="The candidate must use the correct typed recipient identifier.",
                 observation=" ".join(invalid_details),
@@ -672,14 +660,12 @@ class AuditAgentRunner:
                 ),
             ),
             external_result=None,
-            reconciliation=(),
             error=AgentError(),
         )
         completed = self.store.complete_agent_run(
             run.id,
             result.model_dump(mode="json"),
             owner=self.owner,
-            side_effect_state=SideEffectState.NONE.value,
         )
         return AgentTurnRunResult(
             run_id=run.id,
