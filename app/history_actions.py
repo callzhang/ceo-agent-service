@@ -47,112 +47,35 @@ def reply_history_attention(
     *,
     task: ReplyTask | None,
     decision_options: tuple[DecisionOption, ...],
-    side_effect_state: str,
-    requires_reconciliation_resolution: bool = False,
 ) -> HistoryAttention | None:
-    external_effects = {
-        "none": "未执行任何外部动作",
-        "confirmed": "已确认产生外部动作",
-        "unknown": "执行结果未知，不能安全重放",
-    }
-    if side_effect_state not in external_effects:
-        raise ValueError(f"invalid side effect state: {side_effect_state}")
+    """Render history actions from the current task projection.
 
+    Historical effect fields are display-only. Failed runs follow the normal
+    retry/feedback path and the next Agent turn decides from current state.
+    """
     status = attempt.send_status.strip().lower()
-    persisted_code = attempt.send_error.strip()
-    reason = ""
-    reason = (
-        persisted_code
-        if persisted_code in _READABLE_FAILURE_REASONS
-        else (
-            attempt.audit_summary
-            or attempt.codex_reason
-            or persisted_code
-            or "处理未完成"
-        )
-    ).strip()
+    reason = (attempt.audit_summary.strip() or attempt.send_error.strip()
+              or attempt.codex_reason or "处理未完成").strip()
     reason = _readable_failure_reason(reason)
-    external_effect = external_effects[side_effect_state]
-
-    if (
-        task is not None
-        and task.manual_rerun_attempt_id == attempt.id
-        and task.status in {"pending", "processing"}
-    ):
-        rerun_reason = (
-            "正在按钉钉 OA 审批技能重新读取当前审批；"
-            "没有执行同意、拒绝或退回。"
-            if attempt.oa_process_instance_id.strip()
-            else "正在重新读取当前事项；本轮没有执行外部动作。"
+    external_effect = "外部动作是否完成由当前结果和业务系统状态决定"
+    if (task is not None and task.status in {"pending", "processing"}
+        and (status == "failed" or task.manual_rerun_attempt_id == attempt.id)):
+        retry_reason = (
+            "正在重新读取当前审批；下一次普通 Agent turn 会依据当前业务 Skill 处理。"
+            if task.manual_rerun_attempt_id == attempt.id and attempt.oa_process_instance_id.strip()
+            else reason
         )
-        return HistoryAttention(
-            kind="automatic_recovery",
-            reason=rerun_reason,
-            external_effect="未执行任何外部动作",
-            retry_attempt=task.attempts,
-            retry_limit=MAX_REPLY_TASK_ATTEMPTS,
-            retry_at=task.available_at,
-            actions=(HistoryAction("details", "技术详情"),),
-        )
-
-    if (
-        status == "failed"
-        and side_effect_state == "none"
-        and task is not None
-        and task.status in {"pending", "processing"}
-    ):
-        return HistoryAttention(
-            kind="automatic_recovery",
-            reason=reason,
-            external_effect=external_effect,
-            retry_attempt=task.attempts,
-            retry_limit=MAX_REPLY_TASK_ATTEMPTS,
-            retry_at=task.available_at,
-            actions=(HistoryAction("details", "技术详情"),),
-        )
-
+        return HistoryAttention(kind="automatic_recovery", reason=retry_reason,
+            external_effect=external_effect, retry_attempt=task.attempts,
+            retry_limit=MAX_REPLY_TASK_ATTEMPTS, retry_at=task.available_at,
+            actions=(HistoryAction("details", "技术详情"),))
     if status == "needs_human":
-        if requires_reconciliation_resolution:
-            return HistoryAttention(
-                kind="needs_manager",
-                reason="系统无法自动完成该任务，请查看审计详情后按业务规则处理。",
-                external_effect=external_effect,
-                actions=(
-                    HistoryAction("details", "技术详情"),
-                ),
-            )
-        choices = tuple(
-            HistoryAction(
-                option.key,
-                option.label,
-                option.instruction,
-                option.consequence,
-            )
-            for option in decision_options
-        )
-        safe_tail = (
-            _management_tail(include_retry=False)
-            if side_effect_state == "none"
-            else _management_tail(include_retry=False, include_defer=False)
-        )
-        return HistoryAttention(
-            kind="needs_manager",
-            reason=reason,
-            external_effect=external_effect,
-            actions=choices + safe_tail,
-        )
-
+        choices = tuple(HistoryAction(o.key, o.label, o.instruction, o.consequence) for o in decision_options)
+        return HistoryAttention(kind="needs_manager", reason=reason, external_effect=external_effect,
+            actions=choices + _management_tail(include_retry=False))
     if status == "failed":
-        return HistoryAttention(
-            kind="needs_manager",
-            reason=reason,
-            external_effect=external_effect,
-            actions=(
-                _management_tail(include_retry=True)
-                if side_effect_state == "none"
-                else _management_tail(include_retry=False, include_defer=False)
-            ),
-        )
+        return HistoryAttention(kind="needs_manager", reason=reason, external_effect=external_effect,
+            actions=_management_tail(include_retry=True))
     return None
 
 

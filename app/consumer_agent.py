@@ -52,27 +52,15 @@ SERVICE_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = SERVICE_ROOT / "app" / "schemas" / "consumer_agent_result.schema.json"
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_DYNAMIC_SKILL_SENTENCE = (
-    "Consumer Agent A independently selects and reads every applicable business and operation Skill with `agent_cli.read_skill` before forming the candidate. For any dingokr.dingteam.com link or OKR review request, this explicitly includes dingtang-okr-review/SKILL.md and its live-source references; use the Dingteam live source and record its read receipt before proposing an action."
+    "Consumer Agent A independently selects and reads every applicable business and operation Skill before forming the candidate. Provider command names, MCP tools, receipts, and readback procedures belong to the Agent/runtime capability and are not application review conditions."
 )
 AUDIT_DYNAMIC_SKILL_SENTENCE = (
-    "Audit Agent B independently determines every business and operation Skill "
-    "applicable to the candidate, requires the corresponding verified Consumer A "
-    "receipt for each applicable Skill, rereads each exact receipt path with `agent_cli.read_skill`, "
-    "verifies its sha256, and returns revision_required if any applicable receipt is absent, unreadable, changed, or mismatched. This is input compatibility only; canonical output is feedback_provided. Legacy revision_required input is normalized to feedback_provided. "
-    "For an already-unknown effect only, B may perform strictly read-only evidence reconciliation without a receipt when no business Skill is needed to decide whether the effect happened; B must not execute or retry the candidate."
+    "Audit Agent B independently selects and applies every applicable business and operation Skill to the typed candidate. Legacy revision_required is accepted only as an input alias and is normalized to the canonical feedback_provided output. Provider command names, MCP tools, receipts, and readback procedures remain runtime-owned."
 )
-AUDIT_DYNAMIC_SKILL_COMPATIBILITY = (
-    "[dynamic-skill] Audit Agent B independently determines every business and operation Skill applicable to the candidate, requires the corresponding verified Consumer A receipt for each applicable Skill, rereads each exact receipt path with `agent_cli.read_skill`, verifies its sha256, and returns revision_required if any applicable receipt is absent, unreadable, changed, or mismatched. For an already-unknown effect only, B may perform strictly read-only evidence reconciliation without a receipt when no business Skill is needed to decide whether the effect happened; B must not execute or retry the candidate."
-)
-CONSUMER_DYNAMIC_SKILL_BODY = (
-    f"{DYNAMIC_SKILL_MARKER} {CONSUMER_DYNAMIC_SKILL_SENTENCE}"
-)
-AUDIT_DYNAMIC_SKILL_BODY = (
-    AUDIT_DYNAMIC_SKILL_COMPATIBILITY
-)
-CORE_DYNAMIC_SKILL_BODY = (
-    f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
-)
+AUDIT_DYNAMIC_SKILL_COMPATIBILITY = f"{DYNAMIC_SKILL_MARKER} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
+CONSUMER_DYNAMIC_SKILL_BODY = f"{DYNAMIC_SKILL_MARKER} {CONSUMER_DYNAMIC_SKILL_SENTENCE}"
+AUDIT_DYNAMIC_SKILL_BODY = AUDIT_DYNAMIC_SKILL_COMPATIBILITY
+CORE_DYNAMIC_SKILL_BODY = f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
 SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 REVIEWED_DWS_READ_INSTRUCTIONS = """
 Use the capabilities available to the calling agent to gather the evidence
@@ -618,64 +606,25 @@ def audit_developer_instructions(
     recovery_reconciliation: bool = False,
     frozen_delivery_retry: bool = False,
 ) -> str:
+    """Render the Audit contract; provider policy belongs to the runtime."""
+    del allow_write, recovery_reconciliation
     core = _developer_instructions(
-        audit_rules=audit_rules,
-        skill_instruction=AUDIT_DYNAMIC_SKILL_BODY,
-        wire_model=AuditAgentWireResult,
-        result_model=AuditAgentResult,
+        audit_rules=audit_rules, skill_instruction=AUDIT_DYNAMIC_SKILL_BODY,
+        wire_model=AuditAgentWireResult, result_model=AuditAgentResult,
     )
-    recovery_boundary = (
-        "This is an unknown-outcome recovery. The previous attempt did not produce a terminal result. "
-        "Perform only target-matched read-back and return reconciled. Do not return executed, "
-        "revision_required, failed, or needs_human.\n\n"
-        if recovery_reconciliation
-        else ""
-    )
-    delivery_boundary = (
-        "This is a retry of the same task. Preserve the business intent and return "
-        "one terminal structured result.\n\n"
-        if frozen_delivery_retry
-        else ""
-    )
+    if frozen_delivery_retry:
+        core += "\n\nThis is a retry of the same task. Preserve the business intent and return one terminal structured result."
     instructions = _role_developer_instructions(
         core,
         capability_instructions=(
-            "Reread every verified Skill path supplied from Consumer A with "
-            "agent_cli.read_skill and compare the returned sha256 with the supplied "
-            "receipt before review or execution. Also read the operation Skill for "
-            "each proposed capability. A missing, unreadable, changed, or mismatched "
-            "Skill requires feedback_provided rather than a guess. Use "
-        "agent_cli.execute_reviewed_read for live reads. perform a target-matched live read. "
-            "agent_cli.read_text_file may be used for approved local text material. "
-            "For an unfamiliar DWS command, inspect its runtime contract with "
-            '`dws schema --cli-path "<product> <command>" --compact --format json` '
-            "before review; schema discovery is not an unavailable-tool result, "
-            "and missing command syntax is a read-only evidence task. Execute the "
-            "result only as a reviewed local read command. "
-            + (
-                "Use agent_cli.execute_reviewed_write only for allowed external "
-                "writes. "
-                if allow_write
-                else "External writes are unavailable in this turn. "
-            )
-            + "Do not "
-            "use native shell execution; the turn-specific permission determines "
-            "whether a write is allowed, and unknown outcomes remain read-only."
-        ),
-        role_boundary=AUDIT_ROLE_BOUNDARY,
+            "Use the capabilities available to the calling Agent. Apply the applicable "
+            "business and operation Skills to the typed candidate. The application does "
+            "not inspect command names, MCP tools, receipt formats, or readback procedures; "
+            "those are runtime capabilities. Return feedback_provided when the candidate "
+            "must change, and ordinary failed when execution or a dependency does not complete."
+        ), role_boundary=AUDIT_ROLE_BOUNDARY,
     )
-    instructions += (
-        "\n\nReturn needs_human only when the Skill is unavailable/unsupported. "
-        "do not require a prior\nmessage containing the same choice. "
-        "ordinary business judgment remains autonomous when the Skill and evidence support it."
-    )
-    if recovery_reconciliation:
-        instructions += (
-            "\nReturn only outcome=reconciled for this recovery turn. "
-            "Do not return executed, revision_required, failed, or needs_human."
-        )
-    prefix = "This is an unknown-outcome recovery.\n\n" if recovery_reconciliation else ""
-    return prefix + instructions + "\n\n" + _AUDIT_AGENT_RULES + "\n\n" + recovery_boundary + delivery_boundary
+    return instructions + "\n\n" + _AUDIT_AGENT_RULES
 
 
 def _developer_instructions(
@@ -694,8 +643,8 @@ def _developer_instructions(
             "2. [output_contracts] Output Contracts: return the typed wire contract.\n"
             "3. [supported_facts] Supported Facts: use only supported facts.\n"
             "4. [meaning_preservation] Meaning Preservation: preserve candidate meaning.\n"
-            "5. [duplicate_effects] Duplicate Effects: prevent duplicate external effects.\n"
-            "6. [unknown_effects] Unknown Effects: keep unknown effects read-only.\n"
+            "5. [duplicate_effects] Duplicate Effects: retry through the normal result contract and use current business state.\n"
+            "6. [execution_facts] Execution Facts: preserve stable provider identifiers supplied by the runtime.\n"
             "7. [external_secrecy] External Secrecy: do not expose secrets.\n"
             "8. [dependency_auth] Dependency Authentication: verify dependency evidence.",
             f"## Dynamic Skill\n{skill_instruction}",

@@ -2328,7 +2328,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
         "name": "Reply attempts",
         "table": "reply_attempts (current trigger state)",
         "counts": counts,
-        "pending": _queue_count_for(counts, {"pending", "pending_reconciliation"}),
+        "pending": _queue_count_for(counts, {"pending"}),
         "processing": _queue_count_for(counts, {"processing", "sending"}),
         "failed": _queue_count_for(counts, {"failed", "error"}),
         "retryable": _queue_count_for(counts, {"retryable"}),
@@ -4638,12 +4638,6 @@ def _render_attempt_list(
                 attempt,
                 task=reply_task,
                 decision_options=_needs_human_decision_options(attempt, agent_runs),
-                side_effect_state=(
-                    terminal_run.side_effect_state if terminal_run is not None else "none"
-                ),
-                requires_reconciliation_resolution=(
-                    _is_suspended_unknown_reconciliation(terminal_run)
-                ),
             )
         attention_html = _history_attention_html(
             attention,
@@ -6696,12 +6690,6 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         display_attempt,
         task=reply_task,
         decision_options=_needs_human_decision_options(attempt, agent_runs),
-        side_effect_state=(
-            terminal_run.side_effect_state if terminal_run is not None else "none"
-        ),
-        requires_reconciliation_resolution=(
-            _is_suspended_unknown_reconciliation(terminal_run)
-        ),
     )
     return 200, render_page(
         f"Attempt #{attempt.id}",
@@ -7325,7 +7313,7 @@ def _operation_status_class(status: str) -> str:
         return "status-resolved"
     if normalized in {"historical", "skipped", "skipped", "cancelled", "no_action"}:
         return "status-skipped"
-    if normalized in {"pending", "processing", "pending_reconciliation", "dry_run"}:
+    if normalized in {"pending", "processing", "dry_run"}:
         return "status-processing"
     if normalized == "needs_human":
         return "status-needs-human"
@@ -7843,24 +7831,6 @@ def handle_rerun_attempt_post(
         attempt.trigger_message_id,
         channel=channel,
     )
-    if existing_task is not None and existing_task.status == "failed":
-        current_runs = store.list_agent_runs_for_task_generation(
-            existing_task.id,
-            existing_task.execution_generation,
-        )
-        if current_runs:
-            latest_run = max(current_runs, key=lambda run: run.id)
-            if (
-                latest_run.role.value == "audit"
-                and latest_run.status == "unknown"
-                and latest_run.side_effect_state == "unknown"
-            ):
-                store.requeue_failed_unknown_audit_reconciliation(
-                    existing_task.id,
-                    latest_run.id,
-                    reason="manual_unknown_audit_reconciliation",
-                )
-                return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
     conversation_record = store.get_conversation(attempt.conversation_id)
     if conversation_record is None and existing_task is None:
         return (
@@ -7989,49 +7959,6 @@ def handle_needs_human_decision_post(
             {},
             render_page("Decision unavailable", "<p>该 attempt 已选择其他处理方式。</p>"),
         )
-    # An unknown external effect is a reconciliation boundary, not a normal
-    # feedback-driven rerun.  Do not rotate the generation while the latest
-    # Audit run still has an unresolved side effect; doing so could duplicate
-    # an action whose receipt is not known.
-    current_task = store.get_reply_task_for_message(
-        source.conversation_id,
-        source.trigger_message_id,
-        channel=source.channel or "dingtalk",
-    )
-    if current_task is not None:
-        current_runs = store.list_agent_runs_for_task_generation(
-            current_task.id,
-            current_task.execution_generation,
-        )
-        if current_runs:
-            latest_run = max(current_runs, key=lambda run: run.id)
-            try:
-                structured_error = json.loads(latest_run.structured_error_json or "{}")
-            except (TypeError, json.JSONDecodeError):
-                structured_error = {}
-            unknown_effect_code = (
-                isinstance(structured_error, dict)
-                and str(structured_error.get("code") or "")
-                in {"effect_completion_missing", "unknown_external_effect"}
-            )
-            if (
-                latest_run.role is AgentRole.AUDIT
-                and (
-                    (
-                        latest_run.status == "unknown"
-                        and latest_run.side_effect_state == "unknown"
-                    )
-                    or unknown_effect_code
-                )
-            ):
-                return (
-                    409,
-                    {},
-                    render_page(
-                        "Decision unavailable",
-                        "<p>外部动作结果未知，必须先完成审计核对，不能直接按反馈重跑。</p>",
-                    ),
-                )
     skill_receipts_json = source.skill_update_receipts_json or "[]"
     if skill_update_requested:
         try:
@@ -9466,7 +9393,7 @@ def _agent_failure_reason_text(
             error = {}
         code = str(error.get("code") or "unknown") if isinstance(error, dict) else "unknown"
         detail = str(error.get("detail") or "") if isinstance(error, dict) else ""
-        effect = "未执行外部操作" if run.side_effect_state == "none" else "外部操作状态需要核对"
+        effect = "按普通失败流程重试或反馈"
         safe_detail = detail.strip()
         if not safe_detail or safe_detail.startswith("处理未完成，失败代码："):
             safe_detail = _failure_code_explanation(code)
@@ -9876,12 +9803,6 @@ def _needs_human_decision_card(
         and reply_task.status in {"pending", "processing"}
     ):
         return ""
-    terminal_run = next(
-        (run for run in agent_runs if run.id == attempt.agent_run_id),
-        None,
-    )
-    if _is_suspended_unknown_reconciliation(terminal_run):
-        return _reconciliation_resolution_card(attempt, terminal_run)
     action = f"/attempts/{attempt.id}/human-decision"
     options = _needs_human_decision_options(attempt, agent_runs)
     option_forms = "".join(
@@ -9923,385 +9844,6 @@ def _needs_human_decision_card(
         '<button type="submit">执行并发布</button></form>'
         '</section>'
     )
-
-
-def _is_suspended_unknown_reconciliation(run: AgentRun | None) -> bool:
-    return bool(
-        run is not None
-        and run.role is AgentRole.AUDIT
-        and run.status == "unknown"
-        and run.reconciliation_suspended
-        and run.side_effect_state == "unknown"
-    )
-
-
-def _reconciliation_resolution_card(
-    attempt: ReplyAttempt,
-    run: AgentRun,
-) -> str:
-    action = f"/agent-runs/{run.id}/resolution-form"
-    choices = (
-        (
-            "confirmed_occurred",
-            "确认已执行",
-            "确认外部动作已经发生，并结束当前任务。",
-        ),
-        (
-            "confirmed_not_occurred",
-            "确认未执行",
-            "确认外部动作没有发生，并安全重开同一个任务。",
-        ),
-        (
-            "terminate_unrecoverable",
-            "无法确认并停止",
-            "保留审计记录并停止处理，不会自动重放。",
-        ),
-    )
-    forms = "".join(
-        '<form method="post" action="%s">'
-        '<input type="hidden" name="execution_generation" value="%s">'
-        '<input type="hidden" name="resolution" value="%s">'
-        '<input type="hidden" name="reason" value="%s">'
-        '<input type="hidden" name="return_to" value="/attempts/%s">'
-        '<button class="needs-human-option" type="submit">'
-        '<strong>%s</strong><span>%s</span></button></form>'
-        % (
-            action,
-            escape(run.execution_generation, quote=True),
-            escape(resolution, quote=True),
-            escape(attempt.audit_summary or attempt.codex_reason, quote=True),
-            attempt.id,
-            escape(label),
-            escape(consequence),
-        )
-        for resolution, label, consequence in choices
-    )
-    return (
-        '<section class="card needs-human-card">'
-        '<h2>需要你确认外部结果</h2>'
-        '<p class="muted">系统无法取得可信回执，因此没有自动重放。'
-        '请先在外部系统核对实际结果，再选择：</p>'
-        f'<pre class="reply-pre">{escape(attempt.audit_summary or attempt.codex_reason)}</pre>'
-        f"{forms}</section>"
-    )
-
-
-def _needs_human_decision_options(
-    attempt: ReplyAttempt,
-    agent_runs: list[AgentRun],
-) -> tuple[DecisionOption, ...]:
-    try:
-        persisted_options = json.loads(attempt.human_decision_options_json)
-        if persisted_options:
-            return tuple(
-                DecisionOption.model_validate(item) for item in persisted_options
-            )
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
-    matching_runs = [run for run in agent_runs if run.id == attempt.agent_run_id]
-    for run in matching_runs or list(reversed(agent_runs)):
-        if not run.final_result_json.strip():
-            continue
-        if run.role is AgentRole.CONSUMER:
-            try:
-                result = ConsumerAgentResult.model_validate_json(run.final_result_json)
-            except ValueError:
-                continue
-            if result.outcome is ConsumerOutcome.NEEDS_HUMAN:
-                return result.decision_options
-        elif run.role is AgentRole.AUDIT:
-            try:
-                result = AuditAgentResult.model_validate_json(run.final_result_json)
-            except ValueError:
-                continue
-            if result.outcome is AuditOutcome.NEEDS_HUMAN:
-                return result.decision_options
-    return ()
-
-
-def _feedback_event_html(event: FeedbackEvent) -> str:
-    rating = event.rating_label or event.rating or "feedback"
-    comment = event.comment.strip() or "未填写评语"
-    return (
-        "<article class=\"feedback-event\">"
-        "<div class=\"feedback-event-head\">"
-        f"<span class=\"feedback-rating\">{escape(rating)}</span>"
-        f"<time class=\"attempt-time\">{escape(_format_local_time(event.received_at or event.updated_at))}</time>"
-        "</div>"
-        f"<div class=\"feedback-comment\">{escape(comment)}</div>"
-        f"<p class=\"muted\">source: {escape(event.source)}</p>"
-        "</article>"
-    )
-
-
-def _agent_review_panel(
-    pills_html: str,
-    trigger_title: str,
-    trigger_text: str,
-    reason_title: str,
-    reason_text: str,
-    reply_title: str,
-    reply_text: str,
-    side_html: str,
-) -> str:
-    return (
-        "<section class=\"review-grid\">"
-        "<div class=\"card\">"
-        "<div class=\"reply-meta\">"
-        f"{pills_html}"
-        "</div>"
-        f"<h2>{escape(trigger_title)}</h2>"
-        f"<pre class=\"trigger-pre\">{escape(trigger_text)}</pre>"
-        f"<h2>{escape(reason_title)}</h2>"
-        f"<div class=\"codex-reason\">{escape(reason_text)}</div>"
-        f"<h2>{escape(reply_title)}</h2>"
-        f"<pre class=\"reply-pre\">{escape(reply_text)}</pre>"
-        "</div>"
-        "<div class=\"review-side\">"
-        f"{side_html}"
-        "</div>"
-        "</section>"
-    )
-
-
-def _quality_warning_card(attempt: ReplyAttempt) -> str:
-    warnings = _quality_warnings(attempt)
-    if not warnings:
-        return ""
-    items = "".join(f"<li>{escape(warning)}</li>" for warning in warnings)
-    return (
-        "<section class=\"card quality-warning\"><h2>Audit quality warnings</h2>"
-        f"<ul>{items}</ul></section>"
-    )
-
-
-def _context_only_info_card(attempt: ReplyAttempt) -> str:
-    info_icon = _attempt_info_icon(attempt)
-    if not info_icon:
-        return ""
-    return (
-        "<section class=\"card compact-card\">"
-        f"<h2 class=\"context-only-info\">Audit context {info_icon}</h2>"
-        "</section>"
-    )
-
-
-def _oa_metadata_card(attempt: ReplyAttempt) -> str:
-    if not any(
-        value.strip()
-        for value in (
-            attempt.oa_process_instance_id,
-            attempt.oa_task_id,
-            attempt.oa_url,
-            attempt.oa_action,
-            attempt.oa_remark,
-            attempt.oa_action_result_json,
-        )
-    ):
-        return ""
-    process_instance_path = quote(attempt.oa_process_instance_id.strip(), safe="")
-    detail_link = (
-        "<div class=\"muted\">history</div>"
-        f"<div><a class=\"review-link\" href=\"/oa-approvals/{escape(process_instance_path)}\">查看同一审批历史</a></div>"
-        if attempt.oa_process_instance_id.strip()
-        else ""
-    )
-    rows = "".join(
-        f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
-        for label, value in (
-            ("process instance", attempt.oa_process_instance_id),
-            ("task id", attempt.oa_task_id),
-            ("url", attempt.oa_url),
-            ("action", attempt.oa_action),
-            ("remark", attempt.oa_remark),
-        )
-    )
-    return (
-        "<section class=\"card compact-card\"><h2>OA approval</h2>"
-        f"<div class=\"grid\">{rows}{detail_link}</div></section>"
-        f"{_json_card('OA action result', attempt.oa_action_result_json)}"
-    )
-
-
-def _calendar_metadata_card(attempt: ReplyAttempt) -> str:
-    if not any(
-        value.strip()
-        for value in (
-            attempt.calendar_event_id,
-            attempt.calendar_response_status,
-            attempt.calendar_response_result_json,
-        )
-    ):
-        return ""
-    rows = "".join(
-        f"<div class=\"muted\">{escape(label)}</div><div>{escape(value)}</div>"
-        for label, value in (
-            ("event id", attempt.calendar_event_id),
-            ("response", attempt.calendar_response_status),
-        )
-    )
-    return (
-        "<section class=\"card compact-card\"><h2>Calendar response</h2>"
-        f"<div class=\"grid\">{rows}</div></section>"
-        + (
-            _json_card(
-                "Calendar response result",
-                attempt.calendar_response_result_json,
-            )
-            if attempt.calendar_response_result_json.strip()
-            else ""
-        )
-    )
-
-
-def _attempt_action_pills(
-    attempt: ReplyAttempt,
-    *,
-    recovery_state: str = "",
-    closed_after_review: bool = False,
-) -> str:
-    calendar_only = (
-        attempt.send_status.strip().lower() == "calendar"
-        and attempt.calendar_response_status.strip()
-    )
-    if closed_after_review:
-        actions = [("◌ 已核验结案", "skipped")]
-    elif calendar_only:
-        actions = []
-    elif recovery_state:
-        actions = [_recovery_action(recovery_state)]
-    else:
-        actions = [_send_status_action(attempt)]
-    if attempt.oa_action.strip():
-        actions.append((f"🧾 {attempt.oa_action.strip()}", attempt.oa_action))
-    if attempt.calendar_response_status.strip():
-        actions.append(
-            (
-                f"📆 {_display_action_state(attempt.calendar_response_status)}",
-                attempt.calendar_response_status,
-            )
-        )
-    return "".join(
-        f"<span class=\"pill status-action {_action_state_class(state)}\">"
-        f"{escape(label)}</span>"
-        for label, state in actions
-    )
-
-
-def _history_approval_result_pill(result: ApprovalHistoryResult) -> str:
-    label, state = {
-        ApprovalHistoryResult.APPROVED: ("✓ 已同意", "approved"),
-        ApprovalHistoryResult.RETURNED: ("↩ 已退回", "returned"),
-        ApprovalHistoryResult.REJECTED: ("× 已拒绝", "rejected"),
-        ApprovalHistoryResult.COMMENTED_PENDING: ("✎ 已留言，仍待审批", "commented"),
-        ApprovalHistoryResult.NO_ACTION: ("无需处理", "skipped"),
-        ApprovalHistoryResult.NEEDS_HUMAN: ("待你处理", "needs-human"),
-        ApprovalHistoryResult.PROCESSING: ("处理中", "processing"),
-        ApprovalHistoryResult.FAILED: ("处理失败", "failed"),
-        ApprovalHistoryResult.UNKNOWN: ("结果未知", "unknown"),
-    }[result]
-    return (
-        f'<span class="pill status-action history-approval-result '
-        f'action-state-{state}">{escape(label)}</span>'
-    )
-
-
-def _history_approval_pills(
-    attempt: ReplyAttempt,
-    result: ApprovalHistoryResult,
-    *,
-    recovery_state: str,
-) -> str:
-    pills = [_history_approval_result_pill(result)]
-    if recovery_state:
-        label, state = _recovery_action(recovery_state)
-        pills.append(
-            f'<span class="pill status-action {_action_state_class(state)}">'
-            f"{escape(label)}</span>"
-        )
-    elif (
-        result
-        in {
-            ApprovalHistoryResult.APPROVED,
-            ApprovalHistoryResult.RETURNED,
-            ApprovalHistoryResult.REJECTED,
-            ApprovalHistoryResult.COMMENTED_PENDING,
-            ApprovalHistoryResult.NO_ACTION,
-            ApprovalHistoryResult.UNKNOWN,
-        }
-        and attempt.send_status.strip().lower()
-        in {
-            "failed",
-            "blocked",
-            "needs_human",
-            "pending",
-            "processing",
-            "pending_reconciliation",
-            "dry_run",
-        }
-    ):
-        label, state = _send_status_action(attempt)
-        pills.append(
-            f'<span class="pill status-action {_action_state_class(state)}">'
-            f"{escape(label)}</span>"
-        )
-    return "".join(pills)
-
-
-def _attempt_recovery_display_state(
-    store: AutoReplyStore,
-    attempt: ReplyAttempt,
-    task_cache: dict[tuple[str, str, str], ReplyTask | None],
-) -> str:
-    if attempt.send_status.strip().lower() != "failed":
-        return ""
-    task = _reply_task_for_attempt(store, attempt, task_cache)
-    if task is None:
-        return ""
-    if task.status == "done":
-        return "recovered"
-    if task.status == "pending":
-        return "queued"
-    if task.status == "processing":
-        return "processing"
-    return ""
-
-
-def _reply_task_for_attempt(
-    store: AutoReplyStore,
-    attempt: ReplyAttempt,
-    task_cache: dict[tuple[str, str, str], ReplyTask | None],
-) -> ReplyTask | None:
-    task_key = (
-        attempt.channel,
-        attempt.conversation_id,
-        attempt.trigger_message_id,
-    )
-    task = task_cache.get(task_key)
-    if task_key not in task_cache:
-        task = store.get_reply_task_for_message(
-            attempt.conversation_id,
-            attempt.trigger_message_id,
-            channel=attempt.channel,
-        )
-        task_cache[task_key] = task
-    return task
-
-
-def _agent_runs_for_attempt(
-    store: AutoReplyStore,
-    attempt: ReplyAttempt,
-    cache: dict[tuple[int, str], list[AgentRun]],
-) -> list[AgentRun]:
-    if not attempt.agent_run_id:
-        return []
-    terminal_run = store.get_agent_run(attempt.agent_run_id)
-    if terminal_run is None:
-        return []
-    key = (terminal_run.reply_task_id, terminal_run.execution_generation)
-    if key not in cache:
-        cache[key] = store.list_agent_runs_for_task_generation(*key)
-    return cache[key]
 
 
 def _history_attention_html(
@@ -10363,27 +9905,6 @@ def _reply_history_attention_actions(
     items: list[str] = []
     help_items: list[str] = []
     for action in attention.actions:
-        if (
-            action.key
-            in {
-                "confirmed_occurred",
-                "confirmed_not_occurred",
-                "terminate_unrecoverable",
-            }
-            and _is_suspended_unknown_reconciliation(agent_run)
-        ):
-            resolution_action = f"/agent-runs/{agent_run.id}/resolution-form"
-            items.append(
-                f'<form method="post" action="{resolution_action}">'
-                f'<input type="hidden" name="execution_generation" value="{escape(agent_run.execution_generation, quote=True)}">'
-                f'<input type="hidden" name="resolution" value="{escape(action.key, quote=True)}">'
-                f'<input type="hidden" name="reason" value="{escape(attention.reason, quote=True)}">'
-                f'<input type="hidden" name="return_to" value="{escape(return_to, quote=True)}">'
-                f'<button type="submit">{escape(action.label)}</button></form>'
-            )
-            if action.consequence:
-                help_items.append(f"{action.label}：{action.consequence}")
-            continue
         if action.key == "retry":
             items.append(
                 f'<form method="post" action="{detail_href}/rerun?return_to={return_to_query}" '
@@ -10488,8 +10009,6 @@ def _display_action_state(value: str) -> str:
 
 def _send_status_action(attempt: ReplyAttempt) -> tuple[str, str]:
     send_status = attempt.send_status
-    if send_status.strip().lower() == "pending_reconciliation":
-        return "🔎 正在核对执行结果", "processing"
     if send_status.strip().lower() == "reacted":
         return "🙂 Reacted", send_status
     return f"💬 {_display_action_state(send_status)}", send_status
@@ -10732,8 +10251,6 @@ def _attempt_status_card(
         message = "该事项已核验结案；外部动作未自动执行，具体原因见下方审计说明。"
     elif active_attempt.send_status == "skipped":
         message = "这条事项已判定无需回复，无需你操作。"
-    elif active_attempt.send_status == "pending_reconciliation":
-        message = _pending_reconciliation_message(agent_runs or [])
     elif attention is not None:
         return (
             '<section class="card compact-card attempt-status-card">'
@@ -10755,26 +10272,6 @@ def _attempt_status_card(
         f"<br><strong>当前状态：</strong>{message}"
         f"<br><strong>需要你决策：</strong>{'是' if decision_required else '否'}"
         f"{decision_detail}</section>"
-    )
-
-
-def _pending_reconciliation_message(agent_runs: list[AgentRun]) -> str:
-    objective, action_descriptions = _consumer_proposal_display(agent_runs)
-    business_context = ""
-    if objective:
-        business_context += f"事项：{escape(objective)}。"
-    if action_descriptions:
-        business_context += "正在核对：" + "；".join(
-            escape(description.rstrip(" \t\r\n。；;"))
-            for description in action_descriptions
-        ) + "。"
-    return (
-        business_context
-        + (
-            "正在核对执行结果。此前外部动作是否成功尚未形成可验证回执；"
-            "系统只会读取外部状态，不会重复审批或发送通知。"
-            "你当前无需操作；核对完成后会自动更新为已完成、可安全重试或明确失败。"
-        )
     )
 
 
