@@ -2276,7 +2276,7 @@ def test_api_retry_without_progress_clears_only_api_consumer_session(
 
 
 @pytest.mark.parametrize(
-    "invalidation", ["force_new_decision", "wire_mismatch", "missing_session"]
+    "invalidation", ["wire_mismatch", "missing_session"]
 )
 def test_api_consumer_invalidation_starts_fresh_and_preserves_oauth(
     store, task, context, invalidation
@@ -2335,6 +2335,37 @@ def test_api_consumer_invalidation_starts_fresh_and_preserves_oauth(
         task.conversation_id, "codex_oauth"
     ) == "oauth-keep"
     assert store.get_codex_session_id(task.conversation_id) == "oauth-keep"
+
+
+def test_api_consumer_force_rerun_reuses_existing_session_with_new_generation(
+    store, task, context
+):
+    store.upsert_conversation(task.conversation_id, "Group", False, "")
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_api",
+        "api-keep",
+        consumer_wire_contract_hash(),
+    )
+    config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_api")
+    executor = CapturingExecutor(_result_jsonl(session="api-keep"))
+    selected_task = task.model_copy(update={"force_new_decision": True})
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+        codex_session_exists=lambda _: True,
+    ).run(selected_task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "resume" in executor.commands[0]
+    assert "api-keep" in executor.commands[0]
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_api"
+    ) == "api-keep"
 
 
 def test_api_contract_refresh_does_not_make_old_oauth_session_current(

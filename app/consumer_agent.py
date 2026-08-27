@@ -304,17 +304,12 @@ class ConsumerAgentRunner:
         route_sessions = self._consumer_route_sessions(
             task.conversation_id, contract_hash
         )
-        conversation_session_id = route_sessions.get("codex_oauth")
-        if task.force_new_decision and route_sessions:
-            # A forced rerun must reassess the task with the current tools and
-            # instructions. Resuming the old conversation can replay a failed
-            # tool path before the agent sees those changes.
-            for route_name, route_session_id in route_sessions.items():
-                self._clear_route_session(
-                    task.conversation_id, route_name, route_session_id
-                )
-            route_sessions = {}
-            conversation_session_id = None
+        # A forced rerun changes the execution generation and prompt, but it
+        # must keep the compatible conversation session so the agent sees the
+        # original context plus the new feedback.  Route-specific session
+        # selection is performed by AgentTurnProcess; passing one persisted
+        # id here only supplies a fast-path hint and never clears other routes.
+        conversation_session_id = next(iter(route_sessions.values()), None)
         for route_name, route_session_id in tuple(route_sessions.items()):
             if not self._route_session_exists(route_name, route_session_id):
                 self._clear_route_session(
@@ -349,7 +344,7 @@ class ConsumerAgentRunner:
             if conversation_session_id is not None
             else None
         ) or conversation_session_id
-        persist_conversation_session = conversation_session_id is None
+        persist_conversation_session = not bool(route_sessions)
         process = AgentTurnProcess[ConsumerAgentResult](
             store=self.store,
             task=task,
