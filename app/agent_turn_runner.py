@@ -742,8 +742,8 @@ class AgentTurnProcess(Generic[ResultT]):
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
     ) -> AgentTurnRunResult[ResultT]:
-        if recovery_phase not in {"", "reconcile", "execute"}:
-            raise ValueError("invalid recovery phase")
+        if recovery_phase:
+            raise ValueError("recovery phases are not part of the application contract")
         recover_unknown = bool(recovery_phase)
         recovery_authorizations = recovery_authorizations or {}
         line_count = 0
