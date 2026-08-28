@@ -179,6 +179,7 @@ class FridayRuntimeAdapter:
                 session = credential
             else:
                 ticket = credential
+        request_credential = ticket or session or credential
         try:
             execution = FridayExecutionInput(
                 project_id=effective_project,
@@ -212,6 +213,7 @@ class FridayRuntimeAdapter:
                 headers=headers,
                 body=self.contract.create_thread_payload(execution),
                 deadline=deadline,
+                credential=request_credential,
             )
             thread_data = self.contract.unwrap_success_envelope(thread_payload)
             thread_id = self.contract.thread_id_from_create_response(
@@ -231,23 +233,27 @@ class FridayRuntimeAdapter:
                     "execution": {"dispatch_mode": "background"},
                 },
                 deadline=deadline,
+                credential=request_credential,
             )
             turn_data = self.contract.unwrap_success_envelope(turn_payload)
             operation = _mapping_value(turn_data, "operation")
             operation_id = _required_string(operation, "operation_id")
             turn_id = _turn_id_from_operation(operation, turn_data)
-            self._poll_operation(operation_id, headers=headers, deadline=deadline)
+            self._poll_operation(
+                operation_id, headers=headers, deadline=deadline, credential=request_credential
+            )
             artifact_payload = self._request(
                 "GET",
                 f"{self.contract.artifacts_path()}?{urllib.parse.urlencode({'thread_id': thread_id})}",
                 headers=headers,
                 body=None,
                 deadline=deadline,
+                credential=request_credential,
             )
             artifact = self.contract.select_final_artifact(
                 artifact_payload, thread_id=thread_id
             )
-            text = str(artifact.get("final_message") or "").strip()
+            text = _artifact_result_text(artifact)
             if not text:
                 raise FridayRuntimeContractError("Friday response has empty final_message")
             return FridayExecutionResult(
@@ -274,7 +280,12 @@ class FridayRuntimeAdapter:
             ) from exc
 
     def _poll_operation(
-        self, operation_id: str, *, headers: Mapping[str, str], deadline: float
+        self,
+        operation_id: str,
+        *,
+        headers: Mapping[str, str],
+        deadline: float,
+        credential: str | None = None,
     ) -> None:
         while True:
             payload = self._request(
@@ -283,6 +294,7 @@ class FridayRuntimeAdapter:
                 headers=headers,
                 body=None,
                 deadline=deadline,
+                credential=credential,
             )
             try:
                 status = self.contract.operation_status(payload)
@@ -293,9 +305,7 @@ class FridayRuntimeAdapter:
             if status == FridayOperationStatus.COMPLETED:
                 return
             if self.contract.is_terminal_operation_status(status):
-                detail = _operation_failure_detail(
-                    payload, credential=self._configured_credential()
-                )
+                detail = _operation_failure_detail(payload, credential=credential)
                 raise FridayRuntimeError(
                     "friday_runtime_failed", detail, retryable=True
                 )
@@ -314,6 +324,7 @@ class FridayRuntimeAdapter:
         headers: Mapping[str, str],
         body: Mapping[str, object] | None,
         deadline: float,
+        credential: str | None = None,
     ) -> Mapping[str, object]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -342,9 +353,7 @@ class FridayRuntimeAdapter:
                 "friday_runtime_result_invalid", "Friday response is not a JSON object", retryable=False
             )
         if status_code < 200 or status_code >= 300:
-            detail = _safe_response_detail(
-                payload, credential=self._configured_credential()
-            )
+            detail = _safe_response_detail(payload, credential=credential)
             raise FridayRuntimeError("friday_runtime_failed", detail, retryable=True)
         return payload
 
@@ -427,6 +436,19 @@ def _safe_response_detail(
         if isinstance(value, str) and value.strip():
             return _sanitize_error_detail(value, credential=credential)
     return "Friday Runtime request failed"
+
+
+def _artifact_result_text(artifact: Mapping[str, object]) -> str:
+    """Prefer Friday's typed output over a concise display message."""
+
+    for key in ("output_payload", "structured", "result"):
+        value = artifact.get(key)
+        if isinstance(value, (Mapping, list)):
+            return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    value = artifact.get("final_message")
+    return str(value or "").strip()
 
 
 def _sanitize_error_detail(value: str, *, credential: str | None = None) -> str:

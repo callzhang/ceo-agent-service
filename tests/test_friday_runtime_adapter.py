@@ -197,6 +197,31 @@ def test_execute_creates_thread_sends_message_polls_and_returns_artifact(runtime
     assert all(call.headers == {} for call in transport.calls)
 
 
+def test_execute_prefers_typed_artifact_output_payload(runtime_config):
+    typed = {
+        "outcome": "no_action",
+        "summary": "typed Friday result",
+        "risk": "low",
+        "confidence": 1.0,
+    }
+    transport = FakeTransport(
+        [
+            _success({"thread": {"thread_id": "thread-1"}}),
+            _success({"operation": {"operation_id": "op-1", "request_payload": {"turn_id": "turn-1"}}}),
+            _success({"operation": {"status": "completed"}}),
+            _success({"items": [{"thread_id": "thread-1", "output_payload": typed, "final_message": "short"}]}),
+        ]
+    )
+    result = FridayRuntimeAdapter(
+        config=runtime_config, transport=transport, poll_interval_seconds=0
+    ).execute("prompt", project_id="ceo-project")
+
+    assert result.text == (
+        '{"outcome":"no_action","summary":"typed Friday result",'
+        '"risk":"low","confidence":1.0}'
+    )
+
+
 @pytest.mark.parametrize(
     ("status_code", "code"),
     [(401, "friday_runtime_auth_failed"), (403, "friday_runtime_auth_failed")],
@@ -230,6 +255,26 @@ def test_execute_never_persists_provider_token_from_error_body():
     with pytest.raises(FridayRuntimeError) as raised:
         FridayRuntimeAdapter(config, transport=transport).execute(
             "prompt", project_id="ceo-project"
+        )
+
+    assert token not in str(raised.value)
+    assert raised.value.detail == "Friday Runtime request failed"
+
+
+def test_execute_sanitizes_explicit_runtime_ticket_from_error_body():
+    token = "explicit-ticket-secret"
+    runtime_config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+            "CEO_FRIDAY_RUNTIME_TICKET": "configured-ticket",
+        }
+    )
+    transport = FakeTransport([(500, {"message": f"token={token}"})])
+
+    with pytest.raises(FridayRuntimeError) as raised:
+        FridayRuntimeAdapter(runtime_config, transport=transport).execute(
+            "prompt", project_id="ceo-project", runtime_ticket=token
         )
 
     assert token not in str(raised.value)

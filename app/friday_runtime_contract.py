@@ -178,7 +178,11 @@ class FridayRuntimeContract:
         for item in items:
             if not isinstance(item, Mapping) or item.get("thread_id") != thread_id:
                 continue
-            if str(item.get("final_message") or "").strip():
+            if any(
+                isinstance(item.get(key), (Mapping, list))
+                or (isinstance(item.get(key), str) and item.get(key).strip())
+                for key in ("output_payload", "structured", "result", "final_message")
+            ):
                 return item
         raise FridayRuntimeContractError(
             "Friday response has no matching artifact with final_message"
