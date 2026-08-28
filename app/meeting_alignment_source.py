@@ -116,6 +116,7 @@ def read_meeting_source(
     meeting_id: str,
     *,
     calendar_evidence: CalendarMeetingEvidence,
+    creator: MeetingParticipant | None = None,
 ) -> MeetingSource:
     info = dws.get_minutes_info(meeting_id)
     summary = dws.get_minutes_summary(meeting_id)
@@ -137,7 +138,7 @@ def read_meeting_source(
         current_user_id=current_user_id,
         summary=summary,
         meeting_id=meeting_id,
-        creator=calendar_evidence.creator,
+        creator=creator or calendar_evidence.creator,
     )
 
 
@@ -162,6 +163,7 @@ def normalize_meeting_source(
         "uuid",
         "id",
     )
+
     normalized_meeting_id = meeting_id.strip() or payload_meeting_id
     if (
         meeting_id.strip()
@@ -240,6 +242,44 @@ def normalize_meeting_source(
             "shareUrl",
             "sourceUrl",
             "source_url",
+        ),
+    )
+
+
+def minutes_creator_from_list_item(
+    list_item: dict[str, Any],
+) -> MeetingParticipant | None:
+    """Extract the Minutes creator only from explicit stable list metadata."""
+    raw_creator = _payload_data(list_item).get("flashUserInfo")
+    if not isinstance(raw_creator, dict):
+        return None
+    name = _metadata_text(
+        raw_creator,
+        "meeting creator name",
+        "name",
+        "displayName",
+        "nickName",
+        "userName",
+    )
+    if not name:
+        return None
+    return MeetingParticipant(
+        name=name,
+        user_id=_metadata_text(
+            raw_creator,
+            "meeting creator user id",
+            "userId",
+            "user_id",
+            "staffId",
+            "employeeId",
+            "uid",
+        ),
+        open_dingtalk_id=_metadata_text(
+            raw_creator,
+            "meeting creator open dingtalk id",
+            "openDingTalkId",
+            "openDingtalkId",
+            "open_dingtalk_id",
         ),
     )
 

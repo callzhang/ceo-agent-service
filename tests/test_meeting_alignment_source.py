@@ -9,6 +9,7 @@ from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
     MeetingSourceIncomplete,
     build_calendar_meeting_evidence,
+    minutes_creator_from_list_item,
     minutes_meeting_id,
     normalize_minutes_discovery_metadata,
     normalize_meeting_source,
@@ -38,6 +39,24 @@ def discovery_info(**overrides) -> dict:
     }
     info.update(overrides)
     return {"result": info}
+
+
+def test_minutes_creator_uses_explicit_flash_user_identity_only():
+    creator = minutes_creator_from_list_item(
+        discovery_list_item(
+            flashUserInfo={
+                "displayName": "A",
+                "userId": "u-a",
+                "openDingTalkId": "open-a",
+            }
+        )
+    )
+
+    assert creator is not None
+    assert creator.name == "A"
+    assert creator.user_id == "u-a"
+    assert creator.open_dingtalk_id == "open-a"
+    assert minutes_creator_from_list_item(discovery_list_item()) is None
 
 
 @pytest.mark.parametrize(

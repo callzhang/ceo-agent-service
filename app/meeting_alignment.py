@@ -36,6 +36,7 @@ from app.meeting_alignment_source import (
     MeetingSourceIncomplete,
     build_calendar_meeting_evidence,
     build_transcript_one_to_one_evidence,
+    minutes_creator_from_list_item,
     minutes_meeting_id,
     normalize_minutes_discovery_metadata,
     read_meeting_source,
@@ -609,6 +610,7 @@ def _analyze_meeting_job(
             dws,
             job.meeting_id,
             calendar_evidence=evidence,
+            creator=minutes_creator_from_list_item(payload.get("minutes_list_item", {})),
         )
     except (MeetingSourceIncomplete, DwsError) as exc:
         _retry_or_fail(
@@ -902,6 +904,7 @@ def _deliver_meeting_job(
             dws,
             job.meeting_id,
             calendar_evidence=evidence,
+            creator=minutes_creator_from_list_item(source_payload.get("minutes_list_item", {})),
         )
     except (MeetingSourceIncomplete, DwsError) as exc:
         _retry_or_fail(
