@@ -15,7 +15,11 @@
 - Preserve one Consumer/Audit Agent run across route changes; never create a second run for fallback.
 - Do not add audit, review, authorization, confirmation, safety-gate, or effect-reconciliation policy as part of this adapter.
 - Do not add a `discard` action or `discarded` status; use the existing runtime failure and retry contracts.
-- Provider-specific credentials remain in Friday Runtime; CEO Agent must never log or persist Friday provider tokens.
+- Friday provider credentials are stored separately in CEO Agent settings under
+  `CEO_FRIDAY_RUNTIME_PROVIDER_*`; they are never shared with or inherited from
+  `CEO_CODEX_*`, never logged, and are only mapped to `FRIDAY_LLM_*` when a
+  Friday process is launched. Friday Runtime ticket/session credentials remain
+  separate HTTP authentication values.
 - A successful route must return a schema-validated result before entering the existing Audit path.
 - Every bug fix and new behavior must have a regression test before implementation is considered complete.
 - Existing unrelated worktree changes must remain untouched and unstaged.
@@ -62,7 +66,13 @@ def test_contract_requires_thread_message_and_final_artifact():
 
 **Interfaces:**
 - Consumes: `RuntimeRoute`, `load_runtime_config`, and the Task 1 contract.
-- Produces: `friday_runtime` route with `RuntimeKind.FRIDAY_RUNTIME`, `CEO_FRIDAY_RUNTIME_BASE_URL`, and an explicit project/auth binding; Friday owns provider/model selection, so `CEO_FRIDAY_RUNTIME_MODEL` is not sent by the adapter unless the verified API contract later adds a model field.
+- Produces: `friday_runtime` route with `RuntimeKind.FRIDAY_RUNTIME`,
+  `CEO_FRIDAY_RUNTIME_BASE_URL`, an explicit project/auth binding, and
+  independent `CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL` /
+  `CEO_FRIDAY_RUNTIME_PROVIDER_MODEL` /
+  `CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY` settings. The provider values are
+  launcher configuration only; the adapter still does not send them through
+  the Friday HTTP task contract.
 
 - [ ] **Step 1: Add failing tests for `friday_runtime` route parsing and URL normalization.**
 
@@ -161,7 +171,10 @@ def test_execute_creates_thread_sends_message_and_returns_artifact():
 
 **Interfaces:**
 - Consumes: Tasks 2–5 route, adapter, and probe interfaces.
-- Produces: a default no-external-side-effect E2E and an opt-in local Friday Runtime E2E; the latter validates MiniMax through Friday without exposing a provider token to CEO Agent.
+- Produces: a default no-external-side-effect E2E and an opt-in local Friday
+  Runtime E2E; the latter validates MiniMax through Friday while proving that
+  only the independent `CEO_FRIDAY_RUNTIME_PROVIDER_*` settings are handed to
+  the Friday process and Codex settings alone do not configure it.
 
 - [ ] **Step 1: Add a default test with a fake Friday HTTP server that runs OAuth failure → Friday success in one Agent run and asserts ordered attempts.**
 - [ ] **Step 2: Run `pytest tests/e2e/test_friday_runtime_fallback.py -q` and verify it fails before the route integration.**
