@@ -119,6 +119,41 @@ ORCHESTRATION_ATTEMPT_STATUS = {
 RESOURCE_DEADLOCK_WAIT_ERROR = "os_resource_deadlock_wait"
 logger = logging.getLogger(__name__)
 
+
+def _inject_oa_applicant_identity(
+    *,
+    store: AutoReplyStore,
+    dws: Any,
+    trigger: DingTalkMessage,
+    raw_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Add a cached OA applicant target to any trigger carrying an OA link."""
+    process_instance_id = str(raw_payload.get("processInstanceId") or "").strip()
+    if not process_instance_id:
+        oa_url = extract_oa_url(trigger.content)
+        if oa_url:
+            process_instance_id = str(
+                (parse_qs(urlparse(oa_url).query).get("procInstId") or [""])[0]
+            ).strip()
+    read_detail = getattr(dws, "read_oa_process_instance_openapi", None)
+    if not process_instance_id or read_detail is None:
+        return raw_payload
+    try:
+        detail = read_detail(process_instance_id)
+        applicant_user_id = oa_originator_user_id(detail)
+        profile = (
+            store.get_org_user_profile(applicant_user_id)
+            if applicant_user_id
+            else None
+        )
+    except Exception:
+        return raw_payload
+    if applicant_user_id:
+        raw_payload["originatorUserid"] = applicant_user_id
+    if profile is not None and profile.open_dingtalk_id:
+        raw_payload["originatorOpenDingTalkId"] = profile.open_dingtalk_id
+    return raw_payload
+
 HANDOFF_ACK = handoff_ack()
 HANDOFF_TEXT_EMOTION = "我去叫"
 HANDOFF_NOTIFICATION_PREFIX = "【CEO Agent 转人工通知】"
@@ -2440,29 +2475,12 @@ class DingTalkAutoReplyWorker:
                     skill_update_requested=source_attempt.skill_update_requested,
                     skill_update_receipts_json=source_attempt.skill_update_receipts_json,
                 )
-        trigger_raw_payload = dict(trigger.raw_payload)
-        if trigger_raw_payload.get("source") == "oa_pending_scan":
-            process_instance_id = str(
-                trigger_raw_payload.get("processInstanceId") or ""
-            ).strip()
-            read_detail = getattr(self.dws, "read_oa_process_instance_openapi", None)
-            if process_instance_id and read_detail is not None:
-                try:
-                    detail = read_detail(process_instance_id)
-                    applicant_user_id = oa_originator_user_id(detail)
-                    profile = (
-                        self.store.get_org_user_profile(applicant_user_id)
-                        if applicant_user_id
-                        else None
-                    )
-                    if applicant_user_id:
-                        trigger_raw_payload["originatorUserid"] = applicant_user_id
-                    if profile is not None and profile.open_dingtalk_id:
-                        trigger_raw_payload["originatorOpenDingTalkId"] = (
-                            profile.open_dingtalk_id
-                        )
-                except Exception:
-                    pass
+        trigger_raw_payload = _inject_oa_applicant_identity(
+            store=self.store,
+            dws=self.dws,
+            trigger=trigger,
+            raw_payload=dict(trigger.raw_payload),
+        )
         return AgentTaskContext(
             task_id=task.id,
             channel=task.channel,

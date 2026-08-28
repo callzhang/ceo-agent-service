@@ -56,11 +56,50 @@ from app.worker import (
     HANDOFF_NOTIFICATION_PREFIX,
     PROCESSING_ACK,
     DingTalkAutoReplyWorker,
+    _inject_oa_applicant_identity,
 )
 from tests.support.image_bytes import TINY_PNG
 
 
 CONTEXT_HEADER = "上下文消息（自上次回复后的新信息，最多 20 条）:"
+
+
+def test_oa_group_trigger_uses_cached_applicant_open_id(tmp_path):
+    class FakeDws:
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            assert process_instance_id == "proc-1"
+            return {"result": {"originatorUserid": "applicant-user-1"}}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    store.upsert_org_user_profile(
+        user_id="applicant-user-1",
+        name="张三",
+        open_dingtalk_id="open-applicant-1",
+        manager_user_id=None,
+        department_ids=set(),
+    )
+    trigger = DingTalkMessage(
+        open_conversation_id="group-1",
+        open_message_id="message-1",
+        conversation_title="审批群",
+        single_chat=False,
+        sender_name="OA审批",
+        create_time="2026-08-28 15:00:00",
+        content=(
+            "请处理审批 "
+            "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+        ),
+    )
+
+    enriched = _inject_oa_applicant_identity(
+        store=store,
+        dws=FakeDws(),
+        trigger=trigger,
+        raw_payload={},
+    )
+
+    assert enriched["originatorUserid"] == "applicant-user-1"
+    assert enriched["originatorOpenDingTalkId"] == "open-applicant-1"
 
 
 class ScriptOutcome(StrEnum):
