@@ -1188,6 +1188,28 @@ def test_ready_delivery_source_failure_uses_counted_retry(tmp_path):
     assert runner.calls == 0
 
 
+def test_deleted_minutes_source_is_terminal_no_action(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    def fail_info(meeting_id: str):
+        raise DwsError(
+            "dws command failed: minutes has been deleted (operation: minutes/get_minutes_basic_info)"
+        )
+
+    dws.get_minutes_info = fail_info
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "no_action"
+    assert job.error == ""
+    assert runner.calls == 0
+    assert dws.send_calls == []
+
+
 def test_source_read_failure_never_degrades_to_creator_direct(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

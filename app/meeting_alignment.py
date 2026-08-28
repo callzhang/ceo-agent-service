@@ -61,6 +61,12 @@ MEETING_DISCOVERY_ACTIVATED_AT_STATE_KEY = (
 )
 
 
+def _is_deleted_minutes_error(exc: BaseException) -> bool:
+    """A deleted transcript is a terminal source outcome, not a retryable outage."""
+    text = str(exc).lower()
+    return "minutes has been deleted" in text or "minutes_deleted" in text
+
+
 class MeetingProducerDws(Protocol):
     def list_minutes_page(
         self, *, limit: int, cursor: str, start: str, end: str
@@ -613,6 +619,15 @@ def _analyze_meeting_job(
             creator=minutes_creator_from_list_item(payload.get("minutes_list_item", {})),
         )
     except (MeetingSourceIncomplete, DwsError) as exc:
+        if isinstance(exc, DwsError) and _is_deleted_minutes_error(exc):
+            store.update_meeting_alignment_job(
+                job.id,
+                status="no_action",
+                locked_at=None,
+                available_at="",
+                error="",
+            )
+            return
         _retry_or_fail(
             store,
             job,
