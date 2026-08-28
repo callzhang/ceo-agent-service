@@ -433,6 +433,13 @@ def _check_reply_attempts(
             latest + """
                 select count(*) from latest
                 where ordinal=1 and lower(send_status)='needs_human'
+                  and not exists (
+                      select 1 from reply_tasks t
+                      where t.channel=latest.channel
+                        and t.conversation_id=latest.conversation_id
+                        and t.trigger_message_id=latest.trigger_message_id
+                        and lower(t.status) in ('done', 'pending', 'processing')
+                  )
             """,
         ),
         severity="info",

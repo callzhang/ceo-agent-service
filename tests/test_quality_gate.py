@@ -445,6 +445,47 @@ def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp
     }
 
 
+def test_quality_gate_ignores_needs_human_projection_when_task_is_done(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="conversation",
+        conversation_title="group",
+        single_chat=False,
+        trigger_message_id="message",
+        trigger_create_time="2026-08-07 00:00:00",
+        trigger_sender="sender",
+        trigger_text="trigger",
+        execution_generation="generation",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='done' "
+            "where conversation_id='conversation' and trigger_message_id='message'"
+        )
+    store.record_reply_attempt(
+        conversation_id="conversation",
+        conversation_title="group",
+        trigger_message_id="message",
+        trigger_sender="sender",
+        trigger_text="trigger",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+    )
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert ("reply_attempts", "needs_human", 0) not in {
+        (item.source, item.code, item.count) for item in report.attention
+    }
+    assert not [
+        item
+        for item in report.attention
+        if item.source == "reply_attempts" and item.code == "needs_human"
+    ]
+    assert store.count_current_unresolved_problem_attempts() == 0
+
+
 def test_quality_gate_deduplicates_failed_delivery_after_sent_reply_receipt(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
