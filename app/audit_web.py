@@ -10664,6 +10664,8 @@ def _agent_failure_reason_text(
 
 
 def _failure_code_explanation(code: str) -> str:
+    if code == "okr_website_unavailable":
+        return "OKR 网站当前不可用，未取得实时 OKR 内容；本次未形成评审结论。"
     if code in {"consumer_retry_exhausted", "audit_retry_exhausted"}:
         role = "生成回复" if code.startswith("consumer") else "执行审计"
         return f"{role}阶段连续重试后仍未得到可验证结果，已达到本轮重试上限。"
