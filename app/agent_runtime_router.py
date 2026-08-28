@@ -1531,6 +1531,7 @@ class RoutedCodexExecution:
             transcript_end = 0
             line_count = 0
             observed_session_id = route_session_id or ""
+            transcript_reference = ""
             # Friday's operation identifier is the durable execution evidence;
             # unlike Codex, it has no stdout session transcript to reference.
             if route.runtime_kind is not RuntimeKind.FRIDAY_RUNTIME:
