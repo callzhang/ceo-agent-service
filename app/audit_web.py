@@ -3390,7 +3390,7 @@ def _render_agent_runtime_config() -> str:
         'name="friday_runtime_provider_api_key" autocomplete="new-password" '
         f'placeholder="{"●" * 12 if friday_provider_key_configured else ""}" '
         f'data-token-configured="{str(friday_provider_key_configured).lower()}"></label></p>'
-        "<p class=\"muted\">Model is selected by the Friday project; this service does not override it.</p>"
+        "<p class=\"muted\">Provider fields are independent from Codex API; Friday launcher receives them as FRIDAY_LLM_* environment variables.</p>"
         '<p><label><input type="checkbox" name="friday_runtime_auth_disabled" value="1"'
         f'{" checked" if friday_auth_disabled else ""}>'
         " 禁用 Friday Runtime authentication</label></p>"
