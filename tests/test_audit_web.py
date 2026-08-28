@@ -6429,6 +6429,8 @@ def test_history_needs_human_item_shows_agent_choices_inline(tmp_path: Path):
                 "retryable": False,
                 "authorization_required": False,
             },
+            "risk": "high",
+            "confidence": 0.4,
         },
         owner="consumer",
     )
@@ -8761,6 +8763,8 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
                         "retryable": False,
                         "authorization_required": False,
                     },
+                    "risk": "high",
+                    "confidence": 0.4,
                 }
             ),
             "created_at": "2026-08-11 10:00:00",
@@ -8770,8 +8774,10 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
 
     html = audit_web_module._needs_human_decision_card(attempt, [run])
 
-    assert "A. 同意当前方案" in html
-    assert "B. 要求补充材料" in html
+    # The page presents policy-gap choices by ordinal position; the wire key
+    # remains the hidden instruction value used by the form.
+    assert "1. 同意当前方案" in html
+    assert "2. 要求补充材料" in html
     assert "会执行已审计的外部动作。" in html
     assert 'name="instruction" value="同意已核验方案并发布。"' in html
     assert "这是无法由服务自动消除的管理分歧" in html
@@ -8857,10 +8863,8 @@ def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
                     "outcome": "needs_human",
                     "summary": "实时状态与此前回执冲突，需要管理判断。",
                     "proposal_revision": 0,
-                    "side_effect_state": "none",
                     "feedback": None,
                     "external_result": None,
-                    "reconciliation": [],
                     "decision_options": [
                         {
                             "key": "A",
@@ -8880,6 +8884,8 @@ def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
                         "retryable": False,
                         "authorization_required": False,
                     },
+                    "risk": "high",
+                    "confidence": 0.4,
                 }
             ),
             "created_at": "2026-08-18 10:00:00",
