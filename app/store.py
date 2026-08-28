@@ -13619,46 +13619,105 @@ class AutoReplyStore:
             persisted_oa_action = oa_action.strip() or (
                 "review" if persisted_process_id else ""
             )
-            cursor = db.execute(
+            current_attempt = db.execute(
                 """
-                insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    agent_run_id, codex_reason, codex_session_id,
-                    codex_transcript_start_line, codex_transcript_end_line,
-                    audit_tool_events_json, audit_summary,
-                    human_decision_options_json,
-                    oa_process_instance_id, oa_task_id, oa_url, oa_action,
-                    oa_remark, oa_action_result_json, send_status, send_error,
-                    channel
-                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                select attempts.id
+                from reply_attempts as attempts
+                left join agent_runs as runs on runs.id=attempts.agent_run_id
+                where attempts.channel=?
+                  and attempts.conversation_id=?
+                  and attempts.trigger_message_id=?
+                  and (
+                      runs.reply_task_id=?
+                      or attempts.id=(
+                          select manual_rerun_attempt_id
+                          from reply_tasks where id=?
+                      )
+                  )
+                order by attempts.id desc
+                limit 1
                 """,
                 (
-                    conversation_id,
-                    conversation_title,
-                    trigger_message_id,
-                    trigger_sender,
-                    trigger_text,
-                    run_id,
-                    codex_reason,
-                    codex_session_id,
-                    codex_transcript_start_line,
-                    codex_transcript_end_line,
-                    audit_tool_events_json,
-                    audit_summary,
-                    human_decision_options_json,
-                    persisted_process_id,
-                    persisted_task_id,
-                    persisted_oa_url,
-                    persisted_oa_action,
-                    oa_remark,
-                    oa_action_result_json,
-                    send_status,
-                    send_error,
                     channel,
+                    conversation_id,
+                    trigger_message_id,
+                    task_id,
+                    task_id,
                 ),
+            ).fetchone()
+            projection_values = (
+                run_id,
+                codex_reason,
+                codex_session_id,
+                codex_transcript_start_line,
+                codex_transcript_end_line,
+                audit_tool_events_json,
+                audit_summary,
+                human_decision_options_json,
+                persisted_process_id,
+                persisted_task_id,
+                persisted_oa_url,
+                persisted_oa_action,
+                oa_remark,
+                oa_action_result_json,
+                send_status,
+                send_error,
             )
-            attempt_id = int(cursor.lastrowid)
+            if current_attempt is None:
+                cursor = db.execute(
+                    """
+                    insert into reply_attempts (
+                        conversation_id, conversation_title, trigger_message_id,
+                        trigger_sender, trigger_text, action, sensitivity_kind,
+                        agent_run_id, codex_reason, codex_session_id,
+                        codex_transcript_start_line, codex_transcript_end_line,
+                        audit_tool_events_json, audit_summary,
+                        human_decision_options_json,
+                        oa_process_instance_id, oa_task_id, oa_url, oa_action,
+                        oa_remark, oa_action_result_json, send_status, send_error,
+                        channel
+                    ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        conversation_id,
+                        conversation_title,
+                        trigger_message_id,
+                        trigger_sender,
+                        trigger_text,
+                        *projection_values,
+                        channel,
+                    ),
+                )
+                attempt_id = int(cursor.lastrowid)
+            else:
+                attempt_id = int(current_attempt["id"])
+                db.execute(
+                    """
+                    update reply_attempts
+                    set conversation_id=?, conversation_title=?,
+                        trigger_message_id=?, trigger_sender=?, trigger_text=?,
+                        action='agent_run', sensitivity_kind='general',
+                        agent_run_id=?, codex_reason=?, codex_session_id=?,
+                        codex_transcript_start_line=?, codex_transcript_end_line=?,
+                        audit_tool_events_json=?, audit_summary=?,
+                        human_decision_options_json=?, oa_process_instance_id=?,
+                        oa_task_id=?, oa_url=?, oa_action=?, oa_remark=?,
+                        oa_action_result_json=?, send_status=?, send_error=?,
+                        final_reply_text='', permission_action='',
+                        permission_reason='', retry_count=0,
+                        updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (
+                        conversation_id,
+                        conversation_title,
+                        trigger_message_id,
+                        trigger_sender,
+                        trigger_text,
+                        *projection_values,
+                        attempt_id,
+                    ),
+                )
             self._record_memory_write_events_in_connection(
                 db,
                 attempt_id,
@@ -13754,33 +13813,62 @@ class AutoReplyStore:
             process_instance_id, oa_task_id = self._oa_identifiers_from_url(
                 persisted_oa_url
             )
-            cursor = db.execute(
+            current_attempt = db.execute(
                 """
-                insert into reply_attempts (
-                    conversation_id, conversation_title, trigger_message_id,
-                    trigger_sender, trigger_text, action, sensitivity_kind,
-                    codex_reason, audit_summary, oa_process_instance_id,
-                    oa_task_id, oa_url, oa_action, send_status, send_error, channel
-                ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                select id
+                from reply_attempts
+                where channel=? and conversation_id=? and trigger_message_id=?
+                order by id desc
+                limit 1
                 """,
-                (
-                    conversation_id,
-                    conversation_title,
-                    trigger_message_id,
-                    trigger_sender,
-                    trigger_text,
-                    codex_reason,
-                    audit_summary,
-                    process_instance_id,
-                    oa_task_id,
-                    persisted_oa_url,
-                    "review" if process_instance_id else "",
-                    send_status,
-                    send_error,
-                    channel,
-                ),
+                (channel, conversation_id, trigger_message_id),
+            ).fetchone()
+            projection_values = (
+                conversation_id,
+                conversation_title,
+                trigger_message_id,
+                trigger_sender,
+                trigger_text,
+                codex_reason,
+                audit_summary,
+                process_instance_id,
+                oa_task_id,
+                persisted_oa_url,
+                "review" if process_instance_id else "",
+                send_status,
+                send_error,
             )
-            attempt_id = int(cursor.lastrowid)
+            if current_attempt is None:
+                cursor = db.execute(
+                    """
+                    insert into reply_attempts (
+                        conversation_id, conversation_title, trigger_message_id,
+                        trigger_sender, trigger_text, action, sensitivity_kind,
+                        codex_reason, audit_summary, oa_process_instance_id,
+                        oa_task_id, oa_url, oa_action, send_status, send_error, channel
+                    ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (*projection_values, channel),
+                )
+                attempt_id = int(cursor.lastrowid)
+            else:
+                attempt_id = int(current_attempt["id"])
+                db.execute(
+                    """
+                    update reply_attempts
+                    set conversation_id=?, conversation_title=?,
+                        trigger_message_id=?, trigger_sender=?, trigger_text=?,
+                        action='agent_run', sensitivity_kind='general',
+                        codex_reason=?, audit_summary=?,
+                        oa_process_instance_id=?, oa_task_id=?, oa_url=?,
+                        oa_action=?, send_status=?, send_error=?,
+                        final_reply_text='', permission_action='',
+                        permission_reason='', retry_count=0,
+                        updated_at=current_timestamp
+                    where id=?
+                    """,
+                    (*projection_values, attempt_id),
+                )
             task_cursor = db.execute(
                 """
                 update reply_tasks

@@ -10915,7 +10915,7 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(tmp_path: Path, monke
 
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_attempts() == 1
     assert len(runner.calls) == 2
     assert runner.calls[0][1] == runner.calls[1][1]
     assert codex.calls == []
@@ -11491,7 +11491,7 @@ def test_queued_stop_with_error_becomes_terminal_at_retry_limit(
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="failed") == 1
-    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_attempts() == 1
     assert len(runner.calls) == 2
     assert runner.calls[0][1] == runner.calls[1][1]
 

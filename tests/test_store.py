@@ -2110,6 +2110,87 @@ def test_finalize_pre_run_failure_inherits_oa_identity_from_reply_task(
     assert attempt.oa_action == "review"
 
 
+def test_finalize_orchestration_reuses_current_reply_attempt_projection(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-reuse-attempt",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-reuse-attempt",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please retry",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store,
+        task.id,
+        task.execution_generation,
+        owner="audit",
+    ).run
+    store.complete_agent_run(
+        run.id,
+        {"outcome": "failed", "summary": "temporary provider failure"},
+        owner="audit",
+    )
+
+    first_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=run.id,
+        task_status="pending",
+        task_error="temporary provider failure",
+        available_at="2026-08-12 10:01:00",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="temporary provider failure",
+        codex_session_id="session-1",
+        codex_transcript_start_line=1,
+        codex_transcript_end_line=2,
+        audit_tool_events_json="[]",
+        audit_summary="first projection",
+        send_status="failed",
+        send_error="temporary provider failure",
+        channel=task.channel,
+    )
+    assert store.count_reply_attempts() == 1
+
+    second_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        run_id=run.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="provider recovered",
+        codex_session_id="session-2",
+        codex_transcript_start_line=3,
+        codex_transcript_end_line=4,
+        audit_tool_events_json="[]",
+        audit_summary="final projection",
+        send_status="skipped",
+        send_error="",
+        channel=task.channel,
+    )
+    assert second_id == first_id
+    assert store.count_reply_attempts() == 1
+    current = store.get_reply_attempt(first_id)
+    assert current is not None
+    assert current.codex_reason == "provider recovered"
+    assert current.audit_summary == "final projection"
+    assert current.send_status == "skipped"
+
+
 def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     tmp_path: Path,
 ):
