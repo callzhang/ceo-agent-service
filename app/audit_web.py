@@ -9945,12 +9945,7 @@ def create_audit_app(
 
     @app.get("/api/workers/status", response_class=JSONResponse)
     def workers_status() -> JSONResponse:
-        return JSONResponse(
-            worker_status_cache.get_or_refresh(
-                render_worker_status_payload,
-                worker_status_refreshing_payload,
-            )
-        )
+        return JSONResponse(render_settings_status_payload())
 
     @app.get("/api/attention/status", response_class=JSONResponse)
     def attention_status() -> JSONResponse:
