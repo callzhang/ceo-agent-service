@@ -294,7 +294,7 @@ def test_live_friday_runtime_subprocess_minimax_chat_completions(tmp_path: Path)
     ).strip()
     provider_model = os.getenv("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", "MiniMax-M3").strip()
 
-    friday_root = Path("/Users/derek/Documents/Projects/friday-agent/friday-runtime")
+    friday_root = Path(os.getenv("CEO_FRIDAY_RUNTIME_SOURCE_ROOT", "/Users/derek/Documents/Projects/friday-agent/friday-runtime"))
     friday_python = friday_root / ".venv/bin/python"
     if not friday_python.exists():
         pytest.fail(f"Friday runtime interpreter not found: {friday_python}")
@@ -379,6 +379,12 @@ observability:
         stderr=subprocess.PIPE,
         text=True,
     )
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    stdout_thread = threading.Thread(target=lambda: stdout_lines.extend(process.stdout.readlines()), daemon=True)
+    stderr_thread = threading.Thread(target=lambda: stderr_lines.extend(process.stderr.readlines()), daemon=True)
+    stdout_thread.start()
+    stderr_thread.start()
     base_url = f"http://127.0.0.1:{port}"
     try:
         _wait_for_friday(base_url, process)
@@ -474,9 +480,10 @@ observability:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
-        stdout, stderr = process.communicate(timeout=2)
-        assert provider_key not in stdout
-        assert provider_key not in stderr
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
+        assert provider_key not in "".join(stdout_lines)
+        assert provider_key not in "".join(stderr_lines)
         for path in tmp_path.rglob("*"):
             if path.is_file():
                 assert provider_key.encode() not in path.read_bytes()

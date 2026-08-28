@@ -127,8 +127,7 @@ def build_friday_runtime_launch_environment(
     launch_environment = {
         key: value
         for key, value in source_environment.items()
-        if not key.startswith("CEO_CODEX_")
-        and not key.startswith("CEO_FRIDAY_RUNTIME_PROVIDER_")
+        if not key.startswith("CEO_")
     }
     for key, value in config.friday_runtime_provider_environment().items():
         launch_environment.setdefault(key, value)

@@ -73,6 +73,8 @@ def test_friday_launcher_environment_uses_independent_provider_config():
             "FRIDAY_LLM_MODEL": "explicit-model",
             "CEO_CODEX_API_KEY": "must-not-leak",
             "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "must-not-remain",
+            "CEO_CLAUDE_API_KEY": "must-not-leak",
+            "CEO_FRIDAY_RUNTIME_TICKET": "must-not-leak",
         },
     )
 
@@ -82,6 +84,8 @@ def test_friday_launcher_environment_uses_independent_provider_config():
     assert launch_env["FRIDAY_LLM_MODEL"] == "explicit-model"
     assert "CEO_CODEX_API_KEY" not in launch_env
     assert "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY" not in launch_env
+    assert "CEO_CLAUDE_API_KEY" not in launch_env
+    assert "CEO_FRIDAY_RUNTIME_TICKET" not in launch_env
     assert "minimax-secret" not in repr(config)
 
 

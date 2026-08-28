@@ -1614,6 +1614,10 @@ class RoutedCodexExecution:
                     )
                     process = ProcessRunResult(0, friday_result.text, "")
                 except FridayRuntimeError as exc:
+                    if exc.thread_id:
+                        observed_session_id = f"friday_thread:{exc.thread_id}"
+                    if exc.operation_id:
+                        transcript_reference = f"friday_operation:{exc.operation_id}"
                     failure = _runtime_failure_from_friday_error(exc)
                     failed_attempt = self._finalized_step(
                         active_attempt,
