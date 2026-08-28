@@ -122,6 +122,10 @@ Do not propose sending "I will review" as a substitute for action. First prepare
 For `dingtalk-chat/SKILL.md`, use the operation Skill and normal retry
 contract. A provider or transport failure is a failed result, not a human
 decision.
+For an OA applicant notification, when the live OA detail supplies an
+`originator_userid`, pass that stable user id directly to the supported direct
+message operation. Do not replace it with a display-name search; a name search
+is not a reliable identity resolution method.
 """.strip()
 
 
