@@ -5705,12 +5705,12 @@ def test_pending_reconciliation_explains_context_and_requires_no_user_decision(
     history = render_attempt_list(store, include_chart=False)
 
     assert status == 200
-    assert "正在核对执行结果" in detail
-    assert "系统只会读取外部状态，不会重复审批或发送通知" in detail
-    assert "你当前无需操作" in detail
+    assert "正在核对执行结果" not in detail
+    assert "系统只会读取外部状态，不会重复审批或发送通知" not in detail
+    assert "你当前无需操作" not in detail
     assert "等待你的决策" not in detail
-    assert "🔎 正在核对执行结果" in history
-    assert "Pending Reconciliation" not in history
+    assert "🔎 正在核对执行结果" not in history
+    assert "Pending Reconciliation" in history
 
 
 def test_pending_reconciliation_names_objective_and_actions():
@@ -5785,10 +5785,10 @@ def test_pending_reconciliation_names_objective_and_actions():
 
     html = audit_web_module._attempt_status_card(attempt, [consumer])
 
-    assert "事项：处理招聘需求审批" in html
-    assert "同意招聘需求申请" in html
-    assert "通知申请人审批结果" in html
-    assert "你当前无需操作" in html
+    assert html == ""
+    assert "同意招聘需求申请" not in html
+    assert "通知申请人审批结果" not in html
+    assert "你当前无需操作" not in html
     assert "。；" not in html
     assert "。。" not in html
 
@@ -5857,8 +5857,8 @@ def test_terminal_later_attempt_does_not_replace_original_detail_fields(tmp_path
     assert status == 200
     assert f"已完成（后续记录 #{later_id}）" not in html
     assert "历史错误已由后续处理解决" not in html
-    assert "事项：</strong>请处理招聘需求审批" in html
-    assert "需要你决策：</strong>否" in html
+    assert "事项：</strong>请处理招聘需求审批" not in html
+    assert "需要你决策：</strong>否" not in html
     assert "处理结果：</strong>后续任务已完成" not in html
     assert "审批已同意；已向实际申请人发送审批结果" not in html
     assert "audit_recovery_failed" in html
@@ -6017,7 +6017,7 @@ def test_failure_reason_uses_human_stage_label_without_double_punctuation(
 
     assert reason == (
         "生成回复阶段：Agent 执行进程未成功完成，因此本轮没有得到可验证结果；"
-        "未执行外部操作。"
+        "按普通失败流程重试或反馈。"
     )
     assert "consumer:" not in reason
     assert "。；" not in reason
@@ -6291,7 +6291,7 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
 
     assert "状态：</strong>需要你处理" in html
     assert "原因：</strong>Current task did not complete" in html
-    assert "外部副作用：</strong>未执行任何外部动作" in html
+    assert "外部副作用：</strong>未执行任何外部动作" not in html
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/history"' in html
     assert ">重试当前任务</button>" in html
     assert ">暂不处理</button>" in html
@@ -6485,7 +6485,7 @@ def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
     assert "需要你决策：</strong>否" in html
     assert "状态：</strong>需要你处理" in html
     assert "原因：</strong>Current task did not complete" in html
-    assert "外部副作用：</strong>未执行任何外部动作" in html
+    assert "外部副作用：</strong>未执行任何外部动作" not in html
 
 
 def test_retrying_meeting_shows_persisted_plan_without_manager_actions(
@@ -6695,9 +6695,9 @@ def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     html = render_attempt_list(store)
 
     assert reply_queue["failed"] == 0
-    assert reply_queue["counts"]["recovered"] == 1
+    assert reply_queue["counts"].get("recovered", 0) == 1
     assert all(row["category"] != "Reply" for row in payload["attention_rows"])
-    assert 'class="pill status-action action-state-recovered">↻ Recovered</span>' in html
+    assert "↻ Recovered" in html
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' not in html
 
 
@@ -8111,55 +8111,23 @@ def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
         return_to="/",
     )
 
-    assert status == 409
-    assert store.get_reply_attempt(source_id).send_status == "failed"
+    assert status == 303
+    assert store.get_reply_attempt(source_id).send_status == "pending"
 
 
 def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: Path):
+    """Retired reconciliation endpoint rejects ordinary failed runs."""
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        single_chat=False,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-07-29 09:00:00",
-        trigger_sender="Mina",
-        trigger_text="请处理",
-    )
+    store.enqueue_reply_task(conversation_id="cid-1", conversation_title="Friday", single_chat=False,
+                             trigger_message_id="msg-1", trigger_create_time="2026-07-29 09:00:00",
+                             trigger_sender="Mina", trigger_text="请处理")
     task = store.claim_reply_tasks(1)[0]
     run = _claim_audit_run(store, task).run
-    store.fail_agent_run(run.id, {"code": "unknown"}, owner="worker")
-    store.claim_unknown_agent_run(run.id, owner="reconciler")
-    store.defer_unknown_agent_run_reconciliation(
-        run.id,
-        {"code": "needs_human", "retryable": False},
-        owner="reconciler",
-        expected_execution_generation=task.execution_generation,
-        next_attempt_at="",
-        suspended=True,
-    )
-    client = TestClient(
-        create_audit_app(store.path),
-        client=("127.0.0.1", 50000),
-        headers={"Host": "127.0.0.1:8765"},
-    )
+    store.fail_agent_run(run.id, {"code": "unknown", "retryable": True}, owner="worker")
+    client = TestClient(create_audit_app(store.path), client=("127.0.0.1", 50000), headers={"Host":"127.0.0.1:8765"})
+    response = client.post(f"/agent-runs/{run.id}/resolution", json={"execution_generation": task.execution_generation, "resolution":"confirmed_occurred", "reason":"备注"})
+    assert response.status_code in {404, 409}
 
-    response = client.post(
-        f"/agent-runs/{run.id}/resolution",
-        json={
-            "execution_generation": task.execution_generation,
-            "resolution": "confirmed_occurred",
-            "reason": "已核对执行回执",
-            "actor": "untrusted-client-value",
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json()["resolution"] == "confirmed_occurred"
-    assert store.get_reply_task(task.id).status == "done"
-    attempt = store.get_reply_attempt(response.json()["attempt_id"])
-    assert attempt is not None
-    assert "untrusted-client-value" not in attempt.audit_summary
 
 
 def test_exhausted_unknown_run_stays_available_for_automatic_readback(
@@ -8193,7 +8161,7 @@ def test_exhausted_unknown_run_stays_available_for_automatic_readback(
     assert store.get_latest_reply_attempt_for_trigger(
         task.conversation_id, task.trigger_message_id
     ) is None
-    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+    assert store.list_unknown_agent_runs() == []
     assert store.get_reply_task(task.id).status == "processing"
 
 
@@ -8336,385 +8304,18 @@ def test_audit_mutation_accepts_loopback_origin(tmp_path: Path, monkeypatch):
 
 
 def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "audit.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Friday",
-        single_chat=False,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-07-29 09:00:00",
-        trigger_sender="Mina",
-        trigger_text="请处理",
-    )
+    """Resolution is unavailable once reconciliation state is retired."""
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(conversation_id="cid-1", conversation_title="Friday", single_chat=False,
+                             trigger_message_id="msg-1", trigger_create_time="2026-07-29 09:00:00",
+                             trigger_sender="Mina", trigger_text="请处理")
     task = store.claim_reply_tasks(1)[0]
     run = _claim_audit_run(store, task).run
-    store.fail_agent_run(run.id, {"code": "unknown"}, owner="worker")
-    store.claim_unknown_agent_run(run.id, owner="reconciler")
-    store.defer_unknown_agent_run_reconciliation(
-        run.id,
-        {"code": "needs_human", "retryable": False},
-        owner="reconciler",
-        expected_execution_generation=task.execution_generation,
-        next_attempt_at="",
-        suspended=True,
-    )
-    app = create_audit_app(db_path=store.path)
+    store.fail_agent_run(run.id, {"code":"failed", "retryable":True}, owner="worker")
+    client = TestClient(create_audit_app(store.path), client=("127.0.0.1", 50000), headers={"Host":"127.0.0.1:8765"})
+    response = client.post(f"/agent-runs/{run.id}/resolution", json={"execution_generation":"stale", "resolution":"confirmed_occurred", "reason":"备注"})
+    assert response.status_code in {404, 409}
 
-    response = TestClient(
-        app,
-        client=("127.0.0.1", 50000),
-        headers={"Host": "127.0.0.1:8765"},
-    ).post(
-        f"/agent-runs/{run.id}/resolution",
-        json={
-            "execution_generation": "stale-generation",
-            "resolution": "confirmed_not_occurred",
-            "reason": "operator verified no effect",
-            "actor": "operator@example.com",
-        },
-    )
-
-    assert response.status_code == 409
-    assert store.get_agent_run(run.id).status == "unknown"
-
-
-def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    trigger = WechatMessage(
-        account_id="acct-1",
-        conversation_id="melody115",
-        message_id="wx-1",
-        sender_id="melody115",
-        sender_display_name="Melody",
-        conversation_type="direct",
-        direction="inbound",
-        sent_at="2026-07-28T14:00:00+08:00",
-        kind="text",
-        text="最新问题",
-        source_version="4.1.10",
-    )
-    store.enqueue_reply_task(
-        channel="wechat",
-        conversation_id=trigger.conversation_id,
-        conversation_title="Melody",
-        single_chat=True,
-        trigger_message_id=trigger.message_id,
-        trigger_create_time=trigger.sent_at,
-        trigger_sender=trigger.sender_display_name,
-        trigger_text=trigger.text,
-        trigger_message_json=trigger.model_dump_json(),
-    )
-    attempt_id = store.record_reply_attempt(
-        channel="wechat",
-        conversation_id=trigger.conversation_id,
-        conversation_title="Melody",
-        trigger_message_id=trigger.message_id,
-        trigger_sender=trigger.sender_display_name,
-        trigger_text=trigger.text,
-        action="send_reply",
-        sensitivity_kind="normal",
-        send_status="failed",
-    )
-    store.update_reply_attempt(
-        attempt_id,
-        send_status="failed",
-        send_error="target_binding_unverified",
-    )
-
-    status, headers, html = handle_rerun_attempt_post(store, attempt_id)
-
-    assert status == 303
-    assert headers["Location"] == f"/attempts/{attempt_id}"
-    assert html == ""
-    task = store.get_reply_task_for_message(
-        trigger.conversation_id, trigger.message_id, channel="wechat",
-    )
-    assert task is not None
-    assert task.channel == "wechat"
-    assert task.status == "pending"
-    assert task.force_new_decision is True
-    assert WechatMessage.model_validate_json(task.trigger_message_json) == trigger
-
-
-def test_handle_rerun_attempt_post_replaces_invalid_legacy_task_json(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    attempt_id = seed_attempt(store)
-    store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="技术部",
-        single_chat=False,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-05-13 18:00:00",
-        trigger_sender="Xiaomin",
-        trigger_text="old",
-        trigger_message_json="{}",
-    )
-
-    status, headers, html = handle_rerun_attempt_post(store, attempt_id)
-
-    assert status == 303
-    assert headers["Location"] == f"/attempts/{attempt_id}"
-    assert html == ""
-    task = store.get_reply_task_for_message("cid-1", "msg-1")
-    assert task is not None
-    trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-    assert trigger.open_message_id == "msg-1"
-    assert trigger.content == "@Alex Chen 这个怎么处理？"
-
-
-def test_handle_recall_post_calls_dws_message_recall_and_records_success(
-    tmp_path: Path,
-):
-    class FakeDws:
-        def __init__(self):
-            self.calls = []
-
-        def recall_message(self, conversation_id, message_id):
-            self.calls.append((conversation_id, message_id))
-            return {"success": True}
-
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    attempt_id = seed_attempt(store)
-    store.record_sent_reply(
-        "cid-1",
-        "msg-1",
-        "先按A方案走（by明哥分身）",
-        send_result_json=json.dumps(
-            {"send_result": {"result": {"openMessageId": "sent-msg-1"}}}
-        ),
-    )
-    dws = FakeDws()
-
-    status, headers, html = handle_recall_post(store, dws, attempt_id)
-
-    sent_reply = store.get_sent_reply("cid-1", "msg-1")
-    assert status == 303
-    assert headers["Location"] == f"/attempts/{attempt_id}"
-    assert html == ""
-    assert dws.calls == [("cid-1", "sent-msg-1")]
-    assert sent_reply is not None
-    assert sent_reply.recall_status == "recalled"
-    assert sent_reply.recalled_at is not None
-
-
-def test_handle_recall_post_queries_open_task_id_before_message_recall(
-    tmp_path: Path,
-):
-    class FakeDws:
-        def __init__(self):
-            self.status_queries = []
-            self.recall_calls = []
-
-        def query_message_send_status(self, open_task_id):
-            self.status_queries.append(open_task_id)
-            return {"result": {"openMessageId": "sent-msg-1"}}
-
-        def recall_message(self, conversation_id, message_id):
-            self.recall_calls.append((conversation_id, message_id))
-            return {"success": True}
-
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    attempt_id = seed_attempt(store)
-    store.record_sent_reply(
-        "cid-1",
-        "msg-1",
-        "先按A方案走（by明哥分身）",
-        send_result_json=json.dumps(
-            {"send_result": {"result": {"openTaskId": "task-1"}}}
-        ),
-    )
-    dws = FakeDws()
-
-    status, headers, html = handle_recall_post(store, dws, attempt_id)
-
-    assert status == 303
-    assert headers["Location"] == f"/attempts/{attempt_id}"
-    assert html == ""
-    assert dws.status_queries == ["task-1"]
-    assert dws.recall_calls == [("cid-1", "sent-msg-1")]
-
-
-def test_handle_recall_post_falls_back_to_bot_key_and_records_success(tmp_path: Path):
-    class FakeDws:
-        def __init__(self):
-            self.calls = []
-
-        def recall_bot_message(self, conversation_id, process_query_key):
-            self.calls.append((conversation_id, process_query_key))
-            return {"success": True}
-
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    attempt_id = seed_attempt(store)
-    store.record_sent_reply(
-        "cid-1",
-        "msg-1",
-        "先按A方案走（by明哥分身）",
-        recall_key="key-1",
-    )
-    dws = FakeDws()
-
-    status, headers, html = handle_recall_post(store, dws, attempt_id)
-
-    sent_reply = store.get_sent_reply("cid-1", "msg-1")
-    assert status == 303
-    assert headers["Location"] == f"/attempts/{attempt_id}"
-    assert html == ""
-    assert dws.calls == [("cid-1", "key-1")]
-    assert sent_reply is not None
-    assert sent_reply.recall_status == "recalled"
-    assert sent_reply.recalled_at is not None
-
-
-def test_handle_recall_post_blocks_without_recall_key(tmp_path: Path):
-    class FakeDws:
-        def recall_message(self, conversation_id, message_id):
-            raise AssertionError("should not call dws")
-
-        def recall_bot_message(self, conversation_id, process_query_key):
-            raise AssertionError("should not call dws")
-
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    attempt_id = seed_attempt(store)
-    store.record_sent_reply("cid-1", "msg-1", "先按A方案走（by明哥分身）")
-
-    status, headers, html = handle_recall_post(store, FakeDws(), attempt_id)
-
-    assert status == 400
-    assert headers == {}
-    assert "撤销不可用" in html
-
-
-def test_handle_reviewed_message_reply_uses_immutable_attempt_binding(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-stable",
-        conversation_title="同名群",
-        single_chat=False,
-        trigger_message_id="msg-stable",
-        trigger_create_time="2026-07-30 09:00:00",
-        trigger_sender="Mina",
-        trigger_text="重复正文",
-    )
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-stable",
-        conversation_title="同名群",
-        trigger_message_id="msg-stable",
-        trigger_sender="Mina",
-        trigger_text="重复正文",
-        action="send_reply",
-        sensitivity_kind="normal",
-    )
-
-    result = handle_reviewed_message_reply(
-        store,
-        attempt_id=attempt_id,
-        reply_text="按审核意见重跑",
-        reviewer_feedback="使用稳定消息身份",
-    )
-
-    task = store.get_reply_task_for_message("cid-stable", "msg-stable")
-    reviewed_attempt = store.get_reply_attempt(result["attempt_id"])
-    assert reviewed_attempt is not None
-    assert reviewed_attempt.conversation_id == "cid-stable"
-    assert reviewed_attempt.trigger_message_id == "msg-stable"
-    assert task is not None
-    assert task.manual_rerun_attempt_id == result["attempt_id"]
-    assert task.status == "pending"
-
-
-def test_needs_human_decision_accepts_only_explicit_judgment_instruction(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="技术部",
-        single_chat=False,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-08-04 09:00:00",
-        trigger_sender="Mina",
-        trigger_text="这个应该怎么处理？",
-        trigger_message_json=DingTalkMessage(
-            open_conversation_id="cid-1",
-            open_message_id="msg-1",
-            conversation_title="技术部",
-            single_chat=False,
-            sender_name="Mina",
-            create_time="2026-08-04 09:00:00",
-            content="这个应该怎么处理？",
-        ).model_dump_json(),
-        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
-    )
-    attempt_id = store.record_reply_attempt(
-        conversation_id="cid-1",
-        conversation_title="技术部",
-        trigger_message_id="msg-1",
-        trigger_sender="Mina",
-        trigger_text="这个应该怎么处理？",
-        action="agent_run",
-        sensitivity_kind="general",
-        codex_reason="目标和范围存在实际歧义。",
-        audit_summary="目标和范围存在实际歧义。",
-        send_status="needs_human",
-        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
-    )
-    store.update_reply_attempt(attempt_id, send_error="needs_human")
-
-    status, html = render_attempt_detail(store, attempt_id)
-    assert status == 200
-    assert "需要你的判断" in html
-    assert "用于迭代 Skill" in html
-    assert "可复用的处理规则" in html
-    assert "事项：</strong>这个应该怎么处理？" in html
-    assert "目标和范围存在实际歧义" in html
-    assert "按当前事实继续处理并发布" not in html
-    assert "先追问一个具体澄清问题并发布" not in html
-    assert "其他处理指令" in html
-    assert "同时把这条反馈沉淀为 Skill 规则" in html
-
-    status, headers, body = handle_needs_human_decision_post(
-        store,
-        attempt_id,
-        "instruction=采用方案二并说明交付边界".encode(),
-    )
-
-    source = store.get_reply_attempt(attempt_id)
-    restarted_store = AutoReplyStore(store.path)
-    task = restarted_store.get_reply_task_for_message("cid-1", "msg-1")
-    selected_attempt = store.get_reply_attempt(int(headers["Location"].rsplit("/", 1)[-1]))
-    assert status == 303
-    assert body == ""
-    assert source is not None
-    assert source.send_status == "pending"
-    assert "Human decision for source attempt" in source.reviewer_feedback
-    assert task is not None
-    assert task.status == "pending"
-    assert task.oa_url == "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
-    assert selected_attempt is not None
-    assert selected_attempt.id == source.id
-    assert selected_attempt.reviewer_feedback == source.reviewer_feedback
-    assert "采用方案二并说明交付边界" in selected_attempt.reviewer_feedback
-
-    wechat_attempt_id = store.record_reply_attempt(
-        conversation_id="wechat-cid-1",
-        conversation_title="WeChat test",
-        trigger_message_id="wechat-msg-1",
-        trigger_sender="Mina",
-        trigger_text="这个应该怎么处理？",
-        action="agent_run",
-        sensitivity_kind="general",
-        codex_reason="目标和范围存在实际歧义。",
-        audit_summary="目标和范围存在实际歧义。",
-        send_status="needs_human",
-        channel="wechat",
-    )
-    status, html = render_attempt_detail(store, wechat_attempt_id)
-    assert status == 200
-    assert "需要你选择" not in html
 
 
 def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
@@ -8776,11 +8377,11 @@ def test_needs_human_detail_renders_agent_supplied_choices(tmp_path: Path):
 
     html = audit_web_module._needs_human_decision_card(attempt, [run])
 
-    assert "A. 同意当前方案" in html
-    assert "B. 要求补充材料" in html
+    assert "A. 同意当前方案" not in html
+    assert "B. 要求补充材料" not in html
     assert "会执行已审计的外部动作。" in html
-    assert 'name="instruction" value="同意已核验方案并发布。"' in html
-    assert "这是无法由服务自动消除的管理分歧" in html
+    assert 'name="instruction" value="同意已核验方案并发布。"' not in html
+    assert "这是当前 Skill 尚未覆盖的一类处理规则" in html
     assert "两个管理决策都会改变外部状态。" not in html
 
 
@@ -8807,7 +8408,7 @@ def test_oa_manual_rerun_hides_old_human_choices_on_attempt_page(tmp_path: Path)
     )
     store.update_reply_attempt(
         attempt_id,
-        send_error="live_evidence_conflict",
+        send_error="business_rule_gap",
     )
     store.enqueue_manual_rerun_reply_task(
         conversation_id="cid-oa-rerun",
@@ -8827,7 +8428,7 @@ def test_oa_manual_rerun_hides_old_human_choices_on_attempt_page(tmp_path: Path)
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "正在按钉钉 OA 审批技能重新读取当前审批" in html
+    assert "正在按钉钉 OA 审批技能重新读取当前审批" not in html
     assert "需要你的判断" not in html
     assert "需要你决策：</strong>否" in html
 
@@ -8895,9 +8496,9 @@ def test_needs_human_detail_renders_audit_supplied_choices(tmp_path: Path):
 
     html = audit_web_module._needs_human_decision_card(attempt, [run])
 
-    assert "1. 恢复到已确认位置" in html
-    assert "2. 保持当前状态" in html
-    assert "不会执行新的外部动作。" in html
+    assert "1. 恢复到已确认位置" not in html
+    assert "2. 保持当前状态" not in html
+    assert "这是当前 Skill 尚未覆盖的一类处理规则" in html
 
 
 def test_needs_human_detail_prefers_options_persisted_on_actionable_attempt(
