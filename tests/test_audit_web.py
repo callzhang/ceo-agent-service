@@ -6697,8 +6697,10 @@ def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     assert reply_queue["failed"] == 0
     assert reply_queue["counts"]["recovered"] == 1
     assert all(row["category"] != "Reply" for row in payload["attention_rows"])
-    assert 'class="pill status-action action-state-recovered">↻ Recovered</span>' in html
-    assert 'class="pill status-action action-state-failed">💬 Failed</span>' not in html
+    # The current projection is recovered, while the original failed attempt
+    # remains visible as append-only history alongside the recovery marker.
+    assert 'class="pill status-action action-state-recovered">↻ Recovery</span>' in html
+    assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
 def test_runtime_route_failure_detail_shows_later_task_recovery(tmp_path: Path):
@@ -8076,31 +8078,30 @@ def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
     )
     task = store.claim_reply_tasks(limit=1)[0]
     run = _claim_audit_run(store, task).run
-    store.fail_agent_run(
-        run.id,
-        {"code": "effect_completion_missing"},
-        owner="worker",
-    )
+    # An ordinary failed run follows the regular retry/feedback path.  The
+    # retired external-effect decision path must not be resurrected by a
+    # human-decision submission.
+    store.fail_agent_run(run.id, {"code": "codex_process_failed"}, owner="worker")
     source_id = store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,
         run_id=run.id,
         task_status="failed",
-        task_error="effect completion unknown",
+        task_error="codex_process_failed",
         available_at="",
         conversation_id=task.conversation_id,
         conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id,
         trigger_sender=task.trigger_sender,
         trigger_text=task.trigger_text,
-        codex_reason="effect completion unknown",
+        codex_reason="codex_process_failed",
         codex_session_id="",
         codex_transcript_start_line=0,
         codex_transcript_end_line=0,
         audit_tool_events_json="[]",
-        audit_summary="effect completion unknown",
+        audit_summary="codex_process_failed",
         send_status="failed",
-        send_error="effect completion unknown",
+        send_error="codex_process_failed",
         channel="dingtalk",
     )
 
@@ -8111,8 +8112,8 @@ def test_history_human_decision_rejects_unknown_external_effect(tmp_path: Path):
         return_to="/",
     )
 
-    assert status == 409
-    assert store.get_reply_attempt(source_id).send_status == "failed"
+    assert status == 303
+    assert store.get_reply_attempt(source_id).send_status == "pending"
 
 
 def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: Path):
@@ -8128,15 +8129,10 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
     )
     task = store.claim_reply_tasks(1)[0]
     run = _claim_audit_run(store, task).run
-    store.fail_agent_run(run.id, {"code": "unknown"}, owner="worker")
-    store.claim_unknown_agent_run(run.id, owner="reconciler")
-    store.defer_unknown_agent_run_reconciliation(
+    store.fail_agent_run(
         run.id,
-        {"code": "needs_human", "retryable": False},
-        owner="reconciler",
-        expected_execution_generation=task.execution_generation,
-        next_attempt_at="",
-        suspended=True,
+        {"code": "codex_result_invalid", "retryable": False},
+        owner="worker",
     )
     client = TestClient(
         create_audit_app(store.path),
@@ -8148,18 +8144,18 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
         f"/agent-runs/{run.id}/resolution",
         json={
             "execution_generation": task.execution_generation,
-            "resolution": "confirmed_occurred",
-            "reason": "已核对执行回执",
+            "resolution": "confirmed_not_occurred",
+            "reason": "普通失败应通过重试或反馈处理",
             "actor": "untrusted-client-value",
         },
     )
 
-    assert response.status_code == 200
-    assert response.json()["resolution"] == "confirmed_occurred"
-    assert store.get_reply_task(task.id).status == "done"
-    attempt = store.get_reply_attempt(response.json()["attempt_id"])
-    assert attempt is not None
-    assert "untrusted-client-value" not in attempt.audit_summary
+    assert response.status_code == 409
+    assert store.get_agent_run(run.id).status == "failed"
+    assert store.get_reply_task(task.id).status == "processing"
+    assert store.get_latest_reply_attempt_for_trigger(
+        task.conversation_id, task.trigger_message_id
+    ) is None
 
 
 def test_exhausted_unknown_run_stays_available_for_automatic_readback(
@@ -8180,20 +8176,18 @@ def test_exhausted_unknown_run_stays_available_for_automatic_readback(
     run = _claim_audit_run(store, task).run
     store.fail_agent_run(
         run.id,
-        {"code": "audit_reconciliation_evidence_mismatch", "retryable": True},
+        {"code": "codex_result_invalid", "retryable": True},
         owner="worker",
     )
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update agent_runs set reconciliation_event_count=? where id=?",
-            (MAX_RECONCILIATION_EVENTS, run.id),
-        )
 
+    # Failed runs remain ordinary retry candidates; there is no separate
+    # unknown/readback queue to suspend or expose.
     assert store.suspend_exhausted_unknown_agent_runs() == 0
     assert store.get_latest_reply_attempt_for_trigger(
         task.conversation_id, task.trigger_message_id
     ) is None
-    assert [item.id for item in store.list_unknown_agent_runs()] == [run.id]
+    assert store.list_unknown_agent_runs() == []
+    assert store.get_agent_run(run.id).status == "failed"
     assert store.get_reply_task(task.id).status == "processing"
 
 
