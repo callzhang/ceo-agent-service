@@ -235,13 +235,16 @@ def test_group_delivery_normalizes_a_leading_mention_roster_into_context():
     assert dws.sent[0]["at_open_dingtalk_names"] == ["A", "B"]
 
 
-def test_multi_person_no_group_without_agent_selected_creator_retries():
+def test_multi_person_no_group_falls_back_to_meeting_creator():
     dws = FakeDws()
 
-    with pytest.raises(MeetingDeliveryRetry, match="sendable group"):
-        deliver_meeting_alignment(send_decision(target=None), meeting_source(), dws)
+    result = deliver_meeting_alignment(
+        send_decision(target=None), meeting_source(), dws
+    )
 
-    assert dws.sent == []
+    assert result.status == "sent"
+    assert result.target_kind == "direct"
+    assert dws.sent[0]["user_id"] == "u-a"
 
 
 def test_multi_person_followup_can_be_sent_to_creator_directly():

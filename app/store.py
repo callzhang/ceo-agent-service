@@ -11106,6 +11106,31 @@ class AutoReplyStore:
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
             return sorted(jobs, key=lambda job: job.id)
 
+    def rerun_meeting_alignment_jobs(self, job_ids: list[int]) -> list[int]:
+        """Reset selected failed meeting jobs for a fresh analysis turn.
+
+        Existing meeting alignment runs remain immutable. Only the queue
+        projection and retry counter are reset; delivery must be reached again
+        through the current analysis and target-selection path.
+        """
+        ids = sorted({int(job_id) for job_id in job_ids if int(job_id) > 0})
+        if not ids:
+            return []
+        placeholders = ",".join("?" for _ in ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""update meeting_alignment_jobs
+                    set status='retry', attempts=0, locked_at=null,
+                        available_at='', error='', decision_json='{{}}',
+                        target_kind='', target_id='', target_title='',
+                        mentions_json='[]', final_message='',
+                        send_result_json='{{}}', updated_at=current_timestamp
+                    where id in ({placeholders}) and status='failed'
+                    returning id""",
+                ids,
+            ).fetchall()
+            return [int(row["id"]) for row in rows]
+
     def baseline_meeting_alignment_jobs_before(
         self,
         activated_at: str,

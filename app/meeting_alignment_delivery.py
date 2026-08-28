@@ -110,11 +110,20 @@ def deliver_meeting_alignment(
     target_title = source.title
     if target is None:
         if participant_count > 2:
-            raise MeetingDeliveryRetry("multi-party meeting has no sendable group")
-        raise MeetingDeliveryError(
-            "1:1 meeting requires a direct target for the other participant"
-        )
-    if target.kind == "group":
+            direct_user_id, direct_open_dingtalk_id, target_title = (
+                _creator_direct_identity(source, dws)
+            )
+            if not direct_user_id and not direct_open_dingtalk_id:
+                raise MeetingDeliveryRetry(
+                    "multi-party meeting has no sendable group or organizer target"
+                )
+            target_kind = "direct"
+            target_id = direct_user_id or direct_open_dingtalk_id
+        else:
+            raise MeetingDeliveryError(
+                "1:1 meeting requires a direct target for the other participant"
+            )
+    elif target.kind == "group":
         if participant_count == 2:
             raise MeetingDeliveryError(
                 "1:1 meeting requires a direct target for the other participant"
