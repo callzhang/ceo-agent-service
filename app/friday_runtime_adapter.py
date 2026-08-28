@@ -257,12 +257,10 @@ class FridayRuntimeAdapter:
                 operation_id=operation_id,
                 artifact=dict(artifact),
             )
-        except FridayRuntimeError:
-            error = sys.exc_info()[1]
-            assert isinstance(error, FridayRuntimeError)
-            error.thread_id = error.thread_id or thread_id
-            error.turn_id = error.turn_id or turn_id
-            error.operation_id = error.operation_id or operation_id
+        except FridayRuntimeError as exc:
+            exc.thread_id = exc.thread_id or thread_id
+            exc.turn_id = exc.turn_id or turn_id
+            exc.operation_id = exc.operation_id or operation_id
             raise
         except FridayRuntimeContractError as exc:
             raise FridayRuntimeError(
@@ -271,7 +269,8 @@ class FridayRuntimeAdapter:
             ) from exc
         except (ValueError, TypeError, KeyError) as exc:
             raise FridayRuntimeError(
-                "friday_runtime_result_invalid", "Friday response shape is invalid", retryable=False
+                "friday_runtime_result_invalid", "Friday response shape is invalid", retryable=False,
+                thread_id=thread_id, turn_id=turn_id, operation_id=operation_id,
             ) from exc
 
     def _poll_operation(

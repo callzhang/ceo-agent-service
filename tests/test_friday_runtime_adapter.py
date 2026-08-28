@@ -292,6 +292,9 @@ def test_execute_maps_terminal_operation_failure(runtime_config):
     assert raised.value.code == "friday_runtime_failed"
     assert raised.value.retryable is True
     assert raised.value.detail == "provider failed"
+    assert raised.value.thread_id == "thread-1"
+    assert raised.value.operation_id == "op-1"
+    assert raised.value.turn_id == "turn-1"
 
 
 def test_execute_timeout_is_bounded_and_does_not_create_extra_run(runtime_config):

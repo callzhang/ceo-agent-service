@@ -1158,6 +1158,18 @@ class AgentTurnProcess(Generic[ResultT]):
                         )
                 except FridayRuntimeError as exc:
                     friday_failure = _runtime_failure_from_friday_error(exc)
+                    if exc.thread_id:
+                        observed_session_id = f"friday_thread:{exc.thread_id}"
+                    if exc.operation_id:
+                        attempt_transcript_reference = (
+                            f"friday_operation:{exc.operation_id}"
+                        )
+                    if observed_session_id:
+                        active_attempt = self.store.set_agent_runtime_attempt_session(
+                            active_attempt.id,
+                            observed_session_id,
+                            attempt_transcript_reference,
+                        )
                     process = ProcessRunResult(1, "", exc.detail)
                 except Exception:
                     if claude_adapter is not None:

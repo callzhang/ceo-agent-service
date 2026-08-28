@@ -247,6 +247,51 @@ pauses, attempt rows, receipts, or History: they are the evidence needed to
 distinguish a safe read-only retry from an unknown write. Rollback does not
 authorize a replay.
 
+### Optional Friday Runtime fallback
+
+Friday Runtime can be placed after the Codex routes when provider-specific APIs
+(for example MiniMax Chat Completions) are configured inside Friday. CEO Agent
+only sends a prompt to the existing Friday project; it does not receive or
+persist the provider token. Configure the route with a Friday Runtime ticket or
+session token:
+
+```sh
+CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api,friday_runtime
+CEO_FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080
+CEO_FRIDAY_RUNTIME_PROJECT_ID=<existing-friday-project-id>
+CEO_FRIDAY_RUNTIME_MODEL=MiniMax-M3
+CEO_FRIDAY_RUNTIME_TICKET=<runtime-ticket>
+```
+
+For a local runtime that intentionally has authentication disabled, set
+`CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1` and omit both credential variables. The
+adapter creates one Friday thread, submits one turn, waits for its operation,
+and reads the final Artifact. A route change preserves the same CEO Agent run
+and creates no business-side effect by itself.
+
+Run the default, no-network contract test with:
+
+```sh
+.venv/bin/pytest -q tests/e2e/test_friday_runtime_fallback.py
+```
+
+The test uses a temporary HTTP server and SQLite database. It must pass before
+enabling a local endpoint. To exercise a real local Friday Runtime, explicitly
+opt in and provide its endpoint and project:
+
+```sh
+CEO_LIVE_FRIDAY_RUNTIME_E2E=1 \
+FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080 \
+CEO_FRIDAY_RUNTIME_PROJECT_ID=<existing-friday-project-id> \
+.venv/bin/pytest -q tests/e2e/test_friday_runtime_fallback.py
+```
+
+The live test sends only the synthetic prompt `{"ok":true}` and expects a
+schema-valid JSON response. Typed failures are reported as
+`friday_runtime_unreachable`, `friday_runtime_auth_failed`,
+`friday_runtime_result_invalid`, or `friday_runtime_failed`; inspect the
+specific code before changing route order.
+
 ### Runtime Roles And Audit Rules
 
 Consumer Agent A represents the installation owner: it reads evidence, reuses one
