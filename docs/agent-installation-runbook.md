@@ -278,18 +278,21 @@ Run the default, no-network contract test with:
 ```
 
 The test uses a temporary HTTP server and SQLite database. It must pass before
-enabling a local endpoint. To exercise a real local Friday Runtime, explicitly
-opt in and provide its endpoint and project:
+enabling a local endpoint. To exercise the real local Friday Runtime + MiniMax
+Chat Completions E2E, opt in with `--run-live` and provide the independent
+provider settings. Do not source `.env` (it contains non-shell-safe values); the
+command below reads only the provider variables using the repository's safe
+parser and never prints their values:
 
 ```sh
-CEO_LIVE_FRIDAY_RUNTIME_E2E=1 \
-FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080 \
-CEO_FRIDAY_RUNTIME_PROJECT_ID=<existing-friday-project-id> \
-.venv/bin/pytest -q tests/e2e/test_friday_runtime_fallback.py
+python3 -c 'import os; from app.config import read_env_file; os.environ.update({k:v for k,v in read_env_file().items() if k.startswith("CEO_FRIDAY_RUNTIME_PROVIDER_")}); os.environ["CEO_LIVE_FRIDAY_RUNTIME_E2E"]="1"; os.execvp("python3", ["python3", "-m", "pytest", "--run-live", "-m", "live", "tests/e2e/test_friday_runtime_fallback.py::test_live_friday_runtime_subprocess_minimax_chat_completions", "-q"])'
 ```
 
-The live test sends only the synthetic prompt `{"ok":true}` and expects a
-schema-valid JSON response. Typed failures are reported as
+The live test starts a temporary Friday Runtime subprocess, project, and
+SQLite state, then sends only a synthetic JSON prompt through production routed
+execution. It verifies one CEO Agent run, the completed Friday operation and
+Artifact, and scans captured stdout/stderr and temporary state for the provider
+key. Typed failures are reported as
 `friday_runtime_unreachable`, `friday_runtime_auth_failed`,
 `friday_runtime_result_invalid`, or `friday_runtime_failed`; inspect the
 specific code before changing route order.
