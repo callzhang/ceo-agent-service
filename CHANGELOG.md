@@ -2,9 +2,12 @@
 
 - 2026-08-27: enabled the explicitly installed WeChat reader/sender channel
   workers in the production launchd environment (`reader=1`, `sender=1`,
-  `send_mode=auto`). A missing direct-chat target is treated as an empty context
-  in strict queued-task reads, so an unavailable historical target does not
-  create a false service error or abort the worker.
+  `send_mode=auto`). Workers now remain present while the dedicated Reader app
+  is still publishing its ready-account state, rather than being omitted for
+  the entire service lifetime because of a startup race. A missing direct-chat
+  target is treated as an empty context in strict queued-task reads, so an
+  unavailable historical target does not create a false service error or abort
+  the worker.
 
 - 2026-08-27: removed the hardcoded `HTTP_PROXY`, `HTTPS_PROXY`, and
   `ALL_PROXY` values from the CEO launchd service. Launchd no longer assumes a
