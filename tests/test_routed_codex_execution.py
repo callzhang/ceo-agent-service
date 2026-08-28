@@ -238,7 +238,12 @@ def test_friday_unreachable_continues_to_next_configured_route(tmp_path, monkeyp
     config = _friday_config(monkeypatch, "codex_oauth,friday_runtime,claude_api")
     friday = FakeFridayAdapter(
         error=FridayRuntimeError(
-            "friday_runtime_unreachable", "connection refused", retryable=True
+            "friday_runtime_unreachable",
+            "connection refused",
+            retryable=True,
+            thread_id="failed-thread",
+            turn_id="failed-turn",
+            operation_id="failed-operation",
         )
     )
     adapter = FakeAdapter()
@@ -269,6 +274,8 @@ def test_friday_unreachable_continues_to_next_configured_route(tmp_path, monkeyp
     attempts = store.list_agent_runtime_attempts(run_id)
     assert [a.route_name for a in attempts] == ["codex_oauth", "friday_runtime", "claude_api"]
     assert attempts[1].failure_code == "friday_runtime_unreachable"
+    assert attempts[1].session_id == "friday_thread:failed-thread"
+    assert attempts[1].transcript_reference == "friday_operation:failed-operation"
 
 
 def test_read_only_factory_forces_sandbox_and_is_immutable(
