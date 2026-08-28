@@ -54,6 +54,59 @@ def _get_audit_run(
     )
 
 
+def test_recover_no_effect_dingtalk_run_after_service_restart(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-restart",
+        conversation_title="产研管理群",
+        single_chat=False,
+        trigger_message_id="msg-restart",
+        trigger_create_time="2026-08-28 08:00:00",
+        trigger_sender="张晓民",
+        trigger_text="请处理",
+        trigger_message_json="{}",
+    )
+    task = store.get_reply_task_for_message("cid-restart", "msg-restart")
+    assert task is not None
+    task_id = task.id
+    with store._connect() as db:
+        db.execute(
+            "update reply_tasks set status='processing', locked_at=current_timestamp where id=?",
+            (task_id,),
+        )
+    claim = store.claim_agent_run(
+        task_id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="restart-test-owner",
+    )
+    runtime_attempt = store.claim_agent_runtime_attempt(
+        claim.run.id,
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.6-sol",
+    )
+    store.mark_agent_runtime_attempt_running_once(runtime_attempt.id)
+
+    recovered = store.recover_no_effect_agent_runs_after_service_restart()
+
+    assert [item.id for item in recovered] == [task_id]
+    updated = store.get_reply_task(task_id)
+    assert updated is not None
+    assert updated.status == "pending"
+    assert updated.error == "service_restart_before_effect"
+    assert updated.execution_generation != task.execution_generation
+    run = store.get_agent_run(claim.run.id)
+    assert run is not None and run.status == "failed"
+    runtime = store.get_agent_runtime_attempt(runtime_attempt.id)
+    assert runtime is not None and runtime.status == "failed"
+
+
 def _enqueue_manual_rerun_in_process(
     db_path: str,
     attempt_id: int,

@@ -7905,7 +7905,6 @@ class AutoReplyStore:
                 select tasks.*
                 from reply_tasks as tasks
                 where tasks.status='processing'
-                  and tasks.channel='wechat'
                   and exists (
                       select 1
                       from agent_runs as runs
