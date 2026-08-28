@@ -58,6 +58,8 @@ from app.worker import (
     DingTalkAutoReplyWorker,
     _inject_oa_applicant_identity,
 )
+from app.agent_orchestrator import _enrich_oa_applicant_target
+from app.agent_contracts import ConsumerProposal, ProposedAction
 from tests.support.image_bytes import TINY_PNG
 
 
@@ -100,6 +102,33 @@ def test_oa_group_trigger_uses_cached_applicant_open_id(tmp_path):
 
     assert enriched["originatorUserid"] == "applicant-user-1"
     assert enriched["originatorOpenDingTalkId"] == "open-applicant-1"
+
+
+def test_audit_proposal_receives_cached_oa_open_id():
+    proposal = ConsumerProposal(
+        objective="notify applicant",
+        actions=(ProposedAction(
+            description="notify",
+            capability="dingtalk-chat",
+            operation="send_direct_message",
+            target={"user_id": "applicant-user-1", "name": "张三"},
+            payload={"content": "请补充材料"},
+            expected_verification="sent",
+        ),),
+        sourced_facts=[],
+        authored_judgment="use the cached target",
+    )
+    context = AgentTaskContext(
+        task_id=1, channel="dingtalk", conversation_id="c", conversation_title="t",
+        single_chat=False, trigger_message_id="m", trigger_sender="s", trigger_text="t",
+        messages=(), materials=(), prior_receipts=(),
+        trigger_create_time="2026-08-28 15:00:00", trigger_raw_payload={
+            "originatorUserid": "applicant-user-1",
+            "originatorOpenDingTalkId": "open-applicant-1",
+        },
+    )
+    enriched = _enrich_oa_applicant_target(proposal, context)
+    assert enriched.actions[0].target["open_dingtalk_id"] == "open-applicant-1"
 
 
 class ScriptOutcome(StrEnum):
