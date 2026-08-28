@@ -7166,6 +7166,1475 @@ class AutoReplyStore:
 
 
 
+    def resolve_completed_unknown_audit_run_absent(
+        self,
+        run_id: int,
+        task_id: int,
+        *,
+        evidence_digest: str,
+        now: str | datetime | None = None,
+    ) -> str:
+        """Reopen a terminal historical recovery proven absent by its read digest.
+
+        A pre-fix recovery could persist ``completed`` with
+        ``side_effect_state=unknown`` after an otherwise complete, read-only
+        reconciliation.  This narrow repair is intentionally not a generic
+        status override: it requires the exact historical run/task identity,
+        the old ambiguous terminal result, and a non-empty readback digest.
+        It rotates the task into a fresh Consumer generation and never writes
+        or marks an external effect as confirmed.
+        """
+        digest = evidence_digest.strip()
+        if not digest:
+            raise ValueError("evidence_digest must be non-empty")
+        generation = uuid4().hex
+        code = "historical_reconciliation_absent"
+        error_json = _json_object_text(
+            {"code": code, "retryable": False, "evidence_digest": digest},
+            field="structured_error",
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select agent_runs.status, agent_runs.role,
+                       agent_runs.side_effect_state, agent_runs.final_result_json,
+                       agent_runs.execution_generation,
+                       reply_tasks.status as task_status,
+                       reply_tasks.execution_generation as task_generation
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=? and agent_runs.reply_task_id=?
+                """,
+                (run_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise AgentRunLeaseLostError(f"historical run not found: {run_id}")
+            final_result = row["final_result_json"] or ""
+            if not (
+                row["role"] == "audit"
+                and row["status"] == "completed"
+                and row["side_effect_state"] == "unknown"
+                and row["task_status"] == "done"
+                and row["execution_generation"] == row["task_generation"]
+                and '"audit_recovery_ambiguous"' in final_result
+            ):
+                raise AgentRunLeaseLostError(
+                    f"historical run is not an ambiguous unknown recovery: {run_id}"
+                )
+            run_cursor = db.execute(
+                """
+                update agent_runs
+                set status='failed', final_result_json='', structured_error_json=?,
+                    side_effect_state='none', lease_owner='', lease_expires_at='',
+                    completed_at=?, updated_at=?
+                where id=? and reply_task_id=? and status='completed'
+                  and side_effect_state='unknown'
+                """,
+                (error_json, now_text, now_text, run_id, task_id),
+            )
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status='pending', execution_generation=?, force_new_decision=1,
+                    locked_at=null, available_at='', error=?, updated_at=?
+                where id=? and status='done' and execution_generation=?
+                """,
+                (
+                    generation,
+                    code,
+                    now_text,
+                    task_id,
+                    row["execution_generation"],
+                ),
+            )
+            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"historical run changed during resolution: {run_id}"
+                )
+            self._insert_reconciliation_attempt_in_connection(
+                db,
+                run_id=run_id,
+                task_id=task_id,
+                codex_reason=code,
+                audit_summary=f"readback evidence digest {digest}",
+                send_status="failed",
+                send_error=code,
+            )
+        return generation
+
+    def settle_completed_unknown_audit_run_superseded(
+        self,
+        run_id: int,
+        task_id: int,
+        *,
+        reason: str,
+        now: str | datetime | None = None,
+    ) -> None:
+        """Close a terminal unknown Audit whose trigger was later resolved.
+
+        This is for legacy runs already marked ``completed``/``unknown`` where
+        a durable later-reply closure proves that replay would be stale.  It
+        records a terminal no-effect state and leaves the task done.
+        """
+        explanation = reason.strip()
+        if not explanation:
+            raise ValueError("reason must be non-empty")
+        code = "historical_reconciliation_superseded"
+        error_json = _json_object_text(
+            {"code": code, "retryable": False, "reason": explanation},
+            field="structured_error",
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select agent_runs.status, agent_runs.role,
+                       agent_runs.side_effect_state, agent_runs.final_result_json,
+                       reply_tasks.status as task_status
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=? and agent_runs.reply_task_id=?
+                """,
+                (run_id, task_id),
+            ).fetchone()
+            final_result = (row["final_result_json"] or "") if row else ""
+            if row is None or not (
+                row["role"] == "audit"
+                and row["status"] == "completed"
+                and row["side_effect_state"] == "unknown"
+                and row["task_status"] == "done"
+                and '"audit_recovery_ambiguous"' in final_result
+            ):
+                raise AgentRunLeaseLostError(
+                    f"historical run is not a superseded unknown recovery: {run_id}"
+                )
+            cursor = db.execute(
+                """
+                update agent_runs
+                set status='failed', final_result_json='', structured_error_json=?,
+                    side_effect_state='none', lease_owner='', lease_expires_at='',
+                    completed_at=?, updated_at=?
+                where id=? and reply_task_id=? and status='completed'
+                  and side_effect_state='unknown'
+                """,
+                (error_json, now_text, now_text, run_id, task_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"historical run changed during supersession: {run_id}"
+                )
+            self._insert_reconciliation_attempt_in_connection(
+                db,
+                run_id=run_id,
+                task_id=task_id,
+                codex_reason=code,
+                audit_summary=explanation,
+                send_status="skipped",
+                send_error=code,
+            )
+
+    def settle_historical_audit_recovery_attempt(
+        self,
+        attempt_id: int,
+        *,
+        run_id: int,
+        task_id: int,
+        evidence_digest: str,
+        now: str | datetime | None = None,
+    ) -> bool:
+        """Close the UI attempt paired with a repaired historical Audit run."""
+        digest = evidence_digest.strip()
+        if not digest:
+            raise ValueError("evidence_digest must be non-empty")
+        code = "historical_reconciliation_absent"
+        summary_suffix = (
+            " Historical recovery was resolved as absent from the exact readback; "
+            "the old external action was not replayed."
+        )
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select attempts.send_status, attempts.send_error,
+                       attempts.audit_summary, runs.status as run_status,
+                       runs.side_effect_state, runs.structured_error_json,
+                       tasks.status as task_status
+                from reply_attempts attempts
+                join agent_runs runs on runs.id=attempts.agent_run_id
+                join reply_tasks tasks on tasks.id=runs.reply_task_id
+                where attempts.id=? and attempts.agent_run_id=?
+                  and runs.reply_task_id=? and tasks.id=?
+                """,
+                (attempt_id, run_id, task_id, task_id),
+            ).fetchone()
+            if row is None:
+                raise AgentRunLeaseLostError(
+                    f"historical recovery attempt not found: {attempt_id}"
+                )
+            try:
+                structured = json.loads(row["structured_error_json"] or "{}")
+            except json.JSONDecodeError:
+                structured = {}
+            if not (
+                row["send_status"] == "needs_human"
+                and row["send_error"] == "audit_recovery_ambiguous"
+                and row["run_status"] == "failed"
+                and row["side_effect_state"] == "none"
+                and row["task_status"] == "done"
+                and structured.get("code") == code
+                and structured.get("evidence_digest") == digest
+            ):
+                raise AgentRunLeaseLostError(
+                    f"historical recovery attempt is not safely settled: {attempt_id}"
+                )
+            summary = str(row["audit_summary"] or "").rstrip() + summary_suffix
+            cursor = db.execute(
+                """
+                update reply_attempts
+                set send_status='skipped', send_error='', audit_summary=?,
+                    human_decision_options_json='[]', updated_at=?
+                where id=? and send_status='needs_human'
+                """,
+                (summary, now_text, attempt_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"historical recovery attempt changed: {attempt_id}"
+                )
+            return True
+
+    @staticmethod
+    def _insert_reconciliation_attempt_in_connection(
+        db: sqlite3.Connection,
+        *,
+        run_id: int,
+        task_id: int,
+        codex_reason: str,
+        audit_summary: str,
+        send_status: str,
+        send_error: str,
+    ) -> int:
+        row = db.execute(
+            """
+            select reply_tasks.channel, reply_tasks.conversation_id,
+                   reply_tasks.conversation_title, reply_tasks.trigger_message_id,
+                   reply_tasks.trigger_sender, reply_tasks.trigger_text,
+                   reply_tasks.oa_url,
+                   agent_runs.codex_session_id, agent_runs.transcript_start_line,
+                   agent_runs.transcript_end_line, agent_runs.tool_events_json
+            from reply_tasks
+            join agent_runs on agent_runs.reply_task_id=reply_tasks.id
+            where reply_tasks.id=? and agent_runs.id=?
+            """,
+            (task_id, run_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("reconciliation run and task were not found")
+        oa_url = str(row["oa_url"] or "")
+        oa_process_instance_id, oa_task_id = AutoReplyStore._oa_identifiers_from_url(
+            oa_url
+        )
+        cursor = db.execute(
+            """
+            insert into reply_attempts (
+                conversation_id, conversation_title, trigger_message_id,
+                trigger_sender, trigger_text, action, sensitivity_kind,
+                agent_run_id, codex_reason, codex_session_id,
+                codex_transcript_start_line, codex_transcript_end_line,
+                audit_tool_events_json, audit_summary, send_status,
+                send_error, channel, oa_process_instance_id, oa_task_id,
+                oa_url, oa_action
+            ) values (?, ?, ?, ?, ?, 'agent_run', 'general', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["conversation_id"],
+                row["conversation_title"],
+                row["trigger_message_id"],
+                row["trigger_sender"],
+                row["trigger_text"],
+                run_id,
+                codex_reason,
+                row["codex_session_id"],
+                row["transcript_start_line"],
+                row["transcript_end_line"],
+                row["tool_events_json"],
+                audit_summary,
+                send_status,
+                send_error,
+                row["channel"],
+                oa_process_instance_id,
+                oa_task_id,
+                oa_url,
+                "review" if oa_process_instance_id else "",
+            ),
+        )
+        return int(cursor.lastrowid)
+
+
+
+
+
+    def resolve_agent_run_manually(
+        self,
+        run_id: int,
+        *,
+        expected_execution_generation: str,
+        resolution: str,
+        reason: str,
+        actor: str,
+        now: str | datetime | None = None,
+    ) -> ManualAgentRunResolution:
+        allowed = {
+            "confirmed_occurred",
+            "confirmed_not_occurred",
+            "terminate_unrecoverable",
+        }
+        if resolution not in allowed:
+            raise ValueError("invalid manual reconciliation resolution")
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        if not reason.strip():
+            raise ValueError("manual reconciliation reason must be non-empty")
+        if not actor.strip():
+            raise ValueError("manual reconciliation actor must be non-empty")
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            row = db.execute(
+                """
+                select agent_runs.*, reply_tasks.status as task_status,
+                       reply_tasks.execution_generation as task_generation
+                from agent_runs
+                join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+                where agent_runs.id=?
+                  and agent_runs.role='audit'
+                """,
+                (run_id,),
+            ).fetchone()
+            is_suspended_unknown = (
+                row is not None
+                and row["status"] == "unknown"
+                and bool(row["reconciliation_suspended"])
+                and row["task_status"] in {"pending", "processing", "failed"}
+            )
+            is_failed_with_confirmed_effect = (
+                row is not None
+                and row["status"] == "failed"
+                and row["task_status"] == "failed"
+                and resolution == "confirmed_occurred"
+            )
+            if (
+                not (is_suspended_unknown or is_failed_with_confirmed_effect)
+                or row["execution_generation"] != expected_execution_generation
+                or row["task_generation"] != expected_execution_generation
+            ):
+                raise AgentRunLeaseLostError(
+                    f"manual reconciliation target is stale: {run_id}"
+                )
+            task_id = int(row["reply_task_id"])
+            expected_run_status = str(row["status"])
+            expected_task_status = str(row["task_status"])
+            expected_suspended = int(bool(row["reconciliation_suspended"]))
+            code = f"manual_reconciliation_{resolution}"
+            audit_summary = f"{actor}: {reason}"
+            next_generation = expected_execution_generation
+            if resolution == "confirmed_occurred":
+                run_status = "completed"
+                side_effect_state = "confirmed"
+                task_status = "done"
+                send_status = "completed"
+                final_result_json = json.dumps(
+                    {
+                        "outcome": "completed",
+                        "summary": reason,
+                        "manual_resolution": resolution,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            elif resolution == "confirmed_not_occurred":
+                run_status = "failed"
+                side_effect_state = "none"
+                task_status = "pending"
+                send_status = "failed"
+                final_result_json = ""
+                next_generation = uuid4().hex
+            else:
+                run_status = "failed"
+                side_effect_state = "unknown"
+                task_status = "failed"
+                send_status = "blocked"
+                final_result_json = ""
+            structured_error_json = json.dumps(
+                {
+                    "code": code,
+                    "retryable": False,
+                    "reason": reason,
+                    "actor": actor,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            run_cursor = db.execute(
+                """
+                update agent_runs
+                set status=?, final_result_json=?, structured_error_json=?,
+                    side_effect_state=?, reconciliation_suspended=0,
+                    reconciliation_next_attempt_at='', lease_owner='',
+                    lease_expires_at='', completed_at=?, updated_at=?
+                where id=? and status=? and reconciliation_suspended=?
+                  and execution_generation=?
+                """,
+                (
+                    run_status,
+                    final_result_json,
+                    "" if resolution == "confirmed_occurred" else structured_error_json,
+                    side_effect_state,
+                    now_text,
+                    now_text,
+                    run_id,
+                    expected_run_status,
+                    expected_suspended,
+                    expected_execution_generation,
+                ),
+            )
+            if resolution == "confirmed_not_occurred":
+                self._supersede_running_agent_runs(
+                    db,
+                    task_id,
+                    expected_execution_generation,
+                    now_text=now_text,
+                )
+            task_cursor = db.execute(
+                """
+                update reply_tasks
+                set status=?, execution_generation=?, force_new_decision=?,
+                    locked_at=null, available_at='', error=?, updated_at=?
+                where id=? and status=? and execution_generation=?
+                """,
+                (
+                    task_status,
+                    next_generation,
+                    int(resolution == "confirmed_not_occurred"),
+                    "" if task_status == "done" else code,
+                    now_text,
+                    task_id,
+                    expected_task_status,
+                    expected_execution_generation,
+                ),
+            )
+            if run_cursor.rowcount != 1 or task_cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(
+                    f"manual reconciliation target is stale: {run_id}"
+                )
+            attempt_id = self._insert_reconciliation_attempt_in_connection(
+                db,
+                run_id=run_id,
+                task_id=task_id,
+                codex_reason=reason,
+                audit_summary=audit_summary,
+                send_status=send_status,
+                send_error=code,
+            )
+            return ManualAgentRunResolution(
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                resolution=resolution,
+                execution_generation=next_generation,
+            )
+
+    @staticmethod
+    def _claimed_unknown_run_end_line(
+        db: sqlite3.Connection,
+        run_id: int,
+        task_id: int,
+        owner: str,
+        now_text: str,
+        transcript_end_line: int | None,
+    ) -> tuple[int, str]:
+        row = db.execute(
+            """
+            select agent_runs.*
+            from agent_runs
+            join reply_tasks on reply_tasks.id=agent_runs.reply_task_id
+            where agent_runs.id=? and agent_runs.reply_task_id=?
+              and agent_runs.role='audit'
+              and reply_tasks.execution_generation=agent_runs.execution_generation
+            """,
+            (run_id, task_id),
+        ).fetchone()
+        if (
+            row is None
+            or row["status"] != "unknown"
+            or row["lease_owner"] != owner
+            or row["lease_expires_at"] <= now_text
+        ):
+            raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
+        if transcript_end_line is not None and transcript_end_line < 0:
+            raise ValueError("transcript_end_line must not be negative")
+        end_line = (
+            row["transcript_end_line"]
+            if transcript_end_line is None
+            else transcript_end_line
+        )
+        return end_line, row["execution_generation"]
+
+    def list_unknown_agent_runs(
+        self,
+        *,
+        limit: int = 100,
+        now: str | datetime | None = None,
+    ) -> list[AgentRun]:
+        if limit <= 0:
+            return []
+        _, now_text = _utc_store_time(now)
+        with self._connect() as db:
+            rows = db.execute(
+                "select agent_runs.* from agent_runs "
+                "join reply_tasks on reply_tasks.id=agent_runs.reply_task_id "
+                "where agent_runs.status='unknown' "
+                "and agent_runs.role='audit' "
+                "and reply_tasks.status in ('pending', 'processing', 'failed') "
+                "and reply_tasks.execution_generation=agent_runs.execution_generation "
+                "and agent_runs.reconciliation_suspended=0 "
+                "and (agent_runs.reconciliation_next_attempt_at='' "
+                "or agent_runs.reconciliation_next_attempt_at<=?) "
+                "and (agent_runs.lease_owner='' or agent_runs.lease_expires_at<=?) "
+                "order by agent_runs.updated_at, agent_runs.id limit ?",
+                (now_text, now_text, limit),
+            ).fetchall()
+            return [self._agent_run_from_row(row, db=db) for row in rows]
+
+    def claim_unknown_agent_run(
+        self,
+        run_id: int,
+        *,
+        owner: str,
+        lease_seconds: int = 1800,
+        now: str | datetime | None = None,
+    ) -> AgentRunClaim:
+        if not owner.strip():
+            raise ValueError("owner must be non-empty")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        with self._agent_run_write_transaction(now) as (
+            db,
+            (now_value, now_text),
+        ):
+            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+            cursor = db.execute(
+                """
+                update agent_runs
+                set lease_owner=?, lease_expires_at=?,
+                    reconciliation_attempts=reconciliation_attempts + 1,
+                    updated_at=?
+                where id=? and status='unknown'
+                  and role='audit'
+                  and reconciliation_suspended=0
+                  and (reconciliation_next_attempt_at=''
+                       or reconciliation_next_attempt_at<=?)
+                  and (lease_owner='' or lease_expires_at<=?)
+                  and exists (
+                      select 1 from reply_tasks
+                      where reply_tasks.id=agent_runs.reply_task_id
+                        and reply_tasks.status in ('pending', 'processing', 'failed')
+                        and reply_tasks.execution_generation=
+                            agent_runs.execution_generation
+                  )
+                """,
+                (
+                    owner,
+                    lease_expires_at,
+                    now_text,
+                    run_id,
+                    now_text,
+                    now_text,
+                ),
+            )
+            row = db.execute(
+                "select * from agent_runs where id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("agent run does not exist")
+            return AgentRunClaim(
+                run=self._agent_run_from_row(row, db=db),
+                claimed=cursor.rowcount == 1,
+            )
+
+
+    def peek_reply_tasks(
+        self,
+        limit: int,
+        now: str | None = None,
+        *,
+        channel: str | None = None,
+        after_id: int | None = None,
+        max_id: int | None = None,
+    ) -> list[ReplyTask]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            now_expression = "current_timestamp" if now is None else "?"
+            clauses = [
+                "status='pending'",
+                f"(available_at='' or available_at <= {now_expression})",
+                """not exists (
+                    select 1 from agent_runs as runs
+                    where runs.reply_task_id=reply_tasks.id
+                      and runs.execution_generation=reply_tasks.execution_generation
+                      and runs.role='audit'
+                      and runs.status='unknown'
+                      and runs.reconciliation_suspended=1
+                )""",
+            ]
+            args: list[str | int] = []
+            if now is not None:
+                args.append(now)
+            if channel is not None:
+                clauses.append("channel=?")
+                args.append(channel)
+            if after_id is not None:
+                clauses.append("id>?")
+                args.append(after_id)
+            if max_id is not None:
+                clauses.append("id<=?")
+                args.append(max_id)
+            args.append(limit)
+            rows = db.execute(
+                f"""
+                select *
+                from reply_tasks
+                where {' and '.join(clauses)}
+                order by id
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in rows]
+
+    def peek_pending_reconciliation_reply_tasks(
+        self,
+        limit: int,
+        now: str | None = None,
+        *,
+        channel: str | None = None,
+        max_id: int | None = None,
+    ) -> list[ReplyTask]:
+        """Return pending tasks whose current audit run has an unknown effect."""
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            now_expression = "current_timestamp" if now is None else "?"
+            clauses = [
+                "reply_tasks.status='pending'",
+                "agent_runs.role='audit'",
+                "agent_runs.status='unknown'",
+                "agent_runs.execution_generation=reply_tasks.execution_generation",
+                "agent_runs.reconciliation_suspended=0",
+                f"(agent_runs.reconciliation_next_attempt_at='' or agent_runs.reconciliation_next_attempt_at <= {now_expression})",
+                f"(agent_runs.lease_owner='' or agent_runs.lease_expires_at <= {now_expression})",
+            ]
+            args: list[str | int] = []
+            if now is not None:
+                args.extend((now, now))
+            if channel is not None:
+                clauses.append("reply_tasks.channel=?")
+                args.append(channel)
+            if max_id is not None:
+                clauses.append("reply_tasks.id<=?")
+                args.append(max_id)
+            args.append(limit)
+            rows = db.execute(
+                f"""
+                select distinct reply_tasks.*
+                from reply_tasks
+                left join agent_runs on agent_runs.reply_task_id=reply_tasks.id
+                where {' and '.join(clauses)}
+                order by reply_tasks.id
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in rows]
+
+    def max_pending_reply_task_id(
+        self,
+        now: str | None = None,
+        *,
+        channel: str | None = None,
+    ) -> int | None:
+        with self._connect() as db:
+            now_expression = "current_timestamp" if now is None else "?"
+            clauses = [
+                "status='pending'",
+                f"""(
+                    available_at='' or available_at <= {now_expression}
+                    or exists (
+                        select 1 from agent_runs
+                        where agent_runs.reply_task_id=reply_tasks.id
+                          and agent_runs.role='audit'
+                          and agent_runs.status='unknown'
+                          and agent_runs.execution_generation=
+                              reply_tasks.execution_generation
+                          and agent_runs.reconciliation_suspended=0
+                          and (
+                              agent_runs.reconciliation_next_attempt_at=''
+                              or agent_runs.reconciliation_next_attempt_at <= {now_expression}
+                          )
+                          and (
+                              agent_runs.lease_owner=''
+                              or agent_runs.lease_expires_at <= {now_expression}
+                          )
+                    )
+                )""",
+            ]
+            args: list[str] = []
+            if now is not None:
+                args.extend((now, now, now))
+            if channel is not None:
+                clauses.append("channel=?")
+                args.append(channel)
+            row = db.execute(
+                f"""
+                select max(id) as max_id
+                from reply_tasks
+                where {' and '.join(clauses)}
+                """,
+                args,
+            ).fetchone()
+            return row["max_id"] if row is not None else None
+
+    def get_reply_task(self, task_id: int) -> ReplyTask | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from reply_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            return self._reply_task_from_row(row) if row is not None else None
+
+    def claim_reply_task(
+        self, task_id: int, now: str | None = None
+    ) -> ReplyTask | None:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            now_expression = "current_timestamp" if now is None else "?"
+            args: list[str | int] = [task_id]
+            if now is not None:
+                args.extend((now, now, now))
+            cursor = db.execute(
+                f"""
+                update reply_tasks
+                set status='processing',
+                    attempts=attempts + 1,
+                    locked_at=current_timestamp,
+                    available_at='',
+                    updated_at=current_timestamp
+                where id=?
+                  and status='pending'
+                  and (
+                      available_at='' or available_at <= {now_expression}
+                      or exists (
+                          select 1 from agent_runs
+                          where agent_runs.reply_task_id=reply_tasks.id
+                            and agent_runs.role='audit'
+                            and agent_runs.status='unknown'
+                            and agent_runs.execution_generation=
+                                reply_tasks.execution_generation
+                            and agent_runs.reconciliation_suspended=0
+                            and (
+                                agent_runs.reconciliation_next_attempt_at=''
+                                or agent_runs.reconciliation_next_attempt_at <= {now_expression}
+                            )
+                            and (
+                                agent_runs.lease_owner=''
+                                or agent_runs.lease_expires_at <= {now_expression}
+                            )
+                      )
+                  )
+                """,
+                args,
+            )
+            if cursor.rowcount != 1:
+                return None
+            row = db.execute(
+                "select * from reply_tasks where id=?",
+                (task_id,),
+            ).fetchone()
+            return self._reply_task_from_row(row)
+
+    def claim_reply_tasks(
+        self, limit: int, now: str | None = None, *, channel: str = "dingtalk"
+    ) -> list[ReplyTask]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            now_expression = "current_timestamp" if now is None else "?"
+            args: list[str | int] = [channel]
+            if now is not None:
+                args.append(now)
+            args.append(limit)
+            rows = db.execute(
+                f"""
+                select *
+                from reply_tasks
+                where status='pending'
+                  and channel=?
+                  and (available_at='' or available_at <= {now_expression})
+                order by id
+                limit ?
+                """,
+                args,
+            ).fetchall()
+            task_ids = [row["id"] for row in rows]
+            if not task_ids:
+                return []
+            placeholders = ",".join("?" for _ in task_ids)
+            db.execute(
+                f"""
+                update reply_tasks
+                set status='processing',
+                    attempts=attempts + 1,
+                    locked_at=current_timestamp,
+                    available_at='',
+                    updated_at=current_timestamp
+                where id in ({placeholders})
+                """,
+                task_ids,
+            )
+            claimed_rows = db.execute(
+                f"""
+                select *
+                from reply_tasks
+                where id in ({placeholders})
+                order by id
+                """,
+                task_ids,
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in claimed_rows]
+
+    def list_stale_processing_reply_tasks(
+        self, max_age_seconds: int
+    ) -> list[ReplyTask]:
+        if max_age_seconds <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select *
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and tasks.locked_at is not null
+                  and datetime(tasks.locked_at) <= datetime('now', ?)
+                  and not exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and runs.status in ('running', 'unknown')
+                        and runs.lease_expires_at>current_timestamp
+                  )
+                order by tasks.locked_at, tasks.id
+                """,
+                (f"-{int(max_age_seconds)} seconds",),
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in rows]
+
+    def recover_orphaned_processing_reply_tasks(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and not exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                  )
+                order by tasks.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                recovery_error = "orphaned_before_agent_start"
+                if (
+                    row["channel"] == "wechat"
+                    and row["error"] == "wechat_read_only_decision_running"
+                ):
+                    recovery_error = "interrupted_read_only_decision"
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', attempts=max(attempts - 1, 0),
+                        locked_at=null, available_at='',
+                        error=?,
+                        updated_at=current_timestamp
+                    where id=? and status='processing' and execution_generation=?
+                      and not exists (
+                          select 1
+                          from agent_runs
+                          where reply_task_id=reply_tasks.id
+                            and execution_generation=reply_tasks.execution_generation
+                      )
+                    """,
+                    (recovery_error, row["id"], row["execution_generation"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                updated = db.execute(
+                    "select * from reply_tasks where id=?",
+                    (row["id"],),
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
+    def recover_no_effect_agent_runs_after_service_restart(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        """Release runs the stopped service can prove never started an effect."""
+        if limit <= 0:
+            return []
+        error_json = json.dumps(
+            {"code": "service_restart_before_effect", "retryable": True},
+            separators=(",", ":"),
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            # A process may have died after its parent run was already marked
+            # failed.  It cannot be retried through the active-attempt path;
+            # close only entries whose parent proves no external effect began.
+            db.execute(
+                """
+                update agent_runtime_attempts
+                set status='failed', failure_class='process',
+                    failure_code='runtime_parent_terminal_no_effect',
+                    failover_permitted=1, lease_owner='', lease_expires_at='',
+                    finished_at=current_timestamp, updated_at=current_timestamp
+                where status in ('starting', 'running')
+                  and first_effect_started_at=''
+                  and agent_run_id in (
+                      select id from agent_runs
+                      where status='failed' and side_effect_state='none'
+                  )
+                """
+            )
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and tasks.channel='wechat'
+                  and exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                      and runs.status in ('running', 'failed')
+                        and runs.side_effect_state='none'
+                  )
+                  and not exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and (
+                            runs.status='unknown'
+                            or (
+                                runs.status='running'
+                                and runs.side_effect_state<>'none'
+                            )
+                        )
+                  )
+                order by tasks.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                task_id = int(row["id"])
+                generation = str(row["execution_generation"])
+                next_generation = uuid4().hex
+                db.execute(
+                    """
+                    update agent_runs
+                    set status='failed', structured_error_json=case
+                            when status='running' then ?
+                            else structured_error_json
+                        end,
+                        lease_owner='', lease_expires_at='',
+                        completed_at=case
+                            when status='running' then current_timestamp
+                            else completed_at
+                        end,
+                        updated_at=current_timestamp
+                    where reply_task_id=? and execution_generation=?
+                      and status in ('running', 'failed') and side_effect_state='none'
+                    """,
+                    (error_json, task_id, generation),
+                )
+                db.execute(
+                    """
+                    update agent_runtime_attempts
+                    set status='failed', failure_class='process',
+                        failure_code='service_restart_before_effect',
+                        failover_permitted=1, lease_owner='', lease_expires_at='',
+                        finished_at=current_timestamp, updated_at=current_timestamp
+                    where status in ('starting', 'running')
+                      and first_effect_started_at=''
+                      and agent_run_id in (
+                          select id from agent_runs
+                          where reply_task_id=? and execution_generation=?
+                            and status='failed' and side_effect_state='none'
+                      )
+                    """,
+                    (task_id, generation),
+                )
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set force_new_decision=1, execution_generation=?,
+                        status='pending', locked_at=null, available_at='',
+                        error='service_restart_before_effect',
+                        updated_at=current_timestamp
+                    where id=? and status='processing' and execution_generation=?
+                    """,
+                    (next_generation, task_id, generation),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                db.execute(
+                    "delete from codex_session_locks where conversation_id=?",
+                    (row["conversation_id"],),
+                )
+                updated = db.execute(
+                    "select * from reply_tasks where id=?", (task_id,)
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
+    def retry_failed_service_restart_tasks(self, *, limit: int = 100) -> list[ReplyTask]:
+        """Immediately reopen failed no-effect tasks caused by a service restart."""
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks tasks
+                where tasks.status='failed'
+                  and tasks.error like 'service_restart_before_effect%'
+                  and not exists (
+                    select 1 from agent_runs runs
+                    where runs.reply_task_id=tasks.id
+                      and runs.execution_generation=tasks.execution_generation
+                      and (runs.status in ('running','unknown')
+                           or runs.side_effect_state<>'none')
+                  )
+                order by tasks.id limit ?
+                """, (limit,),
+            ).fetchall()
+            recovered = []
+            for row in rows:
+                generation = str(row["execution_generation"])
+                cursor = db.execute(
+                    """update reply_tasks set status='pending', attempts=0,
+                       locked_at=null, available_at='',
+                       error='service_restart_immediate_retry',
+                       execution_generation=?, updated_at=current_timestamp
+                       where id=? and status='failed' and execution_generation=?""",
+                    (uuid4().hex, row["id"], generation),
+                )
+                if cursor.rowcount:
+                    recovered.append(self._reply_task_from_row(
+                        db.execute("select * from reply_tasks where id=?", (row["id"],)).fetchone()
+                    ))
+            return recovered
+
+    def recover_effectful_audit_runs_after_service_restart(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        """Resume interrupted Audit effects through reconciliation, never replay."""
+        if limit <= 0:
+            return []
+        error_json = json.dumps(
+            {
+                "code": "service_restart_effect_requires_reconciliation",
+                "retryable": False,
+            },
+            separators=(",", ":"),
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and runs.role='audit'
+                        and runs.status='running'
+                        and runs.side_effect_state<>'none'
+                  )
+                order by tasks.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                task_id = int(row["id"])
+                generation = str(row["execution_generation"])
+                transitioned_run_ids = [
+                    int(run["id"])
+                    for run in db.execute(
+                        "select id from agent_runs "
+                        "where reply_task_id=? and execution_generation=? "
+                        "and role='audit' and status='running' "
+                        "and side_effect_state<>'none'",
+                        (task_id, generation),
+                    ).fetchall()
+                ]
+                db.execute(
+                    """
+                    update agent_runs
+                    set status='unknown', structured_error_json=?,
+                        side_effect_state='unknown', lease_owner='',
+                        lease_expires_at='', updated_at=current_timestamp
+                    where reply_task_id=? and execution_generation=?
+                      and role='audit' and status='running'
+                      and side_effect_state<>'none'
+                    """,
+                    (error_json, task_id, generation),
+                )
+                db.executemany(
+                    "insert into agent_run_state_events ("
+                    "agent_run_id, phase, structured_error_json"
+                    ") values (?, 'initial_unknown', ?)",
+                    (
+                        (run_id, error_json)
+                        for run_id in transitioned_run_ids
+                    ),
+                )
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', locked_at=null, available_at='',
+                        error='service_restart_effect_reconciliation',
+                        updated_at=current_timestamp
+                    where id=? and status='processing' and execution_generation=?
+                      and exists (
+                          select 1 from agent_runs
+                          where reply_task_id=reply_tasks.id
+                            and execution_generation=reply_tasks.execution_generation
+                            and role='audit' and status='unknown'
+                      )
+                    """,
+                    (task_id, generation),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                db.execute(
+                    "delete from codex_session_locks where conversation_id=?",
+                    (row["conversation_id"],),
+                )
+                updated = db.execute(
+                    "select * from reply_tasks where id=?", (task_id,)
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
+    def skip_unstarted_service_tasks(
+        self,
+        task_ids: list[int] | tuple[int, ...],
+        *,
+        reason: str,
+        expected_source: str = "",
+        now: str | datetime | None = None,
+    ) -> list[ReplyTask]:
+        """Finalize explicitly selected synthetic tasks that never started a write."""
+        normalized_ids = tuple(dict.fromkeys(int(task_id) for task_id in task_ids))
+        if not normalized_ids:
+            return []
+        if any(task_id <= 0 for task_id in normalized_ids):
+            raise ValueError("task ids must be positive")
+        if not reason.strip():
+            raise ValueError("reason must be non-empty")
+
+        placeholders = ",".join("?" for _ in normalized_ids)
+        with self._agent_run_write_transaction(now) as (db, (_, now_text)):
+            rows = db.execute(
+                f"select * from reply_tasks where id in ({placeholders}) order by id",
+                normalized_ids,
+            ).fetchall()
+            if len(rows) != len(normalized_ids):
+                raise ValueError("one or more reply tasks do not exist")
+            for row in rows:
+                try:
+                    payload = json.loads(str(row["trigger_message_json"]))
+                except json.JSONDecodeError as exc:
+                    raise ValueError("service task payload is invalid") from exc
+                raw_payload = payload.get("raw_payload")
+                source = (
+                    str(raw_payload.get("source") or "").strip()
+                    if isinstance(raw_payload, dict)
+                    else ""
+                )
+                explicitly_selected_legacy_source = (
+                    bool(expected_source.strip()) and source == expected_source.strip()
+                )
+                if not isinstance(raw_payload, dict) or not (
+                    raw_payload.get("service_task")
+                    or explicitly_selected_legacy_source
+                ):
+                    raise ValueError("reply task is not an explicit service task")
+                if row["status"] not in {"pending", "processing", "failed"}:
+                    raise ValueError("reply task is already terminal")
+                unsafe = db.execute(
+                    """
+                    select 1
+                    from agent_runs
+                    where reply_task_id=? and execution_generation=?
+                      and (
+                          side_effect_state<>'none'
+                          or effect_receipt_count>0
+                          or effect_unreviewed_count>0
+                      )
+                    limit 1
+                    """,
+                    (int(row["id"]), str(row["execution_generation"])),
+                ).fetchone()
+                if unsafe is not None:
+                    raise ValueError("service task has started or uncertain effects")
+
+            error_json = json.dumps(
+                {
+                    "authorization_required": False,
+                    "code": "invalid_service_task_skipped",
+                    "reason": reason.strip(),
+                    "retryable": False,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            for row in rows:
+                task_id = int(row["id"])
+                generation = str(row["execution_generation"])
+                db.execute(
+                    """
+                    update agent_runs
+                    set status='failed', structured_error_json=?,
+                        lease_owner='', lease_expires_at='',
+                        completed_at=?, updated_at=?
+                    where reply_task_id=? and execution_generation=?
+                      and status='running' and side_effect_state='none'
+                      and effect_receipt_count=0
+                      and effect_unreviewed_count=0
+                    """,
+                    (error_json, now_text, now_text, task_id, generation),
+                )
+                db.execute(
+                    """
+                    update reply_tasks
+                    set status='done', locked_at=null, available_at='', error=?,
+                        updated_at=?
+                    where id=? and execution_generation=?
+                      and status in ('pending', 'processing', 'failed')
+                    """,
+                    (reason.strip(), now_text, task_id, generation),
+                )
+                db.execute(
+                    "delete from codex_session_locks where conversation_id=?",
+                    (str(row["conversation_id"]),),
+                )
+            updated_rows = db.execute(
+                f"select * from reply_tasks where id in ({placeholders}) order by id",
+                normalized_ids,
+            ).fetchall()
+            return [self._reply_task_from_row(row) for row in updated_rows]
+
+    def release_unknown_audit_reconciliation_leases_after_service_restart(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[AgentRun]:
+        """Make interrupted Audit reconciliation eligible on the next worker pass."""
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select runs.*
+                from agent_runs as runs
+                join reply_tasks as tasks on tasks.id=runs.reply_task_id
+                where runs.status='unknown'
+                  and runs.role='audit'
+                  and runs.reconciliation_suspended=0
+                  and runs.lease_owner<>''
+                  and tasks.status in ('processing', 'pending', 'failed')
+                  and tasks.execution_generation=runs.execution_generation
+                order by runs.updated_at, runs.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            released: list[AgentRun] = []
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update agent_runs
+                    set lease_owner='', lease_expires_at='',
+                        reconciliation_next_attempt_at='', updated_at=current_timestamp
+                    where id=? and status='unknown' and role='audit'
+                      and reconciliation_suspended=0 and lease_owner<>''
+                    """,
+                    (row["id"],),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                updated = db.execute(
+                    "select * from agent_runs where id=?", (row["id"],)
+                ).fetchone()
+                released.append(self._agent_run_from_row(updated, db=db))
+            return released
+
+    def resume_completed_agent_turns_after_service_restart(
+        self,
+        *,
+        limit: int = 100,
+    ) -> list[ReplyTask]:
+        """Resume orchestration interrupted after a terminal Agent turn.
+
+        The persisted AgentRun is already the durable source of truth. Requeue
+        the same generation so AgentOrchestrator can derive the next state from
+        it, rather than waiting for stale-task recovery or rerunning a turn.
+        """
+        if limit <= 0:
+            return []
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select tasks.*
+                from reply_tasks as tasks
+                where tasks.status='processing'
+                  and not exists (
+                      select 1
+                      from agent_runs as runs
+                      where runs.reply_task_id=tasks.id
+                        and runs.execution_generation=tasks.execution_generation
+                        and runs.status in ('running', 'unknown')
+                  )
+                  and (
+                      select latest.status
+                      from agent_runs as latest
+                      where latest.reply_task_id=tasks.id
+                        and latest.execution_generation=tasks.execution_generation
+                      order by latest.id desc
+                      limit 1
+                  )='completed'
+                order by tasks.id
+                limit ?
+                """,
+                (limit,),
+            ).fetchall()
+            recovered: list[ReplyTask] = []
+            for row in rows:
+                cursor = db.execute(
+                    """
+                    update reply_tasks
+                    set status='pending', locked_at=null, available_at='',
+                        error='service_restart_after_completed_turn',
+                        updated_at=current_timestamp
+                    where id=? and status='processing' and execution_generation=?
+                      and not exists (
+                          select 1
+                          from agent_runs as runs
+                          where runs.reply_task_id=reply_tasks.id
+                            and runs.execution_generation=reply_tasks.execution_generation
+                            and runs.status in ('running', 'unknown')
+                      )
+                    """,
+                    (row["id"], row["execution_generation"]),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                db.execute(
+                    "delete from codex_session_locks where conversation_id=?",
+                    (row["conversation_id"],),
+                )
+                updated = db.execute(
+                    "select * from reply_tasks where id=?", (row["id"],)
+                ).fetchone()
+                recovered.append(self._reply_task_from_row(updated))
+            return recovered
+
+    def mark_wechat_read_only_decision_started(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+    ) -> None:
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set error='wechat_read_only_decision_running',
+                    updated_at=current_timestamp
+                where id=? and channel='wechat' and status='processing'
+                  and execution_generation=?
+                """,
+                (task_id, expected_execution_generation),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+
+    def complete_reply_task(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+    ) -> None:
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        with self._connect() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='done',
+                    locked_at=null,
+                    error='',
+                    available_at='',
+                    updated_at=current_timestamp
+                where id=? and status='processing' and execution_generation=?
+                """,
+                (task_id, expected_execution_generation),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+
     def settle_failed_reply_task_without_replay(
         self,
         task_id: int,
