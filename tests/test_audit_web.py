@@ -42,6 +42,7 @@ from app.audit_web import (
     render_task_project_detail,
     render_tasks_page,
     render_tutorial_page,
+    render_settings_page,
     render_workers_page,
     render_user_feedback_list,
     run_audit_web,
@@ -5359,9 +5360,51 @@ def test_config_route_is_available(tmp_path: Path):
 
     assert response.status_code == 200
     assert "Producer 路由配置" in response.text
-    assert "/settings?tab=config&amp;config_tab=developer" in response.text
-    assert '<a class="prompt-tab active" href="/settings?tab=config">Config</a>' in response.text
+    assert "/settings?tab=developer" in response.text
+    assert (
+        '<a class="settings-nav-item active" href="/settings?tab=info" '
+        'aria-current="page">Info</a>'
+    ) in response.text
     assert "Producer 路由配置" in legacy_response.text
+
+
+def test_settings_page_flattens_sections_into_left_navigation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    html = render_settings_page(store, active_tab="system")
+    legacy_deep_link_html = render_settings_page(
+        store,
+        active_tab="config",
+        config_tab="system",
+    )
+
+    assert '<div class="settings-layout">' in html
+    assert '<nav class="settings-nav" aria-label="Settings navigation">' in html
+    assert html.count('<nav class="settings-nav"') == 1
+    assert 'aria-label="Settings sections"' not in html
+    assert 'aria-label="Config sections"' not in html
+    assert 'href="/settings?tab=system"' in html
+    assert 'href="/settings?tab=config&amp;config_tab=' not in html
+    active_system_link = (
+        '<a class="settings-nav-item active" href="/settings?tab=system" '
+        'aria-current="page">System Config</a>'
+    )
+    assert active_system_link in html
+    assert active_system_link in legacy_deep_link_html
+    assert 'aria-label="Config sections"' not in legacy_deep_link_html
+    for label, tab in (
+        ("Info", "info"),
+        ("Agent Runtime", "agent-runtime"),
+        ("Channels", "channels"),
+        ("WeChat", "wechat"),
+        ("Developer Prompt", "developer"),
+        ("User Prompt", "user"),
+        ("Audit Rules", "audit-rules"),
+        ("Workers", "workers"),
+        ("Logs", "logs"),
+    ):
+        assert f'href="/settings?tab={tab}"' in html
+        assert label in html
 
 
 def test_render_page_brand_links_to_history():

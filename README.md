@@ -186,7 +186,7 @@ workload 启用 OAuth→API 故障切换并核对同一 run 的 attempt 与 secr
 - Channel gate 在 Agent 前运行结构化 status 和 live authenticated probe。
 - 只有明确 `needs_login` 时，Login Coordinator 才启动一次相应 CLI 登录；并发和抑制窗口内不会重复启动。
 - 网络错误、status 不可读或一般命令失败不会触发登录。
-- `Settings → Config → Channels` 展示 status、live probe、最近成功时间和登录抑制状态，不展示 PID、session、token 或凭证路径。
+- `Settings → Channels` 展示 status、live probe、最近成功时间和登录抑制状态，不展示 PID、session、token 或凭证路径。
 - History 只展示用户可理解的触发、回复、终态和安全结果摘要；运行时内部规划字段不进入页面。
 
 ## OKR 审核数据源
@@ -290,8 +290,8 @@ cp .env.example .env
 | `CEO_REPOSITORY_UPGRADE_REMOTE` / `CEO_REPOSITORY_UPGRADE_BRANCH` | repository-upgrade 检查的 Git remote 和目标分支，默认 `origin` / `main` |
 | `CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS` | 自动检查远端更新的周期，默认 21600 秒（6 小时） |
 | `CEO_REPOSITORY_UPGRADE_DISABLED` | 设为 `1` 禁用周期检查；History 页面仍可手动查看已保存状态 |
-| `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex OAuth 默认模型、thinking 强度和可选 provider；默认 `gpt-5.5` + `medium`。在 `Settings → Config → Agent Runtime` 中用下拉菜单修改；模型可选 `gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。不提供 `gpt-5.6` 别名，因为 Codex CLI 的 ChatGPT OAuth 会拒绝该别名。保存到 `.env` 后重启主服务统一生效，认证与 MCP/skills 保持沿用当前安装用户配置。 |
-| `CEO_AGENT_RUNTIME_ROUTES` / `CEO_CODEX_API_BASE_URL` / `CEO_CODEX_API_MODEL` / `CEO_CODEX_API_KEY` | 可选 Codex API fallback：在 `Settings → Config → Agent Runtime` 启用，填写 Base URL、模型和 Token。已配置的 Token 以圆点掩码显示，页面不会重新下发密钥；眼睛按钮只显示或隐藏本次输入的内容。留空保存会保留已有 Token。 |
+| `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex OAuth 默认模型、thinking 强度和可选 provider；默认 `gpt-5.5` + `medium`。在 `Settings → Agent Runtime` 中用下拉菜单修改；模型可选 `gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。不提供 `gpt-5.6` 别名，因为 Codex CLI 的 ChatGPT OAuth 会拒绝该别名。保存到 `.env` 后重启主服务统一生效，认证与 MCP/skills 保持沿用当前安装用户配置。 |
+| `CEO_AGENT_RUNTIME_ROUTES` / `CEO_CODEX_API_BASE_URL` / `CEO_CODEX_API_MODEL` / `CEO_CODEX_API_KEY` | 可选 Codex API fallback：在 `Settings → Agent Runtime` 启用，填写 Base URL、模型和 Token。已配置的 Token 以圆点掩码显示，页面不会重新下发密钥；眼睛按钮只显示或隐藏本次输入的内容。留空保存会保留已有 Token。 |
 | `CEO_AGENT_RUNTIME_ROUTES` / `CEO_FRIDAY_RUNTIME_BASE_URL` / `CEO_FRIDAY_RUNTIME_PROJECT_ID` / `CEO_FRIDAY_RUNTIME_MODEL` / `CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL` / `CEO_FRIDAY_RUNTIME_PROVIDER_MODEL` / `CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY` / `CEO_FRIDAY_RUNTIME_TICKET`（或 `CEO_FRIDAY_SESSION_TOKEN`） | 可选 Friday Runtime fallback：启用 `friday_runtime` 后填写 Friday Runtime 地址、project ID、Runtime provider 地址/模型/API Token 和一个 Runtime 凭据。Friday provider 配置使用独立的 `CEO_FRIDAY_RUNTIME_PROVIDER_*` 字段，不与 Codex API URL/key 共享；Runtime ticket/session token 仍只用于访问 Friday Runtime。本地无鉴权测试必须显式设置 `CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1`。 |
 | `CEO_CODEX_CAPACITY_RETRY_DELAY` | Codex 明确返回 workspace credits、quota 或 usage limit 后的全局暂停期；默认 30 分钟，暂停期内不再启动新的 Codex 回复、工作汇总或会议分析，过期后自动恢复 |
 | `CEO_CODEX_CAPACITY_RETRY_MAX_DELAY` | Codex 容量持续不足时的最长探测间隔；默认 4 小时。探测从 `CEO_CODEX_CAPACITY_RETRY_DELAY` 开始逐次翻倍，成功后重置 |
@@ -462,7 +462,7 @@ http://127.0.0.1:8765/
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录
 - `/attempts/{id}`：单次处理详情；同一触发消息后续重跑成功时，旧记录顶部会链接到后续 attempt 并展示其最新动作，原始状态仍保留在详情字段中供审计。Consumer 与 Audit 执行记录只能从该 Attempt 打开，不显示内部会话标识或本地文件路径。
 - `/developer-prompt`：Developer/User Prompt 模板管理
-- `/settings`：`Config`、`Workers` 与 `Logs` 标签页；`Config → Channels` 展示 DingTalk/Feishu CLI doctor 状态。`/config`、`/workers`、`/logs` 保留为兼容入口，但渲染同一 Settings 页面。
+- `/settings`：Settings 的所有区块使用统一的左侧导航（Info、System Config、Agent Runtime、Channels、WeChat、Developer Prompt、User Prompt、Audit Rules、Workers、Logs）；`/config`、`/workers`、`/logs` 保留为兼容入口。
 - `/errors`：错误列表
 
 ### 8. 启用 task 总结
@@ -589,7 +589,7 @@ scripts/install-auto-reply-agents.sh
 - `replay-recent-meetings` 会重新读取日历和听记证据，并只重开没有任何发送回执的 `no_action` 或 `failed` 会议任务；已发送或存在发送回执的任务保持终态，避免重复外发。
 - task maintenance loop：按 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 处理 Work Item，并按 `CEO_TASK_DAILY_INTERVAL_SECONDS` 扫描 AI 听记、`CEO_WORKSPACE` 文件和到期 follow-up。
 
-这些周期参数统一在审计页 `Settings → Config → System Config` 中维护，保存到 `.env` 后由 Python 服务启动时读取；launchd 模板不再在 shell 命令里写死或覆盖这些周期值。
+这些周期参数统一在审计页 `Settings → System Config` 中维护，保存到 `.env` 后由 Python 服务启动时读取；launchd 模板不再在 shell 命令里写死或覆盖这些周期值。
 
 meeting producer 首次启用时会持久化激活时间。服务启动恢复队列前，会把激活时间以前且从未尝试发送的历史任务统一标记为 `no_action`；因此切换瞬间已被旧进程领取的历史会议也不会在重启后重新进入分析或发送。
 

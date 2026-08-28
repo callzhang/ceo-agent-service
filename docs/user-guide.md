@@ -142,7 +142,7 @@ http://127.0.0.1:8765/tutorial
 
 完成初始化向导后，至少验证：
 
-1. `Settings → Config → Channels` 中 DingTalk 和 Lark 显示 `ready`。
+1. `Settings → Channels` 中 DingTalk 和 Lark 显示 `ready`。
 2. 用一个受控群聊或私聊发一条明确测试消息。
 3. History 中能看到 trigger、Agent 结论、工具事件和未发送状态。
 4. 没有意外外部动作，也没有持续停留的 `processing` 或 `failed`。
@@ -312,7 +312,7 @@ Consumer A 会通过当前 DWS 登录身份实时读取，Audit B 会在执行�
 | `/oa-approvals/{process_instance_id}` | OA 详情、评论和历史处理结果 |
 | `/tasks` | 项目、TODO 和 follow-up |
 | `/workers` | 后台投递和作业 worker 的运行状态；不显示工作台执行器或 lease |
-| `/settings` | `Config`、`Workers`、`Logs` 标签页；系统参数、路由、Channel gate、队列和运行记录 |
+| `/settings` | 统一左侧导航；系统参数、路由、Channel gate、队列和运行记录 |
 | `/errors` | 需要处理的系统错误 |
 | `/tutorial` | 初始化未完成时的默认首页；全部完成后自动隐藏并回到 History |
 

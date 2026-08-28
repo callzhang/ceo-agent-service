@@ -548,6 +548,13 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .prompt-tab{display:inline-flex;align-items:center;height:32px;padding:0 13px;border-radius:999px;color:var(--steel);font-size:13px;font-weight:600}
 .prompt-tab:hover{text-decoration:none;color:var(--ink)}
 .prompt-tab.active{background:var(--ink);color:#fff}
+.settings-layout{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:start;gap:24px;max-width:1280px;margin:0 auto}
+.settings-nav{position:sticky;top:92px;display:grid;gap:3px;padding:8px;border:1px solid var(--hairline);border-radius:10px;background:var(--surface-soft)}
+.settings-nav-item{display:flex;align-items:center;min-height:38px;padding:0 12px;border-radius:7px;color:var(--steel);font-size:13px;font-weight:600;line-height:1.3}
+.settings-nav-item:hover{text-decoration:none;color:var(--ink);background:var(--canvas)}
+.settings-nav-item.active{background:var(--ink);color:#fff}
+.settings-nav-item.active:hover{color:#fff;background:var(--ink)}
+.settings-content{min-width:0}
 .pill{display:inline-flex;align-items:center;min-height:24px;padding:3px 9px;border-radius:999px;background:var(--surface);color:var(--steel);border:1px solid var(--hairline);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.3;white-space:nowrap}
 .status-sent{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
 .status-resolved{background:rgba(0,212,164,.12);color:#006b55;border-color:rgba(0,180,138,.28)}
@@ -658,6 +665,7 @@ header{background:rgba(17,21,27,.94)}
 @media (max-width:960px){.sent-todos-toolbar{grid-template-columns:1fr 1fr}.sent-todos-toolbar-spacer{display:none}.sent-todos-toolbar .table-toolbar-search{width:100%}.section-head{align-items:flex-start;flex-direction:column}}
 @media (max-width:960px){.worker-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:760px){.shell,main{padding-left:12px;padding-right:12px}.topbar{align-items:flex-start;flex-direction:column;padding:14px 0}.grid{grid-template-columns:1fr}th,td{padding:10px 12px}.attempt-foot{align-items:flex-start;flex-direction:column}.attempt-conversation-banner{align-items:flex-start;flex-direction:column}.attempt-detail-grid{grid-template-columns:1fr}.todo-detail-fields{grid-template-columns:1fr}.todo-followup-time{margin-left:0}.log-head{grid-template-columns:1fr}.log-time{text-align:left}.log-body{grid-template-columns:1fr}.worker-grid{grid-template-columns:1fr}.history-chart{height:220px}.table-toolbar{grid-template-columns:1fr}.table-toolbar-center{justify-content:flex-start}.table-toolbar-right{justify-content:flex-start}.sent-todos-toolbar{grid-template-columns:1fr}}
+@media (max-width:760px){.settings-layout{grid-template-columns:1fr;gap:14px}.settings-nav{position:static;display:flex;gap:4px;overflow-x:auto;padding:5px}.settings-nav-item{flex:0 0 auto;min-height:34px;padding:0 10px;white-space:nowrap}}
 """
 
 FAVICON_HREF = (
@@ -2769,6 +2777,7 @@ def _render_config_body(
     audit_rules_error: str = "",
     audit_rules_draft: str | None = None,
     tab_href_prefix: str = "/config?tab=",
+    include_tabs: bool = True,
 ) -> tuple[str, str]:
     if active_tab == "developer":
         content = _render_developer_prompt_editor_content(saved=saved)
@@ -2798,7 +2807,7 @@ def _render_config_body(
         if active_tab in {"wechat", "audit-rules"}
         else _prompt_config_card(active_tab)
     )
-    tabs = _config_tabs(active_tab, tab_href_prefix=tab_href_prefix)
+    tabs = _config_tabs(active_tab, tab_href_prefix=tab_href_prefix) if include_tabs else ""
     return active_tab, f"{prompt_card}{tabs}{content}"
 
 
@@ -2813,6 +2822,25 @@ def render_settings_page(
     log_type: str = "",
     worker_status_payload: dict[str, object] | None = None,
 ) -> str:
+    if active_tab == "config":
+        # ``config`` was the former parent menu. Resolve old deep links to the
+        # corresponding flat section while keeping those URLs readable.
+        active_tab = config_tab
+    valid_tabs = {
+        "info",
+        "system",
+        "agent-runtime",
+        "channels",
+        "wechat",
+        "developer",
+        "user",
+        "audit-rules",
+        "workers",
+        "logs",
+    }
+    if active_tab not in valid_tabs:
+        active_tab = "info"
+
     if active_tab == "workers":
         content = _render_workers_content(store, payload=worker_status_payload)
     elif active_tab == "logs":
@@ -2826,14 +2854,19 @@ def render_settings_page(
             fixed_params={"tab": "logs"},
         )
     else:
-        active_tab = "config"
         _, content = _render_config_body(
-            active_tab=config_tab,
+            active_tab=active_tab,
             saved=False,
             db_path=store.path,
-            tab_href_prefix="/settings?tab=config&config_tab=",
+            tab_href_prefix="/settings?tab=",
+            include_tabs=False,
         )
-    body = f"{_settings_tabs(active_tab)}{content}"
+    body = (
+        '<div class="settings-layout">'
+        f"{_settings_tabs(active_tab)}"
+        f'<div class="settings-content">{content}</div>'
+        "</div>"
+    )
     return render_page(
         "Settings",
         body,
@@ -2844,13 +2877,25 @@ def render_settings_page(
 
 
 def _settings_tabs(active_tab: str) -> str:
-    tabs = (("config", "Config"), ("workers", "Workers"), ("logs", "Logs"))
+    tabs = (
+        ("info", "Info"),
+        ("system", "System Config"),
+        ("agent-runtime", "Agent Runtime"),
+        ("channels", "Channels"),
+        ("wechat", "WeChat"),
+        ("developer", "Developer Prompt"),
+        ("user", "User Prompt"),
+        ("audit-rules", "Audit Rules"),
+        ("workers", "Workers"),
+        ("logs", "Logs"),
+    )
     links = "".join(
-        f'<a class="{"prompt-tab active" if key == active_tab else "prompt-tab"}" '
-        f'href="/settings?tab={key}">{label}</a>'
+        f'<a class="{"settings-nav-item active" if key == active_tab else "settings-nav-item"}" '
+        f'href="/settings?tab={escape(key, quote=True)}"'
+        f'{" aria-current=\"page\"" if key == active_tab else ""}>{escape(label)}</a>'
         for key, label in tabs
     )
-    return f'<nav class="prompt-tabs" aria-label="Settings sections">{links}</nav>'
+    return f'<nav class="settings-nav" aria-label="Settings navigation">{links}</nav>'
 
 
 def _prompt_config_card(active_tab: str) -> str:
@@ -9127,10 +9172,9 @@ def create_audit_app(
 
     @app.get("/config", response_class=HTMLResponse)
     def config_page(request: Request) -> str:
-        return render_settings_page(
-            AutoReplyStore(db_path),
-            active_tab="config",
-            config_tab=str(request.query_params.get("tab", "info")),
+        return render_config_page(
+            active_tab=str(request.query_params.get("tab", "info")),
+            db_path=db_path,
         )
 
     @app.get("/notifications", response_class=HTMLResponse)
