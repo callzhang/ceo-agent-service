@@ -2505,6 +2505,29 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
         "latest_updated_at": "" if latest_row is None else str(latest_row["value"] or ""),
         "latest_error": latest_error,
     }
+def _clean_work_item_attention_summary(summary: str) -> str:
+    """Turn a local-file excerpt into a useful one-line queue summary.
+
+    Local-file scanners intentionally persist an excerpt (rather than a
+    generated summary) so the worker can audit the original material. The
+    excerpt often starts with row/source HTML comments, which are useful in
+    storage but misleading in the Attention table.
+    """
+
+    text = re.sub(r"<!--.*?-->", "", summary or "", flags=re.DOTALL)
+    lines = []
+    for line in text.splitlines():
+        normalized = " ".join(line.split())
+        if not normalized or normalized.startswith("!["):
+            continue
+        if normalized.casefold() in {"# ai summary", "## ai summary"}:
+            continue
+        lines.append(normalized)
+        if len(lines) >= 2:
+            break
+    return " ".join(lines) or " ".join((summary or "").split())
+
+
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dict[str, str]]:
     specs = [
         (
@@ -2630,13 +2653,16 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                 limit ?
             """
             for row in db.execute(sql, (*statuses, limit)).fetchall():
+                summary = str(row["summary"] or "")
+                if category == "Work item":
+                    summary = _clean_work_item_attention_summary(summary)
                 rows.append(
                     {
                         "category": category,
                         "id": str(row["id"]),
                         "status": str(row["status"] or ""),
                         "context": str(row["context"] or ""),
-                        "summary": str(row["summary"] or ""),
+                        "summary": summary,
                         "updated_at": str(row["updated_at"] or ""),
                         "error": str(row["error"] or ""),
                     }

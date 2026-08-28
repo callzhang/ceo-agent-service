@@ -7236,6 +7236,38 @@ def test_worker_attention_uses_local_file_title_as_work_item_context(
     assert row["summary"] == "Hiring plan"
 
 
+def test_worker_attention_cleans_local_file_summary_metadata(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    work_input_id = store.enqueue_work_summary_input(
+        "local_file",
+        "/workspace/hiring.md",
+        json.dumps(
+            {
+                "source": {"title": "hiring.md"},
+                "summary": (
+                    "<!-- row_key: abc -->\n"
+                    "<!-- source_url: https://example.test/summary -->\n\n"
+                    "# AI Summary\n\n"
+                    "主题: 招聘优化\n"
+                    "时间: 2026-08-28\n"
+                ),
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    payload = build_worker_status_payload(store)
+    row = next(
+        item
+        for item in payload["attention_rows"]
+        if item["category"] == "Work item" and item["id"] == str(work_input_id)
+    )
+
+    assert row["summary"] == "主题: 招聘优化 时间: 2026-08-28"
+    assert "row_key" not in row["summary"]
+    assert "source_url" not in row["summary"]
+
+
 def test_worker_attention_meeting_summary_falls_back_to_meeting_title(
     tmp_path: Path,
 ):
