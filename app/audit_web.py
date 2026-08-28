@@ -50,6 +50,7 @@ from app.approval_history import (
     resolve_approval_history_group_result,
 )
 from app.audit_rules import (
+    _render_audit_variables,
     audit_rules_template_path,
     read_audit_rules_template,
     render_audit_rules,
@@ -2878,6 +2879,7 @@ def render_settings_page(
     prompt: str = "developer",
     view: str = "template",
     connector: str = "dingtalk",
+    audit_rule: str = "template",
     log_limit: int | None = DEFAULT_ERROR_LIST_LIMIT,
     log_page: int = 1,
     log_query: str = "",
@@ -2935,6 +2937,8 @@ def render_settings_page(
         content = _render_prompts_content(prompt=prompt, view=view)
     elif active_tab == "connectors":
         content = _render_connectors_content(store, connector=connector)
+    elif active_tab == "audit-rules":
+        content = _render_audit_rules_content(audit_rule=audit_rule, view=view)
     else:
         _, content = _render_config_body(
             active_tab=active_tab,
@@ -8183,6 +8187,78 @@ def _highlight_audit_rule_variables(template: str) -> str:
     )
 
 
+def _audit_rule_view_link(rule: str, view: str, label: str, active: bool) -> str:
+    class_name = "prompt-tab active" if active else "prompt-tab"
+    return (
+        f'<a class="{class_name}" href="/settings?tab=audit-rules&rule='
+        f'{escape(rule, quote=True)}&view={escape(view, quote=True)}">{escape(label)}</a>'
+    )
+
+
+def _render_audit_rules_content(*, audit_rule: str = "template", view: str = "template") -> str:
+    audit_rule = audit_rule if audit_rule in {"template", "consumer", "audit"} else "template"
+    view = view if view in {"template", "preview"} else "template"
+    template_path = audit_rules_template_path()
+    error_html = ""
+    try:
+        template = read_audit_rules_template()
+        consumer_preview = render_audit_rules(AgentRole.CONSUMER)
+        audit_preview = render_audit_rules(AgentRole.AUDIT)
+    except (OSError, DeveloperPromptTemplateError) as exc:
+        template = ""
+        consumer_preview = audit_preview = ""
+        error_html = f'<p class="attempt-warning">Template render error: {escape(str(exc))}</p>'
+    active_label = {"template": "Template", "consumer": "Consumer", "audit": "Audit"}[audit_rule]
+    rule_tabs = (
+        '<nav class="prompt-pill-tabs" aria-label="Audit Rule sections">'
+        + "".join(
+            _audit_rule_view_link(rule, view, label, audit_rule == rule)
+            for rule, label in (("template", "Template"), ("consumer", "Consumer"), ("audit", "Audit"))
+        )
+        + "</nav>"
+    )
+    view_tabs = (
+        '<nav class="prompt-view-toggle" aria-label="Audit Rule view">'
+        f"{_audit_rule_view_link(audit_rule, 'template', 'Template', view == 'template')}"
+        f"{_audit_rule_view_link(audit_rule, 'preview', 'Rendered preview', view == 'preview')}"
+        "</nav>"
+    )
+    if view == "preview":
+        if audit_rule == "audit":
+            rendered = audit_preview
+        elif audit_rule == "consumer":
+            rendered = consumer_preview
+        else:
+            rendered = _render_audit_variables(template)
+        panel = (
+            '<p class="muted">Rendered preview · current configuration</p>'
+            f'<pre class="audit-template-preview">{escape(rendered)}</pre>'
+        )
+    elif audit_rule == "template":
+        panel = (
+            '<form method="post" action="/settings/audit-rules">'
+            '<label for="audit-rules-template">Configurable rules</label>'
+            f'<textarea id="audit-rules-template" name="template" style="min-height:420px">{escape(template)}</textarea>'
+            '<p><button type="submit">Save rules</button></p></form>'
+            '<h3>Template tokens</h3>'
+            f'<pre class="audit-template-preview">{_highlight_audit_rule_variables(template)}</pre>'
+        )
+    else:
+        panel = (
+            '<p class="muted">当前 tab 使用同一份 Audit Rules template；切换到 Template tab 编辑。</p>'
+            f'<pre class="audit-template-preview">{_highlight_audit_rule_variables(template)}</pre>'
+        )
+    return (
+        '<section class="card audit-rules-page">'
+        '<h2>Audit Rules</h2>'
+        '<p class="muted">Audit Rules 先定义可配置模板，再分别查看 Consumer 和 Audit wrapper 的最终渲染结果。'
+        'Template 中的 {{principal}} 会使用 Configuration 中的当前显示名替换。</p>'
+        f'<p class="muted">Template path: <code>{escape(str(template_path))}</code> · 当前视图：{escape(active_label)}</p>'
+        f'{rule_tabs}{view_tabs}{error_html}{panel}'
+        '</section>'
+    )
+
+
 def _user_prompt_dynamic_function_table() -> str:
     blocks = [
         UserPromptBlock(
@@ -8284,6 +8360,18 @@ def handle_audit_rules_post(body: bytes) -> tuple[int, dict[str, str], str]:
             audit_rules_draft=template,
         )
     return 303, {"Location": "/config?tab=audit-rules&saved=1"}, ""
+
+
+def handle_settings_audit_rules_post(body: bytes) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    template = parsed.get("template", [""])[0]
+    try:
+        write_audit_rules_template(template)
+    except (DeveloperPromptTemplateError, OSError) as exc:
+        return 400, {}, render_page("Audit Rules invalid", escape(str(exc)))
+    return 303, {
+        "Location": "/settings?tab=audit-rules&rule=template&view=template&saved=1"
+    }, ""
 
 
 def handle_prompt_variables_post(body: bytes) -> tuple[int, dict[str, str], str]:
@@ -9686,6 +9774,7 @@ def create_audit_app(
             prompt=str(request.query_params.get("prompt", "developer")),
             view=str(request.query_params.get("view", "template")),
             connector=str(request.query_params.get("connector", "dingtalk")),
+            audit_rule=str(request.query_params.get("rule", "template")),
             log_limit=_bounded_log_page_size(
                 _positive_int_query(request, "limit", default=DEFAULT_ERROR_LIST_LIMIT)
             ),
@@ -9955,6 +10044,11 @@ def create_audit_app(
     @app.post("/settings/prompts")
     async def settings_prompts_save(request: Request):
         status, headers, html = handle_settings_prompt_post(await request.body())
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/settings/audit-rules")
+    async def settings_audit_rules_save(request: Request):
+        status, headers, html = handle_settings_audit_rules_post(await request.body())
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/config/agent-runtime")

@@ -162,6 +162,35 @@ def test_audit_rules_editor_highlights_principal_placeholder_and_uses_current_na
     assert "Escalate to Alex only when needed." in page
 
 
+def test_audit_rules_settings_tabs_separate_template_consumer_and_audit_views(
+    tmp_path: Path, monkeypatch
+):
+    path = tmp_path / "audit_rules.md"
+    path.write_text("Escalate to {{principal}} only when needed.", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(path))
+    monkeypatch.setenv("USER_ALIAS", "Alex")
+    store = _store(tmp_path)
+
+    template_page = render_settings_page(store, active_tab="audit-rules")
+    consumer_page = render_settings_page(
+        store, active_tab="audit-rules", audit_rule="consumer", view="preview"
+    )
+    audit_page = render_settings_page(
+        store, active_tab="audit-rules", audit_rule="audit", view="preview"
+    )
+
+    assert "Audit Rules 先定义可配置模板" in template_page
+    assert 'aria-label="Audit Rule sections"' in template_page
+    assert 'href="/settings?tab=audit-rules&rule=consumer&view=template"' in template_page
+    assert 'href="/settings?tab=audit-rules&rule=audit&view=template"' in template_page
+    assert 'class="config-token audit-variable-pill"' in template_page
+    assert "Escalate to Alex only when needed." not in template_page
+    assert "Escalate to Alex only when needed." in consumer_page
+    assert "Escalate to Alex only when needed." in audit_page
+    assert "{{principal}}" not in consumer_page.split("Rendered preview", 1)[1]
+    assert "{{principal}}" not in audit_page.split("Rendered preview", 1)[1]
+
+
 def test_active_consumer_boundary_uses_configured_principal(monkeypatch):
     monkeypatch.setenv("USER_ALIAS", "Alex")
     instructions = consumer_developer_instructions("Check the candidate.")
