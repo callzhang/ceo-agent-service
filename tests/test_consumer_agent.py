@@ -2130,11 +2130,12 @@ def test_api_only_ineligible_route_is_typed_and_starts_no_process(
     )
     assert run is not None and run.status == "failed"
     error = json.loads(run.structured_error_json)
-    assert error["code"] == (
-        "runtime_capability_missing"
-        if eligibility == "missing_capability"
-        else "runtime_execution_failed"
-    )
+    expected_code = {
+        "missing_capability": "runtime_capability_missing",
+        "paused": "runtime_provider_unreachable",
+        "unprobed": "runtime_execution_failed",
+    }[eligibility]
+    assert error["code"] == expected_code
     assert error["retryable"] is True
     expected_reason = {
         "unprobed": "snapshot_missing",
