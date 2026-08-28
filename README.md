@@ -462,7 +462,7 @@ http://127.0.0.1:8765/
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录
 - `/attempts/{id}`：单次处理详情；同一触发消息后续重跑成功时，旧记录顶部会链接到后续 attempt 并展示其最新动作，原始状态仍保留在详情字段中供审计。Consumer 与 Audit 执行记录只能从该 Attempt 打开，不显示内部会话标识或本地文件路径。
 - `/developer-prompt`：Developer/User Prompt 模板管理
-- `/settings`：Settings 的所有区块使用统一的左侧导航（Info、System Config、Agent Runtime、Connectors、WeChat、Developer Prompt、User Prompt、Audit Rules、Workers、Logs）；`/config`、`/workers`、`/logs` 保留为兼容入口。
+- `/settings`：Settings 的所有区块使用统一的左侧导航（Info、System Config、Agent Runtime、Connectors、WeChat、Developer Prompt、User Prompt、Audit Rules、Workers、Logs）；Info 同时展示 producer 路由相关变量的当前生效值；`/config`、`/workers`、`/logs` 保留为兼容入口。
 - `/errors`：错误列表
 
 ### 8. 启用 task 总结

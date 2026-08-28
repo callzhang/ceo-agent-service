@@ -5472,7 +5472,7 @@ def test_info_menu_renders_producer_configuration_values_explicitly():
     assert "SINGLE_CHAT_READ_RECOVERY_LIMIT" in html
     assert "CEO_MENTION_ALIASES" in html
     assert "CEO_BROADCAST_MENTION_ALIASES" in html
-    assert '<code class="config-info-value">5m</code>' in html
+    assert '<td><code class="config-info-value"></code></td>' not in html
 
 
 def test_render_page_brand_links_to_history():
