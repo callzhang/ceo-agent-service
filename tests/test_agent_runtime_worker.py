@@ -13,7 +13,7 @@ import app.agent_skill_usage as agent_skill_usage
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
-from app.agent_result import AgentError, SideEffectState
+from app.agent_result import AgentError
 from app.audit_agent import AuditAgentRunner
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.consumer_agent import ConsumerAgentRunner
@@ -503,7 +503,6 @@ def _result(
     *,
     summary: str = "任务已完成。",
     retryable: bool = False,
-    side_effect_state: SideEffectState = SideEffectState.NONE,
     code: str = "",
 ) -> ScriptResult:
     return ScriptResult(
@@ -512,7 +511,6 @@ def _result(
         error=AgentError(
             code=code,
             retryable=retryable,
-            side_effect_state=side_effect_state,
         ),
     )
 
@@ -829,6 +827,8 @@ def _agent_result_event(result) -> dict[str, object]:
             "decision_options": [
                 option.model_dump(mode="json") for option in result.decision_options
             ],
+            "risk": result.risk.value,
+            "confidence": result.confidence,
             "error_code": error.code,
             "error_retryable": error.retryable,
             "error_authorization_required": error.authorization_required,
@@ -839,7 +839,6 @@ def _agent_result_event(result) -> dict[str, object]:
             "outcome": result.outcome.value,
             "summary": result.summary,
             "proposal_revision": result.proposal_revision,
-            "side_effect_state": result.side_effect_state.value,
             "feedback": (
                 result.feedback.model_dump(mode="json")
                 if result.feedback is not None
@@ -850,12 +849,11 @@ def _agent_result_event(result) -> dict[str, object]:
                 if result.external_result is not None
                 else None
             ),
-            "reconciliation": [
-                item.model_dump(mode="json") for item in result.reconciliation
-            ],
             "decision_options": [
                 option.model_dump(mode="json") for option in result.decision_options
             ],
+            "risk": result.risk.value,
+            "confidence": result.confidence,
             "error_code": error.code,
             "error_retryable": error.retryable,
             "error_authorization_required": error.authorization_required,
@@ -904,6 +902,8 @@ def _consumer_protocol_result(
                 "retryable": retryable,
                 "authorization_required": False,
             },
+            "risk": "high" if outcome == "needs_human" else "low",
+            "confidence": 0.1 if outcome == "needs_human" else 1.0,
         }
     )
 
@@ -943,7 +943,6 @@ def _audit_protocol_result(
             "outcome": outcome,
             "summary": summary,
             "proposal_revision": revision,
-            "side_effect_state": "confirmed" if executed else "none",
             "feedback": None,
             "external_result": (
                 {
@@ -960,6 +959,8 @@ def _audit_protocol_result(
                 "retryable": retryable,
                 "authorization_required": authorization_required,
             },
+            "risk": "high" if outcome == "needs_human" else "low",
+            "confidence": 0.1 if outcome == "needs_human" else 1.0,
         }
     )
 
@@ -3551,7 +3552,6 @@ def test_queued_task_runs_agent_once_and_records_completed_attempt(tmp_path: Pat
             ScriptedRun(
                 _result(
                     summary="已回复并确认发送成功。",
-                    side_effect_state=SideEffectState.CONFIRMED,
                 ),
                 receipts=(_receipt("send-1"),),
             )
@@ -3754,7 +3754,6 @@ def test_retryable_failure_is_requeued_without_custom_receipt_logic(
                     summary="发送已确认，但最终结果写入失败。",
                     retryable=True,
                     code="result_persistence_failed",
-                    side_effect_state=SideEffectState.CONFIRMED,
                 ),
                 receipts=(_receipt("send-confirmed"),),
             )
@@ -3779,7 +3778,6 @@ def test_completed_result_does_not_require_custom_effect_evidence(tmp_path: Path
         [trigger],
         [
             ScriptedRun(
-                _result(side_effect_state=SideEffectState.CONFIRMED),
                 (_read_event(),),
             )
         ],
@@ -3861,7 +3859,6 @@ def test_failed_result_is_a_regular_failure_without_unknown_effect_state(
                     ScriptOutcome.FAILED,
                     summary="发送结果未知。",
                     code="send_interrupted",
-                    side_effect_state=SideEffectState.UNKNOWN,
                 ),
                 (_persisted_effect_evidence("send-1", "started"),),
             )
@@ -3887,11 +3884,9 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
         [trigger],
         [
             ScriptedRun(
-                _result(side_effect_state=SideEffectState.CONFIRMED),
                 receipts=(_receipt("send-a", command_digest="a" * 64),),
             ),
             ScriptedRun(
-                _result(side_effect_state=SideEffectState.CONFIRMED),
                 receipts=(_receipt("send-b", command_digest="b" * 64),),
             ),
         ],
