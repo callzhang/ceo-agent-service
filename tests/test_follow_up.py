@@ -2007,6 +2007,55 @@ def test_follow_up_failure_marks_failed_and_records_error(tmp_path):
     assert "send failed" in failed.send_result_json
 
 
+def test_transport_failure_uses_failed_projection_without_reconciliation(
+    tmp_path,
+):
+    """A send exception is an ordinary failure; no app-owned readback state is created."""
+    from app.dws_client import DwsError
+
+    class FailedDws(FakeDws):
+        def send_message(self, *args, **kwargs):
+            self.sent.append(kwargs)
+            raise DwsError("transport returned no result", code="1")
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请同步进展",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+
+    dws = FailedDws()
+    assert process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    ) == 0
+
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "failed"
+    result = json.loads(draft.send_result_json)
+    assert result["reason"] == "delivery_failed"
+    assert result["delivery_state"] == "not_sent"
+    attempt = store.get_follow_up_send_attempt(
+        draft_id=draft_id,
+        draft_revision=1,
+    )
+    assert attempt is not None
+    assert attempt["state"] == "failed"
+    assert attempt["idempotency_uuid"] == result["idempotency_uuid"]
+    assert "reconciliation" not in result
+
+
 def test_direct_target_rejection_is_clear_non_delivery_failure(tmp_path):
     from app.dws_client import DwsError
 

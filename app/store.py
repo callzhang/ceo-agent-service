@@ -18052,8 +18052,8 @@ class AutoReplyStore:
                     ).fetchone()[0]
                     == 1
                 )
-                if state != "retryable" and not (
-                    state == "claimed" and lease_expired
+                if state not in {"retryable", "failed"} and not (
+                    state in {"claimed", "sending"} and lease_expired
                 ):
                     return False
                 reclaimed = db.execute(
@@ -19019,7 +19019,7 @@ class AutoReplyStore:
                 where draft_id=?
                   and draft_revision=?
                   and claim_token=?
-                  and state='claimed'
+                  and state in ('claimed', 'sending')
                   and (lease_until='' or datetime(lease_until) <= datetime(?))
                   and exists (
                     select 1

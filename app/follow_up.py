@@ -16,8 +16,6 @@ from app.todo_sync import (
 MAX_FOLLOW_UP_AGE_SECONDS = 7 * 24 * 60 * 60
 RECOVERABLE_AUTH_RETRY_DELAY = timedelta(minutes=15)
 FOLLOW_UP_SEND_LEASE = timedelta(minutes=5)
-FOLLOW_UP_RECONCILIATION_LEASE = timedelta(minutes=5)
-FOLLOW_UP_RECONCILIATION_DELAY = timedelta(minutes=15)
 PRIOR_DELIVERY_REVIEW_REASON = "prior_revision_delivered_requires_agent_review"
 LOCAL_WORK_TZ = ZoneInfo("Asia/Shanghai")
 LOCAL_WORK_START_HOUR = 9
@@ -352,9 +350,7 @@ def _defer_recoverable_follow_up(
             claim_token=claim_token,
             lease_owner=lease_owner,
             now=now,
-            attempt_state=(
-                "unknown" if reason == "dws_send_outcome_unknown" else "retryable"
-            ),
+            attempt_state="retryable",
             attempt_result_json=result_json,
             **update,
         )
@@ -363,169 +359,6 @@ def _defer_recoverable_follow_up(
         draft.revision,
         **update,
     )
-
-
-def _dws_send_outcome_is_unknown(exc: BaseException) -> bool:
-    if not isinstance(exc, DwsError):
-        return False
-    if exc.needs_login or exc.needs_authorization:
-        return False
-    return exc.code in {None, "1"}
-
-
-def _reconcile_unknown_follow_up_attempt(
-    store: AutoReplyStore,
-    dws,
-    draft,
-    attempt: dict[str, object],
-    *,
-    now: str,
-    reconciliation_owner: str,
-) -> str:
-    attempt_revision = int(attempt.get("draft_revision") or 0)
-    payload = _json_dict(str(attempt.get("result_json") or "{}"))
-    conflict = _json_dict(str(attempt.get("conflict_json") or "{}"))
-    late_result = _json_dict(str(attempt.get("late_result_json") or "{}"))
-    authoritative_state = store.authoritative_follow_up_delivery_state(
-        payload,
-        conflict,
-    )
-    verification: dict[str, object] = {
-        "state": "ambiguous",
-        "reason": "no persisted send result supports read-only status lookup",
-    }
-    if authoritative_state == "sent":
-        verification = {
-            "state": "sent",
-            "reason": "persisted authoritative sent evidence is terminal",
-        }
-    else:
-        existing_result = conflict.get("existing_result")
-        candidates = [
-            payload.get("send_result"),
-            (
-                existing_result.get("send_result")
-                if isinstance(existing_result, dict)
-                else None
-            ),
-            late_result.get("send_result"),
-        ]
-        send_result = next(
-            (
-                candidate
-                for candidate in candidates
-                if isinstance(candidate, dict)
-                and candidate.get("success") is not False
-            ),
-            None,
-        )
-    if (
-        authoritative_state != "sent"
-        and verification.get("state") == "ambiguous"
-        and draft.target_kind == "direct"
-        and attempt_revision == draft.revision
-        and hasattr(dws, "read_direct_messages_since")
-    ):
-        try:
-            readback = dws.read_direct_messages_since(
-                draft.owner_user_id,
-                start=str(attempt.get("claimed_at") or now),
-            )
-            messages = readback.get("messages")
-            complete = readback.get("complete") is True
-            if complete and isinstance(messages, list):
-                expected_text = _follow_up_message_text(store, draft)
-                delivered = any(
-                    isinstance(message, dict)
-                    and str(message.get("text") or "").startswith(expected_text)
-                    for message in messages
-                )
-                verification = {
-                    "state": "sent" if delivered else "failed",
-                    "reason": (
-                        "exact outbound text found in complete direct-message readback"
-                        if delivered
-                        else "exact outbound text absent from complete direct-message readback"
-                    ),
-                    "messages_checked": len(messages),
-                }
-            else:
-                verification = {
-                    "state": "ambiguous",
-                    "reason": "direct-message readback is incomplete",
-                }
-        except Exception as exc:
-            verification = {
-                "state": "ambiguous",
-                "reason": "direct-message readback failed",
-                "error": str(exc),
-            }
-    if (
-        authoritative_state != "sent"
-        and isinstance(send_result, dict)
-        and hasattr(dws, "verify_message_send_result")
-    ):
-        try:
-            checked = dws.verify_message_send_result(send_result)
-            if isinstance(checked, dict):
-                verification = checked
-        except Exception as exc:
-            verification = {
-                "state": "ambiguous",
-                "reason": "send status readback failed",
-                "error": str(exc),
-            }
-    if authoritative_state == "failed" and verification.get("state") == "ambiguous":
-        verification["authoritative_prior_state"] = "failed"
-    reconciled = {
-        **payload,
-        "claimed_revision": attempt_revision,
-        "idempotency_uuid": str(attempt.get("idempotency_uuid") or ""),
-        "reconciliation_from_state": str(
-            attempt.get("reconciliation_from_state") or "unknown"
-        ),
-        "reconciliation": verification,
-        "reconciled_at": now,
-    }
-    result_json = json.dumps(reconciled, ensure_ascii=False)
-    state = str(verification.get("state") or "").casefold()
-    claim_token = str(attempt.get("claim_token") or "")
-    if state == "sent":
-        resolution = store.resolve_unknown_follow_up_attempt_sent(
-            draft.id,
-            draft_revision=attempt_revision,
-            claim_token=claim_token,
-            lease_owner=reconciliation_owner,
-            now=now,
-            sent_at=now,
-            result_json=result_json,
-        )
-        outcome = str(resolution.get("outcome") or "")
-        if outcome == "draft_finalized":
-            return "sent_finalized"
-        if outcome == "review_required":
-            return "sent_review_required"
-        return "stale"
-    if state == "failed":
-        resolved = store.resolve_unknown_follow_up_attempt_not_sent(
-            draft.id,
-            draft_revision=attempt_revision,
-            claim_token=claim_token,
-            lease_owner=reconciliation_owner,
-            now=now,
-            result_json=result_json,
-        )
-        return "not_sent" if resolved else "stale"
-    deferred = store.defer_unknown_follow_up_attempt(
-        draft.id,
-        draft_revision=attempt_revision,
-        claim_token=claim_token,
-        lease_owner=reconciliation_owner,
-        now=now,
-        lease_until=_lease_until(now, FOLLOW_UP_RECONCILIATION_DELAY),
-        result_json=result_json,
-    )
-    return "unknown" if deferred else "stale"
 
 
 def _recover_follow_up_send_attempt(
@@ -542,6 +375,11 @@ def _recover_follow_up_send_attempt(
         return False
     state = str(attempt.get("state") or "")
     if state == "claimed":
+        return _attempt_lease_is_active(attempt, now=now)
+    if state == "sending":
+        # A sender that stopped after entering ``sending`` is retried through
+        # the normal claim path once its lease expires.  There is no separate
+        # reconciliation state or readback worker for this case.
         return _attempt_lease_is_active(attempt, now=now)
     if state == "sent":
         store.finalize_reviewed_current_follow_up_delivery(
@@ -967,78 +805,24 @@ def _recover_prior_follow_up_send_attempt(
             )
             blocked = blocked or not invalidated
             continue
-        if state in {"sending", "unknown"}:
-            blocked = True
+        if state == "sending":
+            if _attempt_lease_is_active(attempt, now=now):
+                blocked = True
+                continue
+            invalidated = store.invalidate_expired_prior_follow_up_claim(
+                draft_id=draft.id,
+                draft_revision=int(attempt.get("draft_revision") or 0),
+                claim_token=str(attempt.get("claim_token") or ""),
+                current_revision=draft.revision,
+                now=now,
+            )
+            blocked = blocked or not invalidated
             continue
         if state == "sent":
             if int(attempt.get("review_enqueued_revision") or 0) < draft.revision:
                 _enqueue_prior_delivery_agent_review(store, draft, attempt, now=now)
             blocked = True
     return blocked
-
-
-def _process_expired_follow_up_reconciliations(
-    store: AutoReplyStore,
-    dws,
-    *,
-    now: str,
-    limit: int,
-) -> set[int]:
-    lease_owner = f"follow-up-reconciliation:{uuid4()}"
-    attempts = store.claim_expired_follow_up_reconciliation_attempts(
-        now=now,
-        lease_owner=lease_owner,
-        lease_until=_lease_until(now, FOLLOW_UP_RECONCILIATION_LEASE),
-        limit=limit,
-    )
-    handled_draft_ids: set[int] = set()
-    for attempt in attempts:
-        draft_id = int(attempt.get("draft_id") or 0)
-        draft = store.get_follow_up_draft(draft_id)
-        if draft is None:
-            payload = _json_dict(str(attempt.get("result_json") or "{}"))
-            payload["reconciliation"] = {
-                "state": "ambiguous",
-                "reason": "follow-up draft is unavailable",
-            }
-            store.defer_unknown_follow_up_attempt(
-                draft_id,
-                draft_revision=int(attempt.get("draft_revision") or 0),
-                claim_token=str(attempt.get("claim_token") or ""),
-                lease_owner=lease_owner,
-                now=now,
-                lease_until=_lease_until(now, FOLLOW_UP_RECONCILIATION_DELAY),
-                result_json=json.dumps(payload, ensure_ascii=False),
-            )
-            continue
-        handled_draft_ids.add(draft.id)
-        outcome = _reconcile_unknown_follow_up_attempt(
-            store,
-            dws,
-            draft,
-            attempt,
-            now=now,
-            reconciliation_owner=lease_owner,
-        )
-        attempt_revision = int(attempt.get("draft_revision") or 0)
-        if outcome in {"sent_finalized", "sent_review_required"}:
-            delivered = store.get_follow_up_send_attempt(
-                draft_id=draft.id,
-                draft_revision=attempt_revision,
-            )
-            current = store.get_follow_up_draft(draft.id)
-            if (
-                outcome == "sent_review_required"
-                and delivered is not None
-                and current is not None
-            ):
-                _enqueue_prior_delivery_agent_review(
-                    store,
-                    current,
-                    delivered,
-                    now=now,
-                )
-    return handled_draft_ids
 
 
 def _owner_dingtalk_target(
@@ -1079,16 +863,6 @@ def process_due_follow_ups(
         if auto_send
         else set()
     )
-    reconciled_draft_ids = (
-        _process_expired_follow_up_reconciliations(
-            store,
-            dws,
-            now=now,
-            limit=limit,
-        )
-        if auto_send
-        else set()
-    )
     if draft_ids is None:
         drafts = store.list_follow_up_drafts(
             statuses=("draft", "approved"),
@@ -1114,7 +888,7 @@ def process_due_follow_ups(
     for draft in drafts:
         if not auto_send:
             continue
-        if draft.id in reconciled_draft_ids or draft.id in reopened_review_draft_ids:
+        if draft.id in reopened_review_draft_ids:
             continue
         if _recover_prior_follow_up_send_attempt(store, draft, now=now):
             continue
@@ -1346,27 +1120,24 @@ def process_due_follow_ups(
                     sent += 1
                 continue
         except Exception as exc:
-            if sending and (
-                _dws_send_outcome_is_unknown(exc)
-                or is_external_dependency_error(exc)
-            ):
-                unknown_result_json = json.dumps(
+            if sending and is_external_dependency_error(exc):
+                retryable_result_json = json.dumps(
                     {
                         "recoverable": True,
-                        "reason": "dws_send_outcome_unknown",
+                        "retryable": True,
+                        "reason": "delivery_failed",
                         "error": str(exc),
                         "claimed_revision": draft.revision,
                         "idempotency_uuid": revision_uuid,
                     },
                     ensure_ascii=False,
                 )
-                store.mark_follow_up_sending_unknown(
+                store.mark_follow_up_sending_retryable(
                     draft.id,
                     draft_revision=draft.revision,
                     claim_token=claim_token,
                     lease_owner=lease_owner,
-                    lease_until=_lease_until(now, FOLLOW_UP_RECONCILIATION_DELAY),
-                    result_json=unknown_result_json,
+                    result_json=retryable_result_json,
                 )
                 store.record_error(
                     draft.target_conversation_id,
@@ -1413,24 +1184,6 @@ def process_due_follow_ups(
                     draft,
                     now=now,
                     reason=reason,
-                    error=str(exc),
-                    claim_token=claim_token,
-                    idempotency_uuid=revision_uuid,
-                    lease_owner=lease_owner,
-                )
-                store.record_error(
-                    draft.target_conversation_id,
-                    None,
-                    "follow_up",
-                    str(exc),
-                )
-                continue
-            if _dws_send_outcome_is_unknown(exc):
-                _defer_recoverable_follow_up(
-                    store,
-                    draft,
-                    now=now,
-                    reason="dws_send_outcome_unknown",
                     error=str(exc),
                     claim_token=claim_token,
                     idempotency_uuid=revision_uuid,
