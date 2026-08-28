@@ -53,13 +53,13 @@ def test_production_runtime_builds_friday_adapter(tmp_path, monkeypatch):
     assert routed._friday_adapter is not None
 
 
-def test_friday_launcher_environment_inherits_shared_ceo_provider_config():
+def test_friday_launcher_environment_uses_independent_provider_config():
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
-            "CEO_CODEX_API_BASE_URL": "https://api.minimaxi.com/v1",
-            "CEO_CODEX_API_MODEL": "MiniMax-M3",
-            "CEO_CODEX_API_KEY": "minimax-secret",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "https://api.minimaxi.com/v1",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": "MiniMax-M3",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "minimax-secret",
             "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-agent",
             "CEO_FRIDAY_RUNTIME_MODEL": "MiniMax-M3",
             "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",

@@ -297,10 +297,11 @@ Runtime 路由。它通过 Friday Runtime 的 HTTP 接口创建一个 Thread、�
 operation 完成，再读取该 Thread 的最终 Artifact；CEO Agent 不直接调用 MiniMax 或其他
 provider 的 API，也不把 Friday CLI 当作 Codex CLI 执行。Friday 项目负责 provider、模型、
 凭证和 provider 协议（包括 MiniMax 的 Chat Completions 兼容），CEO Agent 只接收 Friday
-返回的最终文本或结构化 Artifact。启用该路由时，CEO Agent 将现有
-`CEO_CODEX_API_BASE_URL` / `CEO_CODEX_API_KEY` 映射为 Friday launcher 可用的
-`FRIDAY_LLM_BASE_URL` / `FRIDAY_LLM_API_KEY`，并将 `CEO_FRIDAY_RUNTIME_MODEL` 映射为
-`FRIDAY_LLM_MODEL`；这些 provider 配置不在 Settings 中重复维护。
+返回的最终文本或结构化 Artifact。启用该路由时，CEO Agent 使用独立的
+`CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL` / `CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY` /
+`CEO_FRIDAY_RUNTIME_PROVIDER_MODEL` 生成 Friday launcher 可用的
+`FRIDAY_LLM_BASE_URL` / `FRIDAY_LLM_API_KEY` / `FRIDAY_LLM_MODEL`；这些 provider 配置不与
+Codex API 配置共享。
 Friday Runtime HTTP 的 RuntimeTicket/session token 仍是独立的服务认证，不与 provider key 混用。
 
 路由顺序由 `CEO_AGENT_RUNTIME_ROUTES` 按配置顺序决定，例如：

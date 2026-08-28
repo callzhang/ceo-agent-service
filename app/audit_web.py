@@ -3388,7 +3388,7 @@ def _render_agent_runtime_config() -> str:
         '<p><label>Provider API Token<br><input id="friday-provider-api-token" '
         'class="config-value-input secret-token-input" type="password" '
         'name="friday_runtime_provider_api_key" autocomplete="new-password" '
-        f'placeholder="{"●" * 12 if friday_provider_key_configured else ""}" ' 
+        f'placeholder="{"●" * 12 if friday_provider_key_configured else ""}" '
         f'data-token-configured="{str(friday_provider_key_configured).lower()}"></label></p>'
         "<p class=\"muted\">Model is selected by the Friday project; this service does not override it.</p>"
         '<p><label><input type="checkbox" name="friday_runtime_auth_disabled" value="1"'

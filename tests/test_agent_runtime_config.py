@@ -116,8 +116,9 @@ def test_load_runtime_config_accepts_friday_runtime():
             "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
             "CEO_FRIDAY_RUNTIME_MODEL": "MiniMax-M3",
             "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",
-            "CEO_CODEX_API_BASE_URL": "https://api.minimaxi.com/v1",
-            "CEO_CODEX_API_KEY": "minimax-secret",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "https://api.minimaxi.com/v1",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": "MiniMax-M3",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "minimax-secret",
         }
     )
 
@@ -139,12 +140,13 @@ def test_load_runtime_config_accepts_friday_runtime():
     assert "minimax-secret" not in repr(config)
 
 
-def test_friday_runtime_reuses_codex_provider_key_without_duplicate_setting():
+def test_friday_runtime_uses_independent_provider_settings_without_duplication():
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
-            "CEO_CODEX_API_BASE_URL": "https://api.minimaxi.com/v1/",
-            "CEO_CODEX_API_KEY": "minimax-secret",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "https://api.minimaxi.com/v1/",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": "MiniMax-M3",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "minimax-secret",
             "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
             "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",
         }
@@ -154,7 +156,7 @@ def test_friday_runtime_reuses_codex_provider_key_without_duplicate_setting():
     assert config.friday_runtime_provider_environment()["FRIDAY_LLM_API_KEY"] == (
         "minimax-secret"
     )
-    assert config.friday_runtime_provider_environment()["FRIDAY_LLM_MODEL"] == "default"
+    assert config.friday_runtime_provider_environment()["FRIDAY_LLM_MODEL"] == "MiniMax-M3"
     assert config.secret_for("friday_runtime").get_secret_value() == "runtime-ticket"
 
 
@@ -162,6 +164,21 @@ def test_friday_runtime_provider_environment_is_empty_without_shared_key():
     config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+            "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",
+        }
+    )
+
+    assert config.friday_runtime_provider_environment() == {}
+
+
+def test_friday_provider_does_not_inherit_codex_provider_settings():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_CODEX_API_BASE_URL": "https://api.minimaxi.com/v1",
+            "CEO_CODEX_API_MODEL": "MiniMax-M3",
+            "CEO_CODEX_API_KEY": "codex-secret",
             "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
             "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",
         }
