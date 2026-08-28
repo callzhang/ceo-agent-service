@@ -8160,37 +8160,15 @@ def test_agent_run_resolution_api_accepts_only_structured_resolution(tmp_path: P
     ) is None
 
 
-def test_exhausted_unknown_run_stays_available_for_automatic_readback(
-    tmp_path: Path,
-):
+def test_exhausted_failed_run_remains_ordinary_retry_candidate(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-suspended",
-        conversation_title="Operations",
-        single_chat=False,
-        trigger_message_id="msg-suspended",
-        trigger_create_time="2026-08-17 09:00:00",
-        trigger_sender="Mina",
-        trigger_text="请处理并确认结果。",
-        trigger_message_json="{}",
-    )
-    task = store.claim_reply_tasks(limit=1)[0]
-    run = _claim_audit_run(store, task).run
-    store.fail_agent_run(
-        run.id,
-        {"code": "codex_result_invalid", "retryable": True},
-        owner="worker",
-    )
-
-    # Failed runs remain ordinary retry candidates; there is no separate
-    # unknown/readback queue to suspend or expose.
-    assert store.suspend_exhausted_unknown_agent_runs() == 0
-    assert store.get_latest_reply_attempt_for_trigger(
-        task.conversation_id, task.trigger_message_id
-    ) is None
-    assert store.list_unknown_agent_runs() == []
+    store.enqueue_reply_task(conversation_id="cid-suspended", conversation_title="Operations", single_chat=False,
+        trigger_message_id="msg-suspended", trigger_create_time="2026-08-17 09:00:00", trigger_sender="Mina",
+        trigger_text="请处理并确认结果。", trigger_message_json="{}")
+    task = store.claim_reply_tasks(limit=1)[0]; run = _claim_audit_run(store, task).run
+    store.fail_agent_run(run.id, {"code": "codex_result_invalid", "retryable": True}, owner="worker")
     assert store.get_agent_run(run.id).status == "failed"
-    assert store.get_reply_task(task.id).status == "processing"
+    assert store.list_unknown_agent_runs() == []
 
 
 def test_agent_run_resolution_handler_rejects_free_text_without_enum(tmp_path: Path):

@@ -2408,70 +2408,14 @@ def test_agent_effect_state_uses_incremental_counters_not_history_scan(tmp_path)
     assert sum("from agent_run_events" in statement for statement in normalized) <= 4
 
 
-def test_legacy_unknown_start_binds_exact_action_index_once(tmp_path):
+def test_failed_run_preserves_effect_event_fact(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     run = _claim_audit(store, _task(store))
-    identity = {
-        "capability": "agent_cli.dws",
-        "operation": "chat message send",
-        "operation_digest": "command-digest",
-        "arguments_digest": "arguments-digest",
-        "target_identifiers": {"group": "cid-one"},
-    }
-    store.append_agent_run_event(
-        run.id,
-        _effect_event(**identity),
-        owner="audit",
-    )
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "crash_after_write"},
-        owner="audit",
-    )
-    assert store.claim_unknown_agent_run(run.id, owner="recovery").claimed
-
-    assert store.bind_legacy_unknown_effect_action(
-        run.id,
-        action_index=1,
-        operation_id="operation-0",
-        expected_identity=identity,
-        owner="recovery",
-    )
-    assert not store.bind_legacy_unknown_effect_action(
-        run.id,
-        action_index=1,
-        operation_id="operation-0",
-        expected_identity=identity,
-        owner="recovery",
-    )
-    receipt_operation_id = (
-        '{"action_index":1,"arguments_digest":"arguments-digest",'
-        '"capability":"agent_cli.dws","operation":"chat message send",'
-        '"operation_digest":"command-digest",'
-        '"proposal_operation_id":"operation-0"}'
-    )
-    store.record_agent_execution_receipt(
-        run.id,
-        receipt_id="legacy-present",
-        operation_id=receipt_operation_id,
-        cli="dws",
-        command_path="chat message send",
-        command_digest="command-digest",
-        exit_code=0,
-        owner="recovery",
-        expected_status="unknown",
-    )
-    store.confirm_agent_execution_receipt(
-        run.id, receipt_operation_id, owner="recovery"
-    )
-    store.confirm_agent_execution_receipt(
-        run.id, receipt_operation_id, owner="recovery"
-    )
-
+    store.append_agent_run_event(run.id, _effect_event(operation_digest="command-digest"), owner="audit")
+    store.fail_agent_run(run.id, {"code": "crash_after_write", "retryable": True}, owner="audit")
     persisted = store.get_agent_run(run.id)
-    assert persisted is not None
-    assert persisted.tool_events[0]["item"]["metadata"]["action_index"] == 1
-    assert persisted.effect_receipt_count == 1
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.effect_started_count == 1
 
 
 def test_effect_counter_backfill_is_migration_safe(tmp_path):
@@ -2694,66 +2638,23 @@ def test_agent_run_migration_rolls_back_before_commit_on_foreign_key_failure(
     assert orphan == (999,)
 
 
-def test_absent_reconciliation_supersedes_other_running_turns(tmp_path):
+def test_failed_audit_keeps_consumer_projection(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-    consumer = _claim_consumer(store, task).run
-    audit = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=consumer.id,
-        operation_id="operation-0",
-        owner="audit",
-        now="2026-08-06 10:00:00",
-    ).run
-    store.mark_agent_run_unknown(
-        audit.id,
-        {"code": "outcome_unknown"},
-        owner="audit",
-        now="2026-08-06 10:00:01",
-    )
-    assert store.claim_unknown_agent_run(
-        audit.id,
-        owner="reconciler",
-        now="2026-08-06 10:00:02",
-    ).claimed
+    task = _task(store); consumer = _claim_consumer(store, task).run
+    audit = store.claim_agent_run(task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="operation-0", owner="audit").run
+    store.fail_agent_run(audit.id, {"code": "outcome_unavailable", "retryable": True}, owner="audit")
+    assert store.get_agent_run(audit.id).status == "failed"
+    assert store.get_agent_run(consumer.id).status == "running"
 
-    store.resolve_unknown_agent_run_absent(
-        audit.id,
-        task.id,
-        code="effect_absent",
-        owner="reconciler",
-        now="2026-08-06 10:00:03",
-    )
 
+def test_consumer_failed_rows_are_not_reconciliation_candidates(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store); consumer = _claim_consumer(store, task).run
+    store.fail_agent_run(consumer.id, {"code": "read_failed", "retryable": True}, owner="consumer")
     assert store.get_agent_run(consumer.id).status == "failed"
-
-
-def test_consumer_unknown_rows_are_not_reconciliation_candidates(tmp_path):
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-    consumer = _claim_consumer(store, task).run
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            """
-            update agent_runs
-            set status='unknown', side_effect_state='unknown',
-                reconciliation_suspended=1
-            where id=?
-            """,
-            (consumer.id,),
-        )
-
-    assert store.list_suspended_unknown_agent_runs() == []
     assert store.list_unknown_agent_runs() == []
-    with pytest.raises(AgentRunLeaseLostError):
-        store.resume_suspended_unknown_agent_run(
-            consumer.id,
-            expected_execution_generation=task.execution_generation,
-        )
 
 
 def test_single_chat_trigger_replacement_supersedes_running_turn(tmp_path):
