@@ -7975,7 +7975,7 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """
                     update reply_tasks
-                    set force_new_decision=1, execution_generation=?,
+                    set force_new_decision=0, execution_generation=?,
                         status='pending', locked_at=null, available_at='',
                         error='service_restart_before_effect',
                         updated_at=current_timestamp

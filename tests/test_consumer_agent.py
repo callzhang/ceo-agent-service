@@ -795,6 +795,33 @@ def test_consumer_forced_rerun_starts_a_fresh_session(store, task, context):
     assert store.get_codex_session_id(task.conversation_id) == "session-fresh"
 
 
+def test_consumer_service_restart_recovery_continues_existing_session(
+    store, task, context
+):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(
+        task.conversation_id, consumer_wire_contract_hash()
+    )
+    executor = CapturingExecutor(_result_jsonl(session="session-old"))
+    recovered_task = task.model_copy(
+        update={
+            "error": "service_restart_before_effect",
+            "force_new_decision": False,
+        }
+    )
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+    ).run(recovered_task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "resume" in executor.commands[0]
+    assert "session-old" in executor.commands[0]
+    assert "继续" in executor.prompts[0]
+
+
 def test_consumer_accepts_read_only_session_handoff(store, task, context):
     result = {
         "outcome": "no_action",

@@ -101,6 +101,7 @@ def test_recover_no_effect_dingtalk_run_after_service_restart(tmp_path: Path) ->
     assert updated.status == "pending"
     assert updated.error == "service_restart_before_effect"
     assert updated.execution_generation != task.execution_generation
+    assert updated.force_new_decision is False
     run = store.get_agent_run(claim.run.id)
     assert run is not None and run.status == "failed"
     runtime = store.get_agent_runtime_attempt(runtime_attempt.id)

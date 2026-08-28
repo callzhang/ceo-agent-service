@@ -435,13 +435,24 @@ class ConsumerAgentRunner:
             ):
                 raise RuntimeError("codex_session_lock_lost")
 
+        continuation_prompt = ""
+        if task.error in {
+            "service_restart_before_effect",
+            "service_restart_immediate_retry",
+        }:
+            continuation_prompt = (
+                "\n\n## Service Restart Recovery\n"
+                "继续。请在当前原有会话中接着完成上一轮尚未完成的工作，"
+                "不要重新开始一个新的业务判断。"
+            )
+
         try:
             result = process.execute(
                 run=claim.run,
                 prompt="## Runtime Invariants\nPreserve typed proposal contracts and session boundaries. The proposal must match the supplied JSON Schema exactly. The result includes the required field \"expected_verification\".\n\n" + context.render(
                     proposal_revision=proposal_revision,
                     feedback=feedback,
-                ),
+                ) + continuation_prompt,
                 session_id=session_id,
                 developer_instructions=consumer_developer_instructions(
                     rendered_rules,
