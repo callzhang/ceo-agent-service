@@ -3053,14 +3053,16 @@ def _available_runtime_variables_html() -> str:
     rows = "".join(
         "<tr>"
         f"<td><code class=\"config-value\">{{{{{escape(block.name)}}}}}</code></td>"
-        f"<td>{escape(block.description)}</td>"
+        f"<td><strong>{escape(block.description.split('；', 1)[0])}</strong><br>"
+        f"<span class=\"muted\">{escape(block.description)}</span></td>"
         "</tr>"
         for block in USER_PROMPT_BLOCKS
     )
     return (
         '<section class="prompt-runtime-variables">'
         "<h3>Available runtime variables</h3>"
-        '<table class="prompt-runtime-table"><thead><tr><th>Variable</th><th>Description</th></tr></thead>'
+        '<p class="muted">这些是服务在运行时自动替换的占位符，不要手动填写。发送消息时，系统会把它们替换成当前任务对应的内容。</p>'
+        '<table class="prompt-runtime-table"><thead><tr><th>Template variable</th><th>它会被替换成什么</th></tr></thead>'
         f"<tbody>{rows}</tbody></table></section>"
     )
 

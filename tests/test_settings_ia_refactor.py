@@ -43,6 +43,26 @@ def test_prompts_page_uses_pill_tabs_and_template_preview_toggle(tmp_path: Path)
     assert "Prompt config" not in response.text
 
 
+def test_user_prompt_editor_exposes_named_template_and_explains_runtime_variables(
+    tmp_path: Path, monkeypatch
+):
+    template_path = tmp_path / "user_prompt.md"
+    template_path.write_text(
+        "{{style_lines}}\n---\n{{current_message}}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_USER_PROMPT_TEMPLATE_PATH", str(template_path))
+    page = TestClient(create_audit_app(tmp_path / "worker.sqlite3")).get(
+        "/settings?tab=prompts&prompt=user&view=template"
+    )
+
+    assert page.status_code == 200
+    assert "{{style_lines}}" in page.text
+    assert "服务在运行时自动替换" in page.text
+    assert "会话名和会话类型" in page.text
+    assert "不要手动填写" in page.text
+
+
 def test_connectors_page_contains_wechat_without_separate_settings_tab(tmp_path: Path):
     store = _store(tmp_path)
 
