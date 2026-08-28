@@ -29,6 +29,7 @@ from app.agent_runtime_router import (
 )
 from app.claude_runtime_adapter import ClaudeCommandPolicy, ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
 from app.process_runner import run_process_with_idle_timeout
 from app.service_codex_config import ServiceMcpServer
 from app.store import AutoReplyStore
@@ -86,14 +87,39 @@ class AgentRuntimeProbe:
         checked_at = self._now().astimezone(UTC)
         expires_at = checked_at + self._config.probe_interval
         if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
-            return _snapshot(
-                route=route,
-                checked_at=checked_at,
-                expires_at=expires_at,
-                failure=_probe_failure(
-                    "runtime_route_unsupported",
-                    "Friday Runtime route is configured but its execution adapter is not installed.",
-                ),
+            try:
+                result = FridayRuntimeAdapter(self._config).execute(
+                    _PROBE_PROMPT,
+                    project_id=self._config.friday_runtime_project_id,
+                    model=route.model,
+                    timeout_seconds=self._total_timeout_seconds,
+                )
+                parsed = json.loads(result.text)
+                if parsed != {"ok": True}:
+                    raise ValueError("Friday probe result is not canonical")
+            except FridayRuntimeError as exc:
+                return _snapshot(
+                    route=route,
+                    checked_at=checked_at,
+                    expires_at=expires_at,
+                    failure=_probe_failure(exc.code, "Friday Runtime probe failed."),
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                return _snapshot(
+                    route=route,
+                    checked_at=checked_at,
+                    expires_at=expires_at,
+                    failure=_probe_failure(
+                        "runtime_probe_result_invalid",
+                        "Friday Runtime probe did not return the canonical result.",
+                    ),
+                )
+            return RuntimeCapabilitySnapshot(
+                route_name=route.name,
+                capabilities=_BASE_CAPABILITIES,
+                healthy=True,
+                checked_at=checked_at.isoformat(),
+                expires_at=expires_at.isoformat(),
             )
         try:
             with tempfile.TemporaryDirectory(

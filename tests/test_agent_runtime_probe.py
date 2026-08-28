@@ -536,6 +536,16 @@ def test_probe_does_not_run_friday_route_through_codex_adapter(monkeypatch, tmp_
     config = _config(monkeypatch, routes="friday_runtime")
     calls = []
 
+    class FakeFridayAdapter:
+        def __init__(self, _config):
+            pass
+
+        def execute(self, prompt, **kwargs):
+            calls.append((prompt, kwargs))
+            return type("Result", (), {"text": '{"ok":true}'})()
+
+    monkeypatch.setattr("app.agent_runtime_probe.FridayRuntimeAdapter", FakeFridayAdapter)
+
     snapshot = AgentRuntimeProbe(
         config=load_runtime_config(dict(__import__("os").environ)),
         codex_bin="must-not-run",
@@ -544,11 +554,10 @@ def test_probe_does_not_run_friday_route_through_codex_adapter(monkeypatch, tmp_
         temporary_root=tmp_path,
     ).run(route_name="friday_runtime")
 
-    assert calls == []
-    assert snapshot.healthy is False
-    assert snapshot.capabilities == frozenset()
-    assert snapshot.failure is not None
-    assert snapshot.failure.code == "runtime_route_unsupported"
+    assert len(calls) == 1
+    assert snapshot.healthy is True
+    assert snapshot.capabilities == frozenset({"structured_output", "local_schema_validation"})
+    assert snapshot.failure is None
 
 
 @pytest.mark.skip(reason="provider event/tool policy is owned by the Agent runtime")

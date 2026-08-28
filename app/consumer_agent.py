@@ -33,6 +33,7 @@ from app.business_skills import (
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import feedback_spike_vercel_base_url
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.native_cli_metadata import (
@@ -204,6 +205,7 @@ class ConsumerAgentRunner:
         runtime_router: AgentRuntimeRouter | None = None,
         codex_adapter: CodexRuntimeAdapter | None = None,
         claude_adapter: ClaudeRuntimeAdapter | None = None,
+        friday_adapter: FridayRuntimeAdapter | None = None,
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
@@ -218,6 +220,7 @@ class ConsumerAgentRunner:
         self.runtime_router = runtime_router
         self.codex_adapter = codex_adapter
         self.claude_adapter = claude_adapter
+        self.friday_adapter = friday_adapter
         self.executor = executor
         self.owner = owner or f"consumer-agent-{uuid4().hex}"
         self.refresh_runtime_capabilities = refresh_runtime_capabilities
@@ -401,6 +404,7 @@ class ConsumerAgentRunner:
             runtime_router=self.runtime_router,
             codex_adapter=self.codex_adapter,
             claude_adapter=self.claude_adapter,
+            friday_adapter=self.friday_adapter,
             mcp_effect_registry=self.effects,
             native_cli_classifier=self.native_cli_classifier,
             refresh_runtime_capabilities=self.refresh_runtime_capabilities,

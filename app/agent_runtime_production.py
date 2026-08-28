@@ -297,13 +297,19 @@ def _reviewed_surface_manifests(
     manifests = {}
     for route in runtime_config.routes:
         if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
-            # Keep the configuration contract available for the future HTTP
-            # adapter, but never advertise a route that the execution process
-            # cannot actually run.  Otherwise AgentTurnProcess would fall
-            # through to the Codex adapter for this route.
             manifests[route.name] = RuntimeRouteSurfaceManifest(
                 route_name=route.name,
-                capabilities=frozenset(),
+                capabilities=frozenset(
+                    {
+                        "task_context",
+                        "channel:dingtalk",
+                        "channel:wechat",
+                        "channel:lark",
+                        "channel:feishu",
+                        "structured_output",
+                        "local_schema_validation",
+                    }
+                ),
             )
             continue
         if route.runtime_kind is RuntimeKind.CLAUDE_CLI:

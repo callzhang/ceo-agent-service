@@ -18,6 +18,7 @@ from app.agent_wire_contracts import parse_audit_agent_wire_result
 from app.audit_rules import render_audit_rules
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
 from app.store import (
     AgentRole,
@@ -51,6 +52,7 @@ class AuditAgentRunner:
         runtime_router: AgentRuntimeRouter | None = None,
         codex_adapter: CodexRuntimeAdapter | None = None,
         claude_adapter: ClaudeRuntimeAdapter | None = None,
+        friday_adapter: FridayRuntimeAdapter | None = None,
         executor: ProcessExecutor | None = None,
         owner: str | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
@@ -64,6 +66,7 @@ class AuditAgentRunner:
         self.runtime_router = runtime_router
         self.codex_adapter = codex_adapter
         self.claude_adapter = claude_adapter
+        self.friday_adapter = friday_adapter
         self.executor = executor
         self.owner = owner or f"audit-agent-{uuid4().hex}"
         self.effects = mcp_effect_registry or McpToolEffectRegistry.default()
@@ -132,6 +135,7 @@ class AuditAgentRunner:
             runtime_router=self.runtime_router,
             codex_adapter=self.codex_adapter,
             claude_adapter=self.claude_adapter,
+            friday_adapter=self.friday_adapter,
             mcp_effect_registry=self.effects,
             refresh_runtime_capabilities=self.refresh_runtime_capabilities,
         )

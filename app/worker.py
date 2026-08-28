@@ -499,6 +499,9 @@ class DingTalkAutoReplyWorker:
                 claude_adapter=(
                     runtime.claude_adapter if runtime is not None else None
                 ),
+                friday_adapter=(
+                    runtime.friday_adapter if runtime is not None else None
+                ),
                 refresh_runtime_capabilities=(
                     runtime.refresh_runtime_capabilities
                     if runtime is not None
@@ -516,6 +519,9 @@ class DingTalkAutoReplyWorker:
                 ),
                 claude_adapter=(
                     runtime.claude_adapter if runtime is not None else None
+                ),
+                friday_adapter=(
+                    runtime.friday_adapter if runtime is not None else None
                 ),
                 refresh_runtime_capabilities=(
                     runtime.refresh_runtime_capabilities

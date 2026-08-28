@@ -62,6 +62,8 @@ from app.codex_failure import (
 from app.codex_history import count_codex_session_lines
 from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
+from app.agent_runtime_router import _runtime_failure_from_friday_error
 from app.config import feedback_spike_vercel_base_url
 from app.feedback_spike import sanitize_configured_feedback_links
 from app.leak_check import (
@@ -669,6 +671,7 @@ class AgentTurnProcess(Generic[ResultT]):
         runtime_router: AgentRuntimeRouter | None = None,
         codex_adapter: CodexRuntimeAdapter | None = None,
         claude_adapter: ClaudeRuntimeAdapter | None = None,
+        friday_adapter: FridayRuntimeAdapter | None = None,
         mcp_effect_registry: McpToolEffectRegistry | None = None,
         native_cli_classifier: NativeCliMetadataClassifier | None = None,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
@@ -682,6 +685,7 @@ class AgentTurnProcess(Generic[ResultT]):
         )
         self.workspace = workspace
         self.claude_adapter = claude_adapter
+        self.friday_adapter = friday_adapter
         self._allow_legacy_oauth_bootstrap = runtime_router is None
         self.runtime_router = runtime_router or AgentRuntimeRouter(
             routes=self.runtime_config.routes,
@@ -1049,6 +1053,8 @@ class AgentTurnProcess(Generic[ResultT]):
                 primary_turn_started = False
                 primary_turn_closed = False
                 observed_session_id = ""
+                attempt_transcript_reference = ""
+                friday_failure = None
                 active_route = route
                 route_uses_codex_history = route.runtime_kind is RuntimeKind.CODEX_CLI
                 executor_prompt = (
@@ -1087,6 +1093,13 @@ class AgentTurnProcess(Generic[ResultT]):
                         command=command,
                     )
                     command_env = claude_adapter.build_env(route, command=command)
+                elif route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
+                    if self.friday_adapter is None:
+                        self.friday_adapter = FridayRuntimeAdapter(self.runtime_config)
+                    claude_adapter = None
+                    claude_normalizer = None
+                    command = []
+                    command_env = None
                 else:
                     claude_adapter = None
                     claude_normalizer = None
@@ -1106,14 +1119,34 @@ class AgentTurnProcess(Generic[ResultT]):
                     configure_command(command)
                     command_env = self.codex_adapter.build_env(route)
                 try:
-                    process = self.executor(
-                        command,
-                        prompt=executor_prompt,
-                        env=command_env,
-                        total_timeout_seconds=TOTAL_TIMEOUT_SECONDS,
-                        idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
-                        on_stdout_line=persist_line,
-                    )
+                    if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
+                        friday_result = self.friday_adapter.execute(
+                            prompt,
+                            project_id=self.runtime_config.friday_runtime_project_id,
+                            conversation_id=self.task.conversation_id,
+                            model=route.model,
+                            timeout_seconds=TOTAL_TIMEOUT_SECONDS,
+                        )
+                        observed_session_id = f"friday_thread:{friday_result.thread_id}"
+                        attempt_transcript_reference = f"friday_operation:{friday_result.operation_id}"
+                        active_attempt = self.store.set_agent_runtime_attempt_session(
+                            active_attempt.id,
+                            observed_session_id,
+                            attempt_transcript_reference,
+                        )
+                        process = ProcessRunResult(0, friday_result.text, "")
+                    else:
+                        process = self.executor(
+                            command,
+                            prompt=executor_prompt,
+                            env=command_env,
+                            total_timeout_seconds=TOTAL_TIMEOUT_SECONDS,
+                            idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
+                            on_stdout_line=persist_line,
+                        )
+                except FridayRuntimeError as exc:
+                    friday_failure = _runtime_failure_from_friday_error(exc)
+                    process = ProcessRunResult(1, "", exc.detail)
                 except Exception:
                     if claude_adapter is not None:
                         claude_adapter.finish_invocation(command)
@@ -1139,14 +1172,17 @@ class AgentTurnProcess(Generic[ResultT]):
                     break
                 if claude_adapter is not None:
                     claude_adapter.finish_invocation(command)
-                failure_adapter = claude_adapter or self.codex_adapter
-                failure = failure_adapter.classify_failure(
-                    process.stdout,
-                    process.stderr,
-                    process.returncode,
-                    timed_out=process.timed_out,
-                    timeout_kind=process.timeout_kind,
-                )
+                if friday_failure is not None:
+                    failure = friday_failure
+                else:
+                    failure_adapter = claude_adapter or self.codex_adapter
+                    failure = failure_adapter.classify_failure(
+                        process.stdout,
+                        process.stderr,
+                        process.returncode,
+                        timed_out=process.timed_out,
+                        timeout_kind=process.timeout_kind,
+                    )
                 failed_session_id = observed_session_id or route_session_id or ""
                 failed_transcript_end = max(
                     attempt_transcript_start + (line_count - attempt_line_start),
@@ -1169,6 +1205,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     failure.code,
                     failure.failover_permitted,
                     session_id=failed_session_id,
+                    transcript_reference=attempt_transcript_reference,
                     transcript_start=attempt_transcript_start,
                     transcript_end=failed_transcript_end,
                 )
@@ -1260,12 +1297,15 @@ class AgentTurnProcess(Generic[ResultT]):
             if (
                 persisted_attempt is not None
                 and persisted_attempt.status == "running"
-                and route.runtime_kind is RuntimeKind.CODEX_CLI
+                and route.runtime_kind in {
+                    RuntimeKind.CODEX_CLI,
+                    RuntimeKind.FRIDAY_RUNTIME,
+                }
             ):
                 self.store.complete_agent_runtime_attempt(
                     persisted_attempt.id,
                     observed_session_id,
-                    "",
+                    attempt_transcript_reference,
                     attempt_transcript_start,
                     max(
                         attempt_transcript_start + (line_count - attempt_line_start),
