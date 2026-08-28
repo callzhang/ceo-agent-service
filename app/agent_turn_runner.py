@@ -59,7 +59,10 @@ from app.codex_failure import (
     CODEX_PROVIDER_UNAVAILABLE,
     classify_codex_process_failure,
 )
-from app.codex_history import count_codex_session_lines
+from app.codex_history import (
+    count_codex_session_lines,
+    extract_codex_assistant_messages_from_session,
+)
 from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
@@ -1192,7 +1195,19 @@ class AgentTurnProcess(Generic[ResultT]):
                         observed_session_id = trusted_session_id
                         pending_claude_session_id = trusted_session_id
                     else:
-                        result = parse_result(process.stdout)
+                        try:
+                            result = parse_result(process.stdout)
+                        except ResultParseError:
+                            if not observed_session_id or not route_uses_codex_history:
+                                raise
+                            session_result = extract_codex_assistant_messages_from_session(
+                                observed_session_id,
+                                codex_home=_codex_home(),
+                                start_line=attempt_transcript_start,
+                            )
+                            if not session_result:
+                                raise
+                            result = parse_result(session_result)
                     break
                 if claude_adapter is not None:
                     claude_adapter.finish_invocation(command)

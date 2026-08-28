@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.codex_history import (
     count_codex_session_lines,
+    extract_codex_assistant_messages_from_session,
     extract_codex_audit_events_from_session,
     extract_codex_mcp_tool_results_from_session,
     find_codex_session_path,
@@ -117,6 +118,31 @@ def test_find_codex_session_path_uses_local_codex_home(tmp_path: Path):
     session_path = write_session(tmp_path, session_id)
 
     assert find_codex_session_path(session_id, codex_home=tmp_path) == session_path
+
+
+def test_extract_codex_assistant_messages_from_session(tmp_path: Path):
+    session_id = "assistant-result"
+    session_path = write_session(tmp_path, session_id)
+    records = json.loads(session_path.read_text(encoding="utf-8").splitlines()[-1])
+    records["payload"] = {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": '{"outcome":"no_action"}'}],
+    }
+    session_path.write_text(
+        session_path.read_text(encoding="utf-8")
+        + "\n"
+        + json.dumps(records)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    extracted = extract_codex_assistant_messages_from_session(
+        session_id, codex_home=tmp_path
+    )
+
+    extracted_records = [json.loads(line) for line in extracted.splitlines()]
+    assert extracted_records[-1]["payload"]["role"] == "assistant"
 
 
 def test_find_codex_session_path_does_not_inspect_all_files_on_miss(

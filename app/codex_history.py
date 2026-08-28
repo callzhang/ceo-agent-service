@@ -99,6 +99,40 @@ def extract_codex_audit_events_from_session(
     return events
 
 
+def extract_codex_assistant_messages_from_session(
+    session_id: str,
+    codex_home: Path | None = None,
+    start_line: int = 0,
+) -> str:
+    """Return assistant message records persisted for the current Codex turn.
+
+    Native Codex can persist the terminal assistant message in its session
+    transcript even when the streaming stdout closes before delivering that
+    response item. Keep the records in the same JSONL shape consumed by the
+    typed-result parser; callers still own result validation.
+    """
+    path = find_codex_session_path(session_id, codex_home=codex_home)
+    if path is None:
+        return ""
+    records: list[str] = []
+    for line in _iter_file_lines(path, start_line=start_line):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict) or payload.get("type") != "response_item":
+            continue
+        item = payload.get("payload")
+        if (
+            not isinstance(item, dict)
+            or item.get("type") != "message"
+            or item.get("role") != "assistant"
+        ):
+            continue
+        records.append(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    return "\n".join(records)
+
+
 def extract_codex_mcp_tool_results_from_session(
     session_id: str,
     codex_home: Path | None = None,
