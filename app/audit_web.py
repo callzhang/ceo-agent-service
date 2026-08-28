@@ -3026,8 +3026,20 @@ def render_settings_page(
             include_tabs=False,
             include_prompt_card=False,
         )
-    with store.read_snapshot():
-        attention_count = len(_queue_attention_rows(store))
+    # Status/attention/connector pages already carry the attention snapshot
+    # used to render their content.  Reusing it avoids a second set of queue
+    # queries on every navigation (especially noticeable while the cache is
+    # refreshing).  Other settings pages still compute the badge directly.
+    payload_attention_rows = (
+        worker_status_payload.get("attention_rows")
+        if isinstance(worker_status_payload, Mapping)
+        else None
+    )
+    if isinstance(payload_attention_rows, list):
+        attention_count = len(payload_attention_rows)
+    else:
+        with store.read_snapshot():
+            attention_count = len(_queue_attention_rows(store))
     body = (
         '<div class="settings-layout">'
         f"{_settings_tabs(active_tab, attention_count=attention_count)}"
