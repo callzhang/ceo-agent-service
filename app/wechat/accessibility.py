@@ -177,8 +177,8 @@ def _open_target(
             return matching[0] if len(matching) == 1 else None
 
         row = _poll_value(unique_matching_row, sleep=sleep)
-        if row is None:
-            return None
+        # No matching recent-session row is not terminal: inactive direct chats
+        # can still be opened through exact search below.
     elif navigation_query == target_label:
         row = first(id_eq=f"session_item_{target_label}")
     if row is not None:
@@ -196,10 +196,9 @@ def _open_target(
             )
             if composer is not None:
                 return composer
-    # A direct-chat evidence match must come from the recent-session row. Search
-    # results expose duplicate display names without a stable target identifier.
-    if expected_recent_text:
-        return None
+    # If the direct chat is not in the recent-session sidebar, fall back to an
+    # exact search. The caller has already verified the binding; the search is
+    # needed for inactive direct chats that WeChat evicts from the sidebar.
     # not in the sidebar -> search (below)
     search = first(role="AXTextArea", title_contains="搜索")
     if search is None:
