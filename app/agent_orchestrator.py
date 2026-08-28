@@ -150,6 +150,37 @@ class _Deferred:
     detail: str = ""
 
 
+def _enrich_oa_applicant_target(
+    proposal: ConsumerProposal,
+    context: AgentTaskContext,
+) -> ConsumerProposal:
+    open_dingtalk_id = str(
+        context.trigger_raw_payload.get("originatorOpenDingTalkId") or ""
+    ).strip()
+    applicant_user_id = str(
+        context.trigger_raw_payload.get("originatorUserid") or ""
+    ).strip()
+    if not open_dingtalk_id or not applicant_user_id:
+        return proposal
+    actions = []
+    changed = False
+    for action in proposal.actions:
+        target = action.target
+        if not isinstance(target, dict) or str(target.get("user_id") or "").strip() != applicant_user_id:
+            actions.append(action)
+            continue
+        if target.get("open_dingtalk_id") == open_dingtalk_id:
+            actions.append(action)
+            continue
+        updated_target = dict(target)
+        updated_target["open_dingtalk_id"] = open_dingtalk_id
+        actions.append(action.model_copy(update={"target": updated_target}))
+        changed = True
+    if not changed:
+        return proposal
+    return proposal.model_copy(update={"actions": tuple(actions)})
+
+
 class AgentOrchestrator:
     def __init__(
         self,
@@ -321,38 +352,6 @@ class AgentOrchestrator:
                 feedback_cycles=self._feedback_cycles(task),
             )
         )
-
-
-def _enrich_oa_applicant_target(
-    proposal: ConsumerProposal,
-    context: AgentTaskContext,
-) -> ConsumerProposal:
-    open_dingtalk_id = str(
-        context.trigger_raw_payload.get("originatorOpenDingTalkId") or ""
-    ).strip()
-    applicant_user_id = str(
-        context.trigger_raw_payload.get("originatorUserid") or ""
-    ).strip()
-    if not open_dingtalk_id or not applicant_user_id:
-        return proposal
-    actions = []
-    changed = False
-    for action in proposal.actions:
-        target = action.target
-        if not isinstance(target, dict) or str(target.get("user_id") or "").strip() != applicant_user_id:
-            actions.append(action)
-            continue
-        if target.get("open_dingtalk_id") == open_dingtalk_id:
-            actions.append(action)
-            continue
-        updated_target = dict(target)
-        updated_target["open_dingtalk_id"] = open_dingtalk_id
-        actions.append(action.model_copy(update={"target": updated_target}))
-        changed = True
-    if not changed:
-        return proposal
-    return proposal.model_copy(update={"actions": tuple(actions)})
-
     def _consumer_skills(
         self,
         task: ReplyTask,
