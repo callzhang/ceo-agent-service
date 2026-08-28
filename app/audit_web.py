@@ -8248,11 +8248,16 @@ def _render_audit_rules_content(*, audit_rule: str = "template", view: str = "te
             '<p class="muted">当前 tab 使用同一份 Audit Rules template；切换到 Template tab 编辑。</p>'
             f'<pre class="audit-template-preview">{_highlight_audit_rule_variables(template)}</pre>'
         )
+    intro = (
+        'Audit Rules 先定义可配置模板，再分别查看 Consumer 和 Audit wrapper 的最终渲染结果。'
+        'Template 中的 {{principal}} 会使用 Configuration 中的当前显示名替换。'
+        if view == "template"
+        else 'Audit Rules preview 展示已经使用当前 Configuration principal 显示名渲染后的最终文本。'
+    )
     return (
         '<section class="card audit-rules-page">'
         '<h2>Audit Rules</h2>'
-        '<p class="muted">Audit Rules 先定义可配置模板，再分别查看 Consumer 和 Audit wrapper 的最终渲染结果。'
-        'Template 中的 {{principal}} 会使用 Configuration 中的当前显示名替换。</p>'
+        f'<p class="muted">{intro}</p>'
         f'<p class="muted">Template path: <code>{escape(str(template_path))}</code> · 当前视图：{escape(active_label)}</p>'
         f'{rule_tabs}{view_tabs}{error_html}{panel}'
         '</section>'
