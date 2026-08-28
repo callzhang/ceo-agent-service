@@ -2131,6 +2131,7 @@ def build_worker_status_payload(
     launchd_label: str = "com.ceo-agent-service.main",
 ) -> dict[str, object]:
     service = _launchd_service_status(launchd_label)
+    connector_statuses = _connector_status_snapshots()
     # The worker performs short SQLite writes in parallel.  Render every
     # database section from one read-only snapshot so the status endpoint does
     # not repeatedly contend for the writer lock or mix queue generations.
@@ -2140,6 +2141,7 @@ def build_worker_status_payload(
     return {
         "service": service,
         "components": _service_component_snapshots(),
+        "connectors": connector_statuses,
         "wechat": _wechat_status_snapshot(store),
         "queues": queues,
         "attention_rows": attention_rows,
@@ -2152,6 +2154,15 @@ def build_worker_status_payload(
             "retryable": sum(int(queue["retryable"]) for queue in queues),
             "attention": len(attention_rows),
         },
+    }
+
+
+def _connector_status_snapshots() -> dict[str, object]:
+    from app.channel_gate import default_channel_gates
+
+    return {
+        key: gate.check()
+        for key, gate in default_channel_gates().items()
     }
 
 
@@ -2996,7 +3007,13 @@ def render_settings_page(
     elif active_tab == "prompts":
         content = _render_prompts_content(prompt=prompt, view=view)
     elif active_tab == "connectors":
-        content = _render_connectors_content(store, connector=connector)
+        content = _render_connectors_content(
+            store,
+            connector=connector,
+            connector_statuses=(worker_status_payload or {}).get("connectors")
+            if worker_status_payload is not None
+            else None,
+        )
     elif active_tab == "audit-rules":
         content = _render_audit_rules_content(audit_rule=audit_rule, view=view)
     else:
@@ -3074,7 +3091,7 @@ def _render_status_content(
         "</section>"
         '<section class="card worker-section compact-card">'
         "<h2>Connector health</h2>"
-        f"{_connector_health_summary_table()}"
+        f"{_connector_health_summary_table(payload.get('connectors'))}"
         f"{_wechat_status_table(payload.get('wechat') or {})}"
         "</section>"
         '<section class="card worker-section compact-card">'
@@ -3084,9 +3101,11 @@ def _render_status_content(
     )
 
 
-def _connector_health_summary_table() -> str:
-    from app.channel_gate import default_channel_gates
-
+def _connector_health_summary_table(statuses: object | None = None) -> str:
+    if statuses is None:
+        statuses = _connector_status_snapshots()
+    if not isinstance(statuses, Mapping) or not statuses:
+        return '<p class="muted">Connector health is refreshing.</p>'
     rows = "".join(
         "<tr>"
         f"<td>{escape(status.channel)}</td>"
@@ -3094,7 +3113,8 @@ def _connector_health_summary_table() -> str:
         f"{escape(_channel_gate_state_label(status.state.value))}</span></td>"
         f"<td>{escape(status.reason_code or status.detail or '-')}</td>"
         "</tr>"
-        for status in (gate.check() for gate in default_channel_gates().values())
+        for status in statuses.values()
+        if hasattr(status, "channel") and hasattr(status, "state")
     )
     return (
         '<table class="column-sized-table connector-health-summary">'
@@ -3215,7 +3235,12 @@ def _render_prompts_content(*, prompt: str = "developer", view: str = "template"
     )
 
 
-def _render_connectors_content(store: AutoReplyStore, *, connector: str = "dingtalk") -> str:
+def _render_connectors_content(
+    store: AutoReplyStore,
+    *,
+    connector: str = "dingtalk",
+    connector_statuses: object | None = None,
+) -> str:
     connector = connector if connector in {"dingtalk", "lark", "wechat"} else "dingtalk"
     tabs = (
         '<nav class="connector-pill-tabs centered" aria-label="Connector sections">'
@@ -3228,17 +3253,35 @@ def _render_connectors_content(store: AutoReplyStore, *, connector: str = "dingt
     if connector == "wechat":
         content = _render_wechat_config(store)
     else:
-        content = _render_single_connector_content(store, connector)
+        if isinstance(connector_statuses, Mapping):
+            if connector not in connector_statuses:
+                content = '<p class="muted">Connector status is refreshing.</p>'
+            else:
+                content = _render_single_connector_content(
+                    store,
+                    connector,
+                    status=connector_statuses[connector],
+                )
+        else:
+            content = _render_single_connector_content(store, connector)
     return f'<section class="card"><h2>Connectors</h2>{tabs}{content}</section>'
 
 
-def _render_single_connector_content(store: AutoReplyStore, connector: str) -> str:
+def _render_single_connector_content(
+    store: AutoReplyStore,
+    connector: str,
+    *,
+    status: object | None = None,
+) -> str:
     from app.channel_gate import default_channel_gates
 
-    gate = default_channel_gates().get(connector)
-    if gate is None:
-        return '<p class="muted">Connector unavailable.</p>'
-    status = gate.check()
+    if status is None:
+        gate = default_channel_gates().get(connector)
+        if gate is None:
+            return '<p class="muted">Connector unavailable.</p>'
+        status = gate.check()
+    if not hasattr(status, "channel") or not hasattr(status, "state"):
+        return '<p class="muted">Connector status is refreshing.</p>'
     state_label = _channel_gate_state_label(status.state.value)
     state_class = "active" if status.state.value == "ready" else ""
     commands = status.commands or ()
@@ -9500,6 +9543,7 @@ def create_audit_app(
                 "initialized": "",
             },
             "components": _service_component_snapshots(),
+            "connectors": {},
             "queues": [],
             "attention_rows": [],
             "database": {"path": str(db_path)},
@@ -9913,9 +9957,16 @@ def create_audit_app(
 
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page(request: Request) -> str:
+        settings_tab = str(request.query_params.get("tab", "status"))
+        status_payload = None
+        if settings_tab in {"status", "attention", "connectors"}:
+            status_payload = worker_status_cache.get_or_refresh(
+                render_worker_status_payload,
+                worker_status_refreshing_payload,
+            )
         return render_settings_page(
             AutoReplyStore(db_path),
-            active_tab=str(request.query_params.get("tab", "status")),
+            active_tab=settings_tab,
             config_tab=str(request.query_params.get("config_tab", "info")),
             prompt=str(request.query_params.get("prompt", "developer")),
             view=str(request.query_params.get("view", "template")),
@@ -9927,6 +9978,7 @@ def create_audit_app(
             log_page=_positive_int_query(request, "page", default=1),
             log_query=str(request.query_params.get("q", "")),
             log_type=str(request.query_params.get("type", "")),
+            worker_status_payload=status_payload,
         )
 
     @app.get("/codex", response_class=HTMLResponse)
