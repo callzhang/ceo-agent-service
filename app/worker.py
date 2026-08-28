@@ -1800,11 +1800,6 @@ class DingTalkAutoReplyWorker:
                 processed_tasks += 1
         return processed_tasks
 
-    def _recover_due_unknown_agent_reply_tasks(self, *, limit: int) -> int:
-        """Compatibility hook; unknown-effect recovery is no longer scheduled."""
-        del limit
-        return 0
-
     def _recover_stale_agent_reply_tasks(self) -> None:
         stale_tasks = self.store.list_stale_processing_reply_tasks(
             STALE_PROCESSING_TASK_SECONDS
@@ -2353,118 +2348,8 @@ class DingTalkAutoReplyWorker:
             self._dismiss_problem_notification(task)
         return task_status == "done"
 
-    def _backfill_confirmed_direct_reply_ledgers(self, *, limit: int) -> int:
-        """Repair only ledger omissions proven by persisted Audit readback."""
-        repaired = 0
-        # Older confirmed audits include OA and group operations that have no
-        # direct-message ledger contract.  Scan past them, but bound actual
-        # writes to the worker batch size.
-        candidate_limit = max(limit * 100, 100)
-        for audit_run in self.store.list_confirmed_audit_runs_missing_sent_reply(
-            limit=candidate_limit,
-        ):
-            task = self.store.get_reply_task(audit_run.reply_task_id)
-            consumer_run = (
-                self.store.get_agent_run(audit_run.parent_agent_run_id)
-                if audit_run.parent_agent_run_id is not None
-                else None
-            )
-            if task is None or consumer_run is None:
-                continue
-            try:
-                consumer_result = ConsumerAgentResult.model_validate_json(
-                    consumer_run.final_result_json
-                )
-                audit_result = AuditAgentResult.model_validate_json(
-                    audit_run.final_result_json
-                )
-            except (TypeError, ValueError):
-                continue
-            entry = self._confirmed_direct_reply_ledger_entry(
-                task,
-                consumer_result,
-                audit_result,
-            )
-            if entry is None:
-                continue
-            if self.store.record_confirmed_sent_reply_if_absent(
-                audit_run_id=audit_run.id,
-                reply_text=entry[0],
-                send_result_json=entry[1],
-            ):
-                repaired += 1
-                if repaired >= limit:
-                    break
-        if repaired:
-            logger.info("backfilled %s confirmed direct delivery ledger row(s)", repaired)
-        return repaired
 
     @staticmethod
-    def _confirmed_direct_reply_ledger_entry(
-        task: ReplyTask,
-        consumer_result: ConsumerAgentResult | None,
-        audit_result: AuditAgentResult | None,
-    ) -> tuple[str, str] | None:
-        """Return a ledger entry only for a live-confirmed, single direct reply."""
-        if consumer_result is None or audit_result is None:
-            return None
-        proposal = consumer_result.proposal
-        external_result = audit_result.external_result
-        if proposal is None or external_result is None:
-            return None
-        if audit_result.outcome.value != "executed":
-            return None
-        reference = external_result.live_result_reference
-        conversation_id = reference.get("conversation_id")
-        message_id = reference.get("message_id")
-        if (
-            not isinstance(conversation_id, str)
-            or conversation_id != task.conversation_id
-            or not isinstance(message_id, str)
-            or not message_id.strip()
-            or len(proposal.actions) != 1
-        ):
-            return None
-        action = proposal.actions[0]
-        if action.capability != "agent_cli.dws":
-            return None
-        descriptor = describe_native_command(
-            {"type": "command_execution", **action.payload}
-        )
-        if (
-            descriptor is None
-            or descriptor.cli != "dws"
-            or descriptor.command_path not in {
-                "chat message send",
-                "chat +messages-send",
-            }
-        ):
-            return None
-        target_keys = set(descriptor.target_identifiers)
-        target_keys.update(str(key).replace("_", "-") for key in action.target)
-        if not {"open-dingtalk-id", "user"} & target_keys:
-            return None
-        argv = action.payload.get("argv")
-        if not isinstance(argv, (list, tuple)):
-            return None
-        if not all(isinstance(value, str) for value in argv):
-            return None
-        reply_text = dingtalk_message_text(tuple(argv))
-        if not reply_text.strip():
-            return None
-        return (
-            reply_text,
-            json.dumps(
-                {
-                    "source": "agent_audit_readback",
-                    "conversation_id": conversation_id,
-                    "message_id": message_id,
-                    "verification_summary": external_result.verification_summary,
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
-        )
 
     @staticmethod
     def _orchestration_oa_metadata(

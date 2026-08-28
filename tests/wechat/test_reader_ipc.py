@@ -162,6 +162,18 @@ def test_client_fails_closed_when_reader_is_not_running(tmp_path):
     assert caught.value.code == "unavailable"
 
 
+def test_reader_handler_ignores_client_disconnect_when_writing_response():
+    import app.wechat.reader_ipc as module
+
+    class ClosedWriter:
+        def write(self, payload):
+            raise BrokenPipeError
+
+    handler = object.__new__(module._ReaderRequestHandler)
+    handler.wfile = ClosedWriter()
+    handler._reply({"ok": True})
+
+
 def test_socket_rejects_oversized_requests(tmp_path, rpc_service):
     del tmp_path
     socket_path = _short_socket_path()

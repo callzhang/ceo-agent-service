@@ -124,3 +124,15 @@ def test_sender_client_fails_closed_when_helper_is_not_running(tmp_path):
     with pytest.raises(module.SenderExecutionError, match="unavailable") as exc:
         client.health()
     assert exc.value.action_may_have_started is False
+
+
+def test_sender_handler_ignores_client_disconnect_when_writing_response():
+    module = _module()
+
+    class ClosedWriter:
+        def write(self, payload):
+            raise BrokenPipeError
+
+    handler = object.__new__(module._SenderRequestHandler)
+    handler.wfile = ClosedWriter()
+    handler._reply({"ok": True})

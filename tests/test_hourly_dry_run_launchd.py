@@ -117,6 +117,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert probe.returncode == 0, probe.stderr
     assert "--user-id {user_id} --period-label {period_label}" in probe.stdout
     env = plist["EnvironmentVariables"]
+    assert "dingokr.dingteam.com" in env["NO_PROXY"]
     assert env["CEO_SERVICE_ROOT"] == (
         "/Users/derek/Documents/Projects/ceo-agent-service"
     )

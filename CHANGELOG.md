@@ -19,8 +19,9 @@
 
 - Preserve local evidence paths only in explicit task-result `source` and
   `source_ref` fields; continue rejecting runtime paths elsewhere.
-- Clear inherited proxy variables in the main launchd service so DWS uses the
-  verified direct network path when the configured local proxy is unavailable.
+- Keep the local proxy for integrations that require it, while adding
+  `dingokr.dingteam.com` to launchd `NO_PROXY` so live Dingteam OKR reads use a
+  direct network path when the local proxy is unavailable.
 
 - Remove the Audit-side mechanical CLI contract gate. Audit now reviews the
   business proposal and target semantics; external writes still require the

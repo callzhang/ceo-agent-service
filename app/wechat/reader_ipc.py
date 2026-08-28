@@ -153,7 +153,11 @@ class _ReaderRequestHandler(socketserver.StreamRequestHandler):
         self._reply({"ok": False, "error": {"code": code, "message": message}})
 
     def _reply(self, payload: dict) -> None:
-        self.wfile.write(json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n")
+        try:
+            self.wfile.write(json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n")
+        except BrokenPipeError:
+            # The reader client can time out during a long mirror query.
+            return
 
 
 class WechatReaderUnixServer(socketserver.ThreadingUnixStreamServer):
