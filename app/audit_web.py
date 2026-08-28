@@ -42,6 +42,7 @@ from app.agent_runtime_config import (
     SUPPORTED_CODEX_RUNTIME_MODELS,
     normalize_codex_api_base_url,
     normalize_friday_runtime_base_url,
+    normalize_optional_provider_base_url,
 )
 from app.approval_history import (
     ApprovalHistoryResult,
@@ -3298,6 +3299,15 @@ def _render_agent_runtime_config() -> str:
         "CEO_FRIDAY_RUNTIME_BASE_URL", DEFAULT_FRIDAY_RUNTIME_BASE_URL
     )
     friday_project_id = _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_PROJECT_ID")
+    friday_provider_base_url = _agent_runtime_config_value(
+        "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL"
+    )
+    friday_provider_model = _agent_runtime_config_value(
+        "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL"
+    )
+    friday_provider_key_configured = bool(
+        _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")
+    )
     friday_auth_disabled = (
         _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_AUTH_DISABLED") == "1"
     )
@@ -3365,10 +3375,21 @@ def _render_agent_runtime_config() -> str:
         '<p><label>Runtime Base URL<br><input class="config-value-input" type="url" '
         'name="friday_runtime_base_url" required value="'
         f'{escape(friday_base_url, quote=True)}"></label></p>'
-        '<p class="muted">这是本机 Friday Runtime 服务地址；provider 的 URL 和 Token 会复用上方已有的 Codex API 配置，页面无需重复填写。</p>'
+        '<p class="muted">这是本机 Friday Runtime 服务地址；provider URL、model 和 Token 使用下方独立配置，不与 Codex API 配置共享。</p>'
         '<p><label>Project ID<br><input class="config-value-input" type="text" '
         'name="friday_runtime_project_id" value="'
         f'{escape(friday_project_id, quote=True)}"></label></p>'
+        '<p><label>Provider Base URL<br><input class="config-value-input" type="url" '
+        'name="friday_runtime_provider_base_url" value="'
+        f'{escape(friday_provider_base_url, quote=True)}"></label></p>'
+        '<p><label>Provider model<br><input class="config-value-input" type="text" '
+        'name="friday_runtime_provider_model" value="'
+        f'{escape(friday_provider_model, quote=True)}"></label></p>'
+        '<p><label>Provider API Token<br><input id="friday-provider-api-token" '
+        'class="config-value-input secret-token-input" type="password" '
+        'name="friday_runtime_provider_api_key" autocomplete="new-password" '
+        f'placeholder="{"●" * 12 if friday_provider_key_configured else ""}" ' 
+        f'data-token-configured="{str(friday_provider_key_configured).lower()}"></label></p>'
         "<p class=\"muted\">Model is selected by the Friday project; this service does not override it.</p>"
         '<p><label><input type="checkbox" name="friday_runtime_auth_disabled" value="1"'
         f'{" checked" if friday_auth_disabled else ""}>'
@@ -7807,6 +7828,9 @@ def handle_agent_runtime_config_post(
             "friday_runtime_enabled",
             "friday_runtime_base_url",
             "friday_runtime_project_id",
+            "friday_runtime_provider_base_url",
+            "friday_runtime_provider_model",
+            "friday_runtime_provider_api_key",
             "friday_runtime_auth_disabled",
             "friday_runtime_ticket",
             "friday_session_token",
@@ -7821,6 +7845,15 @@ def handle_agent_runtime_config_post(
         "friday_runtime_project_id",
         [_agent_runtime_config_value("CEO_FRIDAY_RUNTIME_PROJECT_ID")],
     )[0].strip()
+    friday_provider_base_url_raw = parsed.get(
+        "friday_runtime_provider_base_url",
+        [_agent_runtime_config_value("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL")],
+    )[0]
+    friday_provider_model = parsed.get(
+        "friday_runtime_provider_model",
+        [_agent_runtime_config_value("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")],
+    )[0].strip()
+    friday_provider_api_key = parsed.get("friday_runtime_provider_api_key", [""])[0].strip()
     friday_auth_disabled = (
         parsed.get("friday_runtime_auth_disabled", [""])[0] == "1"
     )
@@ -7851,6 +7884,9 @@ def handle_agent_runtime_config_post(
             parsed.get("codex_api_base_url", [""])[0]
         )
         friday_base_url = normalize_friday_runtime_base_url(friday_base_url_raw)
+        friday_provider_base_url = normalize_optional_provider_base_url(
+            friday_provider_base_url_raw
+        )
     except ValueError as exc:
         return _invalid_agent_runtime_config(str(exc))
     existing_token = _agent_runtime_config_value("CEO_CODEX_API_KEY")
@@ -7860,6 +7896,18 @@ def handle_agent_runtime_config_post(
         )
     existing_friday_ticket = _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_TICKET")
     existing_friday_session = _agent_runtime_config_value("CEO_FRIDAY_SESSION_TOKEN")
+    existing_friday_provider_key = _agent_runtime_config_value(
+        "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"
+    )
+    if friday_provider_api_key:
+        resulting_provider_key = friday_provider_api_key
+    else:
+        resulting_provider_key = existing_friday_provider_key
+    provider_values = (friday_provider_base_url, friday_provider_model, resulting_provider_key)
+    if any(provider_values) and not all(provider_values):
+        return _invalid_agent_runtime_config(
+            "Friday provider requires Base URL, model, and API Token together."
+        )
     if friday_enabled:
         if not friday_project_id:
             return _invalid_agent_runtime_config(
@@ -7907,6 +7955,8 @@ def handle_agent_runtime_config_post(
         "CEO_CODEX_API_MODEL": api_model,
         "CEO_FRIDAY_RUNTIME_BASE_URL": friday_base_url,
         "CEO_FRIDAY_RUNTIME_PROJECT_ID": friday_project_id,
+        "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": friday_provider_base_url,
+        "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": friday_provider_model,
         "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1" if friday_auth_disabled else "0",
     }
     if api_token:
@@ -7921,6 +7971,8 @@ def handle_agent_runtime_config_post(
         elif friday_session_token:
             updates["CEO_FRIDAY_SESSION_TOKEN"] = friday_session_token
             updates["CEO_FRIDAY_RUNTIME_TICKET"] = ""
+    if friday_provider_api_key:
+        updates["CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"] = friday_provider_api_key
     write_env_values(updates)
     return 303, {"Location": "/config?tab=agent-runtime&saved=1"}, ""
 
