@@ -143,6 +143,25 @@ def test_audit_rules_render_configured_principal_with_allowlisted_placeholder(
     assert "Derek" not in rendered
 
 
+def test_audit_rules_editor_highlights_principal_placeholder_and_uses_current_name(
+    tmp_path: Path, monkeypatch
+):
+    path = tmp_path / "audit_rules.md"
+    path.write_text("Escalate to {{principal}} only when needed.", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(path))
+    monkeypatch.setenv("USER_ALIAS", "Alex")
+
+    from app.audit_web import render_config_page
+
+    page = render_config_page(active_tab="audit-rules")
+    textarea = page.split('<textarea id="template"', 1)[1].split("</textarea>", 1)[0]
+
+    assert 'class="config-token audit-variable-pill"' in page
+    assert "{{principal}}" in textarea
+    assert "Derek" not in textarea
+    assert "Escalate to Alex only when needed." in page
+
+
 def test_active_consumer_boundary_uses_configured_principal(monkeypatch):
     monkeypatch.setenv("USER_ALIAS", "Alex")
     instructions = consumer_developer_instructions("Check the candidate.")

@@ -565,6 +565,8 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .connector-state-value{color:var(--ink);font-size:14px;font-weight:700}
 .connector-commands{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .connector-command{display:inline-flex;padding:6px 9px;border:1px solid var(--hairline);border-radius:7px;background:var(--canvas);color:var(--charcoal);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px}
+.audit-variable-pill{margin:0 2px;padding:3px 8px;border-radius:999px;white-space:nowrap}
+.audit-template-preview{margin:0;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft);padding:14px;color:var(--charcoal);font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
 @media (max-width:760px){.connector-state{grid-template-columns:1fr}.connector-detail-head{display:block}.connector-detail-head .runtime-status{margin-top:10px}}
 .configuration-group{margin:16px 0}
 .configuration-group h3{margin:0 0 8px;color:var(--ink);font-size:15px}
@@ -8137,6 +8139,7 @@ def _render_audit_rules_editor_content(
     template = (
         persisted_template if submitted_draft is None else submitted_draft
     )
+    template_preview = _highlight_audit_rule_variables(template)
     if validation_error:
         error_html = (
             "<p class=\"attempt-warning\">"
@@ -8154,9 +8157,12 @@ def _render_audit_rules_editor_content(
         f"{saved_html}{error_html}"
         "<form method=\"post\" action=\"/config?tab=audit-rules\">"
         "<label for=\"template\">Configurable rules</label>"
+        '<p class="muted">Template 中用受限变量表示当前 principal；它会在预览和运行时替换成 Configuration 中的显示名。</p>'
         f"<textarea id=\"template\" name=\"template\" style=\"min-height:420px\">{escape(template)}</textarea>"
         "<p><button type=\"submit\">Save rules</button></p>"
         "</form>"
+        '<h3>Template preview</h3>'
+        f'<pre class="audit-template-preview">{template_preview}</pre>'
         "</section>"
         "<section class=\"card\">"
         "<h2>Consumer preview</h2>"
@@ -8166,6 +8172,14 @@ def _render_audit_rules_editor_content(
         "<h2>Audit preview</h2>"
         f"<pre>{escape(audit_preview)}</pre>"
         "</section>"
+    )
+
+
+def _highlight_audit_rule_variables(template: str) -> str:
+    highlighted = escape(template)
+    return highlighted.replace(
+        "{{principal}}",
+        '<code class="config-token audit-variable-pill">{{principal}}</code>',
     )
 
 
