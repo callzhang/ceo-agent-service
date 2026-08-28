@@ -647,7 +647,7 @@ def test_sent_attempt_review_enqueue_is_exactly_once_for_current_revision(tmp_pa
     assert queued[0].source_ref == source_ref
 
 
-def test_blocking_prior_attempt_query_returns_all_revisions_in_order(tmp_path):
+def test_prior_attempt_query_returns_all_failed_revisions_in_order(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="客户交付")
     draft_id = store.create_follow_up_draft(
@@ -675,12 +675,11 @@ def test_blocking_prior_attempt_query_returns_all_revisions_in_order(tmp_path):
             now="2026-06-08 02:00:00",
             lease_until="2026-06-08 02:05:00",
         )
-        assert store.mark_follow_up_sending_unknown(
+        assert store.mark_follow_up_sending_retryable(
             draft_id,
             draft_revision=revision,
             claim_token=token,
             lease_owner=owner,
-            lease_until="2026-06-08 02:15:00",
             result_json=json.dumps({"idempotency_uuid": f"uuid-{revision}"}),
         )
         store.update_follow_up_draft(
@@ -690,7 +689,7 @@ def test_blocking_prior_attempt_query_returns_all_revisions_in_order(tmp_path):
         )
 
     def read_blockers(_):
-        return store.list_blocking_prior_follow_up_send_attempts(
+        return store.list_prior_follow_up_send_attempts(
             draft_id=draft_id,
             before_revision=3,
         )
@@ -698,12 +697,12 @@ def test_blocking_prior_attempt_query_returns_all_revisions_in_order(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as pool:
         first_reader, second_reader = list(pool.map(read_blockers, range(2)))
 
-    assert [row["draft_revision"] for row in first_reader] == [1, 2]
-    assert [row["draft_revision"] for row in second_reader] == [1, 2]
-    assert [row["claim_token"] for row in first_reader] == ["token-1", "token-2"]
+    assert [row["draft_revision"] for row in first_reader] == [2, 1]
+    assert [row["draft_revision"] for row in second_reader] == [2, 1]
+    assert [row["claim_token"] for row in first_reader] == ["token-2", "token-1"]
 
 
-def test_historical_unknown_attempt_does_not_block_new_revision(tmp_path):
+def test_historical_failed_attempt_does_not_block_new_revision(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="客户交付")
     todo_id = _create_bound_todo(store, project_id)
@@ -728,12 +727,12 @@ def test_historical_unknown_attempt_does_not_block_new_revision(tmp_path):
         lease_owner="sender", now="2026-06-08 02:00:00",
         lease_until="2026-06-08 02:05:00",
     )
-    # This simulates a legacy row during history migration. It is data only;
-    # the current dispatcher must not route on it.
+    # A prior failed attempt remains historical data; the current dispatcher
+    # must not route on it once a newer revision is scheduled.
     store.update_follow_up_draft(draft_id, question_text="revision-2", scheduled_at="2026-06-08 01:00:00")
     with store._connect() as db:
         db.execute(
-            "update follow_up_send_attempts set state='unknown', lease_owner='', lease_until='' where draft_id=? and draft_revision=1",
+            "update follow_up_send_attempts set state='failed', lease_owner='', lease_until='' where draft_id=? and draft_revision=1",
             (draft_id,),
         )
     store.update_follow_up_draft(draft_id, question_text="revision-3", scheduled_at="2026-06-08 01:00:00")
@@ -743,7 +742,7 @@ def test_historical_unknown_attempt_does_not_block_new_revision(tmp_path):
     assert len(dws.sent) == 1
     assert "revision-3" in dws.sent[0]["text"]
     old = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
-    assert old is not None and old["state"] == "unknown"
+    assert old is not None and old["state"] == "failed"
 
 def test_due_follow_up_defers_outside_local_working_hours(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
