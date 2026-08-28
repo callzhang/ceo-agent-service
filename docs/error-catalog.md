@@ -87,6 +87,16 @@ Skill 或 provider 契约文档。
 历史事件中的 `legacy_code`。新的重试沿用原 `reply_attempt`，追加新的 `agent_run`，
 不会把重试上限伪装成新的业务原因。
 
+会议历史投影迁移使用显式脚本，先预览再申请执行：
+
+```sh
+python scripts/migrate_error_projections.py --db <database>
+python scripts/migrate_error_projections.py --db <database> --apply
+```
+
+脚本默认只读；`--apply` 只更新会议任务的 current projection，不更新
+`meeting_alignment_runs` 历史错误字段。
+
 ## 历史错误码
 
 历史数据库可能包含已经废弃的 `unknown`、`reconciled`、旧恢复状态或早期命令审核错误。
