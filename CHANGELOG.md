@@ -10,10 +10,10 @@
   the worker.
 
 - 2026-08-27: removed the hardcoded `HTTP_PROXY`, `HTTPS_PROXY`, and
-  `ALL_PROXY` values from the CEO launchd service. Launchd no longer assumes a
-  local proxy at `127.0.0.1:7897`; any proxy configuration must be supplied by
-  the runtime environment, while `NO_PROXY` keeps Dingteam OKR reads on the
-  direct path.
+  `ALL_PROXY` values from the CEO launchd service, and explicitly clear both
+  uppercase and lowercase proxy variables inherited from the login shell.
+  Launchd no longer routes the service through the unavailable local endpoint
+  at `127.0.0.1:7897`; the service uses the direct network path.
 
 - 2026-08-27: add the `friday_runtime` Agent Runtime route. Friday owns provider,
   model, credential, and protocol selection (including MiniMax Chat Completions),
