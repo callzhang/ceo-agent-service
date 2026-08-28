@@ -108,6 +108,96 @@ def test_claude_route_uses_independent_model_and_secret():
     assert "anthropic-secret" not in repr(config)
 
 
+def test_load_runtime_config_accepts_friday_runtime():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,friday_runtime",
+            "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080/",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+            "CEO_FRIDAY_RUNTIME_MODEL": "MiniMax-M3",
+            "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",
+        }
+    )
+
+    route = next(item for item in config.routes if item.name == "friday_runtime")
+    assert route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME
+    assert route.credential_mode is CredentialMode.SERVICE_API
+    assert route.model == "MiniMax-M3"
+    assert config.friday_runtime_base_url == "http://127.0.0.1:8080"
+    assert config.friday_runtime_project_id == "ceo-project"
+    assert config.secret_for("friday_runtime").get_secret_value() == "runtime-ticket"
+    assert "runtime-ticket" not in repr(config)
+
+
+def test_friday_runtime_accepts_explicit_auth_disabled_for_local_runtime():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+            "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1",
+        }
+    )
+
+    assert config.friday_runtime_auth_disabled is True
+    assert config.secret_for("friday_runtime") is None
+
+
+def test_friday_runtime_accepts_session_token_credential():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+            "CEO_FRIDAY_SESSION_TOKEN": "session-token",
+        }
+    )
+
+    assert config.secret_for("friday_runtime").get_secret_value() == "session-token"
+
+
+@pytest.mark.parametrize(
+    "credential_name",
+    ["CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"],
+)
+def test_friday_runtime_auth_disabled_rejects_credentials(credential_name: str):
+    with pytest.raises(ValueError, match="auth_disabled"):
+        load_runtime_config(
+            {
+                "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+                "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+                "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1",
+                credential_name: "credential",
+            }
+        )
+
+
+def test_friday_runtime_requires_project_and_one_auth_credential():
+    with pytest.raises(ValueError, match="PROJECT_ID"):
+        load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "friday_runtime"})
+    with pytest.raises(ValueError, match="exactly one"):
+        load_runtime_config(
+            {
+                "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+                "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["friday.local", "http://user:pass@friday.local", "http://friday.local?v=1"],
+)
+def test_friday_runtime_base_url_rejects_unsafe_urls(base_url: str):
+    with pytest.raises(ValueError, match="CEO_FRIDAY_RUNTIME_BASE_URL"):
+        load_runtime_config(
+            {
+                "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+                "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+                "CEO_FRIDAY_RUNTIME_TICKET": "ticket",
+                "CEO_FRIDAY_RUNTIME_BASE_URL": base_url,
+            }
+        )
+
+
 def test_runtime_duration_settings_are_parsed_from_the_supplied_environment():
     config = load_runtime_config(
         {

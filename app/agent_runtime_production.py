@@ -284,6 +284,16 @@ def _reviewed_surface_manifests(
     claude_read_tools = effects.reviewed_read_tools()
     manifests = {}
     for route in runtime_config.routes:
+        if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
+            # Keep the configuration contract available for the future HTTP
+            # adapter, but never advertise a route that the execution process
+            # cannot actually run.  Otherwise AgentTurnProcess would fall
+            # through to the Codex adapter for this route.
+            manifests[route.name] = RuntimeRouteSurfaceManifest(
+                route_name=route.name,
+                capabilities=frozenset(),
+            )
+            continue
         if route.runtime_kind is RuntimeKind.CLAUDE_CLI:
             capabilities = set()
             if "agent_cli" in claude_servers and claude_read_tools.get("agent_cli"):

@@ -85,6 +85,16 @@ class AgentRuntimeProbe:
         route = self._route(route_name)
         checked_at = self._now().astimezone(UTC)
         expires_at = checked_at + self._config.probe_interval
+        if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
+            return _snapshot(
+                route=route,
+                checked_at=checked_at,
+                expires_at=expires_at,
+                failure=_probe_failure(
+                    "runtime_route_unsupported",
+                    "Friday Runtime route is configured but its execution adapter is not installed.",
+                ),
+            )
         try:
             with tempfile.TemporaryDirectory(
                 prefix="ceo-agent-runtime-probe-",

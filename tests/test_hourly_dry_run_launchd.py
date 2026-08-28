@@ -84,7 +84,6 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert "--host" in command[2]
     assert "--port" in command[2]
     assert "CEO_SERVICE_ROOT" in command[2]
-    assert "unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy" not in command[2]
     assert 'CEO_MAX_BATCHES="${CEO_MAX_BATCHES:-4}"' in command[2]
     assert 'CEO_CONSUMER_WORKERS="${CEO_CONSUMER_WORKERS:-2}"' in command[2]
     assert plist["EnvironmentVariables"]["CEO_TASK_CODEX_TIMEOUT_SECONDS"] == "900"
@@ -117,6 +116,9 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert probe.returncode == 0, probe.stderr
     assert "--user-id {user_id} --period-label {period_label}" in probe.stdout
     env = plist["EnvironmentVariables"]
+    assert "HTTP_PROXY" not in env
+    assert "HTTPS_PROXY" not in env
+    assert "ALL_PROXY" not in env
     assert "dingokr.dingteam.com" in env["NO_PROXY"]
     assert env["CEO_SERVICE_ROOT"] == (
         "/Users/derek/Documents/Projects/ceo-agent-service"

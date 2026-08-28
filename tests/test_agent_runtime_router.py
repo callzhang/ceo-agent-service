@@ -34,6 +34,8 @@ def route(name: str) -> RuntimeRoute:
         runtime_kind=(
             RuntimeKind.CLAUDE_CLI
             if name == "claude_api"
+            else RuntimeKind.FRIDAY_RUNTIME
+            if name == "friday_runtime"
             else RuntimeKind.CODEX_CLI
         ),
         credential_mode=(
@@ -43,6 +45,21 @@ def route(name: str) -> RuntimeRoute:
         ),
         model="claude-sonnet-4-5" if name == "claude_api" else "gpt-5.5",
     )
+
+
+def test_router_selects_healthy_friday_runtime_after_codex_failure(store):
+    routes = (route("codex_api"), route("friday_runtime"))
+    required = frozenset({"structured_output"})
+    router = make_router(
+        store,
+        routes=routes,
+        snapshots={
+            "codex_api": snapshot("codex_api", healthy=False),
+            "friday_runtime": snapshot("friday_runtime", capabilities=required),
+        },
+    )
+
+    assert router.first_eligible_route(required_capabilities=required) == routes[1]
 
 
 def snapshot(

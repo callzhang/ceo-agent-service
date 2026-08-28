@@ -6486,9 +6486,72 @@ def test_wechat_loop_retries_after_transient_reader_ipc_unavailable(
         cli._run_wechat_loop(settings, "producer")
 
     errors = store.list_errors(limit=10)
-    assert [error.kind for error in errors] == ["wechat_reader_unavailable"]
-    assert "producer retrying automatically" in errors[0].detail
+    assert errors == []
     assert sleeps == [15]
+
+
+def test_wechat_reader_failure_debounce_resets_after_a_success(
+    monkeypatch,
+    tmp_path,
+):
+    import time
+
+    from app.wechat.reader_ipc import ReaderIpcError
+
+    class StopLoop(Exception):
+        pass
+
+    db = tmp_path / "w.sqlite3"
+    store = AutoReplyStore(db)
+    store.upsert_wechat_read_state(
+        account_id="a1",
+        account_dir="/a1",
+        db_dir="/a1/db_storage",
+        app_version="4.1.10",
+        self_user_id="self-1",
+        capability_status="ready",
+    )
+    settings = SimpleNamespace(
+        db_path=db,
+        workspace=tmp_path,
+        codex_timeout_seconds=30,
+        codex_idle_timeout_seconds=30,
+    )
+    monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
+    outcomes = iter(
+        [
+            ReaderIpcError("unavailable", code="unavailable"),
+            ReaderIpcError("unavailable", code="unavailable"),
+            ReaderIpcError("unavailable", code="unavailable"),
+            None,
+            ReaderIpcError("unavailable", code="unavailable"),
+            ReaderIpcError("unavailable", code="unavailable"),
+            ReaderIpcError("unavailable", code="unavailable"),
+        ]
+    )
+    monkeypatch.setattr(
+        "app.wechat.service.run_produce_once",
+        lambda *a, **k: (
+            (_ for _ in ()).throw(outcome) if (outcome := next(outcomes)) else None
+        ),
+    )
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 7:
+            raise StopLoop
+
+    monkeypatch.setattr(time, "sleep", sleep)
+
+    with pytest.raises(StopLoop):
+        cli._run_wechat_loop(settings, "producer")
+
+    errors = store.list_errors(limit=10)
+    assert [error.kind for error in errors] == [
+        "wechat_reader_unavailable",
+        "wechat_reader_unavailable",
+    ]
 
 
 def test_wechat_loop_uses_default_interval_when_config_is_none(

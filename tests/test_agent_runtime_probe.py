@@ -530,6 +530,27 @@ def test_probe_requires_structured_completion(monkeypatch, tmp_path):
     assert snapshot.expires_at == (NOW + timedelta(minutes=5)).isoformat()
 
 
+def test_probe_does_not_run_friday_route_through_codex_adapter(monkeypatch, tmp_path):
+    monkeypatch.setenv("CEO_FRIDAY_RUNTIME_PROJECT_ID", "ceo-project")
+    monkeypatch.setenv("CEO_FRIDAY_RUNTIME_AUTH_DISABLED", "1")
+    config = _config(monkeypatch, routes="friday_runtime")
+    calls = []
+
+    snapshot = AgentRuntimeProbe(
+        config=load_runtime_config(dict(__import__("os").environ)),
+        codex_bin="must-not-run",
+        executor=lambda *args, **kwargs: calls.append((args, kwargs)),
+        now=lambda: NOW,
+        temporary_root=tmp_path,
+    ).run(route_name="friday_runtime")
+
+    assert calls == []
+    assert snapshot.healthy is False
+    assert snapshot.capabilities == frozenset()
+    assert snapshot.failure is not None
+    assert snapshot.failure.code == "runtime_route_unsupported"
+
+
 @pytest.mark.skip(reason="provider event/tool policy is owned by the Agent runtime")
 def test_probe_accepts_started_action_when_typed_result_is_valid(
     monkeypatch, tmp_path

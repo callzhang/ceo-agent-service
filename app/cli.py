@@ -2723,6 +2723,8 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
         else 15
     )
     consecutive_sqlite_lock_failures = 0
+    consecutive_reader_failures = 0
+    reader_failure_reported = False
     while True:
         try:
             if role == "producer":
@@ -2738,6 +2740,8 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                     account=account,
                 )
             consecutive_sqlite_lock_failures = 0
+            consecutive_reader_failures = 0
+            reader_failure_reported = False
         except Exception as exc:  # keep the loop alive; surface via error log
             if isinstance(exc, OSError) and exc.errno in {errno.EACCES, errno.EPERM}:
                 store.record_error(
@@ -2757,12 +2761,16 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                         f"{role} paused until service restart.",
                     )
                     _pause_wechat_loop_until_service_restart(time.sleep)
-                store.record_error(
-                    "wechat",
-                    "",
-                    "wechat_reader_unavailable",
-                    f"WeChat reader unavailable; {role} retrying automatically: {exc}",
-                )
+                else:
+                    consecutive_reader_failures += 1
+                    if consecutive_reader_failures >= 3 and not reader_failure_reported:
+                        store.record_error(
+                            "wechat",
+                            "",
+                            "wechat_reader_unavailable",
+                            f"WeChat reader unavailable; {role} retrying automatically: {exc}",
+                        )
+                        reader_failure_reported = True
             elif isinstance(exc, WechatTaskProcessingError):
                 store.record_error(
                     exc.conversation_id,

@@ -1,5 +1,13 @@
 import pytest
 
+from app.agent_runtime_config import load_runtime_config
+from app.friday_runtime_adapter import (
+    FridayExecutionResult,
+    FridayHttpResponse,
+    FridayRuntimeAdapter,
+    FridayRuntimeError,
+)
+
 from app.friday_runtime_contract import (
     FridayExecutionInput,
     FridayOperationStatus,
@@ -97,3 +105,186 @@ def test_contract_rejects_missing_final_artifact():
 
     with pytest.raises(FridayRuntimeContractError, match="artifact"):
         contract.select_final_artifact(payload, thread_id="thread-1")
+
+
+class FakeTransport:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def request(self, method, path, *, headers, body=None, timeout_seconds):
+        self.calls.append(
+            type(
+                "Call",
+                (),
+                {
+                    "method": method,
+                    "path": path,
+                    "headers": dict(headers),
+                    "body": body,
+                    "timeout_seconds": timeout_seconds,
+                },
+            )
+        )
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+
+@pytest.fixture
+def runtime_config():
+    return load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+            "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1",
+            "CEO_FRIDAY_RUNTIME_MODEL": "MiniMax-M3",
+        }
+    )
+
+
+def _success(data):
+    return {"result": "success", "code": 200, "message": None, "data": data}
+
+
+def test_execute_creates_thread_sends_message_polls_and_returns_artifact(runtime_config):
+    transport = FakeTransport(
+        [
+            _success({"thread": {"thread_id": "thread-1"}}),
+            _success(
+                {
+                    "thread": {"thread_id": "thread-1"},
+                    "turn": {"turn_id": "turn-1"},
+                    "operation": {
+                        "operation_id": "op-1",
+                        "request_payload": {"turn_id": "turn-1"},
+                    },
+                }
+            ),
+            _success({"operation": {"status": "running"}}),
+            _success({"operation": {"status": "completed"}}),
+            _success(
+                {
+                    "items": [
+                        {"thread_id": "thread-1", "final_message": '{"ok":true}'}
+                    ]
+                }
+            ),
+        ]
+    )
+
+    result = FridayRuntimeAdapter(
+        runtime_config, transport=transport, poll_interval_seconds=0
+    ).execute("produce result", timeout_seconds=10)
+
+    assert isinstance(result, FridayExecutionResult)
+    assert result.text == '{"ok":true}'
+    assert (result.thread_id, result.turn_id, result.operation_id) == (
+        "thread-1",
+        "turn-1",
+        "op-1",
+    )
+    assert [call.path for call in transport.calls] == [
+        "/v1/threads",
+        "/v1/threads/thread-1/turns",
+        "/v1/operations/op-1",
+        "/v1/operations/op-1",
+        "/v1/artifacts?thread_id=thread-1",
+    ]
+    assert transport.calls[0].body["project_id"] == "ceo-project"
+    assert transport.calls[1].body["message"]["text"] == "produce result"
+    assert all(call.headers == {} for call in transport.calls)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "code"),
+    [(401, "friday_runtime_auth_failed"), (403, "friday_runtime_auth_failed")],
+)
+def test_execute_maps_auth_http_errors(runtime_config, status_code, code):
+    transport = FakeTransport([(status_code, {"message": "bad credentials"})])
+
+    with pytest.raises(FridayRuntimeError) as raised:
+        FridayRuntimeAdapter(runtime_config, transport=transport).execute("prompt")
+
+    assert raised.value.code == code
+    assert raised.value.retryable is False
+    assert "bad credentials" not in str(raised.value)
+
+
+def test_execute_maps_transport_error_to_unreachable(runtime_config):
+    transport = FakeTransport([TimeoutError("secret-ticket must not leak")])
+
+    with pytest.raises(FridayRuntimeError) as raised:
+        FridayRuntimeAdapter(runtime_config, transport=transport).execute("prompt")
+
+    assert raised.value.code == "friday_runtime_unreachable"
+    assert raised.value.retryable is True
+    assert "secret-ticket" not in str(raised.value)
+
+
+def test_execute_maps_malformed_json_shape_to_result_invalid(runtime_config):
+    transport = FakeTransport([FridayHttpResponse(200, ["not", "an", "object"])])
+
+    with pytest.raises(FridayRuntimeError) as raised:
+        FridayRuntimeAdapter(runtime_config, transport=transport).execute("prompt")
+
+    assert raised.value.code == "friday_runtime_result_invalid"
+    assert raised.value.retryable is False
+
+
+def test_execute_maps_terminal_operation_failure(runtime_config):
+    transport = FakeTransport(
+        [
+            _success({"thread": {"thread_id": "thread-1"}}),
+            _success(
+                {
+                    "operation": {
+                        "operation_id": "op-1",
+                        "request_payload": {"turn_id": "turn-1"},
+                    }
+                }
+            ),
+            _success(
+                {
+                    "operation": {
+                        "status": "failed",
+                        "last_error": "provider failed",
+                    }
+                }
+            ),
+        ]
+    )
+
+    with pytest.raises(FridayRuntimeError) as raised:
+        FridayRuntimeAdapter(runtime_config, transport=transport).execute("prompt")
+
+    assert raised.value.code == "friday_runtime_failed"
+    assert raised.value.retryable is True
+    assert raised.value.detail == "provider failed"
+
+
+def test_execute_timeout_is_bounded_and_does_not_create_extra_run(runtime_config):
+    transport = FakeTransport(
+        [
+            _success({"thread": {"thread_id": "thread-1"}}),
+            _success(
+                {
+                    "operation": {
+                        "operation_id": "op-1",
+                        "request_payload": {"turn_id": "turn-1"},
+                    }
+                }
+            ),
+            _success({"operation": {"status": "running"}}),
+        ]
+    )
+    adapter = FridayRuntimeAdapter(
+        runtime_config, transport=transport, poll_interval_seconds=0.02
+    )
+
+    with pytest.raises(FridayRuntimeError) as raised:
+        adapter.execute("prompt", timeout_seconds=0.01)
+
+    assert raised.value.code == "friday_runtime_unreachable"
+    assert [call.method for call in transport.calls] == ["POST", "POST", "GET"]

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class RuntimeKind(StrEnum):
     CODEX_CLI = "codex_cli"
     CLAUDE_CLI = "claude_cli"
+    FRIDAY_RUNTIME = "friday_runtime"
 
 
 class CredentialMode(StrEnum):
