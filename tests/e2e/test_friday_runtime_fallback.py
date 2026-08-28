@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import threading
 import time
@@ -398,18 +399,56 @@ observability:
             project_id=project_id,
             base_url=base_url,
         )
-        result = FridayRuntimeAdapter(live_config, poll_interval_seconds=0.2).execute(
-            'Return exactly this JSON object and no other text: {"ok":true,"value":7}.',
-            project_id=project_id,
-            timeout_seconds=120,
-            auth_disabled=True,
+        store = AutoReplyStore(tmp_path / "ceo-agent.sqlite3")
+        _task_id, run_id, generation = _seed_run(store)
+        snapshots = {
+            "friday_runtime": RuntimeCapabilitySnapshot(
+                route_name="friday_runtime",
+                capabilities=CAPABILITIES,
+                healthy=True,
+                checked_at="2026-08-27T00:00:00+00:00",
+                expires_at="2099-08-27T00:00:00+00:00",
+            )
+        }
+        routed = RoutedCodexExecution(
+            store=store,
+            config=live_config,
+            router=AgentRuntimeRouter(routes=live_config.routes, store=store, snapshots=snapshots),
+            adapter=_FailingCodexAdapter(),
+            friday_adapter=FridayRuntimeAdapter(live_config, poll_interval_seconds=0.2),
+            executor=lambda *_args, **_kwargs: ProcessRunResult(1, "", "unused"),
         )
-        assert _parse_json_result(result.text) == {"ok": True, "value": 7}
-        assert result.thread_id
-        assert result.turn_id
-        assert result.operation_id
-        assert result.artifact.get("thread_id") == result.thread_id
-        assert result.artifact
+        routed_result = routed.execute(
+            workload_kind="agent_run",
+            workload_key=str(run_id),
+            prompt='Return exactly this JSON object and no other text: {"ok":true,"value":7}.',
+            command_factory=ApprovedCodexCommandFactory.effectful(developer_instructions="Return JSON."),
+            parser=_parse_json_text,
+            result_codec=RoutedResultCodec.text(schema_id="friday-e2e.json.v1"),
+        )
+        assert json.loads(routed_result.value) == {"ok": True, "value": 7}
+        attempts = store.list_agent_runtime_attempts(run_id)
+        assert len(attempts) == 1
+        assert attempts[0].route_name == "friday_runtime"
+        assert attempts[0].status == "completed"
+        assert attempts[0].operation_id
+        assert attempts[0].session_id
+        with sqlite3.connect(runtime_db) as runtime_state:
+            thread_id = runtime_state.execute("select thread_id from threads").fetchone()[0]
+            turn_id = runtime_state.execute("select turn_id from turns").fetchone()[0]
+            operation = runtime_state.execute(
+                "select operation_id, status from async_operations where operation_id = ?",
+                (attempts[0].operation_id,),
+            ).fetchone()
+            artifact = runtime_state.execute(
+                "select thread_id, created_turn_id, final_message from artifacts where thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            run_model = runtime_state.execute("select model from runs where turn_id = ?", (turn_id,)).fetchone()
+        assert thread_id and turn_id and operation == (attempts[0].operation_id, "completed")
+        assert run_model and run_model[0] == provider_model
+        assert artifact and artifact[0] == thread_id and artifact[1] == turn_id
+        assert _parse_json_result(artifact[2]) == {"ok": True, "value": 7}
     finally:
         process.terminate()
         try:
@@ -417,6 +456,12 @@ observability:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
+        stdout, stderr = process.communicate(timeout=2)
+        assert provider_key not in stdout
+        assert provider_key not in stderr
+        for path in tmp_path.rglob("*"):
+            if path.is_file():
+                assert provider_key.encode() not in path.read_bytes()
 
 
 def _free_local_port() -> int:
@@ -482,3 +527,7 @@ def _parse_json_result(text: str) -> object:
         value, end = decoder.raw_decode(text[start:])
         assert not text[start + end :].strip()
         return value
+
+
+def _parse_json_text(text: str) -> str:
+    return json.dumps(_parse_json_result(text), separators=(",", ":"))
