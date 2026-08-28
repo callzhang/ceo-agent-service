@@ -4406,6 +4406,58 @@ def test_render_config_page_shows_friday_runtime_settings_without_credentials(
     assert form_start < html.index('name="friday_runtime_enabled"') < form_end
 
 
+def test_agent_runtime_settings_form_submits_friday_configuration(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,friday_runtime\n"
+        "CEO_FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080\n"
+        "CEO_FRIDAY_RUNTIME_PROJECT_ID=ceo\n"
+        "CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+    client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    page = client.get("/settings?tab=config&config_tab=agent-runtime")
+    assert page.status_code == 200
+    form_start = page.text.index('<form method="post" action="/config/agent-runtime">')
+    form_end = page.text.index("</form>", form_start)
+    for field_name in (
+        "friday_runtime_settings_present",
+        "friday_runtime_enabled",
+        "friday_runtime_base_url",
+        "friday_runtime_project_id",
+        "friday_runtime_auth_disabled",
+        "friday_runtime_ticket",
+        "friday_session_token",
+    ):
+        field_position = page.text.index(f'name="{field_name}"')
+        assert form_start < field_position < form_end
+
+    response = client.post(
+        "/config/agent-runtime",
+        content=(
+            "codex_model=gpt-5.5&codex_reasoning_effort=medium"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5&friday_runtime_settings_present=1"
+            "&friday_runtime_enabled=1"
+            "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A8080"
+            "&friday_runtime_project_id=ceo&friday_runtime_auth_disabled=1"
+            "&friday_runtime_ticket=&friday_session_token="
+        ),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,friday_runtime" in (
+        env_path.read_text(encoding="utf-8")
+    )
+
+
 def test_handle_agent_runtime_config_post_saves_friday_runtime_ticket_and_route(
     tmp_path: Path,
     monkeypatch,
