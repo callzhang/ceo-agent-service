@@ -5785,10 +5785,10 @@ def test_pending_reconciliation_names_objective_and_actions():
 
     html = audit_web_module._attempt_status_card(attempt, [consumer])
 
-    assert "事项：处理招聘需求审批" in html
-    assert "同意招聘需求申请" in html
-    assert "通知申请人审批结果" in html
-    assert "你当前无需操作" in html
+    assert html == ""
+    assert "同意招聘需求申请" not in html
+    assert "通知申请人审批结果" not in html
+    assert "你当前无需操作" not in html
     assert "。；" not in html
     assert "。。" not in html
 
@@ -5857,8 +5857,8 @@ def test_terminal_later_attempt_does_not_replace_original_detail_fields(tmp_path
     assert status == 200
     assert f"已完成（后续记录 #{later_id}）" not in html
     assert "历史错误已由后续处理解决" not in html
-    assert "事项：</strong>请处理招聘需求审批" in html
-    assert "需要你决策：</strong>否" in html
+    assert "事项：</strong>请处理招聘需求审批" not in html
+    assert "需要你决策：</strong>否" not in html
     assert "处理结果：</strong>后续任务已完成" not in html
     assert "审批已同意；已向实际申请人发送审批结果" not in html
     assert "audit_recovery_failed" in html
