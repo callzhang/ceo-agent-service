@@ -581,6 +581,10 @@ class DingTalkAutoReplyWorker:
         except Exception as exc:
             if raise_authorization and self._is_authorization_error(exc):
                 raise
+            missing_direct_chat_target = (
+                allow_missing_direct_chat_target
+                and self._is_missing_direct_chat_target_error(exc)
+            )
             pat_authorization_requested = False
             is_login_error = self._is_dws_login_error(exc)
             if is_login_error:
@@ -620,10 +624,7 @@ class DingTalkAutoReplyWorker:
                 self._record_dws_transient_error(kind, str(exc))
                 should_record_error = False
                 should_notify = False
-            elif (
-                allow_missing_direct_chat_target
-                and self._is_missing_direct_chat_target_error(exc)
-            ):
+            elif missing_direct_chat_target:
                 self._clear_dws_transient_error(kind)
                 should_record_error = False
                 should_notify = False
@@ -634,7 +635,7 @@ class DingTalkAutoReplyWorker:
                     title=notify_title,
                     message=str(exc)[:120],
                 )
-            if raise_errors:
+            if raise_errors and not missing_direct_chat_target:
                 raise
             return default
 
