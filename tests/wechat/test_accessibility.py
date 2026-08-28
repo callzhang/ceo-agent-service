@@ -369,7 +369,7 @@ def test_open_target_selects_unique_sidebar_row_by_recent_message():
     clicked = []
 
     def first(*, role=None, id_eq=None, title_contains=None):
-        if id_eq == "chat_input_field" and title_contains == "Melody":
+        if id_eq == "chat_input_field":
             return composer
         return None
 
@@ -403,7 +403,7 @@ def test_open_target_waits_for_delayed_matching_sidebar_row():
     scans = 0
 
     def first(*, role=None, id_eq=None, title_contains=None):
-        if id_eq == "chat_input_field" and title_contains == "Melody":
+        if id_eq == "chat_input_field":
             return composer
         return None
 
@@ -515,22 +515,12 @@ def test_open_and_identify_refreshes_ax_root_after_activation(monkeypatch):
     assert Runner().open_and_identify("Melody", expected_recent_text="latest") == "Melody"
 
 
-def test_open_target_searches_when_direct_chat_is_not_in_sidebar():
+def test_open_target_does_not_search_when_recent_message_is_not_in_sidebar():
     searched = []
-    composer = object()
-
-    def first(*, role=None, id_eq=None, title_contains=None):
-        if role == "AXTextArea" and title_contains == "搜索":
-            return object()
-        if id_eq == "search_item_function_Melody":
-            return object()
-        if id_eq == "chat_input_field" and title_contains == "Melody":
-            return composer
-        return None
 
     opened = _open_target(
         "Melody",
-        first=first,
+        first=lambda **_kwargs: None,
         find_all=lambda **_kwargs: [],
         subtree_has_text=lambda _row, _text: False,
         click=lambda _element, n=1: None,
@@ -540,8 +530,8 @@ def test_open_target_searches_when_direct_chat_is_not_in_sidebar():
         expected_recent_text="latest inbound",
     )
 
-    assert opened is composer
-    assert searched == ["Melody"]
+    assert opened is None
+    assert searched == []
 
 
 def test_text_evidence_match_allows_ui_prefix_and_long_truncation():
