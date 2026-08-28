@@ -432,7 +432,8 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert "decision_options is" in instructions
     assert "error_code, error_retryable, and error_authorization_required" in instructions
     assert "Do not return a nested error object" in instructions
-    assert "pass that stable user id directly" in instructions
+    assert "pass that stable user id to" in instructions
+    assert "originatorOpenDingTalkId" in instructions
     assert "display-name search" in instructions
 
 

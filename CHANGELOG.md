@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-08-28: preserve live OA applicant identity mappings in
+  `org_user_profiles` and pass a resolved `openDingTalkId` through the
+  applicant-notification context when DWS provides one, avoiding name-based
+  target resolution.
+
 - 2026-08-28: make the Consumer and Audit prompts expose only the typed wire
   contract. The application result model is an internal persistence shape and
   is no longer rendered beside the wire schema, preventing Codex from

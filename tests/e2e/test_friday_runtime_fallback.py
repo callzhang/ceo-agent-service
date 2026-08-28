@@ -387,7 +387,8 @@ observability:
                 "bootstrap_scan": {"enabled": False, "create_default_thread": False},
             },
         )
-        project = project_payload.get("project")
+        project_data = project_payload.get("data", project_payload)
+        project = project_data.get("project") if isinstance(project_data, dict) else None
         project_id = str(project.get("project_id") if isinstance(project, dict) else "").strip()
         assert project_id
         live_config = _config_for_live_provider(

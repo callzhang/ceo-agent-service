@@ -429,6 +429,11 @@ def scan_pending_oa_approvals(
         if not task_id:
             skipped_missing_task_id.append(process_instance_id)
             continue
+        applicant_user_id, applicant_open_dingtalk_id = _cache_oa_applicant_profile(
+            store,
+            dws,
+            detail_payload,
+        )
         records_payload: Any = {}
         if read_records is not None:
             try:
@@ -474,6 +479,16 @@ def scan_pending_oa_approvals(
                 "taskId": task_id,
                 "processName": process_name,
                 "title": title,
+                **(
+                    {"originatorUserid": applicant_user_id}
+                    if applicant_user_id
+                    else {}
+                ),
+                **(
+                    {"originatorOpenDingTalkId": applicant_open_dingtalk_id}
+                    if applicant_open_dingtalk_id
+                    else {}
+                ),
             },
         )
         inserted = store.enqueue_reply_task(
@@ -514,6 +529,71 @@ def scan_pending_oa_approvals(
         last_error="",
     )
     return queued
+
+
+def _cache_oa_applicant_profile(
+    store: AutoReplyStore,
+    dws: Any,
+    detail_payload: Any,
+) -> tuple[str, str]:
+    """Cache the live OA originator mapping for later direct-user delivery."""
+    if not isinstance(detail_payload, dict):
+        return "", ""
+    applicant_user_id = _oa_originator_user_id(detail_payload)
+    if not applicant_user_id:
+        return "", ""
+    get_profiles = getattr(dws, "get_user_profiles", None)
+    if get_profiles is None:
+        return applicant_user_id, ""
+    try:
+        profiles = get_profiles([applicant_user_id])
+    except Exception:
+        return applicant_user_id, ""
+    for profile in profiles:
+        if str(getattr(profile, "user_id", "") or "").strip() != applicant_user_id:
+            continue
+        open_dingtalk_id = str(
+            getattr(profile, "open_dingtalk_id", "") or ""
+        ).strip()
+        store.upsert_org_user_profile(
+            user_id=applicant_user_id,
+            name=str(getattr(profile, "name", "") or ""),
+            title=str(getattr(profile, "title", "") or ""),
+            open_dingtalk_id=open_dingtalk_id or None,
+            manager_user_id=getattr(profile, "manager_user_id", None),
+            manager_name=str(getattr(profile, "manager_name", "") or ""),
+            department_ids=set(getattr(profile, "department_ids", set()) or set()),
+            department_names=set(
+                getattr(profile, "department_names", set()) or set()
+            ),
+            org_labels=list(getattr(profile, "org_labels", []) or []),
+            has_subordinate=getattr(profile, "has_subordinate", None),
+        )
+        return applicant_user_id, open_dingtalk_id
+    return applicant_user_id, ""
+
+
+def _oa_originator_user_id(value: Any) -> str:
+    if isinstance(value, dict):
+        for key in (
+            "originatorUserid",
+            "originatorUserId",
+            "originator_userid",
+            "originator_user_id",
+        ):
+            candidate = value.get(key)
+            if candidate is not None and str(candidate).strip():
+                return str(candidate).strip()
+        for nested in value.values():
+            candidate = _oa_originator_user_id(nested)
+            if candidate:
+                return candidate
+    elif isinstance(value, list):
+        for nested in value:
+            candidate = _oa_originator_user_id(nested)
+            if candidate:
+                return candidate
+    return ""
 
 
 def _pending_oa_task_id_for_current_user(
