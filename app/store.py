@@ -18334,19 +18334,22 @@ class AutoReplyStore:
                         "outcome": "equivalent_sent",
                         "draft_finalized": False,
                     }
+                # A contradictory late provider result is retained as an
+                # append-only conflict fact, but it must not reintroduce the
+                # removed application-level ``unknown`` state machine.  Keep
+                # the ordinary failed/retryable projection and let the next
+                # normal revision decide whether another send is needed.
                 db.execute(
                     """
                     update follow_up_send_attempts
-                    set state='unknown',
-                        lease_owner='',
-                        lease_until=?,
+                    set lease_owner='',
+                        lease_until='',
                         late_result_json=?,
                         conflict_json=?,
                         updated_at=current_timestamp
                     where id=? and claim_token=? and idempotency_uuid=?
                     """,
                     (
-                        sent_at,
                         result_json,
                         conflict_json,
                         attempt_id,
