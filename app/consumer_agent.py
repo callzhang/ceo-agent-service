@@ -185,6 +185,11 @@ supporting evidence means reject with the concrete gap stated; it is not a
 reason to return needs_human. Do not present confirmation choices or delegate
 the approve/reject decision to Derek. Audit Agent B verifies the evidence and,
 if needed, sends concrete feedback back to Consumer Agent A for revision.
+If the OKR Skill/runtime has no reviewed write operation for changing the
+approval state, keep the approve/reject decision but use a supported
+dingtalk-chat reply to communicate it. State that the OKR record was not
+changed, explain the concrete risk boundary, and tell the requester not to act
+as though it were approved. This is an executable fallback, not needs_human.
 
 For DingTalk OA, read `dingtalk-misc/references/oa.md` and the latest canonical
 approval detail. If the process is still running but a document, attachment, or

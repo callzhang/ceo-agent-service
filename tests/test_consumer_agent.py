@@ -506,6 +506,16 @@ def test_consumer_instructions_reserve_human_for_unsupported_skill_only():
     assert "rule gap" in instructions
 
 
+def test_consumer_instructions_use_reply_fallback_when_okr_write_is_unsupported():
+    instructions = " ".join(
+        consumer_developer_instructions("Verify every supported fact.").split()
+    )
+
+    assert "no reviewed write operation" in instructions
+    assert "OKR record was not changed" in instructions
+    assert "executable fallback, not needs_human" in instructions
+
+
 def test_audit_instructions_accept_the_authorized_low_consequence_standard():
     instructions = audit_developer_instructions("Verify every supported fact.")
 
