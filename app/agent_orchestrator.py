@@ -873,9 +873,9 @@ def _run_error(run: AgentRun) -> AgentError:
         payload = {}
     if not isinstance(payload, dict):
         payload = {}
-    # Never hide the run's concrete failure behind the old catch-all
-    # ``agent_run_failed`` code.  A missing/malformed code is classified as an
-    # execution failure with bounded diagnostics by the caller.
+    # Never hide the run's concrete failure behind a catch-all code. A
+    # missing/malformed code is classified as an execution failure with
+    # bounded diagnostics by the caller.
     code = str(payload.get("code") or "execution_failed")
     return AgentError.model_validate(
         {
