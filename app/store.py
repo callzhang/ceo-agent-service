@@ -15435,7 +15435,6 @@ class AutoReplyStore:
                 (channel, conversation_id, trigger_message_id),
             ).fetchone()
             if current_task is not None:
-                now_text = str(db.execute("select current_timestamp").fetchone()[0])
                 task = self._reply_task_from_row(current_task)
 
             audit_summary = (
