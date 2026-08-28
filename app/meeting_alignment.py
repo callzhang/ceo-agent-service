@@ -695,6 +695,31 @@ def _analyze_meeting_job(
         )
         return
     except RuntimeError as exc:
+        # A runtime lease conflict is a scheduler condition, not a terminal
+        # meeting decision. Close this short-lived run as retryable before
+        # applying the normal meeting backoff so the active lease cannot
+        # strand the job in Attention indefinitely.
+        if isinstance(exc, RoutedCodexExecutionError) and exc.code == "runtime_attempt_active":
+            error = _error_json("runtime_session_conflict", str(exc))
+            _record_agent_run(
+                store,
+                runner,
+                run_id,
+                job_id=job.id,
+                decision=None,
+                status="retry",
+                error=error,
+            )
+            _retry_or_fail(
+                store,
+                job,
+                kind="meeting_agent",
+                exc=exc,
+                now=now,
+                retry_delay=retry_delay,
+                max_attempts=max_attempts,
+            )
+            return
         if isinstance(exc, RoutedCodexExecutionError) and (
             exc.failure_class
             in {
