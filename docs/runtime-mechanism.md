@@ -28,6 +28,12 @@ pending -> running -> done
 - `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；技术读取或 provider 失败使用 `failed`。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
+每个执行 Agent 和审核 Agent 的结构化结果都带有通用的 `risk`（`low`、`medium`、
+`high`）和 `confidence`（0 到 1）字段，不区分任务领域。`needs_human` 只有在风险为
+`high` 且置信度严格低于 `0.5` 时才允许；低置信度的技术或依赖失败仍然是 `failed`，
+规则覆盖但需要修改的结果进入 `needs_feedback`。这样人工入口表示不可安全自行决策的
+高后果规则缺口，而不是模型遇到不确定性就停止。
+
 ## 审核反馈闭环
 
 ```text

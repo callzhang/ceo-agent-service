@@ -146,6 +146,8 @@ class AuditAgentRunner:
             "Return needs_human only for a reusable policy gap: existing rules "
             "cannot determine how this class of cases should be handled. Describe "
             "the rule key, recurring pattern, and mutually exclusive policy choices. "
+            "Set top-level risk and confidence for every result. needs_human is "
+            "valid only for high risk with confidence strictly below 0.5. "
             "Do not turn a technical failure into needs_human."
         )
         if self.dry_run:

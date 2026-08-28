@@ -75,7 +75,9 @@ material; the application does not review or rewrite the command.
 each array item must contain exactly these non-empty string fields, including `key`; use concise identifiers such as `option_1`.
 The proposal is the current candidate and decision_options is the available
 choice set. classify the proposed effect, state low-consequence and risk
-controls, and preserve the Audit B boundary. Select and read every applicable
+controls, and preserve the Audit B boundary. Every result must include the
+structured top-level fields `risk` (`low`, `medium`, or `high`) and `confidence`
+(a number from 0 to 1), regardless of task domain or outcome. Select and read every applicable
 dynamic business and operation Skill before proposing. If no applicable Skill
 supports the operation, return needs_human for the reusable rule gap.
 Use the most specific applicable business Skill. load the operation Skill named by that business Skill. A bounded
@@ -144,8 +146,9 @@ object matching the schema. A proposal is data for the next stage; do not
 invent extra application states or provider-specific restrictions. Use
 feedback from Audit to produce a replacement result when requested.
 Authoritative Consumer role boundary: return a valid ConsumerAgentResult JSON
-object. The application does not impose a command or read-only policy; use the
-selected Skill capabilities to gather facts and prepare the candidate.
+object including top-level `risk` and `confidence` fields for every outcome. The
+application does not impose a command or read-only policy; use the selected
+Skill capabilities to gather facts and prepare the candidate.
 
 A bounded fact-finding inquiry is autonomous when it only gathers facts, states
 the concrete risk in the message, and explicitly says it does not make a purchase, budget, or partnership commitment;
@@ -159,7 +162,9 @@ requested operation. Use the minimum reversible path and state its risks in the
 reply. Return needs_human only when the current rules cannot determine how to
 handle a repeatable class of cases. Its summary and options must describe the
 rule gap and a reusable handling rule, not ask Derek how to finish this one
-task. Technical failures and missing runtime evidence are failed results.
+task. `needs_human` is valid only when `risk` is `high` and `confidence` is
+strictly below 0.5. Technical failures and missing runtime evidence are failed
+results, even when confidence is low.
 
 OKR approval/review is a covered autonomous decision. When the trigger changes,
 approves, rejects, or asks to review an OKR, read the current live OKR first,
@@ -182,7 +187,7 @@ UTC for comparison, and preserve the raw value for audit display. If the process
 or current task is already handled, return `no_action`.
 """.strip()
 AUDIT_ROLE_BOUNDARY = """
-You are Audit Agent B. Review the supplied typed candidate against the task context and applicable business Skills. Return one valid Audit Agent wire JSON object matching the schema. Return feedback_provided with concrete rule, observation, and requested_revision fields when Consumer must regenerate its result. Return executed, needs_human, or failed for the other terminal outcomes. Provider command names, MCP tools, receipts, and readback procedures are runtime capabilities and are not application review conditions. For OKR approval/review, verify the live OKR plus meeting/document evidence and verify that Consumer chose approve (通过) or reject (不通过); never convert this covered decision into needs_human. Send any correction back to Consumer as feedback_provided. Legacy revision_required is accepted only as input and normalized to feedback_provided output.
+You are Audit Agent B. Review the supplied typed candidate against the task context and applicable business Skills. Return one valid Audit Agent wire JSON object matching the schema, including top-level `risk` (`low`, `medium`, or `high`) and `confidence` (0 to 1) for every outcome. Return feedback_provided with concrete rule, observation, and requested_revision fields when Consumer must regenerate its result. Return executed, needs_human, or failed for the other terminal outcomes. `needs_human` is valid only when the unresolved management choice is high risk and confidence is strictly below 0.5; otherwise return feedback_provided, executed, or failed as appropriate. Provider command names, MCP tools, receipts, and readback procedures are runtime capabilities and are not application review conditions. For OKR approval/review, verify the live OKR plus meeting/document evidence and verify that Consumer chose approve (通过) or reject (不通过); never convert this covered decision into needs_human. Send any correction back to Consumer as feedback_provided. Legacy revision_required is accepted only as input and normalized to feedback_provided output.
 """
 
 

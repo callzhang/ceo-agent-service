@@ -179,6 +179,16 @@
       ],
       "title": "ProposedAction",
       "type": "object"
+    },
+    "RiskLevel": {
+      "description": "Estimated consequence if the proposed result is acted on incorrectly.",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
     }
   },
   "additionalProperties": false,
@@ -239,13 +249,26 @@
     },
     "error": {
       "$ref": "#/$defs/AgentError"
+    },
+    "risk": {
+      "$ref": "#/$defs/RiskLevel",
+      "default": "low"
+    },
+    "confidence": {
+      "default": 1.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
     }
   },
   "required": [
     "outcome",
     "summary",
     "proposal",
-    "error"
+    "error",
+    "risk",
+    "confidence"
   ],
   "title": "ConsumerAgentResult",
   "type": "object"

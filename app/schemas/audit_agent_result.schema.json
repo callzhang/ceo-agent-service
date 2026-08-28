@@ -125,7 +125,17 @@
       "title": "DecisionOption",
       "type": "object"
     },
-    "JsonValue": {}
+    "JsonValue": {},
+    "RiskLevel": {
+      "description": "Estimated consequence if the proposed result is acted on incorrectly.",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    }
   },
   "additionalProperties": false,
   "anyOf": [
@@ -275,6 +285,17 @@
     },
     "error": {
       "$ref": "#/$defs/AgentError"
+    },
+    "risk": {
+      "$ref": "#/$defs/RiskLevel",
+      "default": "low"
+    },
+    "confidence": {
+      "default": 1.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
     }
   },
   "required": [
@@ -283,7 +304,9 @@
     "proposal_revision",
     "feedback",
     "external_result",
-    "error"
+    "error",
+    "risk",
+    "confidence"
   ],
   "title": "AuditAgentResult",
   "type": "object"

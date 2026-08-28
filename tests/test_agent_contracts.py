@@ -12,6 +12,7 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     ConsumerOutcome,
     ProposedAction,
+    RiskLevel,
 )
 from app.agent_result import parse_typed_agent_result
 from app.agent_wire_contracts import (
@@ -75,17 +76,65 @@ def test_proposed_action_does_not_require_deferred_structured_boundary_field():
     assert "external_boundary" not in ProposedAction.model_fields
 
 
+def test_needs_human_requires_high_risk_and_low_confidence_for_all_task_types():
+    consumer_payload = {
+        "outcome": "needs_human",
+        "summary": "A management decision is required.",
+        "proposal": None,
+        "decision_options": _decision_options(),
+        "risk": "high",
+        "confidence": 0.49,
+        "error": _error(),
+    }
+    accepted = ConsumerAgentResult.model_validate(consumer_payload)
+    assert accepted.risk is RiskLevel.HIGH
+    assert accepted.confidence == 0.49
+
+    for risk, confidence in (("low", 0.1), ("medium", 0.1), ("high", 0.5)):
+        with pytest.raises(ValidationError, match="high risk and confidence below 0.5"):
+            ConsumerAgentResult.model_validate(
+                {**consumer_payload, "risk": risk, "confidence": confidence}
+            )
+
+    audit_payload = _audit_payload(
+        outcome="needs_human",
+        feedback=None,
+        decision_options=_decision_options(),
+        risk="high",
+        confidence=0.49,
+    )
+    audit = AuditAgentResult.model_validate(audit_payload)
+    assert audit.risk is RiskLevel.HIGH
+    assert audit.confidence == 0.49
+
+
+@pytest.mark.parametrize("field", ["risk", "confidence"])
+def test_wire_result_requires_generic_risk_assessment_fields(field):
+    payload = _consumer_wire_payload()
+    payload.pop(field)
+    with pytest.raises((ValidationError, JsonSchemaValidationError)):
+        _validate_wire_schema(ConsumerAgentWireResult, payload)
+    with pytest.raises(ValidationError):
+        ConsumerAgentWireResult.model_validate(payload)
+
+
 def _consumer_wire_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "outcome": "no_action",
         "summary": "Nothing to do.",
         "proposal": None,
-        "decision_options": [],
-        "error_code": "",
+                "decision_options": [],
+                "risk": "low",
+                "confidence": 1.0,
+                "error_code": "",
         "error_retryable": False,
         "error_authorization_required": False,
+        "risk": "low",
+        "confidence": 1.0,
     }
     payload.update(overrides)
+    if payload["outcome"] == "needs_human" and "risk" not in overrides:
+        payload.update(risk="high", confidence=0.1)
     return payload
 
 
@@ -100,8 +149,12 @@ def _audit_wire_payload(**overrides: object) -> dict[str, object]:
         "error_code": "dependency_failed",
         "error_retryable": True,
         "error_authorization_required": False,
+        "risk": "low",
+        "confidence": 1.0,
     }
     payload.update(overrides)
+    if payload["outcome"] == "needs_human" and "risk" not in overrides:
+        payload.update(risk="high", confidence=0.1)
     return payload
 
 
@@ -129,6 +182,9 @@ def _audit_payload(**overrides: object) -> dict[str, object]:
         "error": _error(),
     }
     payload.update(overrides)
+    if payload["outcome"] == "needs_human":
+        payload.setdefault("risk", "high")
+        payload.setdefault("confidence", 0.1)
     return payload
 
 
@@ -207,6 +263,7 @@ def test_wire_schema_is_discriminated_and_contains_only_nested_fields(model):
     assert schema["discriminator"]["propertyName"] == "outcome"
     assert schema["oneOf"]
     assert "contentSchema" not in serialized
+    assert "risk" in serialized and "confidence" in serialized
     for legacy_field in (
         "proposal_json",
         "decision_options_json",
@@ -421,12 +478,14 @@ def test_needs_human_requires_actionable_options_and_wire_preserves_them():
     ]
     with pytest.raises(ValidationError, match="decision options"):
         ConsumerAgentResult.model_validate(
-            {
-                "outcome": "needs_human",
-                "summary": "A management decision is required.",
-                "proposal": None,
-                "error": _error(),
-            }
+                {
+                    "outcome": "needs_human",
+                    "summary": "A management decision is required.",
+                    "proposal": None,
+                    "risk": "high",
+                    "confidence": 0.1,
+                    "error": _error(),
+                }
         )
 
     result = ConsumerAgentWireResult.model_validate(
@@ -435,6 +494,8 @@ def test_needs_human_requires_actionable_options_and_wire_preserves_them():
             "summary": "A management decision is required.",
             "proposal": None,
             "decision_options": options,
+            "risk": "high",
+            "confidence": 0.1,
             "error_code": "decision_required",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -767,6 +828,8 @@ def test_consumer_wire_result_preserves_nested_proposal_fields():
             "summary": "Prepare the notice.",
             "proposal": _proposal(),
             "decision_options": [],
+            "risk": "low",
+            "confidence": 1.0,
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -786,6 +849,8 @@ def test_audit_wire_result_preserves_nested_result_fields():
             "feedback": None,
             "external_result": None,
             "decision_options": _decision_options(),
+            "risk": "high",
+            "confidence": 0.1,
             "error_code": "decision_required",
             "error_retryable": False,
             "error_authorization_required": False,
@@ -808,8 +873,10 @@ def test_audit_wire_result_preserves_revision_feedback_fields():
                 "observation": "The proposed argv omitted --yes.",
                 "requested_revision": "Add --yes without changing the action.",
             },
-            "external_result": None,
-            "error_code": "dws_write_missing_yes",
+                "external_result": None,
+                "risk": "medium",
+                "confidence": 0.8,
+                "error_code": "dws_write_missing_yes",
             "error_retryable": True,
             "error_authorization_required": False,
         }

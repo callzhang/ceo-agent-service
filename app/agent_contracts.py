@@ -12,7 +12,19 @@ from pydantic import (
 from app.agent_result import AgentError
 
 
+NEEDS_HUMAN_CONFIDENCE_THRESHOLD = 0.5
+
+
+class RiskLevel(StrEnum):
+    """Estimated consequence if the proposed result is acted on incorrectly."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 def _consumer_result_json_schema(schema: dict[str, object]) -> None:
+    schema.setdefault("required", []).extend(("risk", "confidence"))
     schema["anyOf"] = [
         {
             "type": "object",
@@ -34,6 +46,7 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
 
 
 def _audit_result_json_schema(schema: dict[str, object]) -> None:
+    schema.setdefault("required", []).extend(("risk", "confidence"))
     null_value = {"type": "null"}
     schema["anyOf"] = [
         {
@@ -153,11 +166,22 @@ class ConsumerAgentResult(BaseModel):
     proposal: ConsumerProposal | None
     decision_options: tuple[DecisionOption, ...] = ()
     error: AgentError
+    risk: RiskLevel = RiskLevel.LOW
+    confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+    )
 
     @field_validator("outcome", mode="before")
     @classmethod
     def accept_json_outcome(cls, value: object) -> object:
         return ConsumerOutcome(value) if isinstance(value, str) else value
+
+    @field_validator("risk", mode="before")
+    @classmethod
+    def accept_json_risk(cls, value: object) -> object:
+        return RiskLevel(value) if isinstance(value, str) else value
 
     @field_validator("decision_options", mode="before")
     @classmethod
@@ -169,6 +193,13 @@ class ConsumerAgentResult(BaseModel):
         if (self.outcome is ConsumerOutcome.PROPOSAL) != (self.proposal is not None):
             raise ValueError("proposal is required only for proposal outcome")
         if self.outcome is ConsumerOutcome.NEEDS_HUMAN:
+            if not (
+                self.risk is RiskLevel.HIGH
+                and self.confidence < NEEDS_HUMAN_CONFIDENCE_THRESHOLD
+            ):
+                raise ValueError(
+                    "needs_human requires high risk and confidence below 0.5"
+                )
             if not 2 <= len(self.decision_options) <= 4:
                 raise ValueError("needs_human requires two to four decision options")
             keys = [option.key for option in self.decision_options]
@@ -217,6 +248,12 @@ class AuditAgentResult(BaseModel):
     external_result: AuditExternalResult | None
     decision_options: tuple[DecisionOption, ...] = ()
     error: AgentError
+    risk: RiskLevel = RiskLevel.LOW
+    confidence: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+    )
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -224,6 +261,11 @@ class AuditAgentResult(BaseModel):
         if isinstance(value, str) and value == "revision_required":
             value = "feedback_provided"
         return AuditOutcome(value) if isinstance(value, str) else value
+
+    @field_validator("risk", mode="before")
+    @classmethod
+    def accept_json_risk(cls, value: object) -> object:
+        return RiskLevel(value) if isinstance(value, str) else value
 
     @field_validator("decision_options", mode="before")
     @classmethod
@@ -243,6 +285,13 @@ class AuditAgentResult(BaseModel):
         elif self.external_result is not None:
             raise ValueError("external result is only valid for executed")
         if self.outcome is AuditOutcome.NEEDS_HUMAN:
+            if not (
+                self.risk is RiskLevel.HIGH
+                and self.confidence < NEEDS_HUMAN_CONFIDENCE_THRESHOLD
+            ):
+                raise ValueError(
+                    "needs_human requires high risk and confidence below 0.5"
+                )
             if not 2 <= len(self.decision_options) <= 4:
                 raise ValueError("needs_human requires two to four decision options")
             keys = [option.key for option in self.decision_options]

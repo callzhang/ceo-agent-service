@@ -7,6 +7,7 @@ from pydantic import (
     RootModel,
     ValidationError,
     model_validator,
+    field_validator,
 )
 
 from app.agent_contracts import (
@@ -16,6 +17,7 @@ from app.agent_contracts import (
     ConsumerAgentResult,
     ConsumerProposal,
     DecisionOption,
+    RiskLevel,
 )
 from app.agent_result import ResultParseError, parse_typed_agent_result
 
@@ -27,6 +29,13 @@ class _WireBase(BaseModel):
     error_code: str
     error_retryable: bool
     error_authorization_required: bool
+    risk: RiskLevel
+    confidence: float = Field(ge=0.0, le=1.0)
+
+    @field_validator("risk", mode="before")
+    @classmethod
+    def accept_json_risk(cls, value: object) -> object:
+        return RiskLevel(value) if isinstance(value, str) else value
 
     def error_payload(self) -> dict[str, object]:
         return {
@@ -95,6 +104,8 @@ class ConsumerAgentWireResult(RootModel[ConsumerWirePayload]):
                 "summary": payload.summary,
                 "proposal": payload.proposal,
                 "decision_options": payload.decision_options,
+                "risk": payload.risk,
+                "confidence": payload.confidence,
                 "error": payload.error_payload(),
             }
         )
@@ -175,6 +186,8 @@ class AuditAgentWireResult(RootModel[AuditWirePayload]):
                 "feedback": payload.feedback,
                 "external_result": payload.external_result,
                 "decision_options": payload.decision_options,
+                "risk": payload.risk,
+                "confidence": payload.confidence,
                 "error": payload.error_payload(),
             }
         )
