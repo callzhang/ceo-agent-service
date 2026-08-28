@@ -21,7 +21,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 - **结构化消息发现**：按会话来源、明确 @ 和稳定平台对象发现 trigger；业务类型和处理方式由 Agent 动态读取 Skill 判断，不使用关键词 router。
 - **本地任务队列**：使用 SQLite 保存 `reply_tasks`、`reply_attempts`、`seen_messages`、`sent_replies`，避免重复处理和重复发送。
 - **Consumer / Audit Agent 执行**：Consumer A 是管理者的 read-oriented representative，用原生 `codex exec` 读取材料、判断业务并提出精确候选；按角色协议不得主动执行外部写操作。Audit B 独立审阅，并且是 service 生命周期中唯一获授权发布 accepted action、执行和读回外部动作的 Agent。
-- **后台 Codex 隔离**：Consumer/Audit 沿用当前用户配置的 provider 与登录态，但关闭桌面插件、浏览器能力、会话记忆和无关 MCP；外部操作只通过服务注入的受控 `agent_cli` 执行。
+- **后台 Codex 运行环境**：Consumer/Audit 沿用当前用户配置的 provider、登录态、MCP、plugins、hooks 和 skills；角色边界由 Agent 指令与结果协议约束，外部操作只通过服务注入的受控 `agent_cli` 执行。服务不复制或改写用户凭证和 MCP 配置。
 - **CEO 画像数据准备**：从本地工作文档、AI 听记、历史发送样例和可读钉钉知识库中提取证据，蒸馏生成 `data/work-profile/work_profile.md`；运行时只通过 `work_profile_instruction()` 消费这个结果，让 agent 学习管理者的判断顺序、追问方式、表达风格和硬边界。
 - **Skill-first 材料处理**：服务只传递材料引用、原始 ID、链接和精确读取命令；A 动态读取业务 Skill 和操作 Skill，自行决定展开哪些材料，B 按 verified Skill receipt 重读相同 Skill 并在写入前核对实时状态。
 - **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。DingTalk 和 Lark 使用显式通道 gate；Codex 直接沿用本地 App/CLI 登录状态，认证失败立即落为可见失败。写入结果未知时只在原 B session 中核对，不能盲目重放。
@@ -55,7 +55,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 5. **Channel Gate 层**：用 CLI status 和 authenticated probe 确认通道可用；只有明确 `needs_login` 才协调一次登录流程。
 6. **Consumer Agent A 层**：同一对话复用一个原生 Codex session；A 动态发现并读取业务 Skill，再读取操作 Skill、材料并形成精确候选。
 7. **Audit Agent B 层**：service 从 A 的 completed tool events 生成 verified Skill receipts；B 重读同一组 Skill，接受后执行并读回，业务含义变化通过结构化反馈回到 A。
-8. **Audit / Observability / Reconciliation**：审计页面、macOS 通知、launchd、fail-closed 质量巡检和结果未知写操作的只读核对。
+8. **Audit / Observability / Recovery**：审计页面、macOS 通知、launchd、fail-closed 质量巡检和失败任务的可追踪恢复。
 
 完整处理流是：
 
@@ -306,6 +306,16 @@ cp .env.example .env
 | `CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL` | 可选的对话方反馈页根地址；留空则不追加反馈链接。启用前必须把本仓库的 Vercel API 路由部署到安装者自己的 Vercel 项目，并填写自己的部署根地址；不要复用其他人的反馈服务 URL。配置后会在发出的回复末尾追加 `👍 赞｜👎 踩` 反馈链接；同一会话长期未评价时会升级为强提醒，超过硬阈值后只回复“请对我提供反馈后再提问” |
 
 不要把 `HOME` 指向项目目录。`dws` 和 Codex 需要使用真实用户环境里的认证状态。
+
+### Repository upgrade
+
+服务每六小时检查配置的 Git remote/branch（默认 `origin/main`）。History 页面只刷新升级提示，
+不会重载整个页面；设 `CEO_REPOSITORY_UPGRADE_DISABLED=1` 可关闭周期检查，但仍可查看已保存状态。
+升级只允许 fast-forward：分叉仓库或状态指纹变化时停止，不自动 merge、rebase 或覆盖本地改动。
+脏工作树可以在明确确认分支名和提交信息后先保存，再继续升级；升级前创建经完整性校验的 SQLite
+在线备份，并只保留一个最新快照。升级后会同步依赖、运行测试、重启 launchd 并核验新进程和 HTTP/Store
+健康；验证失败只对本次安装的精确提交执行可证明归属的回滚。升级流程不会探测、禁用或覆盖用户的
+Codex MCP 配置。
 
 #### 可选：部署反馈链接服务
 

@@ -65,6 +65,12 @@ result identifier 时，Agent 不再重复动作；正文、目标或参数改�
 `pending_reconciliation` 或 `side_effect_state` 状态，也不启动单独的 reconciliation 回合。下一次 Agent turn
 按当前业务 Skill 正常读取外部状态，再决定继续、修正或终止；服务不根据工具事件替 Agent 作业务判断。
 
+会议投递还有一条领域边界：多人会议必须由 Agent 明确选择首个候选群，服务不会替 Agent 猜测目标。
+只在所选群已被权威会话信息证明不可发送时（例如 `singleChat=true` 或成员数为零），服务才允许
+改用已唯一解析的会议创建人私信；群发现失败、网络失败、元数据缺失或不一致时不猜测收件人，
+保留可恢复重试。Agent 在完整群发现后也可以显式选择创建人 direct target；这与服务层对已选群
+不可发送的回退是两条不同路径，均不能把不完整证据当成发送依据。
+
 ## 持久化
 
 Codex session JSONL 是详细审计来源，保存提示、工具调用、输出和结果。SQLite 保存：

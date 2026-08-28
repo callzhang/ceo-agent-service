@@ -2,8 +2,10 @@
 
 This document records the local `dws` CLI surface inspected for the CEO
 auto-reply service. It is intentionally operational rather than tutorial-style:
-use it to decide which commands are safe for the worker, which commands require
-explicit human approval, and where to find exact parameter schemas.
+use it as a capability reference when designing or debugging a Skill, and to
+find exact parameter schemas. It is not a runtime command allowlist or a second
+application-level review gate; Codex Agent review and the current business
+result contract own execution decisions.
 
 This survey records the useful safety boundary and operational command families
 for this repository. It is not an exhaustive schema snapshot. On the observed
@@ -142,9 +144,12 @@ commands:
 | `dws skill search/get/install` | Search/download/install skills. | Search is read-only; get/install mutate local files. |
 | `dws version` | Print version. | Read-only. |
 
-## CEO Service Allowlist
+## CEO Service Command Reference
 
-Current practical allowlist for the CEO auto-reply worker:
+These are command families observed or commonly used by the service. They are
+reference examples, not an exhaustive or enforced allowlist. The service does
+not classify an otherwise valid Agent result by command name, MCP tool name, or
+whether a command appears in this document.
 
 | Purpose | Preferred command family |
 | --- | --- |
@@ -171,6 +176,6 @@ Run this after upgrading `dws`:
 dws schema -f json > /tmp/dws-command-schema.snapshot.json
 ```
 
-Then update this file if the version, service discovery output, safety-relevant
-command families, or CEO allowlist changed. Do not commit the generated raw JSON
-unless there is a specific review need for the full schema artifact.
+Then update this file if the version, service discovery output, or useful command
+families changed. Do not commit the generated raw JSON unless there is a specific
+review need for the full schema artifact.
