@@ -836,7 +836,11 @@ def _runtime_failure_from_friday_error(error: FridayRuntimeError) -> RuntimeFail
         code=error.code,
         detail=error.detail,
         retryable_on_same_route=error.retryable,
-        failover_permitted=error.retryable,
+        # Authentication means this route cannot serve the current turn; the
+        # router may continue to a configured route, but the same route is not
+        # retried until its credentials are refreshed.
+        failover_permitted=error.retryable
+        or error.code == "friday_runtime_auth_failed",
     )
 
 

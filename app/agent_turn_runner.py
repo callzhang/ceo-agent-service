@@ -1134,7 +1134,19 @@ class AgentTurnProcess(Generic[ResultT]):
                             observed_session_id,
                             attempt_transcript_reference,
                         )
-                        process = ProcessRunResult(0, friday_result.text, "")
+                        process = ProcessRunResult(
+                            0,
+                            json.dumps(
+                                {
+                                    "type": "item.completed",
+                                    "item": {
+                                        "type": "agent_message",
+                                        "text": friday_result.text,
+                                    },
+                                }
+                            ),
+                            "",
+                        )
                     else:
                         process = self.executor(
                             command,

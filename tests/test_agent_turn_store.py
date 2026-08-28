@@ -32,6 +32,7 @@ from app.agent_wire_contracts import (
 )
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.friday_runtime_adapter import FridayExecutionResult
 from app.native_cli_metadata import AgentReadOnlyViolationError, describe_native_command
 from app.process_runner import ProcessRunResult
 from app.service_codex_config import ServiceMcpServer
@@ -982,6 +983,96 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path):
         "claude_api",
         required_contract_hash="contract-v1",
     ) == claude_session
+
+
+def test_friday_runtime_fallback_completes_consumer_run(tmp_path):
+    store = AutoReplyStore(tmp_path / "friday-consumer.sqlite3")
+    task = _task(store)
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,friday_runtime",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-agent",
+            "CEO_FRIDAY_RUNTIME_MODEL": "MiniMax-M3",
+            "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1",
+        }
+    )
+    now = datetime.now(UTC)
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=frozenset(
+                {
+                    "structured_output",
+                    "local_schema_validation",
+                    "task_context",
+                    "channel:wechat",
+                }
+            ),
+            healthy=True,
+            checked_at=now.isoformat(),
+            expires_at=(now + timedelta(minutes=5)).isoformat(),
+        )
+        for route in config.routes
+    }
+    router = AgentRuntimeRouter(routes=config.routes, store=store, snapshots=snapshots)
+    result_json = json.dumps(
+        {
+            "outcome": "no_action",
+            "summary": "Friday completed the turn.",
+            "proposal": None,
+            "decision_options": [],
+            "risk": "low",
+            "confidence": 1.0,
+            "error_code": "",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        },
+        separators=(",", ":"),
+    )
+
+    class Friday:
+        def execute(self, prompt, **kwargs):
+            return FridayExecutionResult(
+                text=result_json,
+                thread_id="friday-thread",
+                turn_id="friday-turn",
+                operation_id="friday-operation",
+                artifact={"final_message": result_json},
+            )
+
+    def executor(command, **kwargs):
+        return ProcessRunResult(
+            1,
+            "",
+            "unexpected status 401 unauthorized: missing bearer or basic authentication for /v1/responses",
+        )
+
+    claim = _claim_consumer(store, task)
+    result = AgentTurnProcess(
+        store=store,
+        task=task,
+        workspace=tmp_path,
+        owner="consumer",
+        executor=executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
+        friday_adapter=Friday(),
+    ).execute(
+        run=claim.run,
+        prompt="Read-only decision",
+        session_id=None,
+        developer_instructions="Return the exact schema.",
+        configure_command=lambda command: None,
+        parse_result=parse_consumer_agent_wire_result,
+        persist_conversation_session=False,
+        conversation_contract_hash="contract-v1",
+    )
+
+    assert result.result.outcome == "no_action"
+    attempts = store.list_agent_runtime_attempts(claim.run.id)
+    assert [attempt.route_name for attempt in attempts] == ["codex_oauth", "friday_runtime"]
+    assert attempts[-1].transcript_reference == "friday_operation:friday-operation"
 
 
 @pytest.mark.parametrize("codex_failure", [
