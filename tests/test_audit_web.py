@@ -5461,6 +5461,20 @@ def test_settings_page_flattens_sections_into_left_navigation(tmp_path: Path):
         assert label in html
 
 
+def test_info_menu_renders_producer_configuration_values_explicitly():
+    html = render_config_page()
+
+    assert '<table class="config-info-values">' in html
+    assert "Current values" in html
+    assert "FAST_PATH_UNREAD_BACKOFF" in html
+    assert "MESSAGE_RECOVERY_INTERVAL" in html
+    assert "SINGLE_CHAT_READ_RECOVERY_WINDOW" in html
+    assert "SINGLE_CHAT_READ_RECOVERY_LIMIT" in html
+    assert "CEO_MENTION_ALIASES" in html
+    assert "CEO_BROADCAST_MENTION_ALIASES" in html
+    assert '<code class="config-info-value">5m</code>' in html
+
+
 def test_render_page_brand_links_to_history():
     html = render_config_page()
 

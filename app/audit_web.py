@@ -240,6 +240,9 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 .secret-token-toggle:hover{border-color:var(--ink);background:var(--surface-soft)}
 .config-value{display:inline-flex;max-width:100%;padding:4px 8px;border-radius:7px;background:var(--surface);border:1px solid var(--hairline-soft);color:var(--charcoal);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
 .config-token{display:inline-flex;max-width:100%;padding:3px 7px;border-radius:6px;background:#ddfff6;border:1px solid rgba(0,180,138,.55);color:#005b49;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;font-weight:700;line-height:1.4;white-space:pre-wrap;word-break:break-word;box-shadow:0 0 0 2px rgba(0,212,164,.12)}
+.config-info-values{margin:12px 0 16px}
+.config-info-values th:first-child,.config-info-values td:first-child{width:360px}
+.config-info-value{display:inline-flex;max-width:100%;padding:3px 7px;border-radius:6px;background:#ddfff6;color:#005b49;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
 .system-config-table th:first-child,.system-config-table td:first-child{width:260px}
 .system-config-table th:nth-child(2),.system-config-table td:nth-child(2){width:280px}
 .config-collapse{border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft);margin:10px 0;overflow:hidden}
@@ -2951,10 +2954,33 @@ def _render_config_info() -> str:
         "</section>"
         for title, rows in logic_sections
     )
+    value_rows = (
+        ("CEO_MENTION_ALIASES", _csv_label(mention_aliases())),
+        ("CEO_BROADCAST_MENTION_ALIASES", _csv_label(broadcast_mention_aliases())),
+        ("FAST_PATH_UNREAD_BACKOFF", _duration_label(fast_path_unread_backoff_duration())),
+        ("MESSAGE_RECOVERY_INTERVAL", _duration_label(message_recovery_interval())),
+        (
+            "SINGLE_CHAT_READ_RECOVERY_WINDOW",
+            _duration_label(single_chat_read_recovery_window()),
+        ),
+        ("SINGLE_CHAT_READ_RECOVERY_LIMIT", str(single_chat_read_recovery_limit())),
+    )
+    value_html = "".join(
+        "<tr>"
+        f"<td><code class=\"config-value\">{escape(key)}</code></td>"
+        f"<td><code class=\"config-info-value\">{escape(value)}</code></td>"
+        "</tr>"
+        for key, value in value_rows
+    )
     return (
         "<section class=\"card\">"
         "<h2>Producer 路由配置</h2>"
         "<p class=\"muted\">这里展示 producer 如何把钉钉消息变成 reply task。</p>"
+        '<h3>Current values</h3>'
+        '<table class="config-info-values">'
+        "<thead><tr><th>Variable</th><th>Current value</th></tr></thead>"
+        f"<tbody>{value_html}</tbody>"
+        "</table>"
         f"<div class=\"logic-list\">{logic_html}</div>"
         "</section>"
     )
