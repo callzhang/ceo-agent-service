@@ -528,6 +528,15 @@ def test_audit_instructions_allow_bounded_fact_finding_without_purchase_commitme
     assert "Return feedback_provided with concrete rule" in instructions
 
 
+def test_audit_instructions_execute_okr_notification_when_write_surface_is_missing():
+    instructions = " ".join(
+        audit_developer_instructions("Verify every supported fact.").split()
+    )
+
+    assert "execute the supported applicant notification action" in instructions
+    assert "do not turn the covered business judgment into failed or needs_human" in instructions
+
+
 def test_audit_instructions_reserve_human_for_unsupported_skill_only():
     instructions = " ".join(
         audit_developer_instructions("Verify every supported fact.").split()
