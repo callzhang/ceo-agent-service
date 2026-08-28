@@ -459,10 +459,17 @@ class AgentOrchestrator:
             # earlier Consumer run in the same revision. Reuse that proposal
             # and continue with Audit instead of regenerating Consumer output.
             if (
-                isinstance(consumer_state, ConsumerAgentResult)
-                and consumer_state.outcome is ConsumerOutcome.FAILED
-                and consumer_state.error.code
-                in {"runtime_route_unavailable", "codex_process_failed", "service_restart_before_effect"}
+                consumer.status == "failed"
+                and _run_error(consumer).code
+                in {
+                    "runtime_route_unavailable",
+                    "codex_process_failed",
+                    "service_restart_before_effect",
+                    "live_okr_unavailable",
+                    "live_okr_source_unavailable",
+                    "live_okr_source_identity_or_record_unavailable",
+                    "live_okr_unavailable_period_or_identity_resolution",
+                }
             ):
                 prior = [
                     run for run in consumer_turns[:-1]

@@ -1339,6 +1339,48 @@ def test_safely_reopened_runtime_route_retries_same_audit_turn(store):
     assert [call["turn_attempt"] for call in audit.calls] == [0, 0]
 
 
+def test_live_okr_source_failure_reuses_prior_proposal_for_audit(store):
+    """A transient live-source failure must not discard a valid proposal."""
+    pending_task = _task(store)
+    task = store.claim_reply_task(pending_task.id)
+    assert task is not None
+    proposal = _consumer_result("proposal", "fallback applicant notification")
+    unavailable = _consumer_result("failed", "Live OKR source unavailable.").model_copy(
+        update={
+            "error": AgentError(
+                code="live_okr_unavailable",
+                retryable=True,
+                authorization_required=False,
+            )
+        }
+    )
+    consumer = ScriptedConsumer(store, proposal, unavailable)
+    context = _context(task)
+    consumer.run(
+        task,
+        context,
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+    consumer.run(
+        task,
+        context,
+        proposal_revision=0,
+        parent_agent_run_id=None,
+    )
+    audit = ScriptedAudit(store, _audit_result("executed", 0))
+
+    result = _process(
+        AgentOrchestrator(store=store, consumer=consumer, audit=audit),
+        task,
+    )
+
+    assert result.status == "executed"
+    assert len(consumer.calls) == 2
+    assert len(audit.calls) == 1
+    assert audit.calls[0]["proposal"].objective == "fallback applicant notification"
+
+
 
 
 def test_retryable_audit_exhaustion_returns_failed_latest_run(store):
