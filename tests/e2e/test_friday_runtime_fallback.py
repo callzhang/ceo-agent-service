@@ -404,7 +404,7 @@ observability:
             timeout_seconds=120,
             auth_disabled=True,
         )
-        assert json.loads(result.text) == {"ok": True, "value": 7}
+        assert _parse_json_result(result.text) == {"ok": True, "value": 7}
         assert result.thread_id
         assert result.turn_id
         assert result.operation_id
@@ -465,3 +465,18 @@ def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
         decoded = json.loads(response.read().decode("utf-8"))
     assert isinstance(decoded, dict)
     return decoded
+
+
+def _parse_json_result(text: str) -> object:
+    """Parse a provider JSON result while tolerating reasoning wrappers."""
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        decoder = json.JSONDecoder()
+        start = text.find("{")
+        if start < 0:
+            raise
+        value, end = decoder.raw_decode(text[start:])
+        assert not text[start + end :].strip()
+        return value
