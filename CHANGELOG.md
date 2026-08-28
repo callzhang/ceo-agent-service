@@ -1,9 +1,5 @@
 # Changelog
 
-- 2026-08-28: restore the launchd Dingteam OKR network path through the
-  configured local proxy at `127.0.0.1:7897`; keep local service addresses in
-  `NO_PROXY` so the live OKR source can refresh its persisted session cache.
-
 - 2026-08-28: prevent the audit console from sending the synthetic
   `oa_pending_scan` conversation id to DingTalk's chat-opening API. Service
   tasks now expose their stored OA detail URL instead of a broken chat-jump
