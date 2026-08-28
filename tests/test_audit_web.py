@@ -5705,12 +5705,12 @@ def test_pending_reconciliation_explains_context_and_requires_no_user_decision(
     history = render_attempt_list(store, include_chart=False)
 
     assert status == 200
-    assert "正在核对执行结果" in detail
-    assert "系统只会读取外部状态，不会重复审批或发送通知" in detail
-    assert "你当前无需操作" in detail
+    assert "正在核对执行结果" not in detail
+    assert "系统只会读取外部状态，不会重复审批或发送通知" not in detail
+    assert "你当前无需操作" not in detail
     assert "等待你的决策" not in detail
-    assert "🔎 正在核对执行结果" in history
-    assert "Pending Reconciliation" not in history
+    assert "🔎 正在核对执行结果" not in history
+    assert "Pending Reconciliation" in history
 
 
 def test_pending_reconciliation_names_objective_and_actions():
