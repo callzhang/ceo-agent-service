@@ -696,6 +696,11 @@ def classify_cli_read_failure(
     completed: subprocess.CompletedProcess[str],
 ) -> CliReadFailure:
     """Preserve typed gate semantics for one reviewed CLI read failure."""
+    # Native command metadata may carry the executable path as ``cli`` for a
+    # local Python command.  Never expose that path as part of a business error
+    # code; classify it under the stable local-shell channel.
+    if channel.endswith("/python") or channel.endswith("/python3"):
+        channel = "local-shell"
     payloads = _json_objects(completed.stdout, completed.stderr)
     if not payloads:
         return CliReadFailure(
