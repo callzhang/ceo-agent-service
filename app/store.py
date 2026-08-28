@@ -11042,6 +11042,22 @@ class AutoReplyStore:
             jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
             return sorted(jobs, key=lambda job: job.id)
 
+    def claim_ready_to_send_meeting_alignment_job(
+        self, job_id: int, *, now: str
+    ) -> MeetingAlignmentJob | None:
+        if job_id <= 0:
+            raise ValueError("meeting alignment job id must be positive")
+        with self._connect() as db:
+            row = db.execute(
+                """update meeting_alignment_jobs
+                   set locked_at=current_timestamp, updated_at=current_timestamp
+                   where id=? and status='ready_to_send' and locked_at is null
+                     and (available_at='' or datetime(available_at)<=datetime(?))
+                   returning *""",
+                (job_id, now),
+            ).fetchone()
+            return self._meeting_alignment_job_from_row(row) if row else None
+
     def schedule_ready_to_send_meeting_alignment_reconciliation(
         self,
         job_id: int,
