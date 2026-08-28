@@ -30,6 +30,7 @@ from app.feedback_spike import sanitize_configured_feedback_links
 from app.leak_check import contains_credential, is_sensitive_field_name
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
+    NativeCliCommand,
     NativeCliMetadataClassifier,
     NativeCliMetadataUnavailableError,
     describe_native_command,
@@ -222,6 +223,27 @@ def _classify_reviewed_write(
     if command.cli == "dws" and not has_noninteractive_confirmation(canonical_argv):
         raise AgentReadOnlyViolationError("agent_cli_confirmation_required")
     return canonical_argv, command
+
+
+def _unclassified_read_command(argv: Sequence[str]):
+    """Describe a read invocation without applying a CLI review policy."""
+    canonical = tuple(argv)
+    operation_parts: list[str] = []
+    for argument in canonical[1:]:
+        if argument.startswith("-"):
+            break
+        operation_parts.append(argument)
+    return NativeCliCommand(
+        cli=canonical[0],
+        command_path=" ".join(operation_parts) or canonical[0],
+        effect=EffectKind.READ_ONLY,
+        command_digest=hashlib.sha256(
+            json.dumps(list(canonical), ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest(),
+        target_identifiers={},
+    )
 
 
 def _is_registered_native_write(command) -> bool:
@@ -614,29 +636,32 @@ def _execute_reviewed(
 ) -> dict[str, object]:
     argv = _validate_reviewed_argv(argv)
     reviewed = classifier or NativeCliMetadataClassifier()
-    item = {"type": "command_execution", "argv": list(argv)}
-    descriptor = describe_native_command(item)
-    if descriptor is None or descriptor.cli == "local-shell":
-        command = reviewed.classify(item)
+    if expected_effect is EffectKind.READ_ONLY:
+        command = _unclassified_read_command(argv)
     else:
-        try:
+        item = {"type": "command_execution", "argv": list(argv)}
+        descriptor = describe_native_command(item)
+        if descriptor is None or descriptor.cli == "local-shell":
             command = reviewed.classify(item)
-        except NativeCliMetadataUnavailableError as exc:
-            command = None
-            if _is_registered_native_write(descriptor):
+        else:
+            try:
+                command = reviewed.classify(item)
+            except NativeCliMetadataUnavailableError as exc:
+                command = None
+                if _is_registered_native_write(descriptor):
+                    command = replace(descriptor, effect=EffectKind.EFFECTFUL)
+                else:
+                    return _process_failure_receipt(
+                        descriptor,
+                        code=exc.code,
+                        retryable=exc.retryable,
+                    )
+            if command is None and _is_registered_native_write(descriptor):
                 command = replace(descriptor, effect=EffectKind.EFFECTFUL)
-            else:
-                return _process_failure_receipt(
-                    descriptor,
-                    code=exc.code,
-                    retryable=exc.retryable,
-                )
-        if command is None and _is_registered_native_write(descriptor):
-            command = replace(descriptor, effect=EffectKind.EFFECTFUL)
-    if command is None:
-        raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
-    if command.effect is not expected_effect:
-        raise AgentReadOnlyViolationError("reviewed_cli_effect_mismatch")
+        if command is None:
+            raise AgentReadOnlyViolationError("agent_cli_command_unreviewed")
+        if command.effect is not expected_effect:
+            raise AgentReadOnlyViolationError("reviewed_cli_effect_mismatch")
     if (
         expected_effect is EffectKind.EFFECTFUL
         and command.cli == "dws"

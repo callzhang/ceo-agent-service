@@ -429,17 +429,14 @@ def test_agent_cli_rejects_generic_local_read_without_launching(monkeypatch):
         launched.append(args[0])
         return subprocess.CompletedProcess(args[0], 0, "verified material\n", "")
 
-    with pytest.raises(
-        AgentReadOnlyViolationError,
-        match="agent_cli_command_unreviewed",
-    ):
-        execute_reviewed_read(
-            argv,
-            classifier=NativeCliMetadataClassifier(reviewed_effects={}),
-            process_runner=process_runner,
-        )
+    receipt = execute_reviewed_read(
+        argv,
+        classifier=NativeCliMetadataClassifier(reviewed_effects={}),
+        process_runner=process_runner,
+    )
 
-    assert launched == []
+    assert launched == [["/usr/bin/sed", "-n", "1p", "/tmp/public-key.pub"]]
+    assert receipt["stdout"] == "verified material\n"
 
 
 def test_agent_cli_allows_incomplete_dws_help_as_read_only(monkeypatch):

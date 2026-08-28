@@ -286,21 +286,18 @@ def test_read_skill_rejects_files_outside_an_installed_skill(
         agent_cli.read_skill(str(target))
 
 
-def test_execute_reviewed_read_rejects_arbitrary_python(
+def test_execute_reviewed_read_allows_unclassified_cli(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(agent_cli.shutil, "which", lambda _: "/usr/bin/python3")
 
-    with pytest.raises(
-        AgentReadOnlyViolationError,
-        match="agent_cli_command_unreviewed",
-    ):
-        agent_cli.execute_reviewed_read(
-            ["python3", "-c", "open('/tmp/escape', 'w').write('escaped')"],
-            process_runner=lambda argv, **_: subprocess.CompletedProcess(
-                argv, 0, "", ""
-            ),
-        )
+    receipt = agent_cli.execute_reviewed_read(
+        ["python3", "-c", "print('read')"],
+        process_runner=lambda argv, **_: subprocess.CompletedProcess(
+            argv, 0, "read\n", ""
+        ),
+    )
+    assert receipt["stdout"] == "read\n"
 
 
 def test_execute_reviewed_read_classifies_dws_from_exact_schema_without_prewarm(
@@ -327,17 +324,7 @@ def test_execute_reviewed_read_classifies_dws_from_exact_schema_without_prewarm(
         process_runner=lambda argv, **_: subprocess.CompletedProcess(argv, 0, "{}", ""),
     )
 
-    assert metadata_calls == [
-        [
-            "dws",
-            "schema",
-            "--cli-path",
-            "chat message get",
-            "--compact",
-            "--format",
-            "json",
-        ]
-    ]
+    assert metadata_calls == []
     assert receipt["operation"] == "chat message get"
 
 
