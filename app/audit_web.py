@@ -10076,11 +10076,6 @@ def _needs_human_decision_options(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
 ) -> tuple[DecisionOption, ...]:
-    # This is the legacy execution-recovery marker, not a business decision.
-    # Do not surface its generic “occurred/not occurred/stop” choices for a
-    # conversation that needs audit feedback to the execution Agent instead.
-    if attempt.audit_summary.strip() == "audit_recovery_ambiguous":
-        return ()
     try:
         persisted_options = json.loads(attempt.human_decision_options_json)
         if persisted_options:
