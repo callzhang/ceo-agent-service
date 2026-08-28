@@ -290,6 +290,49 @@ allowlist。安装用户配置中的 MCP 可能同时公开读写工具；servic
 Agent 不执行 `auth login`、`reset` 或 `logout`。某个 MCP 实际返回未授权时，
 任务如实记录该依赖不可用，不把认证失败伪装成材料缺失。
 
+### Friday Runtime 路由
+
+`friday_runtime` 是与 `codex_oauth`、`codex_api` 和 `claude_api` 并列的 Agent
+Runtime 路由。它通过 Friday Runtime 的 HTTP 接口创建一个 Thread、提交一个 turn、等待
+operation 完成，再读取该 Thread 的最终 Artifact；CEO Agent 不直接调用 MiniMax 或其他
+provider 的 API，也不把 Friday CLI 当作 Codex CLI 执行。Friday 项目负责 provider、模型、
+凭证和 provider 协议（包括 MiniMax 的 Chat Completions 兼容），CEO Agent 只接收 Friday
+返回的最终文本或结构化 Artifact。
+
+路由顺序由 `CEO_AGENT_RUNTIME_ROUTES` 按配置顺序决定，例如：
+
+```text
+codex_oauth,codex_api,friday_runtime,claude_api
+```
+
+启用 `friday_runtime` 必须同时提供 `CEO_FRIDAY_RUNTIME_PROJECT_ID`，并选择一种认证方式：
+`CEO_FRIDAY_RUNTIME_TICKET` 或 `CEO_FRIDAY_SESSION_TOKEN`；也可以显式设置
+`CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1` 用于本地无认证测试。服务只把认证信息放在 HTTP
+请求头，不写入提示词、结果、History 或日志。Friday 的 provider/model 选择不由
+`CEO_CODEX_MODEL` 或 `CEO_CLAUDE_MODEL` 覆盖；`CEO_FRIDAY_RUNTIME_MODEL` 仅保留为
+路由元数据，实际模型选择归 Friday 项目配置。
+
+一次 fallback 始终属于同一个 Agent run：当前路由失败后，Router 选择下一条已配置且健康的
+路由，保留原任务、generation、proposal/revision 和 A/B 生命周期，不创建第二个 Consumer
+或 Audit run。Friday 的 Thread、turn、operation 和 Artifact 标识只作为该次 runtime 调用
+的结果事实保存，供失败重试和 History 关联。
+
+Friday 路由使用以下明确错误码：
+
+| 错误码 | 含义 | 是否可重试 |
+| --- | --- | --- |
+| `friday_runtime_unreachable` | Friday Runtime 网络不可达或 operation 超时 | 是 |
+| `friday_runtime_auth_failed` | Runtime ticket/session token 无效或被拒绝 | 否，需修复 Friday 认证配置 |
+| `friday_runtime_result_invalid` | Friday 返回不是约定 JSON、缺少 operation/Artifact，或结果为空 | 否，需修复契约/实现 |
+| `friday_runtime_failed` | Friday operation 或其 provider 最终失败 | 是，按任务重试策略处理 |
+| `friday_runtime_unavailable` | 已选择 Friday 路由但 adapter 未注入/未配置 | 否，需修复服务配置 |
+
+健康探测使用同一 Friday HTTP 契约和配置，但只提交合成 prompt，不访问业务数据、不调用业务
+工具、不执行外部写入。`tests/e2e/test_runtime_failover_live.py` 默认运行合成路由契约测试；
+真实 Codex/Friday provider 探测和 fallback E2E 必须显式设置
+`CEO_LIVE_RUNTIME_FAILOVER_E2E=1`，并提供真实运行时配置。这样默认测试不会消耗 provider
+配额或依赖本地 Friday 服务，真实 E2E 则验证网络、认证、operation 完成和 Artifact 读取。
+
 ## 重复执行与恢复
 
 ### 精确 revision 去重
@@ -360,6 +403,8 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 | `app.agent_contracts` | 严格定义 A proposal 与 B audit result。 |
 | `app.audit_rules` | 保存、校验并分别渲染共享 Audit Rules。 |
 | `app.codex_runner.CodexRunner` | 以原生 `codex exec` 启动并继承安装用户的 Codex 配置。 |
+| `app.friday_runtime_adapter.FridayRuntimeAdapter` | 通过 Friday Thread/turn/operation/Artifact HTTP 契约执行一个 Agent turn；不实现 provider 选择。 |
+| `app.friday_runtime_contract.FridayRuntimeContract` | 定义 Friday Runtime 请求、认证头、operation 状态和最终 Artifact 的稳定契约。 |
 | `app.channel_gate` / `app.mcp_doctor` | 在运行前检查 CLI 与 MCP 依赖。 |
 | `app.store.AutoReplyStore` | 保存队列、run 关系、租约、revision 和最小恢复状态。 |
 | `app.audit_web` | History、Agent session、Audit Rules、配置和恢复入口。 |

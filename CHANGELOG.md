@@ -1,5 +1,15 @@
 # Changelog
 
+- 2026-08-27: add the `friday_runtime` Agent Runtime route. Friday owns provider,
+  model, credential, and protocol selection (including MiniMax Chat Completions),
+  while CEO Agent uses the Thread/turn/operation/Artifact HTTP contract. A route
+  fallback stays in the same Agent run and preserves its task, generation, and
+  proposal/revision relation. Document the required project/auth configuration,
+  default synthetic failover E2E versus opt-in live provider E2E, and the stable
+  `friday_runtime_unreachable`, `friday_runtime_auth_failed`,
+  `friday_runtime_result_invalid`, `friday_runtime_failed`, and
+  `friday_runtime_unavailable` failure codes.
+
 - 2026-08-26: aligned task-agent timeout ceilings with launchd (`900s` total,
   `300s` idle) after Codex/DWS reads exceeded the previous `180s` idle bound;
   added recovery for orphaned task-agent runs whose parent input is no longer
