@@ -339,13 +339,9 @@ def test_codex_command_does_not_copy_principal_mcp_configuration(
 def test_codex_developer_instructions_classify_dws_login_as_tool_issue():
     instructions = codex_developer_instructions()
 
-    assert "not_authenticated" in instructions
-    assert "exit code 2" in instructions
-    assert "DWS login/tool issue" in instructions
+    assert "do not perform login or credential repair" in instructions
     assert "Dependency Authentication" in instructions
-    assert "Never run login, reset, or logout" in instructions
-    assert "AGENT_CODE_NOT_EXISTS" in instructions
-    assert "unavailable Memory dependency never triggers login" in instructions
+    assert "An unavailable Memory dependency never triggers login" in instructions
 
 
 def test_codex_runner_blocks_reply_when_only_dws_material_read_fails(tmp_path: Path):
@@ -780,8 +776,6 @@ def test_codex_developer_instructions_delegate_operation_syntax_to_skills():
     assert "dws minutes get info --id" not in instructions
     assert "Use the exact read command supplied in the task context" not in instructions
     assert CORE_DYNAMIC_SKILL_BODY in instructions
-    assert "as a DWS login/tool issue" in instructions
-    assert "as DWS authorization/configuration unavailable" in instructions
     assert "External Secrecy" in instructions
 
 
@@ -791,7 +785,7 @@ def test_builds_new_thread_command(tmp_path: Path):
     command = runner.build_command(prompt="hello", session_id=None)
 
     developer_arg = _developer_instructions_arg(command)
-    assert "Consumer Agent A is 明哥's read-only representative" in developer_arg
+    assert "Consumer Agent A gathers facts and proposes a typed candidate" in developer_arg
     assert "Pydantic output contract" in developer_arg
     assert "当前待处理消息" not in developer_arg
     assert "\\n" in developer_arg
@@ -828,7 +822,7 @@ def test_builds_resume_command(tmp_path: Path):
     command = runner.build_command(prompt="next", session_id="abc")
 
     developer_arg = _developer_instructions_arg(command)
-    assert "Consumer Agent A is 明哥's read-only representative" in developer_arg
+    assert "Consumer Agent A gathers facts and proposes a typed candidate" in developer_arg
     assert "Pydantic output contract" in developer_arg
     assert "当前待处理消息" not in developer_arg
 
@@ -902,8 +896,8 @@ def test_codex_developer_instructions_hold_thread_prompt_not_turn_message(monkey
     instructions = codex_developer_instructions()
 
     assert instructions.startswith("## Runtime Invariants\n")
-    assert "Consumer Agent A is 明哥's read-only representative" in instructions
-    assert "agent_cli.read_skill" in instructions
+    assert "Consumer Agent A gathers facts and proposes a typed candidate" in instructions
+    assert "independently selects and reads every applicable" in instructions
     assert "星尘数据的CEO，负责算法部、售前部、市场部、HR部的工作。" not in instructions
     assert "当前待处理消息" not in instructions
 
@@ -937,9 +931,9 @@ def test_codex_developer_instructions_uses_template_variable_values():
     instructions = codex_developer_instructions()
 
     assert (
-        "1. [role_boundary] Role Boundary: Consumer Agent A is 明哥's read-only "
-        "representative; Audit Agent B is the only role allowed to execute an "
-        "accepted candidate."
+        "1. [role_boundary] Role Boundary: Consumer Agent A gathers facts and "
+        "proposes a typed candidate; Audit Agent B applies the operation Skill "
+        "and executes an accepted candidate."
     ) in instructions
 
 

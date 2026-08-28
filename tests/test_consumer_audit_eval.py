@@ -82,6 +82,8 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
             "proposal": proposal,
             "decision_options": decision_options,
             "error": {"code": "", "retryable": False, "authorization_required": False},
+            "risk": "high" if case.consumer_outcome == "needs_human" else "low",
+            "confidence": 0.1 if case.consumer_outcome == "needs_human" else 1.0,
         }
     )
 
@@ -91,14 +93,12 @@ def _audit_result(case: EvalCase, operation_id: str) -> AuditAgentResult:
         "outcome": case.audit_outcome,
         "summary": case.reason,
         "proposal_revision": 0,
-        "side_effect_state": "none",
         "feedback": None,
         "external_result": None,
         "error": {"code": "", "retryable": False, "authorization_required": False},
     }
     if case.audit_outcome == "executed":
         payload.update(
-            side_effect_state="confirmed",
             external_result={
                 "operation_id": operation_id,
                 "verification_summary": "Controlled sink readback matched the operation ID.",
@@ -184,7 +184,6 @@ class FixtureAudit:
             claim.run.id,
             result.model_dump(mode="json"),
             owner="fixture-audit",
-            side_effect_state=result.side_effect_state.value,
         )
         self.session_ids.append(session_id)
         return AgentTurnRunResult(claim.run.id, result, 0, 1)
@@ -283,7 +282,7 @@ def test_eval_cases_traverse_orchestration_with_exactly_the_expected_write(case:
             else []
         )
         return
-    assert result.status == "needs_human"
+    assert result.status == "failed_terminal"
     assert sink.row_count(f"agent-task:{task.id}:{task.execution_generation}:proposal:0") == 0
     expected_oa_reads = (
         [
