@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, Pydantic, urllib/httpx as already used by the repository, SQLite-backed `AutoReplyStore`, pytest, Friday Runtime HTTP/JSON API and its existing `friday` CLI.
 
-**Spec:** `docs/architecture.md`, `docs/runtime-mechanism.md`, `/Users/derek/Documents/Projects/friday-agent/docs/Friday CLI 调试入口与 SSE 流式交互技术设计.md` (validated against Friday Runtime `939232c`)
+**Spec:** `docs/architecture.md`, `docs/runtime-mechanism.md`, `/Users/derek/Documents/Projects/friday-agent/friday-runtime/src/friday_runtime/api/main.py`, `/Users/derek/Documents/Projects/friday-agent/friday-runtime/src/friday_runtime/api/schemas.py` (validated against Friday Runtime `939232c`; the older CLI/SSE design document is background only and is not an endpoint authority)
 
 ## Global Constraints
 
@@ -62,7 +62,7 @@ def test_contract_requires_thread_message_and_final_artifact():
 
 **Interfaces:**
 - Consumes: `RuntimeRoute`, `load_runtime_config`, and the Task 1 contract.
-- Produces: `friday_runtime` route with `RuntimeKind.FRIDAY_RUNTIME`, `CEO_FRIDAY_RUNTIME_BASE_URL`, and `CEO_FRIDAY_RUNTIME_MODEL`; no Friday provider token field in CEO Agent config.
+- Produces: `friday_runtime` route with `RuntimeKind.FRIDAY_RUNTIME`, `CEO_FRIDAY_RUNTIME_BASE_URL`, and an explicit project/auth binding; Friday owns provider/model selection, so `CEO_FRIDAY_RUNTIME_MODEL` is not sent by the adapter unless the verified API contract later adds a model field.
 
 - [ ] **Step 1: Add failing tests for `friday_runtime` route parsing and URL normalization.**
 
@@ -165,7 +165,7 @@ def test_execute_creates_thread_sends_message_and_returns_artifact():
 - [ ] **Step 1: Add a default test with a fake Friday HTTP server that runs OAuth failure → Friday success in one Agent run and asserts ordered attempts.**
 - [ ] **Step 2: Run `pytest tests/e2e/test_friday_runtime_fallback.py -q` and verify it fails before the route integration.**
 - [ ] **Step 3: Add an opt-in test guarded by `CEO_LIVE_FRIDAY_RUNTIME_E2E=1` and `FRIDAY_RUNTIME_BASE_URL`, using a synthetic prompt only.**
-- [ ] **Step 4: Document the exact command, required Friday Runtime endpoint, expected MiniMax model configuration, and failure codes.**
+- [ ] **Step 4: Document the exact command, required Friday Runtime endpoint, project/auth prerequisites, Friday-owned provider/model binding (for example MiniMax-M3), and failure codes.**
 - [ ] **Step 5: Run default E2E plus all focused runtime tests and commit.**
 
 ### Task 7: Deploy and verify without external business writes
