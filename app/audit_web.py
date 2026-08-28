@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
@@ -9945,7 +9946,9 @@ def create_audit_app(
 
     @app.get("/api/workers/status", response_class=JSONResponse)
     def workers_status() -> JSONResponse:
-        return JSONResponse(render_settings_status_payload())
+        # Connector health contains immutable Pydantic results for the HTML
+        # renderer; encode them explicitly for this JSON compatibility API.
+        return JSONResponse(jsonable_encoder(render_settings_status_payload()))
 
     @app.get("/api/attention/status", response_class=JSONResponse)
     def attention_status() -> JSONResponse:
