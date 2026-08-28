@@ -58,7 +58,6 @@ Friday 或 Codex provider 返回的原始错误码会原样保留，并归入对
 | `runtime_provider_unreachable` | Runtime provider API、网络或连接不可用 | 修复 provider 后按 retryable 重试 |
 | `runtime_provider_auth_failed` | Runtime provider token/凭据失效 | 修复凭据后重试 |
 | `runtime_capability_missing` | 所需 runtime 能力未配置 | 终态失败，修复配置后重跑 |
-| `runtime_execution_failed` | runtime 执行失败 | 按 retryable 重试 |
 | `runtime_executor_failed` | runtime executor 本身异常 | 按基础设施重试策略处理 |
 | `runtime_result_invalid` | runtime 返回不符合结果契约 | 修复 adapter/契约后重试 |
 | `runtime_result_validation_failed` | runtime 结果校验失败 | 终态失败或按 provider retryable 重试 |
@@ -71,14 +70,22 @@ Friday 或 Codex provider 返回的原始错误码会原样保留，并归入对
 | 错误码 | 解释 | 默认处理 |
 | --- | --- | --- |
 | `provider_read_failed` | 业务 provider 读取失败；具体原因保存在 `source_code` | 按 provider retryable 重试 |
-| `target_resolution_not_found` | 无法唯一解析业务目标 | 终态失败；不得猜测目标 |
+| `provider_target_failed` | provider 或 Skill 无法完成目标选择；具体原因保存在 `source_code` | 按 provider 的 retryable 处理 |
 | `delivery_failed` | 外部发送请求或 provider 结果失败；具体原因保存在 `source_code` | 按 provider retryable 重试 |
 | `oa_skill_workflow_incomplete` | OA Skill 流程未完成 | 按当前业务能力重试或失败 |
-| `provider_target_failed` | provider 或 Skill 无法完成目标选择；应用层不猜测目标 | 按具体 source_code 处理 |
 
 provider 还可能返回自身的 `server_error_code`、HTTP 错误或 DWS/Friday 原始码；这些值
 属于事实证据，不在应用层重新分类。查看具体 provider 的错误含义时，应同时查阅其
 Skill 或 provider 契约文档。
+
+## 历史投影迁移
+
+历史迁移只更新 `reply_tasks`/`reply_attempts` 的当前投影，不直接修改生产数据库，
+也不删除任何 `agent_runs`、session、tool event 或原始错误事件。迁移读取旧错误关联的
+结构化 run 信息：能确定具体阶段和 provider 原始码时写入 `stage`、`source`、
+`source_code`；不能确定时使用 `execution_failed` 或 `delivery_failed`，并把旧值保留为
+历史事件中的 `legacy_code`。新的重试沿用原 `reply_attempt`，追加新的 `agent_run`，
+不会把重试上限伪装成新的业务原因。
 
 ## 历史错误码
 
