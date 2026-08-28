@@ -357,20 +357,22 @@ observability:
             "FRIDAY_LLM_JSON_MODE": "native",
         }
     )
+    friday_command = [
+        str(friday_python),
+        "-m",
+        "friday_runtime.api.main",
+        "--config",
+        str(config_path),
+        "--db-path",
+        str(runtime_db),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+    assert all(provider_key not in argument for argument in friday_command)
     process = subprocess.Popen(
-        [
-            str(friday_python),
-            "-m",
-            "friday_runtime.api.main",
-            "--config",
-            str(config_path),
-            "--db-path",
-            str(runtime_db),
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-        ],
+        friday_command,
         cwd=friday_root,
         env=child_environment,
         stdout=subprocess.PIPE,

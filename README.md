@@ -314,9 +314,20 @@ Friday Runtime fallback 的默认契约测试不访问网络或真实 provider�
 
 它会在临时 HTTP server 中验证 `codex_oauth`、`codex_api` 失败后，
 `friday_runtime` 在同一个 agent run 内成功，并检查 thread → turn → operation →
-artifact 的调用顺序。需要验证本机 Friday Runtime 时才显式设置
-`CEO_LIVE_FRIDAY_RUNTIME_E2E=1` 和 `FRIDAY_RUNTIME_BASE_URL`，并提供
-`CEO_FRIDAY_RUNTIME_PROJECT_ID`；测试只发送 synthetic prompt，不执行业务写入。
+artifact 的调用顺序。
+
+真实 Friday Runtime + MiniMax Chat Completions E2E 使用 `.env` 中独立保存的
+`CEO_FRIDAY_RUNTIME_PROVIDER_*` 配置。不要直接 `source .env`，因为文件中包含并非
+shell 语法的配置值。下面的命令只通过应用的解析器读取 Friday provider 配置，启动
+临时 Friday 进程、project 和数据库，并显式启用 pytest 的 live marker：
+
+```bash
+python3 -c 'import os; from pathlib import Path; os.environ["CEO_ENV_FILE"]="/private/tmp/ceo-agent-service-live-missing.env"; from app.config import read_env_file; os.environ.update({k:v for k,v in read_env_file(Path(".env")).items() if k.startswith("CEO_FRIDAY_RUNTIME_PROVIDER_")}); os.environ["CEO_LIVE_FRIDAY_RUNTIME_E2E"]="1"; os.execvp("python3", ["python3", "-m", "pytest", "--run-live", "-m", "live", "tests/e2e/test_friday_runtime_fallback.py::test_live_friday_runtime_subprocess_minimax_chat_completions", "-q"])'
+```
+
+live 测试只发送 synthetic JSON prompt，不执行业务写入；它会验证 CEO runtime
+attempt 和 Friday thread、turn、operation、run、Artifact 的完成状态，并检查运行时
+diagnostics 及全部临时输出中不存在 provider token 泄漏。
 
 不要把 `HOME` 指向项目目录。`dws` 和 Codex 需要使用真实用户环境里的认证状态。
 
