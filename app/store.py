@@ -6177,60 +6177,6 @@ class AutoReplyStore:
             (error_json, now_text, now_text, task_id, current_generation),
         )
 
-    @staticmethod
-    def _hold_generation_for_unknown_effects(
-        db: sqlite3.Connection,
-        task_id: int,
-        execution_generation: str,
-        *,
-        now_text: str,
-    ) -> bool:
-        error_json = json.dumps(
-            {"code": "generation_rotation_requires_reconciliation"},
-            separators=(",", ":"),
-        )
-        transitioned_run_ids = [
-            int(row["id"])
-            for row in db.execute(
-                "select id from agent_runs "
-                "where reply_task_id=? and execution_generation=? "
-                "and status='running' and role='audit' "
-                "and side_effect_state<>'none'",
-                (task_id, execution_generation),
-            ).fetchall()
-        ]
-        db.execute(
-            """
-            update agent_runs
-            set status='unknown', structured_error_json=?,
-                side_effect_state='unknown', lease_owner='', lease_expires_at='',
-                updated_at=?
-            where reply_task_id=? and execution_generation=? and status='running'
-              and role='audit'
-              and side_effect_state<>'none'
-            """,
-            (error_json, now_text, task_id, execution_generation),
-        )
-        db.executemany(
-            "insert into agent_run_state_events ("
-            "agent_run_id, phase, structured_error_json, created_at"
-            ") values (?, 'initial_unknown', ?, ?)",
-            (
-                (run_id, error_json, now_text)
-                for run_id in transitioned_run_ids
-            ),
-        )
-        row = db.execute(
-            """
-            select 1 from agent_runs
-            where reply_task_id=? and execution_generation=? and status='unknown'
-              and role='audit'
-            limit 1
-            """,
-            (task_id, execution_generation),
-        ).fetchone()
-        return row is not None
-
     def claim_agent_run(
         self,
         reply_task_id: int,
