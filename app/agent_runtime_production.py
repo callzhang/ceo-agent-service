@@ -107,6 +107,25 @@ class _RuntimeSurfaceManifestView(Mapping[str, RuntimeRouteSurfaceManifest]):
 PRODUCTION_RUNTIME_CAPABILITIES = RuntimeCapabilityRegistry()
 
 
+def build_friday_runtime_launch_environment(
+    config: AgentRuntimeConfig,
+    *,
+    base_environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Prepare a Friday launcher environment from the shared CEO provider config.
+
+    The helper is intentionally side-effect free: callers can pass the
+    returned mapping to a Friday process without mutating the CEO process
+    environment. Explicit ``FRIDAY_LLM_*`` values in ``base_environment``
+    remain authoritative over the inherited provider values.
+    """
+
+    launch_environment = dict(os.environ if base_environment is None else base_environment)
+    for key, value in config.friday_runtime_provider_environment().items():
+        launch_environment.setdefault(key, value)
+    return launch_environment
+
+
 @dataclass(frozen=True)
 class ProductionAgentRuntime:
     config: AgentRuntimeConfig

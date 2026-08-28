@@ -4,9 +4,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_production import (
     PRODUCTION_RUNTIME_CAPABILITIES,
     RuntimeCapabilityRegistry,
+    build_friday_runtime_launch_environment,
     build_production_agent_runtime,
     build_production_routed_codex_execution,
     build_production_runtime_refresher,
@@ -49,6 +51,31 @@ def test_production_runtime_builds_friday_adapter(tmp_path, monkeypatch):
         capability_registry=registry,
     )
     assert routed._friday_adapter is not None
+
+
+def test_friday_launcher_environment_inherits_shared_ceo_provider_config():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_CODEX_API_BASE_URL": "https://api.minimaxi.com/v1",
+            "CEO_CODEX_API_MODEL": "MiniMax-M3",
+            "CEO_CODEX_API_KEY": "minimax-secret",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-agent",
+            "CEO_FRIDAY_RUNTIME_MODEL": "MiniMax-M3",
+            "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",
+        }
+    )
+
+    launch_env = build_friday_runtime_launch_environment(
+        config,
+        base_environment={"PATH": "/usr/bin", "FRIDAY_LLM_MODEL": "explicit-model"},
+    )
+
+    assert launch_env["FRIDAY_LLM_PROVIDER"] == "openai-compatible"
+    assert launch_env["FRIDAY_LLM_BASE_URL"] == "https://api.minimaxi.com/v1"
+    assert launch_env["FRIDAY_LLM_API_KEY"] == "minimax-secret"
+    assert launch_env["FRIDAY_LLM_MODEL"] == "explicit-model"
+    assert "minimax-secret" not in repr(config)
 
 
 def test_production_registry_refreshes_existing_router_view(tmp_path, monkeypatch):
