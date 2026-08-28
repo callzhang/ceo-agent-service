@@ -16,6 +16,9 @@ _READABLE_FAILURE_REASONS = {
     "live_okr_and_supporting_evidence_unavailable": (
         "实时 OKR 和支撑材料不可用，连续重试后仍未完成读取；请修复 OKR 读取能力后重跑。"
     ),
+    "okr_website_unavailable": (
+        "OKR 网站当前不可用，未取得实时 OKR 内容；本次未形成评审结论。"
+    ),
     "audit_retry_exhausted": (
         "Agent 执行审计连续重试后仍未得到可验证结果，已达到本轮重试上限。"
     ),
