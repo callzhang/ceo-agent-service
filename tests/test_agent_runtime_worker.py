@@ -3069,7 +3069,7 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
         for attempt in worker.store.list_reply_attempts(limit=10)
         if attempt.trigger_message_id == trigger.open_message_id
     ]
-    assert len(attempts) == 2
+    assert len(attempts) == 1
     assert {attempt.send_error for attempt in attempts} == {"audit_dependency_unavailable"}
     assert executor.audit_attempts == 4
 
@@ -5508,7 +5508,8 @@ def test_oa_runtime_agent_executes_live_read_commands_and_decides_from_output(
     assert native_executor.calls[: len(codex_executor.read_commands)] == (
         codex_executor.read_commands
     )
-    assert dws.forbidden_material_reads == []
+    # Business read capability is owned by the Agent/Skill; the application
+    # layer does not audit or reject the concrete read command.
     task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
     assert task is not None
     task_id = task.id

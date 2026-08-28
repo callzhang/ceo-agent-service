@@ -211,7 +211,7 @@ def test_quality_gate_accepts_explicit_terminal_failures(tmp_path):
         db.execute(
             """insert into meeting_alignment_jobs
                (meeting_id, status, error)
-               values ('meeting', 'failed', '{\"kind\":\"meeting_agent\",\"message\":\"runtime_route_unavailable\"}')"""
+               values ('meeting', 'failed', '{\"kind\":\"meeting_agent\",\"message\":\"runtime_execution_failed\"}')"""
         )
 
     report = scan_hourly_quality(store.path, now=NOW)

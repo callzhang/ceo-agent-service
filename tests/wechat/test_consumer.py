@@ -138,7 +138,7 @@ def test_runtime_failure_fails_agent_run_without_completing_business_stop(
     class RuntimeFailingRunner:
         def decide(self, *_args, **_kwargs):
             raise RoutedCodexExecutionError(
-                "runtime_route_unavailable",
+                "runtime_execution_failed",
                 secret,
                 failure_class=RuntimeFailureClass.AUTHENTICATION,
                 failure_code="codex_provider_auth_failed",
@@ -153,7 +153,7 @@ def test_runtime_failure_fails_agent_run_without_completing_business_stop(
     assert run.status == "failed"
     error = __import__("json").loads(run.structured_error_json)
     assert error == {
-        "code": "runtime_route_unavailable",
+        "code": "runtime_execution_failed",
         "failure_class": "authentication",
         "failure_code": "codex_provider_auth_failed",
     }
@@ -188,7 +188,7 @@ def test_retryable_runtime_transport_failure_requeues_and_unlocks_task(store, ac
     class RuntimeFailingRunner:
         def decide(self, *_args, **_kwargs):
             raise RoutedCodexExecutionError(
-                "runtime_route_unavailable",
+                "runtime_execution_failed",
                 "unsafe provider detail",
                 failure_class=RuntimeFailureClass.TRANSPORT,
                 failure_code="codex_transport_disconnected",

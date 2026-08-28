@@ -637,7 +637,7 @@ def test_pause_opened_after_selection_prevents_attempt_and_child(store, config):
         ),
     )
 
-    with pytest.raises(RoutedCodexExecutionError, match="runtime_route_unavailable"):
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
         routed.execute(
             workload_kind="agent_run",
             workload_key=str(run_id),
@@ -1776,7 +1776,7 @@ def test_post_start_exception_terminalizes_attempt_and_retry_stays_bounded(
     retry_error = (
         "runtime_session_evidence_missing"
         if failure_stage == "build"
-        else "runtime_route_unavailable"
+        else "runtime_execution_failed"
     )
     with pytest.raises(RoutedCodexExecutionError, match=retry_error):
         routed.execute(**execution_args)
@@ -1831,7 +1831,7 @@ def test_hidden_or_ambiguous_local_session_blocks_read_only_failover(
     assert attempt.first_effect_started_at
     assert attempt.session_id == "hidden-session"
     assert attempt.transcript_end == 4
-    with pytest.raises(RoutedCodexExecutionError, match="runtime_route_unavailable"):
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
         routed.execute(
             workload_kind="structured",
             workload_key=key,
@@ -1855,7 +1855,7 @@ def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config
         adapter=FakeAdapter(),
         executor=lambda *args, **kwargs: pytest.fail("process must not start"),
     )
-    with pytest.raises(RoutedCodexExecutionError, match="runtime_route_unavailable"):
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
         routed.execute(
             workload_kind="structured",
             workload_key=key,
@@ -2258,7 +2258,7 @@ def test_route_pause_opened_during_selection_is_rechecked_before_start(
         now=lambda: NOW,
     )
 
-    with pytest.raises(RoutedCodexExecutionError, match="runtime_route_unavailable"):
+    with pytest.raises(RoutedCodexExecutionError, match="runtime_execution_failed"):
         routed.execute(
             workload_kind="structured",
             workload_key=key,

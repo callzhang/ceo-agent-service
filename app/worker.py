@@ -181,6 +181,7 @@ RECOVERABLE_AGENT_RUNTIME_ERRORS = frozenset(
     {
         "codex_process_failed",
         "codex_process_timeout",
+        "codex_process_interrupted",
         "codex_result_invalid",
         "codex_result_missing",
         "codex_stream_invalid",
@@ -193,9 +194,6 @@ def _continues_codex_capacity_wait(task: ReplyTask, error: str) -> bool:
         is_codex_capacity_exhausted(task.error)
         and error in RECOVERABLE_AGENT_RUNTIME_ERRORS
     )
-INVALID_AGENT_RESULT_ERRORS = frozenset(
-    {"codex_result_invalid", "codex_result_missing"}
-)
 STALE_CODEX_RESUME_ATTEMPTS = 2
 CALENDAR_PENDING_INVITE_LOOKAHEAD_DAYS = 14
 CALENDAR_PENDING_INVITE_EVENT_MATCH_SECONDS = 5 * 60
@@ -1787,37 +1785,12 @@ class DingTalkAutoReplyWorker:
                     continue
                 try:
                     failed_run = self._latest_failed_agent_run(task, run_snapshot)
-                    clean_session_retry = (
-                        error in INVALID_AGENT_RESULT_ERRORS
-                        and task.attempts == self.max_task_attempts
-                        and failed_run is not None
-                        and bool(failed_run.codex_session_id)
-                        and self.store.get_codex_session_id(task.conversation_id)
-                        == failed_run.codex_session_id
-                    )
-                    if error in RECOVERABLE_AGENT_RUNTIME_ERRORS:
-                        if failed_run is not None:
-                            conversation_session = self.store.get_codex_session_id(
-                                task.conversation_id
-                            )
-                            if conversation_session == failed_run.codex_session_id:
-                                self.store.clear_codex_session_if_matches(
-                                    task.conversation_id,
-                                    failed_run.codex_session_id,
-                                )
-                            self.store.clear_agent_run_session(
-                                task.id,
-                                task.execution_generation,
-                                role=failed_run.role,
-                                proposal_revision=failed_run.proposal_revision,
-                                turn_attempt=failed_run.turn_attempt,
-                            )
                     task_status, attempt_id = self._record_agent_runtime_failure_attempt(
                         task,
                         error,
                         retryable=not terminal_codex_auth_failure,
                         prior_run_snapshot=run_snapshot,
-                        allow_clean_session_retry=clean_session_retry,
+                        allow_clean_session_retry=False,
                     )
                 except AgentRunLeaseLostError:
                     continue

@@ -11084,7 +11084,7 @@ def test_codex_process_failure_is_terminal_at_attempt_limit(
     assert dismissed_notification_ids == [worker._problem_notification_id(failed)]
 
 
-def test_invalid_agent_result_gets_one_clean_session_retry_at_attempt_limit(
+def test_invalid_agent_result_stops_at_attempt_limit_without_budget_bypass(
     tmp_path: Path, monkeypatch
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
@@ -11122,16 +11122,16 @@ def test_invalid_agent_result_gets_one_clean_session_retry_at_attempt_limit(
 
     worker.run_once()
 
-    assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_tasks(status="failed") == 0
-    assert worker.store.get_codex_session_id("cid-1") is None
+    assert worker.store.count_reply_tasks(status="pending") == 0
+    assert worker.store.count_reply_tasks(status="failed") == 1
+    assert worker.store.get_codex_session_id("cid-1") == "bad-session"
 
 
 @pytest.mark.parametrize(
     "failure_code",
     ("codex_process_failed", "codex_result_invalid", "codex_result_missing"),
 )
-def test_recoverable_agent_runtime_failure_rotates_stuck_conversation_session_before_retry(
+def test_recoverable_agent_runtime_failure_continues_stuck_conversation_session(
     tmp_path: Path, monkeypatch, failure_code: str
 ):
     trigger = message("@Alex Chen(明哥) 这个怎么处理？")
@@ -11169,10 +11169,10 @@ def test_recoverable_agent_runtime_failure_rotates_stuck_conversation_session_be
 
     worker.run_once()
 
-    assert worker.store.get_codex_session_id("cid-1") is None
+    assert worker.store.get_codex_session_id("cid-1") == "stuck-session"
     failed_run = _get_audit_run(worker.store, 1, "initial")
     assert failed_run is not None
-    assert failed_run.codex_session_id == ""
+    assert failed_run.codex_session_id == "stuck-session"
 
 
 def test_repeated_codex_process_failure_does_not_get_an_extra_claim_at_limit(

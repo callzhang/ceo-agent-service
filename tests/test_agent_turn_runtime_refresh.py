@@ -56,7 +56,7 @@ def test_turn_refreshes_capabilities_before_initial_route_decision(tmp_path):
         refresh_runtime_capabilities=refresh,
     )
 
-    with pytest.raises(RuntimeRouteUnavailableError, match="runtime_route_unavailable"):
+    with pytest.raises(RuntimeRouteUnavailableError, match="runtime_execution_failed"):
         process.execute(
             run=run,
             prompt="Read-only decision.",

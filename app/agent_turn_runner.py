@@ -609,6 +609,9 @@ def _process_failure_code(process: ProcessRunResult) -> str:
 
 def _agent_process_error_code(exc: Exception) -> str:
     code = str(exc).strip()
+    explicit_code = getattr(exc, "code", "")
+    if isinstance(explicit_code, str) and explicit_code.startswith("runtime_"):
+        return explicit_code
     if code.startswith(CODEX_PROVIDER_AUTH_FAILED):
         return code
     if code in {CODEX_PROVIDER_UNAVAILABLE, CODEX_PROVIDER_CAPACITY_EXHAUSTED}:
@@ -1369,25 +1372,49 @@ class AgentTurnProcess(Generic[ResultT]):
         except CompletedRuntimeResultBlockedError:
             raise
         except RuntimeRouteUnavailableError as exc:
-            self._fail_running(run, exc.code, detail=exc.reason)
+            self._fail_running(
+                run,
+                exc.code,
+                detail=exc.reason,
+                stage="connect",
+                source="runtime",
+                source_code=exc.reason,
+            )
             raise
         except ResultParseError as exc:
             self._fail_runtime_attempt_unclassified(active_attempt)
             parse_error_code = _agent_process_error_code(exc)
             self._fail_running(
-                run, parse_error_code, detail=_result_parse_error_detail(exc)
+                run,
+                parse_error_code,
+                detail=_result_parse_error_detail(exc),
+                stage="result",
+                source="codex",
+                session_continuable=True,
             )
             raise
         except AgentReadOnlyViolationError as exc:
             self._fail_runtime_attempt_unclassified(active_attempt)
             code = str(exc).strip() or "agent_read_only_violation"
-            self._fail_running(run, code)
+            self._fail_running(
+                run,
+                code,
+                stage="execution",
+                source="codex",
+                session_continuable=True,
+            )
             raise
         except Exception as exc:
             self._fail_runtime_attempt_unclassified(active_attempt)
             provider_recovery = _agent_process_error_code(exc)
             code = provider_recovery
-            self._fail_running(run, code)
+            self._fail_running(
+                run,
+                code,
+                stage="execution",
+                source="codex",
+                session_continuable=True,
+            )
             if provider_recovery in {
                 CODEX_PROVIDER_UNAVAILABLE,
                 CODEX_PROVIDER_CAPACITY_EXHAUSTED,
@@ -1831,7 +1858,17 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             raise RuntimeError(failure_code)
 
-    def _fail_running(self, run: AgentRun, code: str, *, detail: str = "") -> None:
+    def _fail_running(
+        self,
+        run: AgentRun,
+        code: str,
+        *,
+        detail: str = "",
+        stage: str = "",
+        source: str = "",
+        source_code: str = "",
+        session_continuable: bool = False,
+    ) -> None:
         persisted = self.store.get_agent_run(run.id)
         if persisted is not None and persisted.status == "running":
             terminal_auth_failure = _is_terminal_codex_auth_failure(code)
@@ -1842,6 +1879,10 @@ class AgentTurnProcess(Generic[ResultT]):
                     "retryable": not terminal_auth_failure,
                     "authorization_required": False,
                     **({"detail": detail} if detail else {}),
+                    **({"stage": stage} if stage else {}),
+                    **({"source": source} if source else {}),
+                    **({"source_code": source_code} if source_code else {}),
+                    "session_continuable": session_continuable,
                 },
                 owner=self.owner,
             )

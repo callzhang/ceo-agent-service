@@ -97,7 +97,7 @@ def test_routed_decision_propagates_runtime_failure_instead_of_business_stop(
     class Routed:
         def execute(self, **_kwargs):
             raise RoutedCodexExecutionError(
-                "runtime_route_unavailable",
+                "runtime_execution_failed",
                 "provider detail with secret material",
                 failure_class=RuntimeFailureClass.AUTHENTICATION,
                 failure_code="codex_provider_auth_failed",
@@ -108,7 +108,7 @@ def test_routed_decision_propagates_runtime_failure_instead_of_business_stop(
     with pytest.raises(RoutedCodexExecutionError) as raised:
         runner.decide("decide", None, run_id=41)
 
-    assert raised.value.code == "runtime_route_unavailable"
+    assert raised.value.code == "runtime_execution_failed"
 
 
 def test_routed_decision_correction_prompt_accepts_raw_output_only(tmp_path: Path):

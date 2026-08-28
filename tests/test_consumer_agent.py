@@ -2133,7 +2133,7 @@ def test_api_only_ineligible_route_is_typed_and_starts_no_process(
     assert error["code"] == (
         "runtime_capability_missing"
         if eligibility == "missing_capability"
-        else "runtime_route_unavailable"
+        else "runtime_execution_failed"
     )
     assert error["retryable"] is True
     expected_reason = {
