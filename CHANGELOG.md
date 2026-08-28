@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-08-28: recover a typed Agent result from the bound Codex session when
+  stdout closes before the terminal assistant response is streamed. Recovery
+  is limited to the current attempt's session and transcript range, then uses
+  the existing typed-result parser and validation; unrelated sessions and
+  malformed assistant messages remain failures.
+
 - 2026-08-27: enabled the explicitly installed WeChat reader/sender channel
   workers in the production launchd environment (`reader=1`, `sender=1`,
   `send_mode=auto`). Workers now remain present while the dedicated Reader app
