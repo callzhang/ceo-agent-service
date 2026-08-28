@@ -1198,10 +1198,11 @@ class AgentTurnProcess(Generic[ResultT]):
                         try:
                             result = parse_result(process.stdout)
                         except ResultParseError:
-                            if not observed_session_id or not route_uses_codex_history:
+                            session_id_for_result = observed_session_id or route_session_id
+                            if not session_id_for_result or not route_uses_codex_history:
                                 raise
                             session_result = extract_codex_assistant_messages_from_session(
-                                observed_session_id,
+                                session_id_for_result,
                                 codex_home=_codex_home(),
                                 start_line=attempt_transcript_start,
                             )
