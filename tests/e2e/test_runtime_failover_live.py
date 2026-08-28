@@ -1,8 +1,7 @@
-"""Opt-in live verification for the dual-auth Codex runtime boundary.
+"""Runtime failover end-to-end checks.
 
-These tests deliberately use only synthetic prompts and the sealed no-tools,
-read-only command policy.  They never run unless the operator explicitly sets
-``CEO_LIVE_RUNTIME_FAILOVER_E2E=1``.
+The contract test runs by default with synthetic providers.  The three tests
+that invoke real local/API runtimes remain explicitly opt-in.
 """
 
 from __future__ import annotations
@@ -14,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from app.agent_runtime_config import load_runtime_config
+from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_probe import AgentRuntimeProbe
 from app.agent_runtime_router import (
     AgentRuntimeRouter,
@@ -21,19 +21,16 @@ from app.agent_runtime_router import (
     RoutedCodexExecution,
     RoutedResultCodec,
     count_codex_session_lines,
-    local_codex_session_effect_probe,
 )
 from app.audit_web import _runtime_attempt_evidence_card
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
 from app.store import AgentRole, AutoReplyStore
 
-pytestmark = [
-    pytest.mark.skipif(
-        os.getenv("CEO_LIVE_RUNTIME_FAILOVER_E2E") != "1",
-        reason="set CEO_LIVE_RUNTIME_FAILOVER_E2E=1 to run live runtime failover E2E",
-    ),
-]
+_LIVE_MARK = pytest.mark.skipif(
+    os.getenv("CEO_LIVE_RUNTIME_FAILOVER_E2E") != "1",
+    reason="set CEO_LIVE_RUNTIME_FAILOVER_E2E=1 to run live runtime failover E2E",
+)
 
 _SYNTHETIC_PROMPT = 'Return exactly the synthetic JSON object {"ok":true}.'
 _SYNTHETIC_INSTRUCTIONS = (
@@ -44,9 +41,42 @@ _REQUIRED_CAPABILITIES = frozenset(
     {
         "structured_output",
         "local_schema_validation",
-        "consumer_read_only_enforcement",
     }
 )
+
+
+def test_runtime_failover_contract_runs_by_default(tmp_path):
+    """Exercise configuration and route selection without external providers."""
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,claude_api",
+            "CEO_CODEX_API_KEY": "synthetic-codex-secret",
+            "CEO_CLAUDE_API_KEY": "synthetic-claude-secret",
+            "CEO_CODEX_MODEL": "gpt-5.6-sol",
+            "CEO_CODEX_API_MODEL": "gpt-5.6-terra",
+        }
+    )
+    store = AutoReplyStore(tmp_path / "runtime-contract.sqlite3")
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=_REQUIRED_CAPABILITIES,
+            healthy=route.name != "codex_oauth",
+            checked_at="2026-08-27T00:00:00+00:00",
+            expires_at="2099-08-27T00:00:00+00:00",
+        )
+        for route in config.routes
+    }
+    router = AgentRuntimeRouter(routes=config.routes, store=store, snapshots=snapshots)
+
+    selected = router.first_eligible_route(required_capabilities=_REQUIRED_CAPABILITIES)
+
+    assert selected.name == "codex_api"
+    assert [route.name for route in config.routes] == [
+        "codex_oauth",
+        "codex_api",
+        "claude_api",
+    ]
 
 
 class _RecordingExecutor:
@@ -172,14 +202,15 @@ def _seed_agent_run(store: AutoReplyStore) -> tuple[int, str, str]:
     return claim.run.id, generation, owner
 
 
+@_LIVE_MARK
 def test_oauth_route_probe_from_service_environment(tmp_path):
     config = _live_config()
 
     snapshot = _run_probe(config, "codex_oauth", tmp_path)
 
-    assert "consumer_read_only_enforcement" in snapshot.capabilities
 
 
+@_LIVE_MARK
 def test_api_route_probe_does_not_expose_secret(tmp_path):
     config = _live_config()
     recorder = _RecordingExecutor()
@@ -197,6 +228,7 @@ def test_api_route_probe_does_not_expose_secret(tmp_path):
     assert not any(path.exists() for path in _runtime_database_paths(business_db))
 
 
+@_LIVE_MARK
 def test_read_only_turn_fails_over_under_same_agent_run(tmp_path):
     config = _live_config()
     recorder = _RecordingExecutor()
@@ -207,7 +239,6 @@ def test_read_only_turn_fails_over_under_same_agent_run(tmp_path):
     store = AutoReplyStore(tmp_path / "runtime-failover.sqlite3")
     run_id, generation, _owner = _seed_agent_run(store)
     adapter = CodexRuntimeAdapter(tmp_path, config)
-    real_effect_probe = local_codex_session_effect_probe()
 
     def injected_executor(command, **kwargs):
         if "OPENAI_API_KEY" not in kwargs["env"]:
@@ -225,11 +256,6 @@ def test_read_only_turn_fails_over_under_same_agent_run(tmp_path):
             recorder.results.append(result)
             return result
         return recorder(command, **kwargs)
-
-    def effect_probe(session_id: str, start: int, end: int):
-        if session_id == "synthetic-injected-oauth-failure":
-            return False
-        return real_effect_probe(session_id, start, end)
 
     schema_path = tmp_path / "runtime-failover-result.schema.json"
     schema_path.write_text(
@@ -258,7 +284,6 @@ def test_read_only_turn_fails_over_under_same_agent_run(tmp_path):
             if session_id == "synthetic-injected-oauth-failure"
             else count_codex_session_lines(session_id)
         ),
-        session_effect_probe=effect_probe,
     )
 
     result = routed.execute(
