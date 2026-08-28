@@ -91,6 +91,15 @@ def test_parser_supports_worker_commands():
     assert args.db == "/tmp/worker.sqlite3"
 
 
+def test_parser_supports_detached_repository_updater():
+    args = build_parser().parse_args(
+        ["repository-updater", "--operation-id", "op-1", "--db", "/tmp/worker.sqlite3"]
+    )
+
+    assert args.command == "repository-updater"
+    assert args.operation_id == "op-1"
+
+
 def test_parser_supports_route_scoped_runtime_probe():
     args = build_parser().parse_args(
         ["probe-agent-runtimes", "--route", "codex_api", "--not-send-message"]
@@ -6075,6 +6084,7 @@ def test_run_service_starts_web_producer_and_consumer(monkeypatch, tmp_path):
         WorkerSettings(
             db_path=tmp_path / "worker.sqlite3",
             max_batches=4,
+            repository_upgrade_enabled=False,
             task_work_item_interval_seconds=31,
             task_daily_interval_seconds=3600,
             task_follow_up_interval_seconds=900,

@@ -48,6 +48,49 @@ class UpgradeResult:
     error: str = ""
 
 
+def load_persisted_operation(
+    store: UpgradeStateStore,
+    operation_id: str,
+) -> UpgradeOperation:
+    raw = store.get_service_state(UPGRADE_OPERATION_STATE_KEY)
+    if not raw:
+        raise UpgradePreconditionError("repository upgrade operation is missing")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise UpgradePreconditionError("repository upgrade operation is invalid") from exc
+    if payload.get("operation_id") != operation_id:
+        raise UpgradePreconditionError("repository upgrade operation is not current")
+    try:
+        return UpgradeOperation(
+            operation_id=operation_id,
+            expected_fingerprint=str(payload.get("expected_fingerprint", "")),
+            original_commit=str(payload["original_commit"]),
+            target_commit=str(payload["target_commit"]),
+            branch_name=str(payload.get("branch_name", "")),
+            commit_message=str(payload.get("commit_message", "")),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise UpgradePreconditionError("repository upgrade operation is invalid") from exc
+
+
+def persist_operation(store: UpgradeStateStore, operation: UpgradeOperation) -> None:
+    payload = {
+        "operation_id": operation.operation_id,
+        "status": "preparing",
+        "expected_fingerprint": operation.expected_fingerprint,
+        "original_commit": operation.original_commit,
+        "target_commit": operation.target_commit,
+        "branch_name": operation.branch_name,
+        "commit_message": operation.commit_message,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    store.set_service_state(
+        UPGRADE_OPERATION_STATE_KEY,
+        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+    )
+
+
 def _default_restart() -> None:
     result = subprocess.run(
         ["launchctl", "kickstart", "-k", f"gui/{_uid()}/com.ceo-agent-service.main"],
@@ -214,8 +257,11 @@ class RepositoryUpdater:
         payload = {
             "operation_id": operation.operation_id,
             "status": status,
+            "expected_fingerprint": operation.expected_fingerprint,
             "original_commit": operation.original_commit,
             "target_commit": operation.target_commit,
+            "branch_name": operation.branch_name,
+            "commit_message": operation.commit_message,
             "installed_commit": installed_commit,
             "backup_path": str(backup_path) if backup_path else "",
             "error": error,
@@ -225,3 +271,29 @@ class RepositoryUpdater:
             UPGRADE_OPERATION_STATE_KEY,
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
         )
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="ceo-agent repository-updater")
+    parser.add_argument("--operation-id", required=True)
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--db", required=True)
+    args = parser.parse_args()
+
+    from app.store import AutoReplyStore
+
+    store = AutoReplyStore(Path(args.db))
+    operation = load_persisted_operation(store, args.operation_id)
+    result = RepositoryUpdater(
+        Path(args.repo),
+        store,
+        database_path=Path(args.db),
+    ).execute(operation)
+    print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

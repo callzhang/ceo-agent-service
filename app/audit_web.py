@@ -138,6 +138,12 @@ from app.feedback_events import (
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
 from app.follow_up import resolve_failed_follow_up
+from app.repository_upgrade import GitRepository, RepositoryUpgradeService
+from app.repository_upgrade_web import (
+    launch_repository_updater,
+    register_repository_upgrade_routes,
+    render_repository_upgrade_mount,
+)
 from app.skill_feedback import SkillFeedbackUpdateError, apply_skill_feedback_update
 from app.store import (
     SQLITE_BUSY_TIMEOUT_SECONDS,
@@ -4456,6 +4462,11 @@ def _render_attempt_list(
     search_history_items = bool(object_types)
     search_reply_tasks = "task" in object_types
     search_codex_sessions = "meeting" in object_types
+    repository_upgrade_html = (
+        render_repository_upgrade_mount()
+        if page == 1 and not type_filters and not query
+        else ""
+    )
     pinned_needs_human_html = ""
     if page == 1 and not type_filters and not query:
         unresolved = [
@@ -4698,6 +4709,7 @@ def _render_attempt_list(
     if not items:
         chart_html = _render_history_chart(store) if include_chart else ""
         body = (
+            f"{repository_upgrade_html}"
             f"{chart_html}"
             f"{pinned_needs_human_html}"
             f"{_history_table_header(base_path='/history', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query, search_object_type=search_object_type)}"
@@ -4721,6 +4733,7 @@ def _render_attempt_list(
             search_object_type=search_object_type,
         )
         body = (
+            f"{repository_upgrade_html}"
             f"{chart_html}"
             f"{pinned_needs_human_html}"
             f"{bugfix_html}"
@@ -8463,6 +8476,21 @@ def create_audit_app(
                 )
 
     app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
+
+    register_repository_upgrade_routes(
+        app,
+        service_factory=lambda: RepositoryUpgradeService(
+            repository=GitRepository(_repo_root()),
+            store=AutoReplyStore(db_path),
+            remote=os.getenv("CEO_REPOSITORY_UPGRADE_REMOTE", "origin") or "origin",
+            branch=os.getenv("CEO_REPOSITORY_UPGRADE_BRANCH", "main") or "main",
+        ),
+        updater_launcher=lambda operation: launch_repository_updater(
+            operation,
+            repository_root=_repo_root(),
+            database_path=db_path,
+        ),
+    )
 
     workbench_lifecycle = register_workbench_routes(
         app,

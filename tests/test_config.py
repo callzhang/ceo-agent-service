@@ -9,6 +9,10 @@ from app.config import (
     codex_model_reasoning_effort,
     env_duration,
     parse_duration_value,
+    repository_upgrade_branch,
+    repository_upgrade_check_interval_seconds,
+    repository_upgrade_enabled,
+    repository_upgrade_remote,
 )
 
 
@@ -62,3 +66,27 @@ def test_codex_model_settings_use_configured_values_or_service_defaults(monkeypa
 
     assert codex_model() == "gpt-5.6"
     assert codex_model_reasoning_effort() == "high"
+
+
+def test_repository_upgrade_configuration_has_safe_defaults_and_overrides(monkeypatch):
+    for name in (
+        "CEO_REPOSITORY_UPGRADE_REMOTE",
+        "CEO_REPOSITORY_UPGRADE_BRANCH",
+        "CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS",
+        "CEO_REPOSITORY_UPGRADE_DISABLED",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    assert repository_upgrade_remote() == "origin"
+    assert repository_upgrade_branch() == "main"
+    assert repository_upgrade_check_interval_seconds() == 21600
+    assert repository_upgrade_enabled() is True
+
+    monkeypatch.setenv("CEO_REPOSITORY_UPGRADE_REMOTE", "upstream")
+    monkeypatch.setenv("CEO_REPOSITORY_UPGRADE_BRANCH", "stable")
+    monkeypatch.setenv("CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS", "30")
+    monkeypatch.setenv("CEO_REPOSITORY_UPGRADE_DISABLED", "1")
+    assert repository_upgrade_remote() == "upstream"
+    assert repository_upgrade_branch() == "stable"
+    assert repository_upgrade_check_interval_seconds() == 30
+    assert repository_upgrade_enabled() is False

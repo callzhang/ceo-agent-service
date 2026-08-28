@@ -34,6 +34,10 @@ from app.config import (
     meeting_settle_seconds,
     principal_display_name,
     producer_interval_seconds,
+    repository_upgrade_branch,
+    repository_upgrade_check_interval_seconds,
+    repository_upgrade_enabled,
+    repository_upgrade_remote,
     profile_evidence_dir,
     task_daily_interval_seconds,
     task_follow_up_interval_seconds,
@@ -205,6 +209,10 @@ class WorkerSettings(BaseModel):
     meeting_settle_seconds: PositiveInt = 600
     consumer_workers: PositiveInt = 2
     max_batches: NonNegativeInt | None = None
+    repository_upgrade_enabled: bool = repository_upgrade_enabled()
+    repository_upgrade_remote: str = repository_upgrade_remote()
+    repository_upgrade_branch: str = repository_upgrade_branch()
+    repository_upgrade_check_interval_seconds: PositiveInt = repository_upgrade_check_interval_seconds()
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -302,6 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
         "reset-codex-sessions",
         "build-work-profile",
         "replay-recent-meetings",
+        "repository-updater",
     ):
         subparser = subparsers.add_parser(command)
         subparser.add_argument("--db", default=os.getenv("CEO_WORKER_DB", str(defaults.db_path)))
@@ -440,6 +449,8 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if command == "read-oa-approval-detail":
             subparser.add_argument("--instance-id", required=True)
+        if command == "repository-updater":
+            subparser.add_argument("--operation-id", required=True)
         if command == "retry-work-summary-input":
             subparser.add_argument("--input-id", type=_positive_int, required=True)
         if command == "replay-recent-meetings":
@@ -795,6 +806,10 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         meeting_settle_seconds=meeting_settle_seconds(),
         consumer_workers=getattr(args, "consumer_workers", consumer_worker_count()),
         max_batches=args.max_batches,
+        repository_upgrade_enabled=repository_upgrade_enabled(),
+        repository_upgrade_remote=repository_upgrade_remote(),
+        repository_upgrade_branch=repository_upgrade_branch(),
+        repository_upgrade_check_interval_seconds=repository_upgrade_check_interval_seconds(),
     )
 
 
@@ -2895,6 +2910,24 @@ def run_service(
             ),
         )
     components = components + _wechat_service_components(settings)
+    if settings.repository_upgrade_enabled:
+        from app.repository_upgrade import GitRepository, RepositoryUpgradeService
+        from app.repository_upgrade_scheduler import run_repository_upgrade_check_loop
+
+        components += (
+            (
+                "repository-upgrade-check",
+                lambda: run_repository_upgrade_check_loop(
+                    service_factory=lambda: RepositoryUpgradeService(
+                        repository=GitRepository(_repo_root()),
+                        store=AutoReplyStore(settings.db_path),
+                        remote=settings.repository_upgrade_remote,
+                        branch=settings.repository_upgrade_branch,
+                    ),
+                    interval_seconds=settings.repository_upgrade_check_interval_seconds,
+                ),
+            ),
+        )
     for component, target in components:
         thread = thread_factory(
             target=_service_component_target(
@@ -3392,6 +3425,19 @@ def main() -> None:
                 verify_channels=args.verify_channels,
             )
         )
+    elif args.command == "repository-updater":
+        from app.repository_updater import RepositoryUpdater, load_persisted_operation
+
+        store = AutoReplyStore(settings.db_path)
+        operation = load_persisted_operation(store, args.operation_id)
+        result = RepositoryUpdater(
+            _repo_root(),
+            store,
+            remote=settings.repository_upgrade_remote,
+            branch=settings.repository_upgrade_branch,
+            database_path=settings.db_path,
+        ).execute(operation)
+        print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
     elif args.command == "doctor-mcp":
         doctor_mcp_command(
             settings,

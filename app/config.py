@@ -270,6 +270,22 @@ def task_follow_up_interval_seconds() -> int:
     return env_int("CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS", 60)
 
 
+def repository_upgrade_remote() -> str:
+    return os.getenv("CEO_REPOSITORY_UPGRADE_REMOTE", "origin").strip() or "origin"
+
+
+def repository_upgrade_branch() -> str:
+    return os.getenv("CEO_REPOSITORY_UPGRADE_BRANCH", "main").strip() or "main"
+
+
+def repository_upgrade_check_interval_seconds() -> int:
+    return env_int("CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS", 6 * 60 * 60)
+
+
+def repository_upgrade_enabled() -> bool:
+    return not _env_truthy("CEO_REPOSITORY_UPGRADE_DISABLED")
+
+
 def embedding_base_url() -> str:
     return os.getenv("CEO_EMBEDDING_BASE_URL", "https://embed.preseen.ai/v1")
 

@@ -9,6 +9,7 @@ from app.repository_updater import (
     RepositoryUpdater,
     UpgradeOperation,
     UpgradePreconditionError,
+    load_persisted_operation,
 )
 
 
@@ -123,3 +124,26 @@ def test_failed_verification_rolls_back_installed_revision(tmp_path: Path):
 
     assert git(local, "rev-parse", "HEAD") == op.original_commit
     assert json.loads(store.values["repository_upgrade_operation:v1"])["status"] == "rolled_back"
+
+
+def test_persisted_operation_can_be_loaded_by_id():
+    store = StateStore()
+    store.values["repository_upgrade_operation:v1"] = json.dumps(
+        {
+            "operation_id": "op-1",
+            "status": "preparing",
+            "original_commit": "a" * 40,
+            "target_commit": "b" * 40,
+            "branch_name": "",
+            "commit_message": "",
+        }
+    )
+
+    loaded = load_persisted_operation(store, "op-1")
+
+    assert loaded == UpgradeOperation(
+        operation_id="op-1",
+        expected_fingerprint="",
+        original_commit="a" * 40,
+        target_commit="b" * 40,
+    )
