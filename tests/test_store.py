@@ -2940,6 +2940,7 @@ def test_enqueue_manual_rerun_reply_task_requeues_existing_task(tmp_path: Path):
 
     assert rerun.id == task.id
     assert rerun.status == "pending"
+    assert rerun.attempts == 0
     assert rerun.locked_at is None
     assert rerun.force_new_decision is True
     assert rerun.oa_url == "https://oa.example/process"

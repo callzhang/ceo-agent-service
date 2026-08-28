@@ -4058,6 +4058,7 @@ class AutoReplyStore:
                 trigger_text=excluded.trigger_text,
                 trigger_message_json=excluded.trigger_message_json,
                 available_at='',
+                attempts=0,
                 force_new_decision=1,
                 oa_url=excluded.oa_url,
                 manual_rerun_attempt_id=excluded.manual_rerun_attempt_id,
