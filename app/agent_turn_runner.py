@@ -88,8 +88,6 @@ from app.store import (
 
 ResultT = TypeVar("ResultT")
 ProcessExecutor = Callable[..., ProcessRunResult]
-UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS = 60
-UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS = 15 * 60
 CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
 _COMMON_RUNTIME_CAPABILITIES = frozenset(
     {"structured_output", "local_schema_validation"}
@@ -541,19 +539,6 @@ def _decode_runtime_domain_result(
         return _DecodedRuntimeDomainResult(result=result, evidence=evidence)
     except (ValidationError, ValueError) as exc:
         raise ValueError("runtime_result_envelope_invalid") from exc
-
-
-def unknown_reconciliation_retry_at(
-    attempts: int, *, now: datetime | None = None
-) -> str:
-    delay_seconds = min(
-        UNKNOWN_RECONCILIATION_RETRY_BASE_SECONDS * (2 ** max(attempts - 1, 0)),
-        UNKNOWN_RECONCILIATION_RETRY_MAX_SECONDS,
-    )
-    current = now or datetime.now(timezone.utc)
-    return (
-        current.astimezone(timezone.utc) + timedelta(seconds=delay_seconds)
-    ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _required_runtime_capabilities(
