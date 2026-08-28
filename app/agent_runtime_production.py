@@ -120,7 +120,16 @@ def build_friday_runtime_launch_environment(
     remain authoritative over the inherited provider values.
     """
 
-    launch_environment = dict(os.environ if base_environment is None else base_environment)
+    source_environment = os.environ if base_environment is None else base_environment
+    # Friday is an independent provider boundary.  Do not leak CEO Codex
+    # credentials or route settings into the child process; provider values are
+    # copied below into Friday's own FRIDAY_LLM_* contract instead.
+    launch_environment = {
+        key: value
+        for key, value in source_environment.items()
+        if not key.startswith("CEO_CODEX_")
+        and not key.startswith("CEO_FRIDAY_RUNTIME_PROVIDER_")
+    }
     for key, value in config.friday_runtime_provider_environment().items():
         launch_environment.setdefault(key, value)
     return launch_environment

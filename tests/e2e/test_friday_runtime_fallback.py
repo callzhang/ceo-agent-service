@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import subprocess
 import threading
+import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -27,6 +32,7 @@ from app.agent_runtime_router import (
     RoutedCodexExecution,
     RoutedResultCodec,
 )
+from app.agent_runtime_production import build_friday_runtime_launch_environment
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
@@ -263,3 +269,198 @@ def test_local_friday_runtime_e2e():
         timeout_seconds=60,
     )
     assert json.loads(result.text) == {"ok": True}
+
+
+@pytest.mark.live
+@pytest.mark.skipif(
+    os.getenv("CEO_LIVE_FRIDAY_RUNTIME_E2E") != "1",
+    reason="set CEO_LIVE_FRIDAY_RUNTIME_E2E=1 for local MiniMax E2E",
+)
+def test_live_friday_runtime_subprocess_minimax_chat_completions(tmp_path: Path):
+    """Run the production CEO adapter against a real local Friday subprocess.
+
+    The provider key is supplied only through the child environment.  Runtime,
+    SQLite state, project workspace, logs, and artifacts all live under pytest's
+    temporary directory and are removed by the fixture lifecycle.
+    """
+
+    provider_key = os.getenv("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", "").strip()
+    if not provider_key:
+        pytest.fail("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY is required for live E2E")
+    provider_base_url = os.getenv(
+        "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "https://api.minimaxi.com/v1"
+    ).strip()
+    provider_model = os.getenv("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", "MiniMax-M3").strip()
+
+    friday_root = Path("/Users/derek/Documents/Projects/friday-agent/friday-runtime")
+    friday_python = friday_root / ".venv/bin/python"
+    if not friday_python.exists():
+        pytest.fail(f"Friday runtime interpreter not found: {friday_python}")
+    port = _free_local_port()
+    runtime_db = tmp_path / "friday-runtime.sqlite3"
+    runtime_home = tmp_path / "friday-home"
+    project_workspace = tmp_path / "project"
+    project_workspace.mkdir()
+    config_path = tmp_path / "runtime.yaml"
+    config_path.write_text(
+        """server:
+  host: 127.0.0.1
+  port: 0
+  auth:
+    enabled: false
+    required_for_v1: false
+storage:
+  db_path: ${RUNTIME_DB}
+llm:
+  provider: openai-compatible
+  enabled: true
+  json_mode: native
+memory:
+  provider: disabled
+  enabled: false
+output:
+  root_path: ${RUNTIME_HOME}/output
+observability:
+  logging:
+    root_path: ${RUNTIME_HOME}/logs
+  trace_journal:
+    root_path: ${RUNTIME_HOME}/traces
+""".replace("${RUNTIME_DB}", str(runtime_db)).replace("${RUNTIME_HOME}", str(runtime_home)),
+        encoding="utf-8",
+    )
+
+    # Build the child environment from the production mapping while removing
+    # inherited local Friday provider values and all CEO Codex settings.
+    base_environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("CEO_CODEX_")
+        and not key.startswith("CEO_FRIDAY_RUNTIME_PROVIDER_")
+        and not key.startswith("FRIDAY_LLM_")
+    }
+    config = _config_for_live_provider(
+        provider_base_url=provider_base_url,
+        provider_model=provider_model,
+        provider_key=provider_key,
+        project_id="pending",
+    )
+    child_environment = build_friday_runtime_launch_environment(
+        config, base_environment=base_environment
+    )
+    child_environment.update(
+        {
+            "PYTHONPATH": str(friday_root / "src"),
+            "FRIDAY_RUNTIME_CONFIG": str(config_path),
+            "FRIDAY_HOME": str(runtime_home),
+            "FRIDAY_LLM_JSON_MODE": "native",
+        }
+    )
+    process = subprocess.Popen(
+        [
+            str(friday_python),
+            "-m",
+            "friday_runtime.api.main",
+            "--config",
+            str(config_path),
+            "--db-path",
+            str(runtime_db),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ],
+        cwd=friday_root,
+        env=child_environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        _wait_for_friday(base_url, process)
+        project_payload = _post_json(
+            f"{base_url}/v1/projects",
+            {
+                "name": "CEO live E2E",
+                "description": "temporary live integration project",
+                "workspace_root": str(project_workspace),
+                "bootstrap_scan": {"enabled": False, "create_default_thread": False},
+            },
+        )
+        project = project_payload.get("project")
+        project_id = str(project.get("project_id") if isinstance(project, dict) else "").strip()
+        assert project_id
+        live_config = _config_for_live_provider(
+            provider_base_url=provider_base_url,
+            provider_model=provider_model,
+            provider_key=provider_key,
+            project_id=project_id,
+            base_url=base_url,
+        )
+        result = FridayRuntimeAdapter(live_config, poll_interval_seconds=0.2).execute(
+            'Return exactly this JSON object and no other text: {"ok":true,"value":7}.',
+            project_id=project_id,
+            timeout_seconds=120,
+            auth_disabled=True,
+        )
+        assert json.loads(result.text) == {"ok": True, "value": 7}
+        assert result.thread_id
+        assert result.turn_id
+        assert result.operation_id
+        assert result.artifact.get("thread_id") == result.thread_id
+        assert result.artifact
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def _free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _config_for_live_provider(*, provider_base_url: str, provider_model: str, provider_key: str, project_id: str, base_url: str = "http://127.0.0.1:1"):
+    return load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_FRIDAY_RUNTIME_BASE_URL": base_url,
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": project_id,
+            "CEO_FRIDAY_RUNTIME_MODEL": provider_model,
+            "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": provider_base_url,
+            "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": provider_model,
+            "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": provider_key,
+        }
+    )
+
+
+def _wait_for_friday(base_url: str, process: subprocess.Popen[str]) -> None:
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            pytest.fail("Friday Runtime subprocess exited during startup")
+        try:
+            with urllib.request.urlopen(f"{base_url}/runtime/hello", timeout=1) as response:
+                if response.status == 200:
+                    return
+        except (OSError, urllib.error.URLError):
+            time.sleep(0.2)
+    pytest.fail("Friday Runtime subprocess did not become healthy")
+
+
+def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        decoded = json.loads(response.read().decode("utf-8"))
+    assert isinstance(decoded, dict)
+    return decoded

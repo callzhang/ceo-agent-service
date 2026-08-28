@@ -68,13 +68,20 @@ def test_friday_launcher_environment_uses_independent_provider_config():
 
     launch_env = build_friday_runtime_launch_environment(
         config,
-        base_environment={"PATH": "/usr/bin", "FRIDAY_LLM_MODEL": "explicit-model"},
+        base_environment={
+            "PATH": "/usr/bin",
+            "FRIDAY_LLM_MODEL": "explicit-model",
+            "CEO_CODEX_API_KEY": "must-not-leak",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "must-not-remain",
+        },
     )
 
     assert launch_env["FRIDAY_LLM_PROVIDER"] == "openai-compatible"
     assert launch_env["FRIDAY_LLM_BASE_URL"] == "https://api.minimaxi.com/v1"
     assert launch_env["FRIDAY_LLM_API_KEY"] == "minimax-secret"
     assert launch_env["FRIDAY_LLM_MODEL"] == "explicit-model"
+    assert "CEO_CODEX_API_KEY" not in launch_env
+    assert "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY" not in launch_env
     assert "minimax-secret" not in repr(config)
 
 
