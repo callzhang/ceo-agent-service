@@ -3321,6 +3321,7 @@ def _render_agent_runtime_config() -> str:
         '<p><label>Runtime Base URL<br><input class="config-value-input" type="url" '
         'name="friday_runtime_base_url" required value="'
         f'{escape(friday_base_url, quote=True)}"></label></p>'
+        '<p class="muted">这是本机 Friday Runtime 服务地址；provider 的 URL 和 Token 会复用上方已有的 Codex API 配置，页面无需重复填写。</p>'
         '<p><label>Project ID<br><input class="config-value-input" type="text" '
         'name="friday_runtime_project_id" value="'
         f'{escape(friday_project_id, quote=True)}"></label></p>'

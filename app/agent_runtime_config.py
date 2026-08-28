@@ -30,9 +30,32 @@ class AgentRuntimeConfig(BaseModel):
     friday_runtime_model: str
     friday_runtime_auth_disabled: bool
     friday_runtime_auth_mode: str
+    friday_runtime_provider_api_key: SecretStr | None
 
     def secret_for(self, route_name: str) -> SecretStr | None:
         return self.secrets.get(route_name)
+
+    @property
+    def friday_runtime_provider_base_url(self) -> str:
+        """Return the provider URL shared with the configured Codex API route."""
+
+        return self.codex_api_base_url
+
+    def friday_runtime_provider_environment(self) -> dict[str, str]:
+        """Build the provider environment consumed by a Friday Runtime launcher.
+
+        Friday's RuntimeTicket/session token remains the HTTP authentication
+        credential.  The provider key is deliberately kept as a separate
+        field and is sourced from the existing CEO_CODEX_API_KEY setting.
+        """
+
+        if self.friday_runtime_provider_api_key is None:
+            return {}
+        return {
+            "FRIDAY_LLM_PROVIDER": "openai-compatible",
+            "FRIDAY_LLM_BASE_URL": self.friday_runtime_provider_base_url,
+            "FRIDAY_LLM_API_KEY": self.friday_runtime_provider_api_key.get_secret_value(),
+        }
 
 
 def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
@@ -64,6 +87,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     friday_runtime_project_id = env.get("CEO_FRIDAY_RUNTIME_PROJECT_ID", "").strip()
     friday_runtime_model = env.get("CEO_FRIDAY_RUNTIME_MODEL", "default").strip()
     friday_auth_disabled = env.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED", "").strip() == "1"
+    friday_provider_key = env.get("CEO_CODEX_API_KEY", "").strip()
     claude_model = env.get("CEO_CLAUDE_MODEL", "sonnet").strip()
     routes = []
     secrets: dict[str, SecretStr] = {}
@@ -154,6 +178,11 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
         friday_runtime_model=friday_runtime_model,
         friday_runtime_auth_disabled=friday_auth_disabled,
         friday_runtime_auth_mode=friday_auth_mode,
+        friday_runtime_provider_api_key=(
+            SecretStr(friday_provider_key)
+            if "friday_runtime" in names and friday_provider_key
+            else None
+        ),
     )
 
 
