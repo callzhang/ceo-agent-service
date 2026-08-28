@@ -561,7 +561,6 @@ def consumer_developer_instructions(
         audit_rules=audit_rules,
         skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
         wire_model=ConsumerAgentWireResult,
-        result_model=ConsumerAgentResult,
     )
     instructions = _role_developer_instructions(
         core,
@@ -582,7 +581,7 @@ def audit_developer_instructions(
     del allow_write, recovery_reconciliation
     core = _developer_instructions(
         audit_rules=audit_rules, skill_instruction=AUDIT_DYNAMIC_SKILL_BODY,
-        wire_model=AuditAgentWireResult, result_model=AuditAgentResult,
+        wire_model=AuditAgentWireResult,
     )
     if frozen_delivery_retry:
         core += "\n\nThis is a retry of the same task. Preserve the business intent and return one terminal structured result."
@@ -604,7 +603,6 @@ def _developer_instructions(
     audit_rules: str,
     skill_instruction: str,
     wire_model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
-    result_model: type[ConsumerAgentResult] | type[AuditAgentResult],
 ) -> str:
     validate_audit_rules_text(audit_rules)
     return "\n\n".join(
@@ -621,7 +619,6 @@ def _developer_instructions(
             "8. [dependency_auth] Dependency Authentication: verify dependency evidence.",
             f"## Dynamic Skill\n{skill_instruction}",
             f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
-            f"## Pydantic Result Contract\n{_schema_json(result_model)}",
         )
     )
 

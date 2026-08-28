@@ -267,10 +267,10 @@ def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative
     assert "## Audit Rules" in instructions
     assert "## Dynamic Skill" in instructions
     assert "## Pydantic Wire Contract" in instructions
-    assert "## Pydantic Result Contract" in instructions
+    assert "## Pydantic Result Contract" not in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
     assert '"title":"ConsumerAgentWireResult"' in instructions
-    assert '"title":"ConsumerAgentResult"' in instructions
+    assert '"title":"ConsumerAgentResult"' not in instructions
     assert audit_rules in instructions
     assert CONSUMER_DYNAMIC_SKILL_BODY in instructions
     assert "OKR approval/review is a covered autonomous decision" in instructions
@@ -419,9 +419,9 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     instructions = consumer_developer_instructions("Verify every supported fact.")
 
     assert "## Pydantic Wire Contract" in instructions
-    assert "## Pydantic Result Contract" in instructions
     assert '"title":"ConsumerAgentWireResult"' in instructions
-    assert '"title":"ConsumerAgentResult"' in instructions
+    assert "## Pydantic Result Contract" not in instructions
+    assert '"title":"ConsumerAgentResult"' not in instructions
     assert '"objective"' in instructions
     assert '"sourced_facts"' in instructions
     assert '"authored_judgment"' in instructions

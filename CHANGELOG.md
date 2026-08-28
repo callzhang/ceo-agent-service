@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-08-28: make the Consumer and Audit prompts expose only the typed wire
+  contract. The application result model is an internal persistence shape and
+  is no longer rendered beside the wire schema, preventing Codex from
+  returning nested `error` results that the strict transport parser rejects.
+
 - 2026-08-28: recover a typed Agent result from the bound Codex session when
   stdout closes before the terminal assistant response is streamed. Recovery
   is limited to the current attempt's session and transcript range, then uses
