@@ -4,7 +4,7 @@
 
 This document covers retryable `runtime_route_unavailable` failures before an
 Agent turn starts. Route recovery is ordinary retry scheduling; it is not an
-Audit reconciliation flow and does not inspect tool names or external-effect
+Audit state-check flow and does not inspect tool names or external-effect
 state. If an Agent turn was interrupted after an external call, the next turn
 uses the current business Skill and any persisted provider identifier to decide
 what to do. The service does not create a separate unknown-outcome state.

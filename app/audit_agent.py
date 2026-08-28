@@ -38,8 +38,8 @@ class AuditAgentRunner:
 
     Audit validates the typed proposal/result contract and delegates provider
     capabilities to the selected runtime.  It does not maintain an
-    application-level command review, read-only, unknown-outcome, or
-    reconciliation state machine.
+    application-level command review, read-only, unknown-outcome, or separate
+    recovery state machine.
     """
 
     def __init__(

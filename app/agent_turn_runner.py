@@ -103,9 +103,6 @@ _CONSUMER_RUNTIME_CAPABILITIES = frozenset(
 _AUDIT_RUNTIME_CAPABILITIES = frozenset(
     {"audit_effect_visibility", "reviewed_read_tools", "reviewed_write_tools"}
 )
-_RECONCILIATION_RUNTIME_CAPABILITIES = frozenset(
-    {"reconciliation_read_only"}
-)
 _RUNTIME_DOMAIN_RESULT_CODEC_VERSION = 1
 _RUNTIME_RESULT_EVIDENCE_VERSION = 1
 _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 32 * 1024
@@ -556,7 +553,8 @@ def _required_runtime_capabilities(
     required = set(_COMMON_RUNTIME_CAPABILITIES)
     # Provider/runtime owns execution surfaces. The application only requires
     # structured result and local schema validation; it does not impose
-    # read-only, reviewed-tool, or reconciliation capabilities by role.
+    # Provider execution and state checks are runtime concerns, not application
+    # Audit capabilities.
     if recovery_phase != "reconcile":
         for action in expected_effect_actions:
             capability = action.get("capability")
@@ -2322,9 +2320,9 @@ def _message_readback_window_matches(
     query_range = payload.get("queryRange")
     if not isinstance(query_range, dict):
         return False
-    start = _parse_reconciliation_timestamp(query_range.get("startTime"))
-    end = _parse_reconciliation_timestamp(query_range.get("endTime"))
-    operation_started = _parse_reconciliation_timestamp(operation_started_at)
+    start = _parse_check_timestamp(query_range.get("startTime"))
+    end = _parse_check_timestamp(query_range.get("endTime"))
+    operation_started = _parse_check_timestamp(operation_started_at)
     if start is None or end is None or operation_started is None:
         return False
     return start <= operation_started < end and timedelta(0) < end - start <= timedelta(
@@ -2332,7 +2330,7 @@ def _message_readback_window_matches(
     )
 
 
-def _parse_reconciliation_timestamp(value: object) -> datetime | None:
+def _parse_check_timestamp(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
     normalized = value.strip().replace("Z", "+00:00")

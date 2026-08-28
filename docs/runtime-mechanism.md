@@ -65,7 +65,7 @@ pending -> running -> done
 - 生产入口是 launchd 管理的 `com.ceo-agent-service.main`，由 supervisor 管理 worker 和 audit-web。
 - 同一 `conversation_id` 同时只能有一个执行 Agent 持有 Codex session lock。
 - 每个执行/审核 run 都有独立 lease、revision 和 transcript 范围。
-- 重启时，未完成的 Agent turn 统一按 `failed` 重试；服务不创建 unknown/reconciliation 状态，也不依据工具事件决定是否重放。下一次 Agent turn 按业务 Skill 读取当前外部状态，再自行判断后续动作。
+- 重启时，未完成的 Agent turn 统一按 `failed` 重试；服务不创建 unknown 或独立状态核对队列，也不依据工具事件决定是否重放。下一次 Agent turn 按业务 Skill 读取当前外部状态，再自行判断后续动作。
 - 外部动作的 operation、target 和 provider result identifier（若 provider 返回）会保留用于去重；缺少标识属于 provider/Agent 失败，不转换为额外状态。
 
 ### 应用层边界
@@ -74,7 +74,7 @@ pending -> running -> done
 `side_effect_state`、`unknown`、`reconciled` 等业务状态。应用层只校验最终 typed result 的形状，
 推进 `done`、`failed`、`needs_feedback` 和 `needs_human`，并保存去重所需的最小外部事实：
 `operation`、`target`、provider 稳定结果标识。纯读取不需要 receipt；写入中断时由下一次 Agent turn
-按业务 Skill 读取目标状态，服务不启动专门的只读 reconciliation，也不因“未知工具”阻断执行。
+按业务 Skill 读取目标状态，服务不启动专门的只读核对回合，也不因“未知工具”阻断执行。
 
 历史数据库中已经存在的 `unknown`、`reconciled` 或 `side_effect_state` 值仅作为不可变历史事实展示，
 不得由新代码写入，也不参与当前状态迁移。旧 spec/plan 中描述这些状态机的内容属于历史设计，
