@@ -11,7 +11,7 @@ from app.agent_runtime_router import (
     RoutedCodexExecutionError,
     RoutedResultCodec,
 )
-from app.config import work_profile_path
+from app.config import principal_display_name, work_profile_path
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
     DeliveryTarget,
@@ -225,7 +225,7 @@ def build_meeting_alignment_prompt(
         creator = source.creator
         if creator is None or creator.user_id == source.current_user_id:
             creator_contract = (
-                "当前会议创建人缺失、不唯一或是 Derek，不能选择私信；"
+                f"当前会议创建人缺失、不唯一或是 {principal_display_name()}，不能选择私信；"
                 "没有可发送群时返回 target=null，等待来源证据恢复。"
             )
             creator_name = "（当前不可用）"
@@ -262,7 +262,7 @@ def build_meeting_alignment_prompt(
 - 如果是实际候选人面试，立即返回 action=no_action，并在 audit_summary 说明“实际候选人面试，按范围规则跳过”。不要搜索群、解析 @ 或生成消息。
 
 触发边界：
-- 只有出现实质观点分歧，或 Derek 的观点在后续讨论中没有被完整还原、需要做“Derek 的观点输出解读”时，action=send；否则保持安静，action=no_action。
+- 只有出现实质观点分歧，或 {principal_display_name()} 的观点在后续讨论中没有被完整还原、需要做“{principal_display_name()} 的观点输出解读”时，action=send；否则保持安静，action=no_action。
 - 只要会议中曾经出现实质观点分歧，后来明确对齐也仍然触发发布；必须总结对齐过程和结论，不能因为最终已对齐而改成 no_action。
 - 措辞不同、补充信息、探索性讨论或已经自然顺畅推进，不算实质分歧。
 - 沉默不算对齐。只有相关各方明确同意、承诺或复述一致，才把议题标为 aligned；主持人单方面宣布结论不够。
@@ -275,8 +275,8 @@ def build_meeting_alignment_prompt(
 - 取舍问题应把“选择什么、牺牲什么、承担什么后果”压缩为可回答的问题；回答最小集合后应能直接导出结论或明确下一步。
 - key_questions.answer_owner_names 必须写真正能回答/拍板的人。mention_names 默认只覆盖参会 owner；如果 owner 不是参会人，只有会议中明确说到这是他的任务、由他负责、交给他确认或跟进时，才可以放进 mention_names 并在 final_message 中真实 @。否则可以在正文里写“需要后续同步某某确认”，但不要把这个非参会人放进 mention_names，也不要写成真实 @。
 - 每个真实 @ 都必须放在对应的任务、问题或信息所在句子中，让收件人直接看到自己需要处理或知晓的内容；禁止在消息开头集中列一排 @ 人员。mention_names 中的每个人都必须在 final_message 的对应位置以 `@姓名` 出现，发送层会在原位置转换成真实钉钉 @，不会自动补到开头。
-- “Derek 的观点输出解读”只能解释 Derek 在会议中明确表达的观点，meeting_evidence 必须引用会议原话或可核验片段。
-- 可以结合工作人格和 memory_recall 找到的历史案例、信息来打比方、举例和补全解释，但不能用历史信息发明或替换 Derek 的立场，也不能让历史材料覆盖会议证据。
+- “{principal_display_name()} 的观点输出解读”只能解释 {principal_display_name()} 在会议中明确表达的观点，meeting_evidence 必须引用会议原话或可核验片段。
+- 可以结合工作人格和 memory_recall 找到的历史案例、信息来打比方、举例和补全解释，但不能用历史信息发明或替换 {principal_display_name()} 的立场，也不能让历史材料覆盖会议证据。
 - 使用历史内容时，historical_sources 必须逐项记录来源。未经 memory_recall 核验时，唯一允许的历史来源是服务端注入的工作人格来源 `{work_profile_source}`；不使用历史内容则返回空列表。
 - 能只靠会议证据解释时，historical_sources 必须为空数组。只有实际引用了工作人格中的具体判断或案例时才记录工作人格来源。
 - 记录注入的工作人格来源时，historical_sources 的数组元素必须逐字填写 `{work_profile_source}`，不得改写、加标题或写成说明性文字。

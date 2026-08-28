@@ -374,7 +374,7 @@ not in `~/.agents/skills`.
    CEO_LIVE_SEND_BLOCKERS_ACCEPTED=
    ```
 
-   也可以在审计页 `Settings → System Config` 修改模型与 thinking
+   也可以在审计页 `Settings → Agent Runtime` 修改模型与 thinking
    强度。保存会写入 `.env`；重启主服务后，所有新的 agent runtime 路由都会使用新设置。
 
 3. Keep dry-run on for first validation. For this codebase, dry-run can be set

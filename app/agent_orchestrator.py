@@ -19,6 +19,7 @@ from app.agent_result import AgentError, ResultParseError
 from app.agent_skill_usage import LoadedSkillReceipt, loaded_skill_receipts
 from app.agent_turn_runner import AgentTurnRunResult
 from app.codex_capacity import is_codex_provider_recovery_code
+from app.config import principal_display_name
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 MAX_CONTENT_FEEDBACK_CYCLES = 2
@@ -61,7 +62,7 @@ def _bounded_fact_finding_feedback(
                 requested_revision=(
                     "Regenerate the same task as an executable proposal for that "
                     "bounded inquiry. Put the risk boundary in the outgoing message "
-                    "itself; do not ask Derek to choose between options and do not "
+                    f"itself; do not ask {principal_display_name()} to choose between options and do not "
                     "authorize a quote, order, agreement, or spend."
                 ),
             )

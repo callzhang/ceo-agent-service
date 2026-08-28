@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from html import escape
 from itertools import count, zip_longest
 import os
+import re
 from pathlib import Path
 import stat
 import subprocess
@@ -113,6 +114,7 @@ from app.history_actions import (
 )
 from app.runtime_environment import central_python
 from app.developer_prompt import (
+    CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS,
     configurable_prompt_variable_pairs,
     DeveloperPromptTemplateError,
     developer_prompt_template_path,
@@ -551,6 +553,16 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .prompt-tab{display:inline-flex;align-items:center;height:32px;padding:0 13px;border-radius:999px;color:var(--steel);font-size:13px;font-weight:600}
 .prompt-tab:hover{text-decoration:none;color:var(--ink)}
 .prompt-tab.active{background:var(--ink);color:#fff}
+.prompt-pill-tabs,.prompt-view-toggle,.connector-pill-tabs{display:inline-flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);margin:0 8px 12px 0}
+.configuration-group{margin:16px 0}
+.configuration-group h3{margin:0 0 8px;color:var(--ink);font-size:15px}
+.configuration-table td:first-child{width:280px}
+.configuration-table td:nth-child(2){width:340px}
+.configuration-table .config-value-input{width:100%;min-width:180px}
+.prompt-runtime-variables{margin-top:18px}
+.prompt-runtime-variables h3{margin:0 0 8px;font-size:15px}
+.prompt-runtime-table td:first-child{width:260px}
+.prompt-rendered-preview{max-height:680px;overflow:auto;margin:12px 0 0;padding:16px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft);white-space:pre-wrap;word-break:break-word}
 .settings-layout{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:start;gap:24px;max-width:1280px;margin:0 auto}
 .settings-nav{position:sticky;top:92px;display:grid;gap:3px;padding:8px;border:1px solid var(--hairline);border-radius:10px;background:var(--surface-soft)}
 .settings-nav-item{display:flex;align-items:center;min-height:38px;padding:0 12px;border-radius:7px;color:var(--steel);font-size:13px;font-weight:600;line-height:1.3}
@@ -2781,6 +2793,7 @@ def _render_config_body(
     audit_rules_draft: str | None = None,
     tab_href_prefix: str = "/config?tab=",
     include_tabs: bool = True,
+    include_prompt_card: bool = True,
 ) -> tuple[str, str]:
     if active_tab == "developer":
         content = _render_developer_prompt_editor_content(saved=saved)
@@ -2806,9 +2819,9 @@ def _render_config_body(
         active_tab = "info"
         content = _render_config_info()
     prompt_card = (
-        ""
-        if active_tab in {"wechat", "audit-rules"}
-        else _prompt_config_card(active_tab)
+        _prompt_config_card(active_tab)
+        if include_prompt_card and active_tab not in {"wechat", "audit-rules"}
+        else ""
     )
     tabs = _config_tabs(active_tab, tab_href_prefix=tab_href_prefix) if include_tabs else ""
     return active_tab, f"{prompt_card}{tabs}{content}"
@@ -2819,6 +2832,9 @@ def render_settings_page(
     *,
     active_tab: str = "config",
     config_tab: str = "info",
+    prompt: str = "developer",
+    view: str = "template",
+    connector: str = "dingtalk",
     log_limit: int | None = DEFAULT_ERROR_LIST_LIMIT,
     log_page: int = 1,
     log_query: str = "",
@@ -2829,23 +2845,37 @@ def render_settings_page(
         # ``config`` was the former parent menu. Resolve old deep links to the
         # corresponding flat section while keeping those URLs readable.
         active_tab = config_tab
+    legacy_tabs = {
+        "system": "configuration",
+        "developer": "prompts",
+        "user": "prompts",
+        "channels": "connectors",
+        "wechat": "connectors",
+        "workers": "status",
+    }
+    if active_tab in {"developer", "user"}:
+        prompt = active_tab
+    if active_tab == "wechat":
+        connector = "wechat"
+    active_tab = legacy_tabs.get(active_tab, active_tab)
     valid_tabs = {
         "info",
-        "system",
+        "configuration",
         "agent-runtime",
-        "channels",
-        "wechat",
-        "developer",
-        "user",
+        "prompts",
+        "connectors",
         "audit-rules",
-        "workers",
+        "attention",
+        "status",
         "logs",
     }
     if active_tab not in valid_tabs:
         active_tab = "info"
 
-    if active_tab == "workers":
-        content = _render_workers_content(store, payload=worker_status_payload)
+    if active_tab == "status":
+        content = _render_status_content(store, payload=worker_status_payload)
+    elif active_tab == "attention":
+        content = _render_attention_content(store, payload=worker_status_payload)
     elif active_tab == "logs":
         content = _render_log_content(
             store,
@@ -2856,6 +2886,12 @@ def render_settings_page(
             base_path="/settings",
             fixed_params={"tab": "logs"},
         )
+    elif active_tab == "configuration":
+        content = _render_configuration_content(db_path=store.path)
+    elif active_tab == "prompts":
+        content = _render_prompts_content(prompt=prompt, view=view)
+    elif active_tab == "connectors":
+        content = _render_connectors_content(store, connector=connector)
     else:
         _, content = _render_config_body(
             active_tab=active_tab,
@@ -2863,33 +2899,35 @@ def render_settings_page(
             db_path=store.path,
             tab_href_prefix="/settings?tab=",
             include_tabs=False,
+            include_prompt_card=False,
         )
+    with store.read_snapshot():
+        attention_count = len(_queue_attention_rows(store))
     body = (
         '<div class="settings-layout">'
-        f"{_settings_tabs(active_tab)}"
+        f"{_settings_tabs(active_tab, attention_count=attention_count)}"
         f'<div class="settings-content">{content}</div>'
         "</div>"
     )
     return render_page(
         "Settings",
         body,
-        auto_refresh=active_tab == "workers",
+        auto_refresh=active_tab in {"status", "attention"},
         active_nav="settings",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
     )
 
 
-def _settings_tabs(active_tab: str) -> str:
+def _settings_tabs(active_tab: str, *, attention_count: int = 0) -> str:
     tabs = (
         ("info", "Info"),
-        ("system", "System Config"),
+        ("configuration", "Configuration"),
         ("agent-runtime", "Agent Runtime"),
-        ("channels", "Connectors"),
-        ("wechat", "WeChat"),
-        ("developer", "Developer Prompt"),
-        ("user", "User Prompt"),
+        ("prompts", "Prompts"),
+        ("connectors", "Connectors"),
         ("audit-rules", "Audit Rules"),
-        ("workers", "Workers"),
+        ("attention", "Attention"),
+        ("status", "Status"),
         ("logs", "Logs"),
     )
     links = "".join(
@@ -2898,7 +2936,199 @@ def _settings_tabs(active_tab: str) -> str:
         f'{" aria-current=\"page\"" if key == active_tab else ""}>{escape(label)}</a>'
         for key, label in tabs
     )
+    if attention_count:
+        marker = f'<span class="nav-badge">{escape(str(attention_count))}</span>'
+        links = links.replace(">Attention</a>", f">Attention{marker}</a>", 1)
     return f'<nav class="settings-nav" aria-label="Settings navigation">{links}</nav>'
+
+
+def _render_status_content(
+    store: AutoReplyStore,
+    *,
+    payload: dict[str, object] | None = None,
+) -> str:
+    payload = payload or build_worker_status_payload(store)
+    service = payload["service"]
+    summary = payload["summary"]
+    service_ok = bool(service.get("ok")) if isinstance(service, dict) else False
+    pid_detail = f"runs {service.get('runs') or '-'}"
+    retryable_detail = "waiting for dependency"
+    return (
+        '<section class="worker-grid">'
+        f"{_worker_metric_card('Service', str(service.get('state') or 'unknown'), str(service.get('detail') or ''), ok=service_ok)}"
+        f"{_worker_metric_card('PID', str(service.get('pid') or '-'), pid_detail)}"
+        f"{_worker_metric_card('Processing', str(summary.get('processing') or 0), 'all queues')}"
+        f"{_worker_metric_card('Retryable', str(summary.get('retryable') or 0), retryable_detail)}"
+        f"{_worker_metric_card('Failed', str(summary.get('failed') or 0), 'current queue status', ok=int(summary.get('failed') or 0) == 0)}"
+        "</section>"
+        '<section class="card worker-section compact-card">'
+        "<h2>Runtime Monitor</h2>"
+        f"{_worker_components_table(payload['components'])}"
+        "</section>"
+        '<section class="card worker-section compact-card">'
+        "<h2>Connector health</h2>"
+        f"{_connector_health_summary_table()}"
+        f"{_wechat_status_table(payload.get('wechat') or {})}"
+        "</section>"
+        '<section class="card worker-section compact-card">'
+        "<h2>Queues</h2>"
+        f"{_worker_queues_table(payload['queues'])}"
+        "</section>"
+    )
+
+
+def _connector_health_summary_table() -> str:
+    from app.channel_gate import default_channel_gates
+
+    rows = "".join(
+        "<tr>"
+        f"<td>{escape(status.channel)}</td>"
+        f"<td><span class=\"setup-step-status setup-status-{escape(status.state.value)}\">"
+        f"{escape(_channel_gate_state_label(status.state.value))}</span></td>"
+        f"<td>{escape(status.reason_code or status.detail or '-')}</td>"
+        "</tr>"
+        for status in (gate.check() for gate in default_channel_gates().values())
+    )
+    return (
+        '<table class="column-sized-table connector-health-summary">'
+        "<thead><tr><th>Connector</th><th>Status</th><th>Reason</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
+
+
+def _render_attention_content(
+    store: AutoReplyStore,
+    *,
+    payload: dict[str, object] | None = None,
+) -> str:
+    payload = payload or build_worker_status_payload(store)
+    rows = payload.get("attention_rows") or []
+    return (
+        '<section class="card worker-section compact-card">'
+        "<h2>Attention</h2>"
+        '<p class="muted">需要关注的排队、处理中和失败运行项；此页面只提供诊断入口，不自动执行重试或发送。</p>'
+        f"{_worker_attention_table(rows)}"
+        "</section>"
+    )
+
+
+def _prompt_view_link(prompt: str, view: str, label: str, active: bool) -> str:
+    class_name = "prompt-tab active" if active else "prompt-tab"
+    return (
+        f'<a class="{class_name}" href="/settings?tab=prompts&prompt='
+        f'{escape(prompt, quote=True)}&view={escape(view, quote=True)}">{escape(label)}</a>'
+    )
+
+
+def _available_runtime_variables_html() -> str:
+    rows = "".join(
+        "<tr>"
+        f"<td><code class=\"config-value\">{{{{{escape(block.name)}}}}}</code></td>"
+        f"<td>{escape(block.description)}</td>"
+        "</tr>"
+        for block in USER_PROMPT_BLOCKS
+    )
+    return (
+        '<section class="prompt-runtime-variables">'
+        "<h3>Available runtime variables</h3>"
+        '<table class="prompt-runtime-table"><thead><tr><th>Variable</th><th>Description</th></tr></thead>'
+        f"<tbody>{rows}</tbody></table></section>"
+    )
+
+
+def _render_prompts_content(*, prompt: str = "developer", view: str = "template") -> str:
+    prompt = prompt if prompt in {"developer", "user"} else "developer"
+    view = view if view in {"template", "preview"} else "template"
+    prompt_label = "Developer Prompt" if prompt == "developer" else "User Prompt"
+    tabs = (
+        '<nav class="prompt-pill-tabs" aria-label="Prompt sections">'
+        f"{_prompt_view_link('developer', view, 'Developer Prompt', prompt == 'developer')}"
+        f"{_prompt_view_link('user', view, 'User Prompt', prompt == 'user')}"
+        "</nav>"
+    )
+    toggle = (
+        '<nav class="prompt-view-toggle" aria-label="Prompt view">'
+        f"{_prompt_view_link(prompt, 'template', 'Template', view == 'template')}"
+        f"{_prompt_view_link(prompt, 'preview', 'Rendered preview', view == 'preview')}"
+        "</nav>"
+    )
+    template_path = (
+        developer_prompt_template_path()
+        if prompt == "developer"
+        else user_prompt_template_path()
+    )
+    error_html = ""
+    try:
+        template = (
+            read_developer_prompt_template()
+            if prompt == "developer"
+            else read_user_prompt_template()
+        )
+        preview = (
+            render_developer_prompt_template(template)
+            if prompt == "developer"
+            else render_user_prompt_template(template, {})
+        )
+    except (OSError, DeveloperPromptTemplateError) as exc:
+        template = ""
+        preview = ""
+        error_html = (
+            '<p class="attempt-warning">'
+            f"Template render error: {escape(str(exc))}</p>"
+        )
+    if prompt == "developer":
+        _, template_body = split_developer_prompt_template(template)
+    else:
+        template_body = template
+    if view == "template":
+        editor = (
+            '<form method="post" action="/settings/prompts">'
+            f'<input type="hidden" name="prompt" value="{escape(prompt)}">'
+            '<label for="prompt-template">Template</label>'
+            f'<textarea id="prompt-template" name="template" style="min-height:520px">{escape(template_body)}</textarea>'
+            '<p><button type="submit">Save template</button></p>'
+            "</form>"
+        )
+    else:
+        context_note = (
+            '<p class="muted">Rendered preview · sample runtime context</p>'
+            if prompt == "user"
+            else '<p class="muted">Rendered preview · current configuration</p>'
+        )
+        editor = f"{context_note}<pre class=\"prompt-rendered-preview\">{escape(preview)}</pre>"
+    runtime_variables = _available_runtime_variables_html() if prompt == "user" else ""
+    return (
+        '<section class="card">'
+        "<h2>Prompts</h2>"
+        f"<p class=\"muted\">{escape(prompt_label)} · template path: {escape(str(template_path))}</p>"
+        f"{tabs}{toggle}{error_html}{editor}{runtime_variables}"
+        "</section>"
+    )
+
+
+def _render_connectors_content(store: AutoReplyStore, *, connector: str = "dingtalk") -> str:
+    connector = connector if connector in {"dingtalk", "lark", "wechat"} else "dingtalk"
+    tabs = (
+        '<nav class="connector-pill-tabs" aria-label="Connector sections">'
+        + "".join(
+            _connector_tab_link(connector_key, label, connector == connector_key)
+            for connector_key, label in (("dingtalk", "DingTalk"), ("lark", "Lark"), ("wechat", "WeChat"))
+        )
+        + "</nav>"
+    )
+    if connector == "wechat":
+        content = _render_wechat_config(store)
+    else:
+        content = _render_channel_config(store)
+    return f'<section class="card"><h2>Connectors</h2>{tabs}</section>{content}'
+
+
+def _connector_tab_link(connector: str, label: str, active: bool) -> str:
+    class_name = "prompt-tab active" if active else "prompt-tab"
+    return (
+        f'<a class="{class_name}" href="/settings?tab=connectors&connector='
+        f'{escape(connector, quote=True)}">{escape(label)}</a>'
+    )
 
 
 def _prompt_config_card(active_tab: str) -> str:
@@ -2954,34 +3184,144 @@ def _render_config_info() -> str:
         "</section>"
         for title, rows in logic_sections
     )
-    value_rows = (
-        ("CEO_MENTION_ALIASES", _csv_label(mention_aliases())),
-        ("CEO_BROADCAST_MENTION_ALIASES", _csv_label(broadcast_mention_aliases())),
-        ("FAST_PATH_UNREAD_BACKOFF", _duration_label(fast_path_unread_backoff_duration())),
-        ("MESSAGE_RECOVERY_INTERVAL", _duration_label(message_recovery_interval())),
-        (
-            "SINGLE_CHAT_READ_RECOVERY_WINDOW",
-            _duration_label(single_chat_read_recovery_window()),
-        ),
-        ("SINGLE_CHAT_READ_RECOVERY_LIMIT", str(single_chat_read_recovery_limit())),
-    )
-    value_html = "".join(
-        "<tr>"
-        f"<td><code class=\"config-value\">{escape(key)}</code></td>"
-        f"<td><code class=\"config-info-value\">{escape(value)}</code></td>"
-        "</tr>"
-        for key, value in value_rows
-    )
     return (
         "<section class=\"card\">"
         "<h2>Producer 路由配置</h2>"
-        "<p class=\"muted\">这里展示 producer 如何把钉钉消息变成 reply task。</p>"
-        '<h3>Current values</h3>'
-        '<table class="config-info-values">'
-        "<thead><tr><th>Variable</th><th>Current value</th></tr></thead>"
-        f"<tbody>{value_html}</tbody>"
-        "</table>"
+        "<p class=\"muted\">这里展示 producer 如何把钉钉消息变成 reply task。实际生效值请在 Configuration 中查看。</p>"
         f"<div class=\"logic-list\">{logic_html}</div>"
+        "</section>"
+    )
+
+
+_CONFIGURATION_GROUPS = (
+    "Runtime & Identity",
+    "Message Routing",
+    "Scheduling",
+    "Paths & Storage",
+    "Prompt Variables",
+)
+_CONFIGURATION_GROUP_BY_KEY = {
+    "CEO_PRINCIPAL_NAME": "Runtime & Identity",
+    "USER_ALIAS": "Runtime & Identity",
+    "MEMORY_CONNECTOR_USER_ID": "Runtime & Identity",
+    "CEO_ASSISTANT_SIGNATURE": "Runtime & Identity",
+    "CEO_HANDOFF_ACK": "Runtime & Identity",
+    "CEO_MENTION_ALIASES": "Message Routing",
+    "CEO_AGENT_NAMES": "Message Routing",
+    "CEO_BROADCAST_MENTION_ALIASES": "Message Routing",
+    "DOCUMENT_EXTRACTION_IDS": "Message Routing",
+    "CEO_PRODUCER_INTERVAL_SECONDS": "Scheduling",
+    "CEO_CONSUMER_POLL_INTERVAL_SECONDS": "Scheduling",
+    "CEO_CONSUMER_WORKERS": "Scheduling",
+    "CEO_MEETING_PRODUCER_INTERVAL_SECONDS": "Scheduling",
+    "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS": "Scheduling",
+    "CEO_MEETING_SETTLE_SECONDS": "Scheduling",
+    "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS": "Scheduling",
+    "CEO_TASK_DAILY_INTERVAL_SECONDS": "Scheduling",
+    "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS": "Scheduling",
+    "CEO_POLL_INTERVAL_SECONDS": "Scheduling",
+    "CEO_BATCH_SECONDS": "Scheduling",
+    "FAST_PATH_UNREAD_BACKOFF": "Scheduling",
+    "MESSAGE_RECOVERY_INTERVAL": "Scheduling",
+    "SINGLE_CHAT_READ_RECOVERY_WINDOW": "Scheduling",
+    "SINGLE_CHAT_READ_RECOVERY_LIMIT": "Scheduling",
+    "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL": "Paths & Storage",
+    "CEO_WORKSPACE": "Paths & Storage",
+    "CEO_WORKER_DB": "Paths & Storage",
+    "CEO_CORPUS_DIR": "Paths & Storage",
+    "CEO_WORK_PROFILE_PATH": "Paths & Storage",
+    "CEO_FORBIDDEN_PATH_PREFIXES": "Paths & Storage",
+}
+_CONFIGURATION_INTEGER_KEYS = frozenset(
+    {
+        "CEO_PRODUCER_INTERVAL_SECONDS",
+        "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
+        "CEO_CONSUMER_WORKERS",
+        "CEO_MEETING_PRODUCER_INTERVAL_SECONDS",
+        "CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS",
+        "CEO_MEETING_SETTLE_SECONDS",
+        "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS",
+        "CEO_TASK_DAILY_INTERVAL_SECONDS",
+        "CEO_TASK_FOLLOW_UP_INTERVAL_SECONDS",
+        "CEO_POLL_INTERVAL_SECONDS",
+        "CEO_BATCH_SECONDS",
+        "SINGLE_CHAT_READ_RECOVERY_LIMIT",
+    }
+)
+_CONFIGURATION_DURATION_KEYS = frozenset(
+    {
+        "FAST_PATH_UNREAD_BACKOFF",
+        "MESSAGE_RECOVERY_INTERVAL",
+        "SINGLE_CHAT_READ_RECOVERY_WINDOW",
+    }
+)
+_PROMPT_VARIABLE_DESCRIPTIONS = {
+    "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY": "用于判断当前事项是否需要 principal 处理。",
+    "CEO_PROMPT_VAR_FORBIDDEN_REPLY_TEXT_TERMS": "回复文本中禁止暴露的内部词语。",
+    "CEO_PROMPT_VAR_OA_APPROVAL_RULES": "OA 审批审阅规则文件路径。",
+}
+
+
+def _configuration_entries() -> dict[str, list[tuple[str, str, str, bool]]]:
+    grouped = {group: [] for group in _CONFIGURATION_GROUPS}
+    editable = _editable_system_config_keys()
+    for key, value, description in _system_config_rows():
+        group = _CONFIGURATION_GROUP_BY_KEY.get(key, "Runtime & Identity")
+        grouped[group].append((key, value, description, key in editable))
+    for key, value in configurable_prompt_variable_pairs():
+        env_key = prompt_variable_env_key(key)
+        grouped["Prompt Variables"].append(
+            (
+                env_key,
+                value,
+                _PROMPT_VARIABLE_DESCRIPTIONS.get(env_key, "Prompt 渲染时使用的可配置变量。"),
+                True,
+            )
+        )
+    return grouped
+
+
+def _configuration_value_cell(key: str, value: str, editable: bool) -> str:
+    if not editable:
+        return f'<code class="config-value">{escape(value)}</code>'
+    return (
+        '<input class="config-value-input" type="text" '
+        f'name="config_value" value="{escape(value, quote=True)}" '
+        f'aria-label="{escape(key, quote=True)}">'
+    )
+
+
+def _render_configuration_content(*, db_path: Path | None = None) -> str:
+    grouped = _configuration_entries()
+    group_html = []
+    for group in _CONFIGURATION_GROUPS:
+        rows = grouped[group]
+        row_html = "".join(
+            "<tr>"
+            f'<td><code class="config-value">{escape(key)}</code>'
+            f'<input type="hidden" name="config_key" value="{escape(key, quote=True)}"></td>'
+            f"<td>{_configuration_value_cell(key, value, editable)}</td>"
+            f"<td>{escape(description)}</td>"
+            "</tr>"
+            for key, value, description, editable in rows
+        )
+        group_html.append(
+            '<section class="configuration-group">'
+            f"<h3>{escape(group)}</h3>"
+            '<table class="system-config-table configuration-table">'
+            "<thead><tr><th>Key</th><th>Current value</th><th>Description</th></tr></thead>"
+            f"<tbody>{row_html}</tbody></table></section>"
+        )
+    return (
+        '<section class="card">'
+        "<h2>Configuration</h2>"
+        '<p class="muted">所有影响服务行为的环境配置统一保存在 '
+        f'<code>{escape(str(env_file_path()))}</code>。</p>'
+        '<form method="post" action="/config/configuration">'
+        + "".join(group_html)
+        + '<p><button type="submit">Save configuration</button></p>'
+        "</form>"
+        f"{_runtime_identity_cache_html(db_path)}"
         "</section>"
     )
 
@@ -7878,6 +8218,59 @@ def handle_system_config_post(body: bytes) -> tuple[int, dict[str, str], str]:
     return 303, {"Location": "/config?tab=system&saved=1"}, ""
 
 
+def handle_configuration_post(body: bytes) -> tuple[int, dict[str, str], str]:
+    """Persist the unified Configuration page through the canonical .env writer."""
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    editable_keys = _editable_system_config_keys()
+    editable_keys.update(
+        prompt_variable_env_key(key)
+        for key in CONFIGURABLE_PROMPT_VARIABLE_DEFAULTS
+    )
+    updates = {
+        key: value
+        for key, value in zip_longest(
+            parsed.get("config_key", []),
+            parsed.get("config_value", []),
+            fillvalue="",
+        )
+        if key in editable_keys
+    }
+    invalid = next(
+        (
+            f"{key} must be a non-negative integer"
+            for key, value in updates.items()
+            if key in _CONFIGURATION_INTEGER_KEYS
+            and (
+                not value.strip().isdigit()
+                or (
+                    key == "CEO_CONSUMER_WORKERS"
+                    and not 1 <= int(value.strip()) <= 4
+                )
+                or (
+                    key == "SINGLE_CHAT_READ_RECOVERY_LIMIT"
+                    and int(value.strip()) < 1
+                )
+            )
+        ),
+        None,
+    )
+    if invalid:
+        return 400, {}, render_page("Configuration invalid", escape(invalid))
+    invalid_duration = next(
+        (
+            f"{key} must use an integer duration like 30m or 1h"
+            for key, value in updates.items()
+            if key in _CONFIGURATION_DURATION_KEYS
+            and not re.fullmatch(r"\d+[smhd]", value.strip().lower())
+        ),
+        None,
+    )
+    if invalid_duration:
+        return 400, {}, render_page("Configuration invalid", escape(invalid_duration))
+    write_env_values(updates)
+    return 303, {"Location": "/settings?tab=configuration&saved=1"}, ""
+
+
 def handle_agent_runtime_config_post(
     body: bytes,
 ) -> tuple[int, dict[str, str], str]:
@@ -8060,6 +8453,24 @@ def handle_user_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
     template = parsed.get("template", [""])[0]
     write_user_prompt_template(template)
     return 303, {"Location": "/config?tab=user&saved=1"}, ""
+
+
+def handle_settings_prompt_post(body: bytes) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    prompt = parsed.get("prompt", ["developer"])[0]
+    template = parsed.get("template", [""])[0]
+    try:
+        if prompt == "user":
+            write_user_prompt_template(template)
+        elif prompt == "developer":
+            write_developer_prompt_template(template.strip())
+        else:
+            return 400, {}, render_page("Prompt not found", "Unknown prompt")
+    except (DeveloperPromptTemplateError, OSError) as exc:
+        return 400, {}, render_page("Prompt template invalid", escape(str(exc)))
+    return 303, {
+        "Location": f"/settings?tab=prompts&prompt={quote(prompt)}&view=template&saved=1"
+    }, ""
 
 
 def handle_recall_post(
@@ -9102,7 +9513,29 @@ def create_audit_app(
     def workers_page() -> str:
         return render_settings_page(
             audit_store,
-            active_tab="workers",
+            active_tab="status",
+            worker_status_payload=worker_status_cache.get_or_refresh(
+                render_worker_status_payload,
+                worker_status_refreshing_payload,
+            ),
+        )
+
+    @app.get("/status", response_class=HTMLResponse)
+    def status_page() -> str:
+        return render_settings_page(
+            audit_store,
+            active_tab="status",
+            worker_status_payload=worker_status_cache.get_or_refresh(
+                render_worker_status_payload,
+                worker_status_refreshing_payload,
+            ),
+        )
+
+    @app.get("/attention", response_class=HTMLResponse)
+    def attention_page() -> str:
+        return render_settings_page(
+            audit_store,
+            active_tab="attention",
             worker_status_payload=worker_status_cache.get_or_refresh(
                 render_worker_status_payload,
                 worker_status_refreshing_payload,
@@ -9117,6 +9550,13 @@ def create_audit_app(
                 worker_status_refreshing_payload,
             )
         )
+
+    @app.get("/api/attention/status", response_class=JSONResponse)
+    def attention_status() -> JSONResponse:
+        store = AutoReplyStore(db_path)
+        with store.read_snapshot():
+            rows = _queue_attention_rows(store)
+        return JSONResponse({"count": len(rows), "rows": rows})
 
     @app.get("/logs", response_class=HTMLResponse)
     def log_list(request: Request) -> str:
@@ -9141,6 +9581,9 @@ def create_audit_app(
             AutoReplyStore(db_path),
             active_tab=str(request.query_params.get("tab", "config")),
             config_tab=str(request.query_params.get("config_tab", "info")),
+            prompt=str(request.query_params.get("prompt", "developer")),
+            view=str(request.query_params.get("view", "template")),
+            connector=str(request.query_params.get("connector", "dingtalk")),
             log_limit=_bounded_log_page_size(
                 _positive_int_query(request, "limit", default=DEFAULT_ERROR_LIST_LIMIT)
             ),
@@ -9194,12 +9637,32 @@ def create_audit_app(
     def developer_prompt_editor(request: Request) -> str:
         tab = request.query_params.get("tab", "developer")
         saved_suffix = "&saved=1" if request.query_params.get("saved") == "1" else ""
-        return RedirectResponse(f"/config?tab={tab}{saved_suffix}", status_code=303)
+        if tab == "user":
+            return RedirectResponse(
+                f"/settings?tab=prompts&prompt=user&view=template{saved_suffix}",
+                status_code=303,
+            )
+        return RedirectResponse(
+            f"/settings?tab=prompts&prompt=developer&view=template{saved_suffix}",
+            status_code=303,
+        )
 
     @app.get("/config", response_class=HTMLResponse)
     def config_page(request: Request) -> str:
+        tab = str(request.query_params.get("tab", "info"))
+        if tab in {"developer", "user"}:
+            return RedirectResponse(
+                f"/settings?tab=prompts&prompt={tab}&view=template",
+                status_code=303,
+            )
+        if tab in {"channels", "wechat"}:
+            connector = "wechat" if tab == "wechat" else "dingtalk"
+            return RedirectResponse(
+                f"/settings?tab=connectors&connector={connector}",
+                status_code=303,
+            )
         return render_config_page(
-            active_tab=str(request.query_params.get("tab", "info")),
+            active_tab=tab,
             db_path=db_path,
         )
 
@@ -9375,6 +9838,21 @@ def create_audit_app(
     @app.post("/config/system")
     async def config_system_save(request: Request):
         status, headers, html = handle_system_config_post(await request.body())
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/config/configuration")
+    async def configuration_save(request: Request):
+        status, headers, html = handle_configuration_post(await request.body())
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/settings/configuration")
+    async def settings_configuration_save(request: Request):
+        status, headers, html = handle_configuration_post(await request.body())
+        return _fastapi_post_response(status, headers, html)
+
+    @app.post("/settings/prompts")
+    async def settings_prompts_save(request: Request):
+        status, headers, html = handle_settings_prompt_post(await request.body())
         return _fastapi_post_response(status, headers, html)
 
     @app.post("/config/agent-runtime")

@@ -108,7 +108,7 @@ def test_read_prompt_templates_seed_missing_configured_files(tmp_path, monkeypat
     assert developer_path.exists()
     assert user_path.exists()
     assert "independently selects and reads every applicable" in developer_template
-    assert "<code: app.user_prompt_blocks:current_message_block()>" in user_template
+    assert "{{current_message}}" in user_template
     assert "CEO Agent Prompt" not in user_template
 
 
@@ -355,20 +355,20 @@ def test_user_prompt_template_path_can_be_overridden(tmp_path, monkeypatch):
 
 def test_default_user_prompt_template_is_a_separate_file():
     template = read_user_prompt_template()
-    code_tags = [
-        "<code: app.user_prompt_blocks:style_lines()>",
-        "<code: app.user_prompt_blocks:current_message_block()>",
-        "<code: app.user_prompt_blocks:sender_org_block()>",
-        "<code: app.user_prompt_blocks:known_people_block()>",
-        "<code: app.user_prompt_blocks:context_messages_block()>",
-        "<code: app.user_prompt_blocks:material_references_block()>",
-        "<code: app.user_prompt_blocks:linked_documents_block()>",
-        "<code: app.user_prompt_blocks:image_download_block()>",
+    named_variables = [
+        "{{style_lines}}",
+        "{{current_message}}",
+        "{{sender_org}}",
+        "{{known_people}}",
+        "{{context_messages}}",
+        "{{material_references}}",
+        "{{linked_documents}}",
+        "{{image_download_status}}",
     ]
 
-    assert template.strip() == "\n---\n".join(code_tags)
-    assert "<code: app.user_prompt_blocks:current_message_block()>" in template
-    assert "<code: app.user_prompt_blocks:context_messages_block()>" in template
+    assert template.strip() == "\n---\n".join(named_variables)
+    assert "{{current_message}}" in template
+    assert "{{context_messages}}" in template
     assert "<var: current_message_block>" not in template
     assert "CEO Agent Prompt" not in template
 

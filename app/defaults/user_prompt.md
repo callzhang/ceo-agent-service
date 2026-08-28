@@ -1,15 +1,15 @@
-<code: app.user_prompt_blocks:style_lines()>
+{{style_lines}}
 ---
-<code: app.user_prompt_blocks:current_message_block()>
+{{current_message}}
 ---
-<code: app.user_prompt_blocks:sender_org_block()>
+{{sender_org}}
 ---
-<code: app.user_prompt_blocks:known_people_block()>
+{{known_people}}
 ---
-<code: app.user_prompt_blocks:context_messages_block()>
+{{context_messages}}
 ---
-<code: app.user_prompt_blocks:material_references_block()>
+{{material_references}}
 ---
-<code: app.user_prompt_blocks:linked_documents_block()>
+{{linked_documents}}
 ---
-<code: app.user_prompt_blocks:image_download_block()>
+{{image_download_status}}

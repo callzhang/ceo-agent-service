@@ -17,6 +17,9 @@ from app.leak_check import FORBIDDEN_MARKERS
 
 
 TAG_RE = re.compile(r"<(file|code|var):\s*([^>]+?)\s*>")
+NAMED_RUNTIME_VARIABLE_RE = re.compile(
+    r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}"
+)
 CODE_RE = re.compile(
     r"^([A-Za-z0-9_./-]+(?:\.[A-Za-z_][A-Za-z0-9_]*)?):"
     r"([A-Za-z_][A-Za-z0-9_]*)\(\)$"
@@ -144,10 +147,26 @@ def write_developer_prompt_template(text: str, path: Path | None = None) -> Path
 
 
 def write_user_prompt_template(text: str, path: Path | None = None) -> Path:
+    validate_user_prompt_template(text)
     template_path = path or user_prompt_template_path()
     template_path.parent.mkdir(parents=True, exist_ok=True)
     template_path.write_text(text, encoding="utf-8")
     return template_path
+
+
+def validate_user_prompt_template(text: str) -> None:
+    """Reject unknown named runtime variables while preserving legacy blocks."""
+    allowed = set(_USER_PROMPT_RUNTIME_VARIABLES)
+    for match in NAMED_RUNTIME_VARIABLE_RE.finditer(text):
+        if match.group(1) not in allowed:
+            raise DeveloperPromptTemplateError(
+                f"unknown User Prompt runtime variable: {match.group(1)}"
+            )
+    remaining = NAMED_RUNTIME_VARIABLE_RE.sub("", text)
+    if "{{" in remaining or "}}" in remaining:
+        raise DeveloperPromptTemplateError(
+            "User Prompt contains an invalid runtime variable"
+        )
 
 
 def render_developer_prompt(path: Path | None = None) -> str:
@@ -180,10 +199,51 @@ def render_user_prompt_template(
     variables.update(parse_developer_prompt_variables(variable_definitions))
     variables.update(runtime_variables)
 
-    if not runtime_variables:
-        return _render_template_tags(body, variables)
-    with user_prompt_block_context(runtime_variables):
-        return _render_template_tags(body, variables)
+    context_variables = dict(runtime_variables)
+    for name, provider_name in _USER_PROMPT_RUNTIME_VARIABLES.items():
+        if provider_name not in context_variables and name in context_variables:
+            context_variables[provider_name] = context_variables[name]
+    if not context_variables:
+        rendered = _render_template_tags(body, variables)
+    else:
+        with user_prompt_block_context(context_variables):
+            rendered = _render_template_tags(body, variables)
+    return _render_named_runtime_variables(rendered, runtime_variables)
+
+
+_USER_PROMPT_RUNTIME_VARIABLES = {
+    "style_lines": "style_lines",
+    "current_message": "current_message_block",
+    "sender_org": "sender_org_block",
+    "known_people": "known_people_block",
+    "context_messages": "context_messages_block",
+    "material_references": "material_references_block",
+    "linked_documents": "linked_documents_block",
+    "image_download_status": "image_download_block",
+}
+
+
+def _render_named_runtime_variables(
+    template: str,
+    runtime_variables: dict[str, str],
+) -> str:
+    from app import user_prompt_blocks
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        provider_name = _USER_PROMPT_RUNTIME_VARIABLES.get(name)
+        if provider_name is None:
+            raise DeveloperPromptTemplateError(
+                f"unknown User Prompt runtime variable: {name}"
+            )
+        if provider_name in runtime_variables:
+            return str(runtime_variables[provider_name] or "")
+        if name in runtime_variables:
+            return str(runtime_variables[name] or "")
+        provider = getattr(user_prompt_blocks, provider_name)
+        return str(provider() or "")
+
+    return NAMED_RUNTIME_VARIABLE_RE.sub(replace, template)
 
 
 def split_developer_prompt_template(template: str) -> tuple[str, str]:

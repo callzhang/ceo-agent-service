@@ -7,7 +7,7 @@ from pathlib import Path
 from unicodedata import category, normalize
 from uuid import uuid4
 
-from app.config import repo_root
+from app.config import principal_display_name, repo_root
 from app.developer_prompt import DeveloperPromptTemplateError, TAG_RE
 from app.store import AgentRole
 
@@ -72,6 +72,8 @@ _RESERVED_MARKER_RE = re.compile(
     r"\[\s*dynamic\s*-\s*skill\s*\]",
     re.IGNORECASE,
 )
+_AUDIT_VARIABLE_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+_ALLOWED_AUDIT_VARIABLES = frozenset({"principal"})
 _MAX_ENTITY_DECODE_PASSES = 4
 _ALLOWED_CONTROL_CHARACTERS = frozenset({"\n", "\t"})
 
@@ -128,7 +130,7 @@ def write_audit_rules_template(text: str, path: Path | None = None) -> Path:
 
 
 def render_audit_rules(role: AgentRole, path: Path | None = None) -> str:
-    body = read_audit_rules_template(path)
+    body = _render_audit_variables(read_audit_rules_template(path))
     custom = body if body.strip() else EMPTY_AUDIT_RULES
     wrapper = (
         CONSUMER_RULE_WRAPPER
@@ -136,6 +138,18 @@ def render_audit_rules(role: AgentRole, path: Path | None = None) -> str:
         else AUDIT_RULE_WRAPPER
     )
     return f"{wrapper}\n\n{custom}"
+
+
+def _render_audit_variables(body: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in _ALLOWED_AUDIT_VARIABLES:
+            raise DeveloperPromptTemplateError(
+                f"unsupported Audit Rules variable: {name}"
+            )
+        return principal_display_name().strip() or "the principal"
+
+    return _AUDIT_VARIABLE_RE.sub(replace, body)
 
 
 def validate_audit_rules_text(text: str) -> None:
@@ -155,6 +169,18 @@ def validate_audit_rules_text(text: str) -> None:
         raise DeveloperPromptTemplateError(
             "Audit Rules cannot contain structural HTML blocks or comments"
         )
+
+    if "{{" in structural_text or "}}" in structural_text:
+        for match in _AUDIT_VARIABLE_RE.finditer(structural_text):
+            if match.group(1) not in _ALLOWED_AUDIT_VARIABLES:
+                raise DeveloperPromptTemplateError(
+                    f"unsupported Audit Rules variable: {match.group(1)}"
+                )
+        remaining = _AUDIT_VARIABLE_RE.sub("", structural_text)
+        if "{{" in remaining or "}}" in remaining:
+            raise DeveloperPromptTemplateError(
+                "Audit Rules contain an invalid template variable"
+            )
 
     lines = structural_text.splitlines()
     for index, line in enumerate(lines):

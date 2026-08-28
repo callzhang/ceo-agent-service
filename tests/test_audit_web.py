@@ -5412,7 +5412,7 @@ def test_config_route_is_available(tmp_path: Path):
 
     assert response.status_code == 200
     assert "Producer 路由配置" in response.text
-    assert "/settings?tab=developer" in response.text
+    assert "/settings?tab=prompts" in response.text
     assert (
         '<a class="settings-nav-item active" href="/settings?tab=info" '
         'aria-current="page">Info</a>'
@@ -5435,44 +5435,45 @@ def test_settings_page_flattens_sections_into_left_navigation(tmp_path: Path):
     assert html.count('<nav class="settings-nav"') == 1
     assert 'aria-label="Settings sections"' not in html
     assert 'aria-label="Config sections"' not in html
-    assert 'href="/settings?tab=system"' in html
+    assert 'href="/settings?tab=configuration"' in html
     assert 'href="/settings?tab=config&amp;config_tab=' not in html
     active_system_link = (
-        '<a class="settings-nav-item active" href="/settings?tab=system" '
-        'aria-current="page">System Config</a>'
+        '<a class="settings-nav-item active" href="/settings?tab=configuration" '
+        'aria-current="page">Configuration</a>'
     )
     assert active_system_link in html
     assert active_system_link in legacy_deep_link_html
     assert 'aria-label="Config sections"' not in legacy_deep_link_html
-    assert '<a class="settings-nav-item" href="/settings?tab=channels">Connectors</a>' in html
+    assert '<a class="settings-nav-item" href="/settings?tab=connectors">Connectors</a>' in html
     assert '<a class="settings-nav-item" href="/settings?tab=channels">Channels</a>' not in html
     for label, tab in (
         ("Info", "info"),
         ("Agent Runtime", "agent-runtime"),
-        ("Connectors", "channels"),
-        ("WeChat", "wechat"),
-        ("Developer Prompt", "developer"),
-        ("User Prompt", "user"),
+        ("Connectors", "connectors"),
+        ("Prompts", "prompts"),
         ("Audit Rules", "audit-rules"),
-        ("Workers", "workers"),
+        ("Status", "status"),
         ("Logs", "logs"),
     ):
         assert f'href="/settings?tab={tab}"' in html
         assert label in html
 
 
-def test_info_menu_renders_producer_configuration_values_explicitly():
+def test_info_menu_moves_producer_configuration_values_to_configuration():
     html = render_config_page()
 
-    assert '<table class="config-info-values">' in html
-    assert "Current values" in html
-    assert "FAST_PATH_UNREAD_BACKOFF" in html
-    assert "MESSAGE_RECOVERY_INTERVAL" in html
-    assert "SINGLE_CHAT_READ_RECOVERY_WINDOW" in html
-    assert "SINGLE_CHAT_READ_RECOVERY_LIMIT" in html
-    assert "CEO_MENTION_ALIASES" in html
-    assert "CEO_BROADCAST_MENTION_ALIASES" in html
-    assert '<td><code class="config-info-value"></code></td>' not in html
+    assert '<table class="config-info-values">' not in html
+    assert "实际生效值请在 Configuration 中查看" in html
+    configuration_html = render_settings_page(
+        AutoReplyStore(Path("/tmp/settings-configuration-test.sqlite3")),
+        active_tab="configuration",
+    )
+    assert "FAST_PATH_UNREAD_BACKOFF" in configuration_html
+    assert "MESSAGE_RECOVERY_INTERVAL" in configuration_html
+    assert "SINGLE_CHAT_READ_RECOVERY_WINDOW" in configuration_html
+    assert "SINGLE_CHAT_READ_RECOVERY_LIMIT" in configuration_html
+    assert "CEO_MENTION_ALIASES" in configuration_html
+    assert "CEO_BROADCAST_MENTION_ALIASES" in configuration_html
 
 
 def test_render_page_brand_links_to_history():
@@ -9484,7 +9485,7 @@ def test_workers_routes_render_page_and_json(tmp_path: Path, monkeypatch):
     page_response = client.get("/workers")
 
     assert page_response.status_code == 200
-    assert "Workers" in page_response.text
+    assert "Runtime Monitor" in page_response.text
     assert "Status refresh in progress." in page_response.text or "Work items" in page_response.text
     payload = {}
     for _ in range(20):

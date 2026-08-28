@@ -34,7 +34,7 @@ from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
-from app.config import feedback_spike_vercel_base_url
+from app.config import feedback_spike_vercel_base_url, principal_display_name
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.native_cli_metadata import (
     NativeCliMetadataClassifier,
@@ -583,7 +583,7 @@ def consumer_developer_instructions(
     instructions = _role_developer_instructions(
         core,
         capability_instructions=REVIEWED_DWS_READ_INSTRUCTIONS,
-        role_boundary=CONSUMER_ROLE_BOUNDARY,
+        role_boundary=CONSUMER_ROLE_BOUNDARY.replace("Derek", principal_display_name()),
     )
     return instructions + "\n\n" + _CONSUMER_AGENT_RULES + (f"\n\n{skill_protocol}" if skill_protocol else "")
 

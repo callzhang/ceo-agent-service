@@ -263,9 +263,9 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "unresolved_disagreement" in prompt
     assert "可以提出多个问题" in prompt
     assert "完成对齐所需的最小集合" in prompt
-    assert "Derek 的观点输出解读" in prompt
-    assert "只能解释 Derek 在会议中明确表达的观点" in prompt
-    assert "不能用历史信息发明或替换 Derek 的立场" in prompt
+    assert "的观点输出解读" in prompt
+    assert "只能解释" in prompt and "在会议中明确表达的观点" in prompt
+    assert "不能用历史信息发明或替换" in prompt and "的立场" in prompt
     assert "能只靠会议证据解释时，historical_sources 必须为空数组" in prompt
     assert "必须逐字填写 `/configured/work_profile.md`" in prompt
     assert "不得改写、加标题或写成说明性文字" in prompt
