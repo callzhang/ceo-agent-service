@@ -4347,25 +4347,23 @@ def test_render_config_page_shows_dedicated_agent_runtime_settings_without_token
 
     assert "Agent Runtime" in html
     assert 'method="post" action="/config/agent-runtime"' in html
-    assert '<select name="codex_model"' in html
+    assert 'name="codex_model"' in html
     assert '<option value="gpt-5.6">' not in html
     assert '<option value="gpt-5.6-sol">GPT-5.6 Sol</option>' in html
     assert '<option value="gpt-5.6-terra">GPT-5.6 Terra</option>' in html
     assert '<option value="gpt-5.6-luna">GPT-5.6 Luna</option>' in html
-    assert '<select name="codex_reasoning_effort"' in html
+    assert 'name="codex_reasoning_effort"' in html
     assert 'name="codex_api_enabled"' in html
     assert 'name="codex_api_base_url"' in html
-    assert '<select name="codex_api_model"' in html
+    assert 'name="codex_api_model"' in html
     assert 'id="codex-api-token"' in html
     assert 'type="password" name="codex_api_token"' in html
-    assert 'placeholder="●●●●●●●●●●●●"' in html
-    assert 'data-token-configured="true"' in html
-    assert 'id="codex-api-token-toggle"' in html
+    assert 'placeholder="●●●●●●●●●●●●"' not in html
+    assert 'data-configured="true"' in html
+    assert 'data-password-toggle' in html
     assert 'aria-controls="codex-api-token"' in html
-    assert 'aria-label="显示或隐藏本次输入的 API Token"' in html
-    assert "const currentValue = tokenInput.value;" in html
-    assert 'tokenInput.type = showing ? "password" : "text";' in html
-    assert "tokenInput.value = currentValue;" in html
+    assert 'aria-label="显示或隐藏本次输入的凭据"' in html
+    assert 'input.type=showing ? "password" : "text"' in html
     assert "已配置" in html
     assert "must-not-render" not in html
     assert "CEO_CODEX_MODEL" not in html
@@ -4388,19 +4386,50 @@ def test_render_config_page_shows_friday_runtime_settings_without_credentials(
 
     html = render_config_page(active_tab="agent-runtime")
 
-    assert "Friday Runtime fallback" in html
+    assert "Friday Runtime" in html
     assert 'name="friday_runtime_enabled"' in html
     assert 'name="friday_runtime_base_url"' in html
     assert 'name="friday_runtime_project_id"' in html
-    assert "Provider fields are independent from Codex API" in html
+    assert "Provider URL、model 和 Token 必须成组配置" in html
     assert 'name="friday_runtime_auth_disabled"' in html
     assert 'id="friday-runtime-ticket"' in html
     assert 'id="friday-session-token"' in html
-    assert 'placeholder="●●●●●●●●●●●●"' in html
-    assert 'data-token-configured="true"' in html
-    assert 'aria-controls="friday-runtime-ticket"' in html
-    assert 'aria-controls="friday-session-token"' in html
+    assert 'placeholder="●●●●●●●●●●●●"' not in html
+    assert 'data-configured="true"' in html
+    assert 'data-target="friday-runtime-ticket"' in html
+    assert 'data-target="friday-session-token"' in html
     assert "must-not-render" not in html
+
+
+def test_agent_runtime_page_uses_modern_cards_and_shared_secret_controls(
+    tmp_path: Path, monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_CODEX_API_KEY=codex-secret\n"
+        "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY=provider-secret\n"
+        "CEO_FRIDAY_RUNTIME_TICKET=runtime-secret\n"
+        "CEO_FRIDAY_SESSION_TOKEN=session-secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    html = render_settings_page(
+        AutoReplyStore(tmp_path / "worker.sqlite3"),
+        active_tab="agent-runtime",
+    )
+
+    assert "Runtime Overview" in html
+    assert html.count('class="runtime-card') >= 3
+    assert "Codex OAuth" in html
+    assert "Codex API fallback" in html
+    assert "Friday Runtime" in html
+    assert html.count("data-password-field=") == 4
+    assert html.count('class="password-toggle"') == 4
+    assert "data-password-toggle" in html
+    for secret in ("codex-secret", "provider-secret", "runtime-secret", "session-secret"):
+        assert secret not in html
+    assert html.count("已配置") >= 4
     form_start = html.index('<form method="post" action="/config/agent-runtime">')
     form_end = html.index("</form>", form_start)
     assert form_start < html.index('name="friday_runtime_enabled"') < form_end

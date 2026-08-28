@@ -563,6 +563,35 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .prompt-runtime-variables h3{margin:0 0 8px;font-size:15px}
 .prompt-runtime-table td:first-child{width:260px}
 .prompt-rendered-preview{max-height:680px;overflow:auto;margin:12px 0 0;padding:16px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft);white-space:pre-wrap;word-break:break-word}
+.runtime-overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:16px 0 20px}
+.runtime-overview-item{border:1px solid var(--hairline);border-radius:10px;background:var(--surface-soft);padding:13px 14px;min-width:0}
+.runtime-overview-label{display:block;margin-bottom:5px;color:var(--steel);font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+.runtime-overview-value{display:block;overflow:hidden;color:var(--ink);font-size:15px;font-weight:750;text-overflow:ellipsis;white-space:nowrap}
+.runtime-card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:16px}
+.runtime-card{border:1px solid var(--hairline);border-radius:12px;background:var(--canvas);padding:18px;box-shadow:0 8px 24px rgba(15,23,42,.04)}
+.runtime-card.wide{grid-column:1 / -1}
+.runtime-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}
+.runtime-card-head h3{margin:0;color:var(--ink);font-size:16px;line-height:1.35}
+.runtime-card-head p{margin:4px 0 0;color:var(--steel);font-size:12px;line-height:1.4}
+.runtime-status{display:inline-flex;align-items:center;min-height:24px;padding:3px 9px;border-radius:999px;border:1px solid var(--hairline);background:var(--surface-soft);color:var(--steel);font-size:11px;font-weight:800;white-space:nowrap}
+.runtime-status.active{border-color:rgba(0,180,138,.28);background:#ddfff6;color:#006b55}
+.runtime-status.configured{border-color:rgba(55,114,207,.24);background:rgba(55,114,207,.1);color:#245aa5}
+.runtime-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px 14px}
+.runtime-field{min-width:0}
+.runtime-field.full{grid-column:1 / -1}
+.runtime-field>label{display:block;margin:0 0 5px;color:var(--steel);font-size:12px;font-weight:750}
+.runtime-field>label input[type="checkbox"]{margin-right:6px}
+.runtime-input,.runtime-field select{width:100%;min-height:38px;padding:8px 10px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface);color:var(--ink);font-size:13px;line-height:1.35}
+.runtime-input:focus,.runtime-field select:focus{border-color:var(--mint);box-shadow:0 0 0 3px rgba(0,212,164,.12);outline:0}
+.runtime-helper{margin:5px 0 0;color:var(--steel);font-size:11px;line-height:1.45}
+.password-control{display:flex;align-items:stretch;gap:7px}
+.password-control .password-input{flex:1;min-width:0;padding-right:11px;letter-spacing:.08em}
+.password-toggle{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:76px;padding:0 10px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-soft);color:var(--ink);font-size:12px;font-weight:750;cursor:pointer}
+.password-toggle:hover{border-color:var(--ink);background:var(--surface)}
+.password-toggle:focus{border-color:var(--mint);box-shadow:0 0 0 3px rgba(0,212,164,.12);outline:0}
+.password-toggle-icon{font-size:14px;line-height:1}
+.runtime-save-bar{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:14px;border-top:1px solid var(--hairline)}
+@media (max-width:760px){.runtime-card-grid,.runtime-fields{grid-template-columns:1fr}.runtime-card.wide{grid-column:auto}.runtime-overview{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .settings-layout{display:grid;grid-template-columns:220px minmax(0,1fr);align-items:start;gap:24px;max-width:1280px;margin:0 auto}
 .settings-nav{position:sticky;top:92px;display:grid;gap:3px;padding:8px;border:1px solid var(--hairline);border-radius:10px;background:var(--surface-soft)}
 .settings-nav-item{display:flex;align-items:center;min-height:38px;padding:0 12px;border-radius:7px;color:var(--steel);font-size:13px;font-weight:600;line-height:1.3}
@@ -3687,6 +3716,36 @@ def _agent_runtime_model_option_html(selected: str) -> str:
     )
 
 
+def _runtime_password_field(
+    *,
+    input_id: str,
+    name: str,
+    label: str,
+    configured: bool,
+    helper: str,
+) -> str:
+    state = "已配置" if configured else "未配置"
+    state_class = " configured" if configured else ""
+    return (
+        f'<div class="runtime-field password-field" data-password-field="{escape(input_id)}">'
+        f'<label for="{escape(input_id)}">{escape(label)}</label>'
+        '<div class="password-control">'
+        f'<input id="{escape(input_id)}" class="runtime-input password-input" '
+        'type="password" '
+        f'name="{escape(name)}" autocomplete="new-password" '
+        f'data-configured="{str(configured).lower()}">'
+        f'<button class="password-toggle" type="button" data-password-toggle '
+        f'data-target="{escape(input_id)}" aria-controls="{escape(input_id)}" '
+        'aria-pressed="false" aria-label="显示或隐藏本次输入的凭据">'
+        '<span class="password-toggle-icon" aria-hidden="true">◉</span>'
+        '<span data-password-toggle-label>显示</span></button>'
+        '</div>'
+        f'<p class="runtime-helper"><span class="runtime-status{state_class}">{state}</span> '
+        f'{escape(helper)}</p>'
+        '</div>'
+    )
+
+
 def _render_agent_runtime_config() -> str:
     oauth_model = _agent_runtime_config_value("CEO_CODEX_MODEL", "gpt-5.5")
     reasoning_effort = _agent_runtime_config_value(
@@ -3728,120 +3787,95 @@ def _render_agent_runtime_config() -> str:
     friday_session_configured = bool(
         _agent_runtime_config_value("CEO_FRIDAY_SESSION_TOKEN")
     )
+    active_badge = '<span class="runtime-status active">Active</span>'
+    inactive_badge = '<span class="runtime-status">Not active</span>'
     return (
-        '<section class="card">'
-        "<h2>Agent Runtime</h2>"
-        "<p class=\"muted\">配置默认 Codex OAuth 路由和可选的 API fallback。"
-        "保存到 .env 后，需要重启主服务使已运行的 worker 使用新配置。</p>"
+        '<section class="card runtime-page">'
+        '<div class="runtime-page-head">'
+        '<div><p class="eyebrow">Settings / Agent Runtime</p>'
+        '<h2>Agent Runtime</h2>'
+        '<p class="muted">集中管理模型路由和 fallback 凭据。保存后重启主服务，运行中的 worker 才会使用新配置。</p></div>'
+        '<span class="pill">.env backed</span></div>'
+        '<section class="runtime-overview" aria-label="Runtime Overview">'
+        '<div class="runtime-overview-item"><span class="runtime-overview-label">Primary route</span>'
+        f'<span class="runtime-overview-value">{escape("Codex OAuth")}</span></div>'
+        '<div class="runtime-overview-item"><span class="runtime-overview-label">Model</span>'
+        f'<span class="runtime-overview-value">{escape(oauth_model)}</span></div>'
+        '<div class="runtime-overview-item"><span class="runtime-overview-label">API fallback</span>'
+        f'<span class="runtime-overview-value">{active_badge if api_enabled else inactive_badge}</span></div>'
+        '<div class="runtime-overview-item"><span class="runtime-overview-label">Friday Runtime</span>'
+        f'<span class="runtime-overview-value">{active_badge if friday_enabled else inactive_badge}</span></div>'
+        '</section>'
         '<form method="post" action="/config/agent-runtime">'
-        "<h3>Codex OAuth 默认路由</h3>"
-        '<p><label>Model<br><select name="codex_model">'
-        f"{_agent_runtime_model_option_html(oauth_model)}"
-        "</select></label></p>"
-        '<p><label>Thinking strength<br><select name="codex_reasoning_effort">'
-        f"{_agent_runtime_option_html(_AGENT_RUNTIME_REASONING_EFFORTS, reasoning_effort)}"
-        "</select></label></p>"
-        "<h3>API fallback</h3>"
-        '<p><label><input type="checkbox" name="codex_api_enabled" value="1"'
-        f'{" checked" if api_enabled else ""}>'
-        " 启用 Codex API fallback</label></p>"
-        '<p><label>API Base URL<br><input class="config-value-input" type="url" '
-        'name="codex_api_base_url" required value="'
-        f'{escape(api_base_url, quote=True)}"></label></p>'
-        '<p><label>Fallback model<br><select name="codex_api_model">'
-        f"{_agent_runtime_model_option_html(api_model)}"
-        "</select></label></p>"
-        '<p><label>API Token<br><input id="codex-api-token" '
-        'class="config-value-input secret-token-input" type="password" '
-        'name="codex_api_token" autocomplete="new-password" '
-        f'placeholder="{"●" * 12 if token_configured else ""}" '
-        f'data-token-configured="{str(token_configured).lower()}"></label> '
-        '<button id="codex-api-token-toggle" class="secret-token-toggle" type="button" '
-        'aria-controls="codex-api-token" aria-pressed="false" '
-        'aria-label="显示或隐藏本次输入的 API Token">👁 <span>显示</span></button><br>'
-        f'<span class="muted">当前状态：{"已配置" if token_configured else "未配置"}。'
-        "页面不会重新下发已保存的 Token；输入新 Token 后可用眼睛按钮显示或隐藏本次输入，"
-        "留空保存会保留已配置的 Token。</span></p>"
-        "<p><button type=\"submit\">Save Agent Runtime</button></p>"
-        "<script>"
-        "(() => {"
-        "const tokenInput = document.getElementById('codex-api-token');"
-        "const toggle = document.getElementById('codex-api-token-toggle');"
-        "if (!tokenInput || !toggle) return;"
-        "toggle.addEventListener('click', () => {"
-        "const currentValue = tokenInput.value;"
-        "const showing = tokenInput.type === 'text';"
-        "tokenInput.type = showing ? \"password\" : \"text\";"
-        "tokenInput.value = currentValue;"
-        "toggle.querySelector('span').textContent = showing ? '显示' : '隐藏';"
-        "toggle.setAttribute('aria-pressed', String(!showing));"
-        "});"
-        "})();"
-        "</script>"
-        "<h3>Friday Runtime fallback</h3>"
+        '<div class="runtime-card-grid">'
+        '<section class="runtime-card">'
+        '<div class="runtime-card-head"><div><h3>Codex OAuth</h3><p>默认的本机 OAuth 路由</p></div>'
+        f'{active_badge}</div><div class="runtime-fields">'
+        '<div class="runtime-field"><label for="codex-model">Model</label>'
+        '<select id="codex-model" name="codex_model">'
+        f'{_agent_runtime_model_option_html(oauth_model)}</select>'
+        '<p class="runtime-helper">用于默认 Codex OAuth 执行。</p></div>'
+        '<div class="runtime-field"><label for="codex-reasoning-effort">Thinking strength</label>'
+        '<select id="codex-reasoning-effort" name="codex_reasoning_effort">'
+        f'{_agent_runtime_option_html(_AGENT_RUNTIME_REASONING_EFFORTS, reasoning_effort)}</select>'
+        '<p class="runtime-helper">控制模型推理预算。</p></div></div></section>'
+        '<section class="runtime-card">'
+        '<div class="runtime-card-head"><div><h3>Codex API fallback</h3><p>OAuth 不可用时的备用路由</p></div>'
+        f'{active_badge if api_enabled else inactive_badge}</div><div class="runtime-fields">'
+        '<div class="runtime-field full"><label for="codex-api-enabled">'
+        '<input id="codex-api-enabled" type="checkbox" name="codex_api_enabled" value="1"'
+        f'{" checked" if api_enabled else ""}>启用 Codex API fallback</label>'
+        '<p class="runtime-helper">启用后，服务会在 OAuth 路由不可用时尝试 API。</p></div>'
+        '<div class="runtime-field"><label for="codex-api-base-url">API Base URL</label>'
+        '<input id="codex-api-base-url" class="runtime-input" type="url" name="codex_api_base_url" required '
+        f'value="{escape(api_base_url, quote=True)}"><p class="runtime-helper">兼容 OpenAI API 的 endpoint。</p></div>'
+        '<div class="runtime-field"><label for="codex-api-model">Fallback model</label>'
+        '<select id="codex-api-model" name="codex_api_model">'
+        f'{_agent_runtime_model_option_html(api_model)}</select><p class="runtime-helper">API fallback 使用的模型。</p></div>'
+        f'{_runtime_password_field(input_id="codex-api-token", name="codex_api_token", label="API Token", configured=token_configured, helper="留空保存会保留已配置的 Token。")}'
+        '</div></section>'
+        '<section class="runtime-card wide">'
+        '<div class="runtime-card-head"><div><h3>Friday Runtime</h3><p>本机 Friday Runtime 服务和 provider 凭据</p></div>'
+        f'{active_badge if friday_enabled else inactive_badge}</div>'
         '<input type="hidden" name="friday_runtime_settings_present" value="1">'
-        '<p><label><input type="checkbox" name="friday_runtime_enabled" value="1"'
-        f'{" checked" if friday_enabled else ""}>'
-        " 启用 Friday Runtime fallback</label></p>"
-        '<p><label>Runtime Base URL<br><input class="config-value-input" type="url" '
-        'name="friday_runtime_base_url" required value="'
-        f'{escape(friday_base_url, quote=True)}"></label></p>'
-        '<p class="muted">这是本机 Friday Runtime 服务地址；provider URL、model 和 Token 使用下方独立配置，不与 Codex API 配置共享。</p>'
-        '<p><label>Project ID<br><input class="config-value-input" type="text" '
-        'name="friday_runtime_project_id" value="'
-        f'{escape(friday_project_id, quote=True)}"></label></p>'
-        '<p><label>Provider Base URL<br><input class="config-value-input" type="url" '
-        'name="friday_runtime_provider_base_url" value="'
-        f'{escape(friday_provider_base_url, quote=True)}"></label></p>'
-        '<p><label>Provider model<br><input class="config-value-input" type="text" '
-        'name="friday_runtime_provider_model" value="'
-        f'{escape(friday_provider_model, quote=True)}"></label></p>'
-        '<p><label>Provider API Token<br><input id="friday-provider-api-token" '
-        'class="config-value-input secret-token-input" type="password" '
-        'name="friday_runtime_provider_api_key" autocomplete="new-password" '
-        f'placeholder="{"●" * 12 if friday_provider_key_configured else ""}" '
-        f'data-token-configured="{str(friday_provider_key_configured).lower()}"></label></p>'
-        "<p class=\"muted\">Provider fields are independent from Codex API; Friday launcher receives them as FRIDAY_LLM_* environment variables.</p>"
-        '<p><label><input type="checkbox" name="friday_runtime_auth_disabled" value="1"'
-        f'{" checked" if friday_auth_disabled else ""}>'
-        " 禁用 Friday Runtime authentication</label></p>"
-        '<p><label>Runtime ticket<br><input id="friday-runtime-ticket" '
-        'class="config-value-input secret-token-input" type="password" '
-        'name="friday_runtime_ticket" autocomplete="new-password" '
-        f'placeholder="{"●" * 12 if friday_ticket_configured else ""}" '
-        f'data-token-configured="{str(friday_ticket_configured).lower()}"></label> '
-        '<button id="friday-runtime-ticket-toggle" class="secret-token-toggle" type="button" '
-        'aria-controls="friday-runtime-ticket" aria-pressed="false" '
-        'aria-label="显示或隐藏本次输入的 Friday Runtime ticket">👁 <span>显示</span></button></p>'
-        '<p><label>Session token<br><input id="friday-session-token" '
-        'class="config-value-input secret-token-input" type="password" '
-        'name="friday_session_token" autocomplete="new-password" '
-        f'placeholder="{"●" * 12 if friday_session_configured else ""}" '
-        f'data-token-configured="{str(friday_session_configured).lower()}"></label> '
-        '<button id="friday-session-token-toggle" class="secret-token-toggle" type="button" '
-        'aria-controls="friday-session-token" aria-pressed="false" '
-        'aria-label="显示或隐藏本次输入的 Friday session token">👁 <span>显示</span></button><br>'
-        f'<span class="muted">Ticket 当前状态：{"已配置" if friday_ticket_configured else "未配置"}；'
-        f'Session token 当前状态：{"已配置" if friday_session_configured else "未配置"}。'
-        "页面不会重新下发已保存的凭据；留空保存会保留已有凭据。"
-        "启用认证时必须最终只保留一种凭据。</span></p>"
-        "<script>"
-        "(() => {"
-        "for (const [inputId, toggleId] of [['friday-runtime-ticket', 'friday-runtime-ticket-toggle'], ['friday-session-token', 'friday-session-token-toggle']]) {"
-        "const input = document.getElementById(inputId);"
-        "const toggle = document.getElementById(toggleId);"
-        "if (!input || !toggle) continue;"
-        "toggle.addEventListener('click', () => {"
-        "const showing = input.type === 'text';"
-        "input.type = showing ? 'password' : 'text';"
-        "toggle.querySelector('span').textContent = showing ? '显示' : '隐藏';"
-        "toggle.setAttribute('aria-pressed', String(!showing));"
-        "});"
-        "}"
-        "})();"
-        "</script>"
-        "</form>"
-        "</section>"
+        '<div class="runtime-fields">'
+        '<div class="runtime-field full"><label for="friday-runtime-enabled">'
+        '<input id="friday-runtime-enabled" type="checkbox" name="friday_runtime_enabled" value="1"'
+        f'{" checked" if friday_enabled else ""}>启用 Friday Runtime fallback</label>'
+        '<p class="runtime-helper">Friday provider 配置与 Codex API 独立保存。</p></div>'
+        '<div class="runtime-field"><label for="friday-runtime-base-url">Runtime Base URL</label>'
+        '<input id="friday-runtime-base-url" class="runtime-input" type="url" name="friday_runtime_base_url" required '
+        f'value="{escape(friday_base_url, quote=True)}"><p class="runtime-helper">本机 Friday Runtime 服务地址。</p></div>'
+        '<div class="runtime-field"><label for="friday-runtime-project-id">Project ID</label>'
+        '<input id="friday-runtime-project-id" class="runtime-input" type="text" name="friday_runtime_project_id" '
+        f'value="{escape(friday_project_id, quote=True)}"><p class="runtime-helper">发送给 Friday Runtime 的项目标识。</p></div>'
+        '<div class="runtime-field"><label for="friday-provider-base-url">Provider Base URL</label>'
+        '<input id="friday-provider-base-url" class="runtime-input" type="url" name="friday_runtime_provider_base_url" '
+        f'value="{escape(friday_provider_base_url, quote=True)}"></div>'
+        '<div class="runtime-field"><label for="friday-provider-model">Provider model</label>'
+        '<input id="friday-provider-model" class="runtime-input" type="text" name="friday_runtime_provider_model" '
+        f'value="{escape(friday_provider_model, quote=True)}"></div>'
+        f'{_runtime_password_field(input_id="friday-provider-api-token", name="friday_runtime_provider_api_key", label="Provider API Token", configured=friday_provider_key_configured, helper="Provider URL、model 和 Token 必须成组配置。")}'
+        '<div class="runtime-field full"><label for="friday-runtime-auth-disabled">'
+        '<input id="friday-runtime-auth-disabled" type="checkbox" name="friday_runtime_auth_disabled" value="1"'
+        f'{" checked" if friday_auth_disabled else ""}>禁用 Friday Runtime authentication</label>'
+        '<p class="runtime-helper">仅在本机服务明确允许匿名访问时启用。</p></div>'
+        f'{_runtime_password_field(input_id="friday-runtime-ticket", name="friday_runtime_ticket", label="Runtime ticket", configured=friday_ticket_configured, helper="启用认证时与 Session token 二选一。")}'
+        f'{_runtime_password_field(input_id="friday-session-token", name="friday_session_token", label="Session token", configured=friday_session_configured, helper="启用认证时与 Runtime ticket 二选一。")}'
+        '</div></section>'
+        '</div>'
+        '<div class="runtime-save-bar"><span class="muted">敏感值不会回填到页面。</span>'
+        '<button type="submit">Save Agent Runtime</button></div>'
+        '</form>'
+        '<script>(function(){'
+        'document.querySelectorAll("[data-password-toggle]").forEach(function(toggle){'
+        'toggle.addEventListener("click",function(){'
+        'var input=document.getElementById(toggle.dataset.target); if(!input) return;'
+        'var showing=input.type === "text"; input.type=showing ? "password" : "text";'
+        'toggle.setAttribute("aria-pressed",String(!showing));'
+        'var label=toggle.querySelector("[data-password-toggle-label]"); if(label) label.textContent=showing ? "显示" : "隐藏";'
+        '});});})();</script>'
+        '</section>'
     )
 
 
