@@ -314,7 +314,7 @@ def test_expired_claim_before_sending_is_reclaimed_and_sent_once(
     assert dws.sent[0]["idempotency_uuid"] == first_uuid
 
 
-def test_expired_sending_attempt_reconciles_without_resend(tmp_path, monkeypatch):
+def test_expired_sending_attempt_retries_normally(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="客户交付")
     todo_id = _create_bound_todo(store, project_id)
@@ -334,65 +334,26 @@ def test_expired_sending_attempt_reconciles_without_resend(tmp_path, monkeypatch
     def crash_before_result_persistence(*args, **kwargs):
         raise KeyboardInterrupt("simulated crash before finalization")
 
-    monkeypatch.setattr(
-        store,
-        "update_claimed_follow_up_draft",
-        crash_before_result_persistence,
-    )
-
-    class ReconcilingDws(FakeDws):
-        def __init__(self):
-            super().__init__()
-            self.verify_calls = []
-
-        def send_message(self, *args, **kwargs):
-            super().send_message(*args, **kwargs)
-            return {"success": True, "result": {"openTaskId": "task-1"}}
-
-        def verify_message_send_result(self, send_result):
-            self.verify_calls.append(send_result)
-            return {"state": "sent", "status_result": {"sendStatus": "SUCCESS"}}
-
-    dws = ReconcilingDws()
+    monkeypatch.setattr(store, "update_claimed_follow_up_draft", crash_before_result_persistence)
+    dws = FakeDws()
     with pytest.raises(KeyboardInterrupt, match="simulated crash"):
-        process_due_follow_ups(
-            store,
-            dws,
-            now="2026-06-08 02:00:00",
-            auto_send=True,
-        )
-    assert len(dws.sent) == 1
-    sending = store.get_follow_up_send_attempt(
-        draft_id=draft_id,
-        draft_revision=1,
-    )
-    assert sending is not None
-    assert sending["state"] == "sending"
-    persisted_result = json.loads(str(sending["result_json"]))["send_result"]
-    assert persisted_result["result"]["openTaskId"] == "task-1"
+        process_due_follow_ups(store, dws, now="2026-06-08 02:00:00", auto_send=True)
 
+    sending = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
+    assert sending is not None and sending["state"] == "sending"
+    first_uuid = sending["idempotency_uuid"]
     monkeypatch.setattr(store, "update_claimed_follow_up_draft", original_finalize)
-    assert process_due_follow_ups(
-        store,
-        dws,
-        now="2026-06-08 02:06:00",
-        auto_send=True,
-    ) == 0
-    assert len(dws.sent) == 1
-    assert dws.verify_calls == [persisted_result]
+
+    # Lease expiry makes the same operation retryable; no application readback
+    # or reconciliation worker is involved.
+    assert process_due_follow_ups(store, dws, now="2026-06-08 02:06:00", auto_send=True) == 1
+    assert len(dws.sent) == 2
+    assert dws.sent[1]["idempotency_uuid"] == first_uuid
     assert store.get_follow_up_draft(draft_id).status == "sent"
-    reconciled = store.get_follow_up_send_attempt(
-        draft_id=draft_id,
-        draft_revision=1,
-    )
-    assert reconciled is not None
-    assert reconciled["state"] == "sent"
+    attempt = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
+    assert attempt is not None and attempt["state"] == "sent"
 
-
-def test_failed_send_readback_returns_exact_revision_to_retryable(
-    tmp_path,
-    monkeypatch,
-):
+def test_expired_sending_result_retries_with_same_operation_id(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="客户交付")
     todo_id = _create_bound_todo(store, project_id)
@@ -414,55 +375,26 @@ def test_failed_send_readback_returns_exact_revision_to_retryable(
         lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
 
-    class FailedReadbackDws(FakeDws):
-        def __init__(self):
-            super().__init__()
-            self.verify_calls = []
-
+    class DwsWithResult(FakeDws):
         def send_message(self, *args, **kwargs):
             super().send_message(*args, **kwargs)
-            return {"success": True, "result": {"openTaskId": "task-failed"}}
+            return {"success": True, "result": {"openTaskId": "task-1"}}
 
-        def verify_message_send_result(self, send_result):
-            self.verify_calls.append(send_result)
-            return {"state": "failed", "status_result": {"sendStatus": "FAILED"}}
-
-    dws = FailedReadbackDws()
+    dws = DwsWithResult()
     with pytest.raises(KeyboardInterrupt):
-        process_due_follow_ups(
-            store,
-            dws,
-            now="2026-06-08 02:00:00",
-            auto_send=True,
-        )
-    first_uuid = dws.sent[0]["idempotency_uuid"]
+        process_due_follow_ups(store, dws, now="2026-06-08 02:00:00", auto_send=True)
+    first = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
+    assert first is not None and first["state"] == "sending"
+    first_uuid = first["idempotency_uuid"]
+    assert json.loads(str(first["result_json"]))["send_result"]["result"]["openTaskId"] == "task-1"
     monkeypatch.setattr(store, "update_claimed_follow_up_draft", original_finalize)
 
-    assert process_due_follow_ups(
-        store,
-        dws,
-        now="2026-06-08 02:06:00",
-        auto_send=True,
-    ) == 0
-    retryable = store.get_follow_up_send_attempt(
-        draft_id=draft_id,
-        draft_revision=1,
-    )
-    assert retryable is not None
-    assert retryable["state"] == "retryable"
-    assert len(dws.sent) == 1
-    assert len(dws.verify_calls) == 1
-
-    send_dws = FakeDws()
-    assert process_due_follow_ups(
-        store,
-        send_dws,
-        now="2026-06-08 02:07:00",
-        auto_send=True,
-    ) == 1
-    assert len(send_dws.sent) == 1
-    assert send_dws.sent[0]["idempotency_uuid"] == first_uuid
-
+    assert process_due_follow_ups(store, dws, now="2026-06-08 02:06:00", auto_send=True) == 1
+    assert len(dws.sent) == 2
+    assert dws.sent[1]["idempotency_uuid"] == first_uuid
+    final = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
+    assert final is not None and final["state"] == "sent"
+    assert store.get_follow_up_draft(draft_id).status == "sent"
 
 def test_correction_invalidates_abandoned_claim_and_sends_new_revision(
     tmp_path,
@@ -783,7 +715,7 @@ def test_blocking_prior_attempt_query_returns_all_revisions_in_order(tmp_path):
     assert [row["claim_token"] for row in first_reader] == ["token-1", "token-2"]
 
 
-def test_done_old_review_does_not_mask_newer_unknown_attempt(tmp_path):
+def test_historical_unknown_attempt_does_not_block_new_revision(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="客户交付")
     todo_id = _create_bound_todo(store, project_id)
@@ -794,109 +726,36 @@ def test_done_old_review_does_not_mask_newer_unknown_attempt(tmp_path):
         owner_name="Alex",
         target_conversation_id="cid-1",
         target_kind="group",
-        question_text="revision-1",
+        question_text="旧问题",
         risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
         scheduled_at="2026-06-08 01:00:00",
     )
     assert store.claim_follow_up_draft_revision(
-        draft_id,
-        expected_revision=1,
-        claim_token="token-1",
-        idempotency_uuid="uuid-1",
-        lease_owner="sender-1",
-        claimed_at="2026-06-08 02:00:00",
-        lease_until="2026-06-08 02:05:00",
+        draft_id, expected_revision=1, claim_token="old-token",
+        idempotency_uuid="old-uuid", lease_owner="sender",
+        claimed_at="2026-06-08 02:00:00", lease_until="2026-06-08 02:05:00",
     )
     assert store.transition_follow_up_attempt_to_sending(
-        draft_id,
-        claimed_revision=1,
-        claim_token="token-1",
-        lease_owner="sender-1",
-        now="2026-06-08 02:00:00",
+        draft_id, claimed_revision=1, claim_token="old-token",
+        lease_owner="sender", now="2026-06-08 02:00:00",
         lease_until="2026-06-08 02:05:00",
     )
-    store.update_follow_up_draft(
-        draft_id,
-        question_text="revision-2",
-        scheduled_at="2026-06-08 01:00:00",
-    )
-    assert not store.update_claimed_follow_up_draft(
-        draft_id,
-        claimed_revision=1,
-        claim_token="token-1",
-        lease_owner="sender-1",
-        now="2026-06-08 02:01:00",
-        attempt_state="sent",
-        attempt_result_json=json.dumps({"idempotency_uuid": "uuid-1"}),
-        status="sent",
-        send_result_json=json.dumps({"idempotency_uuid": "uuid-1"}),
-    )
-    source_ref = f"follow-up-repair:{draft_id}:prior-delivery:1:current:2"
-    assert store.enqueue_follow_up_delivery_review(
-        draft_id=draft_id,
-        draft_revision=1,
-        claim_token="token-1",
-        current_revision=2,
-        source_type="follow_up_completion_check",
-        source_ref=source_ref,
-        payload_json="{}",
-    )
-    review = store.claim_work_summary_inputs(limit=1)[0]
-    store.mark_work_summary_input_done(review.id)
+    # This simulates a legacy row during history migration. It is data only;
+    # the current dispatcher must not route on it.
+    store.update_follow_up_draft(draft_id, question_text="revision-2", scheduled_at="2026-06-08 01:00:00")
+    with store._connect() as db:
+        db.execute(
+            "update follow_up_send_attempts set state='unknown', lease_owner='', lease_until='' where draft_id=? and draft_revision=1",
+            (draft_id,),
+        )
+    store.update_follow_up_draft(draft_id, question_text="revision-3", scheduled_at="2026-06-08 01:00:00")
 
-    assert store.claim_follow_up_draft_revision(
-        draft_id,
-        expected_revision=2,
-        claim_token="token-2",
-        idempotency_uuid="uuid-2",
-        lease_owner="sender-2",
-        claimed_at="2026-06-08 02:01:00",
-        lease_until="2026-06-08 02:06:00",
-    )
-    assert store.transition_follow_up_attempt_to_sending(
-        draft_id,
-        claimed_revision=2,
-        claim_token="token-2",
-        lease_owner="sender-2",
-        now="2026-06-08 02:01:00",
-        lease_until="2026-06-08 02:06:00",
-    )
-    assert store.mark_follow_up_sending_unknown(
-        draft_id,
-        draft_revision=2,
-        claim_token="token-2",
-        lease_owner="sender-2",
-        lease_until="2026-06-08 02:15:00",
-        result_json=json.dumps({"idempotency_uuid": "uuid-2"}),
-    )
-    store.update_follow_up_draft(
-        draft_id,
-        question_text="revision-3",
-        scheduled_at="2026-06-08 01:00:00",
-    )
     dws = FakeDws()
-
-    assert process_due_follow_ups(
-        store,
-        dws,
-        now="2026-06-08 02:02:00",
-        auto_send=True,
-    ) == 0
-    assert dws.sent == []
-    assert process_due_follow_ups(
-        store,
-        dws,
-        now="2026-06-08 02:16:00",
-        auto_send=True,
-    ) == 0
-    assert dws.sent == []
-    rev2 = store.get_follow_up_send_attempt(
-        draft_id=draft_id,
-        draft_revision=2,
-    )
-    assert rev2 is not None
-    assert rev2["state"] == "unknown"
-
+    assert process_due_follow_ups(store, dws, now="2026-06-08 02:02:00", auto_send=True) == 1
+    assert len(dws.sent) == 1
+    assert "revision-3" in dws.sent[0]["text"]
+    old = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
+    assert old is not None and old["state"] == "unknown"
 
 def test_due_follow_up_defers_outside_local_working_hours(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
@@ -2360,92 +2219,40 @@ def test_dws_login_required_defers_follow_up_without_marking_failed(tmp_path):
     assert result["reason"] == "dws_login_required"
 
 
-def test_transport_timeout_becomes_unknown_without_blind_resend(tmp_path):
+def test_transport_timeout_is_retryable_without_reconciliation_state(tmp_path):
     from app.dws_client import DwsError
 
     class RetryableDws(FakeDws):
         def send_message(self, *args, **kwargs):
             self.sent.append(kwargs)
-            raise DwsError(
-                "dws command timed out after 30 seconds",
-                retryable_external_dependency=True,
-            )
+            raise DwsError("dws command timed out after 30 seconds", retryable_external_dependency=True)
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-        priority="P0",
-        risk_level="high",
-    )
+    project_id = store.create_work_project(title="客户交付", category="projects", status="active", priority="P0", risk_level="high")
     todo_id = _create_bound_todo(store, project_id)
     draft_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="请同步进展",
+        project_id=project_id, todo_id=todo_id, owner_user_id="owner-1",
+        target_conversation_id="cid-1", target_kind="group", question_text="请同步进展",
         risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
         scheduled_at="2026-06-07 09:00:00",
     )
     dws = RetryableDws()
-
-    sent = process_due_follow_ups(
-        store,
-        dws,
-        now="2026-06-08 02:00:00",
-        auto_send=True,
-    )
-
-    assert sent == 0
-    assert store.list_follow_up_drafts(statuses=("failed",)) == []
+    assert process_due_follow_ups(store, dws, now="2026-06-08 02:00:00", auto_send=True) == 0
     draft = store.get_follow_up_draft(draft_id)
-    assert draft is not None
-    assert draft.status == "draft"
-    assert draft.scheduled_at == "2026-06-07 09:00:00"
-    assert draft.send_result_json == "{}"
-    first_key = dws.sent[0]["idempotency_uuid"]
-    assert first_key
-    attempt = store.get_follow_up_send_attempt(
-        draft_id=draft_id,
-        draft_revision=1,
-    )
-    assert attempt is not None
-    assert attempt["state"] == "unknown"
+    assert draft is not None and draft.status == "draft"
+    attempt = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
+    assert attempt is not None and attempt["state"] == "retryable"
+    result = json.loads(str(attempt["result_json"]))
+    assert result["reason"] == "delivery_failed"
+    assert result["retryable"] is True
+    assert "reconciliation" not in result
 
-    process_due_follow_ups(
-        store,
-        dws,
-        now="2026-06-08 02:16:00",
-        auto_send=True,
-    )
-
-    assert len(dws.sent) == 1
-    assert store.get_follow_up_send_attempt(
-        draft_id=draft_id,
-        draft_revision=1,
-    )["state"] == "unknown"
-
-    store.update_follow_up_draft(
-        draft_id,
-        question_text="请同步修正后的进展和预计完成时间",
-        scheduled_at="2026-06-08 02:16:00",
-    )
-    process_due_follow_ups(
-        store,
-        dws,
-        now="2026-06-08 02:17:00",
-        auto_send=True,
-    )
-
-    assert len(dws.sent) == 1
-    assert store.get_follow_up_send_attempt(
-        draft_id=draft_id,
-        draft_revision=1,
-    )["idempotency_uuid"] == first_key
-
+    # The normal retry uses the same operation identifier and does not perform
+    # a second application-owned readback.
+    first_uuid = dws.sent[0]["idempotency_uuid"]
+    assert process_due_follow_ups(store, dws, now="2026-06-08 02:01:00", auto_send=True) == 0
+    assert len(dws.sent) == 2
+    assert dws.sent[1]["idempotency_uuid"] == first_uuid
 
 def test_unknown_dws_send_outcome_enters_reconciliation_with_stable_uuid(
     tmp_path,
