@@ -2254,73 +2254,42 @@ def test_transport_timeout_is_retryable_without_reconciliation_state(tmp_path):
     assert len(dws.sent) == 2
     assert dws.sent[1]["idempotency_uuid"] == first_uuid
 
-def test_unknown_dws_send_outcome_enters_reconciliation_with_stable_uuid(
-    tmp_path,
-):
+def test_dws_send_failure_records_provider_result_and_operation_id(tmp_path):
     from app.dws_client import DwsError
 
-    class UnknownOutcomeDws(FakeDws):
+    class FailedDws(FakeDws):
         def send_message(self, *args, **kwargs):
             self.sent.append(kwargs)
             raise DwsError("dws command failed with exit code 1", code="1")
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
-        title="客户交付",
-        category="projects",
-        status="active",
-        priority="P0",
-        risk_level="high",
-    )
+    project_id = store.create_work_project(title="客户交付", category="projects", status="active", priority="P0", risk_level="high")
     todo_id = _create_bound_todo(store, project_id)
     draft_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="请同步进展",
+        project_id=project_id, todo_id=todo_id, owner_user_id="owner-1",
+        target_conversation_id="cid-1", target_kind="group", question_text="请同步进展",
         risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
         scheduled_at="2026-06-07 09:00:00",
     )
-    dws = UnknownOutcomeDws()
-
-    sent = process_due_follow_ups(
-        store,
-        dws,
-        now="2026-06-08 02:00:00",
-        auto_send=True,
-    )
-
-    assert sent == 0
-    assert store.list_follow_up_drafts(statuses=("failed",)) == []
+    dws = FailedDws()
+    assert process_due_follow_ups(store, dws, now="2026-06-08 02:00:00", auto_send=True) == 0
     draft = store.get_follow_up_draft(draft_id)
-    assert draft is not None
-    assert draft.status == "draft"
-    assert draft.scheduled_at == "2026-06-07 09:00:00"
-    assert draft.send_result_json == "{}"
-    attempt = store.get_follow_up_send_attempt(
-        draft_id=draft_id,
-        draft_revision=1,
-    )
-    assert attempt is not None
-    assert attempt["state"] == "unknown"
-    result = json.loads(str(attempt["result_json"]))
-    assert result["reason"] == "dws_send_outcome_unknown"
-    assert result["claimed_revision"] == 1
+    assert draft is not None and draft.status == "failed"
+    result = json.loads(draft.send_result_json)
+    assert result["reason"] == "delivery_failed"
     assert result["idempotency_uuid"] == dws.sent[0]["idempotency_uuid"]
-    assert result["idempotency_uuid"]
+    attempt = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
+    assert attempt is not None and attempt["state"] == "failed"
     assert attempt["idempotency_uuid"] == result["idempotency_uuid"]
+    assert "reconciliation" not in result
 
-
-def test_unknown_direct_follow_up_is_finalized_from_exact_message_readback(tmp_path):
+def test_failed_direct_follow_up_does_not_start_application_readback(tmp_path):
     from app.dws_client import DwsError
 
     class ReadbackDws(FakeDws):
         def __init__(self):
             super().__init__()
             self.readbacks = 0
-            self.expected_text = ""
 
         def send_message(self, *args, **kwargs):
             self.sent.append(kwargs)
@@ -2328,64 +2297,33 @@ def test_unknown_direct_follow_up_is_finalized_from_exact_message_readback(tmp_p
 
         def read_direct_messages_since(self, user_id, *, start):
             self.readbacks += 1
-            return {
-                "complete": True,
-                "messages": [
-                        {
-                            "createTime": "2026-06-08 10:01:00",
-                            "sender": "磊哥",
-                            "text": self.expected_text,
-                    }
-                ],
-            }
+            return {"complete": True, "messages": []}
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="客户交付")
     todo_id = _create_bound_todo(store, project_id)
     draft_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_kind="direct",
-        question_text="请同步进展",
+        project_id=project_id, todo_id=todo_id, owner_user_id="owner-1",
+        owner_name="Alex", target_kind="direct", question_text="请同步进展",
         scheduled_at="2026-06-08 01:00:00",
     )
     dws = ReadbackDws()
-    from app.follow_up import _follow_up_message_text
-
-    dws.expected_text = _follow_up_message_text(
-        store, store.get_follow_up_draft(draft_id)
-    )
-
-    assert process_due_follow_ups(
-        store, dws, now="2026-06-08 02:00:00", auto_send=True
-    ) == 0
-    assert process_due_follow_ups(
-        store, dws, now="2026-06-08 02:16:00", auto_send=True
-    ) == 0
-
-    assert dws.readbacks == 1
+    assert process_due_follow_ups(store, dws, now="2026-06-08 02:00:00", auto_send=True) == 0
+    assert dws.readbacks == 0
     assert len(dws.sent) == 1
-    assert store.get_follow_up_draft(draft_id).status == "sent"
-    attempt = store.get_follow_up_send_attempt(
-        draft_id=draft_id, draft_revision=1
-    )
-    assert attempt["state"] == "sent"
-    assert json.loads(attempt["result_json"])["reconciliation"]["reason"] == (
-        "exact outbound text found in complete direct-message readback"
-    )
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None and draft.status == "failed"
+    attempt = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
+    assert attempt is not None and attempt["state"] == "failed"
 
-
-def test_unknown_direct_follow_up_retries_only_after_complete_absence_readback(
-    tmp_path,
-):
+def test_failed_direct_follow_up_retries_after_normal_revision_update(tmp_path):
     from app.dws_client import DwsError
 
     class ReadbackDws(FakeDws):
         def __init__(self):
             super().__init__()
             self.fail_first_send = True
+            self.readbacks = 0
 
         def send_message(self, *args, **kwargs):
             if self.fail_first_send:
@@ -2395,81 +2333,69 @@ def test_unknown_direct_follow_up_retries_only_after_complete_absence_readback(
             return super().send_message(*args, **kwargs)
 
         def read_direct_messages_since(self, user_id, *, start):
+            self.readbacks += 1
             return {"complete": True, "messages": []}
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="客户交付")
     todo_id = _create_bound_todo(store, project_id)
     draft_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_kind="direct",
-        question_text="请同步进展",
+        project_id=project_id, todo_id=todo_id, owner_user_id="owner-1",
+        owner_name="Alex", target_kind="direct", question_text="请同步进展",
         scheduled_at="2026-06-08 01:00:00",
     )
     dws = ReadbackDws()
+    assert process_due_follow_ups(store, dws, now="2026-06-08 02:00:00", auto_send=True) == 0
+    failed = store.get_follow_up_draft(draft_id)
+    assert failed is not None and failed.status == "failed"
+    first = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
+    assert first is not None and first["state"] == "failed"
+    first_uuid = first["idempotency_uuid"]
+    assert dws.readbacks == 0
 
-    assert process_due_follow_ups(
-        store, dws, now="2026-06-08 02:00:00", auto_send=True
-    ) == 0
-    assert process_due_follow_ups(
-        store, dws, now="2026-06-08 02:16:00", auto_send=True
-    ) == 0
-    retryable = store.get_follow_up_send_attempt(
-        draft_id=draft_id, draft_revision=1
+    # A subsequent normal revision is the retry boundary; it does not invoke a
+    # special reconciliation pass.
+    store.update_follow_up_draft(
+        draft_id, status="draft", question_text="请同步修正后的进展",
+        scheduled_at="2026-06-08 02:01:00", send_result_json="{}",
     )
-    assert retryable["state"] == "retryable"
-    assert json.loads(retryable["result_json"])["reconciliation"]["reason"] == (
-        "exact outbound text absent from complete direct-message readback"
-    )
-
-    assert process_due_follow_ups(
-        store, dws, now="2026-06-08 02:17:00", auto_send=True
-    ) == 1
+    assert process_due_follow_ups(store, dws, now="2026-06-08 02:02:00", auto_send=True) == 1
     assert len(dws.sent) == 2
+    assert dws.sent[1]["idempotency_uuid"] != first_uuid
+    assert dws.readbacks == 0
     assert store.get_follow_up_draft(draft_id).status == "sent"
 
-
-def test_unknown_direct_follow_up_stays_unknown_on_partial_message_readback(tmp_path):
+def test_failed_direct_follow_up_ignores_partial_readback_payload(tmp_path):
     from app.dws_client import DwsError
 
     class PartialReadbackDws(FakeDws):
+        def __init__(self):
+            super().__init__()
+            self.readbacks = 0
+
         def send_message(self, *args, **kwargs):
             self.sent.append(kwargs)
             raise DwsError("network interrupted after send", code="1")
 
         def read_direct_messages_since(self, user_id, *, start):
+            self.readbacks += 1
             return {"complete": False, "messages": []}
 
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="客户交付")
     todo_id = _create_bound_todo(store, project_id)
     draft_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_kind="direct",
-        question_text="请同步进展",
+        project_id=project_id, todo_id=todo_id, owner_user_id="owner-1",
+        owner_name="Alex", target_kind="direct", question_text="请同步进展",
         scheduled_at="2026-06-08 01:00:00",
     )
     dws = PartialReadbackDws()
-
-    assert process_due_follow_ups(
-        store, dws, now="2026-06-08 02:00:00", auto_send=True
-    ) == 0
-    assert process_due_follow_ups(
-        store, dws, now="2026-06-08 02:16:00", auto_send=True
-    ) == 0
-
-    attempt = store.get_follow_up_send_attempt(
-        draft_id=draft_id, draft_revision=1
-    )
-    assert attempt["state"] == "unknown"
-    assert len(dws.sent) == 1
-
+    assert process_due_follow_ups(store, dws, now="2026-06-08 02:00:00", auto_send=True) == 0
+    assert dws.readbacks == 0
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None and draft.status == "failed"
+    attempt = store.get_follow_up_send_attempt(draft_id=draft_id, draft_revision=1)
+    assert attempt is not None and attempt["state"] == "failed"
 
 def test_correction_holds_new_revision_while_old_send_outcome_is_unknown(tmp_path):
     from app.dws_client import DwsError
