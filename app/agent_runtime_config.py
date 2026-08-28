@@ -107,8 +107,9 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
         else:
             if not friday_runtime_project_id:
                 raise ValueError("friday_runtime requires CEO_FRIDAY_RUNTIME_PROJECT_ID")
-            if not friday_runtime_model:
-                raise ValueError("friday_runtime requires CEO_FRIDAY_RUNTIME_MODEL")
+            # The Friday project owns provider/model selection.  Keep this
+            # optional value only as route metadata for callers that still
+            # inspect it; it is never sent to Friday by the adapter.
             runtime_ticket = env.get("CEO_FRIDAY_RUNTIME_TICKET", "").strip()
             session_token = env.get("CEO_FRIDAY_SESSION_TOKEN", "").strip()
             if friday_auth_disabled and (runtime_ticket or session_token):

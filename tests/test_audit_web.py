@@ -4379,7 +4379,6 @@ def test_render_config_page_shows_friday_runtime_settings_without_credentials(
         "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,friday_runtime\n"
         "CEO_FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080\n"
         "CEO_FRIDAY_RUNTIME_PROJECT_ID=ceo\n"
-        "CEO_FRIDAY_RUNTIME_MODEL=MiniMax-M3\n"
         "CEO_FRIDAY_RUNTIME_AUTH_DISABLED=0\n"
         "CEO_FRIDAY_RUNTIME_TICKET=must-not-render\n",
         encoding="utf-8",
@@ -4392,7 +4391,7 @@ def test_render_config_page_shows_friday_runtime_settings_without_credentials(
     assert 'name="friday_runtime_enabled"' in html
     assert 'name="friday_runtime_base_url"' in html
     assert 'name="friday_runtime_project_id"' in html
-    assert 'name="friday_runtime_model"' in html
+    assert "Model is selected by the Friday project" in html
     assert 'name="friday_runtime_auth_disabled"' in html
     assert 'id="friday-runtime-ticket"' in html
     assert 'id="friday-session-token"' in html
@@ -4401,6 +4400,9 @@ def test_render_config_page_shows_friday_runtime_settings_without_credentials(
     assert 'aria-controls="friday-runtime-ticket"' in html
     assert 'aria-controls="friday-session-token"' in html
     assert "must-not-render" not in html
+    form_start = html.index('<form method="post" action="/config/agent-runtime">')
+    form_end = html.index("</form>", form_start)
+    assert form_start < html.index('name="friday_runtime_enabled"') < form_end
 
 
 def test_handle_agent_runtime_config_post_saves_friday_runtime_ticket_and_route(
@@ -4421,7 +4423,6 @@ def test_handle_agent_runtime_config_post_saves_friday_runtime_ticket_and_route(
             "&friday_runtime_enabled=1"
             "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A8080%2F"
             "&friday_runtime_project_id=ceo"
-            "&friday_runtime_model=MiniMax-M3"
             "&friday_runtime_auth_disabled=0"
             "&friday_runtime_ticket=ticket-123"
             "&friday_session_token="
@@ -4435,7 +4436,6 @@ def test_handle_agent_runtime_config_post_saves_friday_runtime_ticket_and_route(
     assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,friday_runtime" in env_text
     assert "CEO_FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080" in env_text
     assert "CEO_FRIDAY_RUNTIME_PROJECT_ID=ceo" in env_text
-    assert "CEO_FRIDAY_RUNTIME_MODEL=MiniMax-M3" in env_text
     assert "CEO_FRIDAY_RUNTIME_AUTH_DISABLED=0" in env_text
     assert "CEO_FRIDAY_RUNTIME_TICKET=ticket-123" in env_text
     assert "CEO_FRIDAY_SESSION_TOKEN=" in env_text
@@ -4460,7 +4460,7 @@ def test_handle_agent_runtime_config_post_preserves_friday_credential_when_blank
             "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
             "&codex_api_model=gpt-5.5&friday_runtime_enabled=1"
             "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A8080"
-            "&friday_runtime_project_id=ceo&friday_runtime_model=MiniMax-M3"
+            "&friday_runtime_project_id=ceo"
             "&friday_runtime_ticket=&friday_session_token="
         ).encode()
     )
@@ -4487,7 +4487,7 @@ def test_handle_agent_runtime_config_post_switches_friday_ticket_to_session_toke
             "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
             "&codex_api_model=gpt-5.5&friday_runtime_enabled=1"
             "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A8080"
-            "&friday_runtime_project_id=ceo&friday_runtime_model=MiniMax-M3"
+            "&friday_runtime_project_id=ceo"
             "&friday_runtime_ticket=&friday_session_token=new-session"
         ).encode()
     )
@@ -4516,7 +4516,7 @@ def test_handle_agent_runtime_config_post_auth_disabled_clears_friday_credential
             "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
             "&codex_api_model=gpt-5.5&friday_runtime_enabled=1"
             "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A8080"
-            "&friday_runtime_project_id=ceo&friday_runtime_model=MiniMax-M3"
+            "&friday_runtime_project_id=ceo"
             "&friday_runtime_auth_disabled=1&friday_runtime_ticket=&friday_session_token="
         ).encode()
     )
@@ -4527,6 +4527,65 @@ def test_handle_agent_runtime_config_post_auth_disabled_clears_friday_credential
     assert "CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1" in env_text
     assert 'CEO_FRIDAY_RUNTIME_TICKET=""' in env_text
     assert 'CEO_FRIDAY_SESSION_TOKEN=""' in env_text
+
+
+def test_handle_agent_runtime_config_post_preserves_friday_route_for_legacy_codex_form(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,friday_runtime\n"
+        "CEO_FRIDAY_RUNTIME_PROJECT_ID=ceo\n"
+        "CEO_FRIDAY_RUNTIME_TICKET=existing-ticket\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, _, _ = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5&codex_reasoning_effort=medium"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+        ).encode()
+    )
+
+    assert status == 303
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,friday_runtime" in (
+        env_path.read_text(encoding="utf-8")
+    )
+
+
+def test_handle_agent_runtime_config_post_can_disable_friday_route_from_form(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,friday_runtime\n"
+        "CEO_FRIDAY_RUNTIME_PROJECT_ID=ceo\n"
+        "CEO_FRIDAY_RUNTIME_TICKET=existing-ticket\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, _, _ = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5&codex_reasoning_effort=medium"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+            "&friday_runtime_settings_present=1"
+            "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A8080"
+            "&friday_runtime_project_id=ceo"
+            "&friday_runtime_auth_disabled=0"
+            "&friday_runtime_ticket=&friday_session_token="
+        ).encode()
+    )
+
+    assert status == 303
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth" in env_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_system_config_hides_and_rejects_unknown_env_keys(tmp_path, monkeypatch):

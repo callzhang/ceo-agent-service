@@ -71,7 +71,6 @@ def test_load_runtime_config_accepts_friday_runtime():
     config = load_runtime_config({
         "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,friday_runtime",
         "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080/",
-        "CEO_FRIDAY_RUNTIME_MODEL": "MiniMax-M3",
     })
     route = next(item for item in config.routes if item.name == "friday_runtime")
     assert route.model == "MiniMax-M3"

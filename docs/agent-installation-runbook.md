@@ -259,9 +259,11 @@ session token:
 CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api,friday_runtime
 CEO_FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080
 CEO_FRIDAY_RUNTIME_PROJECT_ID=<existing-friday-project-id>
-CEO_FRIDAY_RUNTIME_MODEL=MiniMax-M3
 CEO_FRIDAY_RUNTIME_TICKET=<runtime-ticket>
 ```
+
+The Friday project owns provider and model selection (for example,
+`MiniMax-M3`); CEO Agent does not override it.
 
 For a local runtime that intentionally has authentication disabled, set
 `CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1` and omit both credential variables. The

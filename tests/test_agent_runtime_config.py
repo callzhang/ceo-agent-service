@@ -142,6 +142,19 @@ def test_friday_runtime_accepts_explicit_auth_disabled_for_local_runtime():
     assert config.secret_for("friday_runtime") is None
 
 
+def test_friday_runtime_does_not_require_a_service_model_override():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+            "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",
+        }
+    )
+
+    assert config.friday_runtime_model == "default"
+    assert config.routes[0].model == "default"
+
+
 def test_friday_runtime_accepts_session_token_credential():
     config = load_runtime_config(
         {

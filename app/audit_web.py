@@ -3254,7 +3254,6 @@ def _render_agent_runtime_config() -> str:
         "CEO_FRIDAY_RUNTIME_BASE_URL", DEFAULT_FRIDAY_RUNTIME_BASE_URL
     )
     friday_project_id = _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_PROJECT_ID")
-    friday_model = _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_MODEL", "default")
     friday_auth_disabled = (
         _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_AUTH_DISABLED") == "1"
     )
@@ -3299,7 +3298,6 @@ def _render_agent_runtime_config() -> str:
         "页面不会重新下发已保存的 Token；输入新 Token 后可用眼睛按钮显示或隐藏本次输入，"
         "留空保存会保留已配置的 Token。</span></p>"
         "<p><button type=\"submit\">Save Agent Runtime</button></p>"
-        "</form>"
         "<script>"
         "(() => {"
         "const tokenInput = document.getElementById('codex-api-token');"
@@ -3316,6 +3314,7 @@ def _render_agent_runtime_config() -> str:
         "})();"
         "</script>"
         "<h3>Friday Runtime fallback</h3>"
+        '<input type="hidden" name="friday_runtime_settings_present" value="1">'
         '<p><label><input type="checkbox" name="friday_runtime_enabled" value="1"'
         f'{" checked" if friday_enabled else ""}>'
         " 启用 Friday Runtime fallback</label></p>"
@@ -3325,9 +3324,7 @@ def _render_agent_runtime_config() -> str:
         '<p><label>Project ID<br><input class="config-value-input" type="text" '
         'name="friday_runtime_project_id" value="'
         f'{escape(friday_project_id, quote=True)}"></label></p>'
-        '<p><label>Model<br><input class="config-value-input" type="text" '
-        'name="friday_runtime_model" required value="'
-        f'{escape(friday_model, quote=True)}"></label></p>'
+        "<p class=\"muted\">Model is selected by the Friday project; this service does not override it.</p>"
         '<p><label><input type="checkbox" name="friday_runtime_auth_disabled" value="1"'
         f'{" checked" if friday_auth_disabled else ""}>'
         " 禁用 Friday Runtime authentication</label></p>"
@@ -3366,6 +3363,7 @@ def _render_agent_runtime_config() -> str:
         "}"
         "})();"
         "</script>"
+        "</form>"
         "</section>"
     )
 
@@ -7752,6 +7750,23 @@ def handle_agent_runtime_config_post(
     api_enabled = parsed.get("codex_api_enabled", [""])[0] == "1"
     api_model = parsed.get("codex_api_model", [""])[0].strip()
     api_token = parsed.get("codex_api_token", [""])[0].strip()
+    persisted_env = read_env_file()
+    current_routes = {
+        value.strip()
+        for value in persisted_env.get("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth").split(",")
+        if value.strip()
+    }
+    friday_settings_present = "friday_runtime_settings_present" in parsed or any(
+        key in parsed
+        for key in (
+            "friday_runtime_enabled",
+            "friday_runtime_base_url",
+            "friday_runtime_project_id",
+            "friday_runtime_auth_disabled",
+            "friday_runtime_ticket",
+            "friday_session_token",
+        )
+    )
     friday_enabled = parsed.get("friday_runtime_enabled", [""])[0] == "1"
     friday_base_url_raw = parsed.get(
         "friday_runtime_base_url",
@@ -7761,15 +7776,21 @@ def handle_agent_runtime_config_post(
         "friday_runtime_project_id",
         [_agent_runtime_config_value("CEO_FRIDAY_RUNTIME_PROJECT_ID")],
     )[0].strip()
-    friday_model = parsed.get(
-        "friday_runtime_model",
-        [_agent_runtime_config_value("CEO_FRIDAY_RUNTIME_MODEL", "default")],
-    )[0].strip()
     friday_auth_disabled = (
         parsed.get("friday_runtime_auth_disabled", [""])[0] == "1"
     )
     friday_ticket = parsed.get("friday_runtime_ticket", [""])[0].strip()
     friday_session_token = parsed.get("friday_session_token", [""])[0].strip()
+    if not friday_settings_present:
+        # Older callers submitted only Codex fields. Preserve an explicitly
+        # configured Friday route when its own settings are present, while
+        # avoiding stale process-environment values from enabling it.
+        friday_enabled = "friday_runtime" in current_routes and bool(
+            friday_project_id
+            or friday_ticket
+            or friday_session_token
+            or friday_auth_disabled
+        )
     if model not in _AGENT_RUNTIME_MODEL_VALUES:
         return _invalid_agent_runtime_config("Model must be selected from this page.")
     if reasoning_effort not in _AGENT_RUNTIME_REASONING_EFFORTS:
@@ -7798,10 +7819,6 @@ def handle_agent_runtime_config_post(
         if not friday_project_id:
             return _invalid_agent_runtime_config(
                 "Project ID is required before Friday Runtime can be enabled."
-            )
-        if not friday_model:
-            return _invalid_agent_runtime_config(
-                "Friday Runtime model is required before it can be enabled."
             )
         if friday_ticket and friday_session_token:
             return _invalid_agent_runtime_config(
@@ -7845,7 +7862,6 @@ def handle_agent_runtime_config_post(
         "CEO_CODEX_API_MODEL": api_model,
         "CEO_FRIDAY_RUNTIME_BASE_URL": friday_base_url,
         "CEO_FRIDAY_RUNTIME_PROJECT_ID": friday_project_id,
-        "CEO_FRIDAY_RUNTIME_MODEL": friday_model,
         "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1" if friday_auth_disabled else "0",
     }
     if api_token:
