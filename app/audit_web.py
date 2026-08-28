@@ -2072,6 +2072,7 @@ def build_worker_status_payload(
     return {
         "service": service,
         "components": _service_component_snapshots(),
+        "wechat": _wechat_status_snapshot(store),
         "queues": queues,
         "attention_rows": attention_rows,
         "database": {"path": str(store.path)},
@@ -2109,6 +2110,10 @@ def _render_workers_content(
         "<section class=\"card worker-section compact-card\">"
         "<h2>Workers</h2>"
         f"{_worker_components_table(payload['components'])}"
+        "</section>"
+        "<section class=\"card worker-section compact-card\">"
+        "<h2>WeChat</h2>"
+        f"{_wechat_status_table(payload.get('wechat') or {})}"
         "</section>"
         "<section class=\"card worker-section compact-card\">"
         "<h2>Queues</h2>"
@@ -2156,6 +2161,45 @@ def _service_component_snapshots() -> list[dict[str, str]]:
         {"name": "task-maintenance", "role": "task agent scans/OKR review", "cadence": f"{task_work_item_interval_seconds()}s"},
         {"name": "follow-up-delivery", "role": "scheduled follow-up delivery", "cadence": f"{task_follow_up_interval_seconds()}s"},
     ]
+
+
+def _wechat_status_snapshot(store: AutoReplyStore) -> dict[str, object]:
+    """Read dedicated Reader/Sender health; never perform a WeChat action."""
+    from app import config
+    from app.wechat import service
+
+    def check(client, method: str) -> tuple[str, str]:
+        try:
+            result = getattr(client, method)()
+            return (str(result.get("status") or "ready") if isinstance(result, dict)
+                    else str(result or "ready"), "")
+        except Exception as exc:
+            return "unavailable", str(exc)
+
+    reader_status, reader_error = check(service.build_reader(), "health")
+    sender = service.build_sender()
+    sender_status, sender_error = check(sender, "health")
+    preflight, preflight_error = check(sender, "preflight")
+    state = service.ready_account_state(store)
+    return {
+        "reader": {"enabled": config.wechat_reader_enabled(), "status": reader_status, "error": reader_error},
+        "sender": {"enabled": config.wechat_sender_enabled(), "status": sender_status, "error": sender_error},
+        "preflight": {"status": preflight, "error": preflight_error},
+        "account": {"ready": state is not None, "account_id": state.get("account_id", "") if state else ""},
+    }
+
+
+def _wechat_status_table(status: dict[str, object]) -> str:
+    rows = []
+    for label, key in (("Reader IPC", "reader"), ("Sender IPC", "sender"), ("Sender preflight", "preflight")):
+        item = status.get(key) or {}
+        value = str(item.get("status") or "unknown") if isinstance(item, dict) else "unknown"
+        detail = str(item.get("error") or ("enabled" if item.get("enabled") else "")) if isinstance(item, dict) else ""
+        rows.append(f"<tr><th>{escape(label)}</th><td>{escape(value)}</td><td>{escape(detail)}</td></tr>")
+    account = status.get("account") or {}
+    account_value = "ready" if isinstance(account, dict) and account.get("ready") else "not ready"
+    rows.append(f"<tr><th>Account</th><td>{escape(account_value)}</td><td></td></tr>")
+    return "<table class=\"worker-table\"><thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
 
 
 def _launchd_service_status(label: str) -> dict[str, object]:
