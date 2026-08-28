@@ -285,7 +285,7 @@ command below reads only the provider variables using the repository's safe
 parser and never prints their values:
 
 ```sh
-python3 -c 'import os; from app.config import read_env_file; os.environ.update({k:v for k,v in read_env_file().items() if k.startswith("CEO_FRIDAY_RUNTIME_PROVIDER_")}); os.environ["CEO_LIVE_FRIDAY_RUNTIME_E2E"]="1"; os.execvp("python3", ["python3", "-m", "pytest", "--run-live", "-m", "live", "tests/e2e/test_friday_runtime_fallback.py::test_live_friday_runtime_subprocess_minimax_chat_completions", "-q"])'
+python3 -c 'import os; from pathlib import Path; os.environ["CEO_ENV_FILE"]="/private/tmp/ceo-agent-service-live-missing.env"; from app.config import read_env_file; os.environ.update({k:v for k,v in read_env_file(Path(".env")).items() if k.startswith("CEO_FRIDAY_RUNTIME_PROVIDER_")}); os.environ["CEO_LIVE_FRIDAY_RUNTIME_E2E"]="1"; os.execvp("python3", ["python3", "-m", "pytest", "--run-live", "-m", "live", "tests/e2e/test_friday_runtime_fallback.py::test_live_friday_runtime_subprocess_minimax_chat_completions", "-q"])'
 ```
 
 The live test starts a temporary Friday Runtime subprocess, project, and
