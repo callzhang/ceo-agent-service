@@ -474,7 +474,9 @@ def _parse_json_result(text: str) -> object:
         return json.loads(text)
     except json.JSONDecodeError:
         decoder = json.JSONDecoder()
-        start = text.find("{")
+        # Reasoning wrappers may themselves quote an example object; the final
+        # object is the provider's answer.
+        start = text.rfind("{")
         if start < 0:
             raise
         value, end = decoder.raw_decode(text[start:])
