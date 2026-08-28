@@ -4727,7 +4727,7 @@ def test_producer_and_consumer_loops_call_separate_methods_once():
     ]
 
 
-def test_consumer_loop_does_not_claim_work_when_runtime_refresh_fails():
+def test_consumer_loop_recovers_work_when_runtime_refresh_fails():
     calls = []
 
     class StopLoop(Exception):
@@ -4755,7 +4755,7 @@ def test_consumer_loop_does_not_claim_work_when_runtime_refresh_fails():
             runtime_refresher=Refresher(),
         )
 
-    assert calls == ["refresh", "sleep:11"]
+    assert calls == ["refresh", "consume", "sleep:11"]
 
 
 def test_producer_and_consumer_loops_skip_when_network_not_ready():

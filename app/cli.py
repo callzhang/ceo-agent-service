@@ -2371,8 +2371,10 @@ def run_consumer_loop(
             try:
                 runtime_refresher.refresh_expired()
             except Exception:  # noqa: BLE001 - keep the sole long-lived owner alive
-                sleep(poll_interval_seconds)
-                continue
+                # Route refresh is independent from local task recovery.  A
+                # failed refresh must not prevent consume_once() from closing
+                # stale ownership and requeueing resumable work.
+                pass
         try:
             worker.consume_once(max_tasks=max_tasks)
         except Exception as exc:

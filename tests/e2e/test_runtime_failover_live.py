@@ -14,6 +14,7 @@ import pytest
 
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+from app.config import read_env_file, repo_root
 from app.agent_runtime_probe import AgentRuntimeProbe
 from app.agent_runtime_router import (
     AgentRuntimeRouter,
@@ -93,7 +94,10 @@ class _RecordingExecutor:
 
 def _live_config():
     try:
-        config = load_runtime_config(os.environ)
+        # The service persists settings in the project's dotenv format; merge
+        # it explicitly so this test uses the same source as launchd startup.
+        runtime_env = {**os.environ, **read_env_file(repo_root() / ".env")}
+        config = load_runtime_config(runtime_env)
     except ValueError as exc:
         pytest.fail(f"live runtime configuration is invalid: {exc}")
     configured = {route.name for route in config.routes}

@@ -118,6 +118,9 @@ def test_routed_decision_correction_prompt_accepts_raw_output_only(tmp_path: Pat
             assert correction_prompt is not None
             correction = correction_prompt("not valid AgentEnvelope")
             assert "valid AgentEnvelope" in correction
+            assert '"user_response"' in correction
+            assert '"kind"' in correction
+            assert "mode/reply/text" in correction
             value = kwargs["parser"](
                 _agent_envelope_json(
                     kind="no_action", mode="no_reply", summary="无需回复。"

@@ -871,8 +871,12 @@ class CodexDecisionRunner:
                 result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
                     correction_prompt=lambda _raw_output: (
                         "Resume the same decision turn. Output one valid AgentEnvelope "
-                        "JSON object only. Reply actions require non-empty text and all "
-                        "non-error decisions require a non-empty audit summary."
+                        "JSON object only. Reply actions require non-empty "
+                        "user_response.text and all non-error decisions require a "
+                        "non-empty audit summary. Use the exact fields and enum "
+                        "values in the schema below; do not return mode/reply/text "
+                        "at the top level. "
+                        f"{REPLY_AGENT_ENVELOPE_SCHEMA_HINT}"
                     )
                 ),
             )

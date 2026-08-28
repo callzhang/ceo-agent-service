@@ -1538,7 +1538,6 @@ class DingTalkAutoReplyWorker:
         self._pass_channel_results = {}
         limit = max_tasks if max_tasks is not None else 50
         processed_tasks = 0
-        self._backfill_confirmed_direct_reply_ledgers(limit=limit)
         self._recover_stale_agent_reply_tasks()
         # Startup recovery can requeue effect-free work.  Bound repeated
         # restart/retry loops so a task cannot remain pending indefinitely.
@@ -2259,11 +2258,10 @@ class DingTalkAutoReplyWorker:
             raise RuntimeError("orchestration final run was not persisted")
         if result.status not in {"failed_retryable", "failed_terminal", "unknown"}:
             self.store.clear_codex_capacity_pause()
-        sent_reply = self._confirmed_direct_reply_ledger_entry(
-            task,
-            result.consumer_result,
-            result.audit_result,
-        )
+        # The Audit Agent owns provider execution and current-state reads.  The
+        # service persists the typed result and provider identifiers; it must
+        # not derive a delivery ledger row from an Audit read-back narrative.
+        sent_reply = None
         decision_options: tuple[DecisionOption, ...] = (
             result.consumer_result.decision_options
             if result.consumer_result is not None

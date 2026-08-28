@@ -1294,15 +1294,7 @@ class AgentTurnProcess(Generic[ResultT]):
         except Exception as exc:
             self._fail_runtime_attempt_unclassified(active_attempt)
             provider_recovery = _agent_process_error_code(exc)
-            code = (
-                provider_recovery
-                if provider_recovery != "codex_process_failed"
-                else (
-                    str(exc)
-                    if str(exc).startswith("audit_recovery_")
-                    else "codex_process_failed"
-                )
-            )
+            code = provider_recovery
             self._fail_running(run, code)
             if provider_recovery in {
                 CODEX_PROVIDER_UNAVAILABLE,
@@ -1726,11 +1718,6 @@ class AgentTurnProcess(Generic[ResultT]):
         if getattr(result, "proposal_revision") != run.proposal_revision:
             self._fail_running(run, "audit_proposal_revision_mismatch")
             raise RuntimeError("audit_proposal_revision_mismatch")
-        if getattr(result, "outcome") is AuditOutcome.EXECUTED:
-            external_result = getattr(result, "external_result", None)
-            if external_result is not None and external_result.operation_id != run.operation_id:
-                self._fail_running(run, "audit_operation_mismatch")
-                raise RuntimeError("audit_operation_mismatch")
 
     def _raise_for_process_failure(
         self, process: ProcessRunResult, *, run: AgentRun
