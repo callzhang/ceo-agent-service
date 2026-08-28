@@ -6017,7 +6017,7 @@ def test_failure_reason_uses_human_stage_label_without_double_punctuation(
 
     assert reason == (
         "生成回复阶段：Agent 执行进程未成功完成，因此本轮没有得到可验证结果；"
-        "未执行外部操作。"
+        "按普通失败流程重试或反馈。"
     )
     assert "consumer:" not in reason
     assert "。；" not in reason
@@ -6291,7 +6291,7 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
 
     assert "状态：</strong>需要你处理" in html
     assert "原因：</strong>Current task did not complete" in html
-    assert "外部副作用：</strong>未执行任何外部动作" in html
+    assert "外部副作用：</strong>外部动作是否完成由当前结果和业务系统状态决定" in html
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/history"' in html
     assert ">重试当前任务</button>" in html
     assert ">暂不处理</button>" in html
@@ -6485,7 +6485,7 @@ def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
     assert "需要你决策：</strong>否" in html
     assert "状态：</strong>需要你处理" in html
     assert "原因：</strong>Current task did not complete" in html
-    assert "外部副作用：</strong>未执行任何外部动作" in html
+    assert "外部副作用：</strong>外部动作是否完成由当前结果和业务系统状态决定" in html
 
 
 def test_retrying_meeting_shows_persisted_plan_without_manager_actions(
