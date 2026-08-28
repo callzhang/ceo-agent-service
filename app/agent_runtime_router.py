@@ -1531,9 +1531,12 @@ class RoutedCodexExecution:
             transcript_end = 0
             line_count = 0
             observed_session_id = route_session_id or ""
-            transcript_reference = (
-                f"codex_session:{observed_session_id}" if observed_session_id else ""
-            )
+            # Friday's operation identifier is the durable execution evidence;
+            # unlike Codex, it has no stdout session transcript to reference.
+            if route.runtime_kind is not RuntimeKind.FRIDAY_RUNTIME:
+                transcript_reference = (
+                    f"codex_session:{observed_session_id}" if observed_session_id else ""
+                )
 
             def current_evidence() -> tuple[str, str, int, int]:
                 return (
@@ -1742,9 +1745,10 @@ class RoutedCodexExecution:
                         action=lambda: self._session_line_counter(observed_session_id),
                     ),
                 )
-            transcript_reference = (
-                f"codex_session:{observed_session_id}" if observed_session_id else ""
-            )
+            if route.runtime_kind is not RuntimeKind.FRIDAY_RUNTIME:
+                transcript_reference = (
+                    f"codex_session:{observed_session_id}" if observed_session_id else ""
+                )
 
             if process.returncode == 0 and not process.timed_out:
                 try:

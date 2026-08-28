@@ -226,6 +226,7 @@ def test_oauth_and_codex_failure_fall_back_to_friday_in_one_agent_run(
         "friday_runtime",
     ]
     assert attempts[-1].status == "completed"
+    assert attempts[-1].transcript_reference == "friday_operation:e2e-operation"
     runs = store.list_agent_runs_for_task_generation(
         _task_id_from_run(store, run_id), generation
     )
