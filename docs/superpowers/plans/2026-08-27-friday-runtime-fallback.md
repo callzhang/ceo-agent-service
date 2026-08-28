@@ -73,7 +73,9 @@ def test_load_runtime_config_accepts_friday_runtime():
         "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080/",
     })
     route = next(item for item in config.routes if item.name == "friday_runtime")
-    assert route.model == "MiniMax-M3"
+    # Friday project owns provider/model selection; CEO Agent keeps metadata
+    # at the non-authoritative default and does not send a model override.
+    assert route.model == "default"
     assert config.friday_runtime_base_url == "http://127.0.0.1:8080"
 ```
 
