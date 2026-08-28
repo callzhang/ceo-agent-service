@@ -8,7 +8,7 @@ import subprocess
 from typing import Callable, Protocol
 from urllib.request import urlopen
 
-from app.database_backup import create_database_backup
+from app.database_backup import create_database_backup, prune_database_backups
 from app.repository_upgrade import GitRepository
 
 
@@ -293,7 +293,13 @@ class RepositoryUpdater:
             / "backups"
             / f"{self.database_path.stem}-before-upgrade-{operation.operation_id}.sqlite3"
         )
-        return create_database_backup(self.database_path, destination)
+        backup_path = create_database_backup(self.database_path, destination)
+        prune_database_backups(
+            destination.parent,
+            today=datetime.now(timezone.utc).date(),
+            keep_path=backup_path,
+        )
+        return backup_path
 
     def _persist(
         self,

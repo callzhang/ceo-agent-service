@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 import json
+import sqlite3
 
 import pytest
 
@@ -170,3 +171,22 @@ def test_persisted_operation_can_be_loaded_by_id():
         original_commit="a" * 40,
         target_commit="b" * 40,
     )
+
+
+def test_upgrade_backups_keep_only_one_snapshot(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute("create table state (value text)")
+        db.execute("insert into state values ('before')")
+        db.commit()
+    updater = RepositoryUpdater(local, StateStore(), database_path=db_path)
+    first = updater._backup(operation(local))
+    second_operation = operation(local).__class__(
+        **{**operation(local).__dict__, "operation_id": "op-2"}
+    )
+    second = updater._backup(second_operation)
+
+    snapshots = sorted((tmp_path / "backups").glob("*.sqlite3"))
+    assert first != second
+    assert snapshots == [second]
