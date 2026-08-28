@@ -21,7 +21,6 @@ STRUCTURED_RUNTIME_CAPABILITIES = frozenset(
     {
         "structured_output",
         "local_schema_validation",
-        "consumer_read_only_enforcement",
         "reviewed_read_tools",
     }
 )

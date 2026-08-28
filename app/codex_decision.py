@@ -53,7 +53,7 @@ SECRET_PATTERNS = (
     re.compile(r"oauth[_-]?code=[^\s&]+", re.IGNORECASE),
 )
 DECISION_RUNTIME_CAPABILITIES = frozenset(
-    {"structured_output", "consumer_read_only_enforcement"}
+    {"structured_output"}
 )
 
 

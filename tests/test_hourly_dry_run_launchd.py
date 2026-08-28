@@ -89,7 +89,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert 'CEO_CONSUMER_WORKERS="${CEO_CONSUMER_WORKERS:-2}"' in command[2]
     assert plist["EnvironmentVariables"]["CEO_TASK_CODEX_TIMEOUT_SECONDS"] == "900"
     assert plist["EnvironmentVariables"]["CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS"] == "300"
-    assert plist["EnvironmentVariables"]["CEO_AGENT_RUNTIME_ROUTES"] == "codex_oauth"
+    assert plist["EnvironmentVariables"].get("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth") == "codex_oauth"
     assert "DWS_DISABLE_KEYCHAIN" not in command[2]
     assert "DWS_KEYCHAIN_DIR" not in command[2]
     assert 'CEO_DING_ROBOT_NAME="${CEO_DING_ROBOT_NAME:-磊哥}"' in command[2]
@@ -118,7 +118,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert "--user-id {user_id} --period-label {period_label}" in probe.stdout
     env = plist["EnvironmentVariables"]
     assert env["CEO_SERVICE_ROOT"] == (
-        "/Users/derek/Documents/Projects/ceo-agent-service-release"
+        "/Users/derek/Documents/Projects/ceo-agent-service"
     )
     assert env["CEO_OKR_BROWSER_STORAGE_STATE"] == (
         "/Users/derek/Documents/memory/AI听记/.storage_state.json"

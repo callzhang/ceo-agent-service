@@ -107,5 +107,5 @@ def test_canonical_prompt_delegates_personnel_and_candidate_policy_to_skill():
     assert "independently selects and reads every applicable" in text
     assert "没有列出的字段不要编造" not in text
     assert "do not invent facts, targets, or receipts" in text
-    assert "never expose credentials or internal runtime details" in text
+    assert "External Secrecy" in text
     assert "只有明确需要 <var: principal> 处理时才回复" not in text

@@ -93,13 +93,13 @@ _COMMON_RUNTIME_CAPABILITIES = frozenset(
     {"structured_output", "local_schema_validation"}
 )
 _CONSUMER_RUNTIME_CAPABILITIES = frozenset(
-    {"consumer_read_only_enforcement", "reviewed_read_tools"}
+    {"reviewed_read_tools"}
 )
 _AUDIT_RUNTIME_CAPABILITIES = frozenset(
     {"audit_effect_visibility", "reviewed_read_tools", "reviewed_write_tools"}
 )
 _RECONCILIATION_RUNTIME_CAPABILITIES = frozenset(
-    {"consumer_read_only_enforcement", "reconciliation_read_only"}
+    {"reconciliation_read_only"}
 )
 _RUNTIME_DOMAIN_RESULT_CODEC_VERSION = 1
 _RUNTIME_RESULT_EVIDENCE_VERSION = 1
