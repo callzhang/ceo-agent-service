@@ -38,8 +38,10 @@ from app.agent_contracts import (
 )
 from app.agent_runtime_config import (
     DEFAULT_CODEX_API_BASE_URL,
+    DEFAULT_FRIDAY_RUNTIME_BASE_URL,
     SUPPORTED_CODEX_RUNTIME_MODELS,
     normalize_codex_api_base_url,
+    normalize_friday_runtime_base_url,
 )
 from app.approval_history import (
     ApprovalHistoryResult,
@@ -3247,6 +3249,21 @@ def _render_agent_runtime_config() -> str:
     }
     api_enabled = "codex_api" in routes
     token_configured = bool(_agent_runtime_config_value("CEO_CODEX_API_KEY"))
+    friday_enabled = "friday_runtime" in routes
+    friday_base_url = _agent_runtime_config_value(
+        "CEO_FRIDAY_RUNTIME_BASE_URL", DEFAULT_FRIDAY_RUNTIME_BASE_URL
+    )
+    friday_project_id = _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_PROJECT_ID")
+    friday_model = _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_MODEL", "default")
+    friday_auth_disabled = (
+        _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_AUTH_DISABLED") == "1"
+    )
+    friday_ticket_configured = bool(
+        _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_TICKET")
+    )
+    friday_session_configured = bool(
+        _agent_runtime_config_value("CEO_FRIDAY_SESSION_TOKEN")
+    )
     return (
         '<section class="card">'
         "<h2>Agent Runtime</h2>"
@@ -3296,6 +3313,57 @@ def _render_agent_runtime_config() -> str:
         "toggle.querySelector('span').textContent = showing ? '显示' : '隐藏';"
         "toggle.setAttribute('aria-pressed', String(!showing));"
         "});"
+        "})();"
+        "</script>"
+        "<h3>Friday Runtime fallback</h3>"
+        '<p><label><input type="checkbox" name="friday_runtime_enabled" value="1"'
+        f'{" checked" if friday_enabled else ""}>'
+        " 启用 Friday Runtime fallback</label></p>"
+        '<p><label>Runtime Base URL<br><input class="config-value-input" type="url" '
+        'name="friday_runtime_base_url" required value="'
+        f'{escape(friday_base_url, quote=True)}"></label></p>'
+        '<p><label>Project ID<br><input class="config-value-input" type="text" '
+        'name="friday_runtime_project_id" value="'
+        f'{escape(friday_project_id, quote=True)}"></label></p>'
+        '<p><label>Model<br><input class="config-value-input" type="text" '
+        'name="friday_runtime_model" required value="'
+        f'{escape(friday_model, quote=True)}"></label></p>'
+        '<p><label><input type="checkbox" name="friday_runtime_auth_disabled" value="1"'
+        f'{" checked" if friday_auth_disabled else ""}>'
+        " 禁用 Friday Runtime authentication</label></p>"
+        '<p><label>Runtime ticket<br><input id="friday-runtime-ticket" '
+        'class="config-value-input secret-token-input" type="password" '
+        'name="friday_runtime_ticket" autocomplete="new-password" '
+        f'placeholder="{"●" * 12 if friday_ticket_configured else ""}" '
+        f'data-token-configured="{str(friday_ticket_configured).lower()}"></label> '
+        '<button id="friday-runtime-ticket-toggle" class="secret-token-toggle" type="button" '
+        'aria-controls="friday-runtime-ticket" aria-pressed="false" '
+        'aria-label="显示或隐藏本次输入的 Friday Runtime ticket">👁 <span>显示</span></button></p>'
+        '<p><label>Session token<br><input id="friday-session-token" '
+        'class="config-value-input secret-token-input" type="password" '
+        'name="friday_session_token" autocomplete="new-password" '
+        f'placeholder="{"●" * 12 if friday_session_configured else ""}" '
+        f'data-token-configured="{str(friday_session_configured).lower()}"></label> '
+        '<button id="friday-session-token-toggle" class="secret-token-toggle" type="button" '
+        'aria-controls="friday-session-token" aria-pressed="false" '
+        'aria-label="显示或隐藏本次输入的 Friday session token">👁 <span>显示</span></button><br>'
+        f'<span class="muted">Ticket 当前状态：{"已配置" if friday_ticket_configured else "未配置"}；'
+        f'Session token 当前状态：{"已配置" if friday_session_configured else "未配置"}。'
+        "页面不会重新下发已保存的凭据；留空保存会保留已有凭据。"
+        "启用认证时必须最终只保留一种凭据。</span></p>"
+        "<script>"
+        "(() => {"
+        "for (const [inputId, toggleId] of [['friday-runtime-ticket', 'friday-runtime-ticket-toggle'], ['friday-session-token', 'friday-session-token-toggle']]) {"
+        "const input = document.getElementById(inputId);"
+        "const toggle = document.getElementById(toggleId);"
+        "if (!input || !toggle) continue;"
+        "toggle.addEventListener('click', () => {"
+        "const showing = input.type === 'text';"
+        "input.type = showing ? 'password' : 'text';"
+        "toggle.querySelector('span').textContent = showing ? '显示' : '隐藏';"
+        "toggle.setAttribute('aria-pressed', String(!showing));"
+        "});"
+        "}"
         "})();"
         "</script>"
         "</section>"
@@ -7684,6 +7752,24 @@ def handle_agent_runtime_config_post(
     api_enabled = parsed.get("codex_api_enabled", [""])[0] == "1"
     api_model = parsed.get("codex_api_model", [""])[0].strip()
     api_token = parsed.get("codex_api_token", [""])[0].strip()
+    friday_enabled = parsed.get("friday_runtime_enabled", [""])[0] == "1"
+    friday_base_url_raw = parsed.get(
+        "friday_runtime_base_url",
+        [_agent_runtime_config_value("CEO_FRIDAY_RUNTIME_BASE_URL", DEFAULT_FRIDAY_RUNTIME_BASE_URL)],
+    )[0]
+    friday_project_id = parsed.get(
+        "friday_runtime_project_id",
+        [_agent_runtime_config_value("CEO_FRIDAY_RUNTIME_PROJECT_ID")],
+    )[0].strip()
+    friday_model = parsed.get(
+        "friday_runtime_model",
+        [_agent_runtime_config_value("CEO_FRIDAY_RUNTIME_MODEL", "default")],
+    )[0].strip()
+    friday_auth_disabled = (
+        parsed.get("friday_runtime_auth_disabled", [""])[0] == "1"
+    )
+    friday_ticket = parsed.get("friday_runtime_ticket", [""])[0].strip()
+    friday_session_token = parsed.get("friday_session_token", [""])[0].strip()
     if model not in _AGENT_RUNTIME_MODEL_VALUES:
         return _invalid_agent_runtime_config("Model must be selected from this page.")
     if reasoning_effort not in _AGENT_RUNTIME_REASONING_EFFORTS:
@@ -7698,6 +7784,7 @@ def handle_agent_runtime_config_post(
         api_base_url = normalize_codex_api_base_url(
             parsed.get("codex_api_base_url", [""])[0]
         )
+        friday_base_url = normalize_friday_runtime_base_url(friday_base_url_raw)
     except ValueError as exc:
         return _invalid_agent_runtime_config(str(exc))
     existing_token = _agent_runtime_config_value("CEO_CODEX_API_KEY")
@@ -7705,17 +7792,74 @@ def handle_agent_runtime_config_post(
         return _invalid_agent_runtime_config(
             "API Token is required before API fallback can be enabled."
         )
+    existing_friday_ticket = _agent_runtime_config_value("CEO_FRIDAY_RUNTIME_TICKET")
+    existing_friday_session = _agent_runtime_config_value("CEO_FRIDAY_SESSION_TOKEN")
+    if friday_enabled:
+        if not friday_project_id:
+            return _invalid_agent_runtime_config(
+                "Project ID is required before Friday Runtime can be enabled."
+            )
+        if not friday_model:
+            return _invalid_agent_runtime_config(
+                "Friday Runtime model is required before it can be enabled."
+            )
+        if friday_ticket and friday_session_token:
+            return _invalid_agent_runtime_config(
+                "Enter either a Friday Runtime ticket or a session token, not both."
+            )
+        # A newly entered credential replaces the other stored credential.  When
+        # both inputs are blank, retain the existing single credential.
+        if friday_ticket:
+            resulting_ticket, resulting_session = friday_ticket, ""
+        elif friday_session_token:
+            resulting_ticket, resulting_session = "", friday_session_token
+        else:
+            resulting_ticket, resulting_session = (
+                existing_friday_ticket,
+                existing_friday_session,
+            )
+        if friday_auth_disabled:
+            if friday_ticket or friday_session_token:
+                return _invalid_agent_runtime_config(
+                    "Disable authentication or clear the Friday credentials before saving."
+                )
+        elif bool(resulting_ticket) == bool(resulting_session):
+            return _invalid_agent_runtime_config(
+                "Friday Runtime requires exactly one ticket or session token."
+            )
     updates = {
         "CEO_CODEX_MODEL": model,
         "CEO_CODEX_MODEL_REASONING_EFFORT": reasoning_effort,
         "CEO_AGENT_RUNTIME_ROUTES": (
-            "codex_oauth,codex_api" if api_enabled else "codex_oauth"
+            ",".join(
+                route
+                for route, enabled in (
+                    ("codex_oauth", True),
+                    ("codex_api", api_enabled),
+                    ("friday_runtime", friday_enabled),
+                )
+                if enabled
+            )
         ),
         "CEO_CODEX_API_BASE_URL": api_base_url,
         "CEO_CODEX_API_MODEL": api_model,
+        "CEO_FRIDAY_RUNTIME_BASE_URL": friday_base_url,
+        "CEO_FRIDAY_RUNTIME_PROJECT_ID": friday_project_id,
+        "CEO_FRIDAY_RUNTIME_MODEL": friday_model,
+        "CEO_FRIDAY_RUNTIME_AUTH_DISABLED": "1" if friday_auth_disabled else "0",
     }
     if api_token:
         updates["CEO_CODEX_API_KEY"] = api_token
+    if friday_auth_disabled:
+        updates["CEO_FRIDAY_RUNTIME_TICKET"] = ""
+        updates["CEO_FRIDAY_SESSION_TOKEN"] = ""
+    elif friday_enabled:
+        if friday_ticket:
+            updates["CEO_FRIDAY_RUNTIME_TICKET"] = friday_ticket
+            updates["CEO_FRIDAY_SESSION_TOKEN"] = ""
+        elif friday_session_token:
+            updates["CEO_FRIDAY_SESSION_TOKEN"] = friday_session_token
+            updates["CEO_FRIDAY_RUNTIME_TICKET"] = ""
     write_env_values(updates)
     return 303, {"Location": "/config?tab=agent-runtime&saved=1"}, ""
 

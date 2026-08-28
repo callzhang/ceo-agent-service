@@ -4370,6 +4370,165 @@ def test_render_config_page_shows_dedicated_agent_runtime_settings_without_token
     assert "CEO_CODEX_MODEL" not in html
 
 
+def test_render_config_page_shows_friday_runtime_settings_without_credentials(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,friday_runtime\n"
+        "CEO_FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080\n"
+        "CEO_FRIDAY_RUNTIME_PROJECT_ID=ceo\n"
+        "CEO_FRIDAY_RUNTIME_MODEL=MiniMax-M3\n"
+        "CEO_FRIDAY_RUNTIME_AUTH_DISABLED=0\n"
+        "CEO_FRIDAY_RUNTIME_TICKET=must-not-render\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    html = render_config_page(active_tab="agent-runtime")
+
+    assert "Friday Runtime fallback" in html
+    assert 'name="friday_runtime_enabled"' in html
+    assert 'name="friday_runtime_base_url"' in html
+    assert 'name="friday_runtime_project_id"' in html
+    assert 'name="friday_runtime_model"' in html
+    assert 'name="friday_runtime_auth_disabled"' in html
+    assert 'id="friday-runtime-ticket"' in html
+    assert 'id="friday-session-token"' in html
+    assert 'placeholder="●●●●●●●●●●●●"' in html
+    assert 'data-token-configured="true"' in html
+    assert 'aria-controls="friday-runtime-ticket"' in html
+    assert 'aria-controls="friday-session-token"' in html
+    assert "must-not-render" not in html
+
+
+def test_handle_agent_runtime_config_post_saves_friday_runtime_ticket_and_route(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text("CEO_CODEX_API_KEY=existing-token\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, headers, html = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5"
+            "&codex_reasoning_effort=medium"
+            "&codex_api_enabled=0"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5"
+            "&friday_runtime_enabled=1"
+            "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A8080%2F"
+            "&friday_runtime_project_id=ceo"
+            "&friday_runtime_model=MiniMax-M3"
+            "&friday_runtime_auth_disabled=0"
+            "&friday_runtime_ticket=ticket-123"
+            "&friday_session_token="
+        ).encode()
+    )
+
+    assert status == 303
+    assert headers["Location"] == "/config?tab=agent-runtime&saved=1"
+    assert html == ""
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,friday_runtime" in env_text
+    assert "CEO_FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080" in env_text
+    assert "CEO_FRIDAY_RUNTIME_PROJECT_ID=ceo" in env_text
+    assert "CEO_FRIDAY_RUNTIME_MODEL=MiniMax-M3" in env_text
+    assert "CEO_FRIDAY_RUNTIME_AUTH_DISABLED=0" in env_text
+    assert "CEO_FRIDAY_RUNTIME_TICKET=ticket-123" in env_text
+    assert "CEO_FRIDAY_SESSION_TOKEN=" in env_text
+    assert "CEO_CODEX_API_KEY=existing-token" in env_text
+
+
+def test_handle_agent_runtime_config_post_preserves_friday_credential_when_blank(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=friday_runtime\n"
+        "CEO_FRIDAY_RUNTIME_TICKET=existing-ticket\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, _, _ = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5&codex_reasoning_effort=medium"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5&friday_runtime_enabled=1"
+            "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A8080"
+            "&friday_runtime_project_id=ceo&friday_runtime_model=MiniMax-M3"
+            "&friday_runtime_ticket=&friday_session_token="
+        ).encode()
+    )
+
+    assert status == 303
+    assert "CEO_FRIDAY_RUNTIME_TICKET=existing-ticket" in env_path.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_handle_agent_runtime_config_post_switches_friday_ticket_to_session_token(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_FRIDAY_RUNTIME_TICKET=existing-ticket\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, _, _ = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5&codex_reasoning_effort=medium"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5&friday_runtime_enabled=1"
+            "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A8080"
+            "&friday_runtime_project_id=ceo&friday_runtime_model=MiniMax-M3"
+            "&friday_runtime_ticket=&friday_session_token=new-session"
+        ).encode()
+    )
+
+    assert status == 303
+    env_text = env_path.read_text(encoding="utf-8")
+    assert 'CEO_FRIDAY_RUNTIME_TICKET=""' in env_text
+    assert "CEO_FRIDAY_SESSION_TOKEN=new-session" in env_text
+
+
+def test_handle_agent_runtime_config_post_auth_disabled_clears_friday_credentials(
+    tmp_path: Path,
+    monkeypatch,
+):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_FRIDAY_RUNTIME_TICKET=existing-ticket\n"
+        "CEO_FRIDAY_SESSION_TOKEN=existing-session\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    status, _, html = handle_agent_runtime_config_post(
+        (
+            "codex_model=gpt-5.5&codex_reasoning_effort=medium"
+            "&codex_api_base_url=https%3A%2F%2Fapi.openai.com%2Fv1"
+            "&codex_api_model=gpt-5.5&friday_runtime_enabled=1"
+            "&friday_runtime_base_url=http%3A%2F%2F127.0.0.1%3A8080"
+            "&friday_runtime_project_id=ceo&friday_runtime_model=MiniMax-M3"
+            "&friday_runtime_auth_disabled=1&friday_runtime_ticket=&friday_session_token="
+        ).encode()
+    )
+
+    assert status == 303
+    assert html == ""
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1" in env_text
+    assert 'CEO_FRIDAY_RUNTIME_TICKET=""' in env_text
+    assert 'CEO_FRIDAY_SESSION_TOKEN=""' in env_text
+
+
 def test_system_config_hides_and_rejects_unknown_env_keys(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
     env_path.write_text(
