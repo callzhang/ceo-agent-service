@@ -15,7 +15,6 @@ from app.agent_runtime_contracts import (
 from app.agent_runtime_router import (
     AgentRuntimeRouter,
     failover_is_safe,
-    local_codex_session_effect_probe,
     _parse_timestamp,
 )
 from app.store import AgentRole, AutoReplyStore
@@ -27,23 +26,6 @@ def test_parse_timestamp_interprets_naive_values_as_beijing_time():
     assert _parse_timestamp("2026-08-20 10:00:00") == datetime(
         2026, 8, 20, 2, 0, tzinfo=UTC
     )
-
-
-def test_effect_probe_reports_inconclusive_evidence_without_classifying_as_effect(
-    tmp_path, monkeypatch
-):
-    session = tmp_path / "session.jsonl"
-    session.write_text('{"type":"item.started","item":{"type":"new_event"}}\n')
-    monkeypatch.setattr(
-        "app.agent_runtime_router.find_codex_session_path",
-        lambda _session_id, codex_home=None: session,
-    )
-
-    probe = local_codex_session_effect_probe(codex_home=tmp_path)
-
-    # An unrecognised transcript item is inconclusive.  Callers must only
-    # block when the probe positively observes an effect (True).
-    assert probe("session-1", 0, 1) is None
 
 
 def route(name: str) -> RuntimeRoute:
@@ -68,8 +50,8 @@ def snapshot(
     *,
     capabilities: frozenset[str] = frozenset({"structured_output"}),
     healthy: bool = True,
-    checked_at: str = "2026-08-20 09:59:00",
-    expires_at: str = "2026-08-20 10:05:00",
+    checked_at: str = "2026-08-20T09:59:00+00:00",
+    expires_at: str = "2026-08-20T10:05:00+00:00",
     failure: RuntimeFailure | None = None,
 ) -> RuntimeCapabilitySnapshot:
     return RuntimeCapabilitySnapshot(
@@ -233,7 +215,7 @@ def test_reviewed_skill_requires_exact_discovered_name_and_digest(store):
 
 def test_initial_route_honors_pause_health_freshness_and_capabilities(store):
     routes = (route("codex_oauth"), route("codex_api"))
-    required = frozenset({"structured_output", "consumer_read_only_enforcement"})
+    required = frozenset({"structured_output"})
     snapshots = {
         "codex_oauth": snapshot(
             "codex_oauth",
@@ -369,7 +351,7 @@ def test_operation_failover_requires_runnable_parent_and_sealed_read_only_policy
     assert terminal_parent.reason == "operation_not_runnable"
 
 
-def test_operation_failover_blocks_effect_evidence_and_honors_route_pause(store):
+def test_operation_failover_ignores_effect_evidence_and_honors_route_pause(store):
     workload_key = seed_structured_operation(store)
     failure = failover_failure()
     claimed = store.claim_runtime_operation_attempt(
@@ -387,14 +369,15 @@ def test_operation_failover_blocks_effect_evidence_and_honors_route_pause(store)
     )
     router = make_router(store)
 
-    blocked = router.next_operation_route(
+    eligible = router.next_operation_route(
         workload_kind="structured",
         workload_key=workload_key,
         failed_attempt=failed,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
     )
-    assert blocked.reason == "effect_started"
+    assert eligible.route == route("codex_api")
+    assert eligible.reason == "eligible_route"
 
     workload_key_2 = seed_structured_operation(store, 13)
     failed_2 = failed_operation_attempt(store, workload_key=workload_key_2)
@@ -1034,7 +1017,11 @@ def test_expired_route_pause_does_not_block_route(store, running_attempt):
         {"codex_api": snapshot("codex_api", expires_at="2026-08-20T09:59:00Z")},
         {"codex_api": snapshot("codex_api", expires_at="not-a-timestamp")},
         {"codex_api": snapshot("codex_api", checked_at="not-a-timestamp")},
-        {"codex_api": snapshot("codex_api", checked_at="2026-08-20 10:01:00")},
+        {
+            "codex_api": snapshot(
+                "codex_api", checked_at="2026-08-20T10:01:00+00:00"
+            )
+        },
         {"codex_api": snapshot("different-route")},
         {"codex_api": snapshot("codex_api", failure=failover_failure())},
     ],

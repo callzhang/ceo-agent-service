@@ -460,7 +460,7 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
             },
         }
     )
-    store.enqueue_work_summary_input(
+    input_id = store.enqueue_work_summary_input(
         item.source.type.value,
         item.source.ref,
         item.model_dump_json(),
@@ -4320,7 +4320,6 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
         {
             "structured_output",
             "local_schema_validation",
-            "consumer_read_only_enforcement",
             "reviewed_read_tools",
         }
     )

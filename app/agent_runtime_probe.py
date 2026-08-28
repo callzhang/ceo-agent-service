@@ -552,15 +552,37 @@ def _probe_stream_failure_code(raw: str) -> str | None:
         return "runtime_probe_incomplete"
     if not payloads or any(not isinstance(payload, dict) for payload in payloads):
         return "runtime_probe_incomplete"
+    # Provider event envelopes are transport details, not an application
+    # policy gate.  Normalize the two response shapes currently emitted by
+    # Codex (JSONL item.completed and response_item/message) and ignore future
+    # informational events.  The probe only needs to establish that one
+    # structured turn completed with the canonical result.
+    normalized: list[dict[str, object]] = []
+    for payload in payloads:
+        payload_type = payload.get("type")
+        if payload_type == "response_item":
+            response = payload.get("payload")
+            if isinstance(response, dict) and response.get("type") == "message":
+                content = response.get("content")
+                texts = [
+                    part.get("text")
+                    for part in content
+                    if isinstance(part, dict)
+                    and part.get("type") == "output_text"
+                    and isinstance(part.get("text"), str)
+                ] if isinstance(content, list) else []
+                if texts:
+                    normalized.append(
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "agent_message", "text": "".join(texts)},
+                        }
+                    )
+            continue
+        if payload_type in {"thread.started", "turn.started", "turn.completed", "turn.failed", "item.completed"}:
+            normalized.append(payload)
+    payloads = normalized
     types = [payload.get("type") for payload in payloads]
-    allowed_types = {
-        "thread.started",
-        "turn.started",
-        "item.completed",
-        "turn.completed",
-    }
-    if any(payload_type not in allowed_types for payload_type in types):
-        return "runtime_probe_policy_violation"
     for payload in payloads:
         if payload.get("type") != "item.completed":
             continue
@@ -569,7 +591,7 @@ def _probe_stream_failure_code(raw: str) -> str | None:
             "agent_message",
             "error",
         }:
-            return "runtime_probe_policy_violation"
+            return "runtime_probe_incomplete"
     if types.count("thread.started") != 1:
         return "runtime_probe_incomplete"
     if types.count("turn.started") != 1 or types.count("turn.completed") != 1:

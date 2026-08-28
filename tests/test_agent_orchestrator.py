@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_context import AgentContextMessage, AgentTaskContext, AuditTurnContext
+from app.agent_context import AgentContextMessage, AgentTaskContext
 from app.agent_contracts import (
     AuditAgentResult,
     AuditOutcome,
@@ -72,7 +72,7 @@ def _bounded_needs_human_result() -> ConsumerAgentResult:
             "outcome": "needs_human",
             "summary": "possible external inquiry",
             "proposal": None,
-            "decision_options": [
+                "decision_options": [
                 {
                     "key": "fact_finding",
                     "label": "仅作事实调研",
@@ -84,9 +84,11 @@ def _bounded_needs_human_result() -> ConsumerAgentResult:
                     "label": "暂停",
                     "instruction": "暂不联系。",
                     "consequence": "等待后续确认。",
-                },
-            ],
-            "error": {
+                    },
+                ],
+                "risk": "high",
+                "confidence": 0.1,
+                "error": {
                 "code": "management_decision_required",
                 "retryable": False,
                 "authorization_required": True,

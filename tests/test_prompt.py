@@ -107,8 +107,7 @@ def test_read_prompt_templates_seed_missing_configured_files(tmp_path, monkeypat
 
     assert developer_path.exists()
     assert user_path.exists()
-    assert "<var: principal>" in developer_template
-    assert "agent_cli.read_skill" in developer_template
+    assert "independently selects and reads every applicable" in developer_template
     assert "<code: app.user_prompt_blocks:current_message_block()>" in user_template
     assert "CEO Agent Prompt" not in user_template
 
@@ -146,11 +145,11 @@ def test_default_developer_prompt_assigns_execution_to_audit_role():
     prompt = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
     assert (
-        "1. [role_boundary] Role Boundary: Consumer Agent A is <var: principal>'s "
-        "read-only representative; Audit Agent B is the only role allowed to execute "
-        "an accepted candidate."
+        "1. [role_boundary] Role Boundary: Consumer Agent A gathers facts and proposes "
+        "a typed candidate; Audit Agent B applies the operation Skill and executes an "
+        "accepted candidate."
     ) in prompt
-    assert "A cannot write" in prompt
+    assert "read-only representative" not in prompt
 
 
 def test_calendar_rules_path_is_not_an_effective_prompt_variable(monkeypatch):
@@ -215,7 +214,6 @@ def test_default_developer_prompt_template_is_a_separate_file():
     assert "principal = 明哥" not in template
     assert "handoff_name = Alex" not in template
     assert "<vars>" not in template
-    assert "<var: principal>" in template
     assert "<code: app.prompt:work_profile_instruction()>" not in template
     assert "work_profile_path" not in template
     assert "Alex 工作人格 Profile:" not in template
@@ -260,18 +258,26 @@ def test_developer_prompt_delegates_latest_material_review_to_business_skill():
     assert "前一次依据的材料已经被修改、补充、评论确认或按要求更新" not in template
     assert "处理文档时，如果是钉钉文档可以用评论功能" not in template
     assert CORE_DYNAMIC_SKILL_BODY in template
-    assert "agent_cli.read_skill" in template
+    assert "independently selects and reads every applicable" in template
+
+
+def test_dynamic_skill_contract_does_not_create_runtime_reconciliation_policy():
+    template = read_developer_prompt_template()
+
+    assert "already-unknown effect" not in template
+    assert "strictly read-only evidence reconciliation" not in template
+    assert "service retries an ordinary failed turn" in template
 
 
 def test_developer_prompt_defines_role_execution_boundary():
     template = read_developer_prompt_template()
 
     assert (
-        "1. [role_boundary] Role Boundary: Consumer Agent A is <var: principal>'s "
-        "read-only representative; Audit Agent B is the only role allowed to execute "
-        "an accepted candidate."
+        "1. [role_boundary] Role Boundary: Consumer Agent A gathers facts and proposes "
+        "a typed candidate; Audit Agent B applies the operation Skill and executes an "
+        "accepted candidate."
     ) in template
-    assert "A cannot write" in template
+    assert "read-only representative" not in template
 
 
 def test_developer_prompt_leaves_solution_workflow_to_business_skills():
@@ -661,7 +667,7 @@ def test_thread_prompt_delegates_direct_message_triage_to_business_skill():
 
     assert "明确要求 明哥 处理、确认、决策或对某个结论表态" not in prompt
     assert CORE_DYNAMIC_SKILL_BODY in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_thread_prompt_leaves_structured_analysis_policy_to_business_skills():
@@ -669,7 +675,7 @@ def test_thread_prompt_leaves_structured_analysis_policy_to_business_skills():
 
     assert "写出列表" not in prompt
     assert "直接给出可用的结构化初版" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_build_turn_prompt_keeps_user_message_separate_from_thread_prompt():
@@ -774,7 +780,7 @@ def test_thread_prompt_delegates_document_commands_to_operation_skills():
     assert 'dws doc read --node "<链接>" --format json' not in prompt
     assert "extension=able" not in prompt
     assert "普通钉钉文件不同于钉钉在线文档" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
     assert "DWS 登录/工具问题" not in prompt
     assert "不要说成对方没有提供材料" not in prompt
 
@@ -784,7 +790,7 @@ def test_thread_prompt_does_not_embed_followup_document_policy():
 
     assert "文档、复盘或补充材料" not in prompt
     assert "先用当前消息、引用、合并前序消息和上下文判断它的角色" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_thread_prompt_delegates_business_context_retrieval():
@@ -793,7 +799,7 @@ def test_thread_prompt_delegates_business_context_retrieval():
     assert "默认不了解当前业务背景" not in prompt
     assert "dws aisearch" not in prompt
     assert "memory_recall" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_thread_prompt_does_not_embed_sender_org_policy():
@@ -801,7 +807,7 @@ def test_thread_prompt_does_not_embed_sender_org_policy():
 
     assert "发信人组织信息" not in prompt
     assert "不要编造职位" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_thread_prompt_does_not_always_load_work_profile(
@@ -834,7 +840,7 @@ def test_thread_prompt_does_not_embed_approval_workflow():
 
     assert "management/OA/钉钉审批审阅原则.md" not in prompt
     assert "材料完整且符合审批原则" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_thread_prompt_does_not_embed_notification_workflow():
@@ -848,7 +854,7 @@ def test_seed_prompt_delegates_calendar_rules_to_business_skills():
     prompt = SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
     assert "<var: calendar_rules_path>" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
     assert CORE_DYNAMIC_SKILL_BODY in prompt
 
 
@@ -856,7 +862,7 @@ def test_thread_prompt_delegates_minutes_handling_to_business_skill():
     prompt = ceo_agent_thread_prompt()
 
     assert "如果新消息或引用涉及“静默会”、AI 听记、会议纪要链接或会议材料" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
     assert CORE_DYNAMIC_SKILL_BODY in prompt
 
 
@@ -878,7 +884,7 @@ def test_thread_prompt_delegates_lightweight_interaction_judgment():
 
     assert "真人直接 @明哥 或分身开玩笑" not in prompt
     assert "不要为了显得参与而发送低信息增益文字" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_thread_prompt_prevents_interjecting_on_group_broadcasts():
@@ -886,7 +892,7 @@ def test_thread_prompt_prevents_interjecting_on_group_broadcasts():
 
     assert "@所有人不是自动跳过的理由" not in prompt
     assert "群聊广播如果是在推进高价值客户线索" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_thread_prompt_delegates_reaction_policy_to_business_skill():
@@ -896,7 +902,7 @@ def test_thread_prompt_delegates_reaction_policy_to_business_skill():
     assert "不要为了“礼貌收口”发送“收到”“好的”这类低信息增益文字" not in prompt
     assert "no_reply 通常用空数组" not in prompt
     assert "dws_message_reaction" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_thread_prompt_delegates_document_reply_shape_to_skills_and_schema():
@@ -912,7 +918,7 @@ def test_thread_prompt_keeps_generic_reaction_output_contract():
 
     assert "我让明哥本人看一下" not in prompt
     assert "dws_message_reaction" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_thread_prompt_treats_existing_principal_reaction_as_handled():
@@ -921,7 +927,7 @@ def test_thread_prompt_treats_existing_principal_reaction_as_handled():
     assert "已有 reaction" not in prompt
     assert "通常说明真人已经用轻量方式处理过" not in prompt
     assert "dws_message_reaction" not in prompt
-    assert "agent_cli.read_skill" in prompt
+    assert "independently selects and reads every applicable" in prompt
 
 
 def test_build_turn_prompt_includes_prefetched_dingtalk_document():

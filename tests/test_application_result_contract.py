@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from app.agent_contracts import AuditAgentResult
 from app.agent_result import AgentError
-from app.agent_runtime_router import _line_violates_read_only_policy
 from app.workbench.store import _begin_immediate_with_retry
 
 
@@ -11,7 +10,6 @@ def test_audit_feedback_is_a_first_class_structured_outcome() -> None:
         outcome="feedback_provided",
         summary="候选需要补充信息",
         proposal_revision=3,
-        side_effect_state="none",
         feedback={
             "rule": "结果必须可执行",
             "observation": "缺少必要字段",
@@ -22,13 +20,6 @@ def test_audit_feedback_is_a_first_class_structured_outcome() -> None:
     )
     assert result.outcome.value == "feedback_provided"
     assert result.feedback is not None
-
-
-def test_provider_command_is_not_reclassified_as_application_policy_failure() -> None:
-    line = '{"type":"item.started","item":{"type":"command_execution","command":"sed"}}'
-    assert not _line_violates_read_only_policy(
-        line, effect_registry=None, native_cli_classifier=None
-    )
 
 
 def test_workbench_begin_immediate_retries_transient_lock() -> None:

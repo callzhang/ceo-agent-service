@@ -14,7 +14,6 @@ from app.agent_contracts import (
     ConsumerProposal,
     ProposedAction,
 )
-from app.agent_result import SideEffectState
 from app.approval_history import ApprovalHistoryResult, resolve_approval_history_result
 from app.store import AgentRole, AgentRun, ReplyAttempt
 
@@ -148,7 +147,6 @@ def _confirmed_audit(
         outcome=AuditOutcome.EXECUTED,
         summary="audit summary",
         proposal_revision=0,
-        side_effect_state=SideEffectState.CONFIRMED,
         feedback=None,
         external_result=AuditExternalResult(
             operation_id=operation_id,
@@ -212,7 +210,6 @@ def test_confirmed_structured_result_uses_native_dws_command_descriptor(argv, ex
         AgentRole.AUDIT,
         _confirmed_audit(),
         parent_agent_run_id=consumer.id,
-        side_effect_state=SideEffectState.CONFIRMED,
     )
 
     attempt = _attempt(oa_process_instance_id="process", oa_task_id="task")
@@ -244,7 +241,6 @@ def test_unrecognized_or_mismatched_native_command_is_unknown(argv):
         AgentRole.AUDIT,
         _confirmed_audit(),
         parent_agent_run_id=consumer.id,
-        side_effect_state=SideEffectState.CONFIRMED,
     )
 
     result = resolve_approval_history_result(
@@ -275,7 +271,6 @@ def test_confirmed_comment_does_not_require_task_identifier():
         AgentRole.AUDIT,
         _confirmed_audit(),
         parent_agent_run_id=consumer.id,
-        side_effect_state=SideEffectState.CONFIRMED,
     )
 
     assert (
@@ -310,7 +305,6 @@ def test_confirmed_structured_action_requires_persisted_process_identifier():
         AgentRole.AUDIT,
         _confirmed_audit(),
         parent_agent_run_id=consumer.id,
-        side_effect_state=SideEffectState.CONFIRMED,
     )
 
     assert (
@@ -351,7 +345,7 @@ def test_proposal_without_audit_confirmation_is_unknown():
     assert resolve_approval_history_result(_attempt(send_status="closed"), [consumer]) is ApprovalHistoryResult.UNKNOWN
 
 
-def test_confirmed_audit_result_does_not_require_row_side_effect_state():
+def test_confirmed_audit_result_uses_typed_result_without_side_effect_projection():
     consumer = _run(
         1,
         AgentRole.CONSUMER,
@@ -375,7 +369,6 @@ def test_confirmed_audit_result_does_not_require_row_side_effect_state():
         _confirmed_audit(),
         parent_agent_run_id=consumer.id,
     )
-    assert audit.side_effect_state == "none"
     assert (
         resolve_approval_history_result(
             _attempt(oa_process_instance_id="process", oa_task_id="task"),
@@ -459,14 +452,12 @@ def test_conflicting_confirmed_approval_actions_are_unknown():
         AgentRole.AUDIT,
         _confirmed_audit(),
         parent_agent_run_id=consumer_approve.id,
-        side_effect_state=SideEffectState.CONFIRMED,
     )
     audit_reject = _run(
         4,
         AgentRole.AUDIT,
         _confirmed_audit(operation_id="operation-4"),
         parent_agent_run_id=consumer_reject.id,
-        side_effect_state=SideEffectState.CONFIRMED,
     )
     assert (
         resolve_approval_history_result(
@@ -546,7 +537,6 @@ def test_confirmed_structured_action_precedes_workflow_status():
         AgentRole.AUDIT,
         _confirmed_audit(),
         parent_agent_run_id=consumer.id,
-        side_effect_state=SideEffectState.CONFIRMED,
     )
     assert (
         resolve_approval_history_result(
@@ -805,7 +795,6 @@ def test_conflicting_structured_and_direct_evidence_on_same_attempt_is_unknown()
         AgentRole.AUDIT,
         _confirmed_audit(),
         parent_agent_run_id=consumer.id,
-        side_effect_state=SideEffectState.CONFIRMED,
     )
     attempt = _attempt(
         oa_process_instance_id="process",
@@ -986,7 +975,6 @@ def test_group_same_attempt_conflict_is_unknown_even_with_older_terminal_evidenc
         AgentRole.AUDIT,
         _confirmed_audit(),
         parent_agent_run_id=consumer.id,
-        side_effect_state=SideEffectState.CONFIRMED,
     )
     conflicting_latest = _attempt(
         id=10,

@@ -14,7 +14,7 @@ INVARIANT_IDENTITIES = (
     ("supported_facts", "Supported Facts"),
     ("meaning_preservation", "Meaning Preservation"),
     ("duplicate_effects", "Duplicate Effects"),
-    ("unknown_effects", "Unknown Effects"),
+    ("execution_facts", "Execution Facts"),
     ("external_secrecy", "External Secrecy"),
     ("dependency_auth", "Dependency Authentication"),
 )
@@ -42,8 +42,8 @@ _INVARIANT_RE = re.compile(
     r"(?P<title>[^:]+): (?P<body>.+)",
 )
 _ROLE_BOUNDARY_RE = re.compile(
-    r"Consumer Agent A is (?P<principal>.+)'s read-only representative; "
-    r"Audit Agent B is the only role allowed to execute an accepted candidate\."
+    r"Consumer Agent A gathers facts and proposes a typed candidate; "
+    r"Audit Agent B applies the operation Skill and executes an accepted candidate\."
 )
 
 
@@ -110,9 +110,7 @@ def validate_prompt_structure(
     ]
     role_boundary = matches[0]
     assert role_boundary is not None
-    role_fields = _ROLE_BOUNDARY_RE.fullmatch(role_boundary.group("body"))
-    assert role_fields is not None
-    assert role_fields.group("principal").strip()
+    assert _ROLE_BOUNDARY_RE.fullmatch(role_boundary.group("body")) is not None
 
     for section_title, model in contract_models:
         assert sections.count(section_title) == 1

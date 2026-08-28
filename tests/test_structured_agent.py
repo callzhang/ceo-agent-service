@@ -112,7 +112,6 @@ def test_structured_runner_routes_processing_request_with_read_only_policy(tmp_p
         {
             "structured_output",
             "local_schema_validation",
-            "consumer_read_only_enforcement",
             "reviewed_read_tools",
         }
     )

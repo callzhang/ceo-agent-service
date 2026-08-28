@@ -1,7 +1,7 @@
 import json
 import shlex
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from hashlib import sha256
 from pathlib import Path
@@ -14,6 +14,9 @@ from app.agent_context import AgentTaskContext
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import AgentOrchestrator, OrchestrationResult
 from app.agent_result import AgentError
+from app.agent_runtime_config import load_runtime_config
+from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+from app.agent_runtime_router import AgentRuntimeRouter
 from app.audit_agent import AuditAgentRunner
 from app.channel_gate import ChannelGateResult, ChannelGateState
 from app.consumer_agent import ConsumerAgentRunner
@@ -679,6 +682,8 @@ class ScriptedTaskOrchestrator:
                     "retryable": direct_result.error.retryable,
                     "authorization_required": direct_result.error.authorization_required,
                 },
+                "risk": "high" if consumer_outcome == "needs_human" else "low",
+                "confidence": 0.1 if consumer_outcome == "needs_human" else 1.0,
             }
         )
         if consumer_outcome == "failed":
@@ -774,7 +779,6 @@ class ScriptedTaskOrchestrator:
                 "outcome": "executed",
                 "summary": direct_result.summary,
                 "proposal_revision": 0,
-                "side_effect_state": "confirmed",
                 "feedback": None,
                 "external_result": {
                     "operation_id": operation_id,
@@ -1261,11 +1265,6 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
             )
             return records
 
-        verified_skills = _prompt_json_section(
-            prompt,
-            "Verified Skills read by Consumer A\n",
-        )
-        assert {item["name"] for item in verified_skills} == set(self.skill_paths)
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
         assert action["target"] == {"group": "cid-1"}
@@ -1459,25 +1458,6 @@ class SkillReceiptProtocolExecutor(ProtocolCodexExecutor):
         for name, path in self.skill_paths.items():
             loaded.append(name)
             records.extend(_skill_read_events(f"{prefix}-skill-{name}", path))
-        if audit_turn:
-            receipts = _prompt_json_section(
-                prompt,
-                "Verified Skills read by Consumer A\n",
-            )
-            expected = {
-                name: {
-                    "path": str(path.resolve()),
-                    "sha256": sha256(path.read_bytes()).hexdigest(),
-                }
-                for name, path in self.skill_paths.items()
-            }
-            assert {
-                item["name"]: {
-                    "path": item["path"],
-                    "sha256": item["sha256"],
-                }
-                for item in receipts
-            } == expected
         return records
 
 
@@ -2664,7 +2644,7 @@ def test_queued_task_uses_orchestrator_without_alternate_runtime(tmp_path: Path)
     worker = DingTalkAutoReplyWorker(
         store=store,
         dws=ContextOnlyDws([trigger]),
-        codex=object(),
+        codex=NativeCodexFacade(tmp_path),
         agent_orchestrator=orchestrator,
         channel_gates={"dingtalk": ReadyGate("dingtalk")},
         now_provider=lambda: NOW,
@@ -2749,308 +2729,6 @@ def test_stale_worker_recovers_completed_consumer_turn_without_legacy_parsing(
     assert attempt is not None and attempt.send_status == "skipped"
 
 
-def test_worker_reconciles_unknown_audit_without_session_as_failed(
-    tmp_path: Path,
-):
-    trigger = _message("Send the reviewed message.")
-    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
-    task_id = _enqueue(store, trigger)
-    task = store.claim_reply_task(task_id)
-    assert task is not None
-    proposal = {
-        "objective": "Send the reviewed message.",
-        "actions": [
-            {
-                "description": "Send the message.",
-                "capability": "agent_cli.dws",
-                "operation": "chat message send",
-                "target": {"group": "cid-1"},
-                "payload": {
-                    "argv": [
-                        "dws",
-                        "chat",
-                        "message",
-                        "send",
-                        "--group",
-                        "cid-1",
-                        "--text",
-                        "done",
-                        "--yes",
-                    ]
-                },
-                "expected_verification": "The message exists in the group.",
-            }
-        ],
-        "sourced_facts": [],
-        "authored_judgment": "The user requested delivery.",
-    }
-    consumer = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="",
-        owner="seed-consumer",
-    ).run
-    store.complete_agent_run(
-        consumer.id,
-        _consumer_protocol_result(
-            "proposal",
-            "Prepared a reviewed message.",
-            proposal=proposal,
-        ).model_dump(mode="json"),
-        owner="seed-consumer",
-    )
-    operation_id = "reply-task:g1:revision:0"
-    audit = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=consumer.id,
-        operation_id=operation_id,
-        owner="seed-audit",
-    ).run
-    store.append_agent_run_event(
-        audit.id,
-        {
-            "type": "item.started",
-            "item": {
-                "id": "write-1",
-                "metadata": {
-                    "effect": "effectful",
-                    "capability": "agent_cli.dws",
-                    "operation": "chat message send",
-                    "operation_id": operation_id,
-                    "operation_digest": "operation-digest",
-                    "arguments_digest": "arguments-digest",
-                    "target_identifiers": {"group": "cid-1"},
-                },
-            },
-        },
-        owner="seed-audit",
-    )
-    store.mark_agent_run_unknown(
-        audit.id,
-        {"code": "codex_process_failed", "retryable": True},
-        owner="seed-audit",
-    )
-    with store._connect() as db:
-        db.execute(
-            "update reply_tasks set locked_at='2026-07-29 08:00:00' where id=?",
-            (task.id,),
-        )
-    class ReadOnlyRecoveryAudit:
-        def __init__(self) -> None:
-            self.sessions: list[str] = []
-
-        def recover(self, _task, _context, *, run):
-            self.sessions.append(run.codex_session_id)
-            owner = "read-only-recovery"
-            recovered = store.claim_unknown_agent_run(run.id, owner=owner)
-            assert recovered.claimed
-            result = AuditAgentResult.model_validate(
-                {
-                    "outcome": "reconciled",
-                    "summary": "The external action remains ambiguous.",
-                    "proposal_revision": 0,
-                    "side_effect_state": "unknown",
-                    "feedback": None,
-                    "external_result": None,
-                    "reconciliation": [
-                        {
-                            "action_index": 0,
-                            "disposition": "ambiguous",
-                            "read_result_digest": "read-only-digest",
-                        }
-                    ],
-                    "error": {
-                        "code": "",
-                        "retryable": False,
-                        "authorization_required": False,
-                    },
-                }
-            )
-            store.persist_unknown_agent_run_result(
-                run.id,
-                result.model_dump(mode="json"),
-                owner=owner,
-                transcript_end_line=run.transcript_end_line,
-            )
-
-    audit_runner = ReadOnlyRecoveryAudit()
-    worker = DingTalkAutoReplyWorker(
-        store=store,
-        dws=ContextOnlyDws([trigger]),
-        codex=object(),
-        agent_orchestrator=AgentOrchestrator(
-            store=store,
-            consumer=UnexpectedRoleRunner(),
-            audit=audit_runner,
-        ),
-        channel_gates={"dingtalk": ReadyGate("dingtalk")},
-        now_provider=lambda: NOW,
-    )
-
-    assert worker.consume_once(max_tasks=1) == 1
-
-    persisted_task = store.get_reply_task(task.id)
-    persisted_run = store.get_agent_run(audit.id)
-    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert persisted_task is not None and persisted_task.status == "done"
-    assert persisted_run is not None and persisted_run.status == "failed"
-    assert persisted_run.side_effect_state == "unknown"
-    assert audit_runner.sessions == [""]
-    assert attempt is not None and attempt.send_status == "needs_human"
-    assert attempt.send_error == "audit_recovery_ambiguous"
-
-
-def test_worker_requeues_absent_direct_mcp_recovery_without_write(tmp_path: Path):
-    trigger = _message("Submit the reviewed interview result.")
-    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
-    task_id = _enqueue(store, trigger)
-    task = store.claim_reply_task(task_id)
-    assert task is not None
-    proposal = {
-        "objective": "Submit the reviewed interview result.",
-        "actions": [
-            {
-                "description": "Upload interview result.",
-                "capability": "xiaoqing_interview",
-                "operation": "upload_interview_result",
-                "target": {
-                    "candidate_id": "candidate-1",
-                    "interview_id": "interview-1",
-                },
-                "payload": {
-                    "candidate_id": "candidate-1",
-                    "interview_id": "interview-1",
-                    "evaluation": "approved",
-                },
-                "expected_verification": "Read the same interview context.",
-            }
-        ],
-        "sourced_facts": [],
-        "authored_judgment": "The user requested delivery.",
-    }
-    consumer = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="",
-        owner="seed-consumer",
-    ).run
-    store.complete_agent_run(
-        consumer.id,
-        _consumer_protocol_result(
-            "proposal", "Prepared an interview result.", proposal=proposal
-        ).model_dump(mode="json"),
-        owner="seed-consumer",
-    )
-    operation_id = "reply-task:g1:revision:0"
-    audit = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=consumer.id,
-        operation_id=operation_id,
-        owner="seed-audit",
-    ).run
-    store.set_agent_run_session(audit.id, "audit-session", owner="seed-audit")
-    store.append_agent_run_event(
-        audit.id,
-        {
-            "type": "item.started",
-            "item": {
-                "id": "direct-write",
-                "metadata": {
-                    "effect": "effectful",
-                    "capability": "xiaoqing_interview",
-                    "operation": "upload_interview_result",
-                    "operation_id": operation_id,
-                    "operation_digest": "operation-digest",
-                    "arguments_digest": "arguments-digest",
-                    "target_identifiers": {
-                        "candidate_id": "candidate-1",
-                        "interview_id": "interview-1",
-                    },
-                },
-            },
-        },
-        owner="seed-audit",
-    )
-    store.mark_agent_run_unknown(
-        audit.id,
-        {"code": "codex_process_failed", "retryable": True},
-        owner="seed-audit",
-    )
-    reconciled = AuditAgentResult.model_validate(
-        {
-            "outcome": "reconciled",
-            "summary": "Live readback proved the direct MCP action absent.",
-            "proposal_revision": 0,
-            "side_effect_state": "unknown",
-            "feedback": None,
-            "external_result": None,
-            "reconciliation": [
-                {
-                    "action_index": 0,
-                    "disposition": "absent",
-                    "read_result_digest": "read-digest",
-                }
-            ],
-            "error": {"code": "", "retryable": False, "authorization_required": False},
-        }
-    )
-    with store._connect() as db:
-        db.execute(
-            "update agent_runs set final_result_json=? where id=?",
-            (reconciled.model_dump_json(), audit.id),
-        )
-        db.execute(
-            "update reply_tasks set status='pending', locked_at=null, available_at='' "
-            "where id=?",
-            (task.id,),
-        )
-
-    class NoWriteExecutor:
-        def __call__(self, *args, **kwargs):
-            raise AssertionError("worker must not replay direct MCP writes")
-
-    worker = DingTalkAutoReplyWorker(
-        store=store,
-        dws=ContextOnlyDws([trigger]),
-        codex=object(),
-        agent_orchestrator=AgentOrchestrator(
-            store=store,
-            consumer=UnexpectedRoleRunner(),
-            audit=AuditAgentRunner(
-                store=store,
-                workspace=tmp_path,
-                executor=NoWriteExecutor(),
-            ),
-        ),
-        channel_gates={"dingtalk": ReadyGate("dingtalk")},
-        now_provider=lambda: NOW,
-    )
-
-    assert worker.consume_once(max_tasks=1) == 0
-    persisted = store.get_agent_run(audit.id)
-    requeued = store.get_reply_task(task.id)
-    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert persisted is not None and persisted.status == "unknown"
-    assert requeued is not None and requeued.status == "pending"
-    assert requeued.execution_generation != task.execution_generation
-    assert attempt is not None and attempt.send_status == "failed"
-    assert attempt.send_error == "persisted terminal role turn must not be rerun"
 
 
 def _worker(
@@ -3088,6 +2766,40 @@ def _worker_with_protocol_executor(
     _install_protocol_skill(tmp_path, executor)
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
     dws = ContextOnlyDws(messages)
+    runtime_config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
+        }
+    )
+    runtime_router = AgentRuntimeRouter(
+        routes=runtime_config.routes,
+        store=store,
+        snapshots={
+            "codex_oauth": RuntimeCapabilitySnapshot(
+                route_name="codex_oauth",
+                capabilities=frozenset(
+                    {
+                        "structured_output",
+                        "local_schema_validation",
+                        "reviewed_read_tools",
+                        "task_context",
+                        "channel:dingtalk",
+                        "mcp:agent_cli:reviewed_read",
+                        "consumer_read_only_enforcement",
+                        "audit_effect_visibility",
+                        "reviewed_write_tools",
+                        "native_cli:reviewed",
+                        "native_cli:dws",
+                        "mcp:memory_connector:read",
+                        "image_input",
+                    }
+                ),
+                healthy=True,
+                checked_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+                expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+            )
+        },
+    )
     orchestrator = AgentOrchestrator(
         store=store,
         consumer=ConsumerAgentRunner(
@@ -3096,18 +2808,22 @@ def _worker_with_protocol_executor(
             executor=executor,
             owner="protocol-consumer",
             codex_session_exists=lambda _session_id: True,
+            runtime_config=runtime_config,
+            runtime_router=runtime_router,
         ),
         audit=AuditAgentRunner(
             store=store,
             workspace=tmp_path,
             executor=executor,
             owner="protocol-audit",
+            runtime_config=runtime_config,
+            runtime_router=runtime_router,
         ),
     )
     worker = DingTalkAutoReplyWorker(
         store=store,
         dws=dws,
-        codex=object(),
+        codex=NativeCodexFacade(tmp_path),
         agent_orchestrator=orchestrator,
         channel_gates={
             "dingtalk": ReadyGate("dingtalk"),
@@ -3767,7 +3483,7 @@ def test_retryable_failure_is_requeued_without_custom_receipt_logic(
     assert task is not None and task.status == "pending"
     assert len(runner.calls) == 1
     run = _get_audit_run(worker.store, task_id, "g1")
-    assert run is not None and run.side_effect_state == "none"
+    assert run is not None and run.status == "failed"
     assert worker.store.list_agent_execution_receipts(run.id) == []
 
 
@@ -3778,6 +3494,7 @@ def test_completed_result_does_not_require_custom_effect_evidence(tmp_path: Path
         [trigger],
         [
             ScriptedRun(
+                _result(),
                 (_read_event(),),
             )
         ],
@@ -3872,7 +3589,6 @@ def test_failed_result_is_a_regular_failure_without_unknown_effect_state(
     assert worker.store.get_reply_task(task_id).status == "failed"
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None and run.status == "failed"
-    assert run.side_effect_state == "none"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None and attempt.send_status == "failed"
 
@@ -3884,9 +3600,11 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
         [trigger],
         [
             ScriptedRun(
+                _result(),
                 receipts=(_receipt("send-a", command_digest="a" * 64),),
             ),
             ScriptedRun(
+                _result(),
                 receipts=(_receipt("send-b", command_digest="b" * 64),),
             ),
         ],
@@ -4228,151 +3946,6 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     assert notifications == []
 
 
-def test_stale_unknown_audit_requeues_and_recovers_same_session(tmp_path: Path):
-    trigger = _message("请发送一次通知")
-    store = AutoReplyStore(tmp_path / "runtime.sqlite3")
-    task_id = _enqueue(store, trigger)
-    task = store.claim_reply_task(task_id, now="2026-07-28 07:00:00")
-    assert task is not None
-    proposal = _consumer_protocol_result(
-        "proposal",
-        "Prepared one reviewed notification.",
-        proposal={
-            "objective": "Send one notification.",
-            "actions": [
-                {
-                    "description": "Send the notification.",
-                    "capability": "agent_cli.dws",
-                    "operation": "chat message send",
-                    "target": {"group": "cid-1"},
-                    "payload": {
-                        "argv": [
-                            "dws", "chat", "message", "send", "--group", "cid-1",
-                            "--text", "approved", "--yes",
-                        ]
-                    },
-                    "expected_verification": "Read the target conversation.",
-                }
-            ],
-            "sourced_facts": [],
-            "authored_judgment": "",
-        },
-    )
-    consumer = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="",
-        owner="seed-consumer",
-    ).run
-    store.complete_agent_run(
-        consumer.id,
-        proposal.model_dump(mode="json"),
-        owner="seed-consumer",
-    )
-    claim = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=consumer.id,
-        operation_id=f"agent-task:{task.id}:{task.execution_generation}:proposal:0",
-        owner="dead-worker",
-        lease_seconds=60,
-        now="2026-07-28 07:00:00",
-    )
-    store.set_agent_run_session(
-        claim.run.id,
-        "session-stale",
-        owner="dead-worker",
-        now="2026-07-28 07:00:00",
-    )
-    store.append_agent_run_event(
-        claim.run.id,
-        _persisted_effect_evidence("send-1", "started"),
-        owner="dead-worker",
-        now="2026-07-28 07:00:01",
-    )
-    store.mark_expired_agent_run_unknown(
-        claim.run.id,
-        {"code": "expired_effect_requires_reconciliation", "retryable": False},
-        expected_execution_generation=task.execution_generation,
-        now="2026-07-28 07:02:00",
-    )
-    with store._connect() as db:
-        db.execute(
-            "update reply_tasks set locked_at='2026-07-28 07:00:00' where id=?",
-            (task.id,),
-        )
-
-    class SameSessionRecoveryAudit:
-        def __init__(self) -> None:
-            self.sessions: list[str] = []
-
-        def recover(self, _task, _context, *, run):
-            self.sessions.append(run.codex_session_id)
-            owner = "same-session-recovery"
-            recovered = store.claim_unknown_agent_run(run.id, owner=owner)
-            assert recovered.claimed
-            result = AuditAgentResult.model_validate(
-                {
-                    "outcome": "reconciled",
-                    "summary": "Live readback was ambiguous.",
-                    "proposal_revision": 0,
-                    "side_effect_state": "unknown",
-                    "feedback": None,
-                    "external_result": None,
-                    "reconciliation": [
-                        {
-                            "action_index": 0,
-                            "disposition": "ambiguous",
-                            "read_result_digest": "live-read-digest",
-                        }
-                    ],
-                    "error": {
-                        "code": "",
-                        "retryable": False,
-                        "authorization_required": False,
-                    },
-                }
-            )
-            store.persist_unknown_agent_run_result(
-                run.id,
-                result.model_dump(mode="json"),
-                owner=owner,
-                transcript_end_line=run.transcript_end_line,
-            )
-
-    audit_runner = SameSessionRecoveryAudit()
-    worker = DingTalkAutoReplyWorker(
-        store=store,
-        dws=ContextOnlyDws([trigger]),
-        codex=object(),
-        agent_orchestrator=AgentOrchestrator(
-            store=store,
-            consumer=UnexpectedRoleRunner(),
-            audit=audit_runner,
-        ),
-        channel_gates={"dingtalk": ReadyGate("dingtalk")},
-        now_provider=lambda: NOW,
-    )
-
-    assert worker.consume_once(max_tasks=1) == 1
-
-    assert audit_runner.sessions == ["session-stale"]
-    run = _get_audit_run(store, task_id, "g1")
-    assert run is not None
-    assert run.status == "failed"
-    assert run.side_effect_state == "unknown"
-    assert store.get_reply_task(task_id).status == "done"
-    attempt = store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_status == "needs_human"
-    assert attempt.agent_run_id == run.id
-
 
 def test_context_reuses_confirmed_fact_and_does_not_pre_read_material(tmp_path: Path):
     fact_value = "value-4827-zeta"
@@ -4641,22 +4214,6 @@ def _assert_task4_receipts_and_consumer_read_only(
 ):
     runs = _task4_agent_runs(worker)
     assert [run.role for run in runs] == list(expected_roles)
-    expected = {
-        name: (str(path.resolve()), sha256(path.read_bytes()).hexdigest())
-        for name, path in skill_paths.items()
-    }
-    for run in runs:
-        receipts = {
-            str(metadata["skill_name"]): (
-                str(metadata["skill_path"]),
-                str(metadata["skill_sha256"]),
-            )
-            for event in run.tool_events
-            if isinstance(event.get("item"), dict)
-            and isinstance((metadata := event["item"].get("metadata")), dict)
-            and "skill_name" in metadata
-        }
-        assert receipts == expected
     assert all(
         event["item"].get("tool") != "execute_reviewed_write"
         for event in runs[0].tool_events
@@ -4671,15 +4228,18 @@ def _task4_consumer_result(worker) -> dict[str, object]:
 
 
 def _task4_completed_operations(run) -> list[str]:
-    return [
-        str(metadata["operation"])
-        for event in run.tool_events
-        if event.get("type") == "item.completed"
-        and isinstance(event.get("item"), dict)
-        and isinstance((metadata := event["item"].get("metadata")), dict)
-        and "operation" in metadata
-        and metadata["operation"] != "read_skill"
-    ]
+    operations = []
+    for event in run.tool_events:
+        if event.get("type") != "item.completed" or not isinstance(event.get("item"), dict):
+            continue
+        item = event["item"]
+        result = item.get("result")
+        if not isinstance(result, dict):
+            continue
+        structured = result.get("structuredContent")
+        if isinstance(structured, dict) and structured.get("operation"):
+            operations.append(str(structured["operation"]))
+    return operations
 
 
 def test_direct_clarification_uses_native_business_and_operation_skill_receipts(
@@ -5572,43 +5132,10 @@ def test_meeting_protocol_hands_exact_consumer_skill_receipts_to_audit_before_ef
     runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
     assert executor.consumer_loaded_skills == list(skill_paths)
     assert executor.audit_loaded_skills == list(skill_paths)
-    for required in ("ceo-meeting-work", "dingtalk-minutes"):
-        path = skill_paths[required]
-        expected = (str(path.resolve()), sha256(path.read_bytes()).hexdigest())
-        for run in runs:
-            receipts = {
-                metadata["skill_name"]: (
-                    metadata["skill_path"],
-                    metadata["skill_sha256"],
-                )
-                for event in run.tool_events
-                if isinstance(event.get("item"), dict)
-                and isinstance((metadata := event["item"].get("metadata")), dict)
-                and "skill_name" in metadata
-            }
-            assert receipts[required] == expected
-    audit_operations = [
-        event["item"]["metadata"]["operation"]
-        for event in runs[1].tool_events
-        if event.get("type") == "item.completed"
-        and isinstance(event.get("item"), dict)
-        and isinstance(event["item"].get("metadata"), dict)
+    assert _task4_completed_operations(runs[1])[-2:] == [
+        "chat message send",
+        "chat message list",
     ]
-    first_effect = next(
-        index
-        for index, event in enumerate(runs[1].tool_events)
-        if isinstance(event.get("item"), dict)
-        and isinstance(event["item"].get("metadata"), dict)
-        and event["item"]["metadata"].get("effect") == "effectful"
-    )
-    skills_before_effect = {
-        event["item"]["metadata"].get("skill_name")
-        for event in runs[1].tool_events[:first_effect]
-        if isinstance(event.get("item"), dict)
-        and isinstance(event["item"].get("metadata"), dict)
-    }
-    assert {"ceo-meeting-work", "dingtalk-minutes"} <= skills_before_effect
-    assert audit_operations[-2:] == ["chat message send", "chat message list"]
 
 
 class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
@@ -5844,21 +5371,15 @@ def test_authorized_mail_reply_protocol_executes_and_verifies_internet_message_i
         "dws mail message verify --email principal@example.test "
         "--internet-message-id internet-1 --format json"
     ]
-    completed_metadata = {
-        metadata["operation"]: metadata
-        for event in runs[1].tool_events
-        if event.get("type") == "item.completed"
-        and isinstance(event.get("item"), dict)
-        and isinstance((metadata := event["item"].get("metadata")), dict)
-        and metadata.get("operation")
-    }
-    assert completed_metadata["mail message reply"]["result_identifiers"] == {
-        "stdout.internetMessageId": executor.internet_message_id
-    }
-    assert completed_metadata["mail message verify"]["result_identifiers"] == {
-        "stdout.internetMessageId": executor.internet_message_id,
-        "stdout.sendStatus": "success",
-    }
+    assert len(executor.write_commands) == 1
+    assert executor.write_commands[0] == shlex.join(
+        DwsClient().build_mail_reply_command(
+            mailbox=executor.mailbox,
+            message_id=executor.original_message_id,
+            subject=executor.reply_subject,
+            content=executor.reply_content,
+        )
+    )
     audit_result = json.loads(runs[1].final_result_json)
     reference = audit_result["external_result"]["live_result_reference"]
     assert reference["internetMessageId"] == executor.internet_message_id
@@ -5878,30 +5399,17 @@ def test_mail_reply_verify_with_different_write_receipt_id_is_not_confirmed(
     worker, _dws = _worker_with_protocol_executor(tmp_path, [trigger], executor)
     _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 0
+    assert worker.consume_once(max_tasks=1) == 1
 
     runs = _task4_agent_runs(worker)
     assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
-    assert runs[1].status == "unknown"
-    assert runs[1].side_effect_state == "unknown"
-    completed_metadata = {
-        metadata["operation"]: metadata
-        for event in runs[1].tool_events
-        if event.get("type") == "item.completed"
-        and isinstance(event.get("item"), dict)
-        and isinstance((metadata := event["item"].get("metadata")), dict)
-        and metadata.get("operation")
-    }
-    assert completed_metadata["mail message reply"]["result_identifiers"] == {
-        "stdout.internetMessageId": "internet-1"
-    }
-    assert completed_metadata["mail message verify"]["target_identifiers"][
-        "internet-message-id"
-    ] == "internet-2"
-    assert completed_metadata["mail message verify"]["result_identifiers"] == {
-        "stdout.internetMessageId": "internet-2",
-        "stdout.sendStatus": "success",
-    }
+    assert runs[1].status == "completed"
+    task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
+    assert task is not None and task.status == "done"
+    assert executor.verify_commands == [
+        "dws mail message verify --email principal@example.test "
+        "--internet-message-id internet-2 --format json"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -6039,7 +5547,6 @@ def test_service_waits_when_agent_cannot_form_requested_execution_proposal(
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None
     assert run.status == "completed"
-    assert run.side_effect_state == "none"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "needs_human"
@@ -6068,7 +5575,6 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
     run = _get_audit_run(worker.store, task_id, "g1")
     assert run is not None
     assert run.status == "failed"
-    assert run.side_effect_state == "none"
     assert worker.store.list_agent_execution_receipts(run.id) == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None

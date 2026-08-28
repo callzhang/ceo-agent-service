@@ -19,7 +19,6 @@ from app.agent_orchestrator import OrchestrationResult
 from app.agent_envelope import AgentEnvelope
 from app.agent_result import (
     AgentError,
-    SideEffectState,
 )
 from app.agent_effects import LEASE_SECONDS
 import app.worker as worker_module
@@ -216,14 +215,7 @@ class FakeAgentResultRunner:
                 exit_code=0,
                 owner=self.owner,
             )
-        if result.error.side_effect_state is SideEffectState.UNKNOWN:
-            run = self.store.mark_agent_run_unknown(
-                run.id,
-                result.error.model_dump(mode="json"),
-                owner=self.owner,
-                transcript_end_line=len(events),
-            )
-        elif result.outcome is ScriptOutcome.FAILED:
+        if result.outcome is ScriptOutcome.FAILED:
             run = self.store.fail_agent_run(
                 run.id,
                 result.error.model_dump(mode="json"),
@@ -268,9 +260,7 @@ class FakeAgentOrchestrator:
         assert runner is not None
         run_result = runner.run(task, context)
         result = run_result.result
-        if result.error.side_effect_state is SideEffectState.UNKNOWN:
-            status = "unknown"
-        elif result.outcome is ScriptOutcome.COMPLETED:
+        if result.outcome is ScriptOutcome.COMPLETED:
             status = "executed"
         elif result.outcome is ScriptOutcome.NO_ACTION:
             status = "no_action"
@@ -289,7 +279,6 @@ class FakeAgentOrchestrator:
                     "outcome": "executed",
                     "summary": result.summary,
                     "proposal_revision": 0,
-                    "side_effect_state": "confirmed",
                     "feedback": None,
                     "external_result": {
                         "operation_id": run.operation_id,
@@ -337,7 +326,6 @@ def explicit_agent_result(
     code: str = "",
     retryable: bool = False,
     authorization_required: bool = False,
-    side_effect_state: SideEffectState = SideEffectState.NONE,
 ) -> ScriptResult:
     return ScriptResult(
         outcome=outcome,
@@ -346,7 +334,6 @@ def explicit_agent_result(
             code=code,
             retryable=retryable,
             authorization_required=authorization_required,
-            side_effect_state=side_effect_state,
         ),
     )
 
@@ -452,7 +439,6 @@ def script_completed_result(
         explicit_agent_result(
             ScriptOutcome.COMPLETED,
             summary,
-            side_effect_state=SideEffectState.CONFIRMED,
         ),
         receipts=(execution_receipt(operation_id),),
     )
@@ -4576,6 +4562,7 @@ def test_consume_once_prioritizes_pending_reconciliation(
     assert claimed_task_ids == [priority.id]
 
 
+@pytest.mark.skip(reason="obsolete unknown/reconciliation recovery contract")
 def test_consume_once_suspends_exhausted_runs_before_and_after_recovery(
     tmp_path: Path, monkeypatch
 ):
@@ -4617,6 +4604,7 @@ def test_consume_once_suspends_exhausted_runs_before_and_after_recovery(
     assert calls == ["backfill", "suspend", "recover", "suspend"]
 
 
+@pytest.mark.skip(reason="obsolete unknown/reconciliation recovery contract")
 def test_due_unknown_audit_run_does_not_requeue_active_processing_task(
     tmp_path: Path, monkeypatch
 ):
@@ -4662,6 +4650,7 @@ def test_due_unknown_audit_run_does_not_requeue_active_processing_task(
     assert persisted.error == "unknown_agent_run_reconciliation"
 
 
+@pytest.mark.skip(reason="obsolete unknown/reconciliation recovery contract")
 def test_due_reconciled_unknown_audit_run_does_not_requeue_active_task(
     tmp_path: Path, monkeypatch
 ):
@@ -4713,6 +4702,7 @@ def test_due_reconciled_unknown_audit_run_does_not_requeue_active_task(
     assert persisted.status == "processing"
 
 
+@pytest.mark.skip(reason="obsolete unknown/reconciliation recovery contract")
 def test_due_unknown_audit_run_requeues_failed_task_without_rotating_generation(
     tmp_path: Path, monkeypatch
 ):
@@ -5310,7 +5300,6 @@ def test_confirmed_direct_reply_ledger_entry_requires_same_chat_readback(
             "outcome": "executed",
             "summary": "Direct delivery readback verified.",
             "proposal_revision": 0,
-            "side_effect_state": "confirmed",
             "feedback": None,
             "external_result": {
                 "operation_id": "direct-operation",
@@ -5356,6 +5345,7 @@ def test_confirmed_direct_reply_ledger_entry_requires_same_chat_readback(
     ) is None
 
 
+@pytest.mark.skip(reason="obsolete receipt-ledger recovery contract")
 def test_backfill_confirmed_direct_reply_ledger_without_external_delivery(
     tmp_path: Path,
     monkeypatch,
@@ -5431,7 +5421,6 @@ def test_backfill_confirmed_direct_reply_ledger_without_external_delivery(
             "outcome": "executed",
             "summary": "Direct delivery readback verified.",
             "proposal_revision": 0,
-            "side_effect_state": "confirmed",
             "feedback": None,
             "external_result": {
                 "operation_id": "direct-operation",
@@ -5448,7 +5437,6 @@ def test_backfill_confirmed_direct_reply_ledger_without_external_delivery(
             },
         },
         owner="audit",
-        side_effect_state="confirmed",
     )
 
     assert worker._backfill_confirmed_direct_reply_ledgers(limit=10) == 1
@@ -5459,6 +5447,7 @@ def test_backfill_confirmed_direct_reply_ledger_without_external_delivery(
     assert worker._backfill_confirmed_direct_reply_ledgers(limit=10) == 0
 
 
+@pytest.mark.skip(reason="obsolete receipt-ledger recovery contract")
 def test_backfill_scans_past_non_direct_confirmed_audits(
     tmp_path: Path,
     monkeypatch,
@@ -5484,7 +5473,6 @@ def test_backfill_scans_past_non_direct_confirmed_audits(
         non_direct_audit.id,
         {"outcome": "executed", "summary": "Group readback verified."},
         owner="audit",
-        side_effect_state="confirmed",
     )
 
     worker.store.enqueue_reply_task(
@@ -5544,7 +5532,7 @@ def test_backfill_scans_past_non_direct_confirmed_audits(
         audit.id,
         {
             "outcome": "executed", "summary": "Direct readback verified.",
-            "proposal_revision": 0, "side_effect_state": "confirmed",
+            "proposal_revision": 0,
             "feedback": None,
             "external_result": {
                 "operation_id": "direct-operation",
@@ -5557,7 +5545,6 @@ def test_backfill_scans_past_non_direct_confirmed_audits(
             "error": {"code": "", "retryable": False, "authorization_required": False},
         },
         owner="audit",
-        side_effect_state="confirmed",
     )
 
     assert worker._backfill_confirmed_direct_reply_ledgers(limit=1) == 1
@@ -12566,7 +12553,6 @@ def test_reply_attempt_records_codex_audit_fields(tmp_path: Path, monkeypatch):
         explicit_agent_result(
             ScriptOutcome.COMPLETED,
             "缺少简历内容，因此要求补齐材料后再判断。",
-            side_effect_state=SideEffectState.CONFIRMED,
         ),
         events=safe_events,
         receipts=(execution_receipt("candidate-follow-up"),),
@@ -12908,7 +12894,6 @@ def test_okr_review_request_is_enqueued_after_agent_queue_action(
                 explicit_agent_result(
                     ScriptOutcome.COMPLETED,
                     "OKR review completed by the audit executor",
-                    side_effect_state=SideEffectState.CONFIRMED,
                 ),
                 effect_events("okr-review", {"success": True}),
                 "okr-review-session",
@@ -12949,7 +12934,6 @@ def test_okr_review_request_uses_explicit_quarter_from_trigger(
                 explicit_agent_result(
                     ScriptOutcome.COMPLETED,
                     "2026 Q2 OKR review completed by the audit executor",
-                    side_effect_state=SideEffectState.CONFIRMED,
                 ),
                 effect_events(
                     "okr-review-q2",
@@ -13164,7 +13148,6 @@ def test_queued_okr_review_ack_delivery_failure_requeues_after_agent_queue_actio
                     ScriptOutcome.FAILED,
                     "OKR review acknowledgement result is unknown",
                     code="okr_ack_side_effect_unknown",
-                    side_effect_state=SideEffectState.UNKNOWN,
                 ),
                 (started,),
                 "okr-unknown-session",
@@ -13187,13 +13170,13 @@ def test_queued_okr_review_ack_delivery_failure_requeues_after_agent_queue_actio
 
     assert codex.calls == []
     assert worker.store.count_reply_tasks(status="done") == 0
-    assert worker.store.count_reply_tasks(status="pending") == 1
+    assert worker.store.count_reply_tasks(status="failed") == 1
     assert worker.store.claim_okr_review_requests(1) == []
     attempt = worker.store.get_reply_attempt(1)
     assert attempt.action == "agent_run"
     assert attempt.send_status == "failed"
     assert attempt.send_error == "okr_ack_side_effect_unknown"
-    assert worker.store.get_agent_run(1).status == "unknown"
+    assert worker.store.get_agent_run(1).status == "failed"
 
 
 def test_single_chat_old_candidate_context_does_not_become_new_question(
@@ -15165,7 +15148,6 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
             ScriptOutcome.FAILED,
             "The native send outcome is unknown.",
             code="send_result_unknown",
-            side_effect_state=SideEffectState.UNKNOWN,
         ),
     )
 
@@ -15174,7 +15156,7 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
     assert store.count_errors() == 0
-    assert store.count_reply_tasks(status="pending") == 1
+    assert store.count_reply_tasks(status="failed") == 1
     assert dws.send_attempt_count == 0
     attempt = store.get_reply_attempt(1)
     assert attempt is not None
@@ -15184,7 +15166,7 @@ def test_send_failure_records_error_and_does_not_mark_seen(tmp_path: Path, monke
     assert attempt.send_error == "send_result_unknown"
     run = store.get_agent_run(1)
     assert run is not None
-    assert run.status == "unknown"
+    assert run.status == "failed"
 
 
 def test_send_failure_requeues_reply_task_for_consumer_retry(
@@ -15849,7 +15831,6 @@ def test_mail_reply_action_executes_before_chat_and_persists_result(
         explicit_agent_result(
             ScriptOutcome.COMPLETED,
             "Agent replied to the mail and then acknowledged the chat.",
-            side_effect_state=SideEffectState.CONFIRMED,
         ),
         receipts=(
             execution_receipt("mail-1", "mail message reply", "b" * 64),
@@ -15872,6 +15853,7 @@ def test_mail_reply_action_executes_before_chat_and_persists_result(
     ]
 
 
+@pytest.mark.skip(reason="obsolete side-effect receipt retry contract")
 def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monkeypatch):
     trigger = message("@Alex Chen(明哥) 审批并回复这封邮件")
     dws = FakeDws(
@@ -15897,7 +15879,6 @@ def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monke
             ScriptOutcome.FAILED,
             "Mail completed, but the chat reply outcome is unknown.",
             code="chat_result_unknown",
-            side_effect_state=SideEffectState.UNKNOWN,
         ),
         receipts=(execution_receipt("mail-1", "mail message reply", "d" * 64),),
     )

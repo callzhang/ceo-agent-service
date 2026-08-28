@@ -312,7 +312,6 @@ class LocalPipelineOrchestrator:
                 "outcome": "executed",
                 "summary": "Reply sent and verified.",
                 "proposal_revision": 0,
-                "side_effect_state": "confirmed",
                 "feedback": None,
                 "external_result": {
                     "operation_id": operation_id,
@@ -326,7 +325,6 @@ class LocalPipelineOrchestrator:
             audit_claim.run.id,
             audit.model_dump(mode="json"),
             owner="local-pipeline",
-            side_effect_state="confirmed",
         )
         return OrchestrationResult(
             status="executed",

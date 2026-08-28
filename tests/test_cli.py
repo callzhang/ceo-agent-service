@@ -350,113 +350,10 @@ def test_quality_check_help_names_the_default_live_channel_gates():
     assert "DingTalk and WeChat" not in help_text
 
 
-def test_service_start_releases_unknown_audit_reconciliation_lease(tmp_path: Path):
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
-    store = AutoReplyStore(settings.db_path)
-    enqueue_trigger_task(store)
-    task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="operation-1",
-        owner="stopped-worker",
-    ).run
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "effect_completion_unknown", "retryable": True},
-        owner="stopped-worker",
-    )
-    assert store.claim_unknown_agent_run(run.id, owner="stopped-reconciler").claimed
-
-    assert cli._recover_orphaned_reply_tasks_on_service_start(settings) == 1
-
-    persisted = store.get_agent_run(run.id)
-    assert persisted is not None
-    assert persisted.lease_owner == ""
-    assert persisted.lease_expires_at == ""
 
 
-def test_service_start_settles_done_unknown_audit_with_delivery_ledger(
-    tmp_path: Path,
-):
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
-    store = AutoReplyStore(settings.db_path)
-    enqueue_trigger_task(store)
-    task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="operation-1",
-        owner="stopped-worker",
-    ).run
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "effect_completion_unknown", "retryable": True},
-        owner="stopped-worker",
-    )
-    store.record_sent_reply(task.conversation_id, task.trigger_message_id, "delivered")
-    with store._connect() as db:
-        db.execute("update reply_tasks set status='done' where id=?", (task.id,))
-
-    assert cli._recover_orphaned_reply_tasks_on_service_start(settings) == 1
-
-    persisted = store.get_agent_run(run.id)
-    assert persisted is not None
-    assert persisted.status == "completed"
-    assert persisted.side_effect_state == "confirmed"
 
 
-def test_service_start_settles_processing_unknown_audit_with_exact_delivery(
-    tmp_path: Path,
-):
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
-    store = AutoReplyStore(settings.db_path)
-    enqueue_trigger_task(store)
-    task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id="operation-1",
-        owner="stopped-worker",
-    ).run
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "effect_completion_unknown", "retryable": True},
-        owner="stopped-worker",
-    )
-    assert store.claim_unknown_agent_run(run.id, owner="stopped-reconciler").claimed
-    store.record_sent_reply(
-        task.conversation_id,
-        task.trigger_message_id,
-        "delivered",
-        send_result_json=json.dumps(
-            {"agent_run_id": run.id, "operation_id": run.operation_id},
-            separators=(",", ":"),
-        ),
-    )
-
-    assert cli._recover_orphaned_reply_tasks_on_service_start(settings) == 2
-
-    persisted_run = store.get_agent_run(run.id)
-    persisted_task = store.get_reply_task(task.id)
-    assert persisted_run is not None
-    assert persisted_run.status == "completed"
-    assert persisted_run.side_effect_state == "confirmed"
-    assert persisted_task is not None
-    assert persisted_task.status == "done"
-    assert persisted_task.error == ""
 
 
 def test_parser_requires_structured_agent_run_resolution():
@@ -480,48 +377,6 @@ def test_parser_requires_structured_agent_run_resolution():
     assert args.resolution == "confirmed_not_occurred"
 
 
-def test_resolve_agent_run_command_records_manual_resolution(tmp_path, capsys):
-    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
-    store = AutoReplyStore(settings.db_path)
-    enqueue_trigger_task(store)
-    task = store.claim_reply_tasks(1)[0]
-    run = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=None,
-        operation_id=f"direct-agent:{task.id}:{task.execution_generation}",
-        owner="worker",
-    ).run
-    store.mark_agent_run_unknown(
-        run.id,
-        {"code": "unknown"},
-        owner="worker",
-    )
-    store.claim_unknown_agent_run(run.id, owner="reconciler")
-    store.defer_unknown_agent_run_reconciliation(
-        run.id,
-        {"code": "needs_human", "retryable": False},
-        owner="reconciler",
-        expected_execution_generation=task.execution_generation,
-        next_attempt_at="",
-        suspended=True,
-    )
-
-    result = resolve_agent_run_command(
-        settings,
-        run_id=run.id,
-        execution_generation=task.execution_generation,
-        resolution="terminate_unrecoverable",
-        reason="无法核实且禁止重放",
-        actor="Derek",
-    )
-
-    assert result["resolution"] == "terminate_unrecoverable"
-    assert store.get_reply_task(task.id).status == "failed"
-    assert '"resolution": "terminate_unrecoverable"' in capsys.readouterr().out
 
 
 def test_parser_supports_recent_meeting_replay():

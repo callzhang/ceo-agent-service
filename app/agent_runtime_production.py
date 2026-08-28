@@ -294,11 +294,7 @@ def _reviewed_surface_manifests(
                         "channel:wechat",
                         "channel:lark",
                         "channel:feishu",
-                        # Reconciliation is run through the same controlled
-                        # read-only command policy as Consumer turns.
-                        "consumer_read_only_enforcement",
                         "reviewed_read_tools",
-                        "reconciliation_read_only",
                         "mcp:agent_cli:reviewed_read",
                         "native_cli:reviewed",
                         "native_cli:dws",
@@ -335,17 +331,12 @@ def _reviewed_surface_manifests(
         )
         capabilities = {
             "audit_effect_visibility",
-            "reconciliation_read_only",
             "image_input",
             "task_context",
             "channel:dingtalk",
             "channel:wechat",
             "channel:lark",
             "channel:feishu",
-            # The native controlled CLI rejects writes when Audit is in the
-            # reconciliation phase, which satisfies the runner's read-only
-            # execution requirement.
-            "consumer_read_only_enforcement",
             "native_cli:reviewed",
             "native_cli:dws",
             "native_cli:lark",

@@ -258,7 +258,6 @@ def test_reviewed_surfaces_keep_all_production_callers_eligible_without_claiming
                         {
                             "structured_output",
                             "local_schema_validation",
-                            "consumer_read_only_enforcement",
                         }
                     )
                 }
@@ -278,15 +277,9 @@ def test_reviewed_surfaces_keep_all_production_callers_eligible_without_claiming
         capability.startswith("reviewed_skill:") for capability in manifest.capabilities
     )
     caller_requirements = (
-        {"structured_output", "consumer_read_only_enforcement"},
         {"structured_output", "reviewed_read_tools"},
         {"structured_output", "reviewed_write_tools", "audit_effect_visibility"},
-        {
-            "structured_output",
-            "consumer_read_only_enforcement",
-            "reconciliation_read_only",
-            "reviewed_read_tools",
-        },
+        {"structured_output", "reviewed_read_tools"},
         {"structured_output", "memory_connector_read"},
         {"structured_output", "mcp:memory_connector:memory_write"},
         {"structured_output", "dws_read", "agent_cli.dws"},
@@ -472,8 +465,6 @@ def test_claude_surface_claims_only_service_owned_exact_read_tools(
         item.startswith("reviewed_skill:") for item in manifest.capabilities
     )
     assert "reviewed_read_tools" in manifest.capabilities
-    assert "consumer_read_only_enforcement" in manifest.capabilities
-    assert "reconciliation_read_only" in manifest.capabilities
     assert "mcp:agent_cli:reviewed_read" in manifest.capabilities
     assert "reviewed_write_tools" not in manifest.capabilities
     assert "mcp:agent_cli:reviewed_write" not in manifest.capabilities

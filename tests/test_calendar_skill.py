@@ -65,7 +65,7 @@ def test_developer_prompts_delegate_calendar_policy_to_business_skills():
 
     assert "<var: calendar_rules_path>" not in text
     assert CORE_DYNAMIC_SKILL_BODY in text
-    assert "agent_cli.read_skill" in text
+    assert "agent_cli.read_skill" not in text
     assert "最具体适用的业务 Skill" not in text
     assert "Pydantic output contract" in text
     assert "2. [output_contracts] Output Contracts:" in text
