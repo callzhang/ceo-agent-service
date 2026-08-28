@@ -8344,16 +8344,7 @@ def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
     )
     task = store.claim_reply_tasks(1)[0]
     run = _claim_audit_run(store, task).run
-    store.fail_agent_run(run.id, {"code": "unknown"}, owner="worker")
-    store.claim_unknown_agent_run(run.id, owner="reconciler")
-    store.defer_unknown_agent_run_reconciliation(
-        run.id,
-        {"code": "needs_human", "retryable": False},
-        owner="reconciler",
-        expected_execution_generation=task.execution_generation,
-        next_attempt_at="",
-        suspended=True,
-    )
+    store.fail_agent_run(run.id, {"code": "codex_result_invalid"}, owner="worker")
     app = create_audit_app(db_path=store.path)
 
     response = TestClient(
@@ -8371,7 +8362,8 @@ def test_agent_run_resolution_api_rejects_stale_generation(tmp_path: Path):
     )
 
     assert response.status_code == 409
-    assert store.get_agent_run(run.id).status == "unknown"
+    assert store.get_agent_run(run.id).status == "failed"
+    assert store.get_reply_task(task.id).status == "processing"
 
 
 def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation(
@@ -8807,7 +8799,7 @@ def test_oa_manual_rerun_hides_old_human_choices_on_attempt_page(tmp_path: Path)
     )
     store.update_reply_attempt(
         attempt_id,
-        send_error="live_evidence_conflict",
+        send_error="codex_result_invalid",
     )
     store.enqueue_manual_rerun_reply_task(
         conversation_id="cid-oa-rerun",
@@ -8827,7 +8819,7 @@ def test_oa_manual_rerun_hides_old_human_choices_on_attempt_page(tmp_path: Path)
     status, html = render_attempt_detail(store, attempt_id)
 
     assert status == 200
-    assert "正在按钉钉 OA 审批技能重新读取当前审批" in html
+    assert "正在重新读取当前审批；下一次普通 Agent turn 会依据当前业务 Skill 处理。" in html
     assert "需要你的判断" not in html
     assert "需要你决策：</strong>否" in html
 
