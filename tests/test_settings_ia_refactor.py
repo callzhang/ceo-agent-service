@@ -75,6 +75,32 @@ def test_connectors_page_contains_wechat_without_separate_settings_tab(tmp_path:
     assert 'href="/settings?tab=wechat"' not in page
 
 
+def test_connector_page_centers_tabs_and_shows_one_connector_without_table(
+    tmp_path: Path, monkeypatch
+):
+    from app.channel_gate import ChannelGateResult, ChannelGateState
+
+    monkeypatch.setattr(
+        "app.channel_gate.DwsChannelGate.check",
+        lambda self: ChannelGateResult(
+            channel="dingtalk",
+            state=ChannelGateState.READY,
+            reason_code="ready",
+            commands=(("dws", "auth", "status"),),
+        ),
+    )
+    page = render_settings_page(
+        _store(tmp_path), active_tab="connectors", connector="dingtalk"
+    )
+
+    assert "connector-pill-tabs centered" in page
+    assert "DingTalk connector" in page
+    assert "dws auth status" in page
+    assert "lark-cli" not in page
+    connector_section = page.split("<h2>Connectors</h2>", 1)[1]
+    assert "<table" not in connector_section
+
+
 def test_status_and_attention_are_separate_pages(tmp_path: Path):
     store = _store(tmp_path)
     store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"待处理"}')

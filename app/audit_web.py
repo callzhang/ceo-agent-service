@@ -554,6 +554,18 @@ a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .prompt-tab:hover{text-decoration:none;color:var(--ink)}
 .prompt-tab.active{background:var(--ink);color:#fff}
 .prompt-pill-tabs,.prompt-view-toggle,.connector-pill-tabs{display:inline-flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);margin:0 8px 12px 0}
+.connector-pill-tabs.centered{display:flex;justify-content:center;width:max-content;margin:0 auto 20px}
+.connector-detail{max-width:900px;margin:0 auto}
+.connector-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}
+.connector-detail-head h3{margin:0;color:var(--ink);font-size:20px;line-height:1.3}
+.connector-detail-head p{margin:5px 0 0;color:var(--steel);font-size:13px}
+.connector-state{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 18px}
+.connector-state-item{border:1px solid var(--hairline);border-radius:10px;background:var(--surface-soft);padding:13px 14px}
+.connector-state-label{display:block;margin-bottom:5px;color:var(--steel);font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase}
+.connector-state-value{color:var(--ink);font-size:14px;font-weight:700}
+.connector-commands{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.connector-command{display:inline-flex;padding:6px 9px;border:1px solid var(--hairline);border-radius:7px;background:var(--canvas);color:var(--charcoal);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px}
+@media (max-width:760px){.connector-state{grid-template-columns:1fr}.connector-detail-head{display:block}.connector-detail-head .runtime-status{margin-top:10px}}
 .configuration-group{margin:16px 0}
 .configuration-group h3{margin:0 0 8px;color:var(--ink);font-size:15px}
 .configuration-table td:first-child{width:280px}
@@ -3140,7 +3152,7 @@ def _render_prompts_content(*, prompt: str = "developer", view: str = "template"
 def _render_connectors_content(store: AutoReplyStore, *, connector: str = "dingtalk") -> str:
     connector = connector if connector in {"dingtalk", "lark", "wechat"} else "dingtalk"
     tabs = (
-        '<nav class="connector-pill-tabs" aria-label="Connector sections">'
+        '<nav class="connector-pill-tabs centered" aria-label="Connector sections">'
         + "".join(
             _connector_tab_link(connector_key, label, connector == connector_key)
             for connector_key, label in (("dingtalk", "DingTalk"), ("lark", "Lark"), ("wechat", "WeChat"))
@@ -3150,8 +3162,48 @@ def _render_connectors_content(store: AutoReplyStore, *, connector: str = "dingt
     if connector == "wechat":
         content = _render_wechat_config(store)
     else:
-        content = _render_channel_config(store)
-    return f'<section class="card"><h2>Connectors</h2>{tabs}</section>{content}'
+        content = _render_single_connector_content(store, connector)
+    return f'<section class="card"><h2>Connectors</h2>{tabs}{content}</section>'
+
+
+def _render_single_connector_content(store: AutoReplyStore, connector: str) -> str:
+    from app.channel_gate import default_channel_gates
+
+    gate = default_channel_gates().get(connector)
+    if gate is None:
+        return '<p class="muted">Connector unavailable.</p>'
+    status = gate.check()
+    state_label = _channel_gate_state_label(status.state.value)
+    state_class = "active" if status.state.value == "ready" else ""
+    commands = status.commands or ()
+    command_html = "".join(
+        f'<span class="connector-command">{escape(" ".join(command))}</span>'
+        for command in commands
+    ) or '<span class="muted">本次检查没有可执行命令。</span>'
+    detail = status.detail or "没有额外说明。"
+    connector_label = {"dingtalk": "DingTalk", "lark": "Lark"}.get(
+        connector, status.channel.title()
+    )
+    return (
+        '<section class="connector-detail">'
+        '<div class="connector-detail-head"><div>'
+        f'<h3>{escape(connector_label)} connector</h3>'
+        '<p>只显示当前连接器的 readiness、live probe 和登录状态。</p>'
+        f'</div><span class="runtime-status {state_class}">{escape(state_label)}</span></div>'
+        '<div class="connector-state">'
+        '<div class="connector-state-item"><span class="connector-state-label">Reason</span>'
+        f'<span class="connector-state-value">{escape(status.reason_code or "-")}</span></div>'
+        '<div class="connector-state-item"><span class="connector-state-label">Login</span>'
+        f'<span class="connector-state-value">{_safe_channel_login_state_html(store, status.channel)}</span></div>'
+        '<div class="connector-state-item"><span class="connector-state-label">Last success</span>'
+        f'<span class="connector-state-value">{_channel_gate_last_success_html(store, status.channel, status.state.value)}</span></div>'
+        '<div class="connector-state-item"><span class="connector-state-label">Detail</span>'
+        f'<span class="connector-state-value">{escape(detail)}</span></div>'
+        '</div>'
+        '<div><span class="connector-state-label">Checks</span>'
+        f'<div class="connector-commands">{command_html}</div></div>'
+        '</section>'
+    )
 
 
 def _connector_tab_link(connector: str, label: str, active: bool) -> str:
