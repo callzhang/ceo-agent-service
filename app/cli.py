@@ -3017,10 +3017,7 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
         + store.recover_effectful_audit_runs_after_service_restart()
         + store.resume_completed_agent_turns_after_service_restart()
     )
-    settled_deliveries = store.settle_unknown_audit_runs_with_sent_reply(
-        include_processing=True
-    )
-    return len(recovered_tasks) + settled_deliveries
+    return len(recovered_tasks)
 
 
 def _recover_okr_review_requests_on_service_start(settings: WorkerSettings) -> int:
