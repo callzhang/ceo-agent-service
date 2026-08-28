@@ -28,6 +28,23 @@ def test_info_moves_current_values_into_configuration(tmp_path: Path):
     assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in configuration
 
 
+def test_settings_defaults_to_status_as_first_page(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/settings")
+
+    assert response.status_code == 200
+    assert "Runtime Monitor" in response.text
+    nav_start = response.text.index('<nav class="settings-nav"')
+    status_pos = response.text.index(">Status</a>", nav_start)
+    info_pos = response.text.index(">Info</a>", nav_start)
+    assert status_pos < info_pos
+    assert (
+        '<a class="settings-nav-item active" href="/settings?tab=status" '
+        'aria-current="page">Status</a>'
+    ) in response.text
+
+
 def test_configuration_uses_one_canonical_identity_setting_and_hides_cache_table(
     tmp_path: Path,
 ):

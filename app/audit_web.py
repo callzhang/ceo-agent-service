@@ -2934,7 +2934,7 @@ def _render_config_body(
 def render_settings_page(
     store: AutoReplyStore,
     *,
-    active_tab: str = "config",
+    active_tab: str = "status",
     config_tab: str = "info",
     prompt: str = "developer",
     view: str = "template",
@@ -3027,6 +3027,7 @@ def render_settings_page(
 
 def _settings_tabs(active_tab: str, *, attention_count: int = 0) -> str:
     tabs = (
+        ("status", "Status"),
         ("info", "Info"),
         ("configuration", "Configuration"),
         ("agent-runtime", "Agent Runtime"),
@@ -3034,7 +3035,6 @@ def _settings_tabs(active_tab: str, *, attention_count: int = 0) -> str:
         ("connectors", "Connectors"),
         ("audit-rules", "Audit Rules"),
         ("attention", "Attention"),
-        ("status", "Status"),
         ("logs", "Logs"),
     )
     links = "".join(
@@ -9915,7 +9915,7 @@ def create_audit_app(
     def settings_page(request: Request) -> str:
         return render_settings_page(
             AutoReplyStore(db_path),
-            active_tab=str(request.query_params.get("tab", "config")),
+            active_tab=str(request.query_params.get("tab", "status")),
             config_tab=str(request.query_params.get("config_tab", "info")),
             prompt=str(request.query_params.get("prompt", "developer")),
             view=str(request.query_params.get("view", "template")),
