@@ -133,6 +133,7 @@ def test_load_runtime_config_accepts_friday_runtime():
         "FRIDAY_LLM_PROVIDER": "openai-compatible",
         "FRIDAY_LLM_BASE_URL": "https://api.minimaxi.com/v1",
         "FRIDAY_LLM_API_KEY": "minimax-secret",
+        "FRIDAY_LLM_MODEL": "MiniMax-M3",
     }
     assert "runtime-ticket" not in repr(config)
     assert "minimax-secret" not in repr(config)
@@ -153,6 +154,7 @@ def test_friday_runtime_reuses_codex_provider_key_without_duplicate_setting():
     assert config.friday_runtime_provider_environment()["FRIDAY_LLM_API_KEY"] == (
         "minimax-secret"
     )
+    assert config.friday_runtime_provider_environment()["FRIDAY_LLM_MODEL"] == "default"
     assert config.secret_for("friday_runtime").get_secret_value() == "runtime-ticket"
 
 

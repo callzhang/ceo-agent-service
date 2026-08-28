@@ -55,6 +55,7 @@ class AgentRuntimeConfig(BaseModel):
             "FRIDAY_LLM_PROVIDER": "openai-compatible",
             "FRIDAY_LLM_BASE_URL": self.friday_runtime_provider_base_url,
             "FRIDAY_LLM_API_KEY": self.friday_runtime_provider_api_key.get_secret_value(),
+            "FRIDAY_LLM_MODEL": self.friday_runtime_model,
         }
 
 
