@@ -128,6 +128,11 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     )
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
     assert env["CEO_CONDA_PREFIX"] == "/Users/derek/miniforge3"
+    # The production launchd job must preserve the explicitly enabled WeChat
+    # channel. The app-level defaults remain disabled for safety in other runs.
+    assert env["CEO_WECHAT_READER_ENABLED"] == "1"
+    assert env["CEO_WECHAT_SENDER_ENABLED"] == "1"
+    assert env["CEO_WECHAT_SEND_MODE"] == "auto"
     assert "HOME" not in env
     assert "CODEX_HOME" not in env
     assert "DWS_DISABLE_KEYCHAIN" not in env

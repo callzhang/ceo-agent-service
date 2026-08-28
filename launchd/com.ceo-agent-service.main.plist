@@ -47,6 +47,15 @@
     <string>900</string>
     <key>CEO_TASK_CODEX_IDLE_TIMEOUT_SECONDS</key>
     <string>300</string>
+    <!-- WeChat is an explicitly enabled local channel in the deployed CEO
+         assistant. Keep these in the launchd environment: service workers are
+         selected once at startup and Python defaults intentionally disable it. -->
+    <key>CEO_WECHAT_READER_ENABLED</key>
+    <string>1</string>
+    <key>CEO_WECHAT_SENDER_ENABLED</key>
+    <string>1</string>
+    <key>CEO_WECHAT_SEND_MODE</key>
+    <string>auto</string>
   </dict>
 </dict>
 </plist>
