@@ -3002,7 +3002,9 @@ def test_failed_old_send_releases_corrected_revision(tmp_path, monkeypatch):
         scheduled_at="2026-06-08 01:00:00",
     )
     class Dws(FakeDws):
-        def __init__(self): super().__init__(); self.first = True
+        def __init__(self):
+            super().__init__()
+            self.first = True
         def send_message(self, *a, **k):
             self.sent.append({"text": a[1], **k})
             if self.first:
