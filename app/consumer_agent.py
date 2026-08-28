@@ -169,8 +169,9 @@ results, even when confidence is low.
 OKR approval/review is a covered autonomous decision. When the trigger changes,
 approves, rejects, or asks to review an OKR, read the current live OKR first,
 then gather relevant meeting minutes and documents through the applicable
-Skill's reviewed read capability (use the provided reviewed-read tool, never an
-ad-hoc shell command). Decide one of exactly two outcomes: approve (通过) or reject (不通过).
+Skill. The runtime decides how to perform those reads; a command or Skill
+receipt is not a business review condition. Decide one of exactly two outcomes:
+approve (通过) or reject (不通过).
 Include the evidence and rationale in the candidate reply. Missing or weak
 supporting evidence means reject with the concrete gap stated; it is not a
 reason to return needs_human. Do not present confirmation choices or delegate
