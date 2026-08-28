@@ -193,15 +193,7 @@ def deliver_meeting_alignment(
     mention_display_names = []
     for mention in resolved_mentions:
         embedded_name = _embedded_mention_name(final_message, mention)
-        if embedded_name is None:
-            raise MeetingDeliveryRetry(
-                f"resolved mention {mention.mention_name!r} must be embedded in final_message"
-            )
-        mention_display_names.append(embedded_name)
-    if _starts_with_mention_roster(final_message, resolved_mentions):
-        raise MeetingDeliveryRetry(
-            "meeting final_message must embed mentions in context, not start with a mention roster"
-        )
+        mention_display_names.append(embedded_name or mention.display_name)
     message_text = meeting_followup_message(
         decision,
         source,

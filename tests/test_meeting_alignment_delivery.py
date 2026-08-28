@@ -202,20 +202,20 @@ def test_group_delivery_uses_first_candidate_and_real_mentions():
     assert result.message_text == dws.sent[0]["text"]
 
 
-def test_group_delivery_retries_when_a_structured_mention_is_not_in_its_message():
+def test_group_delivery_uses_provider_mentions_without_rewriting_message():
     dws = FakeDws()
     decision = send_decision()
     payload = decision.model_dump()
     payload["final_message"] = "会后对齐｜上线评审\n\n请确认对应事项。"
 
-    with pytest.raises(MeetingDeliveryRetry, match="embedded in final_message"):
-        deliver_meeting_alignment(
-            MeetingAlignmentDecision.model_validate(payload),
-            meeting_source(),
-            dws,
-        )
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(payload),
+        meeting_source(),
+        dws,
+    )
 
-    assert dws.sent == []
+    assert result.status == "sent"
+    assert dws.sent[0]["at_open_dingtalk_names"] == ["A", "B"]
 
 
 def test_group_delivery_normalizes_a_leading_mention_roster_into_context():
