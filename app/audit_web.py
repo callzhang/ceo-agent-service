@@ -3350,15 +3350,35 @@ _PROMPT_VARIABLE_DESCRIPTIONS = {
     "CEO_PROMPT_VAR_OA_APPROVAL_RULES": "OA 审批审阅规则文件路径。",
 }
 
+# ``USER_ALIAS`` is the canonical display identity.  ``CEO_PRINCIPAL_NAME``
+# predates the identity resolver and remains a read-only compatibility value;
+# showing both as editable fields makes it look as if two settings control the
+# same thing (and they can easily drift apart).
+_CONFIGURATION_COMPATIBILITY_KEYS = frozenset({"CEO_PRINCIPAL_NAME"})
+_CONFIGURATION_CORE_SCHEDULING_KEYS = frozenset(
+    {
+        "CEO_PRODUCER_INTERVAL_SECONDS",
+        "CEO_CONSUMER_POLL_INTERVAL_SECONDS",
+        "CEO_CONSUMER_WORKERS",
+    }
+)
+
 
 def _configuration_entries() -> dict[str, list[tuple[str, str, str, bool]]]:
     grouped = {group: [] for group in _CONFIGURATION_GROUPS}
     editable = _editable_system_config_keys()
+    seen: set[str] = set()
     for key, value, description in _system_config_rows():
+        if key in _CONFIGURATION_COMPATIBILITY_KEYS or key in seen:
+            continue
+        seen.add(key)
         group = _CONFIGURATION_GROUP_BY_KEY.get(key, "Runtime & Identity")
         grouped[group].append((key, value, description, key in editable))
     for key, value in configurable_prompt_variable_pairs():
         env_key = prompt_variable_env_key(key)
+        if env_key in seen:
+            continue
+        seen.add(env_key)
         grouped["Prompt Variables"].append(
             (
                 env_key,
@@ -3368,6 +3388,71 @@ def _configuration_entries() -> dict[str, list[tuple[str, str, str, bool]]]:
             )
         )
     return grouped
+
+
+def _configuration_compatibility_entries() -> list[tuple[str, str, str, bool]]:
+    """Return legacy keys that remain readable without becoming duplicate inputs."""
+
+    return [
+        (key, value, description, False)
+        for key, value, description in _system_config_rows()
+        if key in _CONFIGURATION_COMPATIBILITY_KEYS
+    ]
+
+
+def _configuration_table_html(
+    rows: list[tuple[str, str, str, bool]],
+    *,
+    include_form_fields: bool = True,
+) -> str:
+    row_html = "".join(
+        "<tr>"
+        f'<td><code class="config-value">{escape(key)}</code>'
+        + (
+            f'<input type="hidden" name="config_key" value="{escape(key, quote=True)}">'
+            if include_form_fields
+            else ""
+        )
+        + f"</td><td>{_configuration_value_cell(key, value, editable)}</td>"
+        f"<td>{escape(description)}</td></tr>"
+        for key, value, description, editable in rows
+    )
+    return (
+        '<table class="system-config-table configuration-table">'
+        "<thead><tr><th>Key</th><th>Current value</th><th>Description</th></tr></thead>"
+        f"<tbody>{row_html}</tbody></table>"
+    )
+
+
+def _configuration_group_html(
+    group: str,
+    rows: list[tuple[str, str, str, bool]],
+) -> str:
+    """Render a group while keeping low-frequency scheduling knobs compact."""
+
+    if group != "Scheduling":
+        return (
+            '<section class="configuration-group">'
+            f"<h3>{escape(group)}</h3>"
+            f"{_configuration_table_html(rows)}</section>"
+        )
+
+    core = [row for row in rows if row[0] in _CONFIGURATION_CORE_SCHEDULING_KEYS]
+    advanced = [row for row in rows if row[0] not in _CONFIGURATION_CORE_SCHEDULING_KEYS]
+    advanced_html = (
+        '<details class="config-collapse configuration-advanced-scheduling">'
+        '<summary><h3>Advanced scheduling</h3></summary>'
+        '<p class="muted">会议、任务维护、本地 CLI 和恢复扫描的独立周期。它们不会改变主服务的 producer/consumer 周期。</p>'
+        f"{_configuration_table_html(advanced)}"
+        "</details>"
+        if advanced
+        else ""
+    )
+    return (
+        '<section class="configuration-group">'
+        f"<h3>{escape(group)}</h3>"
+        f"{_configuration_table_html(core)}{advanced_html}</section>"
+    )
 
 
 def _configuration_value_cell(key: str, value: str, editable: bool) -> str:
@@ -3385,22 +3470,18 @@ def _render_configuration_content(*, db_path: Path | None = None) -> str:
     group_html = []
     for group in _CONFIGURATION_GROUPS:
         rows = grouped[group]
-        row_html = "".join(
-            "<tr>"
-            f'<td><code class="config-value">{escape(key)}</code>'
-            f'<input type="hidden" name="config_key" value="{escape(key, quote=True)}"></td>'
-            f"<td>{_configuration_value_cell(key, value, editable)}</td>"
-            f"<td>{escape(description)}</td>"
-            "</tr>"
-            for key, value, description, editable in rows
-        )
-        group_html.append(
-            '<section class="configuration-group">'
-            f"<h3>{escape(group)}</h3>"
-            '<table class="system-config-table configuration-table">'
-            "<thead><tr><th>Key</th><th>Current value</th><th>Description</th></tr></thead>"
-            f"<tbody>{row_html}</tbody></table></section>"
-        )
+        group_html.append(_configuration_group_html(group, rows))
+    compatibility_rows = _configuration_compatibility_entries()
+    compatibility_html = (
+        '<details class="config-collapse configuration-compatibility">'
+        '<summary><h3>Compatibility keys</h3></summary>'
+        '<p class="muted">这些 key 仅为旧版本兼容保留，不再作为独立配置编辑；身份显示名请统一修改 '
+        '<code>USER_ALIAS</code>。</p>'
+        f"{_configuration_table_html(compatibility_rows, include_form_fields=False)}"
+        "</details>"
+        if compatibility_rows
+        else ""
+    )
     return (
         '<section class="card">'
         "<h2>Configuration</h2>"
@@ -3410,7 +3491,7 @@ def _render_configuration_content(*, db_path: Path | None = None) -> str:
         + "".join(group_html)
         + '<p><button type="submit">Save configuration</button></p>'
         "</form>"
-        f"{_runtime_identity_cache_html(db_path)}"
+        f"{compatibility_html}"
         "</section>"
     )
 
@@ -9846,6 +9927,12 @@ def create_audit_app(
     @app.get("/config", response_class=HTMLResponse)
     def config_page(request: Request) -> str:
         tab = str(request.query_params.get("tab", "info"))
+        if tab in {"system", "configuration"}:
+            saved_suffix = "&saved=1" if request.query_params.get("saved") == "1" else ""
+            return RedirectResponse(
+                f"/settings?tab=configuration{saved_suffix}",
+                status_code=303,
+            )
         if tab in {"developer", "user"}:
             return RedirectResponse(
                 f"/settings?tab=prompts&prompt={tab}&view=template",

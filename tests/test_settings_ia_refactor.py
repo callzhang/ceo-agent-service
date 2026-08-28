@@ -28,6 +28,36 @@ def test_info_moves_current_values_into_configuration(tmp_path: Path):
     assert "CEO_PROMPT_VAR_RESPONSIBILITY_SUMMARY" in configuration
 
 
+def test_configuration_uses_one_canonical_identity_setting_and_hides_cache_table(
+    tmp_path: Path,
+):
+    page = render_settings_page(
+        _store(tmp_path),
+        active_tab="configuration",
+    )
+
+    # USER_ALIAS is the single editable display-name setting. The old
+    # CEO_PRINCIPAL_NAME key remains readable for compatibility, but is not a
+    # second form control that can drift from USER_ALIAS.
+    assert page.count('name="config_key" value="USER_ALIAS"') == 1
+    assert 'name="config_key" value="CEO_PRINCIPAL_NAME"' not in page
+    assert page.count("CEO_PRINCIPAL_NAME") == 1
+    assert '<details class="config-collapse configuration-compatibility">' in page
+    assert "Compatibility keys" in page
+    assert '<details class="config-collapse configuration-advanced-scheduling">' in page
+    assert "Advanced scheduling" in page
+    assert "运行时身份缓存" not in page
+
+
+def test_legacy_system_config_page_maps_to_unified_configuration(tmp_path: Path):
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    response = client.get("/config?tab=system", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings?tab=configuration"
+
+
 def test_prompts_page_uses_pill_tabs_and_template_preview_toggle(tmp_path: Path):
     store = _store(tmp_path)
 
