@@ -4,9 +4,11 @@ from app.leak_check import (
     assert_no_credential_arguments,
     assert_no_credentials,
     contains_credential,
+    contains_local_runtime_leak,
     redact_credentials,
     redact_credentials_in_value,
 )
+from app.config import forbidden_path_prefixes
 
 
 @pytest.mark.parametrize(
@@ -97,6 +99,16 @@ def test_redact_credentials_in_value_preserves_shape_paths_and_page_tokens():
         "next_page_token": "opaque-pagination-value",
         "nested": ["[REDACTED]", {"status": "ok"}],
     }
+
+
+def test_bare_tilde_prefix_does_not_reject_ordinary_ranges(monkeypatch):
+    monkeypatch.setenv(
+        "CEO_FORBIDDEN_PATH_PREFIXES",
+        "/Users/derek/, /home/derek/, ~",
+    )
+
+    assert forbidden_path_prefixes() == ("/Users/derek/", "/home/derek/")
+    assert not contains_local_runtime_leak("skill success rate improved from 40%~50%")
 
 
 @pytest.mark.parametrize(

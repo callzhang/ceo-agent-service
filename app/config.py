@@ -198,7 +198,17 @@ def document_extraction_ids() -> tuple[str, ...]:
 
 
 def forbidden_path_prefixes() -> tuple[str, ...]:
-    return env_csv("CEO_FORBIDDEN_PATH_PREFIXES", (str(Path.home()) + "/",))
+    configured = env_csv(
+        "CEO_FORBIDDEN_PATH_PREFIXES",
+        (str(Path.home()) + "/",),
+    )
+    # A bare "~" is shell shorthand, not a path prefix.  Treating it as a
+    # substring would reject ordinary ranges such as "40%~50%" in results.
+    return tuple(
+        prefix
+        for prefix in configured
+        if prefix not in {"~", "~/"} and prefix.strip()
+    )
 
 
 def parse_duration_value(
