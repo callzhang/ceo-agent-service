@@ -7915,6 +7915,64 @@ def test_render_attempt_detail_shows_counterparty_feedback(tmp_path: Path):
     assert "当前发送方式不支持" not in html
 
 
+def test_render_attempt_detail_does_not_open_synthetic_service_task_as_chat(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    trigger_message_json = json.dumps(
+        {
+            "open_conversation_id": "oa_pending_scan",
+            "open_message_id": "oa-pending:proc-1:revision-1",
+            "conversation_title": "审批待办",
+            "single_chat": True,
+            "sender_name": "Derek OA",
+            "message_type": "text",
+            "create_time": "2026-08-28 08:00:00",
+            "content": "审批待办扫描发现新增审批",
+            "raw_payload": {
+                "source": "oa_pending_scan",
+                "processInstanceId": "proc-1",
+                "taskId": "task-1",
+            },
+        },
+        ensure_ascii=False,
+    )
+    store.enqueue_reply_task(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id="oa-pending:proc-1:revision-1",
+        trigger_create_time="2026-08-28 08:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描发现新增审批",
+        trigger_message_json=trigger_message_json,
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc-1:revision-1",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描发现新增审批",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        oa_url="https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="consumer_retry_exhausted",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "/open-dingtalk-popup?conversation_id=oa_pending_scan" not in html
+    assert "https://aflow.dingtalk.com/detail?procInstId=proc-1&amp;taskId=task-1" in html
+
+
 def test_attempt_list_uses_single_review_feedback_entrypoint(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)

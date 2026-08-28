@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-08-28: prevent the audit console from sending the synthetic
+  `oa_pending_scan` conversation id to DingTalk's chat-opening API. Service
+  tasks now expose their stored OA detail URL instead of a broken chat-jump
+  action.
+
 - 2026-08-28: preserve live OA applicant identity mappings in
   `org_user_profiles` and pass a resolved `openDingTalkId` through the
   applicant-notification context when DWS provides one, avoiding name-based

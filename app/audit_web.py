@@ -9516,6 +9516,7 @@ def _attempt_detail_body(
         actions_html=orchestration_links + _attempt_row_actions(
             attempt,
             sent_reply,
+            reply_task=reply_task,
         ),
         status_html=_attempt_status_card(
             attempt,
@@ -10470,6 +10471,15 @@ def _related_history_card(
             if store is not None
             else None
         )
+        reply_task = (
+            store.get_reply_task_for_message(
+                attempt.conversation_id,
+                attempt.trigger_message_id,
+                channel=attempt.channel,
+            )
+            if store is not None
+            else None
+        )
         rows.append(
             "<tr>"
             f"<td>{_attempt_link(attempt)}</td>"
@@ -10477,7 +10487,7 @@ def _related_history_card(
             f"<td>{escape(attempt.trigger_sender)}</td>"
             f"<td>{_attempt_action_pills(attempt)}</td>"
             f"<td>{escape(_excerpt(attempt.trigger_text, 120))}</td>"
-            f"<td>{_attempt_row_actions(attempt, sent_reply, session_id=session_id)}</td>"
+            f"<td>{_attempt_row_actions(attempt, sent_reply, session_id=session_id, reply_task=reply_task)}</td>"
             "</tr>"
         )
     return (
@@ -10518,13 +10528,11 @@ def _attempt_row_actions(
     sent_reply: SentReply | None,
     *,
     session_id: str = "",
+    reply_task: ReplyTask | None = None,
 ) -> str:
     return_to = f"/codex/{quote(session_id, safe='')}" if session_id else f"/attempts/{attempt.id}"
     return_to_query = quote(return_to, safe="/")
-    dingtalk_href = (
-        "/open-dingtalk-popup?"
-        f"conversation_id={quote(attempt.conversation_id, safe='')}"
-    )
+    chat_action = _attempt_chat_action(attempt, reply_task)
     terminal = attempt.send_status.strip().lower() in {
         "sent", "skipped", "completed", "commented", "calendar", "document", "reacted",
     }
@@ -10532,9 +10540,7 @@ def _attempt_row_actions(
         return (
             '<div class="attempt-row-actions">'
             '<span class="disabled-action">无需操作</span>'
-            f'<a class="compact-button open-dingtalk-action" href="{dingtalk_href}" '
-            "onclick=\"window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260'); return false;\" "
-            "target=\"ceo-open-dingtalk\" rel=\"noopener\">查看钉钉消息</a>"
+            f"{chat_action}"
             "</div>"
         )
     recall_html = (
@@ -10556,10 +10562,48 @@ def _attempt_row_actions(
             else ""
         )
         + recall_html
-        + f"<a class=\"compact-button open-dingtalk-action\" href=\"{dingtalk_href}\" "
+        + chat_action
+        + "</div>"
+    )
+
+
+def _attempt_chat_action(
+    attempt: ReplyAttempt,
+    reply_task: ReplyTask | None,
+) -> str:
+    if _reply_task_is_service_task(reply_task):
+        if attempt.oa_url.strip():
+            return (
+                f'<a class="compact-button open-dingtalk-action" '
+                f'href="{escape(attempt.oa_url, quote=True)}" '
+                'target="_blank" rel="noopener">查看审批</a>'
+            )
+        return '<span class="disabled-action">无可打开会话</span>'
+    dingtalk_href = (
+        "/open-dingtalk-popup?"
+        f"conversation_id={quote(attempt.conversation_id, safe='')}"
+    )
+    return (
+        f'<a class="compact-button open-dingtalk-action" href="{dingtalk_href}" '
         "onclick=\"window.open(this.href,'ceo-open-dingtalk','popup,width=420,height=260'); return false;\" "
-        "target=\"ceo-open-dingtalk\" rel=\"noopener\">查看钉钉消息</a>"
-        "</div>"
+        'target="ceo-open-dingtalk" rel="noopener">查看钉钉消息</a>'
+    )
+
+
+def _reply_task_is_service_task(reply_task: ReplyTask | None) -> bool:
+    if reply_task is None:
+        return False
+    try:
+        payload = json.loads(reply_task.trigger_message_json)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    raw_payload = payload.get("raw_payload")
+    if not isinstance(raw_payload, dict):
+        return False
+    return bool(raw_payload.get("service_task")) or (
+        str(raw_payload.get("source") or "").strip() == "oa_pending_scan"
     )
 
 
