@@ -128,7 +128,7 @@ def test_store_upgrades_point_seven_schema_with_current_indexes(tmp_path: Path):
             )
         }
 
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-23.2"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-26.2"
     assert "idx_workbench_events_event_type" in indexes
     assert "idx_workbench_events_turn_id_id" in indexes
     assert "idx_workbench_turns_task_sequence" in indexes
@@ -224,7 +224,7 @@ def test_store_upgrades_point_eight_turns_with_stable_per_task_sequence(
     upgraded = WorkbenchStore(db_path)
     turns = upgraded.list_turns(task.id)
 
-    assert store_module.STORE_SCHEMA_VERSION == "2026-08-23.2"
+    assert store_module.STORE_SCHEMA_VERSION == "2026-08-26.2"
     assert [(turn.id, turn.task_sequence) for turn in turns] == [
         (second_id, 2),
         (first_id, 1),
