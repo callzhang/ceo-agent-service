@@ -539,7 +539,7 @@ def _cache_oa_applicant_profile(
     """Cache the live OA originator mapping for later direct-user delivery."""
     if not isinstance(detail_payload, dict):
         return "", ""
-    applicant_user_id = _oa_originator_user_id(detail_payload)
+    applicant_user_id = oa_originator_user_id(detail_payload)
     if not applicant_user_id:
         return "", ""
     get_profiles = getattr(dws, "get_user_profiles", None)
@@ -570,10 +570,11 @@ def _cache_oa_applicant_profile(
             has_subordinate=getattr(profile, "has_subordinate", None),
         )
         return applicant_user_id, open_dingtalk_id
-    return applicant_user_id, ""
+    cached = store.get_org_user_profile(applicant_user_id)
+    return applicant_user_id, (cached.open_dingtalk_id or "") if cached else ""
 
 
-def _oa_originator_user_id(value: Any) -> str:
+def oa_originator_user_id(value: Any) -> str:
     if isinstance(value, dict):
         for key in (
             "originatorUserid",
@@ -585,12 +586,12 @@ def _oa_originator_user_id(value: Any) -> str:
             if candidate is not None and str(candidate).strip():
                 return str(candidate).strip()
         for nested in value.values():
-            candidate = _oa_originator_user_id(nested)
+            candidate = oa_originator_user_id(nested)
             if candidate:
                 return candidate
     elif isinstance(value, list):
         for nested in value:
-            candidate = _oa_originator_user_id(nested)
+            candidate = oa_originator_user_id(nested)
             if candidate:
                 return candidate
     return ""

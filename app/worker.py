@@ -96,6 +96,7 @@ from app.store import (
     AutoReplyStore,
     ReplyTask,
 )
+from app.task_scanners import oa_originator_user_id
 from app.work_profile import safe_excerpt
 from PIL import Image, UnidentifiedImageError
 
@@ -2439,6 +2440,29 @@ class DingTalkAutoReplyWorker:
                     skill_update_requested=source_attempt.skill_update_requested,
                     skill_update_receipts_json=source_attempt.skill_update_receipts_json,
                 )
+        trigger_raw_payload = dict(trigger.raw_payload)
+        if trigger_raw_payload.get("source") == "oa_pending_scan":
+            process_instance_id = str(
+                trigger_raw_payload.get("processInstanceId") or ""
+            ).strip()
+            read_detail = getattr(self.dws, "read_oa_process_instance_openapi", None)
+            if process_instance_id and read_detail is not None:
+                try:
+                    detail = read_detail(process_instance_id)
+                    applicant_user_id = oa_originator_user_id(detail)
+                    profile = (
+                        self.store.get_org_user_profile(applicant_user_id)
+                        if applicant_user_id
+                        else None
+                    )
+                    if applicant_user_id:
+                        trigger_raw_payload["originatorUserid"] = applicant_user_id
+                    if profile is not None and profile.open_dingtalk_id:
+                        trigger_raw_payload["originatorOpenDingTalkId"] = (
+                            profile.open_dingtalk_id
+                        )
+                except Exception:
+                    pass
         return AgentTaskContext(
             task_id=task.id,
             channel=task.channel,
@@ -2456,7 +2480,7 @@ class DingTalkAutoReplyWorker:
             materials=materials,
             prior_receipts=self._agent_prior_receipts(task),
             manual_rerun=manual_rerun,
-            trigger_raw_payload=dict(trigger.raw_payload),
+            trigger_raw_payload=trigger_raw_payload,
             image_paths=tuple(str(path.resolve()) for path in image_paths),
             image_sha256s=tuple(
                 hashlib.sha256(path.read_bytes()).hexdigest() for path in image_paths

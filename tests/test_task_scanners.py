@@ -773,6 +773,39 @@ def test_scan_pending_oa_approvals_caches_applicant_open_dingtalk_id(tmp_path):
     assert profile.open_dingtalk_id == "open-applicant-1"
 
 
+def test_scan_pending_oa_approvals_reuses_cached_applicant_mapping(tmp_path):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [DwsOaApprovalCandidate(
+                process_instance_id="proc-1", title="张三提交的申请", process_name="申请"
+            )]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {"result": {"originatorUserid": "applicant-user-1", "tasks": [
+                {"taskId": "task-1", "userId": "principal-user-1", "status": "RUNNING"}
+            ]}}
+
+        def get_user_profiles(self, user_ids):
+            return []
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    store.upsert_org_user_profile(
+        user_id="applicant-user-1", name="张三", open_dingtalk_id="open-applicant-1",
+        manager_user_id=None, department_ids=set(),
+    )
+    assert scan_pending_oa_approvals(store, FakeDws(), now=datetime.fromisoformat(
+        "2026-07-27T09:30:00+08:00"
+    )) == 1
+    task = store.claim_reply_tasks(limit=1)[0]
+    assert '"originatorOpenDingTalkId":"open-applicant-1"' in task.trigger_message_json
+
+
 def test_scan_pending_oa_approvals_covers_an_old_process_that_reaches_me_now(tmp_path):
     class FakeDws:
         def __init__(self):
