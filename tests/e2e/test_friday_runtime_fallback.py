@@ -431,14 +431,15 @@ observability:
         assert len(attempts) == 1
         assert attempts[0].route_name == "friday_runtime"
         assert attempts[0].status == "completed"
-        assert attempts[0].operation_id
         assert attempts[0].session_id
+        assert attempts[0].transcript_reference.startswith("friday_operation:")
+        operation_id = attempts[0].transcript_reference.split(":", 1)[1]
         with sqlite3.connect(runtime_db) as runtime_state:
             thread_id = runtime_state.execute("select thread_id from threads").fetchone()[0]
             turn_id = runtime_state.execute("select turn_id from turns").fetchone()[0]
             operation = runtime_state.execute(
                 "select operation_id, status from async_operations where operation_id = ?",
-                (attempts[0].operation_id,),
+                (operation_id,),
             ).fetchone()
             artifact = runtime_state.execute(
                 "select thread_id, created_turn_id, final_message from artifacts where thread_id = ?",
@@ -449,7 +450,8 @@ observability:
                 "select status, last_error_code, last_error_message from runs where turn_id = ?",
                 (turn_id,),
             ).fetchone()
-        assert thread_id and turn_id and operation == (attempts[0].operation_id, "completed")
+        assert thread_id and thread_id == attempts[0].session_id
+        assert turn_id and operation == (operation_id, "completed")
         assert run_model and run_model[0] == provider_model
         assert run_state and run_state[0] == "completed", _safe_detail(run_state)
         assert artifact and artifact[0] == thread_id and artifact[1] == turn_id
