@@ -90,3 +90,24 @@ def test_start_route_requires_current_fingerprint_and_launches_once():
     assert accepted.status_code == 202
     assert accepted.json()["pid"] == 4242
     assert launched[0].target_commit == "b" * 40
+
+
+def test_dirty_start_requires_explicit_preservation_metadata():
+    app = FastAPI()
+    service = FakeService()
+    service.snapshot = service.snapshot.model_copy(
+        update={"status": UpgradeStatus.LOCAL_CHANGES, "dirty_paths": ("app/a.py",)}
+    )
+    register_repository_upgrade_routes(
+        app,
+        service_factory=lambda: service,
+        updater_launcher=lambda _operation: 4242,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/repository-upgrade/start",
+            json={"operation_id": "op-1", "fingerprint": "fp-1"},
+        )
+
+    assert response.status_code == 422

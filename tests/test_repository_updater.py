@@ -126,6 +126,29 @@ def test_failed_verification_rolls_back_installed_revision(tmp_path: Path):
     assert json.loads(store.values["repository_upgrade_operation:v1"])["status"] == "rolled_back"
 
 
+def test_dirty_upgrade_preserves_exact_branch_and_message(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    (local / "draft.txt").write_text("draft\n", encoding="utf-8")
+    op_base = operation(local)
+    from app.repository_upgrade import GitRepository
+
+    repo = GitRepository(local)
+    records = repo.status_records()
+    op = op_base.__class__(
+        **{**op_base.__dict__, "expected_fingerprint": repo.fingerprint("main", op_base.original_commit, op_base.target_commit, records), "branch_name": "preserve/local", "commit_message": "chore: preserve local draft"}
+    )
+    result = RepositoryUpdater(
+        local,
+        StateStore(),
+        restart=lambda: None,
+        health=lambda: True,
+    ).execute(op)
+
+    assert result.status == "succeeded"
+    assert git(local, "show", "preserve/local", "--format=%s", "--no-patch") == "chore: preserve local draft"
+    assert git(local, "status", "--porcelain") == ""
+
+
 def test_persisted_operation_can_be_loaded_by_id():
     store = StateStore()
     store.values["repository_upgrade_operation:v1"] = json.dumps(

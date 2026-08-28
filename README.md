@@ -287,6 +287,9 @@ cp .env.example .env
 | `CEO_MEETING_PRODUCER_INTERVAL_SECONDS` | 会议信息发现周期，默认 60 秒 |
 | `CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS` | 会后对齐队列消费周期，默认 10 秒 |
 | `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
+| `CEO_REPOSITORY_UPGRADE_REMOTE` / `CEO_REPOSITORY_UPGRADE_BRANCH` | repository-upgrade 检查的 Git remote 和目标分支，默认 `origin` / `main` |
+| `CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS` | 自动检查远端更新的周期，默认 21600 秒（6 小时） |
+| `CEO_REPOSITORY_UPGRADE_DISABLED` | 设为 `1` 禁用周期检查；History 页面仍可手动查看已保存状态 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex OAuth 默认模型、thinking 强度和可选 provider；默认 `gpt-5.5` + `medium`。在 `Settings → Config → Agent Runtime` 中用下拉菜单修改；模型可选 `gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。不提供 `gpt-5.6` 别名，因为 Codex CLI 的 ChatGPT OAuth 会拒绝该别名。保存到 `.env` 后重启主服务统一生效，认证与 MCP/skills 保持沿用当前安装用户配置。 |
 | `CEO_AGENT_RUNTIME_ROUTES` / `CEO_CODEX_API_BASE_URL` / `CEO_CODEX_API_MODEL` / `CEO_CODEX_API_KEY` | 可选 Codex API fallback：在 `Settings → Config → Agent Runtime` 启用，填写 Base URL、模型和 Token。已配置的 Token 以圆点掩码显示，页面不会重新下发密钥；眼睛按钮只显示或隐藏本次输入的内容。留空保存会保留已有 Token。 |
 | `CEO_CODEX_CAPACITY_RETRY_DELAY` | Codex 明确返回 workspace credits、quota 或 usage limit 后的全局暂停期；默认 30 分钟，暂停期内不再启动新的 Codex 回复、工作汇总或会议分析，过期后自动恢复 |

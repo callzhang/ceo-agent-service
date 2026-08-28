@@ -9,7 +9,7 @@ from typing import Callable, Protocol
 from urllib.request import urlopen
 
 from app.database_backup import create_database_backup
-from app.repository_upgrade import GitRepository, RepositoryUpgradeService
+from app.repository_upgrade import GitRepository
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
@@ -161,8 +161,10 @@ class RepositoryUpdater:
         with self.repository.mutex():
             self._persist(operation, "preparing")
             self.repository.fetch(self.remote)
-            self._recheck(operation)
+            records = self._recheck(operation)
             backup_path = self._backup(operation)
+            if records:
+                self._preserve_local_changes(operation)
             self._persist(operation, "updating", backup_path=backup_path)
             try:
                 self.repository._run(
@@ -216,7 +218,7 @@ class RepositoryUpdater:
                 backup_path=str(backup_path) if backup_path else "",
             )
 
-    def _recheck(self, operation: UpgradeOperation) -> None:
+    def _recheck(self, operation: UpgradeOperation) -> list[object]:
         current = self.repository.resolve_ref(self.target_ref)
         remote = self.repository.resolve_ref(self.remote_ref)
         if current != operation.original_commit or remote != operation.target_commit:
@@ -224,7 +226,7 @@ class RepositoryUpdater:
         if not self.repository.is_ancestor(current, remote):
             raise UpgradePreconditionError("repository target is diverged")
         records = self.repository.status_records()
-        if records:
+        if records and not operation.branch_name.strip():
             raise UpgradePreconditionError("repository fingerprint changed")
         fingerprint = self.repository.fingerprint(
             self.branch,
@@ -234,6 +236,54 @@ class RepositoryUpdater:
         )
         if fingerprint != operation.expected_fingerprint:
             raise UpgradePreconditionError("repository fingerprint changed")
+        return records
+
+    def _preserve_local_changes(self, operation: UpgradeOperation) -> None:
+        if not operation.commit_message.strip():
+            raise UpgradePreconditionError("commit message is required for local changes")
+        if not self._valid_preservation_branch(operation.branch_name):
+            raise UpgradePreconditionError("preservation branch is invalid or exists")
+        self.repository._run(
+            ["switch", "-c", operation.branch_name],
+            category="preservation_branch",
+        )
+        try:
+            self.repository._run(["add", "--all"], category="preservation_stage")
+            self.repository._run(
+                ["commit", "-m", operation.commit_message],
+                category="preservation_commit",
+            )
+            self.repository._run(
+                ["switch", self.branch],
+                category="preservation_return",
+            )
+        except Exception:
+            # The branch and original changes remain available for manual repair;
+            # never reset or delete operator work after a preservation failure.
+            raise
+
+    def _valid_preservation_branch(self, branch_name: str) -> bool:
+        if not branch_name.strip() or branch_name == self.branch:
+            return False
+        valid = self.repository._run(
+            ["check-ref-format", "--branch", branch_name],
+            category="preservation_branch_validation",
+            accepted_returncodes=(0, 1),
+        )
+        if valid.returncode != 0:
+            return False
+        for ref in (
+            f"refs/heads/{branch_name}",
+            f"refs/remotes/{self.remote}/{branch_name}",
+        ):
+            existing = self.repository._run(
+                ["show-ref", "--verify", "--quiet", ref],
+                category="preservation_branch_validation",
+                accepted_returncodes=(0, 1),
+            )
+            if existing.returncode == 0:
+                return False
+        return True
 
     def _backup(self, operation: UpgradeOperation) -> Path | None:
         if self.database_path is None or not self.database_path.exists():

@@ -71,6 +71,13 @@ def register_repository_upgrade_routes(
             UpgradeStatus.LOCAL_CHANGES,
         }:
             raise HTTPException(status_code=409, detail="repository_not_upgradable")
+        if snapshot.status is UpgradeStatus.LOCAL_CHANGES and (
+            not request.branch_name.strip() or not request.commit_message.strip()
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="preservation_branch_and_commit_message_required",
+            )
         try:
             reservation = service.reserve_operation(
                 request.operation_id,
