@@ -4391,7 +4391,7 @@ def test_render_config_page_shows_friday_runtime_settings_without_credentials(
     assert 'name="friday_runtime_enabled"' in html
     assert 'name="friday_runtime_base_url"' in html
     assert 'name="friday_runtime_project_id"' in html
-    assert "Model is selected by the Friday project" in html
+    assert "Provider fields are independent from Codex API" in html
     assert 'name="friday_runtime_auth_disabled"' in html
     assert 'id="friday-runtime-ticket"' in html
     assert 'id="friday-session-token"' in html
