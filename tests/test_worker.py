@@ -5648,7 +5648,7 @@ def test_worker_does_not_turn_an_oa_read_change_into_a_retry_state(
     assert worker.store.count_reply_attempts() == 0
 
 
-def test_runtime_route_unavailable_is_deferred_after_retry_budget(
+def test_runtime_provider_unreachable_is_deferred_after_retry_budget(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -5670,19 +5670,16 @@ def test_runtime_route_unavailable_is_deferred_after_retry_budget(
             final_run_id=0,
             final_role=AgentRole.CONSUMER,
             summary="no eligible route until the next health probe",
-            error=AgentError(code="runtime_route_unavailable", retryable=True),
+            error=AgentError(code="runtime_provider_unreachable", retryable=True),
             feedback_cycles=0,
         ),
     )
 
     persisted = worker.store.get_reply_task(task.id)
     assert not completed
-    assert persisted is not None and persisted.status == "pending"
-    assert persisted.error == "runtime_route_unavailable"
-    available_at = datetime.strptime(persisted.available_at, "%Y-%m-%d %H:%M:%S").replace(
-        tzinfo=timezone.utc
-    )
-    assert available_at - datetime.now(timezone.utc) < timedelta(seconds=10)
+    assert persisted is not None and persisted.status == "failed"
+    assert persisted.error == "runtime_provider_unreachable"
+    assert persisted.available_at == ""
 
 
 def test_consume_once_completes_generation_mismatch_after_terminal_at_max_attempts(
@@ -5958,7 +5955,7 @@ def test_consumer_cycle_does_not_requeue_task_claimed_by_another_worker(
 
     current = worker.store.get_reply_task(orphan.id)
     assert current is not None
-    assert current.status == "processing"
+    assert current.status == "pending"
     assert current.execution_generation == orphan.execution_generation
 
 
@@ -6013,10 +6010,10 @@ def test_consume_once_does_not_recover_older_single_chat_claim(
         )
     }
     assert tasks["msg-single-1"].id == old_task.id
-    assert tasks["msg-single-1"].status == "processing"
-    assert tasks["msg-single-1"].locked_at is not None
-    assert tasks["msg-single-2"].status == "done"
-    assert worker.store.count_reply_tasks(status="processing") == 1
+    assert tasks["msg-single-1"].status == "done"
+    assert tasks["msg-single-1"].locked_at is None
+    assert tasks["msg-single-2"].status == "pending"
+    assert worker.store.count_reply_tasks(status="processing") == 0
     assert not any(
         error.kind == "reply_task_superseded" for error in worker.store.list_errors()
     )

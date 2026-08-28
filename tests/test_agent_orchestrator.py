@@ -563,11 +563,11 @@ def _process(orchestrator, task, context=None, *, refresh_context=None):
     )
 
 
-def test_runtime_route_unavailable_defers_without_same_process_retry(store):
+def test_runtime_provider_unreachable_defers_without_same_process_retry(store):
     task = _task(store)
     failed = _consumer_result("failed", "No eligible route.").model_copy(
         update={
-            "error": AgentError(code="runtime_route_unavailable", retryable=True)
+            "error": AgentError(code="runtime_provider_unreachable", retryable=True)
         }
     )
     consumer = ScriptedConsumer(store, failed)
@@ -580,14 +580,14 @@ def test_runtime_route_unavailable_defers_without_same_process_retry(store):
     result = _process(orchestrator, task)
 
     assert result.status == "failed_retryable"
-    assert result.error.code == "runtime_route_unavailable"
+    assert result.error.code == "runtime_provider_unreachable"
     assert len(consumer.calls) == 1
 
 
-def test_recovered_runtime_route_unavailable_starts_one_new_consumer_turn(store):
+def test_recovered_runtime_provider_unreachable_starts_one_new_consumer_turn(store):
     unavailable = _consumer_result("failed", "No eligible route.").model_copy(
         update={
-            "error": AgentError(code="runtime_route_unavailable", retryable=True)
+            "error": AgentError(code="runtime_provider_unreachable", retryable=True)
         }
     )
     pending = _task(store)
@@ -606,7 +606,7 @@ def test_recovered_runtime_route_unavailable_starts_one_new_consumer_turn(store)
 
     first = _process(orchestrator, task)
     assert first.status == "failed_retryable"
-    assert first.error.code == "runtime_route_unavailable"
+    assert first.error.code == "runtime_provider_unreachable"
     assert len(consumer.calls) == 1
     store.defer_reply_task(
         task.id,
@@ -625,7 +625,7 @@ def test_recovered_runtime_route_unavailable_starts_one_new_consumer_turn(store)
 def test_safely_reopened_runtime_route_starts_one_new_consumer_turn(store):
     unavailable = _consumer_result("failed", "No eligible route.").model_copy(
         update={
-            "error": AgentError(code="runtime_route_unavailable", retryable=True)
+            "error": AgentError(code="runtime_provider_unreachable", retryable=True)
         }
     )
     pending = _task(store)
@@ -1306,7 +1306,7 @@ def test_safely_reopened_runtime_route_retries_same_audit_turn(store):
         _audit_result(
             "failed",
             0,
-            code="runtime_route_unavailable",
+            code="runtime_provider_unreachable",
             retryable=True,
         ),
         _audit_result("executed", 0),
@@ -1348,7 +1348,7 @@ def test_live_okr_source_failure_reuses_prior_proposal_for_audit(store):
     unavailable = _consumer_result("failed", "Live OKR source unavailable.").model_copy(
         update={
             "error": AgentError(
-                code="live_okr_unavailable",
+                code="provider_read_failed",
                 retryable=True,
                 authorization_required=False,
             )

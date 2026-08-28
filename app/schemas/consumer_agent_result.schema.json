@@ -14,12 +14,32 @@
         "authorization_required": {
           "title": "Authorization Required",
           "type": "boolean"
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "source_code": {
+          "title": "Source Code",
+          "type": "string"
+        },
+        "session_continuable": {
+          "title": "Session Continuable",
+          "type": "boolean"
         }
       },
       "required": [
         "code",
         "retryable",
-        "authorization_required"
+        "authorization_required",
+        "stage",
+        "source",
+        "source_code",
+        "session_continuable"
       ],
       "title": "AgentError",
       "type": "object"

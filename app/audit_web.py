@@ -10547,7 +10547,7 @@ def _route_failure_recovery_state(
     if (
         reply_task is not None
         and reply_task.status == "done"
-        and failure_code in {"runtime_route_unavailable", "runtime_unclassified"}
+        and failure_code in {"runtime_execution_failed", "runtime_provider_unreachable", "runtime_provider_auth_failed", "runtime_unclassified"}
     ):
         return "recovered"
     return ""
@@ -10664,8 +10664,10 @@ def _agent_failure_reason_text(
 
 
 def _failure_code_explanation(code: str) -> str:
-    if code == "okr_website_unavailable":
-        return "OKR 网站当前不可用，未取得实时 OKR 内容；本次未形成评审结论。"
+    if code == "provider_read_failed":
+        return "业务数据读取失败；请查看来源和 provider 原始错误。"
+    if code == "delivery_failed":
+        return "外部投递失败；请查看投递阶段和 provider 原始错误。"
     if code in {"consumer_retry_exhausted", "audit_retry_exhausted"}:
         role = "生成回复" if code.startswith("consumer") else "执行审计"
         return f"{role}阶段连续重试后仍未得到可验证结果，已达到本轮重试上限。"
@@ -10675,6 +10677,8 @@ def _failure_code_explanation(code: str) -> str:
         return "Agent 运行没有输出可验证的结果 JSON。"
     if code == "codex_process_failed":
         return "Agent 执行进程未成功完成，因此本轮没有得到可验证结果。"
+    if code == "execution_failed":
+        return "Agent 执行失败；请查看关联 run 的阶段和原始错误码。"
     return f"处理未完成，失败代码：{code or 'unknown'}。"
 
 

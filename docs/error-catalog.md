@@ -42,19 +42,21 @@ Friday 或 Codex provider 返回的原始错误码会原样保留，并归入对
 | --- | --- | --- |
 | `run_not_found` | 任务引用的执行 run 不存在 | 终态失败，修复数据关系后重跑 |
 | `agent_run_unavailable` | 当前 run 无法被接管或执行 | 可重试 |
-| `agent_run_failed` | 执行 run 已明确失败 | 读取原始 run 错误后重试或终止 |
+| `execution_failed` | 无法进一步分类的 Agent 执行失败，必须同时查看阶段和原始错误 | 按阶段和 retryable 重试或终止 |
 | `runtime_session_conflict` | session 所有权冲突 | 等待租约释放后重试 |
 | `stale_agent_turn_recovery` | 发现过期 Agent turn，已进入普通重试 | 可重试 |
 | `stale_before_agent_start` | 任务在 Agent 启动前失去租约 | 可重试 |
 | `service_restart_before_effect` | 服务在本轮执行完成前重启 | 可重试 |
 | `service_restart_after_completed_turn` | 服务重启发生在结果完成后、任务投影更新前 | 可重试；不得创建新的业务 attempt |
-| `reply_task_authorization_exhausted` | 任务授权/接管尝试达到上限 | 终态失败 |
+| `reply_task_lease_exhausted` | 任务租约/接管尝试达到上限 | 终态失败 |
 
 ## Runtime 路由
 
 | 错误码 | 解释 | 默认处理 |
 | --- | --- | --- |
-| `runtime_route_unavailable` | 选定的 runtime 路由当前不可用 | 保留同一 proposal/revision 重试，不重新调用 Consumer |
+| `runtime_execution_failed` | Runtime 执行失败但尚未归入更具体的阶段 | 按 stage、source_code 和 retryable 处理 |
+| `runtime_provider_unreachable` | Runtime provider API、网络或连接不可用 | 修复 provider 后按 retryable 重试 |
+| `runtime_provider_auth_failed` | Runtime provider token/凭据失效 | 修复凭据后重试 |
 | `runtime_capability_missing` | 所需 runtime 能力未配置 | 终态失败，修复配置后重跑 |
 | `runtime_execution_failed` | runtime 执行失败 | 按 retryable 重试 |
 | `runtime_executor_failed` | runtime executor 本身异常 | 按基础设施重试策略处理 |
@@ -68,17 +70,11 @@ Friday 或 Codex provider 返回的原始错误码会原样保留，并归入对
 
 | 错误码 | 解释 | 默认处理 |
 | --- | --- | --- |
-| `live_okr_and_supporting_evidence_unavailable` | 当前 OKR 及支撑材料不可读取 | 修复 OKR/live source 能力后重跑 |
-| `live_okr_source_unavailable` | OKR live source 不可用 | 可重试 |
-| `live_okr_source_identity_or_record_unavailable` | 无法确定 OKR 来源身份或记录 | 修复来源解析后重跑 |
-| `live_okr_unavailable_period_or_identity_resolution` | OKR 周期或负责人无法解析 | 修复输入/来源后重跑 |
-| `okr_website_unavailable` | OKR 网站不可访问 | 可重试 |
+| `provider_read_failed` | 业务 provider 读取失败；具体原因保存在 `source_code` | 按 provider retryable 重试 |
 | `target_resolution_not_found` | 无法唯一解析业务目标 | 终态失败；不得猜测目标 |
-| `message_send_failed` | 外部消息发送失败 | 按 provider retryable 重试 |
-| `send_status_failed` | 外部发送状态明确失败 | 按 provider retryable 重试 |
-| `send_failed_readback_auth_required` | 发送后状态读取需要额外认证 | 修复授权后重试 |
+| `delivery_failed` | 外部发送请求或 provider 结果失败；具体原因保存在 `source_code` | 按 provider retryable 重试 |
 | `oa_skill_workflow_incomplete` | OA Skill 流程未完成 | 按当前业务能力重试或失败 |
-| `DIRECT_CHAT_TARGET_NOT_FOUND` | 单聊目标无法唯一解析 | 终态失败，不得猜测收件人 |
+| `provider_target_failed` | provider 或 Skill 无法完成目标选择；应用层不猜测目标 | 按具体 source_code 处理 |
 
 provider 还可能返回自身的 `server_error_code`、HTTP 错误或 DWS/Friday 原始码；这些值
 属于事实证据，不在应用层重新分类。查看具体 provider 的错误含义时，应同时查阅其

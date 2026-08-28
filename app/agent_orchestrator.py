@@ -463,13 +463,10 @@ class AgentOrchestrator:
                 consumer.status == "failed"
                 and _run_error(consumer).code
                 in {
-                    "runtime_route_unavailable",
+                    "runtime_execution_failed",
                     "codex_process_failed",
                     "service_restart_before_effect",
-                    "live_okr_unavailable",
-                    "live_okr_source_unavailable",
-                    "live_okr_source_identity_or_record_unavailable",
-                    "live_okr_unavailable_period_or_identity_resolution",
+                    "provider_read_failed",
                 }
             ):
                 prior = [
@@ -612,7 +609,7 @@ class AgentOrchestrator:
                 authorization_required=True,
             )
         if run.status == "failed" and error.retryable:
-            if error.code == "runtime_route_unavailable":
+            if error.code in {"runtime_execution_failed", "runtime_provider_unreachable", "runtime_provider_auth_failed"}:
                 if _retryable_route_error_can_resume(task, error):
                     feedback = self._retry_feedback(run)
                     if run.proposal_revision > 0 and feedback is None:
@@ -704,7 +701,7 @@ class AgentOrchestrator:
                 authorization_required=True,
             )
         if run.status == "failed" and error.retryable:
-            if error.code == "runtime_route_unavailable":
+            if error.code in {"runtime_execution_failed", "runtime_provider_unreachable", "runtime_provider_auth_failed"}:
                 if _retryable_route_error_can_resume(task, error):
                     return _NextAudit(
                         run.proposal_revision,
@@ -876,11 +873,19 @@ def _run_error(run: AgentRun) -> AgentError:
         payload = {}
     if not isinstance(payload, dict):
         payload = {}
+    # Never hide the run's concrete failure behind the old catch-all
+    # ``agent_run_failed`` code.  A missing/malformed code is classified as an
+    # execution failure with bounded diagnostics by the caller.
+    code = str(payload.get("code") or "execution_failed")
     return AgentError.model_validate(
         {
-            "code": str(payload.get("code") or "agent_run_failed"),
+            "code": code,
             "retryable": payload.get("retryable") is True,
             "authorization_required": payload.get("authorization_required") is True,
+            "stage": str(payload.get("stage") or ""),
+            "source": str(payload.get("source") or ""),
+            "source_code": str(payload.get("source_code") or ""),
+            "session_continuable": payload.get("session_continuable") is True,
         }
     )
 

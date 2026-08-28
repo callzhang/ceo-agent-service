@@ -7084,12 +7084,12 @@ def test_runtime_route_failure_detail_shows_later_task_recovery(tmp_path: Path):
         trigger_text=task.trigger_text,
         action="agent_run",
         sensitivity_kind="general",
-        codex_reason="runtime_route_unavailable",
+        codex_reason="runtime_provider_unreachable",
         send_status="failed",
     )
     store.update_reply_attempt(
         attempt_id,
-        send_error="runtime_route_unavailable",
+        send_error="runtime_provider_unreachable",
     )
     store.complete_reply_task(
         task.id,

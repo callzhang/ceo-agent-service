@@ -13,18 +13,15 @@ _READABLE_FAILURE_REASONS = {
     "consumer_retry_exhausted": (
         "Agent 生成回复连续重试后仍未得到可验证结果，已达到本轮重试上限。"
     ),
-    "live_okr_and_supporting_evidence_unavailable": (
-        "实时 OKR 和支撑材料不可用，连续重试后仍未完成读取；请修复 OKR 读取能力后重跑。"
-    ),
-    "okr_website_unavailable": (
-        "OKR 网站当前不可用，未取得实时 OKR 内容；本次未形成评审结论。"
-    ),
+    "provider_read_failed": "业务数据读取失败；请查看来源和 provider 原始错误。",
+    "delivery_failed": "外部投递失败；请查看投递阶段和 provider 原始错误。",
     "audit_retry_exhausted": (
         "Agent 执行审计连续重试后仍未得到可验证结果，已达到本轮重试上限。"
     ),
     "codex_process_failed": "Agent 执行进程未成功完成，因此本轮没有得到可验证结果。",
     "codex_result_invalid": "Agent 已返回结果，但结果不符合当前校验契约。",
     "codex_result_missing": "Agent 运行结束，但没有输出可验证结果。",
+    "execution_failed": "Agent 执行失败；请查看关联 run 的具体阶段和原始错误码。",
     "agent_read_only_violation": "Agent 在只读阶段尝试执行外部动作，系统已安全阻止。",
 }
 

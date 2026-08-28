@@ -1580,6 +1580,10 @@ class DingTalkAutoReplyWorker:
             return 0
         self._pass_channel_results = {}
         limit = max_tasks if max_tasks is not None else 50
+        # Reclaim tasks left in ``processing`` before an agent run was
+        # materialized.  These rows have no possible external side effect and
+        # must not wait for the stale-age sweep (or remain orphaned forever).
+        self.store.recover_orphaned_processing_reply_tasks(limit=limit)
         processed_tasks = 0
         self._recover_stale_agent_reply_tasks()
         # Startup recovery can requeue effect-free work.  Bound repeated
@@ -1720,7 +1724,7 @@ class DingTalkAutoReplyWorker:
                         self.store.record_error(
                             task.conversation_id,
                             task.trigger_message_id,
-                            "reply_task_authorization_exhausted",
+                            "execution_failed",
                             terminal_authorization_error,
                         )
                         self._notify_problem_attempt(
@@ -2166,7 +2170,7 @@ class DingTalkAutoReplyWorker:
         active_recovery_wait = result.error.code in {
             "agent_run_unavailable",
             "codex_session_locked",
-            "runtime_route_unavailable",
+            "runtime_execution_failed",
         }
         if result.status == "failed_retryable" and result.final_run_id == 0:
             error = error_code or "agent_orchestration_deferred"

@@ -140,16 +140,19 @@ _RUNTIME_RESULT_FORBIDDEN_DOCUMENT_FIELDS = frozenset(
 
 
 class RuntimeRouteUnavailableError(RuntimeError):
-    """No configured route has current evidence for this exact turn."""
+    """No configured runtime route can serve this turn."""
 
-    code = "runtime_route_unavailable"
+    code = "runtime_execution_failed"
 
     def __init__(self, reason: str) -> None:
         self.reason = reason
-        # Keep the stable top-level code for compatibility while exposing an
-        # actionable reason such as `codex_api_paused` or `api_not_reachable`.
+        lowered = reason.lower()
         if "missing_capabilities:" in reason or "surface_missing:" in reason:
             self.code = "runtime_capability_missing"
+        elif any(token in lowered for token in ("auth", "token", "credential")):
+            self.code = "runtime_provider_auth_failed"
+        elif any(token in lowered for token in ("unreachable", "unavailable", "network", "connect", "timeout")):
+            self.code = "runtime_provider_unreachable"
         super().__init__(self.code)
 
 

@@ -117,9 +117,7 @@ def test_internal_retry_code_is_rendered_as_readable_failure_reason():
 
 def test_live_okr_retry_summary_keeps_source_reason_readable():
     attempt = _attempt(
-        audit_summary=(
-            "live_okr_and_supporting_evidence_unavailable; consumer retry attempts exhausted"
-        )
+            audit_summary="provider_read_failed; consumer retry attempts exhausted"
     )
 
     state = reply_history_attention(
@@ -129,7 +127,7 @@ def test_live_okr_retry_summary_keeps_source_reason_readable():
     )
 
     assert state is not None
-    assert "实时 OKR" in state.reason
+    assert "业务数据读取失败" in state.reason
 
 
 def test_historical_image_error_remains_recoverable():

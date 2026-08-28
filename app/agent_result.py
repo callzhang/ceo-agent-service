@@ -25,6 +25,13 @@ class AgentError(BaseModel):
     code: str = ""
     retryable: bool = False
     authorization_required: bool = False
+    # Optional execution diagnostics.  These describe where a failure came
+    # from without replacing the provider's original code with a generic
+    # application error.
+    stage: str = ""
+    source: str = ""
+    source_code: str = ""
+    session_continuable: bool = False
 class EffectKind(StrEnum):
     READ_ONLY = "read_only"
     EFFECTFUL = "effectful"

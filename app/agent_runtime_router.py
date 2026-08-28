@@ -1461,7 +1461,7 @@ class RoutedCodexExecution:
             )
         if decision.route is None:
             raise RoutedCodexExecutionError(
-                "runtime_route_unavailable",
+                "runtime_execution_failed",
                 decision.reason,
                 failure_class=(
                     terminal_failure.failure_class if terminal_failure else None
@@ -2022,7 +2022,7 @@ class RoutedCodexExecution:
                 )
         except RuntimeRoutePausedError as exc:
             raise RoutedCodexExecutionError(
-                "runtime_route_unavailable",
+                "runtime_execution_failed",
                 f"{route.name}_paused",
             ) from exc
         try:
