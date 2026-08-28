@@ -47,6 +47,7 @@ read 调用该入口，再形成通过/不通过判断；截图、仓库链接�
 读取失败时必须保留底层认证、浏览器启动或源端错误码。
 
 完整状态和恢复说明见 [`docs/runtime-mechanism.md`](runtime-mechanism.md)。
+错误码解释统一见 [`docs/error-catalog.md`](error-catalog.md)。
 
 ### Task、Agent Run 与 Reply Attempt 的关系
 

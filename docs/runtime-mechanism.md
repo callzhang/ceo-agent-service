@@ -117,3 +117,4 @@ event 和 provider 结果仍然作为 append-only 事实保留。
 - Consumer/Audit 反馈设计：`docs/superpowers/specs/2026-08-06-consumer-audit-agent-design.md`
 - OKR 领域输入和输出：`docs/superpowers/specs/2026-06-08-okr-review-runner-design.md`
 - 当前实现：`app/agent_orchestrator.py`、`app/consumer_agent.py`、`app/audit_agent.py`、`app/okr_review.py`、`app/weekly_okr_report.py`、`app/store.py`
+- 系统错误码目录：[`docs/error-catalog.md`](error-catalog.md)
