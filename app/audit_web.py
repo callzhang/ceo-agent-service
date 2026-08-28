@@ -2511,27 +2511,59 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
             "Work item",
             "work_summary_inputs",
             "status",
-            "source_type",
-            "coalesce(nullif(json_extract(payload_json, '$.summary'), ''), nullif(json_extract(payload_json, '$.title'), ''), source_ref)",
+            "case when lower(source_type)='local_file' then "
+            "coalesce(nullif(json_extract(payload_json, '$.source.title'), ''), "
+            "nullif(json_extract(payload_json, '$.project_name'), ''), source_type) "
+            "else source_type end",
+            "coalesce(nullif(json_extract(payload_json, '$.summary'), ''), "
+            "nullif(json_extract(payload_json, '$.title'), ''), "
+            "nullif(json_extract(payload_json, '$.project_name'), ''), source_ref)",
             "updated_at",
             "error",
             ("pending", "processing", "failed"),
         ),
-        ("Follow-up", "follow_up_drafts", "status", "owner_name", "question_text", "updated_at", "suppressed_reason", ("failed",)),
+        (
+            "Follow-up",
+            "follow_up_drafts",
+            "status",
+            "coalesce(nullif(owner_name, ''), nullif(target_kind, ''), target_conversation_id)",
+            "coalesce(nullif(question_text, ''), nullif(title, ''), nullif(description, ''), target_conversation_id, owner_name)",
+            "updated_at",
+            "suppressed_reason",
+            ("failed",),
+        ),
         (
             "WeChat delivery",
             "wechat_deliveries",
             "status",
-            "target_type",
-            "reply_text",
+            "coalesce(nullif(target_type, ''), target_id, conversation_id)",
+            "coalesce(nullif(reply_text, ''), nullif(error, ''), nullif(target_id, ''), target_type)",
             "updated_at",
             "case when pre_action_failure=1 then "
             "'The target could not be opened before send; no message was sent. "
             "A fresh target check is required before retry.' else error end",
             ("failed",),
         ),
-        ("Meeting", "meeting_alignment_jobs", "status", "title", "target_title", "updated_at", "error", ("pending", "processing", "failed")),
-        ("OKR", "okr_review_requests", "status", "conversation_title", "trigger_text", "updated_at", "error", ("pending", "processing", "failed")),
+        (
+            "Meeting",
+            "meeting_alignment_jobs",
+            "status",
+            "coalesce(nullif(title, ''), meeting_id)",
+            "coalesce(nullif(target_title, ''), nullif(final_message, ''), title, meeting_id)",
+            "updated_at",
+            "error",
+            ("pending", "processing", "failed"),
+        ),
+        (
+            "OKR",
+            "okr_review_requests",
+            "status",
+            "coalesce(nullif(conversation_title, ''), conversation_id, trigger_sender)",
+            "coalesce(nullif(trigger_text, ''), nullif(period_label, ''), conversation_title, trigger_message_id)",
+            "updated_at",
+            "error",
+            ("pending", "processing", "failed"),
+        ),
     ]
     rows: list[dict[str, str]] = []
     active_reply_task_triggers: set[tuple[str, str, str]] = set()
@@ -2540,7 +2572,9 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
             reply_task_rows = db.execute(
                 """
                 select id, channel, conversation_id, trigger_message_id,
-                       status, conversation_title as context, trigger_text as summary,
+                       status,
+                       coalesce(nullif(conversation_title, ''), conversation_id) as context,
+                       coalesce(nullif(trigger_text, ''), nullif(conversation_title, ''), trigger_message_id) as summary,
                        updated_at, error
                 from reply_tasks
                 where lower(status) in ('pending','processing','failed')

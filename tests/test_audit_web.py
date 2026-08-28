@@ -7208,6 +7208,59 @@ def test_worker_attention_uses_work_input_title_before_raw_reference(tmp_path: P
     assert row["summary"] == "Hiring debrief"
 
 
+def test_worker_attention_uses_local_file_title_as_work_item_context(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    work_input_id = store.enqueue_work_summary_input(
+        "local_file",
+        "/workspace/hiring.md#sha256=abc:size=128",
+        json.dumps(
+            {
+                "source": {"title": "hiring.md"},
+                "project_name": "Hiring plan",
+                "summary": "",
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    payload = build_worker_status_payload(store)
+    row = next(
+        item
+        for item in payload["attention_rows"]
+        if item["category"] == "Work item" and item["id"] == str(work_input_id)
+    )
+
+    assert row["context"] == "hiring.md"
+    assert row["summary"] == "Hiring plan"
+
+
+def test_worker_attention_meeting_summary_falls_back_to_meeting_title(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-summary-fallback",
+        title="Hiring alignment",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-08-28T10:00:00+00:00",
+        eligible_at="2026-08-28T10:00:00+00:00",
+        status="pending",
+    )
+
+    payload = build_worker_status_payload(store)
+    row = next(
+        item
+        for item in payload["attention_rows"]
+        if item["category"] == "Meeting" and item["id"] == str(job_id)
+    )
+
+    assert row["context"] == "Hiring alignment"
+    assert row["summary"] == "Hiring alignment"
+
+
 def test_worker_status_uses_wechat_delivery_outcome_not_raw_failed_status(
     tmp_path: Path,
 ):
