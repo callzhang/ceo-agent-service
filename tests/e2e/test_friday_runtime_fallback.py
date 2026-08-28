@@ -462,7 +462,7 @@ observability:
         assert llm_config.get("model") == provider_model
         assert llm_config.get("base_url") == provider_base_url
         assert provider_key not in json.dumps(llm_config, ensure_ascii=False)
-        assert not llm_config.get("api_key")
+        assert llm_config.get("api_key") in {"<redacted>", "[redacted]"}
         assert artifact and artifact[0] == thread_id and artifact[1] == turn_id
         assert _parse_json_result(artifact[2]) == {"ok": True, "value": 7}
     finally:
