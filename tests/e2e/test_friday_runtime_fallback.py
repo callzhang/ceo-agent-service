@@ -446,7 +446,6 @@ observability:
                 "select thread_id, created_turn_id, final_message from artifacts where thread_id = ?",
                 (thread_id,),
             ).fetchone()
-            run_model = runtime_state.execute("select model from runs where turn_id = ?", (turn_id,)).fetchone()
             run_state = runtime_state.execute(
                 "select status, last_error_code, last_error_message from runs where turn_id = ?",
                 (turn_id,),
@@ -454,8 +453,15 @@ observability:
         assert attempts[0].session_id.startswith("friday_thread:")
         assert thread_id and thread_id == attempts[0].session_id.split(":", 1)[1]
         assert turn_id and operation == (operation_id, "completed")
-        assert run_model and run_model[0] == provider_model
         assert run_state and run_state[0] == "completed", _safe_detail(run_state)
+        diagnostics = _get_json(f"{base_url}/v1/admin/runtime/diagnostics?thread_id={thread_id}")
+        diagnostic_data = diagnostics.get("data", diagnostics)
+        health = diagnostic_data.get("health", {}) if isinstance(diagnostic_data, dict) else {}
+        llm_status = health.get("llm", {}) if isinstance(health, dict) else {}
+        bindings = llm_status.get("bindings", []) if isinstance(llm_status, dict) else []
+        assert bindings and bindings[0].get("provider_type") == "openai-compatible"
+        assert bindings[0].get("model_id") == provider_model
+        assert bindings[0].get("base_url") == provider_base_url
         assert artifact and artifact[0] == thread_id and artifact[1] == turn_id
         assert _parse_json_result(artifact[2]) == {"ok": True, "value": 7}
     finally:
@@ -516,6 +522,13 @@ def _post_json(url: str, payload: dict[str, object]) -> dict[str, object]:
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=20) as response:
+        decoded = json.loads(response.read().decode("utf-8"))
+    assert isinstance(decoded, dict)
+    return decoded
+
+
+def _get_json(url: str) -> dict[str, object]:
+    with urllib.request.urlopen(url, timeout=20) as response:
         decoded = json.loads(response.read().decode("utf-8"))
     assert isinstance(decoded, dict)
     return decoded
