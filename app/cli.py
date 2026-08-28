@@ -2657,18 +2657,19 @@ def run_oa_pending_scan_loop(
 
 
 def _wechat_service_components(settings: WorkerSettings) -> tuple:
-    """WeChat components, only when the reader flag is on and exactly one account
-    is persisted ``ready`` with a self wxid. Disabled by default (adds nothing to
-    the DingTalk service). Auto-sending stays separately gated."""
+    """WeChat components when enabled; workers wait for a ready account.
+
+    The account capability is written asynchronously by the dedicated Reader
+    app, so gating component creation on a startup snapshot would lose the
+    channel permanently after a launchd race. Disabled by default; auto-send
+    remains separately gated.
+    """
     from app import config as _cfg
 
     if not _cfg.wechat_reader_enabled():
         return ()
     from app.wechat import service as _wx
 
-    store = AutoReplyStore(settings.db_path)
-    if _wx.ready_account_state(store) is None:
-        return ()
     components = [
         ("wechat-producer", lambda: _run_wechat_loop(settings, "producer")),
         ("wechat-consumer", lambda: _run_wechat_loop(settings, "consumer")),
@@ -2690,9 +2691,15 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
     from app.wechat.reader_ipc import ReaderIpcError
 
     store = AutoReplyStore(settings.db_path)
-    state = _wx.ready_account_state(store)
-    if state is None:
-        return
+    state = None
+    # Account capability is persisted by the dedicated Reader app and may
+    # become ready just after launchd starts the main service. Keep the worker
+    # alive and retry at the normal low-frequency cadence instead of selecting
+    # an empty component set permanently at startup.
+    while state is None:
+        state = _wx.ready_account_state(store)
+        if state is None:
+            time.sleep(max(1, _cfg.wechat_poll_interval_seconds()))
     account = _wx.account_from_state(state)
     reader = _wx.build_reader()
     runner = None

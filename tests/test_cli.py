@@ -6368,7 +6368,7 @@ def test_wechat_service_components_present_when_reader_ready(monkeypatch, tmp_pa
     assert [name for name, _ in comps] == ["wechat-producer", "wechat-consumer"]
 
 
-def test_wechat_service_components_absent_when_ready_account_has_no_self_id(
+def test_wechat_service_components_wait_when_ready_account_has_no_self_id(
     monkeypatch, tmp_path,
 ):
     import types
@@ -6384,7 +6384,9 @@ def test_wechat_service_components_absent_when_ready_account_has_no_self_id(
     monkeypatch.setenv("CEO_WECHAT_READER_ENABLED", "1")
     monkeypatch.setenv("CEO_WECHAT_SENDER_ENABLED", "1")
 
-    assert cli._wechat_service_components(types.SimpleNamespace(db_path=db)) == ()
+    assert [name for name, _ in cli._wechat_service_components(
+        types.SimpleNamespace(db_path=db)
+    )] == ["wechat-producer", "wechat-consumer", "wechat-sender"]
 
 
 def test_wechat_loop_stops_after_app_data_permission_denial(
