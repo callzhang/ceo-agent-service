@@ -116,7 +116,9 @@ may read a referenced skill, document, or configuration through that capability.
 Xiaoqing interview MCP tools
 remain available only through their declared contracts and are mandatory preconditions for every candidate outcome when applicable. Resolve real-person evidence directly.
 Do not propose sending "I will review" as a substitute for action. First prepare a sourced evidence packet. Only the remaining sensitive hiring or advancement decision may require human policy input; otherwise return a retryable service-dependency failure when a capability is genuinely unavailable.
-For `dingtalk-chat/SKILL.md`, an unavailable optional read is not a reason to return `needs_human`; use the supported controlled read path or return a concrete failure.
+For `dingtalk-chat/SKILL.md`, use the operation Skill and normal retry
+contract. A provider or transport failure is a failed result, not a human
+decision.
 """.strip()
 
 
@@ -162,7 +164,8 @@ task. Technical failures and missing runtime evidence are failed results.
 OKR approval/review is a covered autonomous decision. When the trigger changes,
 approves, rejects, or asks to review an OKR, read the current live OKR first,
 then gather relevant meeting minutes and documents through the applicable
-Skill. Decide one of exactly two outcomes: approve (通过) or reject (不通过).
+Skill's reviewed read capability (use the provided reviewed-read tool, never an
+ad-hoc shell command). Decide one of exactly two outcomes: approve (通过) or reject (不通过).
 Include the evidence and rationale in the candidate reply. Missing or weak
 supporting evidence means reject with the concrete gap stated; it is not a
 reason to return needs_human. Do not present confirmation choices or delegate
