@@ -24,6 +24,7 @@ from app.agent_runtime_router import (
 )
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.service_codex_config import (
     ServiceMcpConfigError,
@@ -112,6 +113,7 @@ class ProductionAgentRuntime:
     router: AgentRuntimeRouter
     codex_adapter: CodexRuntimeAdapter
     claude_adapter: ClaudeRuntimeAdapter | None
+    friday_adapter: FridayRuntimeAdapter | None
     refresh_runtime_capabilities: Callable[[], object] | None
 
 
@@ -131,6 +133,10 @@ def build_production_agent_runtime(
     native_cli = NativeCliMetadataClassifier()
     has_claude_route = any(
         route.runtime_kind is RuntimeKind.CLAUDE_CLI
+        for route in runtime_config.routes
+    )
+    has_friday_route = any(
+        route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME
         for route in runtime_config.routes
     )
     service_servers = (
@@ -159,6 +165,7 @@ def build_production_agent_runtime(
             if has_claude_route
             else None
         ),
+        friday_adapter=(FridayRuntimeAdapter(runtime_config) if has_friday_route else None),
         refresh_runtime_capabilities=refresh_runtime_capabilities,
     )
 
@@ -207,6 +214,11 @@ def build_production_routed_codex_execution(
             surface_manifests=capability_registry.surface_manifests,
         ),
         "adapter": CodexRuntimeAdapter(workspace, runtime_config, codex_bin=codex_bin),
+        "friday_adapter": (
+            FridayRuntimeAdapter(runtime_config)
+            if any(route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME for route in runtime_config.routes)
+            else None
+        ),
         "session_effect_probe": local_codex_session_effect_probe(),
         "total_timeout_seconds": total_timeout_seconds,
         "idle_timeout_seconds": idle_timeout_seconds,

@@ -26,6 +26,31 @@ def _snapshot(route_name: str) -> RuntimeCapabilitySnapshot:
     )
 
 
+def test_production_runtime_builds_friday_adapter(tmp_path, monkeypatch):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "friday_runtime")
+    monkeypatch.setenv("CEO_FRIDAY_RUNTIME_PROJECT_ID", "ceo-agent")
+    monkeypatch.setenv("CEO_FRIDAY_RUNTIME_MODEL", "MiniMax-M3")
+    monkeypatch.setenv("CEO_FRIDAY_RUNTIME_AUTH_DISABLED", "1")
+    registry = RuntimeCapabilityRegistry()
+
+    runtime = build_production_agent_runtime(
+        store=AutoReplyStore(tmp_path / "store.sqlite3"),
+        workspace=tmp_path,
+        capability_registry=registry,
+    )
+
+    assert runtime.friday_adapter is not None
+    assert runtime.config.routes[0].name == "friday_runtime"
+    routed = build_production_routed_codex_execution(
+        store=AutoReplyStore(tmp_path / "routed.sqlite3"),
+        workspace=tmp_path,
+        total_timeout_seconds=10,
+        idle_timeout_seconds=5,
+        capability_registry=registry,
+    )
+    assert routed._friday_adapter is not None
+
+
 def test_production_registry_refreshes_existing_router_view(tmp_path, monkeypatch):
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
     monkeypatch.setenv("CEO_CODEX_API_KEY", "test-secret")

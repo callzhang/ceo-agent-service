@@ -153,9 +153,7 @@ class FridayRuntimeAdapter:
         del conversation_id, model
         if isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
-        effective_project = (
-            project_id.strip() if isinstance(project_id, str) else ""
-        ) or self.config.friday_runtime_project_id
+        effective_project = project_id.strip() if isinstance(project_id, str) else ""
         effective_auth_disabled = (
             self.config.friday_runtime_auth_disabled
             if auth_disabled is None

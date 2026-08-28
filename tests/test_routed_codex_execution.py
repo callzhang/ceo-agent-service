@@ -25,6 +25,7 @@ from app.agent_runtime_router import (
     RoutedResultValidationRetry,
 )
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.friday_runtime_adapter import FridayExecutionResult, FridayRuntimeError
 from app.process_runner import ProcessRunResult
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AgentRole, AutoReplyStore
 
@@ -32,6 +33,19 @@ NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
 CAPABILITIES = frozenset({"structured_output", "reviewed_read_tools"})
 INT_CODEC = RoutedResultCodec.integer(schema_id="test.integer.v1")
 TEXT_CODEC = RoutedResultCodec.text(schema_id="test.text.v1")
+
+
+class FakeFridayAdapter:
+    def __init__(self, result=None, error=None):
+        self.result = result
+        self.error = error
+        self.calls = []
+
+    def execute(self, prompt, **kwargs):
+        self.calls.append((prompt, kwargs))
+        if self.error is not None:
+            raise self.error
+        return self.result
 
 
 def failed_session_probe(*_args):
@@ -153,6 +167,108 @@ def make_router(store, config, *, snapshots=None):
         snapshots=current,
         now=lambda: NOW,
     )
+
+
+def _friday_config(monkeypatch, routes):
+    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", routes)
+    monkeypatch.setenv("CEO_CODEX_API_KEY", "configured-secret")
+    monkeypatch.setenv("CEO_CLAUDE_API_KEY", "configured-claude-secret")
+    monkeypatch.setenv("CEO_FRIDAY_RUNTIME_PROJECT_ID", "ceo-agent")
+    monkeypatch.setenv("CEO_FRIDAY_RUNTIME_MODEL", "MiniMax-M3")
+    monkeypatch.setenv("CEO_FRIDAY_RUNTIME_AUTH_DISABLED", "1")
+    return load_runtime_config(dict(os.environ))
+
+
+def _friday_snapshots(config):
+    return {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=CAPABILITIES,
+            healthy=True,
+            checked_at="2026-08-20T09:59:00+00:00",
+            expires_at="2026-08-20T10:05:00+00:00",
+        )
+        for route in config.routes
+    }
+
+
+def test_runtime_falls_back_to_friday_in_same_agent_run(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "friday-fallback.sqlite3")
+    run_id = seed_agent_run_parent(store, task_id=991)
+    config = _friday_config(monkeypatch, "codex_oauth,codex_api,friday_runtime")
+    friday = FakeFridayAdapter(
+        result=FridayExecutionResult(
+            text="7", thread_id="thread-1", turn_id="turn-1",
+            operation_id="operation-1", artifact={"final_message": "7"},
+        )
+    )
+    adapter = FakeAdapter()
+
+    def executor(*args, **kwargs):
+        return ProcessRunResult(1, "", "provider unavailable")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes, store=store, snapshots=_friday_snapshots(config), now=lambda: NOW
+        ),
+        adapter=adapter,
+        friday_adapter=friday,
+        executor=executor,
+        now=lambda: NOW,
+    )
+    result = routed.execute(
+        workload_kind="agent_run", workload_key=str(run_id), prompt="return 7",
+        command_factory=ApprovedCodexCommandFactory.effectful(developer_instructions="test"),
+        parser=int, result_codec=INT_CODEC,
+    )
+
+    assert result.value == 7
+    assert [a.route_name for a in store.list_agent_runtime_attempts(run_id)] == [
+        "codex_oauth", "codex_api", "friday_runtime"
+    ]
+    assert len(friday.calls) == 1
+    assert store.get_agent_run(run_id).status == "running"
+
+
+def test_friday_unreachable_continues_to_next_configured_route(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "friday-unreachable.sqlite3")
+    run_id = seed_agent_run_parent(store, task_id=992)
+    config = _friday_config(monkeypatch, "codex_oauth,friday_runtime,claude_api")
+    friday = FakeFridayAdapter(
+        error=FridayRuntimeError(
+            "friday_runtime_unreachable", "connection refused", retryable=True
+        )
+    )
+    adapter = FakeAdapter()
+
+    def executor(command, **kwargs):
+        if command[1] == "claude_api":
+            return ProcessRunResult(0, "9", "")
+        return ProcessRunResult(1, "", "provider unavailable")
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes, store=store, snapshots=_friday_snapshots(config), now=lambda: NOW
+        ),
+        adapter=adapter,
+        friday_adapter=friday,
+        executor=executor,
+        now=lambda: NOW,
+    )
+    result = routed.execute(
+        workload_kind="agent_run", workload_key=str(run_id), prompt="return 9",
+        command_factory=ApprovedCodexCommandFactory.effectful(developer_instructions="test"),
+        parser=int, result_codec=INT_CODEC,
+    )
+
+    assert result.value == 9
+    attempts = store.list_agent_runtime_attempts(run_id)
+    assert [a.route_name for a in attempts] == ["codex_oauth", "friday_runtime", "claude_api"]
+    assert attempts[1].failure_code == "friday_runtime_unreachable"
 
 
 def test_read_only_factory_forces_sandbox_and_is_immutable(

@@ -34,12 +34,18 @@ from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
     RuntimeFailure,
     RuntimeFailureClass,
+    RuntimeKind,
     RuntimeRoute,
     RuntimeRouteSurfaceManifest,
 )
 from app.codex_decision import extract_codex_session_id
 from app.codex_history import count_codex_session_lines, find_codex_session_path
 from app.codex_runtime_adapter import CodexRuntimeAdapter
+from app.friday_runtime_adapter import (
+    FridayExecutionResult,
+    FridayRuntimeAdapter,
+    FridayRuntimeError,
+)
 from app.leak_check import contains_credential, contains_local_runtime_leak
 from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.process_runner import ProcessRunResult, run_process_with_idle_timeout
@@ -814,6 +820,26 @@ class RoutedCodexExecutionError(RuntimeError):
         super().__init__(code)
 
 
+def _runtime_failure_from_friday_error(error: FridayRuntimeError) -> RuntimeFailure:
+    """Map Friday's transport result into the shared route-failover contract."""
+
+    if error.code == "friday_runtime_auth_failed":
+        failure_class = RuntimeFailureClass.AUTHENTICATION
+    elif error.code == "friday_runtime_result_invalid":
+        failure_class = RuntimeFailureClass.RESULT
+    elif error.code == "friday_runtime_unreachable":
+        failure_class = RuntimeFailureClass.TRANSPORT
+    else:
+        failure_class = RuntimeFailureClass.PROCESS
+    return RuntimeFailure(
+        failure_class=failure_class,
+        code=error.code,
+        detail=error.detail,
+        retryable_on_same_route=error.retryable,
+        failover_permitted=error.retryable,
+    )
+
+
 def _is_retryable_external_runtime_failure(failure: RuntimeFailure) -> bool:
     """Return whether an exhausted provider failure belongs in caller backoff."""
 
@@ -1224,6 +1250,7 @@ class RoutedCodexExecution:
         config: AgentRuntimeConfig,
         router: AgentRuntimeRouter,
         adapter: CodexRuntimeAdapter,
+        friday_adapter: FridayRuntimeAdapter | None = None,
         executor: ProcessExecutor = run_process_with_idle_timeout,
         session_id_parser: Callable[[str], str | None] = extract_codex_session_id,
         session_line_counter: Callable[[str], int] = count_codex_session_lines,
@@ -1242,6 +1269,7 @@ class RoutedCodexExecution:
         self._config = config
         self._router = router
         self._adapter = adapter
+        self._friday_adapter = friday_adapter
         self._executor = executor
         self._session_id_parser = session_id_parser
         self._session_line_counter = session_line_counter
@@ -1433,23 +1461,32 @@ class RoutedCodexExecution:
                 ),
             )
         route = decision.route
-        try:
-            missing_reviewed_mcp = command_factory.missing_reviewed_mcp_transports(
-                adapter=self._adapter,
-                route=route,
-            )
-        except ValueError as exc:
+        if route.runtime_kind is not RuntimeKind.FRIDAY_RUNTIME:
+            try:
+                missing_reviewed_mcp = command_factory.missing_reviewed_mcp_transports(
+                    adapter=self._adapter,
+                    route=route,
+                )
+            except ValueError as exc:
+                raise RoutedCodexExecutionError(
+                    "runtime_reviewed_mcp_registry_invalid",
+                    failure_class=RuntimeFailureClass.CAPABILITY,
+                    failure_code="runtime_reviewed_mcp_registry_invalid",
+                ) from exc
+            if missing_reviewed_mcp:
+                raise RoutedCodexExecutionError(
+                    "runtime_reviewed_mcp_surface_unavailable",
+                    ",".join(sorted(missing_reviewed_mcp)),
+                    failure_class=RuntimeFailureClass.CAPABILITY,
+                    failure_code="runtime_reviewed_mcp_surface_unavailable",
+                )
+        elif self._friday_adapter is None:
             raise RoutedCodexExecutionError(
-                "runtime_reviewed_mcp_registry_invalid",
-                failure_class=RuntimeFailureClass.CAPABILITY,
-                failure_code="runtime_reviewed_mcp_registry_invalid",
-            ) from exc
-        if missing_reviewed_mcp:
-            raise RoutedCodexExecutionError(
-                "runtime_reviewed_mcp_surface_unavailable",
-                ",".join(sorted(missing_reviewed_mcp)),
-                failure_class=RuntimeFailureClass.CAPABILITY,
-                failure_code="runtime_reviewed_mcp_surface_unavailable",
+                "friday_runtime_unavailable",
+                "Friday Runtime adapter is not configured",
+                failure_class=RuntimeFailureClass.PROCESS,
+                failure_code="friday_runtime_unavailable",
+                retryable_external_dependency=True,
             )
         route_session_id = (
             forced_retry_session_id
@@ -1540,36 +1577,133 @@ class RoutedCodexExecution:
                 evidence=current_evidence,
                 action=lambda: self._renew_attempt_parent_lease(active_attempt),
             )
-            command, env = self._finalized_step(
-                active_attempt,
-                stage="command_build",
-                evidence=current_evidence,
-                action=lambda: command_factory.build(
-                    adapter=self._adapter,
-                    route=route,
-                    prompt=prompt,
-                    session_id=route_session_id,
-                ),
-            )
             active_attempt = self._finalized_step(
                 active_attempt,
                 stage="lease_renewal",
                 evidence=current_evidence,
                 action=lambda: self._renew_attempt_parent_lease(active_attempt),
             )
-            process = self._finalized_step(
-                active_attempt,
-                stage="process_execution",
-                evidence=current_evidence,
-                action=lambda: self._executor(
-                    command,
-                    prompt=prompt,
-                    env=env,
-                    total_timeout_seconds=self._total_timeout_seconds,
-                    idle_timeout_seconds=self._idle_timeout_seconds,
-                    on_stdout_line=observe_stdout_line,
-                ),
-            )
+            friday_result: FridayExecutionResult | None = None
+            if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
+                try:
+                    friday_result = self._friday_adapter.execute(
+                        prompt,
+                        project_id=self._config.friday_runtime_project_id,
+                        conversation_id=conversation_id,
+                        model=route.model,
+                        timeout_seconds=self._total_timeout_seconds,
+                    )
+                    observed_session_id = f"friday_thread:{friday_result.thread_id}"
+                    transcript_reference = (
+                        f"friday_operation:{friday_result.operation_id}"
+                    )
+                    active_attempt = self._store.set_agent_runtime_attempt_session(
+                        active_attempt.id,
+                        observed_session_id,
+                        transcript_reference,
+                        owner=self._owner,
+                        now=self._now(),
+                    )
+                    process = ProcessRunResult(0, friday_result.text, "")
+                except FridayRuntimeError as exc:
+                    failure = _runtime_failure_from_friday_error(exc)
+                    failed_attempt = self._finalized_step(
+                        active_attempt,
+                        stage="attempt_failure",
+                        evidence=current_evidence,
+                        action=lambda: self._store.fail_agent_runtime_attempt(
+                            active_attempt.id,
+                            failure.failure_class.value,
+                            failure.code,
+                            failure.failover_permitted,
+                            session_id=observed_session_id,
+                            transcript_reference=transcript_reference,
+                            transcript_start=transcript_start,
+                            transcript_end=transcript_end,
+                            owner=self._owner,
+                            now=self._now(),
+                        ),
+                    )
+                    next_decision = self._next_route_after_failure(
+                        workload_kind=workload_kind,
+                        workload_key=workload_key,
+                        agent_run_id=agent_run_id,
+                        failed_attempt=failed_attempt,
+                        failure=failure,
+                        required_capabilities=required_capabilities,
+                    )
+                    if next_decision.route is None:
+                        raise RoutedCodexExecutionError(
+                            "runtime_execution_failed",
+                            next_decision.reason,
+                            failure_class=failure.failure_class,
+                            failure_code=failure.code,
+                            retryable_external_dependency=(
+                                _is_retryable_external_runtime_failure(failure)
+                            ),
+                        ) from exc
+                    route = next_decision.route
+                    route_session_id = (
+                        None
+                        if next_decision.fresh_session
+                        else self._session_for_route(conversation_id, route.name)
+                    )
+                    successor = self._claim_and_start(
+                        workload_kind, workload_key, route, route_session_id
+                    )
+                    self._finalized_step(
+                        successor,
+                        stage="attempt_supersede",
+                        evidence=lambda: (
+                            route_session_id or "",
+                            (f"codex_session:{route_session_id}" if route_session_id else ""),
+                            0,
+                            0,
+                        ),
+                        action=lambda: self._store.mark_agent_runtime_attempt_superseded(
+                            failed_attempt.id
+                        ),
+                    )
+                    active_attempt = successor
+                    continue
+                except Exception as exc:
+                    self._terminalize_active_attempt(
+                        active_attempt,
+                        failure_class=RuntimeFailureClass.PROCESS,
+                        failure_code="friday_runtime_failed",
+                        session_id=observed_session_id,
+                        transcript_reference=transcript_reference,
+                        transcript_start=transcript_start,
+                        transcript_end=transcript_end,
+                    )
+                    raise RoutedCodexExecutionError(
+                        "friday_runtime_failed", "adapter_execution"
+                    ) from exc
+            else:
+                command, env = self._finalized_step(
+                    active_attempt,
+                    stage="command_build",
+                    evidence=current_evidence,
+                    action=lambda: command_factory.build(
+                        adapter=self._adapter,
+                        route=route,
+                        prompt=prompt,
+                        session_id=route_session_id,
+                    ),
+                )
+                process = self._finalized_step(
+                    active_attempt,
+                    stage="process_execution",
+                    evidence=current_evidence,
+                    action=lambda: self._executor(
+                        command,
+                        prompt=prompt,
+                        env=env,
+                        total_timeout_seconds=self._total_timeout_seconds,
+                        idle_timeout_seconds=self._idle_timeout_seconds,
+                        on_stdout_line=observe_stdout_line,
+                    ),
+                )
 
             buffered_session_id = self._finalized_step(
                 active_attempt,
