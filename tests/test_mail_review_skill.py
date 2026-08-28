@@ -67,7 +67,7 @@ def test_canonical_prompt_delegates_mail_policy_to_skill():
     assert "如果已读完原邮件和依赖材料、当前消息明确授权回复邮件" not in text
     assert "决策 agent 不得直接发送邮件" not in text
     assert CORE_DYNAMIC_SKILL_BODY in text
-    assert "agent_cli.read_skill" in text
+    assert "independently selects and reads every applicable" in text
     assert "2. [output_contracts] Output Contracts:" in text
 
 

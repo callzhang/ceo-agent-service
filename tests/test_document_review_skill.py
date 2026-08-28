@@ -77,7 +77,7 @@ def test_canonical_prompt_delegates_document_review_judgment_to_skill():
     assert "处理文档时，如果是钉钉文档可以用评论功能" not in text
     assert "普通钉钉文件不同于钉钉在线文档" not in text
     assert CORE_DYNAMIC_SKILL_BODY in text
-    assert "agent_cli.read_skill" in text
+    assert "independently selects and reads every applicable" in text
     assert "2. [output_contracts] Output Contracts:" in text
 
 

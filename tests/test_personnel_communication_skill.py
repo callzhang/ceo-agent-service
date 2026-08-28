@@ -104,8 +104,8 @@ def test_canonical_prompt_delegates_personnel_and_candidate_policy_to_skill():
     ):
         assert removed not in text
     assert CORE_DYNAMIC_SKILL_BODY in text
-    assert "agent_cli.read_skill" in text
+    assert "independently selects and reads every applicable" in text
     assert "没有列出的字段不要编造" not in text
-    assert "invent unsupported facts or targets" in text
-    assert "Credentials and runtime internals" in text
+    assert "do not invent facts, targets, or receipts" in text
+    assert "never expose credentials or internal runtime details" in text
     assert "只有明确需要 <var: principal> 处理时才回复" not in text

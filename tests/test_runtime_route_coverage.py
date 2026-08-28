@@ -9,6 +9,9 @@ _DIRECT_CODEX_RUNNER_EXEMPTIONS = {
     # Workbench runs an interactive, user-owned runtime. It does not execute a
     # persisted service operation and therefore has no operation-router parent.
     "app/workbench/codex_runtime.py",
+    # Repository branch-name suggestions are an isolated, non-persisted helper
+    # and intentionally do not participate in task execution routing.
+    "app/repository_upgrade_agent.py",
 }
 
 

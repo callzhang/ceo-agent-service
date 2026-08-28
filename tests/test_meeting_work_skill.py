@@ -67,7 +67,7 @@ def test_canonical_prompt_delegates_meeting_policy_to_skill():
 
     assert "如果新消息或引用涉及“静默会”、AI 听记、会议纪要链接或会议材料" not in text
     assert CORE_DYNAMIC_SKILL_BODY in text
-    assert "agent_cli.read_skill" in text
+    assert "independently selects and reads every applicable" in text
     assert "2. [output_contracts] Output Contracts:" in text
 
 
