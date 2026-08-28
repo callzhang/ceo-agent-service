@@ -2131,7 +2131,6 @@ def build_worker_status_payload(
     launchd_label: str = "com.ceo-agent-service.main",
 ) -> dict[str, object]:
     service = _launchd_service_status(launchd_label)
-    connector_statuses = _connector_status_snapshots()
     # The worker performs short SQLite writes in parallel.  Render every
     # database section from one read-only snapshot so the status endpoint does
     # not repeatedly contend for the writer lock or mix queue generations.
@@ -2141,7 +2140,9 @@ def build_worker_status_payload(
     return {
         "service": service,
         "components": _service_component_snapshots(),
-        "connectors": connector_statuses,
+        # Connector probes have their own cache so a slow CLI/live probe never
+        # delays the queue/status snapshot used by /workers and /attention.
+        "connectors": {},
         "wechat": _wechat_status_snapshot(store),
         "queues": queues,
         "attention_rows": attention_rows,
@@ -9513,6 +9514,9 @@ def create_audit_app(
     worker_status_cache = _RecentPayloadCache(
         DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
     )
+    connector_status_cache = _RecentPayloadCache(
+        DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
+    )
 
     def render_default_attempt_list() -> str:
         return render_attempt_list(
@@ -9557,11 +9561,25 @@ def create_audit_app(
             },
         }
 
+    def render_settings_status_payload() -> dict[str, object]:
+        payload = worker_status_cache.get_or_refresh(
+            render_worker_status_payload,
+            worker_status_refreshing_payload,
+        )
+        connector_statuses = connector_status_cache.get_or_refresh(
+            _connector_status_snapshots,
+            lambda: {},
+        )
+        if not connector_statuses:
+            return payload
+        return {**payload, "connectors": connector_statuses}
+
     @asynccontextmanager
     async def audit_lifespan(_app: FastAPI):
         default_attempt_list_cache.get_or_render(_render_history_busy_page)
         default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
         worker_status_cache.refresh_in_background(render_worker_status_payload)
+        connector_status_cache.refresh_in_background(_connector_status_snapshots)
         try:
             # Recovery is best-effort at startup.  The worker may hold the
             # SQLite write lock while the web child is being restarted; a
@@ -9894,10 +9912,7 @@ def create_audit_app(
         return render_settings_page(
             audit_store,
             active_tab="status",
-            worker_status_payload=worker_status_cache.get_or_refresh(
-                render_worker_status_payload,
-                worker_status_refreshing_payload,
-            ),
+            worker_status_payload=render_settings_status_payload(),
         )
 
     @app.get("/status", response_class=HTMLResponse)
@@ -9905,10 +9920,7 @@ def create_audit_app(
         return render_settings_page(
             audit_store,
             active_tab="status",
-            worker_status_payload=worker_status_cache.get_or_refresh(
-                render_worker_status_payload,
-                worker_status_refreshing_payload,
-            ),
+            worker_status_payload=render_settings_status_payload(),
         )
 
     @app.get("/attention", response_class=HTMLResponse)
@@ -9916,10 +9928,7 @@ def create_audit_app(
         return render_settings_page(
             audit_store,
             active_tab="attention",
-            worker_status_payload=worker_status_cache.get_or_refresh(
-                render_worker_status_payload,
-                worker_status_refreshing_payload,
-            ),
+            worker_status_payload=render_settings_status_payload(),
         )
 
     @app.get("/api/workers/status", response_class=JSONResponse)
@@ -9960,10 +9969,7 @@ def create_audit_app(
         settings_tab = str(request.query_params.get("tab", "status"))
         status_payload = None
         if settings_tab in {"status", "attention", "connectors"}:
-            status_payload = worker_status_cache.get_or_refresh(
-                render_worker_status_payload,
-                worker_status_refreshing_payload,
-            )
+            status_payload = render_settings_status_payload()
         return render_settings_page(
             AutoReplyStore(db_path),
             active_tab=settings_tab,
