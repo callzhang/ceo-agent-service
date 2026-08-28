@@ -2244,6 +2244,78 @@ def test_finalize_orchestration_reuses_current_reply_attempt_projection(
     assert current.send_status == "skipped"
 
 
+def test_pre_run_failure_projection_is_reused_by_later_agent_run(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-pre-run-reuse",
+        conversation_title="Direct chat",
+        single_chat=True,
+        trigger_message_id="msg-pre-run-reuse",
+        trigger_create_time="2026-08-12 10:00:00",
+        trigger_sender="Derek",
+        trigger_text="Please retry",
+    )
+    [task] = store.claim_reply_tasks(limit=1)
+    first_id = store.finalize_reply_task_without_run(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        task_status="pending",
+        task_error="worker_start_failed",
+        available_at="",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        codex_reason="worker_start_failed",
+        audit_summary="worker_start_failed",
+        send_status="failed",
+        send_error="worker_start_failed",
+        channel=task.channel,
+    )
+    assert store.count_reply_attempts() == 1
+
+    [retry_task] = store.claim_reply_tasks(limit=1)
+    run = _claim_audit_run(
+        store,
+        retry_task.id,
+        retry_task.execution_generation,
+        owner="audit",
+    ).run
+    store.complete_agent_run(
+        run.id,
+        {"outcome": "no_action", "summary": "recovered"},
+        owner="audit",
+    )
+    second_id = store.finalize_orchestrated_reply_task(
+        task_id=retry_task.id,
+        expected_execution_generation=retry_task.execution_generation,
+        run_id=run.id,
+        task_status="done",
+        task_error="",
+        available_at="",
+        conversation_id=retry_task.conversation_id,
+        conversation_title=retry_task.conversation_title,
+        trigger_message_id=retry_task.trigger_message_id,
+        trigger_sender=retry_task.trigger_sender,
+        trigger_text=retry_task.trigger_text,
+        codex_reason="recovered",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="recovered",
+        send_status="skipped",
+        send_error="",
+        channel=retry_task.channel,
+    )
+    assert second_id == first_id
+    assert store.count_reply_attempts() == 1
+    assert store.get_reply_attempt(first_id).codex_reason == "recovered"
+
+
 def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
     tmp_path: Path,
 ):

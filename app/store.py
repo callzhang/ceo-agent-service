@@ -13633,6 +13633,13 @@ class AutoReplyStore:
                           select manual_rerun_attempt_id
                           from reply_tasks where id=?
                       )
+                      or attempts.id=(
+                          select max(latest.id)
+                          from reply_attempts as latest
+                          where latest.channel=attempts.channel
+                            and latest.conversation_id=attempts.conversation_id
+                            and latest.trigger_message_id=attempts.trigger_message_id
+                      )
                   )
                 order by attempts.id desc
                 limit 1
