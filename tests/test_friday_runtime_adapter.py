@@ -214,6 +214,28 @@ def test_execute_maps_auth_http_errors(runtime_config, status_code, code):
     assert "bad credentials" not in str(raised.value)
 
 
+def test_execute_never_persists_provider_token_from_error_body():
+    token = "runtime-ticket-secret"
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "ceo-project",
+            "CEO_FRIDAY_RUNTIME_TICKET": token,
+        }
+    )
+    transport = FakeTransport(
+        [(500, {"message": f"provider rejected bearer token {token}"})]
+    )
+
+    with pytest.raises(FridayRuntimeError) as raised:
+        FridayRuntimeAdapter(config, transport=transport).execute(
+            "prompt", project_id="ceo-project"
+        )
+
+    assert token not in str(raised.value)
+    assert raised.value.detail == "Friday Runtime request failed"
+
+
 def test_execute_maps_transport_error_to_unreachable(runtime_config):
     transport = FakeTransport([TimeoutError("secret-ticket must not leak")])
 
@@ -340,4 +362,39 @@ def test_execute_propagates_runtime_ticket_on_every_request():
 
     assert [call.headers for call in transport.calls] == [
         {"Authorization": "Bearer runtime-ticket"}
+    ] * 4
+
+
+def test_execute_propagates_session_token_without_converting_to_bearer():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "friday_runtime",
+            "CEO_FRIDAY_RUNTIME_PROJECT_ID": "unused-default",
+            "CEO_FRIDAY_SESSION_TOKEN": "session-token",
+        }
+    )
+    transport = FakeTransport(
+        [
+            _success({"thread": {"thread_id": "thread-1"}}),
+            _success(
+                {
+                    "operation": {
+                        "operation_id": "op-1",
+                        "request_payload": {"turn_id": "turn-1"},
+                    }
+                }
+            ),
+            _success({"operation": {"status": "completed"}}),
+            _success(
+                {"items": [{"thread_id": "thread-1", "final_message": "done"}]}
+            ),
+        ]
+    )
+
+    FridayRuntimeAdapter(config, transport=transport, poll_interval_seconds=0).execute(
+        "prompt", project_id="explicit-project"
+    )
+
+    assert [call.headers for call in transport.calls] == [
+        {"X-Friday-Session-Token": "session-token"}
     ] * 4

@@ -547,7 +547,7 @@ def test_probe_does_not_run_friday_route_through_codex_adapter(monkeypatch, tmp_
     monkeypatch.setattr("app.agent_runtime_probe.FridayRuntimeAdapter", FakeFridayAdapter)
 
     snapshot = AgentRuntimeProbe(
-        config=load_runtime_config(dict(__import__("os").environ)),
+        config=config,
         codex_bin="must-not-run",
         executor=lambda *args, **kwargs: calls.append((args, kwargs)),
         now=lambda: NOW,

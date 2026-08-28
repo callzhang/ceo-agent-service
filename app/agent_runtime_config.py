@@ -29,6 +29,7 @@ class AgentRuntimeConfig(BaseModel):
     friday_runtime_project_id: str
     friday_runtime_model: str
     friday_runtime_auth_disabled: bool
+    friday_runtime_auth_mode: str
 
     def secret_for(self, route_name: str) -> SecretStr | None:
         return self.secrets.get(route_name)
@@ -66,6 +67,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     claude_model = env.get("CEO_CLAUDE_MODEL", "sonnet").strip()
     routes = []
     secrets: dict[str, SecretStr] = {}
+    friday_auth_mode = "disabled" if friday_auth_disabled else ""
     for name in names:
         if name == "codex_oauth":
             routes.append(
@@ -120,8 +122,10 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
                 )
             if runtime_ticket:
                 secrets[name] = SecretStr(runtime_ticket)
+                friday_auth_mode = "runtime_ticket"
             elif session_token:
                 secrets[name] = SecretStr(session_token)
+                friday_auth_mode = "session_token"
             routes.append(
                 RuntimeRoute(
                     name=name,
@@ -148,6 +152,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
         friday_runtime_project_id=friday_runtime_project_id,
         friday_runtime_model=friday_runtime_model,
         friday_runtime_auth_disabled=friday_auth_disabled,
+        friday_runtime_auth_mode=friday_auth_mode,
     )
 
 

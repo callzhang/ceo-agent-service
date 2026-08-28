@@ -30,10 +30,22 @@ from app.friday_runtime_contract import (
 class FridayRuntimeError(RuntimeError):
     """A Friday transport or execution result that cannot be returned."""
 
-    def __init__(self, code: str, detail: str, *, retryable: bool) -> None:
+    def __init__(
+        self,
+        code: str,
+        detail: str,
+        *,
+        retryable: bool,
+        thread_id: str = "",
+        turn_id: str = "",
+        operation_id: str = "",
+    ) -> None:
         self.code = code
         self.detail = detail
         self.retryable = retryable
+        self.thread_id = thread_id
+        self.turn_id = turn_id
+        self.operation_id = operation_id
         super().__init__(f"{code}: {detail}")
 
 
@@ -163,7 +175,10 @@ class FridayRuntimeAdapter:
         ticket = runtime_ticket
         session = friday_session_token
         if ticket is None and session is None and not effective_auth_disabled:
-            ticket = credential
+            if self.config.friday_runtime_auth_mode == "session_token":
+                session = credential
+            else:
+                ticket = credential
         try:
             execution = FridayExecutionInput(
                 project_id=effective_project,
@@ -187,6 +202,9 @@ class FridayRuntimeAdapter:
                 "friday_runtime_auth_failed", str(exc), retryable=False
             ) from exc
         deadline = time.monotonic() + timeout_seconds
+        thread_id = ""
+        turn_id = ""
+        operation_id = ""
         try:
             thread_payload = self._request(
                 "POST",
@@ -240,10 +258,16 @@ class FridayRuntimeAdapter:
                 artifact=dict(artifact),
             )
         except FridayRuntimeError:
+            error = sys.exc_info()[1]
+            assert isinstance(error, FridayRuntimeError)
+            error.thread_id = error.thread_id or thread_id
+            error.turn_id = error.turn_id or turn_id
+            error.operation_id = error.operation_id or operation_id
             raise
         except FridayRuntimeContractError as exc:
             raise FridayRuntimeError(
-                "friday_runtime_result_invalid", str(exc), retryable=False
+                "friday_runtime_result_invalid", str(exc), retryable=False,
+                thread_id=thread_id, turn_id=turn_id, operation_id=operation_id,
             ) from exc
         except (ValueError, TypeError, KeyError) as exc:
             raise FridayRuntimeError(
@@ -270,7 +294,9 @@ class FridayRuntimeAdapter:
             if status == FridayOperationStatus.COMPLETED:
                 return
             if self.contract.is_terminal_operation_status(status):
-                detail = _operation_failure_detail(payload)
+                detail = _operation_failure_detail(
+                    payload, credential=self._configured_credential()
+                )
                 raise FridayRuntimeError(
                     "friday_runtime_failed", detail, retryable=True
                 )
@@ -317,7 +343,9 @@ class FridayRuntimeAdapter:
                 "friday_runtime_result_invalid", "Friday response is not a JSON object", retryable=False
             )
         if status_code < 200 or status_code >= 300:
-            detail = _safe_response_detail(payload)
+            detail = _safe_response_detail(
+                payload, credential=self._configured_credential()
+            )
             raise FridayRuntimeError("friday_runtime_failed", detail, retryable=True)
         return payload
 
@@ -377,22 +405,41 @@ def _turn_id_from_operation(
     raise FridayRuntimeContractError("Friday response has no turn_id")
 
 
-def _operation_failure_detail(payload: Mapping[str, object]) -> str:
+def _operation_failure_detail(
+    payload: Mapping[str, object], *, credential: str | None = None
+) -> str:
     try:
         data = payload.get("data")
         operation = data.get("operation") if isinstance(data, Mapping) else None
         if isinstance(operation, Mapping):
             detail = str(operation.get("last_error") or operation.get("phase") or "").strip()
             if detail:
-                return detail[:500]
+                return _sanitize_error_detail(detail, credential=credential)
     except Exception:  # pragma: no cover - defensive serialization boundary
         pass
     return "Friday operation failed"
 
 
-def _safe_response_detail(payload: Mapping[str, object]) -> str:
+def _safe_response_detail(
+    payload: Mapping[str, object], *, credential: str | None = None
+) -> str:
     for key in ("message", "detail", "error"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()[:500]
+            return _sanitize_error_detail(value, credential=credential)
     return "Friday Runtime request failed"
+
+
+def _sanitize_error_detail(value: str, *, credential: str | None = None) -> str:
+    """Keep provider diagnostics while preventing credential persistence."""
+
+    detail = value.strip()
+    if credential:
+        detail = detail.replace(credential, "[redacted]")
+    lowered = detail.casefold()
+    if any(
+        marker in lowered
+        for marker in ("authorization", "bearer ", "api_key", "token=", "secret=")
+    ):
+        return "Friday Runtime request failed"
+    return detail[:500]
