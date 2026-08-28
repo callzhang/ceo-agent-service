@@ -291,6 +291,17 @@ def test_context_renders_reference_and_command_without_resolved_body():
     assert "评论已提交" in rendered
 
 
+def test_context_renders_one_canonical_instant_for_naive_dingtalk_times():
+    rendered = _context().render_business_context(
+        current_time="2026-07-28T04:15:00-07:00"
+    )
+
+    assert "Canonical time facts" in rendered
+    assert '"assumed_timezone": "Asia/Shanghai"' in rendered
+    assert '"utc": "2026-07-28T04:00:00+00:00"' in rendered
+    assert "Compare only the UTC values" in rendered
+
+
 def test_context_contains_runtime_invariants_without_business_rules():
     rendered = _context().render()
 

@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from app.agent_contracts import AuditFeedback, ConsumerProposal
 from app.agent_result import AgentError
@@ -142,9 +143,34 @@ class AgentTaskContext:
             }
             for material in self.materials
         ]
+        effective_current_time = current_time or _current_local_time()
         sections = [
             "Current turn execution time\n"
-            + (current_time or _current_local_time()),
+            + effective_current_time,
+            "Canonical time facts\n"
+            + _json(
+                {
+                    "execution_time": _canonical_context_time(
+                        effective_current_time
+                    ),
+                    "trigger_create_time": _canonical_context_time(
+                        self.trigger_create_time
+                    ),
+                    "message_create_times": [
+                        {
+                            "message_id": message.message_id,
+                            "create_time": _canonical_context_time(
+                                message.create_time
+                            ),
+                        }
+                        for message in self.messages
+                    ],
+                    "comparison_rule": (
+                        "Compare only the UTC values. A DingTalk timestamp without "
+                        "an explicit offset is Asia/Shanghai before conversion."
+                    ),
+                }
+            ),
             "Original trigger\n" + _json(trigger),
             "Recent conversation context\n" + _json(messages),
             "Raw material references and exact read commands\n" + _json(materials),
@@ -259,6 +285,29 @@ def _json(value: object) -> str:
 
 def _current_local_time() -> str:
     return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+
+
+_DINGTALK_MESSAGE_TIME_ZONE = ZoneInfo("Asia/Shanghai")
+
+
+def _canonical_context_time(value: str) -> dict[str, str]:
+    raw = value.strip()
+    if not raw:
+        return {"raw": "", "status": "missing"}
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return {"raw": raw, "status": "unparseable"}
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_DINGTALK_MESSAGE_TIME_ZONE)
+        assumed_timezone = "Asia/Shanghai"
+    else:
+        assumed_timezone = "explicit"
+    return {
+        "raw": raw,
+        "assumed_timezone": assumed_timezone,
+        "utc": parsed.astimezone(timezone.utc).isoformat(),
+    }
 
 
 _CONSUMER_AGENT_RULES = """## Application Result Contract
