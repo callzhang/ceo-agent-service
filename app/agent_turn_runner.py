@@ -1017,7 +1017,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 recovered_completed_attempt = True
                 raise _RecoveredCompletedRuntimeResult
             if self.refresh_runtime_capabilities is not None:
-                self.refresh_runtime_capabilities()
+                self.refresh_runtime_capabilities(force=False)
             attempted_routes = frozenset()
             configured_route_names = frozenset(
                 candidate.name for candidate in self.runtime_config.routes
@@ -1033,6 +1033,17 @@ class AgentTurnProcess(Generic[ResultT]):
                 excluded_routes=excluded_routes,
             )
             route = decision.route
+            if route is None:
+                if self.refresh_runtime_capabilities is not None:
+                    self.refresh_runtime_capabilities(force=True)
+                    decision = self.runtime_router.first_route_decision(
+                        required_capabilities=required_capabilities,
+                        allow_legacy_oauth_bootstrap=(
+                            self._allow_legacy_oauth_bootstrap
+                        ),
+                        excluded_routes=excluded_routes,
+                    )
+                    route = decision.route
             if route is None:
                 unavailable = RuntimeRouteUnavailableError(decision.reason)
                 self._fail_running(run, unavailable.code, detail=decision.reason)

@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-08-28: when all runtime snapshots reject a task, force one fresh route
+  probe before returning `runtime_route_unavailable`, allowing a recovered
+  provider to be used before its previous unhealthy snapshot expires.
+
 - 2026-08-28: prevent the audit console from sending the synthetic
   `oa_pending_scan` conversation id to DingTalk's chat-opening API. Service
   tasks now expose their stored OA detail URL instead of a broken chat-jump

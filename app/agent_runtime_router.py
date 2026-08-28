@@ -1315,7 +1315,7 @@ class RoutedCodexExecution:
         result_validation_retry: RoutedResultValidationRetry | None = None,
     ) -> RoutedCodexExecutionResult[ResultT]:
         if self._refresh_runtime_capabilities is not None:
-            self._refresh_runtime_capabilities()
+            self._refresh_runtime_capabilities(force=False)
         if type(command_factory) is not ApprovedCodexCommandFactory:
             raise ValueError("command_factory must be approved")
         policy = command_factory._approved_policy
@@ -1446,6 +1446,15 @@ class RoutedCodexExecution:
                     required_capabilities=required_capabilities,
                 )
         else:
+            decision = self._router.first_route_decision(
+                required_capabilities=required_capabilities,
+                allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,
+            )
+        if decision.route is None and self._refresh_runtime_capabilities is not None:
+            # A route may recover before its unhealthy snapshot expires. Re-probe
+            # once at the no-route boundary so a transient outage does not become
+            # a task-level route failure for the whole retry window.
+            self._refresh_runtime_capabilities(force=True)
             decision = self._router.first_route_decision(
                 required_capabilities=required_capabilities,
                 allow_legacy_oauth_bootstrap=self._allow_legacy_oauth_bootstrap,

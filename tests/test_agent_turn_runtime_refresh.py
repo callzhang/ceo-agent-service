@@ -39,8 +39,8 @@ def test_turn_refreshes_capabilities_before_initial_route_decision(tmp_path):
     task, run = _task_and_run(store)
     calls: list[str] = []
 
-    def refresh():
-        calls.append("refresh")
+    def refresh(*, force=False):
+        calls.append(f"refresh:{force}")
 
     class Router:
         def first_route_decision(self, **_kwargs):
@@ -67,7 +67,7 @@ def test_turn_refreshes_capabilities_before_initial_route_decision(tmp_path):
             persist_conversation_session=False,
         )
 
-    assert calls == ["refresh", "route"]
+    assert calls == ["refresh:False", "route", "refresh:True", "route"]
 
 
 def test_production_runtime_retains_the_service_owned_refresh_callable(
@@ -76,7 +76,7 @@ def test_production_runtime_retains_the_service_owned_refresh_callable(
     monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth")
     store = AutoReplyStore(tmp_path / "store.sqlite3")
 
-    def refresh():
+    def refresh(*, force=False):
         return None
 
     runtime = build_production_agent_runtime(
