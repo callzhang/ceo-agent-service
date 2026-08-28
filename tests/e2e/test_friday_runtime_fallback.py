@@ -456,12 +456,13 @@ observability:
         assert run_state and run_state[0] == "completed", _safe_detail(run_state)
         diagnostics = _get_json(f"{base_url}/v1/admin/runtime/diagnostics?thread_id={thread_id}")
         diagnostic_data = diagnostics.get("data", diagnostics)
-        health = diagnostic_data.get("health", {}) if isinstance(diagnostic_data, dict) else {}
-        llm_status = health.get("llm", {}) if isinstance(health, dict) else {}
-        bindings = llm_status.get("bindings", []) if isinstance(llm_status, dict) else []
-        assert bindings and bindings[0].get("provider_type") == "openai-compatible"
-        assert bindings[0].get("model_id") == provider_model
-        assert bindings[0].get("base_url") == provider_base_url
+        runtime_config = diagnostic_data.get("config", {}) if isinstance(diagnostic_data, dict) else {}
+        llm_config = runtime_config.get("llm", {}) if isinstance(runtime_config, dict) else {}
+        assert llm_config.get("provider") == "openai-compatible"
+        assert llm_config.get("model") == provider_model
+        assert llm_config.get("base_url") == provider_base_url
+        assert provider_key not in json.dumps(llm_config, ensure_ascii=False)
+        assert not llm_config.get("api_key")
         assert artifact and artifact[0] == thread_id and artifact[1] == turn_id
         assert _parse_json_result(artifact[2]) == {"ok": True, "value": 7}
     finally:
