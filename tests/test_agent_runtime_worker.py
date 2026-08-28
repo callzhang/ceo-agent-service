@@ -3048,11 +3048,11 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
     first = worker.store.get_reply_task(task_id)
     assert first is not None and first.status == "pending"
     assert first.attempts == 1
-    assert first.error == "audit_retry_exhausted"
+    assert first.error == "audit_dependency_unavailable"
     first_attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert first_attempt is not None
     assert first_attempt.send_status == "failed"
-    assert first_attempt.send_error == "audit_retry_exhausted"
+    assert first_attempt.send_error == "audit_dependency_unavailable"
     with worker.store._connect() as db:
         db.execute(
             "update reply_tasks set available_at='' where id=?",
@@ -3070,7 +3070,7 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
         if attempt.trigger_message_id == trigger.open_message_id
     ]
     assert len(attempts) == 2
-    assert {attempt.send_error for attempt in attempts} == {"audit_retry_exhausted"}
+    assert {attempt.send_error for attempt in attempts} == {"audit_dependency_unavailable"}
     assert executor.audit_attempts == 4
 
 
@@ -5579,7 +5579,7 @@ def test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol(
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
     assert attempt.send_status == "failed"
-    assert attempt.send_error == "audit_retry_exhausted"
+    assert attempt.send_error == "native_write_failed"
     audit_runs = [
         item
         for item in worker.store.list_agent_runs_for_task_generation(task_id, "g1")

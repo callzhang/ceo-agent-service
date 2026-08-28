@@ -115,6 +115,23 @@ def test_internal_retry_code_is_rendered_as_readable_failure_reason():
     assert "consumer_retry_exhausted" not in state.reason
 
 
+def test_live_okr_retry_summary_keeps_source_reason_readable():
+    attempt = _attempt(
+        audit_summary=(
+            "live_okr_and_supporting_evidence_unavailable; consumer retry attempts exhausted"
+        )
+    )
+
+    state = reply_history_attention(
+        attempt,
+        task=_task(status="failed", attempts=3),
+        decision_options=(),
+    )
+
+    assert state is not None
+    assert "实时 OKR" in state.reason
+
+
 def test_historical_image_error_remains_recoverable():
     attempt = _attempt(send_error="image_dependency_unavailable")
 

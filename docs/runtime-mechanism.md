@@ -102,7 +102,11 @@ event 和 provider 结果仍然作为 append-only 事实保留。
 
 ## 任务类型
 
-- `okr_review`：指定人员和周期的逐 KR 评审。执行 Agent 先生成评审，审核 Agent 审阅并反馈修改，修正版通过后才发送。
+- `okr_review`：指定人员和周期的逐 KR 评审。执行 Agent 先通过固定只读入口
+  `app.cli read-dingteam-okr --user-id <owner-id> --period-label <period>` 读取实时
+  `processed.objectives`/`processed.okrRows`，再生成评审；审核 Agent 审阅并反馈修改，
+  修正版通过后才发送。底层读取错误（认证失效、浏览器/profile 锁、周期解析失败等）
+  必须原样保留，不能被 `consumer_retry_exhausted` 覆盖。
 - `weekly_okr`：定时生成管理者 OKR 进度周报。分析、报告发布、群摘要发送和外部回读全部完成后，才推进周报成功日期。
 - 普通消息、审批、会议、邮件、任务跟踪和 WeChat 任务都遵循同一生命周期与反馈规则，只在领域输入、工具权限和外部回读方式上不同。
 

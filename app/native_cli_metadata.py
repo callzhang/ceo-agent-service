@@ -16,7 +16,9 @@ from app.runtime_environment import central_python
 
 
 _SHELL_CONNECTORS = frozenset({"&&", "||", "|", ";"})
-_SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset({"read-oa-approval-detail"})
+_SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset(
+    {"read-oa-approval-detail", "read-dingteam-okr"}
+)
 MATERIAL_OUTPUT_ROOT = Path("/tmp").resolve() / "ceo-agent-service-materials"
 _LOCAL_OUTPUT_FLAGS = frozenset(
     {
@@ -390,13 +392,29 @@ def _service_read_only_descriptor(
     argv = segments[0]
     if not _is_service_read_only_python_command(argv):
         return None
+    target_identifiers = _service_read_target_identifiers(argv)
     return NativeCliCommand(
         cli="local-shell",
         command_path=f"app.cli {argv[3]}",
         effect=EffectKind.READ_ONLY,
         command_digest=hashlib.sha256(shlex.join(argv).encode("utf-8")).hexdigest(),
-        target_identifiers={"instance-id": argv[5]},
+        target_identifiers=target_identifiers,
     )
+
+
+def _service_read_target_identifiers(argv: tuple[str, ...]) -> dict[str, str]:
+    """Extract stable identifiers from a registered service-owned read."""
+    if argv[3] == "read-oa-approval-detail":
+        return {"instance-id": argv[5]}
+    identifiers: dict[str, str] = {}
+    for flag, key in (("--user-id", "user-id"), ("--period-label", "period-label")):
+        try:
+            value = argv[argv.index(flag) + 1]
+        except (ValueError, IndexError):
+            continue
+        if value and not value.startswith("-"):
+            identifiers[key] = value
+    return identifiers
 
 
 def _local_read_target_identifiers(
@@ -500,18 +518,37 @@ def _is_agent_instruction_read(argv: tuple[str, ...]) -> bool:
 
 def _is_service_read_only_python_command(argv: tuple[str, ...]) -> bool:
     """Recognize the service's fixed OA adapter before local policy applies."""
-    if len(argv) != 6:
+    if len(argv) < 6:
         return False
-    executable, module_flag, module, command, instance_flag, process_id = argv
+    executable, module_flag, module, command = argv[:4]
     return (
         executable == str(central_python())
         and module_flag == "-m"
         and module == "app.cli"
         and command in _SERVICE_READ_ONLY_PYTHON_COMMANDS
-        and instance_flag == "--instance-id"
-        and bool(process_id)
-        and not process_id.startswith("-")
+        and (
+            (
+                command == "read-oa-approval-detail"
+                and len(argv) == 6
+                and argv[4] == "--instance-id"
+                and bool(argv[5])
+                and not argv[5].startswith("-")
+            )
+            or (
+                command == "read-dingteam-okr"
+                and _has_required_flag_value(argv, "--user-id")
+                and _has_required_flag_value(argv, "--period-label")
+            )
+        )
     )
+
+
+def _has_required_flag_value(argv: tuple[str, ...], flag: str) -> bool:
+    try:
+        value = argv[argv.index(flag) + 1]
+    except (ValueError, IndexError):
+        return False
+    return bool(value) and not value.startswith("-")
 
 
 def structured_target_identifiers(value: object) -> dict[str, str]:

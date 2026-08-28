@@ -1400,7 +1400,7 @@ def test_retryable_audit_exhaustion_returns_failed_latest_run(store):
     assert result.status == "failed_retryable"
     assert result.final_role is AgentRole.AUDIT
     assert result.final_run_id == audit.calls[-1]["run_id"]
-    assert result.error.code == "audit_retry_exhausted"
+    assert result.error.code == "audit_unavailable"
     assert result.error.retryable is True
     assert result.feedback_cycles == 0
     assert len(audit.calls) == 2
@@ -1434,10 +1434,42 @@ def test_retryable_consumer_exhaustion_returns_failed_latest_run(store):
     assert result.status == "failed_retryable"
     assert result.final_role is AgentRole.CONSUMER
     assert result.final_run_id == consumer.calls[-1]["run_id"]
-    assert result.error.code == "consumer_retry_exhausted"
+    assert result.error.code == "consumer_unavailable"
     assert result.error.retryable is True
     assert result.feedback_cycles == 0
     assert len(consumer.calls) == 2
+
+
+def test_retryable_consumer_exhaustion_preserves_live_okr_read_error(store):
+    failure = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "failed",
+            "summary": "Live OKR source unavailable.",
+            "proposal": None,
+            "error": {
+                "code": "live_okr_and_supporting_evidence_unavailable",
+                "retryable": True,
+                "authorization_required": False,
+            },
+        }
+    )
+    task = _task(store)
+    consumer = ScriptedConsumer(store, failure, failure)
+
+    result = _process(
+        AgentOrchestrator(
+            store=store,
+            consumer=consumer,
+            audit=ScriptedAudit(store),
+        ),
+        task,
+    )
+
+    assert result.status == "failed_retryable"
+    assert result.error.code == "live_okr_and_supporting_evidence_unavailable"
+    assert result.summary == (
+        "live_okr_and_supporting_evidence_unavailable; consumer retry attempts exhausted"
+    )
 
 
 def test_recovered_failed_consumer_task_reclaims_same_run(store):

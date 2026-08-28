@@ -13,6 +13,9 @@ _READABLE_FAILURE_REASONS = {
     "consumer_retry_exhausted": (
         "Agent 生成回复连续重试后仍未得到可验证结果，已达到本轮重试上限。"
     ),
+    "live_okr_and_supporting_evidence_unavailable": (
+        "实时 OKR 和支撑材料不可用，连续重试后仍未完成读取；请修复 OKR 读取能力后重跑。"
+    ),
     "audit_retry_exhausted": (
         "Agent 执行审计连续重试后仍未得到可验证结果，已达到本轮重试上限。"
     ),
@@ -213,4 +216,11 @@ def _json_dict(value: str) -> dict[str, object]:
 
 def _readable_failure_reason(reason: str) -> str:
     normalized = reason.strip()
-    return _READABLE_FAILURE_REASONS.get(normalized, normalized)
+    readable = _READABLE_FAILURE_REASONS.get(normalized)
+    if readable is not None:
+        return readable
+    # Retry exhaustion now keeps the source error code in the summary.
+    # Render that code with the same human-readable explanation as a direct
+    # failure while retaining the detailed suffix for unknown codes.
+    source_code = normalized.split(";", 1)[0].strip()
+    return _READABLE_FAILURE_REASONS.get(source_code, normalized)

@@ -39,6 +39,13 @@ pending -> running -> done
 
 `okr_review` 使用上述闭环生成逐 KR 评审；`weekly_okr` 使用上述闭环生成管理者 OKR 进度周报。周报只有在分析、文档发布、群摘要发送和外部回读全部完成后，才能推进成功日期。
 
+OKR 评审的实时数据读取由服务提供固定的只读入口
+`app.cli read-dingteam-okr --user-id <owner-id> --period-label <period>`，该入口调用
+`CEO_OKR_LIVE_SOURCE_COMMAND`（当前为 Dingteam headless source），并返回包含
+`processed.objectives` 与 `processed.okrRows` 的实时载荷。Consumer 必须先通过 reviewed
+read 调用该入口，再形成通过/不通过判断；截图、仓库链接或重试终态不能替代实时读取，
+读取失败时必须保留底层认证、浏览器启动或源端错误码。
+
 完整状态和恢复说明见 [`docs/runtime-mechanism.md`](runtime-mechanism.md)。
 
 ### Task、Agent Run 与 Reply Attempt 的关系

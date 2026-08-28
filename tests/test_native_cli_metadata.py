@@ -110,6 +110,32 @@ def test_describe_native_command_allows_service_owned_oa_detail_read():
     assert descriptor.target_identifiers == {"instance-id": "proc-1"}
 
 
+def test_describe_native_command_allows_service_owned_dingteam_okr_read():
+    descriptor = describe_native_command(
+        {
+            "type": "command_execution",
+            "argv": [
+                str(central_python()),
+                "-m",
+                "app.cli",
+                "read-dingteam-okr",
+                "--user-id",
+                "user-1",
+                "--period-label",
+                "2026年3季度",
+            ],
+        }
+    )
+
+    assert descriptor is not None
+    assert descriptor.effect is EffectKind.READ_ONLY
+    assert descriptor.command_path == "app.cli read-dingteam-okr"
+    assert descriptor.target_identifiers == {
+        "user-id": "user-1",
+        "period-label": "2026年3季度",
+    }
+
+
 def test_describe_native_command_rejects_local_pipeline_with_identifiers():
     descriptor = describe_native_command(
         {

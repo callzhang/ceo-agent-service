@@ -803,13 +803,24 @@ class AgentOrchestrator:
         )
         if latest is None:
             raise RuntimeError("agent retry exhausted without a persisted role turn")
-        code = f"{role.value}_retry_exhausted"
+        # Keep the persisted run's real failure code.  The retry budget is an
+        # orchestration detail and must not hide the source failure (for
+        # example, a live OKR read failure) behind a generic wrapper.
+        underlying = _run_error(latest)
+        code = underlying.code or f"{role.value}_retry_exhausted"
+        summary = code
+        if code != f"{role.value}_retry_exhausted":
+            summary = f"{code}; {role.value} retry attempts exhausted"
         return OrchestrationResult(
             status="failed_retryable",
             final_run_id=latest.id,
             final_role=role,
-            summary=code,
-            error=AgentError(code=code, retryable=True),
+            summary=summary,
+            error=AgentError(
+                code=code,
+                retryable=underlying.retryable or True,
+                authorization_required=underlying.authorization_required,
+            ),
             feedback_cycles=self._feedback_cycles(task),
         )
 

@@ -33,6 +33,7 @@ from app.cli import (
     process_okr_reviews_command,
     process_work_items_command,
     read_oa_approval_detail_command,
+    read_dingteam_okr_command,
     retry_work_summary_input_command,
     send_attempt_command,
     settings_from_args,
@@ -566,6 +567,22 @@ def test_parser_supports_read_oa_approval_detail():
     assert args.instance_id == "proc-1"
 
 
+def test_parser_supports_read_dingteam_okr():
+    args = build_parser().parse_args(
+        [
+            "read-dingteam-okr",
+            "--user-id",
+            "user-1",
+            "--period-label",
+            "2026年3季度",
+        ]
+    )
+
+    assert args.command == "read-dingteam-okr"
+    assert args.user_id == "user-1"
+    assert args.period_label == "2026年3季度"
+
+
 def test_read_oa_approval_detail_command_uses_service_owned_reader(
     tmp_path, monkeypatch, capsys
 ):
@@ -588,6 +605,39 @@ def test_read_oa_approval_detail_command_uses_service_owned_reader(
 
     assert result == {"process_instance": {"title": "审批材料"}}
     assert calls == [{"ding_robot_code": None, "ding_robot_name": None, "ding_receiver_user_id": None}]
+    assert json.loads(capsys.readouterr().out) == result
+
+
+def test_read_dingteam_okr_command_returns_processed_live_payload(
+    tmp_path, monkeypatch, capsys
+):
+    calls = []
+
+    class FakeSource:
+        def __init__(self, **kwargs):
+            calls.append(("init", kwargs))
+
+        def fetch_user_okr(self, **kwargs):
+            calls.append(("fetch", kwargs))
+            return {"processed": {"objectives": [{"id": "o1"}], "okrRows": []}}
+
+    monkeypatch.setenv(
+        "CEO_OKR_LIVE_SOURCE_COMMAND",
+        "/bin/echo fetch --user-id {user_id} --period-label {period_label}",
+    )
+    monkeypatch.setattr("app.okr_review.DwsLiveOkrSource", FakeSource)
+
+    result = read_dingteam_okr_command(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+        user_id=" user-1 ",
+        period_label=" 2026年3季度 ",
+    )
+
+    assert result["processed"]["objectives"] == [{"id": "o1"}]
+    assert calls[1] == (
+        "fetch",
+        {"user_id": "user-1", "period_label": "2026年3季度"},
+    )
     assert json.loads(capsys.readouterr().out) == result
 
 

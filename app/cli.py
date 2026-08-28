@@ -289,6 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
         "scan-task-sources",
         "scan-oa-approvals",
         "read-oa-approval-detail",
+        "read-dingteam-okr",
         "process-follow-ups",
         "check-follow-up-completions",
         "daily-task-maintenance",
@@ -449,6 +450,9 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if command == "read-oa-approval-detail":
             subparser.add_argument("--instance-id", required=True)
+        if command == "read-dingteam-okr":
+            subparser.add_argument("--user-id", required=True)
+            subparser.add_argument("--period-label", required=True)
         if command == "repository-updater":
             subparser.add_argument("--operation-id", required=True)
         if command == "retry-work-summary-input":
@@ -1531,6 +1535,39 @@ def read_oa_approval_detail_command(
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
     payload = dws.read_oa_process_instance_openapi(process_id)
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+    return payload
+
+
+def read_dingteam_okr_command(
+    settings: WorkerSettings,
+    *,
+    user_id: str,
+    period_label: str,
+) -> dict[str, object]:
+    """Read one user's live Dingteam OKR through the configured headless source."""
+    clean_user_id = user_id.strip()
+    clean_period = period_label.strip()
+    if not clean_user_id or not clean_period:
+        raise ValueError("Dingteam OKR user id and period label are required")
+    command_template = _okr_live_source_command_template()
+    if not command_template:
+        raise RuntimeError("CEO_OKR_LIVE_SOURCE_COMMAND is required")
+    from app.okr_review import DwsLiveOkrSource
+
+    source = DwsLiveOkrSource(
+        dws=DwsClient(
+            ding_robot_code=settings.ding_robot_code,
+            ding_robot_name=settings.ding_robot_name,
+            ding_receiver_user_id=settings.ding_receiver_user_id,
+        ),
+        command_template=command_template,
+        timeout_seconds=min(settings.task_codex_timeout_seconds, 300),
+    )
+    payload = source.fetch_user_okr(
+        user_id=clean_user_id,
+        period_label=clean_period,
+    )
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
     return payload
 
@@ -3419,6 +3456,12 @@ def main() -> None:
         scan_oa_approvals_command(settings)
     elif args.command == "read-oa-approval-detail":
         read_oa_approval_detail_command(settings, process_instance_id=args.instance_id)
+    elif args.command == "read-dingteam-okr":
+        read_dingteam_okr_command(
+            settings,
+            user_id=args.user_id,
+            period_label=args.period_label,
+        )
     elif args.command == "process-follow-ups":
         ensure_live_send_allowed(settings)
         process_follow_ups_command(settings)

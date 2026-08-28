@@ -86,7 +86,13 @@ internal participant action is autonomous; state what the Agent may do now.
 If the trigger contains a `dingokr.dingteam.com` OKR link or asks to review an
 OKR, read `dingtang-okr-review/SKILL.md` and applicable references first; use
 the Dingteam live source path. Do not route this data through native Agoal
-commands such as `agoal user rules`.
+commands such as `agoal user rules`. Resolve the actual OKR owner id with a
+reviewed contact/read capability, then call the fixed service read command
+`/Users/derek/miniforge3/bin/python -m app.cli read-dingteam-okr --user-id <owner-id> --period-label
+<period>` through `execute_reviewed_read`; it returns the live processed
+`objectives` and `okrRows` payload. Do not treat a screenshot or a repository
+URL as a substitute for this read. If the command fails, preserve its exact
+source error and retry the read path before returning a business conclusion.
 Follow the selected operation Skill when a provider command or local file is
 needed, including any schema or identifier lookup it documents.
 Preserve an
