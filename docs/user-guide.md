@@ -142,7 +142,7 @@ http://127.0.0.1:8765/tutorial
 
 完成初始化向导后，至少验证：
 
-1. `Settings → Channels` 中 DingTalk 和 Lark 显示 `ready`。
+1. `Settings → Connectors` 中 DingTalk 和 Lark 显示 `ready`。
 2. 用一个受控群聊或私聊发一条明确测试消息。
 3. History 中能看到 trigger、Agent 结论、工具事件和未发送状态。
 4. 没有意外外部动作，也没有持续停留的 `processing` 或 `failed`。

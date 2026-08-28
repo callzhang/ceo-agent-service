@@ -2881,7 +2881,7 @@ def _settings_tabs(active_tab: str) -> str:
         ("info", "Info"),
         ("system", "System Config"),
         ("agent-runtime", "Agent Runtime"),
-        ("channels", "Channels"),
+        ("channels", "Connectors"),
         ("wechat", "WeChat"),
         ("developer", "Developer Prompt"),
         ("user", "User Prompt"),
@@ -2990,8 +2990,8 @@ def _render_channel_config(store: AutoReplyStore) -> str:
     )
     return (
         '<section class="card">'
-        "<h2>Channel doctor</h2>"
-        '<p class="muted">Reusable reply channels and their local CLI readiness.</p>'
+        "<h2>Connectors</h2>"
+        '<p class="muted">External connector status, live probes, and local CLI readiness.</p>'
         '<table class="column-sized-table">'
         "<thead><tr><th>Channel</th><th>状态</th><th>原因</th>"
         "<th>Status 检查</th><th>Live probe</th><th>最近成功</th><th>登录处理</th></tr></thead>"
@@ -7539,7 +7539,7 @@ def _config_tabs(active_tab: str, *, tab_href_prefix: str = "/config?tab=") -> s
         "System Config</a>"
         f"<a class=\"{agent_runtime_class}\" href=\"{href('agent-runtime')}\">"
         "Agent Runtime</a>"
-        f"<a class=\"{channels_class}\" href=\"{href('channels')}\">Channels</a>"
+        f"<a class=\"{channels_class}\" href=\"{href('channels')}\">Connectors</a>"
         f"<a class=\"{wechat_class}\" href=\"{href('wechat')}\">WeChat</a>"
         f"<a class=\"{developer_class}\" href=\"{href('developer')}\">"
         "Developer Prompt</a>"

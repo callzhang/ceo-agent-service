@@ -4708,7 +4708,7 @@ def test_render_config_page_shows_channel_doctor(tmp_path, monkeypatch):
         db_path=tmp_path / "worker.sqlite3",
     )
 
-    assert "Channel doctor" in html
+    assert "Connectors" in html
     assert "dingtalk" in html
     assert "lark" in html
     assert "已就绪" in html
@@ -5444,10 +5444,12 @@ def test_settings_page_flattens_sections_into_left_navigation(tmp_path: Path):
     assert active_system_link in html
     assert active_system_link in legacy_deep_link_html
     assert 'aria-label="Config sections"' not in legacy_deep_link_html
+    assert '<a class="settings-nav-item" href="/settings?tab=channels">Connectors</a>' in html
+    assert '<a class="settings-nav-item" href="/settings?tab=channels">Channels</a>' not in html
     for label, tab in (
         ("Info", "info"),
         ("Agent Runtime", "agent-runtime"),
-        ("Channels", "channels"),
+        ("Connectors", "channels"),
         ("WeChat", "wechat"),
         ("Developer Prompt", "developer"),
         ("User Prompt", "user"),

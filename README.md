@@ -186,7 +186,7 @@ workload 启用 OAuth→API 故障切换并核对同一 run 的 attempt 与 secr
 - Channel gate 在 Agent 前运行结构化 status 和 live authenticated probe。
 - 只有明确 `needs_login` 时，Login Coordinator 才启动一次相应 CLI 登录；并发和抑制窗口内不会重复启动。
 - 网络错误、status 不可读或一般命令失败不会触发登录。
-- `Settings → Channels` 展示 status、live probe、最近成功时间和登录抑制状态，不展示 PID、session、token 或凭证路径。
+- `Settings → Connectors` 展示 status、live probe、最近成功时间和登录抑制状态，不展示 PID、session、token 或凭证路径。
 - History 只展示用户可理解的触发、回复、终态和安全结果摘要；运行时内部规划字段不进入页面。
 
 ## OKR 审核数据源
@@ -462,7 +462,7 @@ http://127.0.0.1:8765/
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录
 - `/attempts/{id}`：单次处理详情；同一触发消息后续重跑成功时，旧记录顶部会链接到后续 attempt 并展示其最新动作，原始状态仍保留在详情字段中供审计。Consumer 与 Audit 执行记录只能从该 Attempt 打开，不显示内部会话标识或本地文件路径。
 - `/developer-prompt`：Developer/User Prompt 模板管理
-- `/settings`：Settings 的所有区块使用统一的左侧导航（Info、System Config、Agent Runtime、Channels、WeChat、Developer Prompt、User Prompt、Audit Rules、Workers、Logs）；`/config`、`/workers`、`/logs` 保留为兼容入口。
+- `/settings`：Settings 的所有区块使用统一的左侧导航（Info、System Config、Agent Runtime、Connectors、WeChat、Developer Prompt、User Prompt、Audit Rules、Workers、Logs）；`/config`、`/workers`、`/logs` 保留为兼容入口。
 - `/errors`：错误列表
 
 ### 8. 启用 task 总结
