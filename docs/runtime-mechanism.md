@@ -55,7 +55,10 @@ pending -> running -> done
 - 所有任务都不得使用 `discard` 动作。
 - 所有任务都不得写入 `discarded` 状态。
 - 不得用“丢弃”代替审核反馈、修正原 run、重新排队、人工升级或失败记录。
-- 业务 run 的 current projection 可以由重跑更新；原始失败作为 append-only state event 保留。proposal 版本、revision lineage、session、runtime attempt 和 tool event 不得覆盖。provider 返回的 `operation`、`target`、稳定 result identifier 作为最小去重事实保存。
+- 业务 `reply_attempt` 的 current projection 可以由重跑更新；同一 trigger/channel 复用原 attempt ID，
+  不创建新的业务 attempt。原始失败作为 append-only state event 保留。其下的 `agent_runs`、proposal
+  版本、revision lineage、session、runtime attempt 和 tool event 不得覆盖；attempt 页面可切换查看
+  这些底层 run。provider 返回的 `operation`、`target`、稳定 result identifier 作为最小去重事实保存。
 - Audit 返回 `executed` 后任务即可进入 `done`；外部结果的读取与判断由 Agent 按业务 Skill 完成。
 
 如果任务确定无需执行，应进入 `done`，并在 trace 写入 `agent_output/no_action`；如果结果需要修改，写入 `audit_feedback` 并保持 `running`；如果处理失败，应进入 `failed`。

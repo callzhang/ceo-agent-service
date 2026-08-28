@@ -347,8 +347,10 @@ Friday 路由使用以下明确错误码：
 
 OA pending 扫描会先读取当前审批记录。只有最新有效记录来自其他参与者时才生成 review
 任务；如果 Derek 已在该外部更新之后完成评论、审批或其他处理，扫描不再把同一审批重新入队。
-History 中的每条 attempt 始终显示自己的真实状态和错误，不以另一条 attempt 改写为“已恢复”
-或“已由后续处理”。历史数据中的旧 unknown/reconciled 标签只按历史事实展示，不参与当前状态迁移。
+同一个业务 `reply_attempt` 是稳定的当前投影：重跑会在原 attempt 上更新当前状态、结果和错误，
+不会再创建第二个业务 attempt。页面可以在该 attempt 下切换查看多个底层 `agent_runs`；这些
+run、session、runtime attempt、tool event 和原始失败事件仍是 append-only 执行事实，不能被覆盖。
+历史中的原始失败仍可展开查看，但列表默认展示 current projection。
 
 ### Agent 失败重试
 

@@ -6916,9 +6916,9 @@ def test_existing_dry_run_calendar_response_is_executed_without_rerunning_codex(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.send_status == "dry_run"
+    assert attempt.send_status == "completed"
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert latest.id != attempt_id
+    assert latest.id == attempt_id
     assert latest.action == "agent_run"
     assert latest.send_status == "completed"
 
@@ -6955,9 +6955,9 @@ def test_retry_existing_calendar_response_missing_event_is_terminal_noop(
 
     assert_calendar_agent_contract(worker, dws)
     updated = worker.store.get_reply_attempt(attempt_id)
-    assert updated.send_status == "dry_run"
+    assert updated.send_status == "skipped"
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert latest.id != attempt_id
+    assert latest.id == attempt_id
     assert latest.send_status == "skipped"
 
 
@@ -7688,14 +7688,14 @@ def test_calendar_retry_ignores_old_system_notification_skip(
     assert final_sent(dws) == []
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
-    assert latest.id != old_attempt_id
+    assert latest.id == old_attempt_id
     assert latest.action == "agent_run"
     assert (
         latest.codex_reason
         == "test_calendar_retry_ignores_old_system_notification_skip"
     )
     assert latest.send_status == "needs_human"
-    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_attempts() == 1
 
 
 def test_calendar_invite_without_description_asks_for_attendance_reason(
@@ -8791,7 +8791,7 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     assert "2. [output_contracts] Return exactly one valid structured result" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
-    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_attempts() == 1
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
     assert latest.action == "agent_run"
@@ -8839,7 +8839,7 @@ def test_recovered_oa_attempt_inherits_identity_and_hides_old_failure(
 
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
-    assert latest.id != failed_id
+    assert latest.id == failed_id
     assert latest.send_status == "skipped"
     assert latest.oa_process_instance_id == "proc-1"
     assert latest.oa_task_id == "task-1"
@@ -11330,7 +11330,7 @@ def test_stale_processing_task_with_terminal_attempt_is_requeued_not_completed(
     assert worker.store.count_errors() == 0
     assert len(agent_runner(worker).calls) == 1
     attempts = worker.store.list_reply_attempts(limit=10)
-    assert [attempt.action for attempt in attempts] == ["agent_run", "send_reply"]
+    assert [attempt.action for attempt in attempts] == ["agent_run"]
 
 
 def test_critical_info_unavailable_stop_with_error_fails_queued_task(
@@ -11537,7 +11537,7 @@ def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
     assert worker.consume_once(max_tasks=1) == 1
 
     assert worker.store.count_reply_tasks(status="done") == 1
-    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_attempts() == 1
     assert len(agent_runner(worker).calls) == 1
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
@@ -11807,7 +11807,7 @@ def test_existing_dry_run_attempt_does_not_call_codex_again(
 
     assert len(agent_runner(worker).calls) == 1
     assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_attempts() == 1
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
     assert latest.action == "agent_run"
@@ -11857,10 +11857,10 @@ def test_failed_send_retries_existing_final_reply_without_calling_codex(
     assert dws.reply_messages == []
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.send_status == "failed"
+    assert attempt.send_status == "completed"
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
-    assert latest.id != attempt_id
+    assert latest.id == attempt_id
     assert latest.action == "agent_run"
     assert latest.send_status == "completed"
     assert worker.store.get_sent_reply("cid-1", "msg-1") is None
@@ -11906,7 +11906,7 @@ def test_sent_reply_prevents_retry_when_latest_attempt_failed(
 
     assert len(agent_runner(worker).calls) == 1
     assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_attempts() == 1
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
     assert latest.action == "agent_run"
@@ -11948,10 +11948,10 @@ def test_rerun_message_retries_existing_failed_attempt_without_calling_codex(
     assert processed == "msg-1"
     assert len(agent_runner(worker).calls) == 1
     assert final_sent(dws) == []
-    assert worker.store.get_reply_attempt(attempt_id).send_status == "failed"
+    assert worker.store.get_reply_attempt(attempt_id).send_status == "completed"
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
-    assert latest.id != attempt_id
+    assert latest.id == attempt_id
     assert latest.action == "agent_run"
     assert latest.send_status == "completed"
 
@@ -11989,11 +11989,11 @@ def test_rerun_message_cleans_legacy_group_reply_wrappers(tmp_path: Path, monkey
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.final_reply_text.startswith("> 周俊杰:")
-    assert attempt.send_status == "failed"
+    assert attempt.final_reply_text == ""
+    assert attempt.send_status == "completed"
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
-    assert latest.id != attempt_id
+    assert latest.id == attempt_id
     assert latest.action == "agent_run"
     assert latest.send_status == "completed"
 
@@ -12038,13 +12038,13 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
 
     assert len(agent_runner(worker).calls) == 1
-    assert worker.store.count_reply_attempts() == 2
+    assert worker.store.count_reply_attempts() == 1
     attempt = worker.store.get_reply_attempt(old_attempt_id)
     assert attempt is not None
-    assert attempt.send_status == "sent"
+    assert attempt.send_status == "completed"
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
-    assert latest.id != old_attempt_id
+    assert latest.id == old_attempt_id
     assert latest.action == "agent_run"
     assert latest.send_status == "completed"
     rerun_task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
@@ -12180,10 +12180,10 @@ def test_rerun_message_does_not_resend_when_trigger_already_has_sent_reply(
     assert final_sent(dws) == []
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt is not None
-    assert attempt.send_status == "sent"
+    assert attempt.send_status == "skipped"
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
-    assert latest.id != attempt_id
+    assert latest.id == attempt_id
     assert latest.action == "agent_run"
     assert latest.send_status == "skipped"
     assert worker.store.count_sent_replies() == 1
@@ -12222,10 +12222,10 @@ def test_force_new_rerun_can_resend_when_trigger_already_has_sent_reply(
     assert final_sent(dws) == []
     old_attempt = worker.store.get_reply_attempt(attempt_id)
     assert old_attempt is not None
-    assert old_attempt.send_status == "sent"
+    assert old_attempt.send_status == "completed"
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.id != attempt_id
+    assert attempt.id == attempt_id
     assert attempt.action == "agent_run"
     assert attempt.send_status == "completed"
     assert json.loads(attempt.audit_tool_events_json) == []
