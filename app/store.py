@@ -3923,7 +3923,6 @@ class AutoReplyStore:
         channel: str = "dingtalk",
         force_rotation: bool = False,
     ) -> ReplyTask:
-        task: ReplyTask | None
         with self._connect() as db:
             db.execute("begin immediate")
             revision_key = self._manual_rerun_revision_key(db, attempt_id)
@@ -3943,8 +3942,6 @@ class AutoReplyStore:
                 channel=channel,
                 force_rotation=force_rotation,
             )
-        if task is None:
-            raise ValueError("agent side effect reconciliation required before rotation")
         return task
 
     @staticmethod
@@ -4000,7 +3997,7 @@ class AutoReplyStore:
         revision_key: str,
         channel: str,
         force_rotation: bool = False,
-    ) -> ReplyTask | None:
+    ) -> ReplyTask:
         existing = db.execute(
             """
             select * from reply_tasks
@@ -4033,13 +4030,6 @@ class AutoReplyStore:
                     raise ValueError(
                         "active agent run must finish before forced rerun"
                     )
-            if cls._hold_generation_for_unknown_effects(
-                db,
-                int(existing["id"]),
-                str(existing["execution_generation"]),
-                now_text=now_text,
-            ):
-                return None
             cls._supersede_running_agent_runs(
                 db,
                 int(existing["id"]),
@@ -6208,12 +6198,10 @@ class AutoReplyStore:
             update agent_runs
             set status='failed',
                 structured_error_json=?,
-                side_effect_state='none',
                 lease_owner='', lease_expires_at='',
                 completed_at=?,
                 updated_at=?
             where reply_task_id=? and execution_generation=? and status='running'
-              and side_effect_state='none'
               and not exists (
                   select 1 from agent_effect_intents
                   where agent_run_id=agent_runs.id and state='dispatched'
@@ -10469,8 +10457,6 @@ class AutoReplyStore:
 
     def rotate_reply_task_execution_generation(self, task_id: int) -> str:
         execution_generation = uuid4().hex
-        blocked = False
-        current_generation = ""
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             task = db.execute(
                 "select execution_generation from reply_tasks where id=? "
@@ -10480,12 +10466,6 @@ class AutoReplyStore:
             if task is None:
                 raise ValueError("retryable reply task was not found")
             current_generation = str(task["execution_generation"])
-            blocked = self._hold_generation_for_unknown_effects(
-                db,
-                task_id,
-                current_generation,
-                now_text=now_text,
-            )
             unresolved_wechat_delivery = db.execute(
                 """
                 select 1
@@ -10501,37 +10481,32 @@ class AutoReplyStore:
                 raise ValueError(
                     "WeChat delivery reconciliation required before rotation"
                 )
-            if blocked:
-                execution_generation = current_generation
-            else:
-                self._supersede_running_agent_runs(
-                    db,
-                    task_id,
-                    current_generation,
-                    now_text=now_text,
-                )
-                self._supersede_ready_wechat_delivery(
-                    db, task_id, execution_generation
-                )
-                cursor = db.execute(
-                    """
-                    update reply_tasks
-                    set force_new_decision=1,
-                        execution_generation=?,
-                        status='pending',
-                        locked_at=null,
-                        available_at='',
-                        error='execution_generation_rotated',
-                        updated_at=current_timestamp
-                    where id=? and status in ('processing', 'pending')
-                      and execution_generation=?
-                    """,
-                    (execution_generation, task_id, current_generation),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("retryable reply task was not found")
-        if blocked:
-            raise ValueError("agent side effect reconciliation required before rotation")
+            self._supersede_running_agent_runs(
+                db,
+                task_id,
+                current_generation,
+                now_text=now_text,
+            )
+            self._supersede_ready_wechat_delivery(
+                db, task_id, execution_generation
+            )
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set force_new_decision=1,
+                    execution_generation=?,
+                    status='pending',
+                    locked_at=null,
+                    available_at='',
+                    error='execution_generation_rotated',
+                    updated_at=current_timestamp
+                where id=? and status in ('processing', 'pending')
+                  and execution_generation=?
+                """,
+                (execution_generation, task_id, current_generation),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("retryable reply task was not found")
         return execution_generation
 
     def defer_reply_task(
@@ -13399,13 +13374,6 @@ class AutoReplyStore:
             )
             if unchanged:
                 return 0
-            if self._hold_generation_for_unknown_effects(
-                db,
-                task_id,
-                current_generation,
-                now_text=now_text,
-            ):
-                return 0
             self._supersede_running_agent_runs(
                 db,
                 task_id,
@@ -15426,10 +15394,6 @@ class AutoReplyStore:
                     revision_key=revision_key,
                     channel=channel,
                 )
-                if task is None:
-                    raise ValueError(
-                        "agent side effect reconciliation required before rotation"
-                    )
                 return source_attempt_id, task
             existing = db.execute(
                 """
@@ -15472,79 +15436,66 @@ class AutoReplyStore:
             ).fetchone()
             if current_task is not None:
                 now_text = str(db.execute("select current_timestamp").fetchone()[0])
-                if self._hold_generation_for_unknown_effects(
-                    db,
-                    int(current_task["id"]),
-                    str(current_task["execution_generation"]),
-                    now_text=now_text,
-                ):
-                    task = None
-                else:
-                    task = self._reply_task_from_row(current_task)
+                task = self._reply_task_from_row(current_task)
 
-            if current_task is not None and task is None:
-                attempt_id = 0
-            else:
-                audit_summary = (
-                    "Reviewer feedback: "
-                    + feedback
-                    + "\nSuggested response: "
-                    + suggestion
-                ).strip()
-                cursor = db.execute(
-                    """
-                    insert into reply_attempts (
-                        conversation_id, conversation_title, trigger_message_id,
-                        trigger_sender, trigger_text, action, sensitivity_kind,
-                        codex_reason, draft_reply_text, audit_tool_events_json,
-                        audit_summary, reviewer_feedback, corrected_reply_text,
-                        reviewed_at, send_status, channel
-                    ) values (?, ?, ?, ?, ?, 'send_reply', 'general',
-                              'reviewed_message_reply', ?, ?, ?, ?, ?,
-                              current_timestamp, 'pending', ?)
-                    """,
-                    (
-                        conversation_id,
-                        conversation_title,
-                        trigger_message_id,
-                        trigger_sender,
-                        trigger_text,
-                        suggestion,
-                        json.dumps(
-                            [{"tool": "audit_review", "result": "queued"}],
-                            ensure_ascii=False,
-                        ),
-                        audit_summary,
-                        feedback,
-                        suggestion,
-                        channel,
+            audit_summary = (
+                "Reviewer feedback: "
+                + feedback
+                + "\nSuggested response: "
+                + suggestion
+            ).strip()
+            cursor = db.execute(
+                """
+                insert into reply_attempts (
+                    conversation_id, conversation_title, trigger_message_id,
+                    trigger_sender, trigger_text, action, sensitivity_kind,
+                    codex_reason, draft_reply_text, audit_tool_events_json,
+                    audit_summary, reviewer_feedback, corrected_reply_text,
+                    reviewed_at, send_status, channel
+                ) values (?, ?, ?, ?, ?, 'send_reply', 'general',
+                          'reviewed_message_reply', ?, ?, ?, ?, ?,
+                          current_timestamp, 'pending', ?)
+                """,
+                (
+                    conversation_id,
+                    conversation_title,
+                    trigger_message_id,
+                    trigger_sender,
+                    trigger_text,
+                    suggestion,
+                    json.dumps(
+                        [{"tool": "audit_review", "result": "queued"}],
+                        ensure_ascii=False,
                     ),
-                )
-                attempt_id = int(cursor.lastrowid)
-                revision_key = self._manual_rerun_revision_key(db, attempt_id)
-                task = self._enqueue_manual_rerun_reply_task_in_connection(
+                    audit_summary,
+                    feedback,
+                    suggestion,
+                    channel,
+                ),
+            )
+            attempt_id = int(cursor.lastrowid)
+            revision_key = self._manual_rerun_revision_key(db, attempt_id)
+            task = self._enqueue_manual_rerun_reply_task_in_connection(
+                db,
+                conversation_id=conversation_id,
+                conversation_title=conversation_title,
+                single_chat=single_chat,
+                trigger_message_id=trigger_message_id,
+                trigger_create_time=trigger_create_time,
+                trigger_sender=trigger_sender,
+                trigger_text=trigger_text,
+                trigger_message_json=trigger_message_json,
+                oa_url=oa_url,
+                attempt_id=attempt_id,
+                revision_key=revision_key,
+                channel=channel,
+            )
+            if source_attempt_id > 0:
+                self._resolve_actionable_attempt_in_connection(
                     db,
-                    conversation_id=conversation_id,
-                    conversation_title=conversation_title,
-                    single_chat=single_chat,
-                    trigger_message_id=trigger_message_id,
-                    trigger_create_time=trigger_create_time,
-                    trigger_sender=trigger_sender,
-                    trigger_text=trigger_text,
-                    trigger_message_json=trigger_message_json,
-                    oa_url=oa_url,
-                    attempt_id=attempt_id,
-                    revision_key=revision_key,
-                    channel=channel,
+                    source_attempt_id,
+                    reviewer_feedback=feedback,
                 )
-                if task is not None and source_attempt_id > 0:
-                    self._resolve_actionable_attempt_in_connection(
-                        db,
-                        source_attempt_id,
-                        reviewer_feedback=feedback,
-                    )
-        if task is None:
-            raise ValueError("agent side effect reconciliation required before rotation")
         return attempt_id, task
 
     @staticmethod
