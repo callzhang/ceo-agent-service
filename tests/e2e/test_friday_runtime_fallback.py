@@ -451,7 +451,8 @@ observability:
                 "select status, last_error_code, last_error_message from runs where turn_id = ?",
                 (turn_id,),
             ).fetchone()
-        assert thread_id and thread_id == attempts[0].session_id
+        assert attempts[0].session_id.startswith("friday_thread:")
+        assert thread_id and thread_id == attempts[0].session_id.split(":", 1)[1]
         assert turn_id and operation == (operation_id, "completed")
         assert run_model and run_model[0] == provider_model
         assert run_state and run_state[0] == "completed", _safe_detail(run_state)
