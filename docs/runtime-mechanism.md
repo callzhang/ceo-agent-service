@@ -50,6 +50,23 @@ pending -> running -> done
 
 反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许两个内容反馈周期；基础设施失败不消耗内容反馈周期。
 
+## Task、Agent Run 与 Reply Attempt
+
+运行时使用三层对象：`reply_task` 是可领取和重试的队列任务，`agent_run` 是一次
+真实的 Consumer/Audit 执行，`reply_attempt` 是同一 trigger/channel 的稳定业务
+当前投影。一个 task 可以有多个 agent run；重跑不新建业务 attempt，而是在原
+`reply_attempt` 上更新 current projection，并把新的 agent run 追加到历史。
+
+```text
+reply_task 1 ──< agent_runs
+trigger/channel 1 ── 1 current reply_attempt
+```
+
+`reply_attempt` 的 `agent_run_id` 指向当前投影对应的最新或终态 run；完整执行历史
+通过 run 的 task、generation 和关联事件查询。Attempt 页面可以切换多个 Consumer
+或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
+event 和 provider 结果仍然作为 append-only 事实保留。
+
 ## 统一禁止事项
 
 - 所有任务都不得使用 `discard` 动作。

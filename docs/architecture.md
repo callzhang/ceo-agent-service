@@ -41,6 +41,28 @@ pending -> running -> done
 
 完整状态和恢复说明见 [`docs/runtime-mechanism.md`](runtime-mechanism.md)。
 
+### Task、Agent Run 与 Reply Attempt 的关系
+
+这三个对象分属调度、执行和展示三层，不能混为一个状态：
+
+```text
+reply_task（业务队列任务）
+  └── agent_runs（多次真实 Agent 执行）
+          └── reply_attempt（稳定的业务当前投影）
+```
+
+- `reply_task` 表示某个触发消息是否需要处理，负责排队、领取、重试、
+  `execution_generation` 和 worker 所有权。一个任务可以经历多次执行。
+- `agent_run` 表示一次实际 Consumer 或 Audit Agent 执行。重试、服务重启接管或
+  新的 generation 都会产生新的 run；run 的状态、session、revision、transcript
+  范围、tool event 和原始错误是不可覆盖的执行事实。
+- `reply_attempt` 表示同一 trigger/channel 的业务结果当前投影。重跑更新原 attempt
+  的当前状态、结果和错误，复用原 ID，不创建第二个业务 attempt。
+
+Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许在同一 attempt
+下切换查看多个底层 `agent_runs`。因此“当前结果可以被修正”与“执行历史不可抹除”
+可以同时成立：列表显示最新结论，详情保留每一次 run 的真实轨迹。
+
 ### Repository Upgrade
 
 服务周期性读取配置的 `origin/main`，只识别可安全 fast-forward 的更新；分叉、状态指纹变化或
