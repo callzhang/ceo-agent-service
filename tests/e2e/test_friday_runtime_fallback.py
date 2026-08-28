@@ -445,8 +445,13 @@ observability:
                 (thread_id,),
             ).fetchone()
             run_model = runtime_state.execute("select model from runs where turn_id = ?", (turn_id,)).fetchone()
+            run_state = runtime_state.execute(
+                "select status, last_error_code, last_error_message from runs where turn_id = ?",
+                (turn_id,),
+            ).fetchone()
         assert thread_id and turn_id and operation == (attempts[0].operation_id, "completed")
         assert run_model and run_model[0] == provider_model
+        assert run_state and run_state[0] == "completed", _safe_detail(run_state)
         assert artifact and artifact[0] == thread_id and artifact[1] == turn_id
         assert _parse_json_result(artifact[2]) == {"ok": True, "value": 7}
     finally:
@@ -531,3 +536,7 @@ def _parse_json_result(text: str) -> object:
 
 def _parse_json_text(text: str) -> str:
     return json.dumps(_parse_json_result(text), separators=(",", ":"))
+
+
+def _safe_detail(value: object) -> str:
+    return str(value).replace(os.getenv("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", ""), "[redacted]")[:500]
