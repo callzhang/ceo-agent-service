@@ -1480,11 +1480,18 @@ class DingTalkAutoReplyWorker:
         del exc
         result = self._channel_result("dingtalk")
         handled = self.login_coordinator.handle(result)
-        return (
-            result.state is ChannelGateState.READY
-            or handled.launched
-            or handled.suppressed
+        if result.state is ChannelGateState.READY:
+            return True
+        if not (handled.launched or handled.suppressed):
+            return False
+        ready = self.login_coordinator.wait_until_ready(
+            "dingtalk",
+            lambda: self.channel_gates["dingtalk"].check(),
+            timeout_seconds=900.0,
+            poll_interval_seconds=5.0,
         )
+        self._pass_channel_results["dingtalk"] = ready
+        return ready.state is ChannelGateState.READY
 
     def _mark_dws_auth_healthy(self) -> None:
         self.login_coordinator.handle(

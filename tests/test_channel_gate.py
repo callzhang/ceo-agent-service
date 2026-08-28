@@ -53,6 +53,38 @@ def test_login_coordinator_starts_one_process_and_suppresses_repeats(tmp_path):
     assert launches == ["dws"]
 
 
+def test_login_coordinator_waits_for_ready_without_new_run(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "db.sqlite3")
+    process = FakeProcess(41)
+    coordinator = LoginCoordinator(
+        store=store,
+        launchers={"dingtalk": lambda: process},
+        now=lambda: datetime(2026, 7, 28, 12, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr("app.channel_gate.time.sleep", lambda _: None)
+    results = iter(
+        (
+            ChannelGateResult(
+                channel="dingtalk",
+                state=ChannelGateState.NEEDS_LOGIN,
+                reason_code="token_expired",
+            ),
+            ChannelGateResult(
+                channel="dingtalk",
+                state=ChannelGateState.READY,
+                reason_code="ready",
+            ),
+        )
+    )
+
+    first = next(results)
+    assert coordinator.handle(first).launched is True
+    ready = coordinator.wait_until_ready("dingtalk", lambda: next(results))
+
+    assert ready.state is ChannelGateState.READY
+    assert store.get_service_state("channel_login_request:dingtalk")
+
+
 def test_login_coordinator_claims_launch_atomically_across_connections(tmp_path):
     database = tmp_path / "db.sqlite3"
     AutoReplyStore(database)

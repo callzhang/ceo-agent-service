@@ -4,6 +4,7 @@ import errno
 import json
 import os
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -223,6 +224,27 @@ class LoginCoordinator:
             state={"status": "running", "pid": process.pid},
         )
         return LoginHandlingResult(launched=True, pid=process.pid)
+
+    def wait_until_ready(
+        self,
+        channel: str,
+        check: Callable[[], ChannelGateResult],
+        *,
+        timeout_seconds: float = 900.0,
+        poll_interval_seconds: float = 5.0,
+    ) -> ChannelGateResult:
+        """Wait for interactive authorization without creating another run."""
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            result = check()
+            if result.channel != channel:
+                raise ValueError("login check returned a different channel")
+            self.handle(result)
+            if result.state is ChannelGateState.READY:
+                return result
+            if time.monotonic() >= deadline:
+                return result
+            time.sleep(poll_interval_seconds)
 
     def _state(self, channel: str) -> dict[str, object]:
         raw = self.store.get_service_state(self._key(channel))
