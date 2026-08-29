@@ -4,7 +4,9 @@
   feedback can be claimed as a deterministic batch, imported into a Workbench
   brainstorm conversation with attempt/run/task references, and resolved only
   after matching commit, test, launchd restart, and `/healthz` receipts are
-  persisted. Original feedback comments remain unchanged.
+  persisted. Original feedback comments remain unchanged. See the [approved
+  design spec](docs/superpowers/specs/2026-08-29-feedback-processing-api-and-workbench-design.md)
+  and [implementation plan](docs/superpowers/plans/2026-08-29-feedback-processing-api-and-workbench.md).
 
 - 2026-08-29: Settings → Connectors → WeChat now embeds the reply-scope
   editor. Saved targets, target search, unsaved-change state, and explicit
