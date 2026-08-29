@@ -28,7 +28,11 @@ from app.codex_failure import (
     classify_codex_process_failure,
 )
 from app.feedback_policy import FeedbackPressureStats
-from app.feedback_processing import FeedbackProcessingBatch, FeedbackProcessingItem
+from app.feedback_processing import (
+    FeedbackProcessingBatch,
+    FeedbackProcessingClaimError,
+    FeedbackProcessingItem,
+)
 from app.config import feedback_spike_vercel_base_url
 from app.feedback_spike import extract_configured_feedback_link_context
 from app.history import HistoryItem
@@ -1110,8 +1114,8 @@ class AutoReplyStore:
                         check (status in ('pending', 'processing', 'resolved')),
                     workbench_task_id text not null default '',
                     workbench_turn_id text not null default '',
-                    attempt_id text not null default '',
-                    agent_run_id text not null default '',
+                    attempt_id integer not null default 0,
+                    agent_run_id integer not null default 0,
                     commit_sha text not null default '',
                     test_evidence_json text not null default '{}',
                     restart_evidence_json text not null default '{}',
@@ -1125,8 +1129,24 @@ class AutoReplyStore:
                     on feedback_processing_items(status);
                 create index if not exists idx_feedback_processing_items_batch
                     on feedback_processing_items(batch_id);
-                insert or ignore into feedback_processing_items (feedback_key)
-                    select key from feedback_events;
+                insert or ignore into feedback_processing_items (
+                    feedback_key, status, resolved_at
+                )
+                    select key,
+                           case when trim(resolved_at) <> ''
+                                then 'resolved' else 'pending' end,
+                           resolved_at
+                    from feedback_events;
+                update feedback_processing_items
+                   set status='resolved',
+                       resolved_at=(select fe.resolved_at from feedback_events fe
+                                    where fe.key=feedback_processing_items.feedback_key),
+                       updated_at=current_timestamp
+                 where exists (
+                     select 1 from feedback_events fe
+                      where fe.key=feedback_processing_items.feedback_key
+                        and trim(fe.resolved_at) <> ''
+                 );
                 create table if not exists service_bugfix_candidates (
                     id integer primary key autoincrement,
                     feedback_event_key text not null unique,
@@ -12962,10 +12982,19 @@ class AutoReplyStore:
             # preserving the original feedback event as the source of truth.
             db.execute(
                 """
-                insert or ignore into feedback_processing_items (feedback_key)
-                values (?)
+                insert into feedback_processing_items (feedback_key, status, resolved_at)
+                values (?, case when trim((select resolved_at from feedback_events where key=?)) <> ''
+                              then 'resolved' else 'pending' end,
+                        coalesce((select resolved_at from feedback_events where key=?), ''))
+                on conflict(feedback_key) do update set
+                    status=case when trim((select resolved_at from feedback_events where key=excluded.feedback_key)) <> ''
+                                then 'resolved' else feedback_processing_items.status end,
+                    resolved_at=case when trim((select resolved_at from feedback_events where key=excluded.feedback_key)) <> ''
+                                     then (select resolved_at from feedback_events where key=excluded.feedback_key)
+                                     else feedback_processing_items.resolved_at end,
+                    updated_at=current_timestamp
                 """,
-                (key,),
+                (key, key, key),
             )
 
     @staticmethod
@@ -13011,17 +13040,29 @@ class AutoReplyStore:
             for key in keys:
                 db.execute(
                     """
-                    insert into feedback_processing_items (feedback_key, batch_id)
-                    values (?, ?)
+                    insert into feedback_processing_items (
+                        feedback_key, batch_id, status, resolved_at
+                    )
+                    values (
+                        ?, ?,
+                        case when trim(coalesce((select resolved_at from feedback_events where key=?), '')) <> ''
+                             then 'resolved' else 'pending' end,
+                        coalesce((select resolved_at from feedback_events where key=?), '')
+                    )
                     on conflict(feedback_key) do update set
                         batch_id=case
                             when feedback_processing_items.status='resolved'
                             then feedback_processing_items.batch_id
                             else excluded.batch_id
                         end,
+                        status=case when trim(coalesce((select resolved_at from feedback_events where key=excluded.feedback_key), '')) <> ''
+                                    then 'resolved' else feedback_processing_items.status end,
+                        resolved_at=case when trim(coalesce((select resolved_at from feedback_events where key=excluded.feedback_key), '')) <> ''
+                                         then (select resolved_at from feedback_events where key=excluded.feedback_key)
+                                         else feedback_processing_items.resolved_at end,
                         updated_at=current_timestamp
                     """,
-                    (key, cleaned_batch_id),
+                    (key, cleaned_batch_id, key, key),
                 )
             row = db.execute(
                 "select * from feedback_processing_batches where batch_id=?",
@@ -13042,6 +13083,31 @@ class AutoReplyStore:
             return []
         with self._connect() as db:
             db.execute("begin immediate")
+            placeholders = ",".join("?" for _ in keys)
+            existing = db.execute(
+                f"""
+                select fe.key as feedback_key,
+                       fe.resolved_at as event_resolved_at,
+                       coalesce(pi.status, 'pending') as item_status
+                from feedback_events fe
+                left join feedback_processing_items pi on pi.feedback_key=fe.key
+                where fe.key in ({placeholders})
+                """,
+                keys,
+            ).fetchall()
+            by_key = {str(row["feedback_key"]): row for row in existing}
+            invalid = [
+                key for key in keys
+                if key not in by_key
+                or str(by_key[key]["event_resolved_at"] or "").strip()
+                or str(by_key[key]["item_status"] or "") != "pending"
+            ]
+            if invalid or len(existing) != len(keys):
+                missing = [key for key in keys if key not in by_key]
+                detail = ",".join(invalid or missing)
+                raise FeedbackProcessingClaimError(
+                    f"feedback processing claim rejected: {detail}"
+                )
             db.execute(
                 """
                 insert or ignore into feedback_processing_batches
@@ -13050,12 +13116,6 @@ class AutoReplyStore:
                 """,
                 (cleaned_batch_id, len(keys)),
             )
-            for key in keys:
-                db.execute(
-                    "insert or ignore into feedback_processing_items (feedback_key) values (?)",
-                    (key,),
-                )
-            placeholders = ",".join("?" for _ in keys)
             db.execute(
                 f"""
                 update feedback_processing_items
@@ -13090,8 +13150,8 @@ class AutoReplyStore:
         *,
         workbench_task_id: str = "",
         workbench_turn_id: str = "",
-        attempt_id: str = "",
-        agent_run_id: str = "",
+        attempt_id: int = 0,
+        agent_run_id: int = 0,
     ) -> FeedbackProcessingItem | None:
         cleaned_key = feedback_key.strip()
         if not cleaned_key:
@@ -13173,6 +13233,20 @@ class AutoReplyStore:
             assignments.append("resolved_at=current_timestamp")
         args.append(cleaned_key)
         with self._connect() as db:
+            current = db.execute(
+                "select status, resolved_at from feedback_processing_items where feedback_key=?",
+                (cleaned_key,),
+            ).fetchone()
+            if current is None:
+                return None
+            current_status = str(current["status"] or "pending")
+            if status is not None and (
+                current_status == "resolved" and status != "resolved"
+                or current_status == "processing" and status == "pending"
+            ):
+                raise ValueError(
+                    f"invalid feedback processing status transition: {current_status}->{status}"
+                )
             db.execute(
                 f"update feedback_processing_items set {', '.join(assignments)} where feedback_key=?",
                 args,
@@ -13189,6 +13263,12 @@ class AutoReplyStore:
         if not cleaned_batch_id:
             return False
         with self._connect() as db:
+            batch = db.execute(
+                "select status, requested_count from feedback_processing_batches where batch_id=?",
+                (cleaned_batch_id,),
+            ).fetchone()
+            if batch is None:
+                return False
             row = db.execute(
                 """
                 select count(*) as total,
@@ -13199,8 +13279,11 @@ class AutoReplyStore:
             ).fetchone()
             total = int(row["total"] or 0) if row else 0
             resolved = int(row["resolved"] or 0) if row else 0
-            if total == 0 or total != resolved:
+            requested_count = int(batch["requested_count"] or 0)
+            if requested_count <= 0 or total != requested_count or total != resolved:
                 return False
+            if str(batch["status"] or "") == "resolved":
+                return True
             cursor = db.execute(
                 """
                 update feedback_processing_batches
@@ -13481,6 +13564,19 @@ class AutoReplyStore:
                 """,
                 (cleaned_key,),
             )
+            if cursor.rowcount == 1:
+                db.execute(
+                    """
+                    insert into feedback_processing_items (
+                        feedback_key, status, resolved_at
+                    ) values (?, 'resolved', current_timestamp)
+                    on conflict(feedback_key) do update set
+                        status='resolved',
+                        resolved_at=current_timestamp,
+                        updated_at=current_timestamp
+                    """,
+                    (cleaned_key,),
+                )
             return cursor.rowcount == 1
 
     def update_sent_reply_recall(

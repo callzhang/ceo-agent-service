@@ -11,6 +11,10 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class FeedbackProcessingClaimError(ValueError):
+    """Raised when a feedback batch cannot be claimed atomically."""
+
+
 class _StrictProcessingModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -39,8 +43,8 @@ class FeedbackProcessingItem(_StrictProcessingModel):
     status: Literal["pending", "processing", "resolved"] = "pending"
     workbench_task_id: str = ""
     workbench_turn_id: str = ""
-    attempt_id: str = ""
-    agent_run_id: str = ""
+    attempt_id: int = 0
+    agent_run_id: int = 0
     commit_sha: str = ""
     test_evidence: dict[str, object] = Field(default_factory=dict)
     restart_evidence: dict[str, object] = Field(default_factory=dict)
