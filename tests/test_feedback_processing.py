@@ -5,12 +5,18 @@ import pytest
 from pydantic import ValidationError
 
 from app.feedback_processing import (
+    FeedbackImportItem,
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
     FeedbackProcessingItem,
+    ResolutionEvidence,
+    build_feedback_start_message,
+    detail_references,
+    persisted_feedback_summary,
+    validate_resolution_evidence,
 )
 import app.store as store_module
-from app.store import AutoReplyStore
+from app.store import AutoReplyStore, UserFeedbackItem
 
 
 def test_feedback_event_seeds_processing_item_without_changing_event(tmp_path: Path):
@@ -243,3 +249,93 @@ def test_resolved_event_projection_and_status_transition_are_consistent(tmp_path
 def test_processing_model_rejects_string_attempt_ids():
     with pytest.raises(ValidationError):
         FeedbackProcessingItem(feedback_key="feedback-1", attempt_id="12")
+
+
+def test_claim_retry_is_idempotent_without_duplicate_items(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "claim-retry.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    first = store.claim_feedback_processing_items("batch-1", ["feedback-1"])
+    second = store.claim_feedback_processing_items("batch-1", ["feedback-1"])
+    assert [item.feedback_key for item in second] == ["feedback-1"]
+    with store._connect() as db:
+        assert db.execute("select count(*) from feedback_processing_items").fetchone()[0] == 1
+        assert db.execute("select count(*) from feedback_processing_batches").fetchone()[0] == 1
+    assert second[0].updated_at == first[0].updated_at
+
+
+def test_pending_count_excludes_processing_projection(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "pending-count.sqlite3")
+    for key in ("feedback-1", "feedback-2"):
+        store.upsert_feedback_event(key=key, feedback_token=key)
+    assert store.count_pending_user_feedback_items() == 2
+    store.claim_feedback_processing_items("batch-1", ["feedback-1"])
+    assert store.count_pending_user_feedback_items() == 1
+
+
+def test_summary_and_references_are_deterministic_and_persisted_only():
+    item = UserFeedbackItem(
+        key="feedback-1",
+        feedback_token="token-1",
+        reviewer_feedback=" reviewer ",
+        corrected_reply_text=" corrected ",
+        audit_summary=" audit ",
+        codex_reason=" reason ",
+        final_reply_text=" reply ",
+        attempt_id=12,
+        agent_run_id=34,
+        codex_session_id="session-1",
+        project_id=56,
+    )
+    assert persisted_feedback_summary(item) == "audit"
+    refs = detail_references(item)
+    assert {ref["label"] for ref in refs} == {"attempt#12", "run#34", "codex#session-1", "task#56"}
+    assert all(ref["route"] == "" or ref["route"].startswith(("/attempts/", "/codex/", "/tasks/")) for ref in refs)
+    assert "/attempts/34/execution/run" not in {ref["route"] for ref in refs}
+
+
+def test_missing_summary_is_empty_and_start_message_has_no_feedback_body():
+    item = FeedbackImportItem(feedback_key="feedback-1", summary="", references=[])
+    message = build_feedback_start_message("batch-1", [item])
+    assert "batch-1" in message
+    assert "skills/ceo-feedback-processing/SKILL.md" in message
+    assert "feedback-1" in message
+    assert "persisted summary:" in message
+    assert "原始反馈" not in message
+
+
+def test_resolution_evidence_requires_current_head_and_success_receipts():
+    head = "a" * 40
+    complete = ResolutionEvidence(
+        commit_sha=head,
+        test_evidence={"pytest": {"exit_code": 0}},
+        restart_evidence={"launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2},
+        health_evidence={"url": "http://127.0.0.1:8765/health", "status_code": 200},
+    )
+    validate_resolution_evidence(complete, current_head=head)
+    for bad in (
+        complete.model_copy(update={"commit_sha": "b" * 40}),
+        complete.model_copy(update={"test_evidence": {"pytest": {"exit_code": 1}}}),
+        complete.model_copy(update={"restart_evidence": {"launchd_label": "x", "before_pid": 1}}),
+        complete.model_copy(update={"health_evidence": {"status_code": 503}}),
+    ):
+        with pytest.raises(ValueError):
+            validate_resolution_evidence(bad, current_head=head)
+
+
+def test_resolve_evidence_marks_every_item_in_batch_atomically(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "resolve-evidence.sqlite3")
+    for key in ("feedback-1", "feedback-2"):
+        store.upsert_feedback_event(key=key, feedback_token=key)
+    store.claim_feedback_processing_items("batch-1", ["feedback-1", "feedback-2"])
+    for key in ("feedback-1", "feedback-2"):
+        store.associate_feedback_processing_turn(key, workbench_task_id="task", workbench_turn_id="turn", attempt_id=1, agent_run_id=2)
+    head = "a" * 40
+    evidence = ResolutionEvidence(
+        commit_sha=head,
+        test_evidence={"pytest": {"exit_code": 0}},
+        restart_evidence={"launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2},
+        health_evidence={"status_code": 200, "url": "http://127.0.0.1:8765/health"},
+    )
+    assert store.resolve_feedback_processing_batch("batch-1", evidence, current_head=head)
+    assert {store.get_feedback_processing_item(key).status for key in ("feedback-1", "feedback-2")} == {"resolved"}
+    assert store.get_feedback_processing_batch("batch-1").status == "resolved"
