@@ -178,6 +178,22 @@ def test_feedback_history_with_corrected_reply_is_resolved_and_not_claimable(tmp
     assert conflict.json()["code"] == "feedback_already_processing"
 
 
+def test_feedback_claim_returns_associated_item_receipts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/console/feedback/batches",
+            json={"feedback_keys": ["feedback-1"], "workbench_task_id": "task-1", "workbench_turn_id": "turn-1"},
+        )
+
+    assert response.status_code == 200
+    receipt = response.json()["item"]["items"][0]
+    assert receipt["workbench_task_id"] == "task-1"
+    assert receipt["workbench_turn_id"] == "turn-1"
+
+
 def test_attention_grouping_keeps_records_and_uses_root_cause_context_key():
     rows = [
         {

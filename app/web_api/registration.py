@@ -307,7 +307,8 @@ def register_console_routes(
                 store.associate_feedback_processing_turn(item.feedback_key, workbench_task_id=(task_id or "").strip(), workbench_turn_id=(turn_id or "").strip())
         imports = [item for item in store.list_feedback_import_items(limit=10000, offset=0) if item.feedback_key in keys]
         imports.sort(key=lambda item: keys.index(item.feedback_key))
-        item = {"batch_id": cleaned_batch_id, "status": store.get_feedback_processing_batch(cleaned_batch_id).status, "feedback_keys": keys, "items": [json_safe(value) for value in claimed], "start_message": build_feedback_start_message(cleaned_batch_id, imports)}
+        refreshed_batch = store.get_feedback_processing_batch(cleaned_batch_id)
+        item = {"batch_id": cleaned_batch_id, "status": refreshed_batch.status if refreshed_batch else "processing", "feedback_keys": keys, "items": _feedback_items_for_batch(store, cleaned_batch_id), "start_message": build_feedback_start_message(cleaned_batch_id, imports)}
         return command_result(item=item, message="反馈批次已领取")
 
     @app.get("/api/console/feedback/batches/{batch_id}")
