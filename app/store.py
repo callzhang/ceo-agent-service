@@ -13328,6 +13328,8 @@ class AutoReplyStore:
             raise ValueError(f"unsupported feedback processing status: {status}")
         if status == "resolved":
             raise ValueError("only batch resolution may mark feedback resolved")
+        if status == "processing":
+            raise ValueError("only atomic batch claim may mark feedback processing")
         assignments: list[str] = ["updated_at=current_timestamp"]
         args: list[object] = []
         for field, value in (
