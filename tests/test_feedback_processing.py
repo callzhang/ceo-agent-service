@@ -4,7 +4,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.feedback_processing import FeedbackProcessingClaimError, FeedbackProcessingItem
+from app.feedback_processing import (
+    FeedbackProcessingBatchError,
+    FeedbackProcessingClaimError,
+    FeedbackProcessingItem,
+)
 from app.store import AutoReplyStore
 
 
@@ -156,6 +160,37 @@ def test_claim_cannot_reassign_pending_item_seeded_by_another_batch(tmp_path: Pa
     assert item.status == "pending"
     assert item.batch_id == "batch-1"
     assert store.get_feedback_processing_batch("batch-2") is None
+
+
+def test_batch_reopen_requires_same_normalized_key_set(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "batch-reopen.sqlite3")
+    for key in ("feedback-1", "feedback-2"):
+        store.upsert_feedback_event(key=key, feedback_token=key)
+    first = store.create_feedback_processing_batch(
+        [" feedback-1", "feedback-2", "feedback-2"], batch_id="batch-1"
+    )
+    second = store.create_feedback_processing_batch(
+        ["feedback-2", "feedback-1"], batch_id="batch-1"
+    )
+    assert second.requested_count == first.requested_count == 2
+    with pytest.raises(FeedbackProcessingBatchError):
+        store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-1")
+    assert store.get_feedback_processing_batch("batch-1").requested_count == 2
+
+
+def test_legacy_text_processing_ids_are_read_as_integers(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "legacy-ids.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    assert store.claim_feedback_processing_items("batch-1", ["feedback-1"])
+    with store._connect() as db:
+        db.execute(
+            "update feedback_processing_items set attempt_id='12', agent_run_id='34' where feedback_key=?",
+            ("feedback-1",),
+        )
+    item = store.get_feedback_processing_item("feedback-1")
+    assert item is not None
+    assert item.attempt_id == 12
+    assert item.agent_run_id == 34
 
 
 def test_resolved_event_projection_and_status_transition_are_consistent(tmp_path: Path):

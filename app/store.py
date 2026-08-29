@@ -29,8 +29,10 @@ from app.codex_failure import (
 )
 from app.feedback_policy import FeedbackPressureStats
 from app.feedback_processing import (
+    FEEDBACK_PROCESSING_BATCH_ERROR,
     FEEDBACK_PROCESSING_CLAIM_ERROR,
     FeedbackProcessingBatch,
+    FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
     FeedbackProcessingItem,
 )
@@ -13001,6 +13003,15 @@ class AutoReplyStore:
     @staticmethod
     def _feedback_processing_item_from_row(row: sqlite3.Row) -> FeedbackProcessingItem:
         values = dict(row)
+        for field in ("attempt_id", "agent_run_id"):
+            raw = values.get(field, 0)
+            if raw in (None, ""):
+                values[field] = 0
+            else:
+                try:
+                    values[field] = int(raw)
+                except (TypeError, ValueError):
+                    values[field] = 0
         for field in ("test_evidence", "restart_evidence", "health_evidence"):
             raw = values.pop(f"{field}_json", "{}")
             try:
@@ -13028,6 +13039,31 @@ class AutoReplyStore:
             raise ValueError("batch_id must not be empty")
         keys = list(dict.fromkeys(key.strip() for key in feedback_keys if key.strip()))
         with self._connect() as db:
+            existing_batch = db.execute(
+                "select * from feedback_processing_batches where batch_id=?",
+                (cleaned_batch_id,),
+            ).fetchone()
+            if existing_batch is not None:
+                existing_keys = {
+                    str(row["feedback_key"])
+                    for row in db.execute(
+                        "select feedback_key from feedback_processing_items where batch_id=?",
+                        (cleaned_batch_id,),
+                    )
+                }
+                if existing_keys != set(keys):
+                    raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
+                return self._feedback_processing_batch_from_row(existing_batch)
+            conflicting = db.execute(
+                """
+                select feedback_key from feedback_processing_items
+                where feedback_key in ({}) and trim(batch_id) <> ''
+                  and status in ('pending', 'processing')
+                """.format(",".join("?" for _ in keys) or "null"),
+                keys,
+            ).fetchall()
+            if conflicting:
+                raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
             db.execute(
                 """
                 insert into feedback_processing_batches (batch_id, requested_count)

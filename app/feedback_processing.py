@@ -11,10 +11,15 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 FEEDBACK_PROCESSING_CLAIM_ERROR = "feedback processing claim rejected"
+FEEDBACK_PROCESSING_BATCH_ERROR = "feedback processing batch definition conflict"
 
 
 class FeedbackProcessingClaimError(ValueError):
     """Raised when a feedback batch cannot be claimed atomically."""
+
+
+class FeedbackProcessingBatchError(ValueError):
+    """Raised when a batch id is reused with a different key set."""
 
 
 class _StrictProcessingModel(BaseModel):
