@@ -80,7 +80,7 @@ export function FeedbackDrawer({
   }, [open]);
 
   useEffect(() => {
-    if (selectAllRef.current) selectAllRef.current.indeterminate = selected.size > 0 && !allSelected;
+    if (selectAllRef.current) selectAllRef.current.indeterminate = visibleSelected.size > 0 && !allSelected;
   }, [allSelected, visibleSelected.size]);
 
   if (!open) return null;

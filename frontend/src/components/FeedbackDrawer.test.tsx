@@ -82,6 +82,7 @@ describe("FeedbackDrawer", () => {
     const props = baseProps();
     render(<FeedbackDrawer {...props} selected={new Set(["stale-key"])} />);
     expect(screen.getByText("已选 0 项")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "全选反馈" })).not.toBePartiallyChecked();
     expect(screen.getByRole("button", { name: "导入并开始 brainstorm" })).toBeDisabled();
   });
 
