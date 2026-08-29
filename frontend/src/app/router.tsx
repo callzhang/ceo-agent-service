@@ -50,6 +50,9 @@ function ConsoleRoutes() {
     <Routes>
       <Route path="/" element={<AgentRoute />} />
       <Route path="/history" element={<HistoryPage />} />
+      <Route path="/history/attempts/:attemptId" element={<BusinessDetailPage kind="Attempt" endpoint="/api/console/history/:id" />} />
+      <Route path="/history/meeting-attempts/:runId" element={<BusinessDetailPage kind="Meeting Attempt" endpoint="/api/console/meeting-attempts/:id" />} />
+      <Route path="/history/oa-approvals/:processInstanceId" element={<BusinessDetailPage kind="OA Approval" endpoint="/api/console/oa-approvals/:id" />} />
       <Route path="/tasks" element={<TasksPage />} />
       <Route path="/tasks/:projectId" element={<TaskDetailRoute />} />
       <Route path="/settings" element={<SettingsRoute />} />
