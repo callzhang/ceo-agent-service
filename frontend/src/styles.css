@@ -117,6 +117,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .attention-details p { margin-bottom: 8px; }
 .attention-links { display: flex; flex-wrap: wrap; gap: 10px; }
 .settings-layout-react { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; max-width: 1180px; margin: 0 auto; align-items: start; }
+.settings-page { padding: 24px; }
+.settings-page .settings-layout-react { max-width: none; }
 .settings-nav-react { position: sticky; top: 16px; display: grid; align-content: start; gap: 3px; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .settings-nav-react a { display: flex; align-items: center; min-height: 38px; padding: 0 12px; border-radius: 7px; color: var(--ink-soft); text-decoration: none; font-size: 0.82rem; font-weight: 650; }
 .settings-nav-react a:hover { color: var(--ink); background: var(--canvas); }
@@ -242,6 +244,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .global-brand strong { font-size: 0.9rem; }
   .global-nav-track { justify-content: flex-start; padding: 8px 10px 8px 0; }
   .console-page { padding: 14px; }
+  .settings-page { padding: 14px; }
   .console-page-card { padding: 18px; }
   .console-page-header { align-items: flex-start; flex-direction: column; }
   .console-page-actions { width: 100%; justify-content: space-between; }

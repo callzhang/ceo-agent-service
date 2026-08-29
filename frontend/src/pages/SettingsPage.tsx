@@ -4,8 +4,6 @@ import { Link, useSearchParams } from "react-router-dom";
 import { displayValue, getSettings, saveSettings } from "../api/console";
 import { TokenEditor } from "../components/editor/TokenEditor";
 import { SecretField } from "../components/forms/SecretField";
-import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
-import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { StatusBadge } from "../components/status/StatusBadge";
 import { AttentionPanel } from "./AttentionPage";
 import { StatusPanel } from "./StatusPage";
@@ -115,18 +113,15 @@ export function SettingsPage() {
   const [payload, setPayload] = useState<RecordValue | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
-  const [snapshot, setSnapshot] = useState("");
   const [draft, setDraft] = useState<RecordValue>({});
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   useEffect(() => {
     if (section === "status" || section === "attention") return;
     const controller = new AbortController(); setState("loading"); setSaveState("idle");
-    getSettings(section, controller.signal).then((response) => { setPayload(response.item); setDraft(fieldsOf(response.item)); setSnapshot(response.meta.snapshot_at); setState("ready"); setError(""); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
+    getSettings(section, controller.signal).then((response) => { setPayload(response.item); setDraft(fieldsOf(response.item)); setState("ready"); setError(""); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
     return () => controller.abort();
   }, [section]);
   async function save() { if (!payload) return; setSaveState("saving"); try { const fields = section === "prompts" ? { template: displayValue(draft[`${prompt}_template`]) } : section === "audit-rules" ? { template: displayValue(draft.template) } : draft; await saveSettings(section, fields, section === "prompts" ? { prompt } : {}); setSaveState("saved"); } catch { setSaveState("error"); } }
-  const label = sections.find(([key]) => key === section)?.[1] || "Settings";
   const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} />;
-  const actions = section === "status" || section === "attention" ? undefined : <SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />;
-  return <ConsolePageLayout title={label} actions={actions}><div className="settings-layout-react"><SectionNav section={section} /><div className="settings-content" onSubmit={(event) => { if ((event.target as HTMLFormElement).tagName === "FORM") { event.preventDefault(); void save(); } }}>{content}</div></div></ConsolePageLayout>;
+  return <main className="console-page settings-page" aria-labelledby="settings-page-title"><h1 id="settings-page-title" className="sr-only">Settings</h1><div className="settings-layout-react"><SectionNav section={section} /><div className="settings-content" onSubmit={(event) => { if ((event.target as HTMLFormElement).tagName === "FORM") { event.preventDefault(); void save(); } }}>{content}</div></div></main>;
 }
