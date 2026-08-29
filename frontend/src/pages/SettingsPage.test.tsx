@@ -34,6 +34,8 @@ describe("SettingsPage", () => {
     expect(await screen.findByRole("heading", { name: "Runtime & Identity" })).toBeInTheDocument();
     expect(screen.getByLabelText("USER_ALIAS")).toHaveValue("磊哥");
     expect(screen.getByText("用户别名")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Configuration" })).toHaveClass("active");
+    expect(screen.getByRole("link", { name: "Status" })).not.toHaveClass("active");
   });
 
   it("keeps prompt and audit editor values visible while highlighting template tokens", async () => {
