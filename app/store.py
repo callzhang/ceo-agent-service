@@ -29,6 +29,7 @@ from app.codex_failure import (
 )
 from app.feedback_policy import FeedbackPressureStats
 from app.feedback_processing import (
+    FEEDBACK_PROCESSING_CLAIM_ERROR,
     FeedbackProcessingBatch,
     FeedbackProcessingClaimError,
     FeedbackProcessingItem,
@@ -13088,7 +13089,8 @@ class AutoReplyStore:
                 f"""
                 select fe.key as feedback_key,
                        fe.resolved_at as event_resolved_at,
-                       coalesce(pi.status, 'pending') as item_status
+                       coalesce(pi.status, 'pending') as item_status,
+                       coalesce(pi.batch_id, '') as item_batch_id
                 from feedback_events fe
                 left join feedback_processing_items pi on pi.feedback_key=fe.key
                 where fe.key in ({placeholders})
@@ -13101,13 +13103,13 @@ class AutoReplyStore:
                 if key not in by_key
                 or str(by_key[key]["event_resolved_at"] or "").strip()
                 or str(by_key[key]["item_status"] or "") != "pending"
+                or (
+                    str(by_key[key]["item_batch_id"] or "").strip()
+                    and str(by_key[key]["item_batch_id"]).strip() != cleaned_batch_id
+                )
             ]
             if invalid or len(existing) != len(keys):
-                missing = [key for key in keys if key not in by_key]
-                detail = ",".join(invalid or missing)
-                raise FeedbackProcessingClaimError(
-                    f"feedback processing claim rejected: {detail}"
-                )
+                raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
             db.execute(
                 """
                 insert or ignore into feedback_processing_batches

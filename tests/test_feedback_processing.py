@@ -144,6 +144,20 @@ def test_claim_cannot_move_processing_item_to_another_batch(tmp_path: Path):
     assert store.get_feedback_processing_batch("batch-2") is None
 
 
+def test_claim_cannot_reassign_pending_item_seeded_by_another_batch(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "pending-conflict.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-1")
+
+    with pytest.raises(FeedbackProcessingClaimError):
+        store.claim_feedback_processing_items("batch-2", ["feedback-1"])
+    item = store.get_feedback_processing_item("feedback-1")
+    assert item is not None
+    assert item.status == "pending"
+    assert item.batch_id == "batch-1"
+    assert store.get_feedback_processing_batch("batch-2") is None
+
+
 def test_resolved_event_projection_and_status_transition_are_consistent(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "resolved.sqlite3")
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")

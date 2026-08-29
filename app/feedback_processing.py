@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+FEEDBACK_PROCESSING_CLAIM_ERROR = "feedback processing claim rejected"
+
 
 class FeedbackProcessingClaimError(ValueError):
     """Raised when a feedback batch cannot be claimed atomically."""
