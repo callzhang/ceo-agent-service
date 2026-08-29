@@ -13056,9 +13056,9 @@ class AutoReplyStore:
                 return self._feedback_processing_batch_from_row(existing_batch)
             conflicting = db.execute(
                 """
-                select pi.feedback_key from feedback_processing_items pi
-                left join feedback_events fe on fe.key=pi.feedback_key
-                where pi.feedback_key in ({})
+                select fe.key as feedback_key from feedback_events fe
+                left join feedback_processing_items pi on pi.feedback_key=fe.key
+                where fe.key in ({})
                   and (
                       trim(pi.batch_id) <> ''
                       or pi.status='resolved'

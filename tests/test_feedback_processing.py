@@ -211,6 +211,11 @@ def test_resolved_event_projection_and_status_transition_are_consistent(tmp_path
     with pytest.raises(ValueError):
         store.patch_feedback_processing_item_evidence("feedback-1", status="pending")
 
+    with store._connect() as db:
+        db.execute(
+            "delete from feedback_processing_items where feedback_key=?",
+            ("feedback-1",),
+        )
     with pytest.raises(FeedbackProcessingBatchError):
         store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-new")
     assert store.get_feedback_processing_batch("batch-new") is None
