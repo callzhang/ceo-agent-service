@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-08-29: Settings → Connectors → WeChat now embeds the reply-scope
+  editor. Saved targets, target search, unsaved-change state, and explicit
+  save feedback are rendered in the React page without navigating to a
+  separate conversation page. Added JSON target-list and reply-scope command
+  endpoints; empty WeChat display names fall back to stable target IDs.
+
 - 2026-08-28: when all runtime snapshots reject a task, force one fresh route
   probe before returning `runtime_route_unavailable`, allowing a recovered
   provider to be used before its previous unhealthy snapshot expires.
