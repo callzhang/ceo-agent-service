@@ -62,6 +62,14 @@ describe("SettingsPage", () => {
     expect(screen.getByText("{{principal}}", { selector: "mark" })).toBeInTheDocument();
   });
 
+  it("highlights runtime substitutions in rendered prompt previews", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "prompts", fields: { user_template: "Reply to {{principal}} in {{conversation}}." }, preview: { user: "Reply to 磊哥 in Friday." } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=prompts&prompt=user&view=preview");
+
+    expect(await screen.findByText("磊哥", { selector: "mark" })).toBeInTheDocument();
+    expect(screen.getByText("Friday", { selector: "mark" })).toBeInTheDocument();
+  });
+
   it("keeps audit rule selection independent from the template or preview view", async () => {
     getSettings.mockResolvedValueOnce({
       item: {
@@ -77,7 +85,8 @@ describe("SettingsPage", () => {
     });
     const firstRender = renderSettings("/settings?tab=audit-rules&rule=template&view=preview");
 
-    expect(await screen.findByText("Escalate to Alex only when needed.", { selector: "pre" })).toBeInTheDocument();
+    expect(await screen.findByText("Alex", { selector: "mark" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Template rendered preview" })).toHaveTextContent("Escalate to Alex only when needed.");
     const ruleTabs = within(screen.getByRole("tablist", { name: "Audit Rule sections" }));
     const viewTabs = within(screen.getByRole("tablist", { name: "Audit Rule view" }));
     expect(screen.getByText("规则类型")).toBeInTheDocument();

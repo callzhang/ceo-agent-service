@@ -199,6 +199,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .prompt-runtime-note { margin-top: 10px; }
 .prompt-runtime-note code { margin-left: 4px; padding: 3px 5px; border-radius: 5px; color: var(--accent-hover); background: var(--accent-soft); }
 .prompt-preview { max-height: 600px; margin: 8px 0 0; padding: 16px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.prompt-preview mark { padding: 0 2px; border-radius: 3px; color: #145d49; background: #d9f2e6; }
 .info-list { display: grid; gap: 0; margin: 22px 0 0; }
 .info-list div { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 18px; padding: 13px 0; border-bottom: 1px solid var(--line); }
 .info-list dt { color: var(--ink-soft); font-weight: 700; }
