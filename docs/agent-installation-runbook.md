@@ -540,11 +540,11 @@ deployment boundary.
 4. Key pages:
 
    - `/`: Agent Workbench conversations, streaming progress, artifacts, and confirmations.
-   - `/history`: reply and execution history.
+   - `/history`: React reply and execution history, with runtime details collapsed by default.
    - `/attempts/{id}`: single attempt, prompt, decision, evidence, send status.
    - `/tasks`: project/TODO summary and follow-up drafts.
    - `/workers`: service worker status.
-   - `/settings`: configuration and logs.
+   - `/settings`: React configuration, runtime, prompts, connectors, audit rules, status, and attention views. Legacy `/config` and `/logs` URLs remain redirect-compatible.
 
    Workbench state is authoritative in SQLite. Server-sent events stream
    replayable progress but do not replace persisted state. Tool calls that need

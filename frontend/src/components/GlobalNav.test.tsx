@@ -17,7 +17,7 @@ function styleFor(selector: string) {
 }
 
 describe("GlobalNav", () => {
-  it("exposes Agent and every existing console destination", () => {
+  it("exposes the user-facing console destinations without removed service repair", () => {
     render(<GlobalNav />);
 
     const expected = [
@@ -25,13 +25,21 @@ describe("GlobalNav", () => {
       ["History", "/history"],
       ["Tasks", "/tasks"],
       ["用户反馈", "/user-feedback"],
-      ["服务修复", "/service-bugfix-candidates"],
       ["Settings", "/settings"],
     ] as const;
     for (const [name, href] of expected) {
       expect(screen.getByRole("link", { name })).toHaveAttribute("href", href);
     }
     expect(screen.getByRole("link", { name: "Agent" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("link", { name: "服务修复" })).not.toBeInTheDocument();
+  });
+
+  it("marks the current route instead of always marking Agent", () => {
+    render(<GlobalNav activePath="/tasks/836" />);
+
+    expect(screen.getByRole("link", { name: "Tasks" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Tasks" })).toHaveClass("active");
+    expect(screen.getByRole("link", { name: "Agent" })).not.toHaveAttribute("aria-current");
   });
 
   it("centers a consistently sized tab group using the workbench accent", () => {
