@@ -9,6 +9,7 @@ from app.feedback_processing import (
     FeedbackProcessingClaimError,
     FeedbackProcessingItem,
 )
+import app.store as store_module
 from app.store import AutoReplyStore
 
 
@@ -35,6 +36,7 @@ def test_feedback_processing_schema_is_additive_and_reopen_is_idempotent(
     tmp_path: Path,
 ):
     db_path = tmp_path / "fresh.sqlite3"
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     AutoReplyStore(db_path)
 
     def schema_snapshot() -> tuple[set[str], set[str]]:
