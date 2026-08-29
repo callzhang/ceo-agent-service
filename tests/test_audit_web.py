@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+from types import SimpleNamespace
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -59,6 +60,13 @@ from app.store import (
     AutoReplyStore,
 )
 from app.wechat.models import WechatMessage
+
+
+def test_attempt_detail_reply_text_falls_back_to_persisted_sent_reply():
+    attempt = SimpleNamespace(final_reply_text="", draft_reply_text="", action="")
+    sent_reply = SimpleNamespace(reply_text="实际已发送的正文")
+
+    assert audit_web_module._attempt_detail_reply_text(attempt, sent_reply) == "实际已发送的正文"
 
 
 def _claim_audit_run(store, task, *, owner="worker"):

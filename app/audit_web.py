@@ -10465,7 +10465,7 @@ def _attempt_detail_body(
         reason_title="审计说明",
         reason_text=_attempt_reason_text(attempt),
         reply_title="生成回复",
-        reply_text=_attempt_detail_reply_text(attempt),
+        reply_text=_attempt_detail_reply_text(attempt, sent_reply),
         side_html=(
             f"{_needs_human_decision_card(attempt, agent_runs, reply_task)}"
             f"{_feedback_form(attempt)}"
@@ -10707,10 +10707,15 @@ def _agent_detail_body(
     )
 
 
-def _attempt_detail_reply_text(attempt: ReplyAttempt) -> str:
+def _attempt_detail_reply_text(
+    attempt: ReplyAttempt,
+    sent_reply: SentReply | None = None,
+) -> str:
     reply_text = attempt.final_reply_text or attempt.draft_reply_text
     if reply_text.strip():
         return reply_text
+    if sent_reply is not None and sent_reply.reply_text.strip():
+        return sent_reply.reply_text
     return _reaction_display_text(attempt) or "No generated reply recorded."
 
 
