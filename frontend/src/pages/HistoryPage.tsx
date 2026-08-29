@@ -42,7 +42,7 @@ export function HistoryPage() {
   const [error, setError] = useState("");
   const [snapshot, setSnapshot] = useState("");
   const query = searchParams.get("q") || "";
-  const status = searchParams.get("status") || "";
+  const status = searchParams.get("status") || searchParams.get("type") || "";
   const objectType = searchParams.get("object_type") || "";
   const page = Math.max(1, Number(searchParams.get("page") || 1));
   const pageSizeValue = Number(searchParams.get("page_size") || 20);

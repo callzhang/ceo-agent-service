@@ -339,7 +339,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .sent-todos-table-wrap { max-height: 520px; overflow: auto; }
 .sent-todos-table { min-width: 1040px; }
 .sent-todos-table th:first-child, .sent-todos-table td:first-child { width: 138px; }
+.sent-todos-table th:nth-child(2), .sent-todos-table td:nth-child(2) { width: 100px; }
+.sent-todos-table th:nth-child(3), .sent-todos-table td:nth-child(3) { width: 120px; }
 .sent-todos-table th:nth-child(4), .sent-todos-table td:nth-child(4), .sent-todos-table th:nth-child(5), .sent-todos-table td:nth-child(5) { min-width: 180px; }
+.sent-todos-table th:nth-child(6), .sent-todos-table td:nth-child(6) { width: 138px; }
+.sent-todos-table th:nth-child(7), .sent-todos-table td:nth-child(7) { width: 100px; }
+.sent-todos-table th:nth-child(8), .sent-todos-table td:nth-child(8) { width: 280px; }
+.sent-todos-table th:nth-child(9), .sent-todos-table td:nth-child(9) { width: 220px; }
 .feedback-workspace-card .card-head { margin-bottom: 14px; }
 .feedback-card-title { margin: 0; color: var(--ink); font-size: 1rem; font-weight: 750; }
 .feedback-pending-badge { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border: 1px solid #e5b6b2; border-radius: 999px; color: var(--danger); background: #fff0ef; font-size: .78rem; font-weight: 800; }
@@ -437,6 +443,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .tasks-table tr, .user-feedback-table tr { padding: 12px 0; border-bottom: 1px solid var(--line); }
   .tasks-table td, .user-feedback-table td { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; width: 100% !important; padding: 5px 0; border: 0; }
   .tasks-table td::before, .user-feedback-table td::before { content: attr(data-label); color: var(--ink-soft); font-size: .72rem; font-weight: 700; }
+  .tasks-table td:nth-child(1)::before { content: "Project"; }
+  .tasks-table td:nth-child(2)::before { content: "Status"; }
+  .tasks-table td:nth-child(3)::before { content: "Priority"; }
+  .tasks-table td:nth-child(4)::before { content: "Owner"; }
+  .tasks-table td:nth-child(5)::before { content: "Progress"; }
+  .tasks-table td:nth-child(6)::before { content: "ToDos"; }
+  .user-feedback-table td:nth-child(1)::before { content: "状态"; }
+  .user-feedback-table td:nth-child(2)::before { content: "评分"; }
+  .user-feedback-table td:nth-child(3)::before { content: "用户反馈"; }
+  .user-feedback-table td:nth-child(4)::before { content: "时间"; }
+  .user-feedback-table td:nth-child(5)::before { content: "操作"; }
   .sent-todos-table-wrap { overflow-x: auto; }
   .feedback-workspace-card .card-head { align-items: stretch; flex-direction: column; }
   .feedback-workspace-card .card-head button { width: 100%; }

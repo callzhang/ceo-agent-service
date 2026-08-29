@@ -246,7 +246,7 @@ def register_console_routes(
                              "created_at": row.received_at or row.updated_at, "key": row.key})
         start = (page - 1) * page_size
         response = list_envelope(filtered[start:start + page_size], page=page, page_size=page_size, total=len(filtered))
-        response["pending_count"] = sum(1 for row in filtered if row["status"] == "pending")
+        response["pending_count"] = store.count_pending_user_feedback_items()
         return response
 
     @app.post("/api/console/feedback/{feedback_id}/resolve")

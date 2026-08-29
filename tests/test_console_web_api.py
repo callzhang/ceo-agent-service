@@ -196,6 +196,34 @@ def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
     assert "[object Object]" not in json.dumps(item, ensure_ascii=False)
 
 
+def test_console_feedback_pending_badge_is_global_when_filtered_to_resolved(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_feedback_event(
+        key="pending-feedback",
+        feedback_token="pending-token",
+        rating_label="一般",
+        comment="待处理",
+        received_at="2026-08-29T08:00:00.000Z",
+    )
+    store.upsert_feedback_event(
+        key="resolved-feedback",
+        feedback_token="resolved-token",
+        rating_label="有用",
+        comment="已处理",
+        received_at="2026-08-29T07:00:00.000Z",
+    )
+    store.resolve_feedback_event("resolved-feedback")
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/feedback?status=resolved")
+
+    assert response.status_code == 200
+    assert response.json()["meta"]["total"] == 1
+    assert response.json()["pending_count"] == 1
+
+
 def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         audit_web_module,
