@@ -66,8 +66,8 @@ def test_feedback_processing_skill_requires_identity_evidence_and_safe_workflow(
         "git rev-parse HEAD",
         "matches the committed SHA",
         "launchctl print",
-        "Runtime changes require restarting",
-        "no restart was applicable",
+        "Every feedback-processing resolution requires restarting",
+        "before/after PID",
         "failure or interruption",
         "same batch",
         "Workbench task",
@@ -98,3 +98,4 @@ def test_feedback_processing_skill_states_local_import_and_forbidden_paths():
 
     assert text.endswith("\n")
     assert not text.endswith("\n\n")
+    assert "no restart was applicable" not in text

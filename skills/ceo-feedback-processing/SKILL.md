@@ -58,15 +58,14 @@ summary, and routes are authoritative.
 5. Commit the related changes with a descriptive `git commit`. Record the commit
    SHA, then read back `git rev-parse HEAD` and verify it matches the committed SHA
    before writing the feedback receipt.
-6. Runtime changes require restarting the required launchd service:
+6. Every feedback-processing resolution requires restarting the launchd service:
    `launchctl kickstart -k gui/$(id -u)/com.ceo-agent-service.main`.
-   Verify `com.ceo-agent-service.main` has a new PID with
+   Verify `com.ceo-agent-service.main` has a new PID with before/after values,
    `launchctl print gui/$(id -u)/com.ceo-agent-service.main`, query local
    `http://127.0.0.1:8765/healthz`, and read back that there is no failed or
-   processing backlog (the **failed/processing backlog** check). If no runtime
-   code, prompt, routing, launchd, or service behavior changed, state that no restart was applicable
-   and retain the test, commit, health, and backlog
-   evidence that does apply.
+   processing backlog (the **failed/processing backlog** check). Preserve these
+   restart, launchd, health, and backlog receipts even when the code change is
+   documentation-only.
 
 ## Evidence and resolution
 
