@@ -2607,7 +2607,7 @@ def test_handle_user_feedback_sync_post_uses_small_batch(tmp_path: Path, monkeyp
     assert kwargs["limit_per_token"] == audit_web_module.USER_FEEDBACK_SYNC_LIMIT_PER_TOKEN
 
 
-def test_handle_user_feedback_resolve_post_marks_feedback_resolved(tmp_path: Path):
+def test_handle_user_feedback_resolve_post_requires_processing_batch(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)
     store.record_sent_reply(
@@ -2630,14 +2630,10 @@ def test_handle_user_feedback_resolve_post_marks_feedback_resolved(tmp_path: Pat
         store,
         b"key=event-1",
     )
-    feedback_html = render_user_feedback_list(store)
-
-    assert status == 303
-    assert headers["Location"] == "/user-feedback"
-    assert html == ""
-    assert "resolved" in feedback_html
-    assert "标记 resolved" not in feedback_html
-    assert "已处理" in feedback_html
+    assert status == 409
+    assert headers == {}
+    assert html == "feedback_batch_required"
+    assert store.get_feedback_event("event-1").resolved_at == ""
 
 
 def test_user_feedback_nav_badge_shows_pending_count(tmp_path: Path):
@@ -2667,7 +2663,7 @@ def test_user_feedback_nav_badge_shows_pending_count(tmp_path: Path):
     assert '<span class="nav-badge">1</span>' not in resolved_html
 
 
-def test_user_feedback_resolve_route_redirects_to_feedback_page(tmp_path: Path):
+def test_user_feedback_resolve_route_requires_processing_batch(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)
     store.upsert_feedback_event(
@@ -2688,8 +2684,8 @@ def test_user_feedback_resolve_route_redirects_to_feedback_page(tmp_path: Path):
         follow_redirects=False,
     )
 
-    assert response.status_code == 303
-    assert response.headers["location"] == "/user-feedback"
+    assert response.status_code == 409
+    assert response.text == "feedback_batch_required"
 
 
 def test_user_feedback_route_renders_feedback_page(tmp_path: Path):

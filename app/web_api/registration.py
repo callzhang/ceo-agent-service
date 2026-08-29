@@ -7,8 +7,10 @@ old form routes during the migration, but React never consumes their HTML.
 
 from collections.abc import Callable
 import json
+import subprocess
 from typing import Any
 from urllib.parse import urlencode
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -23,6 +25,14 @@ from app.web_api.tasks import (
     task_list_response,
 )
 from app.web_api.settings import info_payload
+from app.feedback_processing import (
+    FeedbackProcessingBatchError,
+    FeedbackProcessingClaimError,
+    ResolutionEvidence,
+    build_feedback_start_message,
+    detail_references,
+    persisted_feedback_summary,
+)
 
 
 def register_console_routes(
@@ -217,22 +227,189 @@ def register_console_routes(
         needle = q.strip().casefold()
         filtered = []
         for row in all_rows:
-            row_status = "resolved" if row.resolved_at.strip() or row.reviewer_feedback.strip() or row.corrected_reply_text.strip() else "pending"
+            processing = store.get_feedback_processing_item(row.key)
+            row_status = processing.status if processing is not None else ("resolved" if row.resolved_at.strip() else "pending")
             haystack = " ".join((row.comment, row.conversation_title, row.trigger_sender, row.trigger_text, row_status)).casefold()
             if (status.strip() and row_status != status.strip()) or (needle and needle not in haystack):
                 continue
-            filtered.append({"id": row.key, "attempt_id": str(row.attempt_id) if row.attempt_id else "",
-                             "status": row_status, "rating": row.rating_label or row.rating,
-                             "comment": row.comment or "未填写评语", "context": " · ".join(x for x in (row.conversation_title, row.trigger_sender, row.trigger_text[:140]) if x),
-                             "created_at": row.received_at or row.updated_at, "key": row.key})
+            refs = detail_references(row)
+            filtered.append({
+                "id": row.key, "feedback_key": row.key,
+                "attempt_id": str(row.attempt_id) if row.attempt_id else "",
+                "status": row_status, "processing_status": row_status,
+                "rating": row.rating_label or row.rating,
+                "comment": row.comment or "未填写评语",
+                "context": " · ".join(x for x in (row.conversation_title, row.trigger_sender, row.trigger_text[:140]) if x),
+                "created_at": row.received_at or row.updated_at, "key": row.key,
+                "summary": persisted_feedback_summary(row), "references": refs,
+                "batch_id": processing.batch_id if processing else "",
+                "processing_task_id": processing.workbench_task_id if processing else "",
+            })
         start = (page - 1) * page_size
         return list_envelope(filtered[start:start + page_size], page=page, page_size=page_size, total=len(filtered))
 
+    def _feedback_items_for_batch(store: Any, batch_id: str) -> list[dict[str, Any]]:
+        rows = []
+        for row in store.list_user_feedback_items(limit=10000, offset=0):
+            processing = store.get_feedback_processing_item(row.key)
+            if processing is None or processing.batch_id != batch_id:
+                continue
+            projected = json_safe(processing)
+            projected.update({
+                "id": row.key, "processing_status": processing.status,
+                "summary": persisted_feedback_summary(row), "references": detail_references(row),
+                "processing_task_id": processing.workbench_task_id,
+            })
+            rows.append(projected)
+        rows.sort(key=lambda item: item["feedback_key"])
+        return rows
+
+    @app.post("/api/console/feedback/batches")
+    async def console_feedback_batch_claim(request: Request):
+        payload = await json_object(request)
+        raw_keys = payload.get("feedback_keys", payload.get("keys"))
+        if not isinstance(raw_keys, list) or not raw_keys or any(not isinstance(key, str) or not key.strip() for key in raw_keys):
+            raise HTTPException(status_code=400, detail="feedback_keys must be a non-empty string array")
+        keys = list(dict.fromkeys(key.strip() for key in raw_keys))
+        batch_id = payload.get("batch_id")
+        if batch_id is not None and (not isinstance(batch_id, str) or not batch_id.strip()):
+            raise HTTPException(status_code=400, detail="batch_id must be a non-empty string")
+        task_id = payload.get("workbench_task_id", payload.get("task_id", ""))
+        turn_id = payload.get("workbench_turn_id", payload.get("turn_id", ""))
+        if task_id is not None and not isinstance(task_id, str):
+            raise HTTPException(status_code=400, detail="workbench_task_id must be a string")
+        if turn_id is not None and not isinstance(turn_id, str):
+            raise HTTPException(status_code=400, detail="workbench_turn_id must be a string")
+        cleaned_batch_id = batch_id.strip() if isinstance(batch_id, str) else uuid4().hex
+        claim_store = store_factory()
+        known_keys = {row.key for row in claim_store.list_user_feedback_items(limit=10000, offset=0)}
+        missing = [key for key in keys if key not in known_keys]
+        if missing:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {"feedback_keys": missing}}, status_code=404)
+        try:
+            claimed = claim_store.claim_feedback_processing_items(cleaned_batch_id, keys)
+        except FeedbackProcessingClaimError as exc:
+            return JSONResponse({"ok": False, "code": exc.error_code, "message": "反馈已被其他处理批次占用", "details": {}}, status_code=409)
+        except FeedbackProcessingBatchError as exc:
+            return JSONResponse({"ok": False, "code": "feedback_batch_conflict", "message": str(exc), "details": {}}, status_code=409)
+        store = store_factory()
+        if task_id or turn_id:
+            for item in claimed:
+                store.associate_feedback_processing_turn(item.feedback_key, workbench_task_id=(task_id or "").strip(), workbench_turn_id=(turn_id or "").strip())
+        imports = [item for item in store.list_feedback_import_items(limit=10000, offset=0) if item.feedback_key in keys]
+        imports.sort(key=lambda item: keys.index(item.feedback_key))
+        item = {"batch_id": cleaned_batch_id, "status": store.get_feedback_processing_batch(cleaned_batch_id).status, "feedback_keys": keys, "items": [json_safe(value) for value in claimed], "start_message": build_feedback_start_message(cleaned_batch_id, imports)}
+        return command_result(item=item, message="反馈批次已领取")
+
+    @app.get("/api/console/feedback/batches/{batch_id}")
+    def console_feedback_batch_detail(batch_id: str):
+        store = store_factory()
+        batch = store.get_feedback_processing_batch(batch_id)
+        if batch is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
+        return item_envelope({"batch_id": batch.batch_id, "status": batch.status, "requested_count": batch.requested_count, "created_at": batch.created_at, "updated_at": batch.updated_at, "resolved_at": batch.resolved_at, "items": _feedback_items_for_batch(store, batch.batch_id)})
+
+    @app.patch("/api/console/feedback/batches/{batch_id}")
+    async def console_feedback_batch_association(batch_id: str, request: Request):
+        payload = await json_object(request)
+        task_id = payload.get("workbench_task_id", payload.get("task_id", ""))
+        turn_id = payload.get("workbench_turn_id", payload.get("turn_id", ""))
+        if not isinstance(task_id, str) or not isinstance(turn_id, str) or not task_id.strip() or not turn_id.strip():
+            raise HTTPException(status_code=400, detail="workbench_task_id and workbench_turn_id are required")
+        store = store_factory()
+        batch = store.get_feedback_processing_batch(batch_id)
+        if batch is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
+        for item in _feedback_items_for_batch(store, batch.batch_id):
+            store.associate_feedback_processing_turn(item["feedback_key"], workbench_task_id=task_id.strip(), workbench_turn_id=turn_id.strip())
+        refreshed = store.get_feedback_processing_batch(batch.batch_id)
+        return command_result(item={"batch_id": batch.batch_id, "status": refreshed.status if refreshed else batch.status, "requested_count": refreshed.requested_count if refreshed else batch.requested_count, "items": _feedback_items_for_batch(store, batch.batch_id), "workbench_task_id": task_id.strip(), "workbench_turn_id": turn_id.strip()}, message="反馈批次关联已保存")
+
+    @app.patch("/api/console/feedback/items/{feedback_id}")
+    async def console_feedback_item_patch(feedback_id: str, request: Request):
+        payload = await json_object(request)
+        allowed = {"test_evidence", "tests", "restart_evidence", "restart", "health_evidence", "health", "commit_sha", "note", "status", "workbench_task_id", "task_id", "workbench_turn_id", "turn_id", "attempt_id", "agent_run_id", "associations"}
+        unknown = set(payload) - allowed
+        if unknown:
+            raise HTTPException(status_code=400, detail="unsupported feedback evidence field")
+        kwargs = {
+            "test_evidence": payload.get("test_evidence", payload.get("tests")),
+            "restart_evidence": payload.get("restart_evidence", payload.get("restart")),
+            "health_evidence": payload.get("health_evidence", payload.get("health")),
+            "commit_sha": payload.get("commit_sha"), "note": payload.get("note"), "status": payload.get("status"),
+        }
+        if kwargs["status"] == "resolved":
+            return JSONResponse({"ok": False, "code": "feedback_evidence_invalid", "message": "only batch resolution may mark feedback resolved", "details": {}}, status_code=409)
+        for name in ("test_evidence", "restart_evidence", "health_evidence"):
+            if kwargs[name] is not None and (not isinstance(kwargs[name], dict) or isinstance(kwargs[name], list)):
+                raise HTTPException(status_code=400, detail=f"{name} must be a JSON object")
+        for name in ("commit_sha", "note", "status"):
+            if kwargs[name] is not None and not isinstance(kwargs[name], str):
+                raise HTTPException(status_code=400, detail=f"{name} must be a string")
+        store = store_factory()
+        current = store.get_feedback_processing_item(feedback_id)
+        if current is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback item not found", "details": {}}, status_code=404)
+        if kwargs["status"] == "processing" or (kwargs["status"] == "pending" and current.status != "pending"):
+            return JSONResponse({"ok": False, "code": "feedback_evidence_invalid", "message": "only atomic batch claim may mark feedback processing", "details": {}}, status_code=409)
+        associations = payload.get("associations", {})
+        if not isinstance(associations, dict):
+            raise HTTPException(status_code=400, detail="associations must be a JSON object")
+        task_id = payload.get("workbench_task_id", payload.get("task_id", associations.get("workbench_task_id", associations.get("task_id", current.workbench_task_id))))
+        turn_id = payload.get("workbench_turn_id", payload.get("turn_id", associations.get("workbench_turn_id", associations.get("turn_id", current.workbench_turn_id))))
+        attempt_id = payload.get("attempt_id", associations.get("attempt_id", current.attempt_id))
+        agent_run_id = payload.get("agent_run_id", associations.get("agent_run_id", current.agent_run_id))
+        if not isinstance(task_id, str) or not isinstance(turn_id, str) or not isinstance(attempt_id, int) or isinstance(attempt_id, bool) or not isinstance(agent_run_id, int) or isinstance(agent_run_id, bool):
+            raise HTTPException(status_code=400, detail="feedback associations have invalid types")
+        if "associations" in payload or any(name in payload for name in ("workbench_task_id", "task_id", "workbench_turn_id", "turn_id", "attempt_id", "agent_run_id")):
+            store.associate_feedback_processing_turn(feedback_id, workbench_task_id=task_id.strip(), workbench_turn_id=turn_id.strip(), attempt_id=attempt_id, agent_run_id=agent_run_id)
+        try:
+            item = store.patch_feedback_processing_item_evidence(feedback_id, **kwargs)
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"ok": False, "code": "feedback_evidence_invalid", "message": str(exc), "details": {}}, status_code=409)
+        if item is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback item not found", "details": {}}, status_code=404)
+        return command_result(item=item, message="反馈证据已保存")
+
+    @app.post("/api/console/feedback/batches/{batch_id}/resolve")
+    async def console_feedback_batch_resolve(batch_id: str, request: Request):
+        payload = await json_object(request)
+        try:
+            evidence = ResolutionEvidence.model_validate(payload)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "code": "feedback_resolution_invalid", "message": str(exc), "details": {}}, status_code=409)
+        try:
+            from app.config import repo_root
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root(), capture_output=True, text=True, check=True, timeout=5).stdout.strip()
+            resolved = store_factory().resolve_feedback_processing_batch(batch_id, evidence, current_head=head)
+        except (ValueError, subprocess.SubprocessError, OSError) as exc:
+            return JSONResponse({"ok": False, "code": "feedback_resolution_incomplete", "message": str(exc), "details": {}}, status_code=409)
+        if not resolved:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
+        return command_result(item={"batch_id": batch_id, "status": "resolved"}, message="反馈批次已解决")
+
+    @app.get("/api/console/feedback/{feedback_id}")
+    def console_feedback_detail(feedback_id: str):
+        store = store_factory()
+        row = next((candidate for candidate in store.list_user_feedback_items(limit=10000, offset=0) if candidate.key == feedback_id.strip()), None)
+        if row is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {}}, status_code=404)
+        processing = store.get_feedback_processing_item(row.key)
+        return item_envelope({
+            "id": row.key, "feedback_key": row.key, "feedback_token": row.feedback_token,
+            "rating": row.rating_label or row.rating, "comment": row.comment,
+            "source": row.source, "received_at": row.received_at,
+            "attempt_id": str(row.attempt_id) if row.attempt_id else "", "agent_run_id": row.agent_run_id,
+            "conversation_title": row.conversation_title, "trigger_sender": row.trigger_sender,
+            "trigger_text": row.trigger_text, "summary": persisted_feedback_summary(row),
+            "references": detail_references(row),
+            "status": processing.status if processing else ("resolved" if row.resolved_at.strip() else "pending"),
+            "processing": json_safe(processing) if processing else None,
+        })
+
     @app.post("/api/console/feedback/{feedback_id}/resolve")
     def console_feedback_resolve(feedback_id: str):
-        if not store_factory().resolve_feedback_event(feedback_id):
-            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {}}, status_code=404)
-        return command_result(message="已标记为已处理")
+        return JSONResponse({"ok": False, "code": "feedback_batch_required", "message": "Feedback must be resolved through a processing batch", "details": {"feedback_id": feedback_id}}, status_code=409)
 
     @app.post("/api/console/feedback/sync")
     def console_feedback_sync():

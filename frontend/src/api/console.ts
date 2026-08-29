@@ -63,7 +63,7 @@ export function displayValue(value: unknown): string {
   return "未提供";
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...init,
     headers: { Accept: "application/json", ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers },
@@ -86,7 +86,22 @@ export interface TaskSummary { id: string; title: string; status: string; catego
 export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; }
 export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
-export interface FeedbackItem { id: string; attempt_id: string; status: string; rating: string; comment: string; context: string; created_at: string; }
+export interface FeedbackReference { label: string; route: string; }
+export interface FeedbackItem {
+  id: string;
+  feedback_key?: string;
+  attempt_id: string;
+  status: string;
+  processing_status?: string;
+  rating: string;
+  comment: string;
+  context: string;
+  created_at: string;
+  summary?: string;
+  references?: FeedbackReference[];
+  batch_id?: string;
+  processing_task_id?: string;
+}
 export interface WechatScopeTarget {
   account_id?: string;
   target_type: "direct" | "group";

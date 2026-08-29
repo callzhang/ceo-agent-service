@@ -97,6 +97,48 @@ def test_common_envelopes_and_normalization_are_explicitly_json_serializable():
     assert "<structured error>" not in json.dumps(json_safe({"detail": "<structured error>"}), ensure_ascii=False)
 
 
+def test_feedback_direct_resolve_requires_batch(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1", comment="Needs work")
+
+    with _client(tmp_path) as client:
+        response = client.post("/api/console/feedback/feedback-1/resolve")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_batch_required"
+
+
+def test_feedback_batch_routes_claim_atomically_and_expose_processing_state(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for key in ("feedback-1", "feedback-2"):
+        store.upsert_feedback_event(key=key, feedback_token=f"token-{key}", comment=f"Comment {key}")
+
+    with _client(tmp_path) as client:
+        listed = client.get("/api/console/feedback?status=pending")
+        assert listed.status_code == 200
+        assert {item["feedback_key"] for item in listed.json()["items"]} == {"feedback-1", "feedback-2"}
+        assert all("summary" in item and "references" in item for item in listed.json()["items"])
+
+        claimed = client.post("/api/console/feedback/batches", json={"feedback_keys": ["feedback-1", "feedback-2"]})
+        assert claimed.status_code == 200
+        batch = claimed.json()["item"]
+        assert batch["status"] == "processing"
+        assert batch["feedback_keys"] == ["feedback-1", "feedback-2"]
+        assert "start_message" in batch
+
+        detail = client.get(f"/api/console/feedback/batches/{batch['batch_id']}")
+        assert detail.status_code == 200
+        assert {item["feedback_key"] for item in detail.json()["item"]["items"]} == {"feedback-1", "feedback-2"}
+
+        conflict = client.post("/api/console/feedback/batches", json={"feedback_keys": ["feedback-1"]})
+        assert conflict.status_code == 409
+        assert conflict.json()["code"] == "feedback_already_processing"
+
+        missing = client.post("/api/console/feedback/batches", json={"feedback_keys": ["unknown"]})
+        assert missing.status_code == 404
+        assert missing.json()["code"] == "not_found"
+
+
 def test_attention_grouping_keeps_records_and_uses_root_cause_context_key():
     rows = [
         {

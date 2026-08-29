@@ -8493,11 +8493,10 @@ def handle_feedback_post(
 def handle_user_feedback_resolve_post(
     store: AutoReplyStore, body: bytes
 ) -> tuple[int, dict[str, str], str]:
-    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
-    key = parsed.get("key", [""])[0]
-    if not store.resolve_feedback_event(key):
-        return 404, {}, render_page("Feedback not found", "Feedback not found")
-    return 303, {"Location": "/user-feedback"}, ""
+    # Resolution is intentionally batch-only so the legacy form cannot bypass
+    # the evidence contract enforced by the React console API.
+    del store, body
+    return 409, {}, "feedback_batch_required"
 
 
 def handle_user_feedback_sync_post(
