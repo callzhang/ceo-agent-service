@@ -58,7 +58,7 @@ export function FeedbackPage() {
             if (key === "id") return <span className="console-page-actions">
               {row.attempt_id && <Link to={`/attempts/${row.attempt_id}`}>Attempt</Link>}
               {row.processing_task_id && <Link to={`/?task=${encodeURIComponent(row.processing_task_id)}`}>Workbench task</Link>}
-              {row.batch_id && <Link to={`/api/console/feedback/batches/${encodeURIComponent(row.batch_id)}`}>Processing batch</Link>}
+              {row.batch_id && <a href={`/api/console/feedback/batches/${encodeURIComponent(row.batch_id)}`}>Processing batch</a>}
               {!row.attempt_id && !row.processing_task_id && !row.batch_id && <span className="muted">未关联</span>}
             </span>;
             return displayValue(row[key]);
@@ -67,7 +67,7 @@ export function FeedbackPage() {
           renderExpanded={(row) => <span className="console-page-actions">
             {row.attempt_id ? <Link to={`/attempts/${row.attempt_id}`}>查看关联 Attempt</Link> : <span>未关联 Attempt</span>}
             {row.processing_task_id && <Link to={`/?task=${encodeURIComponent(row.processing_task_id)}`}>查看 Workbench task</Link>}
-            {row.batch_id && <Link to={`/api/console/feedback/batches/${encodeURIComponent(row.batch_id)}`}>查看 processing batch</Link>}
+            {row.batch_id && <a href={`/api/console/feedback/batches/${encodeURIComponent(row.batch_id)}`}>查看 processing batch</a>}
           </span>}
         />
       </section>

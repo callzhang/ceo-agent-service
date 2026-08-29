@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -44,5 +44,19 @@ describe("FeedbackPage", () => {
     expect(screen.getByRole("link", { name: "Processing batch" })).toHaveAttribute("href", "/api/console/feedback/batches/batch-1");
     expect(screen.queryByRole("button", { name: "标记已处理" })).not.toBeInTheDocument();
     expect(screen.getByRole("option", { name: "处理中" })).toBeInTheDocument();
+  });
+
+  it("keeps the batch destination as a native navigation outside the SPA router", async () => {
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+
+    const link = await screen.findByRole("link", { name: "Processing batch" });
+    expect(link.tagName).toBe("A");
+    let preventedBeforeDocument = false;
+    document.addEventListener("click", (event) => {
+      preventedBeforeDocument = event.defaultPrevented;
+      event.preventDefault();
+    }, { once: true });
+    fireEvent(link, createEvent.click(link));
+    expect(preventedBeforeDocument).toBe(false);
   });
 });

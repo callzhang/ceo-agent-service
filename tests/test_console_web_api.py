@@ -174,6 +174,7 @@ def test_feedback_history_with_corrected_reply_is_resolved_and_not_claimable(tmp
 
     assert listed.status_code == 200
     assert listed.json()["items"][0]["status"] == "resolved"
+    assert 'status-resolved">resolved</span>' in audit_web_module.render_user_feedback_list(store)
     assert conflict.status_code == 409
     assert conflict.json()["code"] == "feedback_already_processing"
 

@@ -111,6 +111,26 @@ class ResolutionEvidence(_StrictProcessingModel):
     associations: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
+def project_feedback_status(source: object, processing: object | None = None) -> str:
+    """Return the canonical status shared by API and HTML feedback projections.
+
+    Source-of-truth completion fields win over the processing projection so a
+    reviewed attempt cannot remain visibly pending while its processing row is
+    still catching up.
+    """
+
+    if any(
+        str(getattr(source, field, "") or "").strip()
+        for field in ("resolved_at", "reviewer_feedback", "corrected_reply_text")
+    ):
+        return "resolved"
+    status = str(
+        getattr(processing, "status", getattr(source, "processing_status", "pending"))
+        or "pending"
+    ).strip().casefold()
+    return status if status in {"pending", "processing", "resolved"} else "pending"
+
+
 def persisted_feedback_summary(item: "UserFeedbackItem") -> str:
     """Return the first non-empty summary already persisted for an attempt.
 

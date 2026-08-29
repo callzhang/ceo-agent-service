@@ -32,6 +32,7 @@ from app.feedback_processing import (
     build_feedback_start_message,
     detail_references,
     persisted_feedback_summary,
+    project_feedback_status,
 )
 
 
@@ -61,11 +62,6 @@ def register_console_routes(
     def command_result(*, item: Any = None, message: str = "已完成", ok: bool = True):
         return {"ok": ok, "item": json_safe(item), "message": message,
                 "meta": {"updated_at": snapshot_at()}}
-
-    def feedback_status(row: Any, processing: Any = None) -> str:
-        if row.resolved_at.strip() or row.reviewer_feedback.strip() or row.corrected_reply_text.strip():
-            return "resolved"
-        return processing.status if processing is not None else "pending"
 
     async def json_object(request: Request) -> dict[str, Any]:
         if "application/json" not in request.headers.get("content-type", ""):
@@ -233,7 +229,7 @@ def register_console_routes(
         filtered = []
         for row in all_rows:
             processing = store.get_feedback_processing_item(row.key)
-            row_status = feedback_status(row, processing)
+            row_status = project_feedback_status(row, processing)
             haystack = " ".join((row.comment, row.conversation_title, row.trigger_sender, row.trigger_text, row_status)).casefold()
             if (status.strip() and row_status != status.strip()) or (needle and needle not in haystack):
                 continue
@@ -415,7 +411,7 @@ def register_console_routes(
             "conversation_title": row.conversation_title, "trigger_sender": row.trigger_sender,
             "trigger_text": row.trigger_text, "summary": persisted_feedback_summary(row),
             "references": detail_references(row),
-            "status": feedback_status(row, processing),
+            "status": project_feedback_status(row, processing),
             "batch_id": processing.batch_id if processing else "",
             "processing_task_id": processing.workbench_task_id if processing else "",
             "processing": json_safe(processing) if processing else None,

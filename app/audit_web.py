@@ -144,6 +144,7 @@ from app.feedback_events import (
     sync_feedback_events_for_context as sync_feedback_events_for_context_impl,
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
+from app.feedback_processing import project_feedback_status
 from app.follow_up import resolve_failed_follow_up
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
@@ -7306,7 +7307,7 @@ def render_user_feedback_list(
     rows = []
     for item in store.list_user_feedback_items(limit=limit, offset=offset):
         processing = store.get_feedback_processing_item(item.key)
-        status = _user_feedback_status(item, processing)
+        status = project_feedback_status(item, processing)
         attempt_link = (
             f"<a class=\"review-link\" href=\"/attempts/{item.attempt_id}\">处理</a>"
             if item.attempt_id
@@ -7392,19 +7393,6 @@ def _user_feedback_page_head() -> str:
         "<button class=\"compact-button\" type=\"submit\">同步最新反馈</button>"
         "</form></div>"
     )
-
-
-def _user_feedback_status(item: UserFeedbackItem, processing: object | None = None) -> str:
-    processing_status = str(getattr(processing, "status", "") or "").strip().casefold()
-    if processing_status in {"pending", "processing", "resolved"}:
-        return processing_status
-    if (
-        item.resolved_at.strip()
-        or item.reviewer_feedback.strip()
-        or item.corrected_reply_text.strip()
-    ):
-        return "resolved"
-    return "pending"
 
 
 def _reply_task_item(task: ReplyTask) -> str:
