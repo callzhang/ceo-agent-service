@@ -16,11 +16,13 @@ from fastapi.responses import JSONResponse
 from app.web_api.attention import AttentionListEnvelope, group_attention_rows
 from app.web_api.common import ApiItemEnvelope, ApiListMeta, ApiMeta, json_safe, normalize_display_value, snapshot_at
 from app.web_api.tasks import (
+    ConsoleSentTodoListEnvelope,
     ConsoleTaskDetail,
     ConsoleTaskDetailEnvelope,
     ConsoleTaskListEnvelope,
     task_detail,
     task_list_response,
+    sent_todo_payload,
 )
 from app.web_api.settings import info_payload
 
@@ -32,6 +34,7 @@ def register_console_routes(
     status_payload_factory: Callable[[], Any],
     attention_rows_factory: Callable[[], Any],
     task_row_builder: Callable[[Any, list[Any]], Any] | None = None,
+    history_chart_factory: Callable[[], Any] | None = None,
 ) -> None:
     def list_meta(*, page: int, page_size: int, total: int, snapshot: str):
         return ApiListMeta(
@@ -79,6 +82,19 @@ def register_console_routes(
             category=category,
             task_state=task_state,
             row_builder=task_row_builder,
+        )
+
+    @app.get("/api/console/tasks/sent-todos", response_model=ConsoleSentTodoListEnvelope)
+    def console_sent_todos(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=20, ge=1, le=100),
+    ):
+        rows = [sent_todo_payload(row) for row in store_factory().list_sent_todo_records(limit=5000)]
+        total = len(rows)
+        start = (page - 1) * page_size
+        return ConsoleSentTodoListEnvelope(
+            items=rows[start:start + page_size],
+            meta=list_meta(page=page, page_size=page_size, total=total, snapshot=snapshot_at()),
         )
 
     @app.get("/api/console/tasks/{project_id}/details", response_model=ConsoleTaskDetailEnvelope)
@@ -149,7 +165,10 @@ def register_console_routes(
                 "output": normalize_display_value(row.output_text),
                 "action": normalize_display_value(row.action),
             })
-        return list_envelope(items, page=page, page_size=page_size, total=total)
+        response = list_envelope(items, page=page, page_size=page_size, total=total)
+        if history_chart_factory is not None:
+            response["chart"] = json_safe(history_chart_factory())
+        return response
 
     @app.get("/api/console/history/{attempt_id}")
     def console_history_detail(attempt_id: int):
@@ -226,7 +245,9 @@ def register_console_routes(
                              "comment": row.comment or "未填写评语", "context": " · ".join(x for x in (row.conversation_title, row.trigger_sender, row.trigger_text[:140]) if x),
                              "created_at": row.received_at or row.updated_at, "key": row.key})
         start = (page - 1) * page_size
-        return list_envelope(filtered[start:start + page_size], page=page, page_size=page_size, total=len(filtered))
+        response = list_envelope(filtered[start:start + page_size], page=page, page_size=page_size, total=len(filtered))
+        response["pending_count"] = sum(1 for row in filtered if row["status"] == "pending")
+        return response
 
     @app.post("/api/console/feedback/{feedback_id}/resolve")
     def console_feedback_resolve(feedback_id: str):

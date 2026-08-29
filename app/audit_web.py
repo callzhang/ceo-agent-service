@@ -9670,6 +9670,7 @@ def create_audit_app(
         status_payload_factory=render_settings_status_payload,
         attention_rows_factory=lambda: _queue_attention_rows(audit_store),
         task_row_builder=_task_row_payload,
+        history_chart_factory=lambda: _history_chart_payload(_audit_store(db_path)),
     )
 
     register_repository_upgrade_routes(

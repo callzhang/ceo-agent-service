@@ -134,6 +134,30 @@ class ConsoleTaskDetailEnvelope(ApiItemEnvelope):
     item: ConsoleTaskDetail
 
 
+class ConsoleSentTodo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: str
+    kind_label: str
+    sent_at: str
+    status: str
+    owner: str
+    project_title: str
+    todo_title: str
+    description: str = ""
+    original_text: str = ""
+    deadline: str = ""
+    priority: str = ""
+    target: str = ""
+    external_id: str = ""
+    detail_url: str = ""
+
+
+class ConsoleSentTodoListEnvelope(ApiListEnvelope):
+    items: list[ConsoleSentTodo] = Field(default_factory=list)
+
+
 def _enum_text(value: Any) -> str:
     return normalize_display_value(getattr(value, "value", value))
 
@@ -392,3 +416,37 @@ def task_list_response(
             has_more=has_more,
         ),
     )
+
+
+def sent_todo_payload(record: Any) -> dict[str, str]:
+    target = normalize_display_value(getattr(record, "target_kind", ""))
+    conversation_id = normalize_display_value(getattr(record, "target_conversation_id", ""))
+    external_id = normalize_display_value(getattr(record, "external_id", ""))
+    if conversation_id:
+        target = f"{target}:{conversation_id}".strip(":")
+    elif external_id:
+        target = external_id
+    project_id = int(getattr(record, "project_id", 0) or 0)
+    todo_id = int(getattr(record, "todo_id", 0) or 0)
+    detail_url = (
+        f"/tasks/{project_id}#todo-{todo_id}" if project_id and todo_id
+        else f"/tasks/{project_id}" if project_id else ""
+    )
+    kind = normalize_display_value(getattr(record, "kind", ""))
+    return {
+        "id": f"{kind}:{getattr(record, 'source_id', '')}",
+        "kind": kind,
+        "kind_label": "DingTalk Todo" if kind == "dingtalk_todo" else "Follow-up",
+        "sent_at": normalize_display_value(getattr(record, "sent_at", "")),
+        "status": normalize_display_value(getattr(record, "status", "")),
+        "owner": normalize_display_value(getattr(record, "owner_name", "") or getattr(record, "owner_user_id", "")),
+        "project_title": normalize_display_value(getattr(record, "project_title", "")),
+        "todo_title": normalize_display_value(getattr(record, "todo_title", "") or getattr(record, "title", "")),
+        "description": normalize_display_value(getattr(record, "todo_description", "") or getattr(record, "description", "")),
+        "original_text": normalize_display_value(getattr(record, "original_text", "")),
+        "deadline": normalize_display_value(getattr(record, "deadline_at", "")),
+        "priority": normalize_display_value(getattr(record, "priority", "")),
+        "target": target,
+        "external_id": external_id,
+        "detail_url": detail_url,
+    }
