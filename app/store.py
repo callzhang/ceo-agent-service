@@ -13790,6 +13790,15 @@ class AutoReplyStore:
                        and ra.trigger_message_id = sr.trigger_message_id
                     where trim(sr.feedback_token) <> ''
                     group by sr.feedback_token
+                ), manual_attempt_by_key as (
+                    select
+                        fe.key as feedback_key,
+                        max(ra.id) as attempt_id
+                    from feedback_events fe
+                    join reply_attempts ra
+                        on ra.id = cast(substr(fe.key, 8) as integer)
+                    where fe.key like 'manual:%'
+                    group by fe.key
                 )
                 select
                     fe.key,
@@ -13810,16 +13819,20 @@ class AutoReplyStore:
                     coalesce(ra.draft_reply_text, '') as draft_reply_text,
                     coalesce(ra.codex_reason, '') as codex_reason,
                     coalesce(ra.audit_summary, '') as audit_summary,
-                    coalesce(ra.reviewer_feedback, '') as reviewer_feedback,
-                    coalesce(ra.corrected_reply_text, '') as corrected_reply_text,
+                    case when latest.attempt_id is not null
+                         then coalesce(ra.reviewer_feedback, '') else '' end as reviewer_feedback,
+                    case when latest.attempt_id is not null
+                         then coalesce(ra.corrected_reply_text, '') else '' end as corrected_reply_text,
                     coalesce(pi.status, case when trim(fe.resolved_at) <> '' then 'resolved' else 'pending' end) as processing_status,
                     fe.resolved_at,
                     fe.updated_at
                 from feedback_events fe
                 left join latest_attempt_by_token latest
                     on latest.feedback_token = fe.feedback_token
+                left join manual_attempt_by_key manual
+                    on manual.feedback_key = fe.key
                 left join reply_attempts ra
-                    on ra.id = latest.attempt_id
+                    on ra.id = coalesce(latest.attempt_id, manual.attempt_id)
                 left join agent_runs ar
                     on ar.id = ra.agent_run_id
                 left join feedback_processing_items pi

@@ -39,6 +39,42 @@ def test_feedback_event_seeds_processing_item_without_changing_event(tmp_path: P
     assert event.comment == "原始反馈"
 
 
+def test_manual_attempt_feedback_projection_keeps_context_and_pending_status(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "manual-feedback.sqlite3")
+    store.upsert_conversation(
+        "cid-1", title="技术部", single_chat=False, codex_session_id="session-1"
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="技术部",
+        trigger_message_id="msg-1",
+        trigger_sender="Xiaomin",
+        trigger_text="请检查这个问题",
+        action="send_reply",
+        sensitivity_kind="general",
+        codex_reason="direct ask",
+        draft_reply_text="先按A方案走",
+        audit_summary="查看材料后给出建议。",
+    )
+    store.update_reply_attempt(attempt_id, send_status="sent", final_reply_text="先按A方案走")
+    store.record_reply_feedback(attempt_id, feedback="请通过处理反馈入口复核")
+    store.upsert_feedback_event(
+        key=f"manual:{attempt_id}",
+        feedback_token=f"manual-attempt:{attempt_id}",
+        rating_label="用户反馈",
+        comment="请通过处理反馈入口复核",
+        source="workbench",
+    )
+
+    row = store.list_user_feedback_items()[0]
+
+    assert row.attempt_id == attempt_id
+    assert row.conversation_title == "技术部"
+    assert row.trigger_text == "请检查这个问题"
+    assert row.reviewer_feedback == ""
+    assert row.processing_status == "pending"
+
+
 def test_feedback_processing_schema_is_additive_and_reopen_is_idempotent(
     tmp_path: Path,
 ):
