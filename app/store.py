@@ -51,6 +51,8 @@ from app.wechat.models import WechatReplyScope
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
+STORE_WRITE_LOCK_RETRY_ATTEMPTS = 3
+STORE_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
 AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
@@ -1012,6 +1014,35 @@ class AutoReplyStore:
             return
         with self._connect() as db:
             yield db
+
+    @contextmanager
+    def _immediate_write_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Acquire a short SQLite write transaction with bounded lock retry."""
+        for attempt in range(STORE_WRITE_LOCK_RETRY_ATTEMPTS):
+            try:
+                with self._connect() as db:
+                    try:
+                        db.execute("begin immediate")
+                    except sqlite3.OperationalError as exc:
+                        if (
+                            not _is_sqlite_lock_error(exc)
+                            or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
+                        ):
+                            raise
+                        time.sleep(
+                            STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1)
+                        )
+                        continue
+                    yield db
+                    return
+            except sqlite3.OperationalError as exc:
+                if (
+                    not _is_sqlite_lock_error(exc)
+                    or attempt + 1 >= STORE_WRITE_LOCK_RETRY_ATTEMPTS
+                ):
+                    raise
+                time.sleep(STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
+        raise RuntimeError("SQLite write transaction retry loop exhausted")
 
     def _open_connection(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
@@ -7817,8 +7848,7 @@ class AutoReplyStore:
     ) -> list[ReplyTask]:
         if limit <= 0:
             return []
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
                 select tasks.*
@@ -18185,7 +18215,7 @@ class AutoReplyStore:
         kind: str,
         detail: str,
     ) -> None:
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             db.execute(
                 """
                 insert into errors (conversation_id, message_id, kind, detail)

@@ -2427,6 +2427,44 @@ def test_store_connections_can_use_short_busy_timeout(tmp_path: Path):
     assert busy_timeout == 2_000
 
 
+def test_immediate_write_transaction_retries_begin_without_repeating_body(
+    tmp_path: Path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    original_connect = store._connect
+    begin_attempts = 0
+    body_runs = 0
+
+    @contextmanager
+    def flaky_connect():
+        nonlocal begin_attempts
+        with original_connect() as db:
+            begin_attempts += 1
+            if begin_attempts == 1:
+                class BeginLocked:
+                    def execute(self, _sql):
+                        raise sqlite3.OperationalError("database is locked")
+
+                yield BeginLocked()
+            else:
+                yield db
+
+    monkeypatch.setattr(store, "_connect", flaky_connect)
+    monkeypatch.setattr(store_module.time, "sleep", lambda _seconds: None)
+
+    with store._immediate_write_transaction() as db:
+        body_runs += 1
+        db.execute(
+            "insert into errors (conversation_id, message_id, kind, detail) "
+            "values (?, ?, ?, ?)",
+            ("cid", "msg", "test", "lock retry"),
+        )
+
+    assert begin_attempts == 2
+    assert body_runs == 1
+    assert len(store.list_errors()) == 1
+
+
 def test_store_connections_close_after_context_exit(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
