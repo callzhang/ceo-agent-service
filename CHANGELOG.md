@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-08-29: add the local user-feedback processing workflow. Pending
+  feedback can be claimed as a deterministic batch, imported into a Workbench
+  brainstorm conversation with attempt/run/task references, and resolved only
+  after matching commit, test, launchd restart, and `/healthz` receipts are
+  persisted. Original feedback comments remain unchanged.
+
 - 2026-08-29: Settings → Connectors → WeChat now embeds the reply-scope
   editor. Saved targets, target search, unsaved-change state, and explicit
   save feedback are rendered in the React page without navigating to a
