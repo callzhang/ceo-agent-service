@@ -128,6 +128,9 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
     original_comment = store.get_feedback_event("feedback-8308").comment
 
     with _client(tmp_path) as client:
+        health = client.get("/healthz")
+        assert health.status_code == 200
+        assert health.json() == {"ok": True, "status": "ok"}
         pending = client.get("/api/console/feedback?status=pending&page_size=50")
         assert pending.status_code == 200
         row = next(item for item in pending.json()["items"] if item["feedback_key"] == "feedback-8308")

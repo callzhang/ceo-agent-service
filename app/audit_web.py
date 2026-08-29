@@ -9657,6 +9657,11 @@ def create_audit_app(
 
     app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
 
+    @app.get("/healthz")
+    def healthz() -> dict[str, object]:
+        """Minimal local liveness receipt used by service and feedback evidence."""
+        return {"ok": True, "status": "ok"}
+
     from app.web_api import register_console_routes
 
     register_console_routes(
