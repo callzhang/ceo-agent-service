@@ -16,6 +16,8 @@ interface TaskListProps {
   loadingMore?: boolean;
   onLoadMore?: () => void;
   pendingOperations?: Record<string, "rename" | "archive">;
+  pendingFeedbackCount?: number;
+  onProcessFeedback?: () => void;
 }
 
 interface TaskGroup {
@@ -77,6 +79,8 @@ export function TaskList({
   loadingMore = false,
   onLoadMore,
   pendingOperations = {},
+  pendingFeedbackCount = 0,
+  onProcessFeedback = () => undefined,
 }: TaskListProps) {
   const [query, setQuery] = useState("");
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -209,6 +213,9 @@ export function TaskList({
     <div className="task-list">
       <button className="primary-button new-task-button" type="button" onClick={onNewTask}>
         新任务
+      </button>
+      <button className="secondary-button feedback-button" type="button" onClick={onProcessFeedback}>
+        处理反馈 · {pendingFeedbackCount}
       </button>
       <label className="task-search">
         <Search aria-hidden="true" size={16} />

@@ -46,6 +46,29 @@ function localTimestamp(daysAgo: number) {
 }
 
 describe("TaskList", () => {
+  it("renders feedback processing entry immediately after new task and invokes callback", async () => {
+    const user = userEvent.setup();
+    const onProcessFeedback = vi.fn();
+    render(
+      <TaskList
+        tasks={[]}
+        activeTaskId={null}
+        onSelect={() => undefined}
+        onNewTask={() => undefined}
+        onProcessFeedback={onProcessFeedback}
+        pendingFeedbackCount={3}
+        onRename={() => undefined}
+        onArchive={() => undefined}
+      />,
+    );
+
+    const newTask = screen.getByRole("button", { name: "新任务" });
+    const processFeedback = screen.getByRole("button", { name: "处理反馈 · 3" });
+    expect(newTask.compareDocumentPosition(processFeedback) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(processFeedback);
+    expect(onProcessFeedback).toHaveBeenCalledOnce();
+  });
+
   it("shows a persisted running state and exposes select and new-task actions", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
