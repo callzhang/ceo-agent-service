@@ -62,6 +62,11 @@ def register_console_routes(
         return {"ok": ok, "item": json_safe(item), "message": message,
                 "meta": {"updated_at": snapshot_at()}}
 
+    def feedback_status(row: Any, processing: Any = None) -> str:
+        if row.resolved_at.strip() or row.reviewer_feedback.strip() or row.corrected_reply_text.strip():
+            return "resolved"
+        return processing.status if processing is not None else "pending"
+
     async def json_object(request: Request) -> dict[str, Any]:
         if "application/json" not in request.headers.get("content-type", ""):
             raise HTTPException(status_code=415, detail="JSON Content-Type required")
@@ -228,7 +233,7 @@ def register_console_routes(
         filtered = []
         for row in all_rows:
             processing = store.get_feedback_processing_item(row.key)
-            row_status = "resolved" if row.resolved_at.strip() else (processing.status if processing is not None else "pending")
+            row_status = feedback_status(row, processing)
             haystack = " ".join((row.comment, row.conversation_title, row.trigger_sender, row.trigger_text, row_status)).casefold()
             if (status.strip() and row_status != status.strip()) or (needle and needle not in haystack):
                 continue
@@ -282,10 +287,14 @@ def register_console_routes(
             raise HTTPException(status_code=400, detail="workbench_turn_id must be a string")
         cleaned_batch_id = batch_id.strip() if isinstance(batch_id, str) else uuid4().hex
         claim_store = store_factory()
-        known_keys = {row.key for row in claim_store.list_user_feedback_items(limit=10000, offset=0)}
+        known_rows = claim_store.list_user_feedback_items(limit=10000, offset=0)
+        known_keys = {row.key for row in known_rows}
         missing = [key for key in keys if key not in known_keys]
         if missing:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {"feedback_keys": missing}}, status_code=404)
+        historical = [row.key for row in known_rows if row.key in keys and (row.resolved_at.strip() or row.reviewer_feedback.strip() or row.corrected_reply_text.strip())]
+        if historical:
+            return JSONResponse({"ok": False, "code": "feedback_already_processing", "message": "反馈已完成处理，不能重新领取", "details": {"feedback_keys": historical}}, status_code=409)
         try:
             claimed = claim_store.claim_feedback_processing_items(cleaned_batch_id, keys)
         except FeedbackProcessingClaimError as exc:
@@ -405,7 +414,7 @@ def register_console_routes(
             "conversation_title": row.conversation_title, "trigger_sender": row.trigger_sender,
             "trigger_text": row.trigger_text, "summary": persisted_feedback_summary(row),
             "references": detail_references(row),
-            "status": "resolved" if row.resolved_at.strip() else (processing.status if processing else "pending"),
+            "status": feedback_status(row, processing),
             "batch_id": processing.batch_id if processing else "",
             "processing_task_id": processing.workbench_task_id if processing else "",
             "processing": json_safe(processing) if processing else None,

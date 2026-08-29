@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 import app.audit_web as audit_web_module
 from app.audit_web import create_audit_app
 from app.store import AutoReplyStore
+from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
 from app.web_api.common import (
     ApiItemEnvelope,
@@ -158,6 +159,23 @@ def test_feedback_item_invalid_status_does_not_mutate_association(tmp_path: Path
     assert item.batch_id == batch_id
     assert item.workbench_task_id == ""
     assert item.workbench_turn_id == ""
+
+
+def test_feedback_history_with_corrected_reply_is_resolved_and_not_claimable(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    store.record_sent_reply("cid-1", "msg-1", "先按A方案走", feedback_token="token-1")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    store.record_reply_feedback(attempt_id, feedback="已修正", corrected_reply_text="修正版")
+
+    with _client(tmp_path) as client:
+        listed = client.get("/api/console/feedback?status=resolved")
+        conflict = client.post("/api/console/feedback/batches", json={"feedback_keys": ["feedback-1"]})
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["status"] == "resolved"
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "feedback_already_processing"
 
 
 def test_attention_grouping_keeps_records_and_uses_root_cause_context_key():
