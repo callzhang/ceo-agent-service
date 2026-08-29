@@ -7081,6 +7081,36 @@ def test_recovered_reply_attempt_is_not_reported_or_rendered_as_failed(
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
+def test_attention_includes_recent_unresolved_service_errors(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error(
+        "cid-service-error",
+        "msg-service-error",
+        "runtime_route_unavailable",
+        "runtime route is unavailable",
+    )
+    store.record_error(
+        "cid-resolved-error",
+        "msg-resolved-error",
+        "send",
+        "already recovered",
+    )
+    [resolved] = [
+        error
+        for error in store.list_errors()
+        if error.kind == "send"
+    ]
+    store.resolve_errors([resolved.id], resolution="recovered")
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    service_rows = [row for row in rows if row["category"] == "Service error"]
+    assert len(service_rows) == 1
+    assert service_rows[0]["status"] == "failed"
+    assert service_rows[0]["context"] == "runtime_route_unavailable"
+    assert service_rows[0]["summary"] == "runtime route is unavailable"
+
+
 def test_runtime_route_failure_detail_shows_later_task_recovery(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

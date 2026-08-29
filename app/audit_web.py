@@ -2685,6 +2685,42 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                         "error": str(row["error"] or ""),
                     }
                 )
+        if _sqlite_table_exists(db, "errors"):
+            recovered_statuses = tuple(RECOVERED_REPLY_ATTEMPT_STATUSES)
+            recovered_placeholders = ",".join("?" for _ in recovered_statuses)
+            for row in db.execute(
+                f"""
+                select error_event.id, error_event.kind, error_event.detail,
+                       error_event.created_at
+                from errors error_event
+                where datetime(error_event.created_at) >= datetime('now', '-4 hours')
+                  and coalesce(error_event.resolved_at, '') = ''
+                  and error_event.kind <> 'codex_capacity_pause'
+                  and not exists (
+                    select 1
+                    from reply_attempts recovery
+                    where recovery.conversation_id=error_event.conversation_id
+                      and recovery.trigger_message_id=error_event.message_id
+                      and datetime(recovery.updated_at) >= datetime(error_event.created_at)
+                      and lower(recovery.send_status) in ({recovered_placeholders})
+                  )
+                order by error_event.created_at desc, error_event.id desc
+                limit ?
+                """,
+                (*recovered_statuses, limit),
+            ).fetchall():
+                detail = str(row["detail"] or row["kind"] or "unresolved service error")
+                rows.append(
+                    {
+                        "category": "Service error",
+                        "id": str(row["id"]),
+                        "status": "failed",
+                        "context": str(row["kind"] or "service error"),
+                        "summary": detail,
+                        "updated_at": str(row["created_at"] or ""),
+                        "error": detail,
+                    }
+                )
     for attempt in store.list_current_unresolved_problem_attempts(limit=limit):
         trigger_key = (
             attempt.channel,
