@@ -145,9 +145,11 @@ def detail_references(item: "UserFeedbackItem") -> list[dict[str, str]]:
     run_id = int(getattr(item, "agent_run_id", 0) or 0)
     if run_id > 0:
         if attempt_id > 0:
-            role = str(getattr(item, "attempt_role", "execution") or "execution").strip()
-            if role:
+            role = str(getattr(item, "attempt_role", "") or "").strip().casefold()
+            if role in {"consumer", "audit"}:
                 add(f"run#{run_id}", f"/attempts/{attempt_id}/execution/{role}")
+            else:
+                refs.append({"label": f"run#{run_id}", "route": ""})
         else:
             # There is no standalone public run route; retain the human label
             # only rather than manufacturing a route under another ID.
@@ -194,7 +196,12 @@ def _all_test_exit_codes_zero(value: object) -> tuple[bool, bool]:
     if isinstance(value, dict):
         if "exit_code" in value:
             try:
-                child_ok = int(value["exit_code"]) == 0
+                raw_exit_code = value["exit_code"]
+                child_ok = (
+                    isinstance(raw_exit_code, int)
+                    and not isinstance(raw_exit_code, bool)
+                    and raw_exit_code == 0
+                )
             except (TypeError, ValueError):
                 child_ok = False
             checks = [
@@ -238,7 +245,15 @@ def validate_resolution_evidence(
     if label != "com.ceo-agent-service.main" or before in (None, "") or after in (None, ""):
         raise ValueError("resolution requires launchd label and before/after PIDs")
     try:
-        if int(before) <= 0 or int(after) <= 0 or int(before) == int(after):
+        if (
+            not isinstance(before, int)
+            or isinstance(before, bool)
+            or not isinstance(after, int)
+            or isinstance(after, bool)
+            or before <= 0
+            or after <= 0
+            or before == after
+        ):
             raise ValueError
     except (TypeError, ValueError) as exc:
         raise ValueError("resolution requires distinct positive before/after PIDs") from exc
@@ -258,6 +273,8 @@ def validate_resolution_evidence(
         raise ValueError("resolution health evidence must be local")
     if status is not None:
         if status not in (200, "200", "ok", "healthy", "success"):
+            raise ValueError("resolution requires successful local health evidence")
+        if success is False:
             raise ValueError("resolution requires successful local health evidence")
     elif success is not True:
         raise ValueError("resolution requires successful local health evidence")

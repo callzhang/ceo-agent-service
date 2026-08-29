@@ -410,7 +410,7 @@ class UserFeedbackItem(BaseModel):
     attempt_id: int = 0
     agent_run_id: int = 0
     codex_session_id: str = ""
-    attempt_role: str = "execution"
+    attempt_role: str = ""
     project_id: int = 0
     processing_status: str = "pending"
     conversation_title: str = ""
@@ -13052,6 +13052,7 @@ class AutoReplyStore:
             raise ValueError("batch_id must not be empty")
         keys = list(dict.fromkeys(key.strip() for key in feedback_keys if key.strip()))
         with self._connect() as db:
+            db.execute("begin immediate")
             existing_batch = db.execute(
                 "select * from feedback_processing_batches where batch_id=?",
                 (cleaned_batch_id,),
@@ -13335,6 +13336,8 @@ class AutoReplyStore:
             ("health_evidence_json", health_evidence),
         ):
             if value is not None:
+                if not isinstance(value, dict):
+                    raise TypeError(f"{field} must be a JSON object")
                 assignments.append(f"{field}=?")
                 args.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
         for field, value in (("commit_sha", commit_sha), ("note", note), ("status", status)):

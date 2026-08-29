@@ -98,7 +98,7 @@ def test_claim_associate_patch_and_resolve_feedback_batch(tmp_path: Path):
         workbench_task_id="task-1",
         workbench_turn_id="turn-1",
         attempt_id=12,
-        agent_run_id=34,
+            agent_run_id=34,
     )
     assert associated is not None
     assert associated.workbench_turn_id == "turn-1"
@@ -285,6 +285,7 @@ def test_summary_and_references_are_deterministic_and_persisted_only():
         agent_run_id=34,
         codex_session_id="session-1",
         project_id=56,
+        attempt_role="consumer",
     )
     assert persisted_feedback_summary(item) == "audit"
     refs = detail_references(item)
@@ -317,6 +318,9 @@ def test_resolution_evidence_requires_current_head_and_success_receipts():
         complete.model_copy(update={"test_evidence": {"pytest": {"exit_code": 1}}}),
         complete.model_copy(update={"restart_evidence": {"launchd_label": "x", "before_pid": 1}}),
         complete.model_copy(update={"health_evidence": {"status_code": 503, "ok": True, "url": "http://127.0.0.1:8765/health"}}),
+        complete.model_copy(update={"test_evidence": {"pytest": {"exit_code": "0"}}}),
+        complete.model_copy(update={"restart_evidence": {"launchd_label": "com.ceo-agent-service.main", "before_pid": True, "after_pid": 2}}),
+        complete.model_copy(update={"health_evidence": {"status_code": 200, "ok": False, "url": "http://127.0.0.1:8765/health"}}),
     ):
         with pytest.raises(ValueError):
             validate_resolution_evidence(bad, current_head=head)
