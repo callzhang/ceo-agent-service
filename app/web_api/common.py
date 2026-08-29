@@ -51,6 +51,8 @@ def json_safe(value: Any) -> Any:
     if isinstance(value, (datetime, date, time)):
         return value.isoformat()
     if value is None or isinstance(value, (str, int, float, bool)):
+        if value == "<structured error>":
+            return "连接器诊断暂不可用；请展开技术详情或重新检查连接器。"
         return value
     if isinstance(value, dict):
         return {str(key): json_safe(item) for key, item in value.items()}

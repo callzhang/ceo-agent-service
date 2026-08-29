@@ -10,6 +10,7 @@ from app.web_api.attention import group_attention_rows
 from app.web_api.common import (
     ApiItemEnvelope,
     ApiMeta,
+    json_safe,
     normalize_display_value,
 )
 
@@ -93,6 +94,7 @@ def test_common_envelopes_and_normalization_are_explicitly_json_serializable():
     assert normalize_display_value(["one", {"text": "two"}]) == '["one", {"text": "two"}]'
     assert normalize_display_value(None) == ""
     assert "[object Object]" not in normalize_display_value({"nested": {"value": 1}})
+    assert "<structured error>" not in json.dumps(json_safe({"detail": "<structured error>"}), ensure_ascii=False)
 
 
 def test_attention_grouping_keeps_records_and_uses_root_cause_context_key():
