@@ -1,7 +1,7 @@
 # Feedback Processing API and Workbench Integration Design
 
 Date: 2026-08-29  
-Status: design approved in conversation; implementation not started
+Status: React-aware design revision; implementation not started
 
 ## 1. Goal and scope
 
@@ -25,6 +25,14 @@ The feedback API follows the existing local service boundary (for example,
 `127.0.0.1:8765`). It is not publicly exposed and has no feedback-specific
 authentication layer. If the entire service later needs remote access, that
 will be designed as a separate backend-wide change.
+
+The current UI baseline is React/Vite. The implementation must extend the
+existing Console API and React components rather than add a parallel HTML
+workflow: `frontend/src/app.tsx` owns the Workbench shell, `TaskList` owns the
+left task list, `app.tsx` already owns an accessible Inspector drawer, and
+`frontend/src/pages/FeedbackPage.tsx` already consumes the Console feedback
+resource. The legacy HTML handlers remain compatibility surfaces but are not
+the React feature's primary implementation target.
 
 ## 2. Responsibilities and data flow
 
@@ -70,8 +78,10 @@ feedback or silently return it to history.
 
 ### 3.1 Read operations
 
-`GET /api/feedback?status=pending&limit=50` returns the fields required by the
-Workbench drawer:
+The API uses the existing React Console namespace:
+
+`GET /api/console/feedback?status=pending&page_size=50` returns the fields
+required by the Workbench drawer:
 
 - stable `feedback_key` (the existing `feedback_events.key`);
 - rating, comment, received time, and current processing state;
@@ -91,13 +101,13 @@ surfaces the sync problem without preventing local reads. This makes the
 attempt `8308` regression testable through the same path as newly received
 feedback.
 
-`GET /api/feedback/{feedback_key}` returns the complete original event,
+`GET /api/console/feedback/{feedback_key}` returns the complete original event,
 related attempt/run/task data, persisted summary, detail references, and any
 processing records.
 
 ### 3.2 Processing operations
 
-`POST /api/feedback/batches` atomically claims a multi-selection. Its request
+`POST /api/console/feedback/batches` atomically claims a multi-selection. Its request
 contains:
 
 ```json
@@ -114,20 +124,20 @@ returns a stable `batch_id` and all claimed item keys. The transaction checks
 that every item is still `pending`; if any item is already owned, the whole
 request returns `409 feedback_already_processing` with no partial claim.
 
-An idempotent batch update associates the created Workbench turn after the turn
-is persisted. If turn creation fails, the batch remains `processing` and can be
-resumed from the same task.
+`PATCH /api/console/feedback/batches/{batch_id}` idempotently associates the
+created Workbench turn after the turn is persisted. If turn creation fails, the
+batch remains `processing` and can be resumed from the same task.
 
-`PATCH /api/feedback/items/{feedback_key}` stores processing facts supplied by
+`PATCH /api/console/feedback/items/{feedback_key}` stores processing facts supplied by
 the Skill, including associated attempt/run/task references, commit SHA,
 test evidence, restart evidence, health evidence, and a concise note. It cannot
 move a resolved item back to pending and repeated writes of the same evidence
 are idempotent.
 
-`GET /api/feedback/batches/{batch_id}` returns the batch and item-level state so
+`GET /api/console/feedback/batches/{batch_id}` returns the batch and item-level state so
 the Skill can recover after an interrupted conversation.
 
-`POST /api/feedback/batches/{batch_id}/resolve` accepts a complete evidence
+`POST /api/console/feedback/batches/{batch_id}/resolve` accepts a complete evidence
 payload and performs the final transaction. Before changing state, the API
 requires:
 
@@ -158,6 +168,12 @@ The existing `用户反馈` page reads the same processing projection. Its badge
 counts only unclaimed pending items; rows show pending, processing, or
 resolved. Existing `resolved_at` and corrected-reply history remain immutable
 history and are not re-claimed by migration.
+
+The current `POST /api/console/feedback/{feedback_id}/resolve` endpoint is
+retained only as a compatibility URL and always rejects evidence-free direct
+resolution with `409 feedback_batch_required`. The React “标记已处理” button is
+removed. The legacy HTML resolve handler follows the same rule. Only the batch
+resolve endpoint can change a processing item to `resolved`.
 
 ## 4. Repository-level Skill
 
@@ -196,14 +212,18 @@ does not call a model or synthesize a new summary.
 
 ## 5. Workbench UI and import behavior
 
-The left task list receives one button immediately below `新任务`:
+The existing React task list receives one button immediately below `新任务`:
 
 `处理反馈 · N`
 
-where `N` is the count of pending, unclaimed feedback items. Clicking it opens
-a right-side drawer while keeping the current task and conversation visible.
+where `N` is the count of pending, unclaimed feedback items. `TaskList` receives
+the count and an `onProcessFeedback` callback from `frontend/src/app.tsx`.
+Clicking it opens a new `FeedbackDrawer` while keeping the current task and
+conversation visible.
 
-The drawer:
+`FeedbackDrawer` reuses the existing Inspector drawer's responsive layout,
+scrim, focus restoration, and `aria` behavior; it has its own open/selection
+state so it cannot overwrite the turn Inspector state. It:
 
 - loads pending items from the feedback API;
 - shows rating, existing summary, received time, and detail paths;
@@ -227,7 +247,9 @@ implementation and API writeback. It does not contain a model-generated
 summary or a second copy of the full feedback body.
 
 The UI does not add coding, testing, commit, restart, or evidence forms. The
-Agent and backend API own those operations.
+Agent and backend API own those operations. The existing React Console API
+envelope (`items`, `meta`, `ConsoleApiError`) is reused for feedback calls; a
+second frontend response parser is not introduced.
 
 ## 6. Migration and compatibility
 
@@ -236,7 +258,7 @@ tables and indexes, preserving all existing `feedback_events` rows. Existing
 feedback rows, including the event associated with attempt `8308`, remain
 visible in `用户反馈` and become claimable when they are not already resolved.
 
-The current feedback sync path remains available from `同步最新反馈`; the new
+The current React `同步最新反馈` action remains available; the new Console
 API reuses its bounded implementation for local reads. No
 `service_bugfix_candidates` table, route, or page is restored.
 
@@ -244,8 +266,8 @@ API reuses its bounded implementation for local reads. No
 
 The implementation is ready only when all of the following are demonstrated:
 
-1. The attempt `8308` feedback event appears in `用户反馈` and in
-   `GET /api/feedback?status=pending` when unresolved.
+1. The attempt `8308` feedback event appears in the React `用户反馈` page and
+   in `GET /api/console/feedback?status=pending` when unresolved.
 2. Selecting two or more items claims them atomically and creates one startup
    turn containing only persisted summaries and detail references.
 3. A concurrent claim cannot partially take the same selection.
@@ -255,8 +277,9 @@ The implementation is ready only when all of the following are demonstrated:
    only the local API and repository operations.
 6. Resolve rejects incomplete or inconsistent evidence and accepts a complete
    commit/test/restart/health receipt, marking every item resolved together.
-7. Focused backend, Workbench frontend, migration, and Skill contract tests
-   pass, followed by the required runtime restart and live readback.
+7. Focused backend, Console API, Workbench frontend, migration, and Skill
+   contract tests pass; `npm run build:workbench` succeeds; then the required
+   runtime restart and live readback complete.
 
 ## 8. Out of scope
 
