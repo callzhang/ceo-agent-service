@@ -45,6 +45,7 @@ from app.native_cli_metadata import (
     replace_dingtalk_message_text,
     service_read_command_contract,
 )
+from app.prompt import work_profile_instruction
 from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
 
@@ -61,6 +62,14 @@ AUDIT_DYNAMIC_SKILL_COMPATIBILITY = f"{DYNAMIC_SKILL_MARKER} {AUDIT_DYNAMIC_SKIL
 CONSUMER_DYNAMIC_SKILL_BODY = f"{DYNAMIC_SKILL_MARKER} {CONSUMER_DYNAMIC_SKILL_SENTENCE}"
 AUDIT_DYNAMIC_SKILL_BODY = AUDIT_DYNAMIC_SKILL_COMPATIBILITY
 CORE_DYNAMIC_SKILL_BODY = f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_SENTENCE}"
+AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION = """
+Use the current work profile, complete conversation context, and inspected
+materials to judge whether the candidate genuinely responds in the principal's
+role. A receipt acknowledgment may be an opening or interim state, but receipt
+alone does not complete a response to substantive input that calls for the
+principal's engagement. Return feedback_provided when the candidate must be
+regenerated; do not rewrite it yourself.
+""".strip()
 SHARED_RULES_PATH = Path.home() / ".agents" / "AGENT.md"
 REVIEWED_DWS_READ_INSTRUCTIONS = """
 Use the capabilities available to the calling agent to gather the evidence
@@ -147,6 +156,7 @@ def consumer_wire_contract_hash() -> str:
         "business_skill_protocol": render_business_skill_protocol(
             installed_business_skill_catalog()
         ),
+        "work_profile_instruction": work_profile_instruction(),
         "service_read_commands": service_read_command_contract(),
         "wire_schema": ConsumerAgentWireResult.model_json_schema(),
     }
@@ -601,7 +611,16 @@ def consumer_developer_instructions(
         capability_instructions=REVIEWED_DWS_READ_INSTRUCTIONS,
         role_boundary=CONSUMER_ROLE_BOUNDARY.replace("Derek", principal_display_name()),
     )
-    return instructions + "\n\n" + _CONSUMER_AGENT_RULES + (f"\n\n{skill_protocol}" if skill_protocol else "")
+    return "\n\n".join(
+        part
+        for part in (
+            instructions,
+            _CONSUMER_AGENT_RULES,
+            skill_protocol,
+            work_profile_instruction(),
+        )
+        if part
+    )
 
 
 def audit_developer_instructions(
@@ -629,7 +648,14 @@ def audit_developer_instructions(
             "must change, and ordinary failed when execution or a dependency does not complete."
         ), role_boundary=AUDIT_ROLE_BOUNDARY,
     )
-    return instructions + "\n\n" + _AUDIT_AGENT_RULES
+    return "\n\n".join(
+        (
+            instructions,
+            _AUDIT_AGENT_RULES,
+            AUDIT_RESPONSE_COMPLETENESS_INSTRUCTION,
+            work_profile_instruction(),
+        )
+    )
 
 
 def _developer_instructions(

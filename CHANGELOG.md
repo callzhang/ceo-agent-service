@@ -1,5 +1,12 @@
 # Changelog
 
+- 2026-08-29: ordinary Consumer and Audit turns now receive the configured
+  work profile, and profile changes rotate stale Consumer sessions. Audit asks
+  Consumer for a replacement when a safe receipt-only candidate does not
+  genuinely engage with substantive input; the response itself remains guided
+  by the current profile, conversation, and inspected evidence rather than a
+  domain template or keyword classifier.
+
 - 2026-08-29: add the local user-feedback processing workflow. Pending
   feedback can be claimed as a deterministic batch, imported into a Workbench
   brainstorm conversation with attempt/run/task references, and resolved only

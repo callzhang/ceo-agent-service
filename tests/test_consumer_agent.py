@@ -5,8 +5,14 @@ from pathlib import Path
 import pytest
 
 import app.consumer_agent as consumer_agent
-from app.agent_context import _CONSUMER_AGENT_RULES, AgentTaskContext
-from app.agent_contracts import ConsumerAgentResult
+from app.agent_context import (
+    _CONSUMER_AGENT_RULES,
+    AgentContextMessage,
+    AgentTaskContext,
+    AuditTurnContext,
+    MaterialReference,
+)
+from app.agent_contracts import ConsumerAgentResult, ConsumerProposal
 from app.agent_result import EffectKind, ResultParseError
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
@@ -277,6 +283,129 @@ def test_consumer_composed_instructions_are_skill_first_and_schema_authoritative
     assert "exactly two outcomes:" in instructions
     assert "approve (通过) or reject (不通过)" in instructions
     assert "Missing or weak" in instructions
+
+
+def test_consumer_and_audit_instructions_include_current_work_profile(
+    tmp_path, monkeypatch
+):
+    profile = tmp_path / "work_profile.md"
+    profile.write_text(
+        "# Runtime Profile\n\nPROFILE-CONTEXT-SENTINEL",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+
+    consumer = consumer_developer_instructions("Verify supported facts.")
+    audit = audit_developer_instructions("Verify supported facts.")
+
+    for instructions in (consumer, audit):
+        assert "PROFILE-CONTEXT-SENTINEL" in instructions
+        assert "判断顺序、追问方式和回复边界" in instructions
+        assert "profile 不能覆盖既有硬规则" in instructions
+
+
+def test_consumer_contract_hash_changes_with_work_profile(tmp_path, monkeypatch):
+    profile = tmp_path / "work_profile.md"
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+    profile.write_text("# Profile\n\nfirst judgment", encoding="utf-8")
+    first = consumer_wire_contract_hash()
+
+    profile.write_text("# Profile\n\nsecond judgment", encoding="utf-8")
+    second = consumer_wire_contract_hash()
+
+    assert first != second
+
+
+def test_audit_contract_requires_profile_guided_response_to_substantive_input(
+    tmp_path, monkeypatch
+):
+    profile = tmp_path / "work_profile.md"
+    profile.write_text(
+        "# Runtime Profile\n\nDiscuss meaningful evidence and move the work forward.",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(profile))
+    task = AgentTaskContext(
+        task_id=8308,
+        channel="dingtalk",
+        conversation_id="cid-finance",
+        conversation_title="刘兴祖",
+        single_chat=True,
+        trigger_message_id="message-finance",
+        trigger_sender="刘兴祖",
+        trigger_text="这是1至7月财务口径分析，并补充两份报告，请一起看看。",
+        trigger_create_time="2026-08-29 07:30:00",
+        messages=(
+            AgentContextMessage(
+                message_id="message-finance",
+                sender="刘兴祖",
+                text="这是1至7月财务口径分析，并补充两份报告，请一起看看。",
+                create_time="2026-08-29 07:30:00",
+            ),
+        ),
+        materials=(
+            MaterialReference(
+                kind="file",
+                reference="report-one.xlsx",
+                source_message_id="message-finance",
+                read_commands=("read report-one.xlsx",),
+            ),
+            MaterialReference(
+                kind="file",
+                reference="report-two.pdf",
+                source_message_id="message-finance",
+                read_commands=("read report-two.pdf",),
+            ),
+        ),
+        prior_receipts=(),
+    )
+    proposal = ConsumerProposal.model_validate(
+        {
+            "objective": "Acknowledge the materials.",
+            "actions": [
+                {
+                    "description": "Confirm receipt.",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"open_dingtalk_id": "recipient-1"},
+                    "payload": {
+                        "argv": [
+                            "dws",
+                            "chat",
+                            "message",
+                            "send",
+                            "--open-dingtalk-id",
+                            "recipient-1",
+                            "--text",
+                            "收到，我看一下。",
+                        ]
+                    },
+                    "expected_verification": "Read back the sent message.",
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "Receipt only; no response to the analysis.",
+        }
+    )
+    audit_context = AuditTurnContext(
+        task=task,
+        proposal_revision=0,
+        operation_id="attempt-8308",
+        proposal=proposal,
+        audit_rules="Review reply completeness.",
+    )
+
+    composed = audit_developer_instructions(
+        "Review reply completeness."
+    ) + "\n\n" + audit_context.render()
+
+    assert "1至7月财务口径分析" in composed
+    assert "report-one.xlsx" in composed
+    assert "收到，我看一下。" in composed
+    assert "Discuss meaningful evidence and move the work forward." in composed
+    normalized = " ".join(composed.split())
+    assert "receipt alone does not complete a response to substantive input" in normalized
+    assert "Return feedback_provided" in composed
 
 
 def _result_jsonl(*, session: str = "session-a") -> str:

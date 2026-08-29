@@ -102,3 +102,24 @@ def test_message_triage_skill_has_no_command_catalog_or_python_router():
 
     assert "An `@all` broadcast with no principal action" in text
     assert "Reuse confirmed facts" in text
+
+
+def test_message_triage_skill_does_not_treat_receipt_as_substantive_completion():
+    text = _skill_text()
+
+    for required in (
+        "smallest response that genuinely satisfies the message",
+        "incoming acknowledgment",
+        "outgoing receipt confirmation",
+        "current work profile",
+        "substantive material",
+    ):
+        assert required in text
+
+    for forbidden in (
+        "financial material",
+        "three questions",
+        "minimum reply length",
+        "re.compile",
+    ):
+        assert forbidden not in text
