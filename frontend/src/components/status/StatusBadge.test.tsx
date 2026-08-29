@@ -15,6 +15,7 @@ describe("StatusBadge", () => {
     ["Not active", "未启用", "status-neutral"],
     ["sending", "发送中", "status-progress"],
     ["needs_action", "需要处理", "status-warning"],
+    ["wechat_window_unavailable", "微信窗口不可用", "status-danger"],
     ["unknown", "未知", "status-neutral"],
   ])("maps %s to a stable label and semantic tone", (value, label, tone) => {
     render(<StatusBadge value={value} />);
