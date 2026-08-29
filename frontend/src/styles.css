@@ -59,14 +59,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 
 .workbench-root.workbench-embedded {
   grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
 }
 
 .workbench-root.workbench-embedded .workbench-shell {
-  height: 100vh;
+  height: 100%;
 }
 
 .console-root {
   min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--canvas);
 }
 
@@ -577,7 +581,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   display: grid;
   grid-template-columns: minmax(260px, 310px) minmax(430px, 1fr) minmax(250px, 292px);
   min-height: 0;
-  height: calc(100vh - 52px);
+  height: 100%;
   background: var(--canvas);
 }
 

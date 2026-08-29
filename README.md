@@ -455,7 +455,7 @@ http://127.0.0.1:8765/
 
 常用页面：
 
-- `/`：Agent Workbench，用于创建和继续 agent 任务、查看流式进度、产物与待确认操作
+- `/`：Agent Workbench，用于创建和继续 agent 任务、查看流式进度、产物与待确认操作；工作区高度由 SPA 外层布局扣除顶部导航的实际高度，桌面单行导航和移动端双行导航都不使用固定像素猜测
 - `/history`：React SPA 回复与执行历史；“检索对象”可分别筛选普通钉钉回复、微信、审批、task 和 meeting，状态筛选支持 sent、reacted、skipped、blocked、failed 和 done。详情页统一显示业务结果，Runtime details 默认折叠。
 - Attention 中的运行错误使用 `/history/errors/{error_id}` 只读详情页；错误记录 ID 属于 `errors` 表，不会再被误当成 `reply_attempts` 的 Attempt ID。
 - History 的状态筛选按当前可处理性展示：同一触发消息或同一会后任务已经有后续结果时，旧 `failed` / `blocked` / `ready_to_send` 行保留为审计证据，但不再进入 active failed/blocked/pending 筛选；尚无后续结果的 blocked 统一显示为可恢复的 `Blocked`。

@@ -311,13 +311,21 @@ describe("TaskList", () => {
   });
 
   it("gives the virtualized task list a bounded viewport through explicit flex ancestors", () => {
+    const consoleRoot = styleFor(".console-root");
+    expect(consoleRoot.display).toBe("grid");
+    expect(consoleRoot.gridTemplateRows).toBe("auto minmax(0, 1fr)");
+
     const root = styleFor(".workbench-root");
     expect(root.display).toBe("grid");
     expect(root.gridTemplateRows).toBe("auto minmax(0, 1fr)");
 
     const shell = styleFor(".workbench-shell");
-    expect(shell.height).toBe("calc(100vh - 52px)");
+    expect(shell.height).toBe("100%");
     expect(shell.minHeight).toBe("0px");
+
+    const embeddedRoot = styleFor(".workbench-root.workbench-embedded");
+    expect(embeddedRoot.height).toBe("100%");
+    expect(embeddedRoot.minHeight).toBe("0px");
 
     const panel = styleFor(".task-panel");
     expect(panel.display).toBe("flex");
