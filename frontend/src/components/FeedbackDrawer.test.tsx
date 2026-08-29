@@ -86,6 +86,18 @@ describe("FeedbackDrawer", () => {
     expect(screen.getByRole("button", { name: "导入并开始 brainstorm" })).toBeDisabled();
   });
 
+  it("keeps a processing error resumable with the selected rows visible", async () => {
+    const user = userEvent.setup();
+    const props = baseProps();
+    render(<FeedbackDrawer {...props} selected={new Set(["fb-1"])} error="关联失败，可重试" />);
+    expect(screen.getByRole("alert")).toHaveTextContent("关联失败，可重试");
+    expect(screen.getByText("修复任务状态")).toBeInTheDocument();
+    const importButton = screen.getByRole("button", { name: "导入并开始 brainstorm" });
+    expect(importButton).toBeEnabled();
+    await user.click(importButton);
+    expect(props.onImport).toHaveBeenCalledOnce();
+  });
+
   it("keeps hook order stable when opening and closing", () => {
     const props = baseProps();
     const { rerender } = render(<FeedbackDrawer {...props} open={false} />);
