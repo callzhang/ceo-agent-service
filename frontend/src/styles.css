@@ -136,7 +136,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .settings-pill-row { display: inline-flex; gap: 3px; margin: 16px 0; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-muted); }
 .settings-pill-row a { min-height: 32px; padding: 7px 14px; border-radius: 999px; color: var(--ink-soft); text-decoration: none; font-size: 0.78rem; font-weight: 700; white-space: nowrap; }
 .settings-pill-row a:hover { color: var(--ink); }
-.settings-pill-row a.active { color: white; background: #1c1c1c; }
+.settings-pill-row a.active, .settings-pill-row a[aria-selected="true"] { color: white; background: #1c1c1c; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%); }
+.settings-pill-row a[aria-selected="false"] { color: var(--ink-soft); background: transparent; }
 .settings-view-row { margin-top: 0; }
 .settings-collapse { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 .settings-collapse summary { cursor: pointer; font-weight: 700; }
