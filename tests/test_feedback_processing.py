@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from app.feedback_processing import (
     FeedbackImportItem,
+    FEEDBACK_PROCESSING_ALREADY_PROCESSING_ERROR,
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
     FeedbackProcessingItem,
@@ -150,8 +151,9 @@ def test_claim_cannot_move_processing_item_to_another_batch(tmp_path: Path):
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
     assert store.claim_feedback_processing_items("batch-1", ["feedback-1"])
 
-    with pytest.raises(FeedbackProcessingClaimError):
+    with pytest.raises(FeedbackProcessingClaimError) as error:
         store.claim_feedback_processing_items("batch-2", ["feedback-1"])
+    assert error.value.error_code == FEEDBACK_PROCESSING_ALREADY_PROCESSING_ERROR
     assert store.get_feedback_processing_item("feedback-1").batch_id == "batch-1"
     assert store.get_feedback_processing_batch("batch-2") is None
 

@@ -17,12 +17,15 @@ if TYPE_CHECKING:
     from app.store import UserFeedbackItem
 
 FEEDBACK_PROCESSING_CLAIM_ERROR = "feedback processing claim rejected"
+FEEDBACK_PROCESSING_ALREADY_PROCESSING_ERROR = "feedback_already_processing"
 FEEDBACK_PROCESSING_BATCH_ERROR = "feedback processing batch definition conflict"
 FEEDBACK_PROCESSING_SKILL_PATH = "skills/ceo-feedback-processing/SKILL.md"
 
 
 class FeedbackProcessingClaimError(ValueError):
     """Raised when a feedback batch cannot be claimed atomically."""
+
+    error_code = FEEDBACK_PROCESSING_ALREADY_PROCESSING_ERROR
 
 
 class FeedbackProcessingBatchError(ValueError):
