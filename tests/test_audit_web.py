@@ -8538,6 +8538,12 @@ def test_render_attempt_detail_keeps_blocked_pill_despite_later_oa_result(
 def test_handle_feedback_post_updates_attempt_and_redirects(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
+    store.record_sent_reply(
+        "cid-1",
+        "msg-1",
+        "先按A方案走（by明哥分身）",
+        feedback_token="manual-feedback-token",
+    )
     body = (
         "feedback=%E9%9C%80%E8%A6%81%E6%9B%B4%E4%B8%A5%E8%B0%A8"
         "&corrected_reply=%E5%85%88%E7%9C%8B%E6%9D%90%E6%96%99"
@@ -8552,6 +8558,13 @@ def test_handle_feedback_post_updates_attempt_and_redirects(tmp_path: Path):
     assert attempt is not None
     assert attempt.reviewer_feedback == "需要更严谨"
     assert attempt.corrected_reply_text == "先看材料"
+    events = store.list_feedback_events_for_tokens(["manual-feedback-token"])[
+        "manual-feedback-token"
+    ]
+    assert len(events) == 1
+    assert events[0].key == f"manual:{attempt_id}"
+    assert events[0].comment == "需要更严谨"
+    assert events[0].original_text == attempt.trigger_text
 
 
 def test_handle_rerun_attempt_post_requeues_task_and_redirects(tmp_path: Path):

@@ -8483,6 +8483,26 @@ def handle_feedback_post(
         corrected_reply_text=corrected_reply,
     ):
         return 404, {}, render_page("Attempt not found", "Attempt not found")
+    # Keep the attempt review and the user-feedback inbox in sync.  The
+    # feedback token belongs to the sent reply, so this remains a real
+    # association rather than an invented event identity.
+    attempt = store.get_reply_attempt(attempt_id)
+    sent_reply = (
+        store.get_sent_reply(attempt.conversation_id, attempt.trigger_message_id)
+        if attempt is not None
+        else None
+    )
+    if attempt is not None and sent_reply is not None and sent_reply.feedback_token.strip():
+        store.upsert_feedback_event(
+            key=f"manual:{attempt_id}",
+            feedback_token=sent_reply.feedback_token.strip(),
+            rating_label="用户反馈",
+            comment=feedback,
+            original_text=attempt.trigger_text,
+            reply_text=attempt.final_reply_text or attempt.draft_reply_text,
+            source="workbench",
+            received_at=datetime.now(timezone.utc).isoformat(),
+        )
     return 303, {"Location": f"/attempts/{attempt_id}"}, ""
 
 
