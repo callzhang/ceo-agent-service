@@ -1015,13 +1015,18 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
     const cached = feedbackPendingCacheRef.current;
     setFeedbackLoading(!cached);
     setFeedbackError("");
-    setFeedbackSelected(new Set());
-    feedbackSubmitRef.current.batch = null;
-    feedbackSubmitRef.current.batchId = "";
-    feedbackSubmitRef.current.task = null;
-    feedbackSubmitRef.current.turn = null;
-    feedbackSubmitRef.current.associated = false;
-    feedbackSubmitRef.current.keys = [];
+    const resumable = feedbackSubmitRef.current.keys.length > 0 && Boolean(
+      feedbackSubmitRef.current.batchId || feedbackSubmitRef.current.batch || feedbackSubmitRef.current.turn,
+    );
+    setFeedbackSelected(new Set(resumable ? feedbackSubmitRef.current.keys : []));
+    if (!resumable) {
+      feedbackSubmitRef.current.batch = null;
+      feedbackSubmitRef.current.batchId = "";
+      feedbackSubmitRef.current.task = null;
+      feedbackSubmitRef.current.turn = null;
+      feedbackSubmitRef.current.associated = false;
+      feedbackSubmitRef.current.keys = [];
+    }
     if (cached) {
       setFeedbackPending(cached.items);
       setPendingFeedbackCount(cached.count);
