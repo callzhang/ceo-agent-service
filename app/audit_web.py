@@ -8472,18 +8472,9 @@ def _error_resolution_label(store: AutoReplyStore, error: ReplyError) -> str:
     return "active"
 
 
-def handle_feedback_post(
-    store: AutoReplyStore, attempt_id: int, body: bytes
-) -> tuple[int, dict[str, str], str]:
-    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
-    feedback = parsed.get("feedback", [""])[0]
-    corrected_reply = parsed.get("corrected_reply", [""])[0]
-    if not store.record_reply_feedback(
-        attempt_id,
-        feedback=feedback,
-        corrected_reply_text=corrected_reply,
-    ):
-        return 404, {}, render_page("Attempt not found", "Attempt not found")
+def _record_feedback_event_for_attempt(
+    store: AutoReplyStore, attempt_id: int, feedback: str
+) -> None:
     # Keep the attempt review and the user-feedback inbox in sync.  The
     # feedback token belongs to the sent reply, so this remains a real
     # association rather than an invented event identity.
@@ -8509,6 +8500,21 @@ def handle_feedback_post(
             source="workbench",
             received_at=datetime.now(timezone.utc).isoformat(),
         )
+
+
+def handle_feedback_post(
+    store: AutoReplyStore, attempt_id: int, body: bytes
+) -> tuple[int, dict[str, str], str]:
+    parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+    feedback = parsed.get("feedback", [""])[0]
+    corrected_reply = parsed.get("corrected_reply", [""])[0]
+    if not store.record_reply_feedback(
+        attempt_id,
+        feedback=feedback,
+        corrected_reply_text=corrected_reply,
+    ):
+        return 404, {}, render_page("Attempt not found", "Attempt not found")
+    _record_feedback_event_for_attempt(store, attempt_id, feedback)
     return 303, {"Location": f"/attempts/{attempt_id}"}, ""
 
 

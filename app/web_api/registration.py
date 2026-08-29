@@ -213,12 +213,16 @@ def register_console_routes(
     @app.post("/api/console/history/{attempt_id}/feedback")
     async def console_history_feedback(attempt_id: int, request: Request):
         payload = await json_object(request)
-        if not store_factory().record_reply_feedback(
+        store = store_factory()
+        feedback = str(payload.get("feedback") or payload.get("reviewer_feedback") or "")
+        if not store.record_reply_feedback(
             attempt_id,
-            feedback=str(payload.get("feedback") or payload.get("reviewer_feedback") or ""),
+            feedback=feedback,
             corrected_reply_text=str(payload.get("corrected_reply") or ""),
         ):
             return JSONResponse({"ok": False, "code": "not_found", "message": "Attempt not found", "details": {}}, status_code=404)
+        from app.audit_web import _record_feedback_event_for_attempt
+        _record_feedback_event_for_attempt(store, attempt_id, feedback)
         return command_result(message="反馈已保存")
 
     @app.post("/api/console/history/{attempt_id}/rerun")
