@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { displayValue, listFeedback, resolveFeedback, syncFeedback, type FeedbackItem } from "../api/console";
+import { displayValue, listFeedback, syncFeedback, type FeedbackItem } from "../api/console";
 import { ResponsiveDataList } from "../components/data/ResponsiveDataList";
 import { SummaryText } from "../components/data/SummaryText";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
@@ -31,7 +31,6 @@ export function FeedbackPage() {
     return () => controller.abort();
   }, [query, status]);
   const changeStatus = (value: string) => { const next = new URLSearchParams(searchParams); if (value) next.set("status", value); else next.delete("status"); setSearchParams(next); };
-  const resolve = async (id: string) => { try { await resolveFeedback(id); setRows((current) => current.map((row) => row.id === id ? { ...row, status: "resolved" } : row)); } catch (error) { setError(error instanceof Error ? error.message : "保存失败"); } };
   return (
     <ConsolePageLayout title="用户反馈" actions={<SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />}>
       <section className="console-card">
@@ -42,7 +41,7 @@ export function FeedbackPage() {
             if (event.target.value) next.set("q", event.target.value); else next.delete("q");
             setSearchParams(next);
           }} />
-          <label htmlFor="feedback-status">状态</label><select id="feedback-status" value={status} onChange={(event) => changeStatus(event.target.value)}><option value="">全部</option><option value="pending">未处理</option><option value="resolved">已处理</option></select>
+          <label htmlFor="feedback-status">状态</label><select id="feedback-status" value={status} onChange={(event) => changeStatus(event.target.value)}><option value="">全部</option><option value="pending">未处理</option><option value="processing">处理中</option><option value="resolved">已处理</option></select>
           <button type="button" className="secondary-button" onClick={() => void syncFeedback()}>同步最新反馈</button>
         </form>
         <ResponsiveDataList
@@ -52,9 +51,24 @@ export function FeedbackPage() {
           state={state === "loading" ? "loading" : state === "error" ? "error" : rows.length ? "ready" : "empty"}
           errorMessage={error}
           emptyMessage="当前没有用户反馈"
-          renderCell={(row, key) => key === "status" ? <StatusBadge value={row.status} /> : key === "comment" ? <SummaryText value={row.comment} /> : key === "context" ? <SummaryText value={displayValue(row.context)} /> : key === "id" ? <span className="console-page-actions">{row.attempt_id && <Link to={`/attempts/${row.attempt_id}`}>Attempt</Link>}{row.status === "pending" && <button type="button" className="details-toggle" onClick={() => void resolve(row.id)}>标记已处理</button>}</span> : displayValue(row[key])}
+          renderCell={(row, key) => {
+            if (key === "status") return <StatusBadge value={row.status} />;
+            if (key === "comment") return <SummaryText value={row.comment} />;
+            if (key === "context") return <SummaryText value={displayValue(row.context)} />;
+            if (key === "id") return <span className="console-page-actions">
+              {row.attempt_id && <Link to={`/attempts/${row.attempt_id}`}>Attempt</Link>}
+              {row.processing_task_id && <Link to={`/?task=${encodeURIComponent(row.processing_task_id)}`}>Workbench task</Link>}
+              {row.batch_id && <Link to={`/api/console/feedback/batches/${encodeURIComponent(row.batch_id)}`}>Processing batch</Link>}
+              {!row.attempt_id && !row.processing_task_id && !row.batch_id && <span className="muted">未关联</span>}
+            </span>;
+            return displayValue(row[key]);
+          }}
           expandable
-          renderExpanded={(row) => row.attempt_id ? <Link to={`/attempts/${row.attempt_id}`}>查看关联 Attempt</Link> : <span>未关联 Attempt</span>}
+          renderExpanded={(row) => <span className="console-page-actions">
+            {row.attempt_id ? <Link to={`/attempts/${row.attempt_id}`}>查看关联 Attempt</Link> : <span>未关联 Attempt</span>}
+            {row.processing_task_id && <Link to={`/?task=${encodeURIComponent(row.processing_task_id)}`}>查看 Workbench task</Link>}
+            {row.batch_id && <Link to={`/api/console/feedback/batches/${encodeURIComponent(row.batch_id)}`}>查看 processing batch</Link>}
+          </span>}
         />
       </section>
     </ConsolePageLayout>

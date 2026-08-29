@@ -2451,9 +2451,9 @@ def test_render_user_feedback_list_marks_pending_and_resolved(tmp_path: Path):
     assert "<th>Token</th>" not in html
     assert "token-pending" not in html
     assert "user-feedback-actions" in html
-    assert 'action="/user-feedback/resolve"' in html
-    assert 'name="key" value="event-pending"' in html
-    assert "标记 resolved" in html
+    assert 'action="/user-feedback/resolve"' not in html
+    assert 'name="key" value="event-pending"' not in html
+    assert "标记 resolved" not in html
     assert f'href="/attempts/{pending_attempt_id}"' in html
     assert f'href="/attempts/{resolved_attempt_id}"' in html
 
@@ -2493,6 +2493,36 @@ def test_render_user_feedback_list_paginates(tmp_path: Path):
     assert 'href="/user-feedback"' in second_page
     assert "2-2" in second_page
     assert "2 / 2" in second_page
+
+
+def test_render_user_feedback_list_shows_processing_links_without_resolve_action(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+    store.upsert_feedback_event(
+        key="event-processing",
+        feedback_token="token-processing",
+        rating="not_useful",
+        rating_label="不太有用",
+        comment="处理中反馈",
+        source="ceo-agent-spike",
+        received_at="2026-06-02T08:00:00.000Z",
+    )
+    store.claim_feedback_processing_items("batch-1", ["event-processing"])
+    store.associate_feedback_processing_turn(
+        "event-processing",
+        workbench_task_id="task-1",
+        workbench_turn_id="turn-1",
+    )
+
+    html = render_user_feedback_list(store)
+
+    assert 'class="pill status-processing">processing</span>' in html
+    assert 'href="/?task=task-1"' in html
+    assert 'href="/api/console/feedback/batches/batch-1"' in html
+    assert 'action="/user-feedback/resolve"' not in html
+    assert "标记 resolved" not in html
 
 
 def test_feedback_pages_do_not_sync_external_events_during_render(
@@ -2686,6 +2716,7 @@ def test_user_feedback_resolve_route_requires_processing_batch(tmp_path: Path):
 
     assert response.status_code == 409
     assert response.text == "feedback_batch_required"
+    assert store.get_feedback_event("event-1").resolved_at == ""
 
 
 def test_user_feedback_route_renders_feedback_page(tmp_path: Path):

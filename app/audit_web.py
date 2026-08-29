@@ -7305,13 +7305,26 @@ def render_user_feedback_list(
     offset = _page_offset(page, limit)
     rows = []
     for item in store.list_user_feedback_items(limit=limit, offset=offset):
-        status = _user_feedback_status(item)
+        processing = store.get_feedback_processing_item(item.key)
+        status = _user_feedback_status(item, processing)
         attempt_link = (
             f"<a class=\"review-link\" href=\"/attempts/{item.attempt_id}\">处理</a>"
             if item.attempt_id
             else "<span class=\"muted\">未关联</span>"
         )
-        resolve_action = _user_feedback_resolve_action(item, status)
+        processing_links = []
+        if processing is not None:
+            task_id = str(processing.workbench_task_id or "").strip()
+            batch_id = str(processing.batch_id or "").strip()
+            if task_id:
+                processing_links.append(
+                    f'<a class="review-link" href="/?task={quote(task_id, safe="")}">Workbench task</a>'
+                )
+            if batch_id:
+                processing_links.append(
+                    f'<a class="review-link" href="/api/console/feedback/batches/{quote(batch_id, safe="")}">Processing batch</a>'
+                )
+        links_html = "".join(processing_links)
         context_lines = [
             value
             for value in (
@@ -7336,7 +7349,7 @@ def render_user_feedback_list(
             f"{context_html}"
             "</td>"
             f"<td>{escape(_format_local_time(item.received_at or item.updated_at))}</td>"
-            f"<td><div class=\"user-feedback-actions\">{attempt_link}{resolve_action}</div></td>"
+            f"<td><div class=\"user-feedback-actions\">{attempt_link}{links_html}</div></td>"
             "</tr>"
         )
     if rows:
@@ -7381,7 +7394,10 @@ def _user_feedback_page_head() -> str:
     )
 
 
-def _user_feedback_status(item: UserFeedbackItem) -> str:
+def _user_feedback_status(item: UserFeedbackItem, processing: object | None = None) -> str:
+    processing_status = str(getattr(processing, "status", "") or "").strip().casefold()
+    if processing_status in {"pending", "processing", "resolved"}:
+        return processing_status
     if (
         item.resolved_at.strip()
         or item.reviewer_feedback.strip()
@@ -7389,17 +7405,6 @@ def _user_feedback_status(item: UserFeedbackItem) -> str:
     ):
         return "resolved"
     return "pending"
-
-
-def _user_feedback_resolve_action(item: UserFeedbackItem, status: str) -> str:
-    if status == "resolved":
-        return "<span class=\"muted\">已处理</span>"
-    return (
-        "<form method=\"post\" action=\"/user-feedback/resolve\">"
-        f"<input type=\"hidden\" name=\"key\" value=\"{escape(item.key)}\">"
-        "<button type=\"submit\">标记 resolved</button>"
-        "</form>"
-    )
 
 
 def _reply_task_item(task: ReplyTask) -> str:
