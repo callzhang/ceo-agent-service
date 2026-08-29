@@ -1307,6 +1307,43 @@ def test_runtime_domain_result_codec_rejects_business_document_reference(tmp_pat
     assert persisted_attempt is not None and persisted_attempt.status == "running"
 
 
+def test_runtime_domain_result_codec_preserves_message_readback_for_ledger_projection():
+    result = AuditAgentResult(
+        outcome=AuditOutcome.EXECUTED,
+        summary="Message sent and read back.",
+        proposal_revision=0,
+        feedback=None,
+        external_result=AuditExternalResult(
+            operation_id="operation-readback",
+            verification_summary="The message was read back from the same chat.",
+            live_result_reference={
+                "send_status": "SUCCESS",
+                "message_id": "message-1",
+                "readback": {
+                    "conversationId": "conversation-1",
+                    "messageId": "message-1",
+                    "text": "已发送正文",
+                },
+            },
+        ),
+        error=AgentError(),
+    )
+
+    encoded = _encode_runtime_domain_result(
+        schema_id="schema-v1",
+        role=AgentRole.AUDIT,
+        recovery_phase="execute",
+        result=result,
+    )
+    decoded = json.loads(encoded)
+
+    assert decoded["result"]["external_result"]["live_result_reference"]["readback"] == {
+        "conversationId": "conversation-1",
+        "messageId": "message-1",
+        "text": "已发送正文",
+    }
+
+
 def test_runtime_domain_result_codec_rejects_consumer_document_payload():
     result = parse_consumer_agent_wire_result(
         json.dumps(

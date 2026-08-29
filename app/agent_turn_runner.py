@@ -119,6 +119,7 @@ _RUNTIME_RESULT_REFERENCE_KEYS = frozenset(
         "receipt_id",
         "recovery_action_indexes",
         "remark",
+        "readback",
         "send_status",
         "status",
         "task_id",
@@ -135,6 +136,22 @@ _RUNTIME_RESULT_FORBIDDEN_DOCUMENT_FIELDS = frozenset(
         "stderr",
         "stdout",
         "transcript",
+    }
+)
+
+_RUNTIME_RESULT_READBACK_KEYS = frozenset(
+    {
+        "conversationId",
+        "conversation_id",
+        "content",
+        "createTime",
+        "create_time",
+        "messageId",
+        "message_id",
+        "sender",
+        "senderId",
+        "sender_id",
+        "text",
     }
 )
 
@@ -293,6 +310,26 @@ def _project_runtime_external_reference(
         raise ValueError("runtime_result_envelope_external_reference_invalid")
     projected: dict[str, object] = {}
     for key, value in reference.items():
+        if key == "readback":
+            if not isinstance(value, dict) or not set(value).issubset(
+                _RUNTIME_RESULT_READBACK_KEYS
+            ):
+                raise ValueError("runtime_result_envelope_external_reference_invalid")
+            readback: dict[str, str] = {}
+            for readback_key, readback_value in value.items():
+                if not isinstance(readback_value, str) or not readback_value:
+                    raise ValueError(
+                        "runtime_result_envelope_external_reference_invalid"
+                    )
+                if len(readback_value) > 2048 or contains_local_runtime_leak(
+                    readback_value
+                ):
+                    raise ValueError(
+                        "runtime_result_envelope_external_reference_invalid"
+                    )
+                readback[readback_key] = readback_value
+            projected[key] = readback
+            continue
         if key == "recovery_action_indexes":
             if (
                 not isinstance(value, list)
