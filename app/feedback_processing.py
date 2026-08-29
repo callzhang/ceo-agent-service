@@ -269,12 +269,12 @@ def validate_resolution_evidence(
         parsed.scheme != "http"
         or parsed.hostname not in {"127.0.0.1", "localhost"}
         or parsed.port != 8765
+        or parsed.path != "/healthz"
+        or parsed.query
+        or parsed.fragment
     ):
         raise ValueError("resolution health evidence must be local")
-    if status is not None:
-        if status not in (200, "200", "ok", "healthy", "success"):
-            raise ValueError("resolution requires successful local health evidence")
-        if success is False:
-            raise ValueError("resolution requires successful local health evidence")
-    elif success is not True:
+    if not isinstance(status, int) or isinstance(status, bool) or status != 200:
+        raise ValueError("resolution requires successful local health evidence")
+    if not isinstance(success, bool) or success is not True:
         raise ValueError("resolution requires successful local health evidence")
