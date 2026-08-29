@@ -139,6 +139,27 @@ def test_feedback_batch_routes_claim_atomically_and_expose_processing_state(tmp_
         assert missing.json()["code"] == "not_found"
 
 
+def test_feedback_item_invalid_status_does_not_mutate_association(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+
+    with _client(tmp_path) as client:
+        claimed = client.post("/api/console/feedback/batches", json={"feedback_keys": ["feedback-1"]})
+        batch_id = claimed.json()["item"]["batch_id"]
+        response = client.patch(
+            "/api/console/feedback/items/feedback-1",
+            json={"status": "bogus", "workbench_task_id": "task-1", "workbench_turn_id": "turn-1"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_evidence_invalid"
+    item = store.get_feedback_processing_item("feedback-1")
+    assert item is not None
+    assert item.batch_id == batch_id
+    assert item.workbench_task_id == ""
+    assert item.workbench_turn_id == ""
+
+
 def test_attention_grouping_keeps_records_and_uses_root_cause_context_key():
     rows = [
         {

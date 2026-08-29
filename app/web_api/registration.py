@@ -340,6 +340,8 @@ def register_console_routes(
         }
         if kwargs["status"] == "resolved":
             return JSONResponse({"ok": False, "code": "feedback_evidence_invalid", "message": "only batch resolution may mark feedback resolved", "details": {}}, status_code=409)
+        if kwargs["status"] is not None and kwargs["status"] not in {"pending", "processing"}:
+            return JSONResponse({"ok": False, "code": "feedback_evidence_invalid", "message": "unsupported feedback processing status", "details": {}}, status_code=409)
         for name in ("test_evidence", "restart_evidence", "health_evidence"):
             if kwargs[name] is not None and (not isinstance(kwargs[name], dict) or isinstance(kwargs[name], list)):
                 raise HTTPException(status_code=400, detail=f"{name} must be a JSON object")
