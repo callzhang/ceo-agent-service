@@ -53,6 +53,32 @@ def test_feedback_processing_skill_requires_identity_evidence_and_safe_workflow(
         "only after all items complete",
         "incomplete evidence",
         "processing",
+        "Confirm the repository root",
+        "current branch",
+        "current HEAD",
+        "read every selected",
+        "before claiming the batch",
+        "every processing conversation",
+        "exact command",
+        "exit_code=0",
+        "run time",
+        "brief output",
+        "git rev-parse HEAD",
+        "matches the committed SHA",
+        "launchctl print",
+        "Runtime changes require restarting",
+        "no restart was applicable",
+        "failure or interruption",
+        "same batch",
+        "Workbench task",
+        "workbench_task_id",
+        "workbench_turn_id",
+        "attempt_id",
+        "agent_run_id",
+        "commit SHA",
+        "restart evidence",
+        "health evidence",
+        "before/after PID",
     ):
         assert required in text
 
@@ -70,3 +96,5 @@ def test_feedback_processing_skill_states_local_import_and_forbidden_paths():
     ):
         assert required in text
 
+    assert text.endswith("\n")
+    assert not text.endswith("\n\n")
