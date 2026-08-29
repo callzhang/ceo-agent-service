@@ -1,15 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const listFeedback = vi.hoisted(() => vi.fn());
-const resolveFeedback = vi.hoisted(() => vi.fn());
 const syncFeedback = vi.hoisted(() => vi.fn());
 vi.mock("../api/console", () => ({
   listFeedback,
-  resolveFeedback,
   syncFeedback,
-  displayValue: (value: unknown) => typeof value === "string" ? value : JSON.stringify(value),
+  displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value),
 }));
 
 import { FeedbackPage } from "./FeedbackPage";
@@ -17,23 +15,48 @@ import { FeedbackPage } from "./FeedbackPage";
 describe("FeedbackPage", () => {
   beforeEach(() => {
     listFeedback.mockResolvedValue({
-      items: [{ id: "feedback-1", attempt_id: "836", status: "pending", rating: "很有用", comment: "需要补充下一步。", context: "Friday · Shawn · 请补充下一步", created_at: "2026-08-29T00:00:00Z" }],
+      items: [
+        {
+          id: "feedback-1",
+          attempt_id: "8308",
+          status: "processing",
+          processing_status: "processing",
+          rating: "不太有用",
+          comment: "请修复这个反馈",
+          context: "产品群 · Mina",
+          created_at: "2026-08-29T00:00:00Z",
+          summary: "修复任务状态",
+          references: [],
+          batch_id: "batch-1",
+          processing_task_id: "task-1",
+        },
+      ],
       meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" },
-      pending_count: 1,
     });
-    resolveFeedback.mockResolvedValue({ ok: true, message: "已标记为已处理" });
-    syncFeedback.mockResolvedValue({ ok: true, message: "已同步最新反馈" });
   });
 
-  it("keeps the legacy compact feedback table and inline action", async () => {
+  it("renders processing state and links to the attempt, Workbench task, and batch", async () => {
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
 
-    expect(await screen.findByRole("region", { name: "用户反馈工作区" })).toBeInTheDocument();
-    expect(screen.getByText("待处理 1")).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "用户反馈" })).toBeInTheDocument();
-    expect(screen.getByText("需要补充下一步。")).toBeInTheDocument();
-    expect(screen.getByText("Friday · Shawn · 请补充下一步")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "标记已处理" })).toBeInTheDocument();
-    expect(screen.queryByText("展开详情")).not.toBeInTheDocument();
+    expect(await screen.findByText("处理中")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Attempt" })).toHaveAttribute("href", "/attempts/8308");
+    expect(screen.getByRole("link", { name: "Workbench task" })).toHaveAttribute("href", "/?task=task-1");
+    expect(screen.getByRole("link", { name: "Processing batch" })).toHaveAttribute("href", "/api/console/feedback/batches/batch-1");
+    expect(screen.queryByRole("button", { name: "标记已处理" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "处理中" })).toBeInTheDocument();
+  });
+
+  it("keeps the batch destination as a native navigation outside the SPA router", async () => {
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+
+    const link = await screen.findByRole("link", { name: "Processing batch" });
+    expect(link.tagName).toBe("A");
+    let preventedBeforeDocument = false;
+    document.addEventListener("click", (event) => {
+      preventedBeforeDocument = event.defaultPrevented;
+      event.preventDefault();
+    }, { once: true });
+    fireEvent(link, createEvent.click(link));
+    expect(preventedBeforeDocument).toBe(false);
   });
 });

@@ -7,9 +7,10 @@ old form routes during the migration, but React never consumes their HTML.
 
 from collections.abc import Callable
 import json
-import os
+import subprocess
 from typing import Any
 from urllib.parse import urlencode
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -17,15 +18,22 @@ from fastapi.responses import JSONResponse
 from app.web_api.attention import AttentionListEnvelope, group_attention_rows
 from app.web_api.common import ApiItemEnvelope, ApiListMeta, ApiMeta, json_safe, normalize_display_value, snapshot_at
 from app.web_api.tasks import (
-    ConsoleSentTodoListEnvelope,
     ConsoleTaskDetail,
     ConsoleTaskDetailEnvelope,
     ConsoleTaskListEnvelope,
     task_detail,
     task_list_response,
-    sent_todo_payload,
 )
 from app.web_api.settings import info_payload
+from app.feedback_processing import (
+    FeedbackProcessingBatchError,
+    FeedbackProcessingClaimError,
+    ResolutionEvidence,
+    build_feedback_start_message,
+    detail_references,
+    persisted_feedback_summary,
+    project_feedback_status,
+)
 
 
 def register_console_routes(
@@ -35,7 +43,6 @@ def register_console_routes(
     status_payload_factory: Callable[[], Any],
     attention_rows_factory: Callable[[], Any],
     task_row_builder: Callable[[Any, list[Any]], Any] | None = None,
-    history_chart_factory: Callable[[], Any] | None = None,
 ) -> None:
     def list_meta(*, page: int, page_size: int, total: int, snapshot: str):
         return ApiListMeta(
@@ -83,19 +90,6 @@ def register_console_routes(
             category=category,
             task_state=task_state,
             row_builder=task_row_builder,
-        )
-
-    @app.get("/api/console/tasks/sent-todos", response_model=ConsoleSentTodoListEnvelope)
-    def console_sent_todos(
-        page: int = Query(default=1, ge=1),
-        page_size: int = Query(default=20, ge=1, le=100),
-    ):
-        rows = [sent_todo_payload(row) for row in store_factory().list_sent_todo_records(limit=5000)]
-        total = len(rows)
-        start = (page - 1) * page_size
-        return ConsoleSentTodoListEnvelope(
-            items=rows[start:start + page_size],
-            meta=list_meta(page=page, page_size=page_size, total=total, snapshot=snapshot_at()),
         )
 
     @app.get("/api/console/tasks/{project_id}/details", response_model=ConsoleTaskDetailEnvelope)
@@ -166,10 +160,7 @@ def register_console_routes(
                 "output": normalize_display_value(row.output_text),
                 "action": normalize_display_value(row.action),
             })
-        response = list_envelope(items, page=page, page_size=page_size, total=total)
-        if history_chart_factory is not None:
-            response["chart"] = json_safe(history_chart_factory())
-        return response
+        return list_envelope(items, page=page, page_size=page_size, total=total)
 
     @app.get("/api/console/history/{attempt_id}")
     def console_history_detail(attempt_id: int):
@@ -237,24 +228,198 @@ def register_console_routes(
         needle = q.strip().casefold()
         filtered = []
         for row in all_rows:
-            row_status = "resolved" if row.resolved_at.strip() or row.reviewer_feedback.strip() or row.corrected_reply_text.strip() else "pending"
+            processing = store.get_feedback_processing_item(row.key)
+            row_status = project_feedback_status(row, processing)
             haystack = " ".join((row.comment, row.conversation_title, row.trigger_sender, row.trigger_text, row_status)).casefold()
             if (status.strip() and row_status != status.strip()) or (needle and needle not in haystack):
                 continue
-            filtered.append({"id": row.key, "attempt_id": str(row.attempt_id) if row.attempt_id else "",
-                             "status": row_status, "rating": row.rating_label or row.rating,
-                             "comment": row.comment or "未填写评语", "context": " · ".join(x for x in (row.conversation_title, row.trigger_sender, row.trigger_text[:140]) if x),
-                             "created_at": row.received_at or row.updated_at, "key": row.key})
+            refs = detail_references(row)
+            filtered.append({
+                "id": row.key, "feedback_key": row.key,
+                "attempt_id": str(row.attempt_id) if row.attempt_id else "",
+                "status": row_status, "processing_status": row_status,
+                "rating": row.rating_label or row.rating,
+                "comment": row.comment or "未填写评语",
+                "context": " · ".join(x for x in (row.conversation_title, row.trigger_sender, row.trigger_text[:140]) if x),
+                "created_at": row.received_at or row.updated_at, "key": row.key,
+                "summary": persisted_feedback_summary(row), "references": refs,
+                "batch_id": processing.batch_id if processing else "",
+                "processing_task_id": processing.workbench_task_id if processing else "",
+            })
         start = (page - 1) * page_size
-        response = list_envelope(filtered[start:start + page_size], page=page, page_size=page_size, total=len(filtered))
-        response["pending_count"] = store.count_pending_user_feedback_items()
-        return response
+        return list_envelope(filtered[start:start + page_size], page=page, page_size=page_size, total=len(filtered))
+
+    def _feedback_items_for_batch(store: Any, batch_id: str) -> list[dict[str, Any]]:
+        rows = []
+        for row in store.list_user_feedback_items(limit=10000, offset=0):
+            processing = store.get_feedback_processing_item(row.key)
+            if processing is None or processing.batch_id != batch_id:
+                continue
+            projected = json_safe(processing)
+            projected.update({
+                "id": row.key, "processing_status": processing.status,
+                "summary": persisted_feedback_summary(row), "references": detail_references(row),
+                "processing_task_id": processing.workbench_task_id,
+            })
+            rows.append(projected)
+        rows.sort(key=lambda item: item["feedback_key"])
+        return rows
+
+    @app.post("/api/console/feedback/batches")
+    async def console_feedback_batch_claim(request: Request):
+        payload = await json_object(request)
+        raw_keys = payload.get("feedback_keys", payload.get("keys"))
+        if not isinstance(raw_keys, list) or not raw_keys or any(not isinstance(key, str) or not key.strip() for key in raw_keys):
+            raise HTTPException(status_code=400, detail="feedback_keys must be a non-empty string array")
+        keys = list(dict.fromkeys(key.strip() for key in raw_keys))
+        batch_id = payload.get("batch_id")
+        if batch_id is not None and (not isinstance(batch_id, str) or not batch_id.strip()):
+            raise HTTPException(status_code=400, detail="batch_id must be a non-empty string")
+        task_id = payload.get("workbench_task_id", payload.get("task_id", ""))
+        turn_id = payload.get("workbench_turn_id", payload.get("turn_id", ""))
+        if task_id is not None and not isinstance(task_id, str):
+            raise HTTPException(status_code=400, detail="workbench_task_id must be a string")
+        if turn_id is not None and not isinstance(turn_id, str):
+            raise HTTPException(status_code=400, detail="workbench_turn_id must be a string")
+        cleaned_batch_id = batch_id.strip() if isinstance(batch_id, str) else uuid4().hex
+        claim_store = store_factory()
+        known_rows = claim_store.list_user_feedback_items(limit=10000, offset=0)
+        known_keys = {row.key for row in known_rows}
+        missing = [key for key in keys if key not in known_keys]
+        if missing:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {"feedback_keys": missing}}, status_code=404)
+        historical = [row.key for row in known_rows if row.key in keys and (row.resolved_at.strip() or row.reviewer_feedback.strip() or row.corrected_reply_text.strip())]
+        if historical:
+            return JSONResponse({"ok": False, "code": "feedback_already_processing", "message": "反馈已完成处理，不能重新领取", "details": {"feedback_keys": historical}}, status_code=409)
+        try:
+            claimed = claim_store.claim_feedback_processing_items(cleaned_batch_id, keys)
+        except FeedbackProcessingClaimError as exc:
+            return JSONResponse({"ok": False, "code": exc.error_code, "message": "反馈已被其他处理批次占用", "details": {}}, status_code=409)
+        except FeedbackProcessingBatchError as exc:
+            return JSONResponse({"ok": False, "code": "feedback_batch_conflict", "message": str(exc), "details": {}}, status_code=409)
+        store = store_factory()
+        if task_id or turn_id:
+            for item in claimed:
+                store.associate_feedback_processing_turn(item.feedback_key, workbench_task_id=(task_id or "").strip(), workbench_turn_id=(turn_id or "").strip())
+        imports = [item for item in store.list_feedback_import_items(limit=10000, offset=0) if item.feedback_key in keys]
+        imports.sort(key=lambda item: keys.index(item.feedback_key))
+        refreshed_batch = store.get_feedback_processing_batch(cleaned_batch_id)
+        item = {"batch_id": cleaned_batch_id, "status": refreshed_batch.status if refreshed_batch else "processing", "feedback_keys": keys, "items": _feedback_items_for_batch(store, cleaned_batch_id), "start_message": build_feedback_start_message(cleaned_batch_id, imports)}
+        return command_result(item=item, message="反馈批次已领取")
+
+    @app.get("/api/console/feedback/batches/{batch_id}")
+    def console_feedback_batch_detail(batch_id: str):
+        store = store_factory()
+        batch = store.get_feedback_processing_batch(batch_id)
+        if batch is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
+        return item_envelope({"batch_id": batch.batch_id, "status": batch.status, "requested_count": batch.requested_count, "created_at": batch.created_at, "updated_at": batch.updated_at, "resolved_at": batch.resolved_at, "items": _feedback_items_for_batch(store, batch.batch_id)})
+
+    @app.patch("/api/console/feedback/batches/{batch_id}")
+    async def console_feedback_batch_association(batch_id: str, request: Request):
+        payload = await json_object(request)
+        task_id = payload.get("workbench_task_id", payload.get("task_id", ""))
+        turn_id = payload.get("workbench_turn_id", payload.get("turn_id", ""))
+        if not isinstance(task_id, str) or not isinstance(turn_id, str) or not task_id.strip() or not turn_id.strip():
+            raise HTTPException(status_code=400, detail="workbench_task_id and workbench_turn_id are required")
+        store = store_factory()
+        batch = store.get_feedback_processing_batch(batch_id)
+        if batch is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
+        for item in _feedback_items_for_batch(store, batch.batch_id):
+            store.associate_feedback_processing_turn(item["feedback_key"], workbench_task_id=task_id.strip(), workbench_turn_id=turn_id.strip())
+        refreshed = store.get_feedback_processing_batch(batch.batch_id)
+        return command_result(item={"batch_id": batch.batch_id, "status": refreshed.status if refreshed else batch.status, "requested_count": refreshed.requested_count if refreshed else batch.requested_count, "items": _feedback_items_for_batch(store, batch.batch_id), "workbench_task_id": task_id.strip(), "workbench_turn_id": turn_id.strip()}, message="反馈批次关联已保存")
+
+    @app.patch("/api/console/feedback/items/{feedback_id}")
+    async def console_feedback_item_patch(feedback_id: str, request: Request):
+        payload = await json_object(request)
+        allowed = {"test_evidence", "tests", "restart_evidence", "restart", "health_evidence", "health", "commit_sha", "note", "status", "workbench_task_id", "task_id", "workbench_turn_id", "turn_id", "attempt_id", "agent_run_id", "associations"}
+        unknown = set(payload) - allowed
+        if unknown:
+            raise HTTPException(status_code=400, detail="unsupported feedback evidence field")
+        kwargs = {
+            "test_evidence": payload.get("test_evidence", payload.get("tests")),
+            "restart_evidence": payload.get("restart_evidence", payload.get("restart")),
+            "health_evidence": payload.get("health_evidence", payload.get("health")),
+            "commit_sha": payload.get("commit_sha"), "note": payload.get("note"), "status": payload.get("status"),
+        }
+        if kwargs["status"] == "resolved":
+            return JSONResponse({"ok": False, "code": "feedback_evidence_invalid", "message": "only batch resolution may mark feedback resolved", "details": {}}, status_code=409)
+        if kwargs["status"] is not None and kwargs["status"] not in {"pending", "processing"}:
+            return JSONResponse({"ok": False, "code": "feedback_evidence_invalid", "message": "unsupported feedback processing status", "details": {}}, status_code=409)
+        for name in ("test_evidence", "restart_evidence", "health_evidence"):
+            if kwargs[name] is not None and (not isinstance(kwargs[name], dict) or isinstance(kwargs[name], list)):
+                raise HTTPException(status_code=400, detail=f"{name} must be a JSON object")
+        for name in ("commit_sha", "note", "status"):
+            if kwargs[name] is not None and not isinstance(kwargs[name], str):
+                raise HTTPException(status_code=400, detail=f"{name} must be a string")
+        store = store_factory()
+        current = store.get_feedback_processing_item(feedback_id)
+        if current is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback item not found", "details": {}}, status_code=404)
+        if kwargs["status"] == "processing" or (kwargs["status"] == "pending" and current.status != "pending"):
+            return JSONResponse({"ok": False, "code": "feedback_evidence_invalid", "message": "only atomic batch claim may mark feedback processing", "details": {}}, status_code=409)
+        associations = payload.get("associations", {})
+        if not isinstance(associations, dict):
+            raise HTTPException(status_code=400, detail="associations must be a JSON object")
+        task_id = payload.get("workbench_task_id", payload.get("task_id", associations.get("workbench_task_id", associations.get("task_id", current.workbench_task_id))))
+        turn_id = payload.get("workbench_turn_id", payload.get("turn_id", associations.get("workbench_turn_id", associations.get("turn_id", current.workbench_turn_id))))
+        attempt_id = payload.get("attempt_id", associations.get("attempt_id", current.attempt_id))
+        agent_run_id = payload.get("agent_run_id", associations.get("agent_run_id", current.agent_run_id))
+        if not isinstance(task_id, str) or not isinstance(turn_id, str) or not isinstance(attempt_id, int) or isinstance(attempt_id, bool) or not isinstance(agent_run_id, int) or isinstance(agent_run_id, bool):
+            raise HTTPException(status_code=400, detail="feedback associations have invalid types")
+        if "associations" in payload or any(name in payload for name in ("workbench_task_id", "task_id", "workbench_turn_id", "turn_id", "attempt_id", "agent_run_id")):
+            store.associate_feedback_processing_turn(feedback_id, workbench_task_id=task_id.strip(), workbench_turn_id=turn_id.strip(), attempt_id=attempt_id, agent_run_id=agent_run_id)
+        try:
+            item = store.patch_feedback_processing_item_evidence(feedback_id, **kwargs)
+        except (TypeError, ValueError) as exc:
+            return JSONResponse({"ok": False, "code": "feedback_evidence_invalid", "message": str(exc), "details": {}}, status_code=409)
+        if item is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback item not found", "details": {}}, status_code=404)
+        return command_result(item=item, message="反馈证据已保存")
+
+    @app.post("/api/console/feedback/batches/{batch_id}/resolve")
+    async def console_feedback_batch_resolve(batch_id: str, request: Request):
+        payload = await json_object(request)
+        try:
+            evidence = ResolutionEvidence.model_validate(payload)
+        except Exception as exc:
+            return JSONResponse({"ok": False, "code": "feedback_resolution_invalid", "message": str(exc), "details": {}}, status_code=409)
+        try:
+            from app.config import repo_root
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root(), capture_output=True, text=True, check=True, timeout=5).stdout.strip()
+            resolved = store_factory().resolve_feedback_processing_batch(batch_id, evidence, current_head=head)
+        except (ValueError, subprocess.SubprocessError, OSError) as exc:
+            return JSONResponse({"ok": False, "code": "feedback_resolution_incomplete", "message": str(exc), "details": {}}, status_code=409)
+        if not resolved:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
+        return command_result(item={"batch_id": batch_id, "status": "resolved"}, message="反馈批次已解决")
+
+    @app.get("/api/console/feedback/{feedback_id}")
+    def console_feedback_detail(feedback_id: str):
+        store = store_factory()
+        row = next((candidate for candidate in store.list_user_feedback_items(limit=10000, offset=0) if candidate.key == feedback_id.strip()), None)
+        if row is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {}}, status_code=404)
+        processing = store.get_feedback_processing_item(row.key)
+        return item_envelope({
+            "id": row.key, "feedback_key": row.key, "feedback_token": row.feedback_token,
+            "rating": row.rating_label or row.rating, "comment": row.comment,
+            "source": row.source, "received_at": row.received_at,
+            "attempt_id": str(row.attempt_id) if row.attempt_id else "", "agent_run_id": row.agent_run_id,
+            "conversation_title": row.conversation_title, "trigger_sender": row.trigger_sender,
+            "trigger_text": row.trigger_text, "summary": persisted_feedback_summary(row),
+            "references": detail_references(row),
+            "status": project_feedback_status(row, processing),
+            "batch_id": processing.batch_id if processing else "",
+            "processing_task_id": processing.workbench_task_id if processing else "",
+            "processing": json_safe(processing) if processing else None,
+        })
 
     @app.post("/api/console/feedback/{feedback_id}/resolve")
     def console_feedback_resolve(feedback_id: str):
-        if not store_factory().resolve_feedback_event(feedback_id):
-            return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {}}, status_code=404)
-        return command_result(message="已标记为已处理")
+        return JSONResponse({"ok": False, "code": "feedback_batch_required", "message": "Feedback must be resolved through a processing batch", "details": {"feedback_id": feedback_id}}, status_code=409)
 
     @app.post("/api/console/feedback/sync")
     def console_feedback_sync():
@@ -342,7 +507,6 @@ def register_console_routes(
             elif section == "audit-rules":
                 from app.audit_rules import (
                     AgentRole,
-                    _render_audit_variables,
                     read_audit_rules_template,
                     render_audit_rules,
                 )
@@ -352,25 +516,17 @@ def register_console_routes(
                     "section": section,
                     "fields": fields,
                     "preview": {
-                        "template": _render_audit_variables(template),
+                        "template": template,
                         "consumer": render_audit_rules(AgentRole.CONSUMER),
                         "audit": render_audit_rules(AgentRole.AUDIT),
                     },
                 }
             else:
                 env = app_config.read_env_file()
-                runtime_keys = (
-                    "CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT", "CEO_AGENT_RUNTIME_ROUTES",
-                    "CEO_CODEX_API_BASE_URL", "CEO_CODEX_API_MODEL", "CEO_FRIDAY_RUNTIME_BASE_URL",
-                    "CEO_FRIDAY_RUNTIME_PROJECT_ID", "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL",
-                    "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", "CEO_FRIDAY_RUNTIME_AUTH_DISABLED",
-                    "CEO_CODEX_API_KEY", "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY",
-                    "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN",
-                )
-                fields = {key: env.get(key, os.environ.get(key, "")) for key in runtime_keys}
+                fields = {key: env.get(key, "") for key in ("CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT", "CEO_AGENT_RUNTIME_ROUTES", "CEO_CODEX_API_BASE_URL", "CEO_CODEX_API_MODEL", "CEO_FRIDAY_RUNTIME_BASE_URL", "CEO_FRIDAY_RUNTIME_PROJECT_ID")}
             if payload is None:
                 payload = {"section": section, "fields": fields}
-            payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"] if section == "agent-runtime" else []
+            payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"] if section == "agent-runtime" else []
         return item_envelope(payload)
 
     @app.get("/api/console/tutorial")
@@ -590,24 +746,13 @@ def register_console_routes(
         elif section in {"prompts", "audit-rules"}:
             encoded = {"prompt": str(payload.get("prompt") or "developer"), "template": str(payload.get("template") or fields.get("template") or "")}
         elif section == "agent-runtime":
-            routes = {item.strip() for item in str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or "").split(",") if item.strip()}
             encoded = {
                 "codex_model": str(fields.get("codex_model") or fields.get("CEO_CODEX_MODEL") or ""),
                 "codex_reasoning_effort": str(fields.get("codex_reasoning_effort") or fields.get("CEO_CODEX_MODEL_REASONING_EFFORT") or ""),
-                "codex_api_enabled": "1" if str(fields.get("codex_api_enabled") or ("1" if "codex_api" in routes else "0")).lower() in {"1", "true", "yes", "on"} else "0",
+                "codex_api_enabled": "1" if str(fields.get("codex_api_enabled") or "CEO_CODEX_API_KEY" in fields).lower() in {"1", "true", "yes", "on"} else "0",
                 "codex_api_model": str(fields.get("codex_api_model") or fields.get("CEO_CODEX_API_MODEL") or ""),
                 "codex_api_base_url": str(fields.get("codex_api_base_url") or fields.get("CEO_CODEX_API_BASE_URL") or ""),
-                "codex_api_token": str(fields.get("codex_api_token") or fields.get("CEO_CODEX_API_KEY") or ""),
-                "friday_runtime_settings_present": "1",
-                "friday_runtime_enabled": "1" if "friday_runtime" in routes else "0",
-                "friday_runtime_base_url": str(fields.get("friday_runtime_base_url") or fields.get("CEO_FRIDAY_RUNTIME_BASE_URL") or ""),
-                "friday_runtime_project_id": str(fields.get("friday_runtime_project_id") or fields.get("CEO_FRIDAY_RUNTIME_PROJECT_ID") or ""),
-                "friday_runtime_provider_base_url": str(fields.get("friday_runtime_provider_base_url") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL") or ""),
-                "friday_runtime_provider_model": str(fields.get("friday_runtime_provider_model") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL") or ""),
-                "friday_runtime_provider_api_key": str(fields.get("friday_runtime_provider_api_key") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY") or ""),
-                "friday_runtime_auth_disabled": str(fields.get("friday_runtime_auth_disabled") or fields.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED") or ""),
-                "friday_runtime_ticket": str(fields.get("friday_runtime_ticket") or fields.get("CEO_FRIDAY_RUNTIME_TICKET") or ""),
-                "friday_session_token": str(fields.get("friday_session_token") or fields.get("CEO_FRIDAY_SESSION_TOKEN") or ""),
+                "codex_api_token": str(fields.get("codex_api_token") or ""),
             }
         else:
             encoded = {str(k): str(v) for k, v in fields.items()}

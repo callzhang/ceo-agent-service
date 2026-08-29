@@ -8,6 +8,7 @@ import app.audit_web as audit_web_module
 import app.config as app_config_module
 from app.audit_web import create_audit_app
 from app.store import AutoReplyStore
+from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
 from app.web_api.common import (
     ApiItemEnvelope,
@@ -97,6 +98,103 @@ def test_common_envelopes_and_normalization_are_explicitly_json_serializable():
     assert normalize_display_value(None) == ""
     assert "[object Object]" not in normalize_display_value({"nested": {"value": 1}})
     assert "<structured error>" not in json.dumps(json_safe({"detail": "<structured error>"}), ensure_ascii=False)
+
+
+def test_feedback_direct_resolve_requires_batch(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1", comment="Needs work")
+
+    with _client(tmp_path) as client:
+        response = client.post("/api/console/feedback/feedback-1/resolve")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_batch_required"
+
+
+def test_feedback_batch_routes_claim_atomically_and_expose_processing_state(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    for key in ("feedback-1", "feedback-2"):
+        store.upsert_feedback_event(key=key, feedback_token=f"token-{key}", comment=f"Comment {key}")
+
+    with _client(tmp_path) as client:
+        listed = client.get("/api/console/feedback?status=pending")
+        assert listed.status_code == 200
+        assert {item["feedback_key"] for item in listed.json()["items"]} == {"feedback-1", "feedback-2"}
+        assert all("summary" in item and "references" in item for item in listed.json()["items"])
+
+        claimed = client.post("/api/console/feedback/batches", json={"feedback_keys": ["feedback-1", "feedback-2"]})
+        assert claimed.status_code == 200
+        batch = claimed.json()["item"]
+        assert batch["status"] == "processing"
+        assert batch["feedback_keys"] == ["feedback-1", "feedback-2"]
+        assert "start_message" in batch
+
+        detail = client.get(f"/api/console/feedback/batches/{batch['batch_id']}")
+        assert detail.status_code == 200
+        assert {item["feedback_key"] for item in detail.json()["item"]["items"]} == {"feedback-1", "feedback-2"}
+
+        conflict = client.post("/api/console/feedback/batches", json={"feedback_keys": ["feedback-1"]})
+        assert conflict.status_code == 409
+        assert conflict.json()["code"] == "feedback_already_processing"
+
+        missing = client.post("/api/console/feedback/batches", json={"feedback_keys": ["unknown"]})
+        assert missing.status_code == 404
+        assert missing.json()["code"] == "not_found"
+
+
+def test_feedback_item_invalid_status_does_not_mutate_association(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+
+    with _client(tmp_path) as client:
+        claimed = client.post("/api/console/feedback/batches", json={"feedback_keys": ["feedback-1"]})
+        batch_id = claimed.json()["item"]["batch_id"]
+        response = client.patch(
+            "/api/console/feedback/items/feedback-1",
+            json={"status": "bogus", "workbench_task_id": "task-1", "workbench_turn_id": "turn-1"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_evidence_invalid"
+    item = store.get_feedback_processing_item("feedback-1")
+    assert item is not None
+    assert item.batch_id == batch_id
+    assert item.workbench_task_id == ""
+    assert item.workbench_turn_id == ""
+
+
+def test_feedback_history_with_corrected_reply_is_resolved_and_not_claimable(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+    store.record_sent_reply("cid-1", "msg-1", "先按A方案走", feedback_token="token-1")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    store.record_reply_feedback(attempt_id, feedback="已修正", corrected_reply_text="修正版")
+
+    with _client(tmp_path) as client:
+        listed = client.get("/api/console/feedback?status=resolved")
+        conflict = client.post("/api/console/feedback/batches", json={"feedback_keys": ["feedback-1"]})
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["status"] == "resolved"
+    assert 'status-resolved">resolved</span>' in audit_web_module.render_user_feedback_list(store)
+    assert conflict.status_code == 409
+    assert conflict.json()["code"] == "feedback_already_processing"
+
+
+def test_feedback_claim_returns_associated_item_receipts(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+
+    with _client(tmp_path) as client:
+        response = client.post(
+            "/api/console/feedback/batches",
+            json={"feedback_keys": ["feedback-1"], "workbench_task_id": "task-1", "workbench_turn_id": "turn-1"},
+        )
+
+    assert response.status_code == 200
+    receipt = response.json()["item"]["items"][0]
+    assert receipt["workbench_task_id"] == "task-1"
+    assert receipt["workbench_turn_id"] == "turn-1"
 
 
 def test_attention_grouping_keeps_records_and_uses_root_cause_context_key():

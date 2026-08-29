@@ -623,6 +623,7 @@ h1, h2, h3, p { margin-top: 0; }
 .primary-button:disabled, .secondary-button:disabled { cursor: not-allowed; opacity: 0.5; }
 
 .new-task-button { width: 100%; margin-bottom: 12px; }
+.feedback-button { width: 100%; margin-bottom: 12px; }
 
 .task-search {
   display: flex;
@@ -850,6 +851,26 @@ h1, h2, h3, p { margin-top: 0; }
 .panel-error strong, .inline-alert { color: var(--danger); }
 .inline-alert { padding: 9px 10px; border-radius: 8px; background: #fbeceb; font-size: 0.8rem; }
 .drawer-scrim { display: none; }
+
+.feedback-drawer { position: fixed; z-index: 30; inset: 0 0 0 auto; display: flex; flex-direction: column; width: min(420px, 88vw); box-shadow: var(--shadow); overflow: auto; }
+.feedback-drawer-scrim { display: block; position: fixed; z-index: 20; inset: 0; border: 0; background: rgb(20 24 21 / 28%); }
+.feedback-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.feedback-select-all, .feedback-item-select { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
+.feedback-select-all { align-items: center; color: var(--ink); font-size: 0.82rem; font-weight: 650; }
+.feedback-selection-count { color: var(--ink-soft); font-size: 0.72rem; }
+.feedback-items { display: grid; gap: 8px; }
+.feedback-item { padding: 11px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.feedback-item:hover { background: var(--surface-muted); }
+.feedback-item-content { display: grid; gap: 7px; min-width: 0; }
+.feedback-item-summary { color: var(--ink); font-size: 0.82rem; line-height: 1.5; overflow-wrap: anywhere; }
+.feedback-item-meta { color: var(--ink-soft); font-size: 0.7rem; }
+.feedback-item-references { display: flex; flex-wrap: wrap; gap: 7px 12px; }
+.feedback-item-references a { color: var(--accent); font-size: 0.73rem; text-decoration: none; }
+.feedback-item-references a:hover { text-decoration: underline; }
+.feedback-state { margin: 20px 0; color: var(--ink-soft); font-size: 0.84rem; line-height: 1.55; }
+.feedback-error { color: var(--danger); }
+.feedback-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+.feedback-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 90px; padding: 0 13px; }
 
 @media (max-width: 939px) {
   .workbench-shell { grid-template-columns: minmax(245px, 292px) minmax(0, 1fr); }
