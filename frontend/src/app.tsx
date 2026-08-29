@@ -868,7 +868,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
     const feedbackController = new AbortController();
     controllersRef.current.add(feedbackController);
     void Promise.resolve(listPendingFeedback({}, feedbackController.signal)).then((page) => {
-      if (!mountedRef.current || feedbackController.signal.aborted) return;
+      if (!mountedRef.current || feedbackController.signal.aborted || feedbackLoadRef.current) return;
       setFeedbackPending(page.items);
       setPendingFeedbackCount(page.meta.total);
       feedbackPendingCacheRef.current = { items: page.items, count: page.meta.total };
