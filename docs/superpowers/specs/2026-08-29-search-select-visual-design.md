@@ -44,12 +44,13 @@
 
 ## Application scope
 
+- Agent：任务列表搜索采用统一 SearchField；不改变本地任务过滤行为。
 - Tasks：搜索、类型、状态、排序、每页数量；控制条采用 B，有限状态可逐步采用 C。
 - History：搜索、状态、对象类型、每页数量；状态可采用 C。
 - Feedback：搜索、反馈状态、每页数量；状态可采用 C。
 - Attention：搜索/状态快速筛选（若当前页面已有状态控件）；Failed / Processing / Pending 使用 C。
 - WeChat connector：联系人搜索采用统一 SearchField；类型或范围筛选使用 SelectField。
-- Settings：已有 pill/tab、输入和 select 使用相同 token，修正 selected/focus 对比度，但不改变页面 IA。
+- Settings：已有 pill/tab、输入和 select 使用相同 token，修正 selected/focus 对比度，但不改变页面 IA；Agent Runtime 的模型选择也使用统一 SelectField。
 
 ## Accessibility and behavior
 
