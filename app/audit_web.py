@@ -5571,7 +5571,6 @@ def _render_attempt_list(
             search_object_type=search_object_type,
         )
         body = (
-            f"{repository_upgrade_html}"
             f"{chart_html}"
             f"{pinned_needs_human_html}"
             f"{header}"

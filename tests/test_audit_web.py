@@ -5513,8 +5513,10 @@ def test_render_page_brand_links_to_history():
 
 
 def test_repository_upgrade_mount_is_in_history_header_right_side(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
     html = render_attempt_list(
-        AutoReplyStore(tmp_path / "worker.sqlite3"),
+        store,
         include_chart=False,
     )
 
