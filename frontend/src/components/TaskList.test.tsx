@@ -314,6 +314,8 @@ describe("TaskList", () => {
     const consoleRoot = styleFor(".console-root");
     expect(consoleRoot.display).toBe("grid");
     expect(consoleRoot.gridTemplateRows).toBe("auto minmax(0, 1fr)");
+    expect(consoleRoot.height).toBe("100vh");
+    expect(consoleRoot.minHeight).toBe("0px");
 
     const root = styleFor(".workbench-root");
     expect(root.display).toBe("grid");

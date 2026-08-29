@@ -68,7 +68,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 }
 
 .console-root {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--canvas);
