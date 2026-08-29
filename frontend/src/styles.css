@@ -337,11 +337,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .section-head h2 { margin: 0; font-size: 1rem; }
 .section-head p { margin: 4px 0 0; }
 .sent-todos-table-wrap { max-height: 520px; overflow: auto; }
-.sent-todos-table { min-width: 1040px; }
+.sent-todos-table { width: 1456px; min-width: 1456px; }
 .sent-todos-table th:first-child, .sent-todos-table td:first-child { width: 138px; }
 .sent-todos-table th:nth-child(2), .sent-todos-table td:nth-child(2) { width: 100px; }
 .sent-todos-table th:nth-child(3), .sent-todos-table td:nth-child(3) { width: 120px; }
-.sent-todos-table th:nth-child(4), .sent-todos-table td:nth-child(4), .sent-todos-table th:nth-child(5), .sent-todos-table td:nth-child(5) { min-width: 180px; }
+.sent-todos-table th:nth-child(4), .sent-todos-table td:nth-child(4), .sent-todos-table th:nth-child(5), .sent-todos-table td:nth-child(5) { width: 180px; }
 .sent-todos-table th:nth-child(6), .sent-todos-table td:nth-child(6) { width: 138px; }
 .sent-todos-table th:nth-child(7), .sent-todos-table td:nth-child(7) { width: 100px; }
 .sent-todos-table th:nth-child(8), .sent-todos-table td:nth-child(8) { width: 280px; }
