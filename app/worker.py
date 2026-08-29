@@ -2273,10 +2273,12 @@ class DingTalkAutoReplyWorker:
             raise RuntimeError("orchestration final run was not persisted")
         if result.status not in {"failed_retryable", "failed_terminal", "unknown"}:
             self.store.clear_codex_capacity_pause()
-        # The Audit Agent owns provider execution and current-state reads.  The
-        # service persists the typed result and provider identifiers; it must
-        # not derive a delivery ledger row from an Audit read-back narrative.
-        sent_reply = None
+        # Persist a DingTalk message projection only from the typed Audit
+        # result's structured delivery reference.  This does not inspect the
+        # command stream or re-audit the business action: it merely keeps the
+        # message visible in History when the provider already returned a
+        # successful, target-matched read-back.
+        sent_reply = self._sent_reply_projection_from_result(task, result)
         decision_options: tuple[DecisionOption, ...] = (
             result.consumer_result.decision_options
             if result.consumer_result is not None
@@ -2367,6 +2369,36 @@ class DingTalkAutoReplyWorker:
         elif task_status == "done":
             self._dismiss_problem_notification(task)
         return task_status == "done"
+
+    @staticmethod
+    def _sent_reply_projection_from_result(
+        task: ReplyTask,
+        result: OrchestrationResult,
+    ) -> tuple[str, str] | None:
+        if task.channel != "dingtalk" or result.status != "executed":
+            return None
+        audit_result = result.audit_result
+        if audit_result is None or audit_result.external_result is None:
+            return None
+        reference = audit_result.external_result.live_result_reference
+        send_status = str(reference.get("sendStatus") or reference.get("send_status") or "").strip().lower()
+        if send_status not in {"success", "sent"}:
+            return None
+        readback = reference.get("readback")
+        if not isinstance(readback, dict):
+            return None
+        conversation_id = str(
+            readback.get("conversationId") or readback.get("conversation_id") or ""
+        ).strip()
+        if conversation_id != task.conversation_id:
+            return None
+        reply_text = str(readback.get("text") or readback.get("content") or "").strip()
+        if not reply_text:
+            return None
+        return (
+            reply_text,
+            json.dumps(reference, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        )
 
 
     @staticmethod

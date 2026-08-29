@@ -8,6 +8,7 @@ import importlib
 import json
 from pathlib import Path
 import sqlite3
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -385,6 +386,81 @@ class ScriptedAgentOrchestrator:
     def process(self, task, context, *, refresh_context) -> OrchestrationResult:
         self.calls.append((task, context))
         return self.results.pop(0)
+
+
+def test_sent_reply_projection_uses_target_matched_audit_readback():
+    task = SimpleNamespace(channel="dingtalk", conversation_id="cid-1")
+    audit_result = AuditAgentResult.model_validate(
+        {
+            "outcome": "executed",
+            "summary": "sent",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": {
+                "operation_id": "op-1",
+                "verification_summary": "provider success",
+                "live_result_reference": {
+                    "sendStatus": "SUCCESS",
+                    "readback": {"conversationId": "cid-1", "text": "已发送正文"},
+                },
+            },
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    )
+    result = OrchestrationResult(
+        status="executed",
+        final_run_id=1,
+        final_role=AgentRole.AUDIT,
+        summary="sent",
+        error=AgentError(code="", retryable=False, authorization_required=False),
+        feedback_cycles=0,
+        audit_result=audit_result,
+    )
+
+    assert DingTalkAutoReplyWorker._sent_reply_projection_from_result(task, result) == (
+        "已发送正文",
+        '{"readback":{"conversationId":"cid-1","text":"已发送正文"},"sendStatus":"SUCCESS"}',
+    )
+
+
+def test_sent_reply_projection_rejects_unmatched_readback():
+    task = SimpleNamespace(channel="dingtalk", conversation_id="cid-1")
+    audit_result = AuditAgentResult.model_validate(
+        {
+            "outcome": "executed",
+            "summary": "sent",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": {
+                "operation_id": "op-1",
+                "verification_summary": "provider success",
+                "live_result_reference": {
+                    "sendStatus": "SUCCESS",
+                    "readback": {"conversationId": "cid-2", "text": "错误目标"},
+                },
+            },
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    )
+    result = OrchestrationResult(
+        status="executed",
+        final_run_id=1,
+        final_role=AgentRole.AUDIT,
+        summary="sent",
+        error=AgentError(code="", retryable=False, authorization_required=False),
+        feedback_cycles=0,
+        audit_result=audit_result,
+    )
+
+    assert DingTalkAutoReplyWorker._sent_reply_projection_from_result(task, result) is None
 
 
 def explicit_agent_result(
