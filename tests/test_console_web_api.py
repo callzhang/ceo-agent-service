@@ -296,6 +296,30 @@ def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
     assert "[object Object]" not in json.dumps(item, ensure_ascii=False)
 
 
+def test_console_history_includes_chart_snapshot(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="history-conversation",
+        conversation_title="History test",
+        trigger_message_id="history-message",
+        trigger_sender="Derek",
+        trigger_text="Show recent events",
+        action="chat_message",
+        sensitivity_kind="",
+        codex_reason="test",
+        draft_reply_text="Recent event",
+        send_status="sent",
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/history?page=1&page_size=20")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["chart"]["total"] >= 1
+    assert len(payload["chart"]["labels"]) == 24
+
+
 def test_console_feedback_pending_badge_is_global_when_filtered_to_resolved(
     tmp_path: Path,
 ):
@@ -499,6 +523,58 @@ def test_console_attention_returns_grouped_json_with_snapshot(monkeypatch, tmp_p
     assert payload["meta"]["total"] == 1
     assert payload["items"][0]["count"] == 2
     assert payload["items"][0]["root_cause"] == "db_locked"
+
+
+def test_console_attention_preserves_record_detail_url(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        audit_web_module,
+        "_queue_attention_rows",
+        lambda store: [
+            {
+                "category": "Service error",
+                "id": "12830",
+                "status": "failed",
+                "context": "producer_loop_error",
+                "summary": "database is locked",
+                "updated_at": "2026-08-29 18:27:11",
+                "error": "database is locked",
+                "detail_url": "/history/errors/12830",
+            },
+        ],
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/attention")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["records"][0]["detail_url"] == "/history/errors/12830"
+
+
+def test_queue_attention_rows_routes_service_errors_to_history_detail(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("", "", "producer_loop_error", "database is locked")
+    error_id = store.list_errors(limit=1)[0].id
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    service_error = next(row for row in rows if row["category"] == "Service error")
+    assert service_error["id"] == str(error_id)
+    assert service_error["detail_url"] == f"/history/errors/{error_id}"
+
+
+def test_console_error_detail_returns_error_record(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error("", "", "producer_loop_error", "database is locked")
+    error_id = store.list_errors(limit=1)[0].id
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/console/history/errors/{error_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["item"]["id"] == error_id
+    assert payload["item"]["kind"] == "producer_loop_error"
+    assert payload["item"]["error"] == "database is locked"
 
 
 def test_spa_mode_serves_same_react_index_for_business_deep_links_and_keeps_api_404_json(

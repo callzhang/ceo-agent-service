@@ -43,6 +43,7 @@ def register_console_routes(
     status_payload_factory: Callable[[], Any],
     attention_rows_factory: Callable[[], Any],
     task_row_builder: Callable[[Any, list[Any]], Any] | None = None,
+    history_chart_factory: Callable[[], Any] | None = None,
 ) -> None:
     def list_meta(*, page: int, page_size: int, total: int, snapshot: str):
         return ApiListMeta(
@@ -160,7 +161,37 @@ def register_console_routes(
                 "output": normalize_display_value(row.output_text),
                 "action": normalize_display_value(row.action),
             })
-        return list_envelope(items, page=page, page_size=page_size, total=total)
+        response = list_envelope(items, page=page, page_size=page_size, total=total)
+        if history_chart_factory is not None:
+            response["chart"] = json_safe(history_chart_factory())
+        return response
+
+    @app.get("/api/console/history/errors/{error_id}")
+    def console_error_detail(error_id: int):
+        error = store_factory().get_error(error_id)
+        if error is None:
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "Error record not found", "details": {}},
+                status_code=404,
+            )
+        resolved = bool(error.resolved_at)
+        return item_envelope({
+            "id": error.id,
+            "title": error.kind,
+            "kind": error.kind,
+            "status": "resolved" if resolved else "failed",
+            "summary": error.detail,
+            "error": error.detail,
+            "created_at": error.created_at,
+            "updated_at": error.resolved_at or error.created_at,
+            "resolved_at": error.resolved_at,
+            "resolution": error.resolution,
+            "context": "service error",
+            "runtime": {
+                "conversation_id": error.conversation_id or "",
+                "message_id": error.message_id or "",
+            },
+        })
 
     @app.get("/api/console/history/{attempt_id}")
     def console_history_detail(attempt_id: int):
@@ -247,7 +278,12 @@ def register_console_routes(
                 "processing_task_id": processing.workbench_task_id if processing else "",
             })
         start = (page - 1) * page_size
-        return list_envelope(filtered[start:start + page_size], page=page, page_size=page_size, total=len(filtered))
+        envelope = list_envelope(filtered[start:start + page_size], page=page, page_size=page_size, total=len(filtered))
+        envelope["pending_count"] = sum(
+            1 for row in all_rows
+            if project_feedback_status(row, store.get_feedback_processing_item(row.key)) == "pending"
+        )
+        return envelope
 
     def _feedback_items_for_batch(store: Any, batch_id: str) -> list[dict[str, Any]]:
         rows = []

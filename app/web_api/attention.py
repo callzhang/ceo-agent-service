@@ -19,6 +19,7 @@ class AttentionRecord(BaseModel):
     summary: str
     updated_at: str
     error: str = ""
+    detail_url: str = ""
 
 
 class AttentionGroup(BaseModel):
@@ -60,6 +61,7 @@ def _record(row: dict[str, Any]) -> AttentionRecord:
         summary=normalize_display_value(row.get("summary")),
         updated_at=normalize_display_value(row.get("updated_at")),
         error=error,
+        detail_url=normalize_display_value(row.get("detail_url")),
     )
 
 

@@ -7,7 +7,7 @@ import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { StatusBadge } from "../components/status/StatusBadge";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 
-export function AttentionPanel() {
+export function AttentionPanel({ onCountChange }: { onCountChange?: (count: number) => void } = {}) {
   const [rows, setRows] = useState<AttentionItem[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -19,13 +19,14 @@ export function AttentionPanel() {
     setError("");
     return listAttention().then((page) => {
       setRows(page.items);
+      onCountChange?.(page.items.reduce((total, row) => total + Math.max(0, row.count), 0));
       setSnapshot(page.meta.snapshot_at);
       setState("ready");
     }).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : "加载失败");
       setState("error");
     });
-  }, []);
+  }, [onCountChange]);
   useEffect(() => { void load(); }, [load]);
 
   return (

@@ -1,7 +1,6 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 
-import { App } from "../app";
 import { AppShell } from "./AppShell";
 
 const AgentPage = lazy(() => import("../app").then((module) => ({ default: module.App })));
@@ -16,6 +15,7 @@ const DomainListPage = lazy(() => import("../pages/DomainListPage").then((module
 const TutorialPage = lazy(() => import("../pages/TutorialPage").then((module) => ({ default: module.TutorialPage })));
 const CodexSessionDetailPage = lazy(() => import("../pages/CodexPages").then((module) => ({ default: module.CodexSessionDetailPage })));
 const BusinessDetailPage = lazy(() => import("../pages/BusinessDetailPage").then((module) => ({ default: module.BusinessDetailPage })));
+const RuntimeErrorDetailPage = lazy(() => import("../pages/RuntimeErrorDetailPage").then((module) => ({ default: module.RuntimeErrorDetailPage })));
 
 function PlaceholderPage({ title, children }: { title: string; children?: ReactNode }) {
   return (
@@ -51,6 +51,7 @@ function ConsoleRoutes() {
     <Routes>
       <Route path="/" element={<AgentRoute />} />
       <Route path="/history" element={<HistoryPage />} />
+      <Route path="/history/errors/:errorId" element={<RuntimeErrorDetailPage />} />
       <Route path="/history/attempts/:attemptId" element={<BusinessDetailPage kind="Attempt" endpoint="/api/console/history/:id" />} />
       <Route path="/history/meeting-attempts/:runId" element={<BusinessDetailPage kind="Meeting Attempt" endpoint="/api/console/meeting-attempts/:id" />} />
       <Route path="/history/oa-approvals/:processInstanceId" element={<BusinessDetailPage kind="OA Approval" endpoint="/api/console/oa-approvals/:id" />} />
@@ -77,6 +78,7 @@ function ConsoleRoutes() {
       <Route path="/developer-prompt" element={<Navigate to="/settings?tab=prompts" replace />} />
       <Route path="/logs" element={<Navigate to="/history" replace />} />
       <Route path="/errors" element={<Navigate to="/history" replace />} />
+      <Route path="/errors/:errorId" element={<RuntimeErrorDetailPage />} />
       <Route path="*" element={<PlaceholderPage title="页面不存在"><p>请检查地址，或从顶部导航选择一个业务页面。</p></PlaceholderPage>} />
     </Routes>
   );

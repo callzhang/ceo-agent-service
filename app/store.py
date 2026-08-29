@@ -18889,6 +18889,14 @@ class AutoReplyStore:
             rows = db.execute(query, args).fetchall()
             return [ReplyError.model_validate(dict(row)) for row in rows]
 
+    def get_error(self, error_id: int) -> ReplyError | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from errors where id=?",
+                (error_id,),
+            ).fetchone()
+            return None if row is None else ReplyError.model_validate(dict(row))
+
     def list_errors_after(self, error_id: int) -> list[ReplyError]:
         with self._connect() as db:
             rows = db.execute(

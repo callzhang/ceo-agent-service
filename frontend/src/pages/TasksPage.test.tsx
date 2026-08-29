@@ -29,9 +29,9 @@ describe("TasksPage", () => {
     render(<MemoryRouter><TasksPage /></MemoryRouter>);
 
     expect(await screen.findByRole("region", { name: "Tasks workspace" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Task type filter" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Task state filter" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Task sort" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "类型" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "状态" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "排序" })).toBeInTheDocument();
     expect(screen.getByRole("table", { name: "Tasks" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Sent TODOs" })).toBeInTheDocument();
   });

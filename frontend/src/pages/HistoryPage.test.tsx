@@ -35,8 +35,8 @@ describe("HistoryPage", () => {
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);
 
     expect(await screen.findByRole("region", { name: "History workspace" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "History status filter" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "History object filter" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "状态" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "对象" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Recent 24 hour events" })).toBeInTheDocument();
     expect(screen.getByRole("article", { name: /客户项目/ })).toBeInTheDocument();
     expect(screen.getByText("问")).toBeInTheDocument();

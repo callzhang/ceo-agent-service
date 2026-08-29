@@ -1,9 +1,10 @@
-import { Archive, Check, Pencil, Search, X } from "lucide-react";
+import { Archive, Check, Pencil, X } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
 
 import { parseWorkbenchTimestamp, taskStateLabel } from "../presentation";
 import type { Task } from "../types";
+import { SearchField } from "./filters/SearchField";
 
 interface TaskListProps {
   tasks: Task[];
@@ -217,18 +218,15 @@ export function TaskList({
       <button className="secondary-button feedback-button" type="button" onClick={onProcessFeedback}>
         处理反馈 · {pendingFeedbackCount}
       </button>
-      <label className="task-search">
-        <Search aria-hidden="true" size={16} />
-        <span className="sr-only">搜索任务</span>
-        <input
-          type="search"
-          aria-label="搜索任务"
-          placeholder="搜索任务"
-          aria-describedby={hasMore ? "task-search-scope" : undefined}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </label>
+      <SearchField
+        id="agent-task-search"
+        label="搜索任务"
+        placeholder="搜索任务"
+        value={query}
+        describedBy={hasMore ? "task-search-scope" : undefined}
+        onChange={setQuery}
+        onClear={() => setQuery("")}
+      />
       {hasMore && <p className="search-scope" id="task-search-scope">仅搜索已加载的任务</p>}
       <div className="task-items">
         {useVirtualList ? (

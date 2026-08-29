@@ -21,4 +21,39 @@ describe("console API helpers", () => {
       meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" },
     });
   });
+
+  it("uses server-provided Attention detail URLs instead of assuming every record is an Attempt", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      items: [{
+        category: "Service error",
+        root_cause: "database is locked",
+        context: "producer_loop_error",
+        severity: "error",
+        count: 1,
+        summary: "database is locked",
+        error: "database is locked",
+        updated_at: "2026-08-29 18:27:11",
+        records: [{
+          id: "12830",
+          category: "Service error",
+          status: "failed",
+          context: "producer_loop_error",
+          root_cause: "database is locked",
+          summary: "database is locked",
+          updated_at: "2026-08-29 18:27:11",
+          error: "database is locked",
+          detail_url: "/history/errors/12830",
+        }],
+      }],
+      meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T18:27:11Z" },
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    try {
+      const { listAttention } = await import("./console");
+      const page = await listAttention();
+      expect(page.items[0].links).toEqual([{ label: "查看错误详情", href: "/history/errors/12830" }]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

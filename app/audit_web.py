@@ -2721,6 +2721,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                         "summary": detail,
                         "updated_at": str(row["created_at"] or ""),
                         "error": detail,
+                        "detail_url": f"/history/errors/{int(row['id'])}",
                     }
                 )
     for attempt in store.list_current_unresolved_problem_attempts(limit=limit):
