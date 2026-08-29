@@ -320,6 +320,7 @@ def register_console_routes(
             elif section == "audit-rules":
                 from app.audit_rules import (
                     AgentRole,
+                    _render_audit_variables,
                     read_audit_rules_template,
                     render_audit_rules,
                 )
@@ -329,7 +330,7 @@ def register_console_routes(
                     "section": section,
                     "fields": fields,
                     "preview": {
-                        "template": template,
+                        "template": _render_audit_variables(template),
                         "consumer": render_audit_rules(AgentRole.CONSUMER),
                         "audit": render_audit_rules(AgentRole.AUDIT),
                     },

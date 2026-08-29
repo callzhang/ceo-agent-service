@@ -3,7 +3,8 @@
 - 2026-08-29: 修正 Settings → Audit Rules 的双层切换关系。Template、Consumer、Audit
   规则选择会保留当前 Template/Rendered preview 视图；视图选择也会真正控制面板内容，
   不再因为规则类型切换而隐式重置。Consumer/Audit 的 Template 视图明确展示共享模板，
-  仅 Template 规则可编辑保存。
+  仅 Template 规则可编辑保存。API 同时区分可编辑的模板原文和已解析
+  `{{principal}}` 的 Template preview，避免预览把变量原样展示。
 
 - 2026-08-29: Settings → Connectors → WeChat now embeds the reply-scope
   editor. Saved targets, target search, unsaved-change state, and explicit
