@@ -217,6 +217,24 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
     json.dumps(payload, ensure_ascii=False)
 
 
+def test_console_audit_rules_template_preview_is_rendered_but_template_is_preserved(
+    monkeypatch, tmp_path: Path
+):
+    template_path = tmp_path / "audit_rules.md"
+    template_path.write_text("Escalate to {{principal}} only when needed.", encoding="utf-8")
+    monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(template_path))
+    monkeypatch.setenv("USER_ALIAS", "Alex")
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/settings/audit-rules")
+
+    assert response.status_code == 200
+    item = response.json()["item"]
+    assert item["fields"]["template"] == "Escalate to {{principal}} only when needed."
+    assert item["preview"]["template"] == "Escalate to Alex only when needed."
+    assert "{{principal}}" not in item["preview"]["template"]
+
+
 def test_console_attention_returns_grouped_json_with_snapshot(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         audit_web_module,
