@@ -9456,6 +9456,70 @@ def _workbench_index_chunks(file_descriptor: int):
         os.close(file_descriptor)
 
 
+_SPA_EXACT_PAGE_PATHS = frozenset(
+    {
+        "/",
+        "/history",
+        "/tasks",
+        "/settings",
+        "/user-feedback",
+        "/tutorial",
+        "/notifications",
+        "/codex",
+        "/workers",
+        "/status",
+        "/attention",
+        "/logs",
+        "/errors",
+        "/config",
+        "/developer-prompt",
+        "/wechat/review",
+        "/wechat/memory-review",
+        "/wechat/deliveries",
+        "/wechat/conversations",
+    }
+)
+
+
+def _is_spa_page_path(path: str) -> bool:
+    normalized = path.rstrip("/") or "/"
+    if normalized in _SPA_EXACT_PAGE_PATHS:
+        return True
+    return any(
+        normalized.startswith(prefix)
+        for prefix in (
+            "/history/",
+            "/tasks/",
+            "/settings/",
+            "/codex/",
+            "/attempts/",
+            "/meeting-attempts/",
+            "/oa-approvals/",
+        )
+    )
+
+
+def _spa_index_response(asset_dir: Path) -> Response:
+    opened_index = _open_workbench_index(asset_dir)
+    if opened_index is None:
+        return HTMLResponse(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>React console unavailable</title></head>"
+            "<body><h1>React console assets are missing</h1></body></html>",
+            status_code=503,
+            headers={"Cache-Control": "no-cache", **WORKBENCH_SECURITY_HEADERS},
+        )
+    file_descriptor, size = opened_index
+    return StreamingResponse(
+        _workbench_index_chunks(file_descriptor),
+        media_type="text/html",
+        headers={
+            "Cache-Control": "no-cache",
+            "Content-Length": str(size),
+            **WORKBENCH_SECURITY_HEADERS,
+        },
+    )
+
+
 def create_audit_app(
     db_path: Path,
     ding_robot_code: str | None = None,
@@ -9467,6 +9531,7 @@ def create_audit_app(
     workbench_executor=None,
     workbench_scheduler_interval_seconds: float = 1.0,
     workbench_scheduler_join_timeout_seconds: float = 1.0,
+    spa_enabled: bool = False,
 ) -> FastAPI:
     # The audit process is read-heavy. Reuse one initialized Store so requests do
     # not repeatedly contend with the worker for schema initialization writes.
@@ -9597,6 +9662,16 @@ def create_audit_app(
 
     app = FastAPI(title="CEO Agent Audit", lifespan=audit_lifespan)
 
+    from app.web_api import register_console_routes
+
+    register_console_routes(
+        app,
+        store_factory=lambda: AutoReplyStore(db_path),
+        status_payload_factory=render_settings_status_payload,
+        attention_rows_factory=lambda: _queue_attention_rows(audit_store),
+        task_row_builder=_task_row_payload,
+    )
+
     register_repository_upgrade_routes(
         app,
         service_factory=lambda: RepositoryUpgradeService(
@@ -9645,6 +9720,8 @@ def create_audit_app(
                 status_code=exc.status_code,
                 headers=exc.headers,
             )
+        if spa_enabled and request.method in {"GET", "HEAD"} and _is_spa_page_path(request.url.path):
+            return _spa_index_response(asset_dir)
         response = await call_next(request)
         path = request.url.path
         if path == "/" or path.startswith("/workbench-assets/"):
@@ -10331,6 +10408,7 @@ def create_default_audit_app() -> FastAPI:
         ding_robot_code=os.getenv("CEO_DING_ROBOT_CODE")
         or os.getenv("DINGTALK_DING_ROBOT_CODE"),
         ding_robot_name=os.getenv("CEO_DING_ROBOT_NAME"),
+        spa_enabled=True,
     )
 
 
@@ -10369,6 +10447,7 @@ def run_audit_web(
             db_path,
             ding_robot_code=ding_robot_code,
             ding_robot_name=ding_robot_name,
+            spa_enabled=True,
         ),
         host=host,
         port=port,
