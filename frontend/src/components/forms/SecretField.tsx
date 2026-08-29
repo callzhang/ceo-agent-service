@@ -34,7 +34,7 @@ export function SecretField({ id, label, value = "", configured = false, onChang
           {visible ? <EyeOff aria-hidden="true" size={16} /> : <Eye aria-hidden="true" size={16} />}
         </button>
       </div>
-      {configured && <p className="field-help">已保存的凭据不会回填</p>}
+      {configured && <p className="field-help">已保存的凭据已回填，可直接编辑或替换。</p>}
     </div>
   );
 }

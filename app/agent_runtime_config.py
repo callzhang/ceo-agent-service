@@ -15,6 +15,22 @@ DEFAULT_FRIDAY_RUNTIME_BASE_URL = "http://127.0.0.1:8080"
 SUPPORTED_CODEX_RUNTIME_MODELS = frozenset(
     {"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
 )
+SUPPORTED_OPENAI_COMPATIBLE_MODELS = frozenset(
+    {
+        *SUPPORTED_CODEX_RUNTIME_MODELS,
+        "MiniMax-M2.5",
+        "MiniMax-M2.1",
+        "MiniMax-M2",
+        "qwen3-max",
+        "qwen3-coder-plus",
+        "qwen-plus",
+        "qwen-turbo",
+        "glm-5",
+        "glm-4.7",
+        "glm-4.6",
+        "glm-4.5",
+    }
+)
 
 
 class AgentRuntimeConfig(BaseModel):
@@ -75,7 +91,7 @@ def load_runtime_config(env: Mapping[str, str]) -> AgentRuntimeConfig:
     api_model = env.get("CEO_CODEX_API_MODEL", model).strip()
     if "codex_oauth" in names and model not in SUPPORTED_CODEX_RUNTIME_MODELS:
         raise ValueError("CEO_CODEX_MODEL must select a supported Codex runtime model")
-    if "codex_api" in names and api_model not in SUPPORTED_CODEX_RUNTIME_MODELS:
+    if "codex_api" in names and api_model not in SUPPORTED_OPENAI_COMPATIBLE_MODELS:
         raise ValueError(
             "CEO_CODEX_API_MODEL must select a supported Codex runtime model"
         )

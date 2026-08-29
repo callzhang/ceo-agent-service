@@ -65,6 +65,18 @@ def test_codex_api_route_rejects_a_missing_api_key():
         load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_api"})
 
 
+def test_codex_api_route_accepts_common_openai_compatible_model():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_api",
+            "CEO_CODEX_API_KEY": "secret-value",
+            "CEO_CODEX_API_MODEL": "qwen-plus",
+        }
+    )
+
+    assert config.routes[0].model == "qwen-plus"
+
+
 def test_codex_api_route_rejects_an_unsuffixed_gpt_5_6_model():
     with pytest.raises(ValueError, match="CEO_CODEX_API_MODEL"):
         load_runtime_config(

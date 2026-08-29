@@ -41,6 +41,7 @@ from app.agent_contracts import (
 from app.agent_runtime_config import (
     DEFAULT_CODEX_API_BASE_URL,
     DEFAULT_FRIDAY_RUNTIME_BASE_URL,
+    SUPPORTED_OPENAI_COMPATIBLE_MODELS,
     SUPPORTED_CODEX_RUNTIME_MODELS,
     normalize_codex_api_base_url,
     normalize_friday_runtime_base_url,
@@ -3990,6 +3991,7 @@ _AGENT_RUNTIME_MODELS = (
     ("gpt-5.6-luna", "GPT-5.6 Luna"),
 )
 _AGENT_RUNTIME_MODEL_VALUES = SUPPORTED_CODEX_RUNTIME_MODELS
+_AGENT_RUNTIME_COMPATIBLE_MODEL_VALUES = SUPPORTED_OPENAI_COMPATIBLE_MODELS
 _AGENT_RUNTIME_REASONING_EFFORTS = ("low", "medium", "high", "xhigh")
 
 
@@ -8702,7 +8704,7 @@ def handle_agent_runtime_config_post(
         return _invalid_agent_runtime_config(
             "Thinking strength must be selected from this page."
         )
-    if api_model not in _AGENT_RUNTIME_MODEL_VALUES:
+    if api_model not in _AGENT_RUNTIME_COMPATIBLE_MODEL_VALUES:
         return _invalid_agent_runtime_config(
             "Fallback model must be selected from this page."
         )

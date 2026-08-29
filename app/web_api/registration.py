@@ -7,6 +7,7 @@ old form routes during the migration, but React never consumes their HTML.
 
 from collections.abc import Callable
 import json
+import os
 from typing import Any
 from urllib.parse import urlencode
 
@@ -358,10 +359,18 @@ def register_console_routes(
                 }
             else:
                 env = app_config.read_env_file()
-                fields = {key: env.get(key, "") for key in ("CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT", "CEO_AGENT_RUNTIME_ROUTES", "CEO_CODEX_API_BASE_URL", "CEO_CODEX_API_MODEL", "CEO_FRIDAY_RUNTIME_BASE_URL", "CEO_FRIDAY_RUNTIME_PROJECT_ID")}
+                runtime_keys = (
+                    "CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT", "CEO_AGENT_RUNTIME_ROUTES",
+                    "CEO_CODEX_API_BASE_URL", "CEO_CODEX_API_MODEL", "CEO_FRIDAY_RUNTIME_BASE_URL",
+                    "CEO_FRIDAY_RUNTIME_PROJECT_ID", "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL",
+                    "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", "CEO_FRIDAY_RUNTIME_AUTH_DISABLED",
+                    "CEO_CODEX_API_KEY", "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY",
+                    "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN",
+                )
+                fields = {key: env.get(key, os.environ.get(key, "")) for key in runtime_keys}
             if payload is None:
                 payload = {"section": section, "fields": fields}
-            payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"] if section == "agent-runtime" else []
+            payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"] if section == "agent-runtime" else []
         return item_envelope(payload)
 
     @app.get("/api/console/tutorial")
@@ -581,13 +590,24 @@ def register_console_routes(
         elif section in {"prompts", "audit-rules"}:
             encoded = {"prompt": str(payload.get("prompt") or "developer"), "template": str(payload.get("template") or fields.get("template") or "")}
         elif section == "agent-runtime":
+            routes = {item.strip() for item in str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or "").split(",") if item.strip()}
             encoded = {
                 "codex_model": str(fields.get("codex_model") or fields.get("CEO_CODEX_MODEL") or ""),
                 "codex_reasoning_effort": str(fields.get("codex_reasoning_effort") or fields.get("CEO_CODEX_MODEL_REASONING_EFFORT") or ""),
-                "codex_api_enabled": "1" if str(fields.get("codex_api_enabled") or "CEO_CODEX_API_KEY" in fields).lower() in {"1", "true", "yes", "on"} else "0",
+                "codex_api_enabled": "1" if str(fields.get("codex_api_enabled") or ("1" if "codex_api" in routes else "0")).lower() in {"1", "true", "yes", "on"} else "0",
                 "codex_api_model": str(fields.get("codex_api_model") or fields.get("CEO_CODEX_API_MODEL") or ""),
                 "codex_api_base_url": str(fields.get("codex_api_base_url") or fields.get("CEO_CODEX_API_BASE_URL") or ""),
-                "codex_api_token": str(fields.get("codex_api_token") or ""),
+                "codex_api_token": str(fields.get("codex_api_token") or fields.get("CEO_CODEX_API_KEY") or ""),
+                "friday_runtime_settings_present": "1",
+                "friday_runtime_enabled": "1" if "friday_runtime" in routes else "0",
+                "friday_runtime_base_url": str(fields.get("friday_runtime_base_url") or fields.get("CEO_FRIDAY_RUNTIME_BASE_URL") or ""),
+                "friday_runtime_project_id": str(fields.get("friday_runtime_project_id") or fields.get("CEO_FRIDAY_RUNTIME_PROJECT_ID") or ""),
+                "friday_runtime_provider_base_url": str(fields.get("friday_runtime_provider_base_url") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL") or ""),
+                "friday_runtime_provider_model": str(fields.get("friday_runtime_provider_model") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL") or ""),
+                "friday_runtime_provider_api_key": str(fields.get("friday_runtime_provider_api_key") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY") or ""),
+                "friday_runtime_auth_disabled": str(fields.get("friday_runtime_auth_disabled") or fields.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED") or ""),
+                "friday_runtime_ticket": str(fields.get("friday_runtime_ticket") or fields.get("CEO_FRIDAY_RUNTIME_TICKET") or ""),
+                "friday_session_token": str(fields.get("friday_session_token") or fields.get("CEO_FRIDAY_SESSION_TOKEN") or ""),
             }
         else:
             encoded = {str(k): str(v) for k, v in fields.items()}

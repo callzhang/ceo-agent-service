@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -20,6 +21,8 @@ function renderSettings(path: string) {
 
 describe("SettingsPage", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    listAttention.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechat.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechatTargets.mockResolvedValue({ items: [], account_id: "", meta: { page: 1, page_size: 50, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     getSettings.mockResolvedValue({
@@ -33,6 +36,22 @@ describe("SettingsPage", () => {
       },
       meta: { snapshot_at: "2026-08-29T00:00:00Z" },
     });
+  });
+
+  it("shows a red unresolved Attention badge in the Settings navigation", async () => {
+    listAttention.mockResolvedValueOnce({
+      items: [
+        { count: 4 },
+        { count: 1 },
+      ],
+      meta: { page: 1, page_size: 20, total: 2, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" },
+    });
+
+    renderSettings("/settings?tab=configuration");
+
+    const badge = await screen.findByLabelText("5 个未解决问题");
+    expect(badge).toHaveClass("settings-nav-badge");
+    expect(badge).toHaveTextContent("5");
   });
 
   it("restores the explanatory producer routing sections on Info", async () => {
@@ -52,6 +71,34 @@ describe("SettingsPage", () => {
     expect(screen.getByText("用户别名")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Configuration" })).toHaveClass("active");
     expect(screen.getByRole("link", { name: "Status" })).not.toHaveClass("active");
+  });
+
+  it("prefills saved Agent Runtime credentials from the settings DTO", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "agent-runtime", fields: {
+      CEO_CODEX_API_KEY: "codex-token",
+      CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY: "provider-token",
+      CEO_FRIDAY_RUNTIME_TICKET: "runtime-ticket",
+      CEO_FRIDAY_SESSION_TOKEN: "session-token",
+    } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=agent-runtime");
+
+    expect(await screen.findByLabelText("API Token")).toHaveValue("codex-token");
+    expect(screen.getByLabelText("Provider API Token")).toHaveValue("provider-token");
+    expect(screen.getByLabelText("Runtime ticket")).toHaveValue("runtime-ticket");
+    expect(screen.getByLabelText("Session token")).toHaveValue("session-token");
+    expect(screen.getAllByText(/已保存的凭据已回填/)).toHaveLength(4);
+    expect(screen.getAllByRole("option", { name: "MiniMax M2.5" })).toHaveLength(2);
+    expect(screen.getAllByRole("option", { name: "Qwen3 Max" })).toHaveLength(2);
+    expect(screen.getAllByRole("option", { name: "GLM-5" })).toHaveLength(2);
+
+    const token = screen.getByLabelText("API Token");
+    await user.clear(token);
+    await user.type(token, "replacement-token");
+    expect(token).toHaveValue("replacement-token");
+    saveSettings.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+    fireEvent.submit(screen.getByRole("button", { name: "保存" }).closest("form")!);
+    expect(saveSettings).toHaveBeenCalledWith("agent-runtime", expect.objectContaining({ CEO_CODEX_API_KEY: "replacement-token" }), {});
   });
 
   it("keeps prompt and audit editor values visible while highlighting template tokens", async () => {

@@ -1,9 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { displayValue, getSettings, listWechat, listWechatTargets, saveSettings, saveWechatReplyScope, type WechatScopeTarget } from "../api/console";
+import { displayValue, getSettings, listAttention, listWechat, listWechatTargets, saveSettings, saveWechatReplyScope, type WechatScopeTarget } from "../api/console";
 import { TokenEditor } from "../components/editor/TokenEditor";
 import { SecretField } from "../components/forms/SecretField";
+import { SearchField } from "../components/filters/SearchField";
+import { SelectField } from "../components/filters/SelectField";
 import { StatusBadge } from "../components/status/StatusBadge";
 import { AttentionPanel } from "./AttentionPage";
 import { StatusPanel } from "./StatusPage";
@@ -24,9 +26,9 @@ function fieldsOf(payload: RecordValue) {
   return record(payload.fields);
 }
 
-function SectionNav({ section }: { section: SettingsSection }) {
+function SectionNav({ section, attentionCount }: { section: SettingsSection; attentionCount: number }) {
   return <nav className="settings-nav-react" aria-label="Settings navigation">
-    {sections.map(([key, label]) => <Link key={key} to={`/settings?tab=${key}`} className={section === key ? "active" : ""} aria-current={section === key ? "page" : undefined}>{label}</Link>)}
+    {sections.map(([key, label]) => <Link key={key} to={`/settings?tab=${key}`} className={section === key ? "active" : ""} aria-current={section === key ? "page" : undefined}>{label}{key === "attention" && attentionCount > 0 && <span className="settings-nav-badge" aria-label={`${attentionCount} 个未解决问题`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}</Link>)}
   </nav>;
 }
 
@@ -216,7 +218,7 @@ function WechatReplyScopePanel() {
     {loadState === "error" && <div className="page-state page-state-error" role="alert">{error}</div>}
     {loadState === "ready" && <>
       <div className="wechat-selected-block"><div className="wechat-section-label">当前回复范围 <span>{selectedTargets.length} 个对象</span></div>{selectedTargets.length ? <div className="wechat-target-list">{selectedTargets.map((target) => <WechatTargetRow key={scopeKey(target)} target={target} selected onToggle={toggleTarget} />)}</div> : <p className="wechat-empty">尚未选择对象。搜索并勾选后，点击“保存回复范围”。</p>}</div>
-      <div className="wechat-target-picker"><div className="wechat-section-label">添加或调整对象</div><div className="wechat-search-row"><label htmlFor="wechat-target-search">搜索好友或群聊</label><input id="wechat-target-search" value={search} placeholder="按名称或 ID 搜索" onChange={(event) => setSearch(event.target.value)} /><button type="button" className="secondary-button" onClick={() => void searchTargets()} disabled={searchState === "loading"}>{searchState === "loading" ? "搜索中…" : "搜索"}</button></div>{searchError && <p className="field-error" role="alert">{searchError}</p>}{targets.length > 0 && <div className="wechat-target-list">{targets.map((target) => <WechatTargetRow key={scopeKey(target)} target={target} selected={selected.has(scopeKey(target))} onToggle={toggleTarget} />)}</div>}{!targets.length && <p className="wechat-empty">点击搜索读取可用的微信好友和群聊。</p>}</div>
+      <div className="wechat-target-picker"><div className="wechat-section-label">添加或调整对象</div><div className="wechat-search-row"><SearchField id="wechat-target-search" label="搜索好友或群聊" value={search} placeholder="按名称或 ID 搜索" onChange={(value) => { setSaveState("idle"); setSearch(value); }} onClear={() => { setSaveState("idle"); setSearch(""); }} /><button type="button" className="secondary-button" onClick={() => void searchTargets()} disabled={searchState === "loading"}>{searchState === "loading" ? "搜索中…" : "搜索"}</button></div>{searchError && <p className="field-error" role="alert">{searchError}</p>}{targets.length > 0 && <div className="wechat-target-list">{targets.map((target) => <WechatTargetRow key={scopeKey(target)} target={target} selected={selected.has(scopeKey(target))} onToggle={toggleTarget} />)}</div>}{!targets.length && <p className="wechat-empty">点击搜索读取可用的微信好友和群聊。</p>}</div>
       <div className="wechat-scope-actions"><button type="button" className="primary-button" onClick={() => void saveScope()} disabled={!dirty || saveState === "saving"}>{saveState === "saving" ? "保存中…" : "保存回复范围"}</button>{saveState === "saved" && <span className="save-success" role="status">回复范围已保存</span>}{saveState === "error" && <span className="save-error" role="alert">保存失败，当前选择仍保留</span>}</div>
     </>}
     {error && loadState === "ready" && <p className="field-error" role="alert">{error}</p>}
@@ -237,15 +239,62 @@ function ConnectorTab({ value, label, active }: { value: string; label: string; 
 
 function StateItem({ label, value }: { label: string; value: string }) { return <div className="connector-state-item"><span>{label}</span><strong>{value}</strong></div>; }
 
-function RuntimePanel({ payload, draft, setDraft, saveState }: { payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error" }) {
-  const value = (key: string) => displayValue(draft[key] ?? fieldsOf(payload)[key]);
-  const input = (key: string, label: string, type = "text") => <label className="runtime-field"><span>{label}</span><input type={type} value={value(key)} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} /></label>;
-  return <SettingsCard><div className="settings-card-heading"><div><p className="eyebrow">Settings / Agent Runtime</p><h2>Agent Runtime</h2><p className="muted">集中管理模型路由和 fallback 凭据。保存后重启主服务，运行中的 worker 才会使用新配置。</p></div><span className="settings-path">.env backed</span></div><div className="runtime-overview"><StateItem label="Primary route" value="Codex OAuth" /><StateItem label="Model" value={value("CEO_CODEX_MODEL")} /><StateItem label="API fallback" value={value("CEO_AGENT_RUNTIME_ROUTES").includes("codex_api") ? "Active" : "Not active"} /><StateItem label="Friday Runtime" value={value("CEO_AGENT_RUNTIME_ROUTES").includes("friday_runtime") ? "Active" : "Not active"} /></div><form onSubmit={(event) => event.preventDefault()}><div className="runtime-card-grid"><section className="runtime-card"><div className="runtime-card-head"><div><h3>Codex OAuth</h3><p>默认的本机 OAuth 路由</p></div><StatusBadge value="Active" /></div><div className="runtime-fields">{input("CEO_CODEX_MODEL", "Model")}{input("CEO_CODEX_MODEL_REASONING_EFFORT", "Thinking strength")}</div></section><section className="runtime-card"><div className="runtime-card-head"><div><h3>Codex API fallback</h3><p>OAuth 不可用时的备用路由</p></div><StatusBadge value={value("CEO_AGENT_RUNTIME_ROUTES").includes("codex_api") ? "Active" : "Not active"} /></div><div className="runtime-fields">{input("CEO_CODEX_API_BASE_URL", "API Base URL", "url")}{input("CEO_CODEX_API_MODEL", "Fallback model")}<SecretField id="codex-api-token" label="API Token" configured value="" onChange={(next) => setDraft({ ...draft, CEO_CODEX_API_KEY: next })} /></div></section><section className="runtime-card runtime-card-wide"><div className="runtime-card-head"><div><h3>Friday Runtime</h3><p>本机 Friday Runtime 服务和 provider 凭据</p></div><StatusBadge value={value("CEO_AGENT_RUNTIME_ROUTES").includes("friday_runtime") ? "Active" : "Not active"} /></div><div className="runtime-fields">{input("CEO_FRIDAY_RUNTIME_BASE_URL", "Runtime Base URL", "url")}{input("CEO_FRIDAY_RUNTIME_PROJECT_ID", "Project ID")}{input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "Provider Base URL", "url")}{input("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", "Provider model")}<SecretField id="friday-runtime-ticket" label="Runtime ticket" configured value="" onChange={(next) => setDraft({ ...draft, CEO_FRIDAY_RUNTIME_TICKET: next })} /><SecretField id="friday-session-token" label="Session token" configured value="" onChange={(next) => setDraft({ ...draft, CEO_FRIDAY_SESSION_TOKEN: next })} /></div></section></div><div className="runtime-save-bar"><span className="muted">敏感值不会回填到页面。</span><SaveBar state={saveState} /></div></form></SettingsCard>;
+const CODEX_MODEL_OPTIONS = [
+  { value: "gpt-5.5", label: "GPT-5.5" },
+  { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+  { value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+  { value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+];
+
+const COMPATIBLE_MODEL_GROUPS = [
+  { label: "OpenAI", options: CODEX_MODEL_OPTIONS },
+  { label: "MiniMax", options: [
+    { value: "MiniMax-M2.5", label: "MiniMax M2.5" },
+    { value: "MiniMax-M2.1", label: "MiniMax M2.1" },
+    { value: "MiniMax-M2", label: "MiniMax M2" },
+  ] },
+  { label: "Qwen", options: [
+    { value: "qwen3-max", label: "Qwen3 Max" },
+    { value: "qwen3-coder-plus", label: "Qwen3 Coder Plus" },
+    { value: "qwen-plus", label: "Qwen Plus" },
+    { value: "qwen-turbo", label: "Qwen Turbo" },
+  ] },
+  { label: "智谱", options: [
+    { value: "glm-5", label: "GLM-5" },
+    { value: "glm-4.7", label: "GLM-4.7" },
+    { value: "glm-4.6", label: "GLM-4.6" },
+    { value: "glm-4.5", label: "GLM-4.5" },
+  ] },
+];
+
+function rawValue(draft: RecordValue, payload: RecordValue, key: string) {
+  const candidate = draft[key] ?? fieldsOf(payload)[key];
+  return typeof candidate === "string" ? candidate : "";
 }
 
-function SettingsContent({ section, payload, draft, setDraft, prompt, view, connector, auditRule, saveState }: { section: SettingsSection; payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; prompt: "developer" | "user"; view: "template" | "preview"; connector: string; auditRule: "template" | "consumer" | "audit"; saveState: "idle" | "saving" | "saved" | "error" }) {
+function modelOptions(groups: Array<{ label: string; options: Array<{ value: string; label: string }> }>, current: string) {
+  const options = groups.flatMap((group) => group.options);
+  if (current && !options.some((option) => option.value === current)) {
+    return [{ label: "当前配置", options: [{ value: current, label: `当前配置：${current}` }] }, ...groups];
+  }
+  return groups;
+}
+
+function ModelSelect({ id, label, value, groups, onChange }: { id: string; label: string; value: string; groups: Array<{ label: string; options: Array<{ value: string; label: string }> }>; onChange: (value: string) => void }) {
+  return <SelectField id={id} label={label} value={value} onChange={onChange}><option value="">请选择模型</option>{modelOptions(groups, value).map((group) => <optgroup key={group.label} label={group.label}>{group.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</optgroup>)}</SelectField>;
+}
+
+function RuntimePanel({ payload, draft, setDraft, saveState }: { payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error" }) {
+  const value = (key: string) => displayValue(draft[key] ?? fieldsOf(payload)[key]);
+  const raw = (key: string) => rawValue(draft, payload, key);
+  const input = (key: string, label: string, type = "text") => <label className="runtime-field"><span>{label}</span><input type={type} value={value(key)} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} /></label>;
+  const update = (key: string, next: string) => setDraft({ ...draft, [key]: next });
+  return <SettingsCard><div className="settings-card-heading"><div><p className="eyebrow">Settings / Agent Runtime</p><h2>Agent Runtime</h2><p className="muted">集中管理模型路由和 fallback 凭据。保存后重启主服务，运行中的 worker 才会使用新配置。</p></div><span className="settings-path">.env backed</span></div><div className="runtime-overview"><StateItem label="Primary route" value="Codex OAuth" /><StateItem label="Model" value={value("CEO_CODEX_MODEL")} /><StateItem label="API fallback" value={value("CEO_AGENT_RUNTIME_ROUTES").includes("codex_api") ? "Active" : "Not active"} /><StateItem label="Friday Runtime" value={value("CEO_AGENT_RUNTIME_ROUTES").includes("friday_runtime") ? "Active" : "Not active"} /></div><form onSubmit={(event) => event.preventDefault()}><div className="runtime-card-grid"><section className="runtime-card"><div className="runtime-card-head"><div><h3>Codex OAuth</h3><p>默认的本机 OAuth 路由</p></div><StatusBadge value="Active" /></div><div className="runtime-fields"><ModelSelect id="codex-model" label="Model" value={raw("CEO_CODEX_MODEL")} groups={[{ label: "Codex / OpenAI", options: CODEX_MODEL_OPTIONS }]} onChange={(next) => update("CEO_CODEX_MODEL", next)} />{input("CEO_CODEX_MODEL_REASONING_EFFORT", "Thinking strength")}</div></section><section className="runtime-card"><div className="runtime-card-head"><div><h3>Codex API fallback</h3><p>OAuth 不可用时的备用路由</p></div><StatusBadge value={value("CEO_AGENT_RUNTIME_ROUTES").includes("codex_api") ? "Active" : "Not active"} /></div><div className="runtime-fields">{input("CEO_CODEX_API_BASE_URL", "API Base URL", "url")}<ModelSelect id="codex-api-model" label="Fallback model" value={raw("CEO_CODEX_API_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_CODEX_API_MODEL", next)} /><SecretField id="codex-api-token" label="API Token" configured={Boolean(raw("CEO_CODEX_API_KEY"))} value={raw("CEO_CODEX_API_KEY")} onChange={(next) => update("CEO_CODEX_API_KEY", next)} /></div></section><section className="runtime-card runtime-card-wide"><div className="runtime-card-head"><div><h3>Friday Runtime</h3><p>本机 Friday Runtime 服务和 provider 凭据</p></div><StatusBadge value={value("CEO_AGENT_RUNTIME_ROUTES").includes("friday_runtime") ? "Active" : "Not active"} /></div><div className="runtime-fields">{input("CEO_FRIDAY_RUNTIME_BASE_URL", "Runtime Base URL", "url")}{input("CEO_FRIDAY_RUNTIME_PROJECT_ID", "Project ID")}{input("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL", "Provider Base URL", "url")}<ModelSelect id="friday-provider-model" label="Provider model" value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL")} groups={COMPATIBLE_MODEL_GROUPS} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL", next)} /><SecretField id="friday-provider-api-token" label="Provider API Token" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"))} value={raw("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY", next)} /><SecretField id="friday-runtime-ticket" label="Runtime ticket" configured={Boolean(raw("CEO_FRIDAY_RUNTIME_TICKET"))} value={raw("CEO_FRIDAY_RUNTIME_TICKET")} onChange={(next) => update("CEO_FRIDAY_RUNTIME_TICKET", next)} /><SecretField id="friday-session-token" label="Session token" configured={Boolean(raw("CEO_FRIDAY_SESSION_TOKEN"))} value={raw("CEO_FRIDAY_SESSION_TOKEN")} onChange={(next) => update("CEO_FRIDAY_SESSION_TOKEN", next)} /></div></section></div><div className="runtime-save-bar"><span className="muted">已保存凭据会回填；可直接编辑后保存。</span><SaveBar state={saveState} /></div></form></SettingsCard>;
+}
+
+function SettingsContent({ section, payload, draft, setDraft, prompt, view, connector, auditRule, saveState, onAttentionCountChange }: { section: SettingsSection; payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; prompt: "developer" | "user"; view: "template" | "preview"; connector: string; auditRule: "template" | "consumer" | "audit"; saveState: "idle" | "saving" | "saved" | "error"; onAttentionCountChange: (count: number) => void }) {
   if (section === "status") return <StatusPanel />;
-  if (section === "attention") return <AttentionPanel />;
+  if (section === "attention") return <AttentionPanel onCountChange={onAttentionCountChange} />;
   if (section === "prompts") return <PromptPanel payload={payload} prompt={prompt} view={view} draft={draft} setDraft={setDraft} saveState={saveState} />;
   if (section === "connectors") return <ConnectorPanel payload={payload} connector={connector} />;
   if (section === "agent-runtime") return <RuntimePanel payload={payload} draft={draft} setDraft={setDraft} saveState={saveState} />;
@@ -278,6 +327,17 @@ export function SettingsPage() {
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<RecordValue>({});
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [attentionCount, setAttentionCount] = useState(0);
+  useEffect(() => {
+    if (section === "attention") return;
+    let active = true;
+    listAttention().then((page) => {
+      if (active) setAttentionCount(page.items.reduce((total, item) => total + Math.max(0, Number(item.count || 0)), 0));
+    }).catch(() => {
+      if (active) setAttentionCount(0);
+    });
+    return () => { active = false; };
+  }, [section]);
   useEffect(() => {
     if (section === "status" || section === "attention") return;
     const controller = new AbortController(); setState("loading"); setSaveState("idle");
@@ -285,6 +345,6 @@ export function SettingsPage() {
     return () => controller.abort();
   }, [section]);
   async function save() { if (!payload) return; setSaveState("saving"); try { const fields = section === "prompts" ? { template: displayValue(draft[`${prompt}_template`]) } : section === "audit-rules" ? { template: displayValue(draft.template) } : draft; await saveSettings(section, fields, section === "prompts" ? { prompt } : {}); setSaveState("saved"); } catch { setSaveState("error"); } }
-  const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} />;
-  return <main className="console-page settings-page" aria-labelledby="settings-page-title"><h1 id="settings-page-title" className="sr-only">Settings</h1><div className="settings-layout-react"><SectionNav section={section} /><div className="settings-content" onSubmit={(event) => { if ((event.target as HTMLFormElement).tagName === "FORM") { event.preventDefault(); void save(); } }}>{content}</div></div></main>;
+  const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} onAttentionCountChange={setAttentionCount} />;
+  return <main className="console-page settings-page" aria-labelledby="settings-page-title"><h1 id="settings-page-title" className="sr-only">Settings</h1><div className="settings-layout-react"><SectionNav section={section} attentionCount={attentionCount} /><div className="settings-content" onSubmit={(event) => { if ((event.target as HTMLFormElement).tagName === "FORM") { event.preventDefault(); void save(); } }}>{content}</div></div></main>;
 }

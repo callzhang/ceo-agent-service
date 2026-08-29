@@ -1,9 +1,11 @@
 import json
+import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 import app.audit_web as audit_web_module
+import app.config as app_config_module
 from app.audit_web import create_audit_app
 from app.store import AutoReplyStore
 from app.web_api.attention import group_attention_rows
@@ -261,6 +263,107 @@ def test_console_audit_rules_template_preview_is_rendered_but_template_is_preser
     assert item["fields"]["template"] == "Escalate to {{principal}} only when needed."
     assert item["preview"]["template"] == "Escalate to Alex only when needed."
     assert "{{principal}}" not in item["preview"]["template"]
+
+
+def test_console_agent_runtime_returns_saved_credentials_for_prefill(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        app_config_module,
+        "read_env_file",
+        lambda: {
+            "CEO_CODEX_API_KEY": "codex-token",
+            "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "provider-token",
+            "CEO_FRIDAY_RUNTIME_TICKET": "runtime-ticket",
+            "CEO_FRIDAY_SESSION_TOKEN": "session-token",
+        },
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/settings/agent-runtime")
+
+    assert response.status_code == 200
+    fields = response.json()["item"]["fields"]
+    assert fields["CEO_CODEX_API_KEY"] == "codex-token"
+    assert fields["CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY"] == "provider-token"
+    assert fields["CEO_FRIDAY_RUNTIME_TICKET"] == "runtime-ticket"
+    assert fields["CEO_FRIDAY_SESSION_TOKEN"] == "session-token"
+
+
+def test_console_agent_runtime_writes_prefilled_credentials_and_compatible_model(monkeypatch, tmp_path: Path):
+    runtime_env_keys = (
+        "CEO_AGENT_RUNTIME_ROUTES",
+        "CEO_CODEX_MODEL",
+        "CEO_CODEX_MODEL_REASONING_EFFORT",
+        "CEO_CODEX_API_BASE_URL",
+        "CEO_CODEX_API_MODEL",
+        "CEO_CODEX_API_KEY",
+        "CEO_FRIDAY_RUNTIME_BASE_URL",
+        "CEO_FRIDAY_RUNTIME_PROJECT_ID",
+        "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL",
+        "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL",
+        "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY",
+        "CEO_FRIDAY_RUNTIME_TICKET",
+        "CEO_FRIDAY_SESSION_TOKEN",
+        "CEO_FRIDAY_RUNTIME_AUTH_DISABLED",
+    )
+    original_runtime_env = {
+        key: os.environ.get(key)
+        for key in runtime_env_keys
+    }
+
+    def restore_runtime_env() -> None:
+        for key, value in original_runtime_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "CEO_AGENT_RUNTIME_ROUTES=codex_oauth,codex_api,friday_runtime\n"
+        "CEO_CODEX_MODEL=gpt-5.5\n"
+        "CEO_CODEX_MODEL_REASONING_EFFORT=medium\n"
+        "CEO_CODEX_API_BASE_URL=https://api.openai.com/v1\n"
+        "CEO_CODEX_API_MODEL=gpt-5.5\n"
+        "CEO_CODEX_API_KEY=old-codex-token\n"
+        "CEO_FRIDAY_RUNTIME_BASE_URL=http://127.0.0.1:8080\n"
+        "CEO_FRIDAY_RUNTIME_PROJECT_ID=project-1\n"
+        "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL=https://provider.example/v1\n"
+        "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL=qwen-plus\n"
+        "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY=old-provider-token\n"
+        "CEO_FRIDAY_RUNTIME_TICKET=old-ticket\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CEO_ENV_FILE", str(env_path))
+
+    try:
+        with _client(tmp_path) as client:
+            response = client.post(
+                "/api/console/settings/agent-runtime",
+                json={"fields": {
+                    "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api,friday_runtime",
+                    "CEO_CODEX_MODEL": "gpt-5.5",
+                    "CEO_CODEX_MODEL_REASONING_EFFORT": "medium",
+                    "CEO_CODEX_API_BASE_URL": "https://api.openai.com/v1",
+                    "CEO_CODEX_API_MODEL": "MiniMax-M2.5",
+                    "CEO_CODEX_API_KEY": "new-codex-token",
+                    "CEO_FRIDAY_RUNTIME_BASE_URL": "http://127.0.0.1:8080",
+                    "CEO_FRIDAY_RUNTIME_PROJECT_ID": "project-1",
+                    "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL": "https://provider.example/v1",
+                    "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL": "qwen-plus",
+                    "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY": "new-provider-token",
+                    "CEO_FRIDAY_RUNTIME_TICKET": "new-ticket",
+                    "CEO_FRIDAY_SESSION_TOKEN": "",
+                }},
+            )
+
+        assert response.status_code == 200
+        env_text = env_path.read_text(encoding="utf-8")
+        assert "CEO_CODEX_API_MODEL=MiniMax-M2.5" in env_text
+        assert "CEO_CODEX_API_KEY=new-codex-token" in env_text
+        assert "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY=new-provider-token" in env_text
+        assert "CEO_FRIDAY_RUNTIME_TICKET=new-ticket" in env_text
+    finally:
+        restore_runtime_env()
 
 
 def test_console_attention_returns_grouped_json_with_snapshot(monkeypatch, tmp_path: Path):
