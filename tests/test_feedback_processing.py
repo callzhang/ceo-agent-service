@@ -184,6 +184,15 @@ def test_batch_reopen_requires_same_normalized_key_set(tmp_path: Path):
     assert store.get_feedback_processing_batch("batch-1").requested_count == 2
 
 
+def test_create_batch_rejects_unknown_feedback_keys_atomically(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "batch-unknown.sqlite3")
+    store.upsert_feedback_event(key="known", feedback_token="token-known")
+    with pytest.raises(FeedbackProcessingBatchError):
+        store.create_feedback_processing_batch(["known", "missing"], batch_id="batch-1")
+    assert store.get_feedback_processing_batch("batch-1") is None
+    assert store.get_feedback_processing_item("missing") is None
+
+
 def test_legacy_text_processing_ids_are_read_as_integers(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "legacy-ids.sqlite3")
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")

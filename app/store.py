@@ -13039,6 +13039,23 @@ class AutoReplyStore:
             raise ValueError("batch_id must not be empty")
         keys = list(dict.fromkeys(key.strip() for key in feedback_keys if key.strip()))
         with self._connect() as db:
+            if keys:
+                placeholders = ",".join("?" for _ in keys)
+                source_rows = db.execute(
+                    f"""
+                    select key, resolved_at
+                    from feedback_events
+                    where key in ({placeholders})
+                    """,
+                    keys,
+                ).fetchall()
+                source_by_key = {str(row["key"]): row for row in source_rows}
+                if len(source_rows) != len(keys) or any(
+                    str(source_by_key[key]["resolved_at"] or "").strip()
+                    for key in keys
+                    if key in source_by_key
+                ):
+                    raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
             existing_batch = db.execute(
                 "select * from feedback_processing_batches where batch_id=?",
                 (cleaned_batch_id,),
