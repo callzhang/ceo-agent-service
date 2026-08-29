@@ -164,7 +164,6 @@ from app.store import (
     ReplyAttempt,
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     ReplyError,
-    ServiceBugfixCandidate,
     SentTodoRecord,
     ReplyTask,
     SentReply,
@@ -2093,7 +2092,6 @@ def _top_nav(
         ("history", "History", "/history"),
         ("tasks", "Tasks", "/tasks"),
         ("user-feedback", "用户反馈", "/user-feedback"),
-        ("service-bugfix", "服务修复", "/service-bugfix-candidates"),
         ("settings", "Settings", "/settings"),
     ]
     item_html = "".join(
@@ -5557,7 +5555,6 @@ def _render_attempt_list(
         )
     else:
         chart_html = _render_history_chart(store) if include_chart else ""
-        bugfix_html = _pending_service_bugfix_card(store)
         header = _history_table_header(
             base_path="/history",
             page=page,
@@ -5571,7 +5568,6 @@ def _render_attempt_list(
             f"{repository_upgrade_html}"
             f"{chart_html}"
             f"{pinned_needs_human_html}"
-            f"{bugfix_html}"
             f"{header}"
             "<div data-live-search-region=\"history\">"
             f"{session_search_html}"
@@ -5589,21 +5585,6 @@ def _render_attempt_list(
         user_feedback_pending_count=(
             store.count_pending_user_feedback_items() if include_feedback_count else 0
         ),
-    )
-
-
-def _pending_service_bugfix_card(store: AutoReplyStore) -> str:
-    pending_count = store.count_service_bugfix_candidates(status="pending")
-    if not pending_count:
-        return ""
-    label = "99+" if pending_count > 99 else str(pending_count)
-    return (
-        "<section class=\"card compact-card feedback-card\">"
-        "<div class=\"card-head\"><h2>待处理服务修复</h2>"
-        f"<a class=\"review-link\" href=\"/service-bugfix-candidates\">查看 {escape(label)}</a>"
-        "</div>"
-        "<p class=\"muted\">来自明确指出本服务 bug、失败或回归的用户反馈。</p>"
-        "</section>"
     )
 
 
@@ -7346,59 +7327,6 @@ def render_user_feedback_list(
         body,
         active_nav="user-feedback",
         user_feedback_pending_count=store.count_pending_user_feedback_items(),
-    )
-
-
-def render_service_bugfix_candidates(store: AutoReplyStore) -> str:
-    candidates = store.list_service_bugfix_candidates(status="pending", limit=100)
-    rows = "".join(_service_bugfix_candidate_row(candidate) for candidate in candidates)
-    if rows:
-        body = (
-            "<section class=\"card\">"
-            "<div class=\"card-head\"><h2>待处理服务修复</h2></div>"
-            "<table class=\"column-sized-table\"><thead><tr>"
-            "<th>反馈</th><th>来源</th><th>原因</th><th>时间</th>"
-            "</tr></thead><tbody>"
-            f"{rows}"
-            "</tbody></table></section>"
-        )
-    else:
-        body = (
-            "<section class=\"card\"><div class=\"card-head\"><h2>待处理服务修复</h2></div>"
-            "<p class=\"muted\">暂无待处理服务修复。</p></section>"
-        )
-    return render_page(
-        "服务修复",
-        body,
-        active_nav="service-bugfix",
-        user_feedback_pending_count=store.count_pending_user_feedback_items(),
-    )
-
-
-def _service_bugfix_candidate_row(candidate: ServiceBugfixCandidate) -> str:
-    attempt_link = (
-        f"<a class=\"review-link\" href=\"/attempts/{candidate.attempt_id}\">#{candidate.attempt_id}</a>"
-        if candidate.attempt_id
-        else "<span class=\"muted\">未关联</span>"
-    )
-    source = " · ".join(
-        value
-        for value in (
-            candidate.conversation_title,
-            _excerpt(candidate.trigger_text, 120),
-        )
-        if value
-    )
-    return (
-        "<tr>"
-        "<td>"
-        f"<div class=\"user-feedback-comment\">{escape(candidate.title)}</div>"
-        f"<div class=\"user-feedback-context\">{escape(candidate.feedback_comment)}</div>"
-        "</td>"
-        f"<td>{attempt_link}<div class=\"user-feedback-context\">{escape(source)}</div></td>"
-        f"<td>{escape(candidate.reason)}</td>"
-        f"<td>{escape(_format_local_time(candidate.created_at))}</td>"
-        "</tr>"
     )
 
 
@@ -9790,10 +9718,6 @@ def create_audit_app(
             audit_store,
             page=_positive_int_query(request, "page", default=1),
         )
-
-    @app.get("/service-bugfix-candidates", response_class=HTMLResponse)
-    def service_bugfix_candidates() -> str:
-        return render_service_bugfix_candidates(audit_store)
 
     @app.get("/tutorial", response_class=HTMLResponse)
     def tutorial_page() -> Response:

@@ -38,7 +38,6 @@ from app.audit_web import (
     render_error_list,
     render_log_list,
     render_oa_approval_detail,
-    render_service_bugfix_candidates,
     render_task_project_detail,
     render_tasks_page,
     render_tutorial_page,
@@ -1222,7 +1221,7 @@ def test_oa_approval_detail_route_shows_summary_and_history(tmp_path: Path):
     assert "Attempt history" in response.text
 
 
-def test_service_bugfix_candidates_page_lists_pending_feedback(tmp_path: Path):
+def test_service_bugfix_candidates_page_is_removed(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.create_service_bugfix_candidate(
         feedback_event_key="event-1",
@@ -1235,12 +1234,14 @@ def test_service_bugfix_candidates_page_lists_pending_feedback(tmp_path: Path):
         trigger_text="上一条回复失败了",
     )
 
-    html = render_service_bugfix_candidates(store)
+    history_html = render_attempt_list(store)
+    assert "待处理服务修复" not in history_html
+    assert "/service-bugfix-candidates" not in history_html
 
-    assert "待处理服务修复" in html
-    assert "自动回复服务报错" in html
-    assert "/attempts/42" in html
-    assert "技术部" in html
+    response = loopback_test_client(create_audit_app(store.path)).get(
+        "/service-bugfix-candidates"
+    )
+    assert response.status_code == 404
 
 
 def _seed_wechat_pending(store: AutoReplyStore) -> int:
