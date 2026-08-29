@@ -79,6 +79,8 @@ describe("FeedbackDrawer", () => {
     expect(screen.getByRole("button", { name: "导入并开始 brainstorm" })).toBeDisabled();
     render(<FeedbackDrawer {...props} selected={new Set(["fb-1"])} submitting />);
     expect(screen.getByRole("button", { name: "导入中…" })).toBeDisabled();
+    expect(screen.getAllByRole("checkbox", { name: "全选反馈" }).at(-1)).toBeDisabled();
+    expect(screen.getAllByRole("checkbox", { name: "选择反馈 修复任务状态" }).at(-1)).toBeDisabled();
   });
 
   it("ignores selected keys that are not in the pending API rows", () => {

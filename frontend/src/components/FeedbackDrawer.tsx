@@ -117,6 +117,7 @@ export function FeedbackDrawer({
                   ref={selectAllRef}
                   type="checkbox"
                   checked={allSelected}
+                  disabled={submitting}
                   onChange={onSelectAll}
                   aria-label="全选反馈"
                 />
@@ -133,6 +134,7 @@ export function FeedbackDrawer({
                       <input
                         type="checkbox"
                         checked={visibleSelected.has(key)}
+                        disabled={submitting}
                         onChange={() => onToggle(key)}
                         aria-label={`选择反馈 ${item.summary}`}
                       />

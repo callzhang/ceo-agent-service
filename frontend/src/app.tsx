@@ -1061,22 +1061,22 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
   }, []);
 
   const toggleFeedback = useCallback((key: string) => {
-    if (feedbackSubmitRef.current.batch || feedbackSubmitRef.current.turn) return;
+    if (feedbackSubmitting || feedbackSubmitRef.current.batch || feedbackSubmitRef.current.turn) return;
     setFeedbackSelected((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
-  }, []);
+  }, [feedbackSubmitting]);
 
   const selectAllFeedback = useCallback(() => {
-    if (feedbackSubmitRef.current.batch || feedbackSubmitRef.current.turn) return;
+    if (feedbackSubmitting || feedbackSubmitRef.current.batch || feedbackSubmitRef.current.turn) return;
     setFeedbackSelected((current) => {
       const keys = feedbackPending.map(feedbackKey);
       const allSelected = keys.length > 0 && keys.every((key) => current.has(key));
       return allSelected ? new Set() : new Set(keys);
     });
-  }, [feedbackPending]);
+  }, [feedbackPending, feedbackSubmitting]);
 
   const importFeedback = useCallback(async () => {
     if (feedbackSubmitting) return;
