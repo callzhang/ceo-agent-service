@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-08-29: 重做 Attention React 页面的问题展示。未解决数量现在使用当前快照的
+  聚合项总数显示红色数字 badge；问题改为摘要卡片，根因、严重程度、最近更新时间和
+  详情动作层级更清晰，刷新期间保留上一份可用快照。`warning` 状态统一显示为黄色警告。
+
 - 2026-08-29: 修正 Settings → Audit Rules 的双层切换关系。Template、Consumer、Audit
   规则选择会保留当前 Template/Rendered preview 视图；视图选择也会真正控制面板内容，
   不再因为规则类型切换而隐式重置。Consumer/Audit 的 Template 视图明确展示共享模板，

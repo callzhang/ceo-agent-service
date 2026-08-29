@@ -9,6 +9,7 @@ describe("StatusBadge", () => {
     ["unavailable", "不可用", "status-danger"],
     ["failed", "失败", "status-danger"],
     ["pending", "待处理", "status-warning"],
+    ["warning", "警告", "status-warning"],
     ["completed", "已完成", "status-success"],
     ["not ready", "未就绪", "status-danger"],
     ["Active", "进行中", "status-success"],

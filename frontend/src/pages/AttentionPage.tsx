@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { displayValue, listAttention, type AttentionItem } from "../api/console";
-import { ResponsiveDataList } from "../components/data/ResponsiveDataList";
 import { SummaryText } from "../components/data/SummaryText";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { StatusBadge } from "../components/status/StatusBadge";
@@ -13,8 +12,11 @@ export function AttentionPanel() {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [snapshot, setSnapshot] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const unresolvedCount = rows.reduce((total, row) => total + Math.max(0, row.count), 0);
   const load = useCallback(() => {
     setState("loading");
+    setError("");
     return listAttention().then((page) => {
       setRows(page.items);
       setSnapshot(page.meta.snapshot_at);
@@ -27,21 +29,39 @@ export function AttentionPanel() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-      <section className="console-card attention-panel">
-        <div className="status-panel-toolbar"><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /><button type="button" className="secondary-button" onClick={() => void load()} disabled={state === "loading"}>{state === "loading" ? "刷新中…" : "刷新"}</button></div>
-        <p className="muted">当前未解决问题按根因聚合；完整错误和命令只在展开详情中显示。</p>
-        <ResponsiveDataList
-          ariaLabel="待处理问题"
-          columns={[{ key: "category", label: "类别" }, { key: "severity", label: "严重程度" }, { key: "count", label: "数量" }, { key: "summary", label: "摘要" }, { key: "updated_at", label: "更新时间" }]}
-          rows={rows}
-          state={state === "loading" ? "loading" : state === "error" ? "error" : rows.length ? "ready" : "empty"}
-          errorMessage={error}
-          emptyMessage="当前没有待处理问题"
-          renderCell={(row, key) => key === "count" ? `${row.count} 项` : key === "severity" ? <StatusBadge value={row.severity} /> : key === "summary" ? <SummaryText value={displayValue(row.summary)} /> : displayValue(row[key])}
-          expandable
-          renderExpanded={(row) => <div className="attention-details"><p><strong>根因：</strong>{row.root_cause || "未分类"}</p><p><strong>错误：</strong>{displayValue(row.error)}</p><div className="attention-links">{row.links.map((link) => <Link key={link.href} to={link.href}>{link.label}</Link>)}</div></div>}
-        />
-      </section>
+    <section className="console-card attention-panel">
+      <div className="attention-panel-header">
+        <div>
+          <p className="eyebrow">ACTION REQUIRED</p>
+          <h2>待处理问题</h2>
+          <p className="muted">按根因聚合未解决问题；摘要先展示影响，完整错误和命令放在详情中。</p>
+        </div>
+        <div className="attention-panel-actions">
+          <div className="attention-snapshot"><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /><button type="button" className="secondary-button" onClick={() => void load()} disabled={state === "loading"}>{state === "loading" ? "刷新中…" : "刷新"}</button></div>
+          {rows.length > 0 && <div className="attention-count-summary"><span className="attention-count-badge" aria-label={`${unresolvedCount} 个未解决问题`}>{unresolvedCount}</span><span>个未解决</span></div>}
+        </div>
+      </div>
+      {state === "error" && <div className="page-state page-state-error" role="alert">{error}</div>}
+      {state === "loading" && rows.length === 0 && <div className="page-state" role="status">正在加载…</div>}
+      {state === "ready" && rows.length === 0 && <div className="page-state">当前没有待处理问题</div>}
+      {rows.length > 0 && <div className="attention-list" role="list" aria-label="待处理问题">
+        {rows.map((row) => {
+          const expanded = expandedId === row.id;
+          return <article className={`attention-card${expanded ? " is-expanded" : ""}`} key={row.id} role="listitem">
+            <div className="attention-card-head">
+              <div className="attention-card-title"><span className="attention-category">{displayValue(row.category)}</span><StatusBadge value={row.severity} /></div>
+              <span className="attention-group-count" aria-label={`${row.count} 个同类问题`}>{row.count}</span>
+            </div>
+            <div className="attention-card-body">
+              <div className="attention-root-cause"><span>根因</span><strong>{displayValue(row.root_cause) || "未分类"}</strong></div>
+              <SummaryText value={displayValue(row.summary)} lines={2} label="展开摘要" />
+            </div>
+            <div className="attention-card-foot"><span>最近更新 · {displayValue(row.updated_at)}</span><button type="button" className="details-toggle" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : row.id)}>{expanded ? "收起详情" : "查看详情"}</button></div>
+            <div className="attention-details" hidden={!expanded}><p><strong>错误：</strong>{displayValue(row.error) || "未提供"}</p><div className="attention-links">{row.links.map((link) => <Link key={link.href} to={link.href}>{link.label}</Link>)}</div></div>
+          </article>;
+        })}
+      </div>}
+    </section>
   );
 }
 
