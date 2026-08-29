@@ -212,6 +212,29 @@ def test_enqueue_and_claim_work_summary_input(tmp_path: Path):
     assert row == ("done",)
 
 
+def test_claim_work_summary_input_uses_lock_retrying_transaction(
+    monkeypatch, tmp_path: Path
+):
+    store = _store(tmp_path)
+    input_id = store.enqueue_work_summary_input(
+        "reply_attempt", "1", _work_item().model_dump_json()
+    )
+    original_transaction = store._immediate_write_transaction
+    calls = 0
+
+    def retrying_transaction():
+        nonlocal calls
+        calls += 1
+        return original_transaction()
+
+    monkeypatch.setattr(store, "_immediate_write_transaction", retrying_transaction)
+
+    claimed = store.claim_work_summary_inputs(limit=1)
+
+    assert [item.id for item in claimed] == [input_id]
+    assert calls == 1
+
+
 def test_reset_stale_processing_work_summary_inputs_requeues_orphans(tmp_path: Path):
     db_path = tmp_path / "task.sqlite3"
     store = AutoReplyStore(db_path)

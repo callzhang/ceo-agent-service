@@ -4028,8 +4028,7 @@ class AutoReplyStore:
         channel: str = "dingtalk",
         force_rotation: bool = False,
     ) -> ReplyTask:
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             revision_key = self._manual_rerun_revision_key(db, attempt_id)
             task = self._enqueue_manual_rerun_reply_task_in_connection(
                 db,
@@ -7777,8 +7776,7 @@ class AutoReplyStore:
     def claim_reply_task(
         self, task_id: int, now: str | None = None
     ) -> ReplyTask | None:
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             now_expression = "current_timestamp" if now is None else "?"
             args: list[str | int] = [task_id]
             if now is not None:
@@ -7829,8 +7827,7 @@ class AutoReplyStore:
     ) -> list[ReplyTask]:
         if limit <= 0:
             return []
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             now_expression = "current_timestamp" if now is None else "?"
             args: list[str | int] = [channel]
             if now is not None:
@@ -7973,8 +7970,7 @@ class AutoReplyStore:
             {"code": "service_restart_before_effect", "retryable": True},
             separators=(",", ":"),
         )
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             # A process may have died after its parent run was already marked
             # failed.  It cannot be retried through the active-attempt path;
             # close only entries whose parent proves no external effect began.
@@ -8140,8 +8136,7 @@ class AutoReplyStore:
             },
             separators=(",", ":"),
         )
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
                 select tasks.*
@@ -8339,8 +8334,7 @@ class AutoReplyStore:
         """Make interrupted Audit reconciliation eligible on the next worker pass."""
         if limit <= 0:
             return []
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
                 select runs.*
@@ -8390,8 +8384,7 @@ class AutoReplyStore:
         """
         if limit <= 0:
             return []
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
                 select tasks.*
@@ -8511,8 +8504,7 @@ class AutoReplyStore:
         audit_summary = audit_summary.strip()
         if not reason or not audit_summary:
             raise ValueError("reason and audit_summary must be non-empty")
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             task = db.execute(
                 "select * from reply_tasks where id=? and status='failed'",
                 (task_id,),
@@ -9868,8 +9860,7 @@ class AutoReplyStore:
             for value in (account_id, target_type, target_id, conversation_id)
         ):
             raise ValueError("WeChat delivery target must be complete")
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             task = db.execute(
                 "select * from reply_tasks where id=? and status='processing' "
                 "and execution_generation=? and channel='wechat'",
@@ -10111,8 +10102,7 @@ class AutoReplyStore:
         """Return pre-action failures to the send queue for a bounded retry."""
         if max_retries < 1:
             return 0
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
                 select deliveries.id as delivery_id, (
@@ -10223,8 +10213,7 @@ class AutoReplyStore:
     ):
         from app.wechat.models import WechatDelivery
 
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             cursor = db.execute(
                 """
                 update wechat_deliveries
@@ -11601,8 +11590,7 @@ class AutoReplyStore:
     def claim_okr_review_requests(self, limit: int) -> list[OkrReviewRequest]:
         if limit <= 0:
             return []
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
                 select *
@@ -11641,8 +11629,7 @@ class AutoReplyStore:
     def reset_recoverable_okr_review_requests(
         self, *, processing_max_age_seconds: int | None = None
     ) -> list[OkrReviewRequest]:
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             params: list[object] = []
             processing_clause = "status='processing'"
             if processing_max_age_seconds is not None:
@@ -12693,8 +12680,7 @@ class AutoReplyStore:
         feedback_token = (
             feedback_context.feedback_token if feedback_context is not None else ""
         )
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             row = db.execute(
                 """
                 select reply_tasks.conversation_id, reply_tasks.trigger_message_id
@@ -13067,8 +13053,7 @@ class AutoReplyStore:
         if not cleaned_batch_id:
             raise ValueError("batch_id must not be empty")
         keys = list(dict.fromkeys(key.strip() for key in feedback_keys if key.strip()))
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             existing_batch = db.execute(
                 "select * from feedback_processing_batches where batch_id=?",
                 (cleaned_batch_id,),
@@ -13170,8 +13155,7 @@ class AutoReplyStore:
         keys = list(dict.fromkeys(key.strip() for key in feedback_keys if key.strip()))
         if not cleaned_batch_id or not keys:
             return []
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             existing_batch = db.execute(
                 "select 1 from feedback_processing_batches where batch_id=?",
                 (cleaned_batch_id,),
@@ -13433,9 +13417,7 @@ class AutoReplyStore:
             if current_head is None:
                 raise ValueError("current_head is required when resolving with evidence")
             validate_resolution_evidence(normalized_evidence, current_head=current_head)
-        with self._connect() as db:
-            if normalized_evidence is not None:
-                db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             batch = db.execute(
                 "select status, requested_count from feedback_processing_batches where batch_id=?",
                 (cleaned_batch_id,),
@@ -14308,8 +14290,7 @@ class AutoReplyStore:
         sent_reply_feedback_token = (
             feedback_context.feedback_token if feedback_context is not None else ""
         )
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             row = db.execute(
                 """
                 select agent_runs.status as run_status,
@@ -14519,8 +14500,7 @@ class AutoReplyStore:
             raise ValueError("invalid pre-run reply task status")
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             task = db.execute(
                 """
                 select execution_generation, status, oa_url
@@ -14928,8 +14908,7 @@ class AutoReplyStore:
         suggestion = suggested_reply_text.strip()
         task: ReplyTask | None = None
         attempt_id = 0
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             source_row = None
             if source_attempt_id > 0:
                 source_row = db.execute(
@@ -16146,8 +16125,7 @@ class AutoReplyStore:
     def claim_work_summary_inputs(self, limit: int) -> list[WorkSummaryInput]:
         if limit <= 0:
             return []
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
                 select *
@@ -16205,8 +16183,7 @@ class AutoReplyStore:
             return cursor.rowcount
 
     def reset_processing_work_summary_inputs(self) -> list[WorkSummaryInput]:
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
                 """
                 select *
@@ -16680,8 +16657,7 @@ class AutoReplyStore:
         keys = list(filtered.keys())
         columns = ", ".join(keys)
         placeholders = ", ".join("?" for _ in keys)
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             existing = db.execute(
                 """
                 select id
@@ -17639,8 +17615,7 @@ class AutoReplyStore:
         claimed_at: str,
         lease_until: str,
     ) -> bool:
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             draft = db.execute(
                 """
                 select revision, status, send_claim_token
@@ -17843,8 +17818,7 @@ class AutoReplyStore:
     ) -> dict[str, object]:
         if outcome not in {"sent", "failed"}:
             raise ValueError("late follow-up result must be sent or failed")
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             row = db.execute(
                 """
                 select *
@@ -18029,8 +18003,7 @@ class AutoReplyStore:
         lease_owner: str,
         result_json: str,
     ) -> bool:
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             cursor = db.execute(
                 """
                 update follow_up_send_attempts
@@ -18105,8 +18078,7 @@ class AutoReplyStore:
                 continue
             assignments.append(f"{key}=?")
             parameters.append(value)
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             attempt = db.execute(
                 """
                 update follow_up_send_attempts
@@ -18212,8 +18184,7 @@ class AutoReplyStore:
         draft_id: int,
         draft_revision: int,
     ) -> bool:
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             attempt = db.execute(
                 """
                 select attempts.result_json
@@ -18309,8 +18280,7 @@ class AutoReplyStore:
         source_ref: str,
         payload_json: str,
     ) -> bool:
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             attempt = db.execute(
                 """
                 update follow_up_send_attempts
@@ -19503,8 +19473,7 @@ class AutoReplyStore:
         current = now.astimezone(timezone.utc)
         if retry_time.astimezone(timezone.utc) <= current:
             raise ValueError("codex capacity retry_at must be in the future")
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             row = db.execute(
                 "select value from service_state where key=?",
                 (CODEX_CAPACITY_PAUSE_STATE_KEY,),
@@ -19567,8 +19536,7 @@ class AutoReplyStore:
     ) -> tuple[bool, dict[str, object]]:
         now_utc = now.astimezone(timezone.utc)
         key = f"channel_login_request:{channel}"
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             row = db.execute(
                 "select value from service_state where key=?",
                 (key,),
@@ -19630,8 +19598,7 @@ class AutoReplyStore:
         state: dict[str, object],
     ) -> bool:
         key = f"channel_login_request:{channel}"
-        with self._connect() as db:
-            db.execute("begin immediate")
+        with self._immediate_write_transaction() as db:
             reservation = db.execute(
                 """
                 select reservation_owner
