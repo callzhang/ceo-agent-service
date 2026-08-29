@@ -107,13 +107,11 @@ export function FeedbackDrawer({
 
         {loading ? (
           <p className="feedback-state" role="status">正在加载反馈…</p>
-        ) : error ? (
-          <p className="feedback-state feedback-error" role="alert">{error}</p>
-        ) : pending.length === 0 ? (
-          <p className="feedback-state">当前没有待处理反馈</p>
         ) : (
           <>
-            <div className="feedback-toolbar">
+            {error && <p className="feedback-state feedback-error" role="alert">{error}</p>}
+            {pending.length === 0 ? <p className="feedback-state">当前没有待处理反馈</p> : <>
+              <div className="feedback-toolbar">
               <label className="feedback-select-all">
                 <input
                   ref={selectAllRef}
@@ -125,8 +123,8 @@ export function FeedbackDrawer({
                 <span>全选</span>
               </label>
               <span className="feedback-selection-count" role="status">已选 {visibleSelected.size} 项</span>
-            </div>
-            <div className="feedback-items">
+              </div>
+              <div className="feedback-items">
               {pending.map((item) => {
                 const key = feedbackKey(item);
                 return (
@@ -155,13 +153,14 @@ export function FeedbackDrawer({
                   </article>
                 );
               })}
-            </div>
-            <div className="feedback-actions">
-              <button className="secondary-button" type="button" onClick={onClose} disabled={submitting}>取消</button>
-              <button className="primary-button" type="button" onClick={() => void onImport()} disabled={loading || Boolean(error) || submitting || visibleSelected.size === 0}>
-                {submitting ? "导入中…" : <><Check aria-hidden="true" size={15} />导入并开始 brainstorm</>}
-              </button>
-            </div>
+              </div>
+              <div className="feedback-actions">
+                <button className="secondary-button" type="button" onClick={onClose} disabled={submitting}>取消</button>
+                <button className="primary-button" type="button" onClick={() => void onImport()} disabled={loading || submitting || visibleSelected.size === 0}>
+                  {submitting ? "导入中…" : <><Check aria-hidden="true" size={15} />导入并开始 brainstorm</>}
+                </button>
+              </div>
+            </>}
           </>
         )}
       </div>

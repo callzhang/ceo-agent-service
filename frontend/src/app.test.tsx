@@ -17,11 +17,19 @@ const api = vi.hoisted(() => ({
   stopTurn: vi.fn(),
 }));
 
+const feedbackApi = vi.hoisted(() => ({
+  listPendingFeedback: vi.fn(),
+  claimFeedbackBatch: vi.fn(),
+  associateFeedbackTurn: vi.fn(),
+}));
+
 vi.mock("./api", () => api);
+vi.mock("./api/feedback", () => feedbackApi);
 
 import { App } from "./app";
 import styles from "./styles.css?raw";
 import type { RuntimeCapabilities, Task, Timeline, Turn } from "./types";
+import type { FeedbackItem } from "./api/console";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -116,6 +124,68 @@ function setCompactViewport(compact: boolean) {
 }
 
 describe("App", () => {
+  it("imports selected pending feedback into the current workbench conversation", async () => {
+    const user = userEvent.setup();
+    class QuietEventSource {
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      addEventListener() {}
+      close() {}
+    }
+    vi.stubGlobal("EventSource", QuietEventSource);
+    const feedbackTask: Task = { ...first, id: "feedback-task", title: "处理反馈", state: "idle" };
+    const feedbackTurn: Turn = {
+      id: "feedback-turn",
+      task_id: feedbackTask.id,
+      client_request_id: "feedback-import:batch-1",
+      user_text: "Feedback processing batch: batch-1",
+      status: "queued",
+      stop_requested: false,
+      final_text: "",
+      error_code: "",
+      error_detail: "",
+      started_at: "",
+      completed_at: "",
+      created_at: "2026-08-29 10:00:00",
+      updated_at: "2026-08-29 10:00:00",
+    };
+    const item: FeedbackItem = {
+      id: "feedback-1",
+      feedback_key: "feedback-1",
+      attempt_id: "12",
+      status: "pending",
+      processing_status: "pending",
+      rating: "差",
+      comment: "请修复",
+      context: "会话",
+      created_at: "2026-08-29T09:00:00Z",
+      summary: "修复任务状态",
+      references: [{ label: "attempt#12", route: "/attempts/12" }],
+      batch_id: "",
+      processing_task_id: "",
+    };
+    api.listTasks.mockResolvedValue({ items: [], nextCursor: "" });
+    api.createTask.mockResolvedValue(feedbackTask);
+    api.createTurn.mockResolvedValue(feedbackTurn);
+    feedbackApi.listPendingFeedback.mockResolvedValue({ items: [item], meta: { page: 1, page_size: 100, total: 1, next_cursor: "", has_more: false, snapshot_at: "now" } });
+    feedbackApi.claimFeedbackBatch.mockResolvedValue({ ok: true, message: "ok", meta: { updated_at: "now" }, item: { batch_id: "batch-1", status: "processing", requested_count: 1, feedback_keys: ["feedback-1"], start_message: "Feedback processing batch: batch-1\n  persisted summary: 修复任务状态", items: [] } });
+    feedbackApi.associateFeedbackTurn.mockResolvedValue({ ok: true, message: "ok", meta: { updated_at: "now" }, item: { batch_id: "batch-1", status: "processing", requested_count: 1, items: [] } });
+    api.getTimeline.mockImplementation((taskId: string) => Promise.resolve(emptyTimeline(taskId === feedbackTask.id ? feedbackTask : first)));
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "处理反馈 · 0" }));
+    expect(await screen.findByText("修复任务状态")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "选择反馈 修复任务状态" }));
+    await user.click(screen.getByRole("button", { name: "导入并开始 brainstorm" }));
+
+    await waitFor(() => expect(feedbackApi.claimFeedbackBatch).toHaveBeenCalledWith(["feedback-1"], feedbackTask.id));
+    expect(api.createTask).toHaveBeenCalledWith("处理反馈", "codex", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    await waitFor(() => expect(api.createTurn).toHaveBeenCalledWith(feedbackTask.id, expect.stringContaining("persisted summary: 修复任务状态"), "feedback-import:batch-1", expect.objectContaining({ signal: expect.any(AbortSignal) })));
+    expect(feedbackApi.associateFeedbackTurn).toHaveBeenCalledWith("batch-1", feedbackTask.id, feedbackTurn.id);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "处理反馈" })).toBeNull());
+    expect(screen.getByRole("heading", { name: "处理反馈" })).toBeInTheDocument();
+  });
+
   it("switches to a flexible two-column layout below the 940px desktop minimum", () => {
     expect(styles).toContain("@media (max-width: 939px)");
     expect(styles).toContain("grid-template-columns: minmax(245px, 292px) minmax(0, 1fr)");

@@ -6,14 +6,23 @@ import {
   cancelAction,
   confirmAction,
   createTask,
+  createTurn,
   getStats,
   getTimeline,
   listTasks,
   renameTask,
   runtimeCapabilities,
 } from "./api";
+import {
+  associateFeedbackTurn,
+  claimFeedbackBatch,
+  listPendingFeedback,
+  type FeedbackBatch,
+} from "./api/feedback";
+import type { FeedbackItem } from "./api/console";
 import { Composer } from "./components/Composer";
 import { ConversationTimeline } from "./components/ConversationTimeline";
+import { FeedbackDrawer } from "./components/FeedbackDrawer";
 import { GlobalNav } from "./components/GlobalNav";
 import { TaskList } from "./components/TaskList";
 import { TurnInspector } from "./components/TurnInspector";
@@ -59,6 +68,10 @@ function taskTimestamp(value: string) {
 
 function sortTasks(tasks: Task[]) {
   return [...tasks].sort((left, right) => taskTimestamp(right.updated_at) - taskTimestamp(left.updated_at));
+}
+
+function feedbackKey(item: FeedbackItem): string {
+  return item.feedback_key || item.id;
 }
 
 function taskIdFromUrl(): string | null {
@@ -222,6 +235,13 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
   const [resourceQueues, setResourceQueues] = useState<ResourcePageQueues>(emptyResourcePageQueues);
   const [capabilities, setCapabilities] = useState<RuntimeCapabilities[] | null>(null);
   const [stats, setStats] = useState<WorkbenchStats | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackPending, setFeedbackPending] = useState<FeedbackItem[]>([]);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackError, setFeedbackError] = useState("");
+  const [feedbackSelected, setFeedbackSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [pendingFeedbackCount, setPendingFeedbackCount] = useState(0);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const inspectorIsDrawer = useMediaQuery("(max-width: 939px)");
   const inspectorToggleRef = useRef<HTMLButtonElement>(null);
@@ -259,6 +279,10 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
   const loadedOlderTimelineRef = useRef(false);
   const streamRef = useRef<EventStreamConnection | null>(null);
   const confirmationMutationsRef = useRef(new Set<string>());
+  const feedbackLoadRef = useRef<{ id: number; controller: AbortController } | null>(null);
+  const feedbackSubmitRef = useRef<{ controller: AbortController; batch: FeedbackBatch | null; task: Task | null; turn: Turn | null; associated: boolean; keys: string[] }>({
+    controller: new AbortController(), batch: null, task: null, turn: null, associated: false, keys: [],
+  });
 
   const closeInspector = useCallback(() => setInspectorOpen(false), []);
 
@@ -849,6 +873,8 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       streamRef.current = null;
       cancelActiveChase();
       cancelPageRequests();
+      feedbackLoadRef.current?.controller.abort();
+      feedbackSubmitRef.current.controller.abort();
       for (const controller of controllersRef.current) controller.abort();
       controllersRef.current.clear();
     };
@@ -962,6 +988,128 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       : capabilities.find((runtime) => runtime.kind === selectedTask?.runtime_kind)?.capabilities ?? null,
     [capabilities, selectedTask?.runtime_kind],
   );
+
+  const closeFeedback = useCallback(() => {
+    if (feedbackSubmitting) return;
+    feedbackLoadRef.current?.controller.abort();
+    feedbackLoadRef.current = null;
+    setFeedbackOpen(false);
+    setFeedbackError("");
+  }, [feedbackSubmitting]);
+
+  const openFeedback = useCallback(() => {
+    feedbackLoadRef.current?.controller.abort();
+    const controller = new AbortController();
+    const requestId = nextRequest(controller);
+    feedbackLoadRef.current = { id: requestId, controller };
+    setFeedbackOpen(true);
+    setFeedbackLoading(true);
+    setFeedbackError("");
+    setFeedbackSelected(new Set());
+    feedbackSubmitRef.current.batch = null;
+    feedbackSubmitRef.current.task = null;
+    feedbackSubmitRef.current.turn = null;
+    feedbackSubmitRef.current.associated = false;
+    feedbackSubmitRef.current.keys = [];
+    void listPendingFeedback({}, controller.signal).then((page) => {
+      if (!mountedRef.current || feedbackLoadRef.current?.id !== requestId || controller.signal.aborted) return;
+      setFeedbackPending(page.items);
+      setPendingFeedbackCount(page.meta.total);
+    }).catch((error) => {
+      if (mountedRef.current && feedbackLoadRef.current?.id === requestId && !(error instanceof DOMException && error.name === "AbortError")) {
+        setFeedbackError("反馈加载失败，请重试");
+      }
+    }).finally(() => {
+      finishRequest(controller);
+      if (feedbackLoadRef.current?.id === requestId && mountedRef.current) {
+        feedbackLoadRef.current = null;
+        setFeedbackLoading(false);
+      }
+    });
+  }, []);
+
+  const toggleFeedback = useCallback((key: string) => {
+    setFeedbackSelected((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const selectAllFeedback = useCallback(() => {
+    setFeedbackSelected((current) => {
+      const keys = feedbackPending.map(feedbackKey);
+      const allSelected = keys.length > 0 && keys.every((key) => current.has(key));
+      return allSelected ? new Set() : new Set(keys);
+    });
+  }, [feedbackPending]);
+
+  const importFeedback = useCallback(async () => {
+    if (feedbackSubmitting) return;
+    const keys = feedbackPending.map(feedbackKey).filter((key) => feedbackSelected.has(key));
+    if (keys.length === 0) return;
+    const workflow = feedbackSubmitRef.current;
+    if (workflow.keys.join("\u0000") !== keys.join("\u0000")) {
+      workflow.batch = null;
+      workflow.task = null;
+      workflow.turn = null;
+      workflow.associated = false;
+      workflow.keys = keys;
+    }
+    workflow.controller.abort();
+    workflow.controller = new AbortController();
+    const controller = workflow.controller;
+    setFeedbackSubmitting(true);
+    setFeedbackError("");
+    try {
+      let task = workflow.task;
+      if (!task) {
+        task = selectedTaskIdRef.current
+          ? tasksRef.current.find((candidate) => candidate.id === selectedTaskIdRef.current) ?? null
+          : null;
+        if (!task) {
+          task = await createTask("处理反馈", "codex", { signal: controller.signal });
+          if (!mountedRef.current || controller.signal.aborted) return;
+          recordCreatedTask(task);
+          writeTasks((current) => [task!, ...current.filter((candidate) => candidate.id !== task!.id)]);
+          scheduleStatsRefresh();
+        }
+        workflow.task = task;
+      }
+      if (!workflow.batch) {
+        const claimed = await claimFeedbackBatch(keys, task.id);
+        if (!claimed.ok) throw new Error(claimed.message);
+        workflow.batch = claimed.item;
+      }
+      const batch = workflow.batch;
+      if (!batch.start_message) throw new Error("反馈批次缺少启动消息");
+      if (!workflow.turn) {
+        workflow.turn = await createTurn(task.id, batch.start_message, `feedback-import:${batch.batch_id}`, { signal: controller.signal });
+      }
+      if (!workflow.associated) {
+        const associated = await associateFeedbackTurn(batch.batch_id, task.id, workflow.turn.id);
+        if (!associated.ok) throw new Error(associated.message);
+        workflow.associated = true;
+      }
+      if (!mountedRef.current || controller.signal.aborted) return;
+      selectTask(task.id);
+      setFeedbackOpen(false);
+      setFeedbackError("");
+      setFeedbackSelected(new Set());
+      setPendingFeedbackCount((count) => Math.max(0, count - keys.length));
+      workflow.batch = null;
+      workflow.task = null;
+      workflow.turn = null;
+      workflow.associated = false;
+      workflow.keys = [];
+    } catch (error) {
+      if (mountedRef.current && !(error instanceof DOMException && error.name === "AbortError")) {
+        setFeedbackError("反馈导入未完成；可重试继续处理");
+      }
+    } finally {
+      if (mountedRef.current && workflow.controller === controller) setFeedbackSubmitting(false);
+    }
+  }, [feedbackPending, feedbackSelected, feedbackSubmitting, scheduleStatsRefresh, selectTask, writeTasks]);
 
   useEffect(() => {
     streamRef.current?.close();
@@ -1249,6 +1397,8 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
               onLoadMore={() => void loadMoreTasks()}
               onSelect={selectTask}
               onNewTask={() => void newTask()}
+              pendingFeedbackCount={pendingFeedbackCount}
+              onProcessFeedback={openFeedback}
               onRename={rename}
               onArchive={archive}
             />
@@ -1399,6 +1549,18 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
           </div>
         </>
       )}
+      <FeedbackDrawer
+        open={feedbackOpen}
+        pending={feedbackPending}
+        loading={feedbackLoading}
+        error={feedbackError}
+        selected={feedbackSelected}
+        submitting={feedbackSubmitting}
+        onToggle={toggleFeedback}
+        onSelectAll={selectAllFeedback}
+        onImport={importFeedback}
+        onClose={closeFeedback}
+      />
       </div>
     </div>
   );
