@@ -4243,10 +4243,10 @@ def test_dispatched_effect_result_is_terminal_failure_without_unknown_state(
     }
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
         row = db.execute(
-            "select status, side_effect_state from agent_runs where id=?",
+            "select status from agent_runs where id=?",
             (run.id,),
         ).fetchone()
-    assert row == ("failed", "none")
+    assert row == ("failed",)
     retry_claim = store.claim_agent_run(
         task_id,
         "initial",
@@ -4298,39 +4298,10 @@ def test_restart_after_effect_terminalizes_run_and_requeues_new_generation(
     }
     with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
         row = db.execute(
-            "select status, side_effect_state from agent_runs where id=?",
+            "select status from agent_runs where id=?",
             (run.id,),
         ).fetchone()
-    assert row == ("failed", "none")
-
-
-def test_terminalize_legacy_unknown_agent_runs_is_explicitly_failed(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = _enqueue_universal_reply_task(store)
-    run = _claim_audit_run(store, task_id, "initial", owner="worker-1").run
-    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        db.execute(
-            "update agent_runs set status='unknown', side_effect_state='unknown' where id=?",
-            (run.id,),
-        )
-        db.commit()
-
-    assert store.terminalize_legacy_unknown_agent_runs() == 1
-    failed = store.get_agent_run(run.id)
-    assert failed is not None
-    assert failed.status == "failed"
-    assert json.loads(failed.structured_error_json) == {
-        "code": "legacy_execution_result_missing",
-        "retryable": False,
-    }
-    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
-        row = db.execute(
-            "select status, side_effect_state from agent_runs where id=?",
-            (run.id,),
-        ).fetchone()
-    assert row == ("failed", "none")
+    assert row == ("failed",)
 
 
 def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):

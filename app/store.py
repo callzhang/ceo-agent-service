@@ -8154,7 +8154,6 @@ class AutoReplyStore:
                         and runs.execution_generation=tasks.execution_generation
                         and runs.role='audit'
                         and runs.status='running'
-                        and runs.side_effect_state<>'none'
                   )
                 order by tasks.id
                 limit ?
@@ -8170,8 +8169,7 @@ class AutoReplyStore:
                     for run in db.execute(
                         "select id from agent_runs "
                         "where reply_task_id=? and execution_generation=? "
-                        "and role='audit' and status='running' "
-                        "and side_effect_state<>'none'",
+                        "and role='audit' and status='running'",
                         (task_id, generation),
                     ).fetchall()
                 ]
@@ -8179,14 +8177,10 @@ class AutoReplyStore:
                     """
                     update agent_runs
                     set status='failed', structured_error_json=?,
-                        side_effect_state='none',
-                        effect_failed_count=effect_started_count,
-                        effect_unreviewed_count=0,
                         lease_owner='', lease_expires_at='',
                         completed_at=current_timestamp, updated_at=current_timestamp
                     where reply_task_id=? and execution_generation=?
                       and role='audit' and status='running'
-                      and side_effect_state<>'none'
                     """,
                     (error_json, task_id, generation),
                 )
@@ -8891,67 +8885,6 @@ class AutoReplyStore:
                 continue
             recovered.append(int(row["id"]))
         return recovered
-
-    def terminalize_legacy_unknown_agent_runs(self, *, limit: int = 500) -> int:
-        """Convert legacy indeterminate runs into explicit terminal failures."""
-        if limit <= 0:
-            return 0
-        error_json = json.dumps(
-            {
-                "code": "legacy_execution_result_missing",
-                "retryable": False,
-            },
-            separators=(",", ":"),
-        )
-        with self._connect() as db:
-            db.execute("begin immediate")
-            rows = db.execute(
-                """
-                select id, status, side_effect_state, effect_started_count,
-                       effect_completed_count, effect_receipt_count
-                from agent_runs
-                where status='unknown' or side_effect_state='unknown'
-                order by id
-                limit ?
-                """,
-                (limit,),
-            ).fetchall()
-            if not rows:
-                return 0
-            now_text = datetime.now(timezone.utc).isoformat()
-            for row in rows:
-                failed_effects = max(
-                    0,
-                    int(row["effect_started_count"])
-                    - int(row["effect_completed_count"])
-                    - int(row["effect_receipt_count"]),
-                )
-                db.execute(
-                    """
-                    update agent_runs
-                    set status='failed', final_result_json='',
-                        structured_error_json=?, side_effect_state='none',
-                        effect_failed_count=max(effect_failed_count, ?),
-                        effect_unreviewed_count=0,
-                        reconciliation_suspended=0,
-                        reconciliation_next_attempt_at='',
-                        lease_owner='', lease_expires_at='',
-                        completed_at=coalesce(nullif(completed_at, ''), ?),
-                        updated_at=?
-                    where id=? and (status='unknown' or side_effect_state='unknown')
-                    """,
-                    (error_json, failed_effects, now_text, now_text, row["id"]),
-                )
-                db.execute(
-                    """
-                    insert into agent_run_state_events (
-                        agent_run_id, phase, structured_error_json, created_at
-                    ) values (?, 'terminal_failure', ?, ?)
-                    """,
-                    (row["id"], error_json, now_text),
-                )
-            db.commit()
-            return len(rows)
 
     def recover_failed_effect_free_audit_tasks(self, *, channel: str) -> list[int]:
         """Retry a failed Audit delivery once without regenerating Consumer's proposal.
