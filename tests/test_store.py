@@ -4261,6 +4261,49 @@ def test_dispatched_effect_result_is_terminal_failure_without_unknown_state(
     assert retry_claim.run.status == "failed"
 
 
+def test_restart_after_effect_terminalizes_run_and_requeues_new_generation(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store, task_id, "initial", owner="worker-1",
+        now="2026-08-21 00:00:00",
+    ).run
+    authorization = _effect_intent_authorization("restart-dispatched")
+    store.prepare_agent_effect_intents(
+        run.id, (authorization,), owner="worker-1", now="2026-08-21 00:00:00",
+    )
+    store.dispatch_agent_effect_intent(
+        run.id, authorization, now="2026-08-21 00:00:01",
+    )
+    store.append_agent_run_event(
+        run.id,
+        _runtime_effect_started_event(run.operation_id),
+        owner="worker-1",
+        now="2026-08-21 00:00:02",
+    )
+
+    recovered = store.recover_effectful_audit_runs_after_service_restart()
+
+    assert len(recovered) == 1
+    assert recovered[0].status == "pending"
+    assert recovered[0].execution_generation != "initial"
+    failed = store.get_agent_run(run.id)
+    assert failed is not None
+    assert failed.status == "failed"
+    assert json.loads(failed.structured_error_json) == {
+        "code": "service_restart_effect_failed",
+        "retryable": True,
+    }
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        row = db.execute(
+            "select status, side_effect_state from agent_runs where id=?",
+            (run.id,),
+        ).fetchone()
+    assert row == ("failed", "none")
+
+
 def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     first_store = AutoReplyStore(db_path)

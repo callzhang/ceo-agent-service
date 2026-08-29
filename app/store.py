@@ -8135,8 +8135,8 @@ class AutoReplyStore:
             return []
         error_json = json.dumps(
             {
-                "code": "service_restart_effect_requires_reconciliation",
-                "retryable": False,
+                "code": "service_restart_effect_failed",
+                "retryable": True,
             },
             separators=(",", ":"),
         )
@@ -8178,9 +8178,12 @@ class AutoReplyStore:
                 db.execute(
                     """
                     update agent_runs
-                    set status='unknown', structured_error_json=?,
-                        side_effect_state='unknown', lease_owner='',
-                        lease_expires_at='', updated_at=current_timestamp
+                    set status='failed', structured_error_json=?,
+                        side_effect_state='none',
+                        effect_failed_count=effect_started_count,
+                        effect_unreviewed_count=0,
+                        lease_owner='', lease_expires_at='',
+                        completed_at=current_timestamp, updated_at=current_timestamp
                     where reply_task_id=? and execution_generation=?
                       and role='audit' and status='running'
                       and side_effect_state<>'none'
@@ -8190,7 +8193,7 @@ class AutoReplyStore:
                 db.executemany(
                     "insert into agent_run_state_events ("
                     "agent_run_id, phase, structured_error_json"
-                    ") values (?, 'initial_unknown', ?)",
+                    ") values (?, 'terminal_failure', ?)",
                     (
                         (run_id, error_json)
                         for run_id in transitioned_run_ids
@@ -8199,18 +8202,19 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """
                     update reply_tasks
-                    set status='pending', locked_at=null, available_at='',
-                        error='service_restart_effect_reconciliation',
+                    set status='pending', execution_generation=?,
+                        locked_at=null, available_at='',
+                        error='service_restart_effect_failed',
                         updated_at=current_timestamp
                     where id=? and status='processing' and execution_generation=?
                       and exists (
                           select 1 from agent_runs
                           where reply_task_id=reply_tasks.id
                             and execution_generation=reply_tasks.execution_generation
-                            and role='audit' and status='unknown'
+                            and role='audit' and status='failed'
                       )
                     """,
-                    (task_id, generation),
+                    (uuid4().hex, task_id, generation),
                 )
                 if cursor.rowcount != 1:
                     continue
