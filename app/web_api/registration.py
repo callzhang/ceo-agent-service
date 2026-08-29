@@ -360,6 +360,26 @@ def register_console_routes(
         rows = store_factory().list_wechat_memory_candidates()
         return list_envelope(rows, page=1, page_size=max(20, len(rows)), total=len(rows))
 
+    @app.post("/api/console/wechat/memory-review/{candidate_id}/{action}")
+    async def console_wechat_memory_action(candidate_id: int, action: str, request: Request):
+        payload = await json_object(request)
+        if action not in {"approve", "reject", "revoke"}:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "不支持的审核动作", "details": {}}, status_code=422)
+        try:
+            result = store_factory().review_wechat_memory_candidate(candidate_id, action, reviewer=str(payload.get("reviewer") or "local-user"), final_statement=str(payload.get("final_statement") or ""))
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "Memory 候选审核失败", "details": {"reason": normalize_display_value(exc)}}, status_code=422)
+        return command_result(item=result, message="审核状态已更新")
+
+    @app.post("/api/console/wechat/memory-review/{candidate_id}/resolve-unknown")
+    async def console_wechat_memory_resolve_unknown(candidate_id: int, request: Request):
+        payload = await json_object(request)
+        try:
+            result = store_factory().resolve_wechat_memory_candidate_write_unknown(candidate_id, reviewer=str(payload.get("reviewer") or "local-user"), confirm=bool(payload.get("confirm")))
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "无法解决 unknown 写入", "details": {"reason": normalize_display_value(exc)}}, status_code=422)
+        return command_result(item=result, message="已记录 unknown 处理结果")
+
     @app.post("/api/console/wechat/deliveries/{delivery_id}/approve")
     async def console_wechat_approve(delivery_id: int, request: Request):
         from app.wechat import service

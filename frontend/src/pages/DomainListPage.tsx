@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { approveWechatDelivery, displayValue, listCodexSessions, listWechat, rejectWechatDelivery } from "../api/console";
+import { approveWechatDelivery, displayValue, listCodexSessions, listWechat, rejectWechatDelivery, reviewWechatMemory } from "../api/console";
 import { ResponsiveDataList } from "../components/data/ResponsiveDataList";
 import { SummaryText } from "../components/data/SummaryText";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
@@ -39,7 +39,7 @@ export function DomainListPage({ title, endpoint, kind = "resource" }: { title: 
           return key === "reply_text" || key === "error" ? <SummaryText value={displayValue(row[key])} /> : displayValue(row[key]);
         }}
         expandable
-        renderExpanded={(row: Record<string, unknown>) => <div><pre className="technical-details">{JSON.stringify(row, null, 2)}</pre>{kind === "wechat" && Boolean(row.id) && <div className="console-page-actions"><button type="button" className="secondary-button" onClick={() => void approveWechatDelivery(String(row.id))}>发送/批准</button><button type="button" className="secondary-button" onClick={() => void rejectWechatDelivery(String(row.id))}>拒绝</button></div>}</div>}
+        renderExpanded={(row: Record<string, unknown>) => <div><pre className="technical-details">{JSON.stringify(row, null, 2)}</pre>{kind === "wechat" && Boolean(row.id) && <div className="console-page-actions">{endpoint.includes("memory-review") ? <><button type="button" className="secondary-button" onClick={() => void reviewWechatMemory(String(row.id), "approve", displayValue(row.edited_statement || row.statement))}>批准</button><button type="button" className="secondary-button" onClick={() => void reviewWechatMemory(String(row.id), "reject")}>拒绝</button>{row.status === "approved" && <button type="button" className="secondary-button" onClick={() => void reviewWechatMemory(String(row.id), "revoke")}>撤销批准</button>}</> : row.status === "ready_to_send" ? <><button type="button" className="secondary-button" onClick={() => void approveWechatDelivery(String(row.id))}>发送/批准</button><button type="button" className="secondary-button" onClick={() => void rejectWechatDelivery(String(row.id))}>拒绝</button></> : null}</div>}</div>}
       />
     </section>
   </ConsolePageLayout>;
