@@ -3064,6 +3064,7 @@ def _resolve_recovered_errors_on_service_start(settings: WorkerSettings) -> int:
 
 def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
+    store.terminalize_legacy_unknown_agent_runs()
     recovered_tasks = (
         store.recover_orphaned_processing_reply_tasks()
         + store.recover_no_effect_agent_runs_after_service_restart()
