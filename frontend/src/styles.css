@@ -384,7 +384,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .settings-page { padding: 14px; }
   .console-page-card { padding: 18px; }
   .console-page-header { align-items: flex-start; flex-direction: column; }
-  .console-page-actions { width: 100%; justify-content: space-between; }
+  .console-page-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
   .console-card { padding: 16px; }
   .attention-panel-header { flex-direction: column; gap: 16px; }
   .attention-panel-actions { width: 100%; justify-items: stretch; }
