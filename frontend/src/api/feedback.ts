@@ -53,6 +53,10 @@ export interface ResolutionEvidence {
   associations?: Record<string, Record<string, unknown>>;
 }
 
+export interface FeedbackRequestOptions {
+  signal?: AbortSignal;
+}
+
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid feedback response");
   return value as Record<string, unknown>;
@@ -135,12 +139,26 @@ export function getFeedbackBatch(batchId: string, signal?: AbortSignal): Promise
   return request<unknown>(`/api/console/feedback/batches/${encodeURIComponent(batchId)}`, { signal }).then((value) => parseResource(value, parseBatch));
 }
 
-export function claimFeedbackBatch(feedbackKeys: string[], workbenchTaskId = "", workbenchTurnId = "") {
-  return request<unknown>("/api/console/feedback/batches", { method: "POST", body: JSON.stringify({ feedback_keys: feedbackKeys, workbench_task_id: workbenchTaskId, workbench_turn_id: workbenchTurnId }) }).then(parseBatchCommand);
+export function claimFeedbackBatch(
+  feedbackKeys: string[],
+  workbenchTaskId = "",
+  workbenchTurnId = "",
+  batchId = "",
+  options: FeedbackRequestOptions = {},
+) {
+  return request<unknown>("/api/console/feedback/batches", {
+    method: "POST",
+    signal: options.signal,
+    body: JSON.stringify({ feedback_keys: feedbackKeys, workbench_task_id: workbenchTaskId, workbench_turn_id: workbenchTurnId, ...(batchId ? { batch_id: batchId } : {}) }),
+  }).then(parseBatchCommand);
 }
 
-export function associateFeedbackTurn(batchId: string, workbenchTaskId: string, workbenchTurnId: string) {
-  return request<unknown>(`/api/console/feedback/batches/${encodeURIComponent(batchId)}`, { method: "PATCH", body: JSON.stringify({ workbench_task_id: workbenchTaskId, workbench_turn_id: workbenchTurnId }) }).then(parseBatchCommand);
+export function associateFeedbackTurn(batchId: string, workbenchTaskId: string, workbenchTurnId: string, options: FeedbackRequestOptions = {}) {
+  return request<unknown>(`/api/console/feedback/batches/${encodeURIComponent(batchId)}`, {
+    method: "PATCH",
+    signal: options.signal,
+    body: JSON.stringify({ workbench_task_id: workbenchTaskId, workbench_turn_id: workbenchTurnId }),
+  }).then(parseBatchCommand);
 }
 
 export function patchFeedbackItem(feedbackKey: string, evidence: Partial<ResolutionEvidence> & { note?: string; status?: "pending" | "processing" }) {

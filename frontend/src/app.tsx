@@ -280,8 +280,9 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
   const streamRef = useRef<EventStreamConnection | null>(null);
   const confirmationMutationsRef = useRef(new Set<string>());
   const feedbackLoadRef = useRef<{ id: number; controller: AbortController } | null>(null);
-  const feedbackSubmitRef = useRef<{ controller: AbortController; batch: FeedbackBatch | null; task: Task | null; turn: Turn | null; associated: boolean; keys: string[] }>({
-    controller: new AbortController(), batch: null, task: null, turn: null, associated: false, keys: [],
+  const feedbackPendingCacheRef = useRef<{ items: FeedbackItem[]; count: number } | null>(null);
+  const feedbackSubmitRef = useRef<{ controller: AbortController; batch: FeedbackBatch | null; batchId: string; task: Task | null; turn: Turn | null; associated: boolean; keys: string[] }>({
+    controller: new AbortController(), batch: null, batchId: "", task: null, turn: null, associated: false, keys: [],
   });
 
   const closeInspector = useCallback(() => setInspectorOpen(false), []);
@@ -864,6 +865,14 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
     }).catch((error) => {
       if (mountedRef.current && !(error instanceof DOMException && error.name === "AbortError")) setCapabilities([]);
     }).finally(() => finishRequest(controller));
+    const feedbackController = new AbortController();
+    controllersRef.current.add(feedbackController);
+    void Promise.resolve(listPendingFeedback({}, feedbackController.signal)).then((page) => {
+      if (!mountedRef.current || feedbackController.signal.aborted) return;
+      setFeedbackPending(page.items);
+      setPendingFeedbackCount(page.meta.total);
+      feedbackPendingCacheRef.current = { items: page.items, count: page.meta.total };
+    }).catch(() => undefined).finally(() => finishRequest(feedbackController));
     void refreshStats();
     return () => {
       mountedRef.current = false;
@@ -1003,18 +1012,28 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
     const requestId = nextRequest(controller);
     feedbackLoadRef.current = { id: requestId, controller };
     setFeedbackOpen(true);
-    setFeedbackLoading(true);
+    const cached = feedbackPendingCacheRef.current;
+    setFeedbackLoading(!cached);
     setFeedbackError("");
     setFeedbackSelected(new Set());
     feedbackSubmitRef.current.batch = null;
+    feedbackSubmitRef.current.batchId = "";
     feedbackSubmitRef.current.task = null;
     feedbackSubmitRef.current.turn = null;
     feedbackSubmitRef.current.associated = false;
     feedbackSubmitRef.current.keys = [];
+    if (cached) {
+      setFeedbackPending(cached.items);
+      setPendingFeedbackCount(cached.count);
+      finishRequest(controller);
+      feedbackLoadRef.current = null;
+      return;
+    }
     void listPendingFeedback({}, controller.signal).then((page) => {
       if (!mountedRef.current || feedbackLoadRef.current?.id !== requestId || controller.signal.aborted) return;
       setFeedbackPending(page.items);
       setPendingFeedbackCount(page.meta.total);
+      feedbackPendingCacheRef.current = { items: page.items, count: page.meta.total };
     }).catch((error) => {
       if (mountedRef.current && feedbackLoadRef.current?.id === requestId && !(error instanceof DOMException && error.name === "AbortError")) {
         setFeedbackError("反馈加载失败，请重试");
@@ -1051,11 +1070,13 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
     const workflow = feedbackSubmitRef.current;
     if (workflow.keys.join("\u0000") !== keys.join("\u0000")) {
       workflow.batch = null;
+      workflow.batchId = "";
       workflow.task = null;
       workflow.turn = null;
       workflow.associated = false;
       workflow.keys = keys;
     }
+    if (!workflow.batchId) workflow.batchId = `feedback-import:${keys.join(",")}`;
     workflow.controller.abort();
     workflow.controller = new AbortController();
     const controller = workflow.controller;
@@ -1077,7 +1098,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
         workflow.task = task;
       }
       if (!workflow.batch) {
-        const claimed = await claimFeedbackBatch(keys, task.id);
+        const claimed = await claimFeedbackBatch(keys, task.id, "", workflow.batchId, { signal: controller.signal });
         if (!claimed.ok) throw new Error(claimed.message);
         workflow.batch = claimed.item;
       }
@@ -1087,7 +1108,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
         workflow.turn = await createTurn(task.id, batch.start_message, `feedback-import:${batch.batch_id}`, { signal: controller.signal });
       }
       if (!workflow.associated) {
-        const associated = await associateFeedbackTurn(batch.batch_id, task.id, workflow.turn.id);
+        const associated = await associateFeedbackTurn(batch.batch_id, task.id, workflow.turn.id, { signal: controller.signal });
         if (!associated.ok) throw new Error(associated.message);
         workflow.associated = true;
       }
@@ -1098,6 +1119,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       setFeedbackSelected(new Set());
       setPendingFeedbackCount((count) => Math.max(0, count - keys.length));
       workflow.batch = null;
+      workflow.batchId = "";
       workflow.task = null;
       workflow.turn = null;
       workflow.associated = false;

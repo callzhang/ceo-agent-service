@@ -141,10 +141,12 @@ export function FeedbackDrawer({
                         <span className="feedback-item-meta">评分：{item.rating || "未提供"} · 收到：{item.created_at ? <time dateTime={item.created_at}>{item.created_at}</time> : "未提供"}</span>
                         {item.references.length > 0 && (
                           <span className="feedback-item-references">
-                            {item.references.map((reference) => (
+                            {item.references.map((reference) => reference.route ? (
                               <a key={`${key}:${reference.route}:${reference.label}`} href={reference.route}>
                                 {reference.label}
                               </a>
+                            ) : (
+                              <span key={`${key}:label:${reference.label}`}>{reference.label}</span>
                             ))}
                           </span>
                         )}

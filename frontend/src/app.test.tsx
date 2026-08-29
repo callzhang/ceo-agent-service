@@ -173,15 +173,15 @@ describe("App", () => {
     api.getTimeline.mockImplementation((taskId: string) => Promise.resolve(emptyTimeline(taskId === feedbackTask.id ? feedbackTask : first)));
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "处理反馈 · 0" }));
+    await user.click(await screen.findByRole("button", { name: "处理反馈 · 1" }));
     expect(await screen.findByText("修复任务状态")).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "选择反馈 修复任务状态" }));
     await user.click(screen.getByRole("button", { name: "导入并开始 brainstorm" }));
 
-    await waitFor(() => expect(feedbackApi.claimFeedbackBatch).toHaveBeenCalledWith(["feedback-1"], feedbackTask.id));
+    await waitFor(() => expect(feedbackApi.claimFeedbackBatch).toHaveBeenCalledWith(["feedback-1"], feedbackTask.id, "", "feedback-import:feedback-1", expect.objectContaining({ signal: expect.any(AbortSignal) })));
     expect(api.createTask).toHaveBeenCalledWith("处理反馈", "codex", expect.objectContaining({ signal: expect.any(AbortSignal) }));
     await waitFor(() => expect(api.createTurn).toHaveBeenCalledWith(feedbackTask.id, expect.stringContaining("persisted summary: 修复任务状态"), "feedback-import:batch-1", expect.objectContaining({ signal: expect.any(AbortSignal) })));
-    expect(feedbackApi.associateFeedbackTurn).toHaveBeenCalledWith("batch-1", feedbackTask.id, feedbackTurn.id);
+    expect(feedbackApi.associateFeedbackTurn).toHaveBeenCalledWith("batch-1", feedbackTask.id, feedbackTurn.id, expect.objectContaining({ signal: expect.any(AbortSignal) }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "处理反馈" })).toBeNull());
     expect(screen.getByRole("heading", { name: "处理反馈" })).toBeInTheDocument();
   });

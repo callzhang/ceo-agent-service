@@ -47,12 +47,15 @@ describe("FeedbackDrawer", () => {
   });
 
   it("renders persisted summaries and only API-provided reference links", () => {
-    render(<FeedbackDrawer {...baseProps()} />);
+    const props = baseProps();
+    props.pending[0].references.push({ label: "run#9", route: "" });
+    render(<FeedbackDrawer {...props} />);
     expect(screen.getByText("修复任务状态")).toBeInTheDocument();
     expect(screen.getByText("补充测试")).toBeInTheDocument();
     expect(screen.getAllByText(/评分：未提供/)).toHaveLength(2);
     expect(screen.getAllByText("2026-08-29T00:00:00Z")).toHaveLength(2);
     expect(screen.getByRole("link", { name: "查看 Attempt" })).toHaveAttribute("href", "/attempts/attempt-1");
+    expect(screen.getByText("run#9")).not.toHaveAttribute("href");
     expect(screen.queryByRole("link", { name: /反馈|任务|会话/ })).toBeNull();
   });
 
