@@ -92,7 +92,7 @@ function toWechatTarget(value: unknown): WechatScopeTarget | null {
     account_id: typeof item.account_id === "string" ? item.account_id : undefined,
     target_type: targetType,
     target_id: targetId,
-    display_name: typeof item.display_name === "string" ? item.display_name : targetId,
+    display_name: typeof item.display_name === "string" && item.display_name.trim() ? item.display_name : targetId,
     trigger_mode: triggerMode,
     conversation_id: typeof item.conversation_id === "string" && item.conversation_id ? item.conversation_id : targetId,
     enabled: item.enabled !== false,
