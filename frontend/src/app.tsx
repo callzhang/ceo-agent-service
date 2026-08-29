@@ -1117,7 +1117,11 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       setFeedbackOpen(false);
       setFeedbackError("");
       setFeedbackSelected(new Set());
-      setPendingFeedbackCount((count) => Math.max(0, count - keys.length));
+      const remainingFeedback = feedbackPending.filter((item) => !keys.includes(feedbackKey(item)));
+      const remainingCount = Math.max(0, pendingFeedbackCount - keys.length);
+      setFeedbackPending(remainingFeedback);
+      setPendingFeedbackCount(remainingCount);
+      feedbackPendingCacheRef.current = { items: remainingFeedback, count: remainingCount };
       workflow.batch = null;
       workflow.batchId = "";
       workflow.task = null;
@@ -1131,7 +1135,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
     } finally {
       if (mountedRef.current && workflow.controller === controller) setFeedbackSubmitting(false);
     }
-  }, [feedbackPending, feedbackSelected, feedbackSubmitting, scheduleStatsRefresh, selectTask, writeTasks]);
+  }, [feedbackPending, feedbackSelected, feedbackSubmitting, pendingFeedbackCount, scheduleStatsRefresh, selectTask, writeTasks]);
 
   useEffect(() => {
     streamRef.current?.close();
