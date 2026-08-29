@@ -193,6 +193,16 @@ def test_create_batch_rejects_unknown_feedback_keys_atomically(tmp_path: Path):
     assert store.get_feedback_processing_item("missing") is None
 
 
+def test_reopen_existing_batch_is_idempotent_after_source_resolution(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "batch-resolved-reopen.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    original = store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-1")
+    assert store.resolve_feedback_event("feedback-1") is True
+    reopened = store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-1")
+    assert reopened.batch_id == original.batch_id
+    assert reopened.requested_count == original.requested_count
+
+
 def test_legacy_text_processing_ids_are_read_as_integers(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "legacy-ids.sqlite3")
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")

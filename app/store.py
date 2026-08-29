@@ -13039,6 +13039,21 @@ class AutoReplyStore:
             raise ValueError("batch_id must not be empty")
         keys = list(dict.fromkeys(key.strip() for key in feedback_keys if key.strip()))
         with self._connect() as db:
+            existing_batch = db.execute(
+                "select * from feedback_processing_batches where batch_id=?",
+                (cleaned_batch_id,),
+            ).fetchone()
+            if existing_batch is not None:
+                existing_keys = {
+                    str(row["feedback_key"])
+                    for row in db.execute(
+                        "select feedback_key from feedback_processing_items where batch_id=?",
+                        (cleaned_batch_id,),
+                    )
+                }
+                if existing_keys != set(keys):
+                    raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
+                return self._feedback_processing_batch_from_row(existing_batch)
             if keys:
                 placeholders = ",".join("?" for _ in keys)
                 source_rows = db.execute(
@@ -13056,21 +13071,6 @@ class AutoReplyStore:
                     if key in source_by_key
                 ):
                     raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
-            existing_batch = db.execute(
-                "select * from feedback_processing_batches where batch_id=?",
-                (cleaned_batch_id,),
-            ).fetchone()
-            if existing_batch is not None:
-                existing_keys = {
-                    str(row["feedback_key"])
-                    for row in db.execute(
-                        "select feedback_key from feedback_processing_items where batch_id=?",
-                        (cleaned_batch_id,),
-                    )
-                }
-                if existing_keys != set(keys):
-                    raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
-                return self._feedback_processing_batch_from_row(existing_batch)
             conflicting = db.execute(
                 """
                 select fe.key as feedback_key from feedback_events fe
