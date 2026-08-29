@@ -199,7 +199,11 @@ function confirmationProgressFromEvent(event: WorkbenchEvent): { id: string; sta
   return id || status ? { id, status } : null;
 }
 
-export function App() {
+export interface AppProps {
+  showGlobalNav?: boolean;
+}
+
+export function App({ showGlobalNav = true }: AppProps = {}) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1196,8 +1200,8 @@ export function App() {
   }
 
   return (
-    <div className="workbench-root">
-      <GlobalNav />
+    <div className={`workbench-root${showGlobalNav ? "" : " workbench-embedded"}`}>
+      {showGlobalNav && <GlobalNav activePath="/" />}
       <div className={`workbench-shell${selectedTask ? " has-selection" : ""}`}>
       <aside
         className="task-panel"
