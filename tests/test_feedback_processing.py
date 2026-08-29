@@ -316,7 +316,7 @@ def test_resolution_evidence_requires_current_head_and_success_receipts():
         complete.model_copy(update={"commit_sha": "b" * 40}),
         complete.model_copy(update={"test_evidence": {"pytest": {"exit_code": 1}}}),
         complete.model_copy(update={"restart_evidence": {"launchd_label": "x", "before_pid": 1}}),
-        complete.model_copy(update={"health_evidence": {"status_code": 503}}),
+        complete.model_copy(update={"health_evidence": {"status_code": 503, "ok": True, "url": "http://127.0.0.1:8765/health"}}),
     ):
         with pytest.raises(ValueError):
             validate_resolution_evidence(bad, current_head=head)

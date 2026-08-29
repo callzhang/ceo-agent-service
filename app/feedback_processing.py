@@ -256,5 +256,8 @@ def validate_resolution_evidence(
         or parsed.port != 8765
     ):
         raise ValueError("resolution health evidence must be local")
-    if status not in (200, "200", "ok", "healthy", "success") and success is not True:
+    if status is not None:
+        if status not in (200, "200", "ok", "healthy", "success"):
+            raise ValueError("resolution requires successful local health evidence")
+    elif success is not True:
         raise ValueError("resolution requires successful local health evidence")
