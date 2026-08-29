@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-
 import { App } from "../app";
 import { AppShell } from "./AppShell";
 
+const AgentPage = lazy(() => import("../app").then((module) => ({ default: module.App })));
 const TaskDetailPage = lazy(() => import("../pages/TaskDetailPage").then((module) => ({ default: module.TaskDetailPage })));
 const TasksPage = lazy(() => import("../pages/TasksPage").then((module) => ({ default: module.TasksPage })));
 const AttentionPage = lazy(() => import("../pages/AttentionPage").then((module) => ({ default: module.AttentionPage })));
@@ -29,7 +30,7 @@ function PlaceholderPage({ title, children }: { title: string; children?: ReactN
 }
 
 function AgentRoute() {
-  return <App showGlobalNav={false} />;
+  return <AgentPage showGlobalNav={false} />;
 }
 
 function SettingsRoute() {

@@ -1,5 +1,7 @@
 # Changelog
 
+2026-08-29: 进一步优化 React SPA 的首屏加载：Agent Workbench 改为路由级懒加载，普通业务页面不再同步加载 Markdown、SSE 和虚拟列表依赖；生产构建主入口从 527.38 kB 拆分为 238.55 kB 主 chunk 与 286.99 kB Agent chunk，消除单 chunk 超过 500 kB 的构建警告。
+
 2026-08-29: 修正 Settings → Agent Runtime 的凭据编辑链路。已保存的 Codex API、Friday Provider API、Runtime ticket 和 Session token 会回填到 password 控件，可直接编辑或替换并通过 JSON Settings API 保存；Fallback/Friday Provider 模型改为按供应商分组的下拉选项，包含 MiniMax、Qwen 和智谱 GLM 常见模型，Codex OAuth 仍限制为受支持的 GPT 模型。
 
 2026-08-29: 对齐老版业务页面的信息结构。History React 页面恢复最近 24 小时事件区、状态/对象筛选、分页和问答式执行卡片；Tasks 恢复类型/状态/排序工具条、分页和 Sent TODOs 表格；用户反馈恢复紧凑表格、上下文、待处理数量和行内处理动作。对应数据继续通过 JSON API 提供。
