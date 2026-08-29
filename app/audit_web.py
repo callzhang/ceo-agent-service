@@ -5549,7 +5549,6 @@ def _render_attempt_list(
     if not items:
         chart_html = _render_history_chart(store) if include_chart else ""
         body = (
-            f"{repository_upgrade_html}"
             f"{chart_html}"
             f"{pinned_needs_human_html}"
             f"{_history_table_header(base_path='/history', page=page, limit=limit, total_count=total_count, type_filters=type_filters, query=query, search_object_type=search_object_type)}"

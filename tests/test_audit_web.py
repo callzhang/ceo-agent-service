@@ -5521,6 +5521,7 @@ def test_repository_upgrade_mount_is_in_history_header_right_side(tmp_path: Path
     mount_index = html.index('id="repository-upgrade-banner"')
     main_index = html.index("<main>")
     assert mount_index < main_index
+    assert html.count('id="repository-upgrade-banner"') == 1
     assert 'class="topbar-extra"' in html
     assert 'class="repository-upgrade-control"' in html
 
