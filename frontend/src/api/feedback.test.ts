@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ConsoleApiError } from "./console";
-import { associateFeedbackTurn, claimFeedbackBatch, getFeedbackBatch, resolveFeedbackBatch } from "./feedback";
+import { associateFeedbackTurn, claimFeedbackBatch, getFeedbackBatch, listPendingFeedback, resolveFeedbackBatch } from "./feedback";
 
 const validItem = {
   feedback_key: "fb-1", batch_id: "batch-1", status: "processing",
@@ -42,5 +42,12 @@ describe("feedback API", () => {
     expect(JSON.parse(String(claimInit.body))).toMatchObject({ feedback_keys: ["fb-1"], batch_id: "feedback-import:fb-1" });
     await associateFeedbackTurn("feedback-import:fb-1", "task-1", "turn-1", { signal: controller.signal });
     expect((fetchMock.mock.calls[1][1] as RequestInit).signal).toBe(controller.signal);
+  });
+
+  it("requests the drawer page-size limit explicitly", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [], meta: { page: 1, page_size: 50, total: 0, next_cursor: "", has_more: false, snapshot_at: "now" } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await listPendingFeedback({ page_size: 50 });
+    expect(String(fetchMock.mock.calls[0][0])).toContain("page_size=50");
   });
 });

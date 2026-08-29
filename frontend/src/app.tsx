@@ -871,7 +871,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
     const feedbackGeneration = ++feedbackPreloadGenerationRef.current;
     feedbackPreloadRef.current = { generation: feedbackGeneration, controller: feedbackController };
     controllersRef.current.add(feedbackController);
-    void Promise.resolve(listPendingFeedback({}, feedbackController.signal)).then((page) => {
+    void Promise.resolve(listPendingFeedback({ page_size: 50 }, feedbackController.signal)).then((page) => {
       if (!mountedRef.current || feedbackController.signal.aborted || feedbackLoadRef.current || feedbackPreloadGenerationRef.current !== feedbackGeneration) return;
       setFeedbackPending(page.items);
       setPendingFeedbackCount(page.meta.total);
@@ -1042,7 +1042,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       feedbackLoadRef.current = null;
       return;
     }
-    void listPendingFeedback({}, controller.signal).then((page) => {
+    void listPendingFeedback({ page_size: 50 }, controller.signal).then((page) => {
       if (!mountedRef.current || feedbackLoadRef.current?.id !== requestId || controller.signal.aborted) return;
       setFeedbackPending(page.items);
       setPendingFeedbackCount(page.meta.total);
@@ -1061,6 +1061,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
   }, []);
 
   const toggleFeedback = useCallback((key: string) => {
+    if (feedbackSubmitRef.current.batch || feedbackSubmitRef.current.turn) return;
     setFeedbackSelected((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key); else next.add(key);
@@ -1069,6 +1070,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
   }, []);
 
   const selectAllFeedback = useCallback(() => {
+    if (feedbackSubmitRef.current.batch || feedbackSubmitRef.current.turn) return;
     setFeedbackSelected((current) => {
       const keys = feedbackPending.map(feedbackKey);
       const allSelected = keys.length > 0 && keys.every((key) => current.has(key));

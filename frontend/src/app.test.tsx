@@ -174,6 +174,7 @@ describe("App", () => {
 
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "处理反馈 · 1" }));
+    expect(feedbackApi.listPendingFeedback).toHaveBeenCalledWith({ page_size: 50 }, expect.any(AbortSignal));
     expect(await screen.findByText("修复任务状态")).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "选择反馈 修复任务状态" }));
     await user.click(screen.getByRole("button", { name: "导入并开始 brainstorm" }));
