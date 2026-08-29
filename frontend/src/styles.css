@@ -924,3 +924,16 @@ h1, h2, h3, p { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
 }
+
+/* Keep the brand and the horizontally scrollable nav on separate rows on phones. */
+@media (max-width: 720px) {
+  .global-nav { display: block; overflow-x: hidden; }
+  .global-brand { min-width: 0; }
+  .global-nav-track {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    justify-content: flex-start;
+    box-sizing: border-box;
+  }
+}
