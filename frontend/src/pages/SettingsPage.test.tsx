@@ -80,6 +80,8 @@ describe("SettingsPage", () => {
     expect(await screen.findByText("Escalate to Alex only when needed.", { selector: "pre" })).toBeInTheDocument();
     const ruleTabs = within(screen.getByRole("tablist", { name: "Audit Rule sections" }));
     const viewTabs = within(screen.getByRole("tablist", { name: "Audit Rule view" }));
+    expect(screen.getByText("规则类型")).toBeInTheDocument();
+    expect(screen.getByText("查看方式")).toBeInTheDocument();
     expect(ruleTabs.getByRole("tab", { name: /^Template$/ })).toHaveAttribute("aria-selected", "true");
     expect(viewTabs.getByRole("tab", { name: /^Template$/ })).toHaveAttribute("aria-selected", "false");
     expect(viewTabs.getByRole("tab", { name: "Rendered preview" })).toHaveAttribute("aria-selected", "true");
