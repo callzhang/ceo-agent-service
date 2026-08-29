@@ -13222,7 +13222,7 @@ class AutoReplyStore:
                 """,
                 (cleaned_batch_id, len(keys)),
             )
-            db.execute(
+            cursor = db.execute(
                 f"""
                 update feedback_processing_items
                 set batch_id=?, status='processing', updated_at=current_timestamp
@@ -13231,6 +13231,8 @@ class AutoReplyStore:
                 """,
                 [cleaned_batch_id, *keys],
             )
+            if cursor.rowcount != len(keys):
+                raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
             db.execute(
                 """
                 update feedback_processing_batches
@@ -13248,6 +13250,8 @@ class AutoReplyStore:
                 """,
                 [*keys, cleaned_batch_id],
             ).fetchall()
+            if len(rows) != len(keys):
+                raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
         return [self._feedback_processing_item_from_row(row) for row in rows]
 
     def associate_feedback_processing_turn(
@@ -13321,6 +13325,8 @@ class AutoReplyStore:
         allowed_statuses = {"pending", "processing", "resolved"}
         if status is not None and status not in allowed_statuses:
             raise ValueError(f"unsupported feedback processing status: {status}")
+        if status == "resolved":
+            raise ValueError("only batch resolution may mark feedback resolved")
         assignments: list[str] = ["updated_at=current_timestamp"]
         args: list[object] = []
         for field, value in (
@@ -13340,7 +13346,7 @@ class AutoReplyStore:
         args.append(cleaned_key)
         with self._connect() as db:
             current = db.execute(
-                "select status, resolved_at from feedback_processing_items where feedback_key=?",
+                "select * from feedback_processing_items where feedback_key=?",
                 (cleaned_key,),
             ).fetchone()
             if current is None:
@@ -13353,6 +13359,21 @@ class AutoReplyStore:
                 raise ValueError(
                     f"invalid feedback processing status transition: {current_status}->{status}"
                 )
+            changed = False
+            for field, value in (
+                ("test_evidence_json", test_evidence),
+                ("restart_evidence_json", restart_evidence),
+                ("health_evidence_json", health_evidence),
+            ):
+                if value is not None:
+                    old = json.loads(current[field] or "{}")
+                    if json.dumps(old, ensure_ascii=False, sort_keys=True, separators=(",", ":")) != json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")):
+                        changed = True
+            for field, value in (("commit_sha", commit_sha), ("note", note), ("status", status)):
+                if value is not None and str(current[field] or "") != str(value):
+                    changed = True
+            if not changed:
+                return self._feedback_processing_item_from_row(current)
             db.execute(
                 f"update feedback_processing_items set {', '.join(assignments)} where feedback_key=?",
                 args,
@@ -13427,18 +13448,21 @@ class AutoReplyStore:
                         raise ValueError("resolution requires every item to be processing")
                     if not str(row["workbench_task_id"] or "").strip() or not str(row["workbench_turn_id"] or "").strip() or int(row["attempt_id"] or 0) <= 0 or int(row["agent_run_id"] or 0) <= 0:
                         raise ValueError("resolution requires complete item associations")
-                    item_commit = str(row["commit_sha"] or "").strip() or normalized_evidence.commit_sha.strip()
+                    item_commit = str(row["commit_sha"] or "").strip()
                     if item_commit.lower() != normalized_evidence.commit_sha.strip().lower():
                         raise ValueError("resolution item commit does not match receipt")
                     test_json = json.loads(row["test_evidence_json"] or "{}")
                     restart_json = json.loads(row["restart_evidence_json"] or "{}")
                     health_json = json.loads(row["health_evidence_json"] or "{}")
-                    if not test_json:
-                        test_json = normalized_evidence.test_evidence
-                    if not restart_json:
-                        restart_json = normalized_evidence.restart_evidence
-                    if not health_json:
-                        health_json = normalized_evidence.health_evidence
+                    validate_resolution_evidence(
+                        ResolutionEvidence(
+                            commit_sha=item_commit,
+                            test_evidence=test_json,
+                            restart_evidence=restart_json,
+                            health_evidence=health_json,
+                        ),
+                        current_head=current_head,
+                    )
                     db.execute(
                         """
                         update feedback_processing_items

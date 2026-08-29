@@ -9,6 +9,7 @@ different workflow shape.
 import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -170,6 +171,7 @@ def build_feedback_start_message(
     lines = [
         f"Feedback processing batch: {batch_id}",
         f"Use repository Skill: {FEEDBACK_PROCESSING_SKILL_PATH}",
+        "Use the brainstorming skill for this conversation, then use the local feedback API to write evidence and resolve the batch.",
         "Process the persisted feedback items below; do not copy the full feedback body.",
     ]
     for item in items:
@@ -192,11 +194,15 @@ def _all_test_exit_codes_zero(value: object) -> tuple[bool, bool]:
     if isinstance(value, dict):
         if "exit_code" in value:
             try:
-                if int(value["exit_code"]) != 0:
-                    return False, True
+                child_ok = int(value["exit_code"]) == 0
             except (TypeError, ValueError):
-                return False, True
-            return True, True
+                child_ok = False
+            checks = [
+                _all_test_exit_codes_zero(child)
+                for key, child in value.items()
+                if key != "exit_code"
+            ]
+            return child_ok and all(check[0] for check in checks), True
         checks = [_all_test_exit_codes_zero(child) for child in value.values()]
         return all(check[0] for check in checks), any(check[1] for check in checks)
     if isinstance(value, list):
@@ -229,7 +235,7 @@ def validate_resolution_evidence(
     ).strip()
     before = restart.get("before_pid", restart.get("pid_before"))
     after = restart.get("after_pid", restart.get("pid_after"))
-    if not label or before in (None, "") or after in (None, ""):
+    if label != "com.ceo-agent-service.main" or before in (None, "") or after in (None, ""):
         raise ValueError("resolution requires launchd label and before/after PIDs")
     try:
         if int(before) <= 0 or int(after) <= 0 or int(before) == int(after):
@@ -241,11 +247,13 @@ def validate_resolution_evidence(
     status = health.get("status_code", health.get("http_status", health.get("status")))
     success = health.get("ok")
     health_url = str(health.get("url") or health.get("endpoint") or "").strip()
-    if health_url and not (
-        health_url.startswith("http://127.0.0.1")
-        or health_url.startswith("http://localhost")
-        or health_url.startswith("https://127.0.0.1")
-        or health_url.startswith("https://localhost")
+    if not health_url:
+        raise ValueError("resolution requires local health URL")
+    parsed = urlsplit(health_url)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost"}
+        or parsed.port != 8765
     ):
         raise ValueError("resolution health evidence must be local")
     if status not in (200, "200", "ok", "healthy", "success") and success is not True:

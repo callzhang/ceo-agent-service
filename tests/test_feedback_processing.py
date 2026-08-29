@@ -107,14 +107,14 @@ def test_claim_associate_patch_and_resolve_feedback_batch(tmp_path: Path):
 
     store.patch_feedback_processing_item_evidence(
         "feedback-1",
-        test_evidence={"passed": 3},
-        restart_evidence={"process": "new"},
-        health_evidence={"status": 200},
-        commit_sha="abc123",
-        status="resolved",
+        test_evidence={"passed": {"exit_code": 0}},
+        restart_evidence={"process": "new", "launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2},
+        health_evidence={"status_code": 200, "url": "http://127.0.0.1:8765/health"},
+        commit_sha="a" * 40,
     )
-    store.patch_feedback_processing_item_evidence("feedback-2", status="resolved")
-    assert store.resolve_feedback_processing_batch("batch-1") is True
+    store.associate_feedback_processing_turn("feedback-2", workbench_task_id="task-1", workbench_turn_id="turn-1", attempt_id=13, agent_run_id=35)
+    store.patch_feedback_processing_item_evidence("feedback-2", test_evidence={"passed": {"exit_code": 0}}, restart_evidence={"process": "new", "launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, health_evidence={"status_code": 200, "url": "http://127.0.0.1:8765/health"}, commit_sha="a" * 40)
+    assert store.resolve_feedback_processing_batch("batch-1", {"commit_sha": "a" * 40, "test_evidence": {"passed": {"exit_code": 0}}, "restart_evidence": {"launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, "health_evidence": {"status_code": 200, "url": "http://127.0.0.1:8765/health"}}, current_head="a" * 40) is True
     assert store.get_feedback_processing_batch("batch-1").status == "resolved"
     assert store.resolve_feedback_processing_batch("batch-1") is True
 
@@ -329,6 +329,7 @@ def test_resolve_evidence_marks_every_item_in_batch_atomically(tmp_path: Path):
     store.claim_feedback_processing_items("batch-1", ["feedback-1", "feedback-2"])
     for key in ("feedback-1", "feedback-2"):
         store.associate_feedback_processing_turn(key, workbench_task_id="task", workbench_turn_id="turn", attempt_id=1, agent_run_id=2)
+        store.patch_feedback_processing_item_evidence(key, commit_sha="a" * 40, test_evidence={"pytest": {"exit_code": 0}}, restart_evidence={"launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, health_evidence={"status_code": 200, "url": "http://127.0.0.1:8765/health"})
     head = "a" * 40
     evidence = ResolutionEvidence(
         commit_sha=head,
