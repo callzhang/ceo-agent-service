@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -575,6 +576,60 @@ def test_console_error_detail_returns_error_record(tmp_path: Path):
     assert payload["item"]["id"] == error_id
     assert payload["item"]["kind"] == "producer_loop_error"
     assert payload["item"]["error"] == "database is locked"
+
+
+def test_console_sent_todos_endpoint_returns_structured_rows_before_project_route(tmp_path: Path, monkeypatch):
+    record = SimpleNamespace(
+        kind="dingtalk_todo",
+        source_id=7,
+        sent_at="2026-08-29 18:00:00",
+        status="done",
+        owner_name="Alex",
+        owner_user_id="user-7",
+        project_id=836,
+        project_title="Launch project",
+        todo_id=12,
+        todo_title="Review launch checklist",
+        todo_description="Review the launch checklist",
+        original_text="Review launch checklist",
+        deadline_at="2026-08-30 10:00:00",
+        priority="high",
+        target_kind="dingtalk",
+        target_conversation_id="",
+        external_id="task-7",
+        detail="",
+    )
+    monkeypatch.setattr(
+        AutoReplyStore,
+        "list_sent_todo_records",
+        lambda _store, *, limit=5000: [record],
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/tasks/sent-todos")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["total"] == 1
+    assert payload["items"] == [
+        {
+            "id": "dingtalk_todo:7",
+            "kind": "dingtalk_todo",
+            "kind_label": "DingTalk Todo",
+            "sent_at": "2026-08-29 18:00:00",
+            "status": "done",
+            "owner": "Alex",
+            "project_title": "Launch project",
+            "todo_title": "Review launch checklist",
+            "description": "Review the launch checklist",
+            "original_text": "Review launch checklist",
+            "deadline": "2026-08-30 10:00:00",
+            "priority": "high",
+            "target": "task-7",
+            "external_id": "task-7",
+            "detail_url": "/tasks/836#todo-12",
+        }
+    ]
 
 
 def test_spa_mode_serves_same_react_index_for_business_deep_links_and_keeps_api_404_json(

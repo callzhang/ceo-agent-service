@@ -21,6 +21,9 @@ from app.web_api.tasks import (
     ConsoleTaskDetail,
     ConsoleTaskDetailEnvelope,
     ConsoleTaskListEnvelope,
+    ConsoleSentTodo,
+    ConsoleSentTodoListEnvelope,
+    sent_todo_payload,
     task_detail,
     task_list_response,
 )
@@ -91,6 +94,22 @@ def register_console_routes(
             category=category,
             task_state=task_state,
             row_builder=task_row_builder,
+        )
+
+    @app.get("/api/console/tasks/sent-todos", response_model=ConsoleSentTodoListEnvelope)
+    def console_sent_todos(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=5000, ge=1, le=5000),
+    ):
+        rows = [
+            sent_todo_payload(record)
+            for record in store_factory().list_sent_todo_records(limit=5000)
+        ]
+        total = len(rows)
+        start = (page - 1) * page_size
+        return ConsoleSentTodoListEnvelope(
+            items=[ConsoleSentTodo.model_validate(row) for row in rows[start : start + page_size]],
+            meta=list_meta(page=page, page_size=page_size, total=total, snapshot=snapshot_at()),
         )
 
     @app.get("/api/console/tasks/{project_id}/details", response_model=ConsoleTaskDetailEnvelope)

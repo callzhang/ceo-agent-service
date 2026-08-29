@@ -460,6 +460,7 @@ http://127.0.0.1:8765/
 - Attention 中的运行错误使用 `/history/errors/{error_id}` 只读详情页；错误记录 ID 属于 `errors` 表，不会再被误当成 `reply_attempts` 的 Attempt ID。
 - History 的状态筛选按当前可处理性展示：同一触发消息或同一会后任务已经有后续结果时，旧 `failed` / `blocked` / `ready_to_send` 行保留为审计证据，但不再进入 active failed/blocked/pending 筛选；尚无后续结果的 blocked 统一显示为可恢复的 `Blocked`。
 - `/tasks`：work projects、状态、category filter、Priority/Risk 排序、TODO checklist、实时全文检索和分页
+- `/tasks` 页面中的 `Sent TODOs` 通过 `/api/console/tasks/sent-todos` 加载结构化的 DingTalk Todo 与 follow-up 发送记录；该 API 必须放在 `/api/console/tasks/{project_id}` 动态路由之前，避免 `sent-todos` 被当成项目 ID 解析。
 - `/tasks/{project_id}`：单个 work project 详情、facts、TODO DDL/owner、更新记录和 follow-up 记录
 - `/attempts/{id}`：单次处理详情；同一触发消息后续重跑成功时，旧记录顶部会链接到后续 attempt 并展示其最新动作，原始状态仍保留在详情字段中供审计。Consumer 与 Audit 执行记录只能从该 Attempt 打开，不显示内部会话标识或本地文件路径。
 - `/developer-prompt`：Developer/User Prompt 模板管理
