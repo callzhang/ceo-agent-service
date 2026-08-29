@@ -8,7 +8,40 @@ import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { StatusBadge } from "../components/status/StatusBadge";
 
-export function DomainListPage({ title, endpoint, kind = "resource" }: { title: string; endpoint: string; kind?: "resource" | "codex" | "wechat" }) {
+function NotificationStatusPanel() {
+  const [permission, setPermission] = useState("检查中");
+  const [worker, setWorker] = useState("检查中");
+
+  useEffect(() => {
+    if ("Notification" in window) {
+      setPermission(Notification.permission === "granted" ? "已允许" : Notification.permission === "denied" ? "已拒绝" : "未设置");
+    } else {
+      setPermission("浏览器不支持");
+    }
+    if (!("serviceWorker" in navigator)) {
+      setWorker("浏览器不支持");
+      return;
+    }
+    navigator.serviceWorker.register("/notification-service-worker.js")
+      .then(() => navigator.serviceWorker.ready)
+      .then(() => setWorker("已连接"))
+      .catch(() => setWorker("连接失败"));
+  }, []);
+
+  return <section className="console-card notification-status-panel" aria-labelledby="notification-status-title">
+    <div className="settings-card-heading">
+      <div><p className="eyebrow">DELIVERY STATUS</p><h2 id="notification-status-title">浏览器通知状态</h2></div>
+      <span className="console-card-muted">不会自动申请通知权限</span>
+    </div>
+    <div className="notification-status-grid">
+      <div className="notification-status-item"><span>通知权限</span><strong>{permission}</strong><small>需要在浏览器设置中允许后，才能显示桌面提醒。</small></div>
+      <div className="notification-status-item"><span>Service Worker</span><strong>{worker}</strong><small>负责接收事件并处理通知点击跳转。</small></div>
+    </div>
+    <p className="field-help" aria-live="polite">实时事件流仍由本地服务维护；本页仅展示连接与权限状态。</p>
+  </section>;
+}
+
+export function DomainListPage({ title, endpoint, kind = "resource", showNotificationStatus = false }: { title: string; endpoint: string; kind?: "resource" | "codex" | "wechat"; showNotificationStatus?: boolean }) {
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [snapshot, setSnapshot] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -24,6 +57,7 @@ export function DomainListPage({ title, endpoint, kind = "resource" }: { title: 
     ? [{ key: "title", label: "会话" }, { key: "type", label: "类型" }, { key: "detail_url", label: "详情" }]
     : [{ key: "status", label: "状态" }, { key: "target_type", label: "对象" }, { key: "target_id", label: "目标" }, { key: "reply_text", label: "摘要" }, { key: "error", label: "诊断" }];
   return <ConsolePageLayout title={title} actions={<SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />}>
+    {showNotificationStatus && <NotificationStatusPanel />}
     <section className="console-card">
       <ResponsiveDataList
         ariaLabel={title}

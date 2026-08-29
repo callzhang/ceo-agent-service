@@ -55,7 +55,7 @@ function ConsoleRoutes() {
       <Route path="/settings" element={<SettingsRoute />} />
       <Route path="/user-feedback" element={<FeedbackPage />} />
       <Route path="/tutorial" element={<TutorialPage />} />
-      <Route path="/notifications" element={<DomainListPage title="Notifications" endpoint="/api/console/notifications" />} />
+      <Route path="/notifications" element={<DomainListPage title="Notifications" endpoint="/api/console/notifications" showNotificationStatus />} />
       <Route path="/codex" element={<DomainListPage title="Codex Sessions" endpoint="/api/console/codex/sessions" kind="codex" />} />
       <Route path="/codex/:sessionId" element={<CodexDetailRoute />} />
       <Route path="/wechat/review" element={<DomainListPage title="WeChat 待发审核" endpoint="/api/console/wechat/review" kind="wechat" />} />
