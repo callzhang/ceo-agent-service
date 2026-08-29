@@ -68,11 +68,11 @@ function parseProcessingItem(value: unknown): FeedbackProcessingItem {
   const item: FeedbackProcessingItem = {
     feedback_key: stringField(row, "feedback_key"), batch_id: stringField(row, "batch_id"), status: stringField(row, "status"),
     workbench_task_id: stringField(row, "workbench_task_id"), workbench_turn_id: stringField(row, "workbench_turn_id"),
-    attempt_id: Number(row.attempt_id), agent_run_id: Number(row.agent_run_id), commit_sha: stringField(row, "commit_sha"),
+    attempt_id: row.attempt_id === undefined ? 0 : row.attempt_id as number, agent_run_id: row.agent_run_id === undefined ? 0 : row.agent_run_id as number, commit_sha: stringField(row, "commit_sha"),
     test_evidence: record(row.test_evidence), restart_evidence: record(row.restart_evidence), health_evidence: record(row.health_evidence),
     note: stringField(row, "note"), resolved_at: stringField(row, "resolved_at"),
   };
-  if (!Number.isInteger(item.attempt_id) || !Number.isInteger(item.agent_run_id)) throw new Error("invalid feedback response");
+  if (!Number.isInteger(item.attempt_id) || !Number.isInteger(item.agent_run_id) || item.attempt_id < 0 || item.agent_run_id < 0) throw new Error("invalid feedback response");
   return item;
 }
 
@@ -117,7 +117,18 @@ function parseBatchCommand(value: unknown) {
 export function listPendingFeedback(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<ConsoleList<FeedbackItem>> {
   const filtered = Object.entries(params).filter(([key, value]) => key !== "status" && value !== undefined && value !== "");
   const search = new URLSearchParams({ status: "pending", ...Object.fromEntries(filtered.map(([key, value]) => [key, String(value)])) });
-  return request<unknown>(`/api/console/feedback?${search.toString()}`, { signal }).then((value) => parseConsoleList<FeedbackItem>(value));
+  return request<unknown>(`/api/console/feedback?${search.toString()}`, { signal }).then((value) => {
+    const page = parseConsoleList(value);
+    const items = page.items.map((raw) => {
+      const row = record(raw);
+      for (const key of ["id", "feedback_key", "attempt_id", "status", "processing_status", "rating", "comment", "context", "created_at", "summary", "batch_id", "processing_task_id"] as const) {
+        if (typeof row[key] !== "string") throw new Error("invalid feedback response");
+      }
+      if (!Array.isArray(row.references) || row.references.some((ref) => typeof ref !== "object" || ref === null || typeof (ref as Record<string, unknown>).label !== "string" || typeof (ref as Record<string, unknown>).route !== "string")) throw new Error("invalid feedback response");
+      return row as unknown as FeedbackItem;
+    });
+    return { ...page, items };
+  });
 }
 
 export function getFeedbackBatch(batchId: string, signal?: AbortSignal): Promise<ConsoleResource<FeedbackBatch>> {
@@ -148,7 +159,7 @@ export function getFeedbackDetail(feedbackKey: string, signal?: AbortSignal): Pr
   return request<unknown>(`/api/console/feedback/${encodeURIComponent(feedbackKey)}`, { signal }).then((value) => parseResource(value, (raw) => {
     const row = record(raw);
     const item = row as unknown as FeedbackDetail;
-    for (const key of ["id", "attempt_id", "status", "rating", "comment", "context", "created_at", "feedback_token", "source", "received_at", "conversation_title", "trigger_sender", "trigger_text", "summary"] as const) {
+    for (const key of ["id", "attempt_id", "status", "rating", "comment", "context", "created_at", "feedback_key", "feedback_token", "source", "received_at", "conversation_title", "trigger_sender", "trigger_text", "summary", "batch_id", "processing_task_id"] as const) {
       if (typeof row[key] !== "string") throw new Error("invalid feedback response");
     }
     if (typeof row.agent_run_id !== "number" || (row.processing !== null && row.processing !== undefined && typeof row.processing !== "object")) throw new Error("invalid feedback response");

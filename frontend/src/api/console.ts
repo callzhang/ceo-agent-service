@@ -97,10 +97,10 @@ export interface FeedbackItem {
   comment: string;
   context: string;
   created_at: string;
-  summary?: string;
-  references?: FeedbackReference[];
-  batch_id?: string;
-  processing_task_id?: string;
+  summary: string;
+  references: FeedbackReference[];
+  batch_id: string;
+  processing_task_id: string;
 }
 export interface WechatScopeTarget {
   account_id?: string;
