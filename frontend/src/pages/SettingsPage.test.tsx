@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -60,6 +60,49 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByRole("textbox", { name: "Template" })).toHaveValue("hello {{principal}}");
     expect(screen.getByText("{{principal}}", { selector: "mark" })).toBeInTheDocument();
+  });
+
+  it("keeps audit rule selection independent from the template or preview view", async () => {
+    getSettings.mockResolvedValueOnce({
+      item: {
+        section: "audit-rules",
+        fields: { template: "Escalate to {{principal}} only when needed." },
+        preview: {
+          template: "Escalate to Alex only when needed.",
+          consumer: "Escalate to Alex only when needed.\n\nConsumer wrapper",
+          audit: "Escalate to Alex only when needed.\n\nAudit wrapper",
+        },
+      },
+      meta: { snapshot_at: "2026-08-29T00:00:00Z" },
+    });
+    const firstRender = renderSettings("/settings?tab=audit-rules&rule=template&view=preview");
+
+    expect(await screen.findByText("Escalate to Alex only when needed.", { selector: "pre" })).toBeInTheDocument();
+    const ruleTabs = within(screen.getByRole("tablist", { name: "Audit Rule sections" }));
+    const viewTabs = within(screen.getByRole("tablist", { name: "Audit Rule view" }));
+    expect(ruleTabs.getByRole("tab", { name: /^Template$/ })).toHaveAttribute("aria-selected", "true");
+    expect(viewTabs.getByRole("tab", { name: /^Template$/ })).toHaveAttribute("aria-selected", "false");
+    expect(viewTabs.getByRole("tab", { name: "Rendered preview" })).toHaveAttribute("aria-selected", "true");
+    expect(ruleTabs.getByRole("tab", { name: /^Consumer$/ })).toHaveAttribute("href", "/settings?tab=audit-rules&rule=consumer&view=preview");
+
+    firstRender.unmount();
+    getSettings.mockResolvedValueOnce({
+      item: {
+        section: "audit-rules",
+        fields: { template: "Escalate to {{principal}} only when needed." },
+        preview: { template: "Escalate to Alex only when needed." },
+      },
+      meta: { snapshot_at: "2026-08-29T00:00:00Z" },
+    });
+    renderSettings("/settings?tab=audit-rules&rule=consumer&view=template");
+
+    expect(await screen.findByText("Escalate to {{principal}} only when needed.", { selector: "pre" })).toBeInTheDocument();
+    expect(screen.getByText("当前 tab 使用同一份 Audit Rules template；切换到 Template tab 编辑。")).toBeInTheDocument();
+    const consumerRuleTabs = within(screen.getByRole("tablist", { name: "Audit Rule sections" }));
+    const consumerViewTabs = within(screen.getByRole("tablist", { name: "Audit Rule view" }));
+    expect(consumerRuleTabs.getByRole("tab", { name: /^Consumer$/ })).toHaveAttribute("aria-selected", "true");
+    expect(consumerViewTabs.getByRole("tab", { name: /^Template$/ })).toHaveAttribute("aria-selected", "true");
+    expect(consumerViewTabs.getByRole("tab", { name: "Rendered preview" })).toHaveAttribute("aria-selected", "false");
   });
 
   it("shows the WeChat reply scope editor inline instead of linking away", async () => {
