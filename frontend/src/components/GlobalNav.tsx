@@ -19,8 +19,13 @@ function isActivePath(pathname: string, href: string) {
 
 export function GlobalNav({ activePath = window.location.pathname || "/" }: GlobalNavProps) {
   const inRouter = useInRouterContext();
+  const pageLabel = destinations.find(([, href]) => isActivePath(activePath, href))?.[0] || "CEO Agent";
   return (
     <nav className="global-nav" aria-label="主导航">
+      <a className="global-brand" href="/history">
+        <span className="global-brand-mark" aria-hidden="true" />
+        <span><strong>{pageLabel}</strong><small>Local audit console</small></span>
+      </a>
       <div className="global-nav-track">
         {destinations.map(([label, href]) => {
           const active = isActivePath(activePath, href);

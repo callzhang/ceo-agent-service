@@ -15,17 +15,17 @@ describe("console router", () => {
     ["/notifications", "Notifications"],
     ["/codex/session-1", "Codex Session"],
     ["/wechat/review", "WeChat 待发审核"],
-  ])("renders a deep link for %s", (path, heading) => {
+  ])("renders a deep link for %s", async (path, heading) => {
     window.history.replaceState({}, "", path);
     render(<ConsoleRouter />);
 
-    expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
   });
 
-  it("renders a not-found page for an unknown business path", () => {
+  it("renders a not-found page for an unknown business path", async () => {
     window.history.replaceState({}, "", "/does-not-exist");
     render(<ConsoleRouter />);
 
-    expect(screen.getByRole("heading", { name: "页面不存在" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "页面不存在" })).toBeInTheDocument();
   });
 });

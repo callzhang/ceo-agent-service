@@ -182,7 +182,9 @@ export function command(path: string, body: Record<string, unknown> = {}) {
 
 export function resolveFeedback(id: string) { return command(`/api/console/feedback/${encodeURIComponent(id)}/resolve`); }
 export function syncFeedback() { return command("/api/console/feedback/sync"); }
-export function saveSettings(section: string, fields: Record<string, unknown>) { return command(`/api/console/settings/${encodeURIComponent(section)}`, { fields }); }
+export function saveSettings(section: string, fields: Record<string, unknown>, extras: Record<string, unknown> = {}) {
+  return command(`/api/console/settings/${encodeURIComponent(section)}`, { ...extras, fields });
+}
 export function getTutorial(signal?: AbortSignal) { return getResource("/api/console/tutorial", signal); }
 export function runTutorialAction(actionId: string) { return command(`/api/console/tutorial/run/${encodeURIComponent(actionId)}`); }
 export function checkTutorialStep(stepId: string) { return command(`/api/console/tutorial/check/${encodeURIComponent(stepId)}`); }

@@ -1,19 +1,20 @@
-import { BrowserRouter, Navigate, Route, Routes, useParams, useSearchParams } from "react-router-dom";
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 
 import { App } from "../app";
 import { AppShell } from "./AppShell";
-import { TaskDetailPage } from "../pages/TaskDetailPage";
-import { TasksPage } from "../pages/TasksPage";
-import { AttentionPage } from "../pages/AttentionPage";
-import { HistoryPage } from "../pages/HistoryPage";
-import { StatusPage } from "../pages/StatusPage";
-import { FeedbackPage } from "../pages/FeedbackPage";
-import { SettingsPage } from "../pages/SettingsPage";
-import { DomainListPage } from "../pages/DomainListPage";
-import { TutorialPage } from "../pages/TutorialPage";
-import { CodexSessionDetailPage } from "../pages/CodexPages";
-import { BusinessDetailPage } from "../pages/BusinessDetailPage";
+
+const TaskDetailPage = lazy(() => import("../pages/TaskDetailPage").then((module) => ({ default: module.TaskDetailPage })));
+const TasksPage = lazy(() => import("../pages/TasksPage").then((module) => ({ default: module.TasksPage })));
+const AttentionPage = lazy(() => import("../pages/AttentionPage").then((module) => ({ default: module.AttentionPage })));
+const HistoryPage = lazy(() => import("../pages/HistoryPage").then((module) => ({ default: module.HistoryPage })));
+const StatusPage = lazy(() => import("../pages/StatusPage").then((module) => ({ default: module.StatusPage })));
+const FeedbackPage = lazy(() => import("../pages/FeedbackPage").then((module) => ({ default: module.FeedbackPage })));
+const SettingsPage = lazy(() => import("../pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
+const DomainListPage = lazy(() => import("../pages/DomainListPage").then((module) => ({ default: module.DomainListPage })));
+const TutorialPage = lazy(() => import("../pages/TutorialPage").then((module) => ({ default: module.TutorialPage })));
+const CodexSessionDetailPage = lazy(() => import("../pages/CodexPages").then((module) => ({ default: module.CodexSessionDetailPage })));
+const BusinessDetailPage = lazy(() => import("../pages/BusinessDetailPage").then((module) => ({ default: module.BusinessDetailPage })));
 
 function PlaceholderPage({ title, children }: { title: string; children?: ReactNode }) {
   return (
@@ -81,7 +82,9 @@ export function ConsoleRouter() {
   return (
     <BrowserRouter>
       <AppShell>
-        <ConsoleRoutes />
+        <Suspense fallback={<main className="console-page"><section className="console-card page-state" role="status">正在打开页面…</section></main>}>
+          <ConsoleRoutes />
+        </Suspense>
       </AppShell>
     </BrowserRouter>
   );

@@ -8,7 +8,7 @@ import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { StatusBadge } from "../components/status/StatusBadge";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 
-export function AttentionPage() {
+export function AttentionPanel() {
   const [rows, setRows] = useState<AttentionItem[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -27,8 +27,8 @@ export function AttentionPage() {
   useEffect(() => { void load(); }, [load]);
 
   return (
-    <ConsolePageLayout title="Attention" actions={<><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /><button type="button" className="secondary-button" onClick={() => void load()}>刷新</button></>}>
-      <section className="console-card">
+      <section className="console-card attention-panel">
+        <div className="status-panel-toolbar"><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /><button type="button" className="secondary-button" onClick={() => void load()} disabled={state === "loading"}>{state === "loading" ? "刷新中…" : "刷新"}</button></div>
         <p className="muted">当前未解决问题按根因聚合；完整错误和命令只在展开详情中显示。</p>
         <ResponsiveDataList
           ariaLabel="待处理问题"
@@ -42,6 +42,9 @@ export function AttentionPage() {
           renderExpanded={(row) => <div className="attention-details"><p><strong>根因：</strong>{row.root_cause || "未分类"}</p><p><strong>错误：</strong>{displayValue(row.error)}</p><div className="attention-links">{row.links.map((link) => <Link key={link.href} to={link.href}>{link.label}</Link>)}</div></div>}
         />
       </section>
-    </ConsolePageLayout>
   );
+}
+
+export function AttentionPage() {
+  return <ConsolePageLayout title="Attention"><AttentionPanel /></ConsolePageLayout>;
 }

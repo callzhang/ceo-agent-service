@@ -243,6 +243,7 @@ def register_console_routes(
 
     @app.get("/api/console/settings/{section}")
     def console_settings(section: str):
+        payload: Any = None
         allowed = {"status", "info", "configuration", "agent-runtime", "prompts", "connectors", "audit-rules", "attention"}
         if section not in allowed:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Unknown settings section", "details": {}}, status_code=404)
@@ -257,19 +258,86 @@ def register_console_routes(
             if section == "info":
                 fields = {"principal": app_config.principal_display_name(), "workspace": str(app_config.workspace_path()), "repository": str(app_config.repo_root())}
             elif section == "configuration":
-                from app.audit_web import _editable_system_config_keys
-                env = app_config.read_env_file()
-                fields = {key: env.get(key, "") for key in sorted(_editable_system_config_keys())}
+                from app.audit_web import (
+                    _configuration_compatibility_entries,
+                    _configuration_entries,
+                )
+                groups = []
+                for name, rows in _configuration_entries().items():
+                    groups.append(
+                        {
+                            "name": name,
+                            "items": [
+                                {
+                                    "key": key,
+                                    "value": value,
+                                    "description": description,
+                                    "editable": editable,
+                                }
+                                for key, value, description, editable in rows
+                            ],
+                        }
+                    )
+                fields = {
+                    item["key"]: item["value"]
+                    for group in groups
+                    for item in group["items"]
+                }
+                payload = {
+                    "section": section,
+                    "fields": fields,
+                    "groups": groups,
+                    "compatibility": [
+                        {
+                            "key": key,
+                            "value": value,
+                            "description": description,
+                            "editable": editable,
+                        }
+                        for key, value, description, editable in _configuration_compatibility_entries()
+                    ],
+                }
             elif section == "prompts":
-                from app.developer_prompt import read_developer_prompt_template, read_user_prompt_template
-                fields = {"developer_template": read_developer_prompt_template(), "user_template": read_user_prompt_template()}
+                from app.developer_prompt import (
+                    read_developer_prompt_template,
+                    read_user_prompt_template,
+                    render_developer_prompt_template,
+                    render_user_prompt_template,
+                )
+                developer_template = read_developer_prompt_template()
+                user_template = read_user_prompt_template()
+                fields = {"developer_template": developer_template, "user_template": user_template}
+                payload = {
+                    "section": section,
+                    "fields": fields,
+                    "preview": {
+                        "developer": render_developer_prompt_template(developer_template),
+                        "user": render_user_prompt_template(user_template, {}),
+                    },
+                }
             elif section == "audit-rules":
-                from app.audit_rules import read_audit_rules_template
-                fields = {"template": read_audit_rules_template()}
+                from app.audit_rules import (
+                    AgentRole,
+                    read_audit_rules_template,
+                    render_audit_rules,
+                )
+                template = read_audit_rules_template()
+                fields = {"template": template}
+                payload = {
+                    "section": section,
+                    "fields": fields,
+                    "preview": {
+                        "template": template,
+                        "consumer": render_audit_rules(AgentRole.CONSUMER),
+                        "audit": render_audit_rules(AgentRole.AUDIT),
+                    },
+                }
             else:
                 env = app_config.read_env_file()
                 fields = {key: env.get(key, "") for key in ("CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT", "CEO_AGENT_RUNTIME_ROUTES", "CEO_CODEX_API_BASE_URL", "CEO_CODEX_API_MODEL", "CEO_FRIDAY_RUNTIME_BASE_URL", "CEO_FRIDAY_RUNTIME_PROJECT_ID")}
-            payload = {"section": section, "fields": fields, "secrets": ["CEO_CODEX_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"] if section == "agent-runtime" else []}
+            if payload is None:
+                payload = {"section": section, "fields": fields}
+            payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"] if section == "agent-runtime" else []
         return item_envelope(payload)
 
     @app.get("/api/console/tutorial")
