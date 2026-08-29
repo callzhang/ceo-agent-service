@@ -146,6 +146,7 @@ from app.feedback_events import (
     sync_feedback_events_for_sent_replies as sync_feedback_events_for_sent_replies_impl,
 )
 from app.feedback_processing import project_feedback_status
+from app.email_store import EmailStore
 from app.follow_up import resolve_failed_follow_up
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
@@ -8492,10 +8493,15 @@ def handle_feedback_post(
         if attempt is not None
         else None
     )
-    if attempt is not None and sent_reply is not None and sent_reply.feedback_token.strip():
+    if attempt is not None:
+        feedback_token = (
+            sent_reply.feedback_token.strip()
+            if sent_reply is not None and sent_reply.feedback_token.strip()
+            else f"manual-attempt:{attempt_id}"
+        )
         store.upsert_feedback_event(
             key=f"manual:{attempt_id}",
-            feedback_token=sent_reply.feedback_token.strip(),
+            feedback_token=feedback_token,
             rating_label="用户反馈",
             comment=feedback,
             original_text=attempt.trigger_text,
@@ -9691,6 +9697,7 @@ def create_audit_app(
         attention_rows_factory=lambda: _queue_attention_rows(audit_store),
         task_row_builder=_task_row_payload,
         history_chart_factory=lambda: _history_chart_payload(_audit_store(db_path)),
+        email_store_factory=lambda: EmailStore(db_path),
     )
 
     register_repository_upgrade_routes(

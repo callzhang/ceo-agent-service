@@ -8567,6 +8567,25 @@ def test_handle_feedback_post_updates_attempt_and_redirects(tmp_path: Path):
     assert events[0].original_text == attempt.trigger_text
 
 
+def test_handle_feedback_post_creates_manual_event_without_spike_token(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+
+    status, _headers, _html = handle_feedback_post(
+        store,
+        attempt_id,
+        "feedback=%E6%B5%8B%E8%AF%95%E5%8F%8D%E9%A6%88".encode(),
+    )
+
+    assert status == 303
+    events = store.list_feedback_events_for_tokens([f"manual-attempt:{attempt_id}"])[
+        f"manual-attempt:{attempt_id}"
+    ]
+    assert len(events) == 1
+    assert events[0].key == f"manual:{attempt_id}"
+    assert events[0].comment == "测试反馈"
+
+
 def test_handle_rerun_attempt_post_requeues_task_and_redirects(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
