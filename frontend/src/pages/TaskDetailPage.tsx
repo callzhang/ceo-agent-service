@@ -50,7 +50,7 @@ export function TaskDetailPage({ projectId }: { projectId: string }) {
           <div><dt>Next step</dt><dd><SummaryText value={task.next_summary} /></dd></div>
         </dl>
       </section>
-      <section className="console-card">
+      <section className="console-card task-facts-section">
         <h2>Facts</h2>
         <ResponsiveDataList
           ariaLabel="项目事实"

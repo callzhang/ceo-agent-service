@@ -25,6 +25,7 @@ describe("TaskDetailPage", () => {
 
     expect(await screen.findByRole("heading", { name: "客户项目" })).toBeInTheDocument();
     expect(screen.getByText("source.md")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Facts" }).closest("section")).toHaveClass("task-facts-section");
     expect(screen.getAllByRole("button", { name: "展开详情" }).length).toBeGreaterThan(0);
     expect(screen.queryByText("[object Object]")).not.toBeInTheDocument();
   });

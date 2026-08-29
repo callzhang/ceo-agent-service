@@ -317,6 +317,26 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .responsive-data-list th { color: var(--ink-soft); font-size: 0.76rem; white-space: nowrap; }
 .details-toggle { width: fit-content; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--accent); background: var(--surface); cursor: pointer; }
 .responsive-expanded { margin-top: 8px; color: var(--ink-soft); overflow-wrap: anywhere; }
+
+/* Facts use a comparison-friendly desktop table: descriptions and sources need room,
+   while the row action must remain a single, readable control. Mobile keeps the
+   shared card layout below. */
+@media (min-width: 721px) {
+  .task-facts-section .responsive-table-wrap { overflow-x: visible; }
+  .task-facts-section .responsive-data-list table { table-layout: fixed; }
+  .task-facts-section .responsive-data-list th:nth-child(1),
+  .task-facts-section .responsive-data-list td:nth-child(1) { width: 37%; }
+  .task-facts-section .responsive-data-list th:nth-child(2),
+  .task-facts-section .responsive-data-list td:nth-child(2) { width: 24%; }
+  .task-facts-section .responsive-data-list th:nth-child(3),
+  .task-facts-section .responsive-data-list td:nth-child(3),
+  .task-facts-section .responsive-data-list th:nth-child(4),
+  .task-facts-section .responsive-data-list td:nth-child(4) { width: 16%; }
+  .task-facts-section .responsive-data-list th:last-child,
+  .task-facts-section .responsive-data-list td:last-child { width: 92px; min-width: 92px; }
+  .task-facts-section .responsive-data-list td { overflow-wrap: anywhere; }
+  .task-facts-section .details-toggle { min-width: 78px; white-space: nowrap; }
+}
 .history-page, .tasks-page, .feedback-page { max-width: 1180px; margin: 0 auto; }
 .history-chart-card { padding: 16px 18px; margin-bottom: 12px; }
 .history-chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
