@@ -80,6 +80,14 @@ class FeedbackImportItem(_StrictProcessingModel):
     summary: str = ""
     references: list[dict[str, str]] = Field(default_factory=list)
 
+    @property
+    def key(self) -> str:
+        return self.feedback_key
+
+    @property
+    def persisted_summary(self) -> str:
+        return self.summary
+
 
 class ResolutionEvidence(_StrictProcessingModel):
     """Evidence receipt required before a processing batch can be resolved."""
