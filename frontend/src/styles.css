@@ -140,7 +140,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .detail-definition-list dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .technical-details { max-height: 360px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-overview-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; color: var(--ink-soft); font-size: .82rem; }
-.status-metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; max-width: 1180px; margin: 0 auto 16px; }
+.status-metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; max-width: 1180px; margin: 0 auto 16px; }
 .status-metric { display: grid; gap: 8px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .status-metric span { color: var(--ink-soft); font-size: .78rem; }
 .status-metric strong { overflow-wrap: anywhere; }
@@ -298,6 +298,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .status-table-secondary { margin-top: 14px; }
 .status-metric small { color: var(--ink-soft); font-size: 0.75rem; }
 .status-metric-good strong { color: var(--accent); }
+.status-metric-warning strong { color: var(--warning); }
 .status-metric-bad strong { color: var(--danger); }
 .status-refresh-button { display: block; margin: 0 0 16px auto; padding: 8px 14px; }
 

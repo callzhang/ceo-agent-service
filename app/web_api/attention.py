@@ -19,6 +19,8 @@ class AttentionRecord(BaseModel):
     summary: str
     updated_at: str
     error: str = ""
+    detail_label: str = ""
+    detail: str = ""
     detail_url: str = ""
 
 
@@ -33,6 +35,8 @@ class AttentionGroup(BaseModel):
     count: int
     summary: str
     error: str = ""
+    detail_label: str = ""
+    detail: str = ""
     updated_at: str
     records: list[AttentionRecord] = Field(default_factory=list)
 
@@ -46,23 +50,40 @@ class AttentionListEnvelope(BaseModel):
 
 def _record(row: dict[str, Any]) -> AttentionRecord:
     error = normalize_display_value(row.get("error"))
+    status = normalize_display_value(row.get("status"))
+    detail_label, detail = _detail(status, error)
     context = normalize_display_value(row.get("context"))
     root_cause = normalize_display_value(row.get("root_cause"))
     error_code = normalize_display_value(row.get("error_code"))
     if not root_cause:
-        root_cause = error or error_code or context or "unknown"
+        root_cause = error or error_code or detail or context or "unknown"
     return AttentionRecord(
         id=normalize_display_value(row.get("id")),
         category=normalize_display_value(row.get("category")),
-        status=normalize_display_value(row.get("status")),
+        status=status,
         context=context,
         root_cause=root_cause,
         error_code=error_code,
         summary=normalize_display_value(row.get("summary")),
         updated_at=normalize_display_value(row.get("updated_at")),
         error=error,
+        detail_label=detail_label,
+        detail=detail,
         detail_url=normalize_display_value(row.get("detail_url")),
     )
+
+
+def _detail(status: str, error: str) -> tuple[str, str]:
+    if error:
+        return "错误", error
+    normalized = status.strip().lower()
+    if normalized == "pending":
+        return "状态", "已入队，等待执行。"
+    if normalized == "processing":
+        return "状态", "正在执行。"
+    if normalized == "failed":
+        return "错误", "任务失败，但未记录具体错误；请检查执行历史和服务日志。"
+    return "状态", f"当前状态：{status or '未提供'}。"
 
 
 def group_attention_rows(rows: Iterable[dict[str, Any]]) -> list[AttentionGroup]:
@@ -89,6 +110,8 @@ def group_attention_rows(rows: Iterable[dict[str, Any]]) -> list[AttentionGroup]
                 count=len(records),
                 summary=latest.summary,
                 error=latest.error,
+                detail_label=latest.detail_label,
+                detail=latest.detail,
                 updated_at=latest.updated_at,
                 records=records,
             )

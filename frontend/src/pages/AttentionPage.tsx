@@ -48,6 +48,12 @@ export function AttentionPanel({ onCountChange }: { onCountChange?: (count: numb
       {rows.length > 0 && <div className="attention-list" role="list" aria-label="待处理问题">
         {rows.map((row) => {
           const expanded = expandedId === row.id;
+          const detail = displayValue(row.detail);
+          const fallbackError = displayValue(row.error);
+          const detailValue = detail === "未提供" ? fallbackError : detail;
+          const detailLabel = detail === "未提供" && fallbackError !== "未提供"
+            ? "错误"
+            : (displayValue(row.detail_label) || "状态");
           return <article className={`attention-card${expanded ? " is-expanded" : ""}`} key={row.id} role="listitem">
             <div className="attention-card-head">
               <div className="attention-card-title"><span className="attention-category">{displayValue(row.category)}</span><StatusBadge value={row.severity} /></div>
@@ -58,7 +64,7 @@ export function AttentionPanel({ onCountChange }: { onCountChange?: (count: numb
               <SummaryText value={displayValue(row.summary)} lines={2} label="展开摘要" />
             </div>
             <div className="attention-card-foot"><span>最近更新 · {displayValue(row.updated_at)}</span><button type="button" className="details-toggle" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? null : row.id)}>{expanded ? "收起详情" : "查看详情"}</button></div>
-            <div className="attention-details" hidden={!expanded}><p><strong>错误：</strong>{displayValue(row.error) || "未提供"}</p><div className="attention-links">{row.links.map((link) => <Link key={link.href} to={link.href}>{link.label}</Link>)}</div></div>
+            <div className="attention-details" hidden={!expanded}><p><strong>{detailLabel}：</strong>{detailValue === "未提供" ? "当前没有可展示的详情。" : detailValue}</p><div className="attention-links">{row.links.map((link) => <Link key={link.href} to={link.href}>{link.label}</Link>)}</div></div>
           </article>;
         })}
       </div>}

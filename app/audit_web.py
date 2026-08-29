@@ -106,6 +106,7 @@ from app.config import (
     work_profile_path,
     workspace_path,
 )
+from app.quality_gate import scan_hourly_quality
 from app.embedding import EmbeddingClient
 from app.history import safe_observability_error
 from app.history_actions import (
@@ -2146,8 +2147,10 @@ def build_worker_status_payload(
     with store.read_snapshot():
         queues = _queue_status_snapshots(store)
         attention_rows = _queue_attention_rows(store)
+    system_health = _system_health_snapshot(store, service)
     return {
         "service": service,
+        "system_health": system_health,
         "components": _service_component_snapshots(),
         # Connector probes have their own cache so a slow CLI/live probe never
         # delays the queue/status snapshot used by /workers and /attention.
@@ -2164,6 +2167,67 @@ def build_worker_status_payload(
             "retryable": sum(int(queue["retryable"]) for queue in queues),
             "attention": len(attention_rows),
         },
+    }
+
+
+def _system_health_snapshot(
+    store: AutoReplyStore,
+    service: Mapping[str, object],
+) -> dict[str, object]:
+    """Project process liveness and repair-window health separately.
+
+    Queue records keep their own lifecycle. The four-hour quality-gate window
+    only changes this system-level projection, never a task or attempt status.
+    """
+
+    if not bool(service.get("ok")):
+        return {
+            "state": "degraded",
+            "detail": "The main launchd service is not running normally.",
+            "checked_at": "",
+            "violations": 1,
+        }
+    try:
+        report = scan_hourly_quality(store.path)
+    except Exception as exc:
+        return {
+            "state": "unavailable",
+            "detail": f"The system health check could not run: {exc}",
+            "checked_at": "",
+            "violations": 0,
+        }
+
+    recent_error_violations = [
+        issue
+        for issue in report.violations
+        if issue.source == "errors" and issue.code == "recent_error"
+    ]
+    other_violations = [
+        issue for issue in report.violations if issue not in recent_error_violations
+    ]
+    if other_violations:
+        return {
+            "state": "degraded",
+            "detail": other_violations[0].detail,
+            "checked_at": report.checked_at,
+            "violations": sum(issue.count for issue in other_violations),
+        }
+    if recent_error_violations:
+        count = sum(issue.count for issue in recent_error_violations)
+        return {
+            "state": "observing",
+            "detail": (
+                f"{count} recent service error{'s' if count != 1 else ''} "
+                "remain in the four-hour health observation window."
+            ),
+            "checked_at": report.checked_at,
+            "violations": count,
+        }
+    return {
+        "state": "healthy",
+        "detail": "No current quality-gate violations.",
+        "checked_at": report.checked_at,
+        "violations": 0,
     }
 
 

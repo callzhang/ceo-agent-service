@@ -19,7 +19,7 @@ function StatusSection({ title, children }: { title: string; children: ReactNode
   return <section className="console-card status-section"><h2>{title}</h2>{children}</section>;
 }
 
-function StatusMetric({ label, value, detail, tone }: { label: string; value: string; detail: string; tone?: "good" | "bad" }) {
+function StatusMetric({ label, value, detail, tone }: { label: string; value: string; detail: string; tone?: "good" | "bad" | "warning" }) {
   return <article className={`status-metric${tone ? ` status-metric-${tone}` : ""}`}>
     <span>{label}</span>
     <strong>{value}</strong>
@@ -57,6 +57,7 @@ export function StatusPanel() {
   if (!payload) return <section className="console-card page-state" role="status">正在加载…</section>;
 
   const service = record(payload.service);
+  const systemHealth = record(payload.system_health);
   const summary = record(payload.summary);
   const components = list(payload.components);
   const queues = list(payload.queues);
@@ -76,6 +77,7 @@ export function StatusPanel() {
     <div className="status-panel-toolbar"><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /><button type="button" className="secondary-button" onClick={() => void load()} disabled={state === "loading"}>{state === "loading" ? "刷新中…" : "刷新"}</button></div>
     <section className="status-metric-grid">
       <StatusMetric label="Service" value={displayValue(service.state || "unknown")} detail={displayValue(service.detail || "-")} tone={service.ok === false ? "bad" : "good"} />
+      <StatusMetric label="System health" value={displayValue(systemHealth.state || "unavailable")} detail={displayValue(systemHealth.detail || "-")} tone={systemHealth.state === "healthy" ? "good" : systemHealth.state === "observing" ? "warning" : "bad"} />
       <StatusMetric label="PID" value={displayValue(service.pid)} detail={`runs ${displayValue(service.runs)}`} />
       <StatusMetric label="Processing" value={displayValue(summary.processing)} detail="all queues" />
       <StatusMetric label="Retryable" value={displayValue(summary.retryable)} detail="waiting for dependency" />

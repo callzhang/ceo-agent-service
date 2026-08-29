@@ -86,7 +86,7 @@ export interface TaskSummary { id: string; title: string; status: string; catego
 export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; }
 export interface HistoryChart { labels: string[]; series: Array<{ name: string; data: number[] }>; total: number; range: string; }
-export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
+export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; detail_label: string; detail: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
 export interface FeedbackReference { label: string; route: string; }
 export interface FeedbackItem {
   id: string;
@@ -197,7 +197,7 @@ export function listAttention(signal?: AbortSignal) {
         const label = displayValue(item.category) === "Service error" ? "查看错误详情" : "查看详情";
         return { label, href: detailUrl };
       }).filter((link): link is { label: string; href: string } => Boolean(link));
-      return { id: `${displayValue(row.category)}:${displayValue(row.root_cause)}:${displayValue(row.context)}`, category: displayValue(row.category), root_cause: displayValue(row.root_cause), context: displayValue(row.context), severity: displayValue(row.severity), count: Number(row.count || records.length), summary: row.summary, error: row.error, updated_at: displayValue(row.updated_at), links } satisfies AttentionItem;
+      return { id: `${displayValue(row.category)}:${displayValue(row.root_cause)}:${displayValue(row.context)}`, category: displayValue(row.category), root_cause: displayValue(row.root_cause), context: displayValue(row.context), severity: displayValue(row.severity), count: Number(row.count || records.length), summary: row.summary, error: row.error, detail_label: displayValue(row.detail_label || "状态"), detail: row.detail ?? row.error, updated_at: displayValue(row.updated_at), links } satisfies AttentionItem;
     }),
   }));
 }
