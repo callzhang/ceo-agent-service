@@ -172,6 +172,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .info-list div { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 18px; padding: 13px 0; border-bottom: 1px solid var(--line); }
 .info-list dt { color: var(--ink-soft); font-weight: 700; }
 .info-list dd { margin: 0; overflow-wrap: anywhere; }
+.info-notes { display: grid; gap: 8px; margin: 20px 0; padding: 14px 16px; border-left: 3px solid var(--accent); border-radius: 8px; background: var(--accent-soft); }
+.info-notes p { margin: 0; color: var(--ink-soft); line-height: 1.6; }
+.info-logic-list { display: grid; gap: 14px; margin-top: 22px; }
+.info-logic-section { padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-muted); }
+.info-logic-section h3 { margin-bottom: 12px; }
+.info-logic-section dl { display: grid; gap: 0; margin: 0; }
+.info-logic-section dl > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 16px; padding: 11px 0; border-top: 1px solid var(--line); }
+.info-logic-section dt { color: var(--ink-soft); font-weight: 700; }
+.info-logic-section dd { min-width: 0; margin: 0; line-height: 1.6; }
 .connector-heading { align-items: center; margin-top: 18px; }
 .connector-heading h3 { margin: 0; }
 .connector-state-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 22px 0; }
@@ -264,6 +273,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .settings-table td::before { content: attr(data-label); color: var(--ink-soft); font-size: 0.73rem; font-weight: 700; }
   .settings-table th:nth-child(1), .settings-table td:nth-child(1), .settings-table th:nth-child(2), .settings-table td:nth-child(2) { width: auto; }
   .runtime-overview, .runtime-card-grid, .runtime-fields, .connector-state-grid { grid-template-columns: 1fr; }
+  .info-logic-section dl > div { grid-template-columns: 1fr; gap: 5px; }
   .notification-status-grid { grid-template-columns: 1fr; }
   .runtime-card-wide { grid-column: auto; }
   .settings-pill-row { max-width: 100%; overflow-x: auto; }

@@ -22,6 +22,7 @@ from app.web_api.tasks import (
     task_detail,
     task_list_response,
 )
+from app.web_api.settings import info_payload
 
 
 def register_console_routes(
@@ -257,6 +258,7 @@ def register_console_routes(
             from app import config as app_config
             if section == "info":
                 fields = {"principal": app_config.principal_display_name(), "workspace": str(app_config.workspace_path()), "repository": str(app_config.repo_root())}
+                payload = {"fields": fields, **info_payload()}
             elif section == "configuration":
                 from app.audit_web import (
                     _configuration_compatibility_entries,

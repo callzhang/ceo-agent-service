@@ -55,6 +55,17 @@ function SummaryDescription({ value }: { value: string }) {
   return <span className="settings-description" title={value}>{value || "未提供描述"}</span>;
 }
 
+function InfoPanel({ payload }: { payload: RecordValue }) {
+  const sections = Array.isArray(payload.sections) ? payload.sections.map(record) : [];
+  const notes = Array.isArray(payload.notes) ? payload.notes.map(displayValue).filter(Boolean) : [];
+  return <SettingsCard>
+    <div className="settings-card-heading"><div><h2>Producer 路由配置</h2><p className="muted">这里展示 producer 如何把钉钉消息变成 reply task。实际生效值请在 Configuration 中查看。</p></div><span className="settings-path">Runtime logic</span></div>
+    {notes.length > 0 && <div className="info-notes" aria-label="运行说明">{notes.map((note, index) => <p key={index}>{note}</p>)}</div>}
+    <div className="info-logic-list" aria-label="Producer 路由说明">{sections.map((section, sectionIndex) => <section className="info-logic-section" key={displayValue(section.title) || sectionIndex}><h3>{displayValue(section.title)}</h3><dl>{Array.isArray(section.items) && section.items.map((rawItem, itemIndex) => { const item = record(rawItem); return <div key={displayValue(item.label) || itemIndex}><dt>{displayValue(item.label)}</dt><dd><SummaryDescription value={displayValue(item.description)} /></dd></div>; })}</dl></section>)}</div>
+    <details className="settings-collapse"><summary>当前运行上下文</summary><dl className="info-list">{Object.entries(fieldsOf(payload)).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{displayValue(value)}</dd></div>)}</dl></details>
+  </SettingsCard>;
+}
+
 function PromptPanel({ payload, prompt, view, draft, setDraft, saveState }: { payload: RecordValue; prompt: "developer" | "user"; view: "template" | "preview"; draft: RecordValue; setDraft: (value: RecordValue) => void; saveState: "idle" | "saving" | "saved" | "error" }) {
   const templateKey = `${prompt}_template`;
   const value = displayValue(draft[templateKey] ?? fieldsOf(payload)[templateKey]);
@@ -99,7 +110,7 @@ function SettingsContent({ section, payload, draft, setDraft, prompt, view, conn
     return <SettingsCard><h2>Audit Rules</h2><p className="muted">Audit Rules 先定义可配置模板，再分别查看 Consumer 和 Audit wrapper 的最终渲染结果。Template 中的 <code>{"{{principal}}"}</code> 会使用当前配置显示名替换。</p><p className="muted">当前视图：{auditRule}</p><div className="settings-pill-row" role="tablist" aria-label="Audit Rule sections">{(["template", "consumer", "audit"] as const).map((key) => <Link key={key} role="tab" aria-selected={auditRule === key} className={auditRule === key ? "active" : ""} to={`/settings?tab=audit-rules&rule=${key}&view=${key === "template" ? "template" : "preview"}`}>{key[0].toUpperCase() + key.slice(1)}</Link>)}</div><div className="settings-pill-row settings-view-row" role="tablist" aria-label="Audit Rule view"><Link role="tab" aria-selected={auditRule === "template"} className={auditRule === "template" ? "active" : ""} to={`/settings?tab=audit-rules&rule=${auditRule}&view=template`}>Template</Link><Link role="tab" aria-selected={auditRule !== "template"} className={auditRule !== "template" ? "active" : ""} to={`/settings?tab=audit-rules&rule=${auditRule}&view=preview`}>Rendered preview</Link></div><div id="audit-rules-panel" role="tabpanel" aria-label={auditRule === "template" ? "Template" : `${auditRule} preview`}>{auditRule === "template" ? <form onSubmit={(event) => event.preventDefault()}><TokenEditor id="audit-rules-template" label="Configurable rules" value={template} onChange={(next) => setDraft({ ...draft, template: next })} rows={16} /><SaveBar state={saveState} /></form> : <pre className="prompt-preview">{preview || template}</pre>}</div></SettingsCard>;
   }
   if (section === "configuration") { const groups = Array.isArray(payload.groups) ? payload.groups.map(record) : []; const compatibility = Array.isArray(payload.compatibility) ? payload.compatibility.map(record) : []; return <SettingsCard><h2>Configuration</h2><p className="muted">所有影响服务行为的环境配置统一保存在 <code>.env</code>；每个配置项的说明和当前值保持在同一行。</p><form onSubmit={(event) => event.preventDefault()}><ConfigTable groups={groups} compatibility={compatibility} draft={draft} setDraft={setDraft} /><SaveBar state={saveState} /></form></SettingsCard>; }
-  return <SettingsCard><h2>Producer 路由配置</h2><p className="muted">这里展示 producer 如何把钉钉消息变成 reply task。实际生效值请在 Configuration 中查看。</p><dl className="info-list">{Object.entries(fieldsOf(payload)).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{displayValue(value)}</dd></div>)}</dl></SettingsCard>;
+  return <InfoPanel payload={payload} />;
 }
 
 export function SettingsPage() {

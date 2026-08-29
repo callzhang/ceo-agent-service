@@ -21,11 +21,22 @@ describe("SettingsPage", () => {
       item: {
         section: "configuration",
         fields: { USER_ALIAS: "磊哥" },
+        notes: ["Producer 负责发现候选消息，Consumer 负责执行 reply task。"],
+        sections: [{ title: "快路径", items: [{ label: "入口", description: "扫描未读会话并进入队列。" }] }],
         groups: [{ name: "Runtime & Identity", items: [{ key: "USER_ALIAS", value: "磊哥", description: "用户别名", editable: true }] }],
         compatibility: [],
       },
       meta: { snapshot_at: "2026-08-29T00:00:00Z" },
     });
+  });
+
+  it("restores the explanatory producer routing sections on Info", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "info", fields: { principal: "磊哥" }, notes: ["Producer 负责发现候选消息，Consumer 负责执行 reply task。"], sections: [{ title: "快路径", items: [{ label: "入口", description: "扫描未读会话并进入队列。" }] }] }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    renderSettings("/settings?tab=info");
+
+    expect(await screen.findByRole("heading", { name: "快路径" })).toBeInTheDocument();
+    expect(screen.getByText("扫描未读会话并进入队列。")).toBeInTheDocument();
+    expect(screen.getByText("Producer 负责发现候选消息，Consumer 负责执行 reply task。")).toBeInTheDocument();
   });
 
   it("renders configuration groups instead of flattening the settings DTO", async () => {
