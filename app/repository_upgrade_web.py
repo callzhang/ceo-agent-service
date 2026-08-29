@@ -131,12 +131,13 @@ def launch_repository_updater(
 
 
 def render_repository_upgrade_mount() -> str:
-    """Render the self-contained History banner mount point."""
+    """Render the compact repository status control in the page header."""
     return """
-<section id="repository-upgrade-banner" class="card" aria-live="polite">
-  <div class="card-head"><h2>Repository upgrade</h2><span data-upgrade-status>Checking…</span></div>
-  <div data-upgrade-details></div>
-</section>
+<div id="repository-upgrade-banner" class="repository-upgrade-control" aria-live="polite">
+  <span class="repository-upgrade-label">Repository</span>
+  <span class="repository-upgrade-status" data-upgrade-status>Checking…</span>
+  <span class="repository-upgrade-details" data-upgrade-details></span>
+</div>
 <script>
 (function () {
   const banner = document.getElementById("repository-upgrade-banner");

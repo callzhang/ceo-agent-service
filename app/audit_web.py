@@ -217,6 +217,11 @@ header{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.94);border-
 .topbar{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:24px;min-height:72px}
 .topbar>.brand{justify-self:start;min-width:0}
 .topbar>.nav{grid-column:2;justify-self:center}
+.topbar-extra{grid-column:3;justify-self:end;display:flex;align-items:center;min-width:0}
+.repository-upgrade-control{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;max-width:360px}
+.repository-upgrade-label{color:var(--steel);font-size:12px;font-weight:700;white-space:nowrap}
+.repository-upgrade-status{display:inline-flex;align-items:center;min-height:24px;padding:3px 8px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);color:var(--steel);font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:800;line-height:1.2;white-space:nowrap}
+.repository-upgrade-details{min-width:0;color:var(--steel);font-size:11px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .brand{display:flex;align-items:center;gap:12px;min-width:0}
 .brand-home:hover{text-decoration:none}
 .brand-mark{width:28px;height:28px;border-radius:8px;background:var(--ink);box-shadow:inset 0 -8px 0 rgba(0,212,164,.26)}
@@ -549,7 +554,7 @@ th{background:var(--surface-soft);color:var(--steel);font-size:12px;font-weight:
 a.nav-item:hover{color:var(--ink);text-decoration:none;border-color:var(--ink)}
 .nav-item.active{background:var(--ink);border-color:var(--ink);color:#fff;cursor:default}
 .nav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;margin-left:7px;padding:0 5px;border-radius:999px;background:#d45656;color:#fff;font-family:"Geist Mono","SF Mono",Menlo,Consolas,monospace;font-size:11px;font-weight:800;line-height:1}
-@media (max-width:960px){.topbar{grid-template-columns:minmax(0,1fr);align-items:start;gap:14px;padding:14px 0}.topbar>.nav{grid-column:1;justify-self:center}}
+@media (max-width:960px){.topbar{grid-template-columns:minmax(0,1fr);align-items:start;gap:14px;padding:14px 0}.topbar>.nav{grid-column:1;justify-self:center}.topbar-extra{grid-column:1;justify-self:end}}
 .prompt-tabs{display:inline-flex;align-items:center;gap:6px;padding:4px;border:1px solid var(--hairline);border-radius:999px;background:var(--surface-soft);margin:0 0 12px}
 .prompt-tab{display:inline-flex;align-items:center;height:32px;padding:0 13px;border-radius:999px;color:var(--steel);font-size:13px;font-weight:600}
 .prompt-tab:hover{text-decoration:none;color:var(--ink)}
@@ -1000,6 +1005,7 @@ def render_page(
     active_nav: str | None = None,
     user_feedback_pending_count: int | None = None,
     head_extra: str = "",
+    topbar_extra: str = "",
 ) -> str:
     refresh_meta = (
         "<meta http-equiv=\"refresh\" content=\"15\">" if auto_refresh else ""
@@ -1017,6 +1023,7 @@ def render_page(
         f"<h1>{escape(title)}</h1><div class=\"eyebrow\">Local audit console</div>"
         "</div></a>"
         f"{nav_html}"
+        f'<div class="topbar-extra">{topbar_extra}</div>'
         "</div></header><main>"
         f"{body}</main>{_browser_notification_client_script()}</body></html>"
     )
@@ -5585,6 +5592,7 @@ def _render_attempt_list(
         user_feedback_pending_count=(
             store.count_pending_user_feedback_items() if include_feedback_count else 0
         ),
+        topbar_extra=repository_upgrade_html,
     )
 
 

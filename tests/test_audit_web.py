@@ -5512,6 +5512,19 @@ def test_render_page_brand_links_to_history():
     assert '<a class="brand brand-home" href="/history" aria-label="History home">' in html
 
 
+def test_repository_upgrade_mount_is_in_history_header_right_side(tmp_path: Path):
+    html = render_attempt_list(
+        AutoReplyStore(tmp_path / "worker.sqlite3"),
+        include_chart=False,
+    )
+
+    mount_index = html.index('id="repository-upgrade-banner"')
+    main_index = html.index("<main>")
+    assert mount_index < main_index
+    assert 'class="topbar-extra"' in html
+    assert 'class="repository-upgrade-control"' in html
+
+
 def test_render_developer_prompt_editor_shows_template_and_preview(
     tmp_path: Path,
     monkeypatch,
