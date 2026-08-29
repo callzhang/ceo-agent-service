@@ -543,6 +543,7 @@ def register_console_routes(
             elif section == "audit-rules":
                 from app.audit_rules import (
                     AgentRole,
+                    _render_audit_variables,
                     read_audit_rules_template,
                     render_audit_rules,
                 )
@@ -552,14 +553,23 @@ def register_console_routes(
                     "section": section,
                     "fields": fields,
                     "preview": {
-                        "template": template,
+                        "template": _render_audit_variables(template),
                         "consumer": render_audit_rules(AgentRole.CONSUMER),
                         "audit": render_audit_rules(AgentRole.AUDIT),
                     },
                 }
             else:
                 env = app_config.read_env_file()
-                fields = {key: env.get(key, "") for key in ("CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT", "CEO_AGENT_RUNTIME_ROUTES", "CEO_CODEX_API_BASE_URL", "CEO_CODEX_API_MODEL", "CEO_FRIDAY_RUNTIME_BASE_URL", "CEO_FRIDAY_RUNTIME_PROJECT_ID")}
+                fields = {key: env.get(key, "") for key in (
+                    "CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT",
+                    "CEO_AGENT_RUNTIME_ROUTES", "CEO_CODEX_API_BASE_URL",
+                    "CEO_CODEX_API_MODEL", "CEO_CODEX_API_KEY",
+                    "CEO_FRIDAY_RUNTIME_BASE_URL", "CEO_FRIDAY_RUNTIME_PROJECT_ID",
+                    "CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL",
+                    "CEO_FRIDAY_RUNTIME_PROVIDER_MODEL",
+                    "CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY",
+                    "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN",
+                )}
             if payload is None:
                 payload = {"section": section, "fields": fields}
             payload["secrets"] = ["CEO_CODEX_API_KEY", "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN"] if section == "agent-runtime" else []
@@ -788,7 +798,17 @@ def register_console_routes(
                 "codex_api_enabled": "1" if str(fields.get("codex_api_enabled") or "CEO_CODEX_API_KEY" in fields).lower() in {"1", "true", "yes", "on"} else "0",
                 "codex_api_model": str(fields.get("codex_api_model") or fields.get("CEO_CODEX_API_MODEL") or ""),
                 "codex_api_base_url": str(fields.get("codex_api_base_url") or fields.get("CEO_CODEX_API_BASE_URL") or ""),
-                "codex_api_token": str(fields.get("codex_api_token") or ""),
+                "codex_api_token": str(fields.get("codex_api_token") or fields.get("CEO_CODEX_API_KEY") or ""),
+                "friday_runtime_settings_present": "1",
+                "friday_runtime_enabled": "1" if "friday_runtime" in str(fields.get("CEO_AGENT_RUNTIME_ROUTES") or "").split(",") else "0",
+                "friday_runtime_base_url": str(fields.get("friday_runtime_base_url") or fields.get("CEO_FRIDAY_RUNTIME_BASE_URL") or ""),
+                "friday_runtime_project_id": str(fields.get("friday_runtime_project_id") or fields.get("CEO_FRIDAY_RUNTIME_PROJECT_ID") or ""),
+                "friday_runtime_provider_base_url": str(fields.get("friday_runtime_provider_base_url") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL") or ""),
+                "friday_runtime_provider_model": str(fields.get("friday_runtime_provider_model") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_MODEL") or ""),
+                "friday_runtime_provider_api_key": str(fields.get("friday_runtime_provider_api_key") or fields.get("CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY") or ""),
+                "friday_runtime_ticket": str(fields.get("friday_runtime_ticket") or fields.get("CEO_FRIDAY_RUNTIME_TICKET") or ""),
+                "friday_session_token": str(fields.get("friday_session_token") or fields.get("CEO_FRIDAY_SESSION_TOKEN") or ""),
+                "friday_runtime_auth_disabled": str(fields.get("friday_runtime_auth_disabled") or fields.get("CEO_FRIDAY_RUNTIME_AUTH_DISABLED") or "0"),
             }
         else:
             encoded = {str(k): str(v) for k, v in fields.items()}

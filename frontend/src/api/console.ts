@@ -84,7 +84,8 @@ function query(params: Record<string, string | number | undefined>) {
 
 export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; }
 export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; }
-export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; }
+export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; }
+export interface HistoryChart { labels: string[]; series: Array<{ name: string; data: number[] }>; total: number; range: string; }
 export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
 export interface FeedbackReference { label: string; route: string; }
 export interface FeedbackItem {
@@ -102,6 +103,8 @@ export interface FeedbackItem {
   batch_id: string;
   processing_task_id: string;
 }
+export interface FeedbackList extends ConsoleList<FeedbackItem> { pending_count?: number; }
+export interface SentTodoItem { id: string; kind: string; kind_label: string; sent_at: string; status: string; owner: string; project_title: string; todo_title: string; description: string; original_text: string; deadline: string; priority: string; target: string; external_id: string; detail_url: string; }
 export interface WechatScopeTarget {
   account_id?: string;
   target_type: "direct" | "group";
@@ -165,12 +168,20 @@ export function listTasks(params: Record<string, string | number | undefined> = 
   });
 }
 
+export function listSentTodos(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal) {
+  return request<unknown>(`/api/console/tasks/sent-todos${query(params)}`, { signal }).then((value) => parseConsoleList<SentTodoItem>(value));
+}
+
 export function getTaskDetail(projectId: string, signal?: AbortSignal) {
   return request<ConsoleResource<unknown>>(`/api/console/tasks/${encodeURIComponent(projectId)}`, { signal }).then((response) => ({ ...response, item: mapTaskDetail(response.item) }));
 }
 
 export function listHistory(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal) {
-  return request<unknown>(`/api/console/history${query(params)}`, { signal }).then((value) => parseConsoleList<HistoryItem>(value));
+  return request<unknown>(`/api/console/history${query(params)}`, { signal }).then((value) => {
+    const page = parseConsoleList<HistoryItem>(value);
+    const row = asRecord(value);
+    return { ...page, chart: isRecord(row.chart) ? row.chart as unknown as HistoryChart : undefined };
+  });
 }
 
 export function listAttention(signal?: AbortSignal) {
@@ -192,7 +203,11 @@ export function listAttention(signal?: AbortSignal) {
 }
 
 export function listFeedback(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal) {
-  return request<unknown>(`/api/console/feedback${query(params)}`, { signal }).then((value) => parseConsoleList<FeedbackItem>(value));
+  return request<unknown>(`/api/console/feedback${query(params)}`, { signal }).then((value) => {
+    const page = parseConsoleList<FeedbackItem>(value);
+    const row = asRecord(value);
+    return { ...page, pending_count: typeof row.pending_count === "number" ? row.pending_count : undefined } satisfies FeedbackList;
+  });
 }
 
 export function getStatus(signal?: AbortSignal) {
