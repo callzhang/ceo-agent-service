@@ -6,8 +6,11 @@ const getSettings = vi.hoisted(() => vi.fn());
 const saveSettings = vi.hoisted(() => vi.fn());
 const getStatus = vi.hoisted(() => vi.fn());
 const listAttention = vi.hoisted(() => vi.fn());
+const listWechat = vi.hoisted(() => vi.fn());
+const listWechatTargets = vi.hoisted(() => vi.fn());
+const saveWechatReplyScope = vi.hoisted(() => vi.fn());
 
-vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
+vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
 
 import { SettingsPage } from "./SettingsPage";
 
@@ -17,6 +20,8 @@ function renderSettings(path: string) {
 
 describe("SettingsPage", () => {
   beforeEach(() => {
+    listWechat.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechatTargets.mockResolvedValue({ items: [], account_id: "", meta: { page: 1, page_size: 50, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     getSettings.mockResolvedValue({
       item: {
         section: "configuration",
@@ -55,5 +60,17 @@ describe("SettingsPage", () => {
 
     expect(await screen.findByRole("textbox", { name: "Template" })).toHaveValue("hello {{principal}}");
     expect(screen.getByText("{{principal}}", { selector: "mark" })).toBeInTheDocument();
+  });
+
+  it("shows the WeChat reply scope editor inline instead of linking away", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+
+    renderSettings("/settings?tab=connectors&connector=wechat");
+
+    expect(await screen.findByRole("heading", { name: "微信自动回复对象" })).toBeInTheDocument();
+    expect(await screen.findAllByText("Melody")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "保存回复范围" })).toBeDisabled();
+    expect(screen.queryByRole("link", { name: "打开回复范围" })).not.toBeInTheDocument();
   });
 });

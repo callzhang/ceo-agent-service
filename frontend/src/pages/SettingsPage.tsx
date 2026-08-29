@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { displayValue, getSettings, saveSettings } from "../api/console";
+import { displayValue, getSettings, listWechat, listWechatTargets, saveSettings, saveWechatReplyScope, type WechatScopeTarget } from "../api/console";
 import { TokenEditor } from "../components/editor/TokenEditor";
 import { SecretField } from "../components/forms/SecretField";
 import { StatusBadge } from "../components/status/StatusBadge";
@@ -78,11 +78,131 @@ function PromptPanel({ payload, prompt, view, draft, setDraft, saveState }: { pa
   </SettingsCard>;
 }
 
+function scopeKey(target: WechatScopeTarget) {
+  return `${target.target_type}:${target.target_id}`;
+}
+
+function toWechatTarget(value: unknown): WechatScopeTarget | null {
+  const item = record(value);
+  const targetType = item.target_type === "group" || item.target_type === "direct" ? item.target_type : null;
+  const targetId = typeof item.target_id === "string" ? item.target_id : "";
+  if (!targetType || !targetId) return null;
+  const triggerMode = targetType === "group" ? "mention_current_account" : "every_inbound_text";
+  return {
+    account_id: typeof item.account_id === "string" ? item.account_id : undefined,
+    target_type: targetType,
+    target_id: targetId,
+    display_name: typeof item.display_name === "string" ? item.display_name : targetId,
+    trigger_mode: triggerMode,
+    conversation_id: typeof item.conversation_id === "string" && item.conversation_id ? item.conversation_id : targetId,
+    enabled: item.enabled !== false,
+  };
+}
+
+function WechatTargetRow({ target, selected, onToggle }: { target: WechatScopeTarget; selected: boolean; onToggle: (target: WechatScopeTarget) => void }) {
+  const kind = target.target_type === "group" ? "群聊" : "好友";
+  return <label className="wechat-target-row">
+    <input type="checkbox" checked={selected} onChange={() => onToggle(target)} />
+    <span className="wechat-target-copy"><strong>{target.display_name}</strong><small>{kind} · {target.target_id}</small></span>
+  </label>;
+}
+
+function WechatReplyScopePanel() {
+  const [selected, setSelected] = useState<Map<string, WechatScopeTarget>>(new Map());
+  const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
+  const [targets, setTargets] = useState<WechatScopeTarget[]>([]);
+  const [accountId, setAccountId] = useState("");
+  const [search, setSearch] = useState("");
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [searchState, setSearchState] = useState<"idle" | "loading" | "error">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [error, setError] = useState("");
+  const [searchError, setSearchError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoadState("loading");
+    listWechat("/api/console/wechat/conversations", controller.signal).then((response) => {
+      const scopes = response.items.map(toWechatTarget).filter((item): item is WechatScopeTarget => item !== null);
+      const chosen = scopes.filter((item) => item.enabled !== false);
+      setAccountId(scopes.find((item) => item.account_id)?.account_id || "");
+      setSelected(new Map(chosen.map((item) => [scopeKey(item), item])));
+      setSavedKeys(new Set(chosen.map(scopeKey)));
+      setTargets(chosen);
+      setLoadState("ready");
+      setError("");
+    }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return;
+      setError(reason instanceof Error ? reason.message : "回复范围加载失败");
+      setLoadState("error");
+    });
+    return () => controller.abort();
+  }, []);
+
+  const selectedTargets = Array.from(selected.values());
+  const dirty = selected.size !== savedKeys.size || selectedTargets.some((item) => !savedKeys.has(scopeKey(item)));
+
+  function toggleTarget(target: WechatScopeTarget) {
+    setSaveState("idle");
+    setSelected((current) => {
+      const next = new Map(current);
+      const key = scopeKey(target);
+      if (next.has(key)) next.delete(key); else next.set(key, { ...target, enabled: true });
+      return next;
+    });
+  }
+
+  async function searchTargets() {
+    setSearchState("loading");
+    setSearchError("");
+    try {
+      const response = await listWechatTargets({ query: search.trim(), kind: "all", limit: 50 });
+      setAccountId((current) => current || response.account_id);
+      const next = response.items.map(toWechatTarget).filter((item): item is WechatScopeTarget => item !== null);
+      setTargets(next);
+      setSearchState("idle");
+    } catch (reason: unknown) {
+      setSearchError(reason instanceof Error ? reason.message : "联系人读取失败");
+      setSearchState("error");
+    }
+  }
+
+  async function saveScope() {
+    if (!accountId) {
+      setSaveState("error");
+      setError("尚未连接可用的微信账号，请先在 Tutorial 完成微信连接。");
+      return;
+    }
+    setSaveState("saving");
+    setError("");
+    try {
+      await saveWechatReplyScope(accountId, selectedTargets);
+      setSavedKeys(new Set(selected.keys()));
+      setSaveState("saved");
+    } catch (reason: unknown) {
+      setSaveState("error");
+      setError(reason instanceof Error ? reason.message : "回复范围保存失败");
+    }
+  }
+
+  return <div className="wechat-scope-panel" id="wechat-reply-scope-panel">
+    <div className="wechat-scope-heading"><div><h3>微信自动回复对象</h3><p className="muted">只处理这里明确选中的好友和群聊。好友触发模式为接收任意消息，群聊触发模式为提及当前账号。</p></div><span className={`wechat-scope-state ${dirty ? "is-dirty" : ""}`} role="status">{dirty ? "有未保存更改" : saveState === "saved" ? "已保存" : "已同步"}</span></div>
+    {loadState === "loading" && <div className="page-state" role="status">正在加载已保存的回复范围…</div>}
+    {loadState === "error" && <div className="page-state page-state-error" role="alert">{error}</div>}
+    {loadState === "ready" && <>
+      <div className="wechat-selected-block"><div className="wechat-section-label">当前回复范围 <span>{selectedTargets.length} 个对象</span></div>{selectedTargets.length ? <div className="wechat-target-list">{selectedTargets.map((target) => <WechatTargetRow key={scopeKey(target)} target={target} selected onToggle={toggleTarget} />)}</div> : <p className="wechat-empty">尚未选择对象。搜索并勾选后，点击“保存回复范围”。</p>}</div>
+      <div className="wechat-target-picker"><div className="wechat-section-label">添加或调整对象</div><div className="wechat-search-row"><label htmlFor="wechat-target-search">搜索好友或群聊</label><input id="wechat-target-search" value={search} placeholder="按名称或 ID 搜索" onChange={(event) => setSearch(event.target.value)} /><button type="button" className="secondary-button" onClick={() => void searchTargets()} disabled={searchState === "loading"}>{searchState === "loading" ? "搜索中…" : "搜索"}</button></div>{searchError && <p className="field-error" role="alert">{searchError}</p>}{targets.length > 0 && <div className="wechat-target-list">{targets.map((target) => <WechatTargetRow key={scopeKey(target)} target={target} selected={selected.has(scopeKey(target))} onToggle={toggleTarget} />)}</div>}{!targets.length && <p className="wechat-empty">点击搜索读取可用的微信好友和群聊。</p>}</div>
+      <div className="wechat-scope-actions"><button type="button" className="primary-button" onClick={() => void saveScope()} disabled={!dirty || saveState === "saving"}>{saveState === "saving" ? "保存中…" : "保存回复范围"}</button>{saveState === "saved" && <span className="save-success" role="status">回复范围已保存</span>}{saveState === "error" && <span className="save-error" role="alert">保存失败，当前选择仍保留</span>}</div>
+    </>}
+    {error && loadState === "ready" && <p className="field-error" role="alert">{error}</p>}
+  </div>;
+}
+
 function ConnectorPanel({ payload, connector }: { payload: RecordValue; connector: string }) {
   const item = record(payload[connector]);
   const state = displayValue(item.state || item.status || "unknown");
   const commands = Array.isArray(item.commands) ? item.commands : [];
-  if (connector === "wechat") return <SettingsCard><h2>Connectors</h2><div className="settings-pill-row" role="tablist" aria-label="Connector sections"><ConnectorTab value="dingtalk" label="DingTalk" active={false} /><ConnectorTab value="lark" label="Lark" active={false} /><ConnectorTab value="wechat" label="WeChat" active /></div><h3>微信自动回复对象</h3><p className="muted">持续维护自动回复范围；微信连接和能力检查请在 Tutorial 完成。</p><a className="secondary-button settings-inline-link" href="/wechat/conversations">打开回复范围</a></SettingsCard>;
+  if (connector === "wechat") return <SettingsCard><div className="settings-card-heading"><div><h2>Connectors</h2><p className="muted">WeChat 连接状态和自动回复范围在当前页面直接维护。</p></div><StatusBadge value={state} /></div><div className="settings-pill-row" role="tablist" aria-label="Connector sections"><ConnectorTab value="dingtalk" label="DingTalk" active={false} /><ConnectorTab value="lark" label="Lark" active={false} /><ConnectorTab value="wechat" label="WeChat" active /></div><div id="connector-panel" role="tabpanel" aria-label="WeChat connector"><div className="connector-heading"><h3>WeChat connector</h3><StatusBadge value={state} /></div><p className="muted">连接和能力检查请在 Tutorial 完成；下方回复范围编辑不会自动发送消息。</p><WechatReplyScopePanel /></div></SettingsCard>;
   return <SettingsCard><div className="settings-card-heading"><div><h2>Connectors</h2><p className="muted">External connector status, live probes, and local CLI readiness.</p></div><StatusBadge value={state} /></div><div className="settings-pill-row" role="tablist" aria-label="Connector sections"><ConnectorTab value="dingtalk" label="DingTalk" active={connector === "dingtalk"} /><ConnectorTab value="lark" label="Lark" active={connector === "lark"} /><ConnectorTab value="wechat" label="WeChat" active={false} /></div><div id="connector-panel" role="tabpanel" aria-label={`${connector} connector`}><div className="connector-heading"><h3>{connector === "dingtalk" ? "DingTalk connector" : "Lark connector"}</h3><StatusBadge value={state} /></div><p className="muted">只显示当前连接器的 readiness、live probe 和登录状态。</p><div className="connector-state-grid"><StateItem label="Reason" value={displayValue(item.reason_code)} /><StateItem label="Login" value={displayValue(item.login || "not requested")} /><StateItem label="Last success" value={displayValue(item.last_success || (state === "ready" ? "本次检查" : "尚无成功记录"))} /><StateItem label="Detail" value={displayValue(item.detail || "没有额外说明。")} /></div><h4>Checks</h4><div className="connector-commands">{commands.length ? commands.map((command, index) => <code key={index}>{displayValue(command)}</code>) : <span className="muted">未执行</span>}</div></div></SettingsCard>;
 }
 

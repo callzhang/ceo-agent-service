@@ -286,3 +286,49 @@ def test_spa_mode_serves_same_react_index_for_business_deep_links_and_keeps_api_
     assert unknown_api.status_code == 404
     assert unknown_api.headers["content-type"].startswith("application/json")
     assert "<!doctype html>" not in unknown_api.text
+
+
+def test_console_wechat_targets_and_reply_scope_use_json_contract(
+    tmp_path: Path, monkeypatch,
+):
+    class FakeSetup:
+        def list_targets(self, *, query, kind, limit, offset):
+            del limit, offset
+            if kind == "direct":
+                items = [{
+                    "target_type": "direct", "target_id": "alice",
+                    "conversation_id": "alice", "display_name": "Alice",
+                    "trigger_mode": "every_inbound_text",
+                }]
+            else:
+                items = [{
+                    "target_type": "group", "target_id": "team",
+                    "conversation_id": "team", "display_name": "Team",
+                    "trigger_mode": "mention_current_account",
+                }]
+            return [item for item in items if query.casefold() in item["display_name"].casefold()]
+
+    ready_state = {"account_id": "wx-account", "capability_status": "ready"}
+    import app.wechat.service as wechat_service
+
+    monkeypatch.setattr(wechat_service, "ready_account_state", lambda store: ready_state)
+    monkeypatch.setattr(wechat_service, "build_setup_service", lambda store: FakeSetup())
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    with _client(tmp_path) as client:
+        targets = client.get("/api/console/wechat/targets?query=team")
+        saved = client.post("/api/console/wechat/reply-scope", json={
+            "account_id": "wx-account",
+            "targets": [{
+                "target_type": "group", "target_id": "team",
+                "display_name": "Team", "trigger_mode": "mention_current_account",
+                "conversation_id": "team",
+            }],
+        })
+
+    assert targets.status_code == 200
+    assert targets.json()["account_id"] == "wx-account"
+    assert {item["target_id"] for item in targets.json()["items"]} == {"team"}
+    assert saved.status_code == 200
+    assert saved.json()["item"] == {"account_id": "wx-account", "saved": 1}
+    assert [scope.target_id for scope in store.list_wechat_reply_scopes("wx-account", enabled_only=True)] == ["team"]

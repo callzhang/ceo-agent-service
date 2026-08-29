@@ -87,6 +87,19 @@ export interface TaskDetail extends TaskSummary { description: string; backgroun
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; }
 export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
 export interface FeedbackItem { id: string; attempt_id: string; status: string; rating: string; comment: string; context: string; created_at: string; }
+export interface WechatScopeTarget {
+  account_id?: string;
+  target_type: "direct" | "group";
+  target_id: string;
+  display_name: string;
+  trigger_mode: "every_inbound_text" | "mention_current_account";
+  conversation_id: string;
+  enabled?: boolean;
+}
+
+export interface WechatTargetList extends ConsoleList<WechatScopeTarget> {
+  account_id: string;
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
@@ -192,6 +205,15 @@ export function confirmTutorialStep(stepId: string, evidence: Record<string, unk
 export function listCodexSessions(signal?: AbortSignal) { return request<unknown>("/api/console/codex/sessions", { signal }).then(parseConsoleList); }
 export function getCodexSession(id: string, signal?: AbortSignal) { return getResource(`/api/console/codex/sessions/${encodeURIComponent(id)}`, signal); }
 export function listWechat(path: string, signal?: AbortSignal) { return request<unknown>(path, { signal }).then(parseConsoleList); }
+export function listWechatTargets(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal) {
+  return request<unknown>(`/api/console/wechat/targets${query(params)}`, { signal }).then((value) => {
+    const page = parseConsoleList<WechatScopeTarget>(value);
+    return { ...page, account_id: isRecord(value) && typeof value.account_id === "string" ? value.account_id : "" } satisfies WechatTargetList;
+  });
+}
+export function saveWechatReplyScope(accountId: string, targets: WechatScopeTarget[]) {
+  return command("/api/console/wechat/reply-scope", { account_id: accountId, targets });
+}
 export function approveWechatDelivery(id: string) { return command(`/api/console/wechat/deliveries/${encodeURIComponent(id)}/approve`); }
 export function rejectWechatDelivery(id: string) { return command(`/api/console/wechat/deliveries/${encodeURIComponent(id)}/reject`); }
 export function reviewWechatMemory(id: string, action: "approve" | "reject" | "revoke", finalStatement = "") { return command(`/api/console/wechat/memory-review/${encodeURIComponent(id)}/${action}`, { reviewer: "local-user", final_statement: finalStatement }); }

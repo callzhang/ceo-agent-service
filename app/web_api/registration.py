@@ -425,6 +425,61 @@ def register_console_routes(
             rows.extend(json_safe(scope) for scope in store.list_wechat_reply_scopes(account_id))
         return list_envelope(rows, page=1, page_size=max(20, len(rows)), total=len(rows))
 
+    @app.get("/api/console/wechat/targets")
+    def console_wechat_targets(
+        query: str = "", kind: str = "all", limit: int = 50, offset: int = 0,
+    ):
+        if kind not in {"all", "direct", "group"} or not 1 <= limit <= 100 or offset < 0:
+            return JSONResponse(
+                {"ok": False, "code": "validation_error", "message": "目标查询参数无效", "details": {}},
+                status_code=422,
+            )
+        store = store_factory()
+        from app.wechat import service as wechat_service
+
+        state = wechat_service.ready_account_state(store)
+        if state is None:
+            response = list_envelope([], page=1, page_size=limit, total=0)
+            response["account_id"] = ""
+            return response
+        try:
+            setup = wechat_service.build_setup_service(store)
+            kinds = (kind,) if kind != "all" else ("direct", "group")
+            candidates = [
+                item
+                for target_kind in kinds
+                for item in setup.list_targets(
+                    query=query, kind=target_kind, limit=100, offset=0,
+                )
+            ]
+        except Exception as exc:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "wechat_targets_unavailable",
+                    "message": "暂时无法读取微信联系人，请确认 WeChat Reader 已连接。",
+                    "details": {"reason": normalize_display_value(exc)},
+                },
+                status_code=409,
+            )
+        candidates.sort(
+            key=lambda item: (
+                str(item.get("display_name", "")).casefold(),
+                str(item.get("target_type", "")),
+                str(item.get("target_id", "")),
+            )
+        )
+        total = len(candidates)
+        page_items = candidates[offset:offset + limit]
+        response = list_envelope(
+            page_items,
+            page=offset // limit + 1,
+            page_size=limit,
+            total=total,
+        )
+        response["account_id"] = str(state.get("account_id") or "")
+        return response
+
     @app.get("/api/console/wechat/memory-review")
     def console_wechat_memory_review():
         rows = store_factory().list_wechat_memory_candidates()
@@ -473,9 +528,24 @@ def register_console_routes(
     @app.post("/api/console/wechat/reply-scope")
     async def console_wechat_reply_scope(request: Request):
         payload = await json_object(request)
-        from app.wechat.service import build_setup_service
         try:
-            result = build_setup_service(store_factory()).save_reply_scope(payload)
+            from app.wechat.audit_web import WechatReplyScopeRequest
+            from app.wechat.models import WechatReplyScope
+
+            parsed = WechatReplyScopeRequest.model_validate(payload)
+            scopes = [
+                WechatReplyScope(
+                    account_id=parsed.account_id,
+                    target_type=target.target_type,
+                    target_id=target.target_id,
+                    conversation_id=target.conversation_id or target.target_id,
+                    display_name=target.display_name,
+                    trigger_mode=target.trigger_mode,
+                )
+                for target in parsed.targets
+            ]
+            store_factory().replace_wechat_reply_scopes(parsed.account_id, scopes)
+            result = {"account_id": parsed.account_id, "saved": len(scopes)}
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "validation_error", "message": "回复范围保存失败", "details": {"reason": normalize_display_value(exc)}}, status_code=422)
         return command_result(item=result, message="回复范围已保存")
