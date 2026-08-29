@@ -128,6 +128,7 @@ from app.weekly_okr_report import (
 )
 
 WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = 3
+WECHAT_READER_LAUNCHD_LABEL = "com.stardust.ceo-agent.wechat-reader"
 WORK_SUMMARY_RETRY_BASE_DELAY_SECONDS = 60
 WORK_SUMMARY_RETRY_MAX_DELAY_SECONDS = 15 * 60
 WORK_SUMMARY_TRANSIENT_ERROR_MARKERS = (
@@ -2808,6 +2809,7 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                 else:
                     consecutive_reader_failures += 1
                     if consecutive_reader_failures >= 3 and not reader_failure_reported:
+                        _restart_wechat_reader_service()
                         store.record_error(
                             "wechat",
                             "",
@@ -2835,6 +2837,25 @@ def _run_wechat_loop(settings: WorkerSettings, role: str) -> None:
                 consecutive_sqlite_lock_failures = 0
                 store.record_error("wechat", "", f"wechat_{role}_loop_error", str(exc))
         time.sleep(interval)
+
+
+def _restart_wechat_reader_service() -> None:
+    """Restart a hung reader helper after repeated IPC timeouts."""
+    try:
+        subprocess.run(
+            [
+                "launchctl",
+                "kickstart",
+                "-k",
+                f"gui/{os.getuid()}/{WECHAT_READER_LAUNCHD_LABEL}",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
 
 
 def _pause_wechat_loop_until_service_restart(sleep: Callable[[float], None]) -> None:
