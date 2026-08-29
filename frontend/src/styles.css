@@ -97,8 +97,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .console-filter-bar label { font-weight: 700; }
 .console-filter-bar input { min-height: 38px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); }
 .status-badge { display: inline-flex; width: fit-content; align-items: center; padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-soft); background: var(--surface-muted); font-size: .74rem; font-weight: 700; white-space: nowrap; }
-.status-active, .status-running, .status-processing { color: var(--accent); border-color: #b9d9ca; background: var(--accent-soft); }
-.status-failed, .status-over_due { color: var(--danger); border-color: #e5b6b2; background: #fff0ef; }
+.status-success { color: var(--accent); border-color: #b9d9ca; background: var(--accent-soft); }
+.status-progress { color: #1e6091; border-color: #b8d5e8; background: #edf7fd; }
+.status-warning { color: var(--warning); border-color: #e4c889; background: #fff8e8; }
+.status-danger { color: var(--danger); border-color: #e5b6b2; background: #fff0ef; }
+.status-neutral { color: var(--ink-soft); border-color: var(--line); background: var(--surface-muted); }
 .snapshot-badge { color: var(--ink-soft); font-size: .78rem; }
 .summary-text { display: inline; max-width: 100%; }
 .summary-text-value { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: var(--summary-lines); overflow-wrap: anywhere; }
