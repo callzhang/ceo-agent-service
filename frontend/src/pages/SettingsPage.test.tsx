@@ -72,5 +72,6 @@ describe("SettingsPage", () => {
     expect(await screen.findAllByText("Melody")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "保存回复范围" })).toBeDisabled();
     expect(screen.queryByRole("link", { name: "打开回复范围" })).not.toBeInTheDocument();
+    expect(screen.queryByText("unknown")).not.toBeInTheDocument();
   });
 });
