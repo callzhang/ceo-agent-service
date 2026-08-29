@@ -186,6 +186,22 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "处理反馈" })).toBeInTheDocument();
   });
 
+  it("invalidates an older pending-feedback preload when the drawer opens", async () => {
+    const user = userEvent.setup();
+    const preload = deferred<{ items: FeedbackItem[]; meta: { page: number; page_size: number; total: number; next_cursor: string; has_more: boolean; snapshot_at: string } }>();
+    api.listTasks.mockResolvedValue({ items: [], nextCursor: "" });
+    feedbackApi.listPendingFeedback
+      .mockReturnValueOnce(preload.promise)
+      .mockResolvedValueOnce({ items: [], meta: { page: 1, page_size: 100, total: 0, next_cursor: "", has_more: false, snapshot_at: "now" } });
+    render(<App />);
+    const button = await screen.findByRole("button", { name: "处理反馈 · 0" });
+    const preloadSignal = feedbackApi.listPendingFeedback.mock.calls[0][1] as AbortSignal;
+    await user.click(button);
+    expect(preloadSignal.aborted).toBe(true);
+    await act(async () => preload.resolve({ items: [], meta: { page: 1, page_size: 100, total: 9, next_cursor: "", has_more: false, snapshot_at: "stale" } }));
+    expect(screen.getByRole("button", { name: "处理反馈 · 0" })).toBeInTheDocument();
+  });
+
   it("switches to a flexible two-column layout below the 940px desktop minimum", () => {
     expect(styles).toContain("@media (max-width: 939px)");
     expect(styles).toContain("grid-template-columns: minmax(245px, 292px) minmax(0, 1fr)");

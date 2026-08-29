@@ -280,6 +280,8 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
   const streamRef = useRef<EventStreamConnection | null>(null);
   const confirmationMutationsRef = useRef(new Set<string>());
   const feedbackLoadRef = useRef<{ id: number; controller: AbortController } | null>(null);
+  const feedbackPreloadRef = useRef<{ generation: number; controller: AbortController } | null>(null);
+  const feedbackPreloadGenerationRef = useRef(0);
   const feedbackPendingCacheRef = useRef<{ items: FeedbackItem[]; count: number } | null>(null);
   const feedbackSubmitRef = useRef<{ controller: AbortController; batch: FeedbackBatch | null; batchId: string; task: Task | null; turn: Turn | null; associated: boolean; keys: string[] }>({
     controller: new AbortController(), batch: null, batchId: "", task: null, turn: null, associated: false, keys: [],
@@ -866,9 +868,11 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       if (mountedRef.current && !(error instanceof DOMException && error.name === "AbortError")) setCapabilities([]);
     }).finally(() => finishRequest(controller));
     const feedbackController = new AbortController();
+    const feedbackGeneration = ++feedbackPreloadGenerationRef.current;
+    feedbackPreloadRef.current = { generation: feedbackGeneration, controller: feedbackController };
     controllersRef.current.add(feedbackController);
     void Promise.resolve(listPendingFeedback({}, feedbackController.signal)).then((page) => {
-      if (!mountedRef.current || feedbackController.signal.aborted || feedbackLoadRef.current) return;
+      if (!mountedRef.current || feedbackController.signal.aborted || feedbackLoadRef.current || feedbackPreloadGenerationRef.current !== feedbackGeneration) return;
       setFeedbackPending(page.items);
       setPendingFeedbackCount(page.meta.total);
       feedbackPendingCacheRef.current = { items: page.items, count: page.meta.total };
@@ -883,6 +887,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       cancelActiveChase();
       cancelPageRequests();
       feedbackLoadRef.current?.controller.abort();
+      feedbackPreloadRef.current?.controller.abort();
       feedbackSubmitRef.current.controller.abort();
       for (const controller of controllersRef.current) controller.abort();
       controllersRef.current.clear();
@@ -1007,6 +1012,9 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
   }, [feedbackSubmitting]);
 
   const openFeedback = useCallback(() => {
+    feedbackPreloadGenerationRef.current += 1;
+    feedbackPreloadRef.current?.controller.abort();
+    feedbackPreloadRef.current = null;
     feedbackLoadRef.current?.controller.abort();
     const controller = new AbortController();
     const requestId = nextRequest(controller);
@@ -1126,6 +1134,9 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       const remainingCount = Math.max(0, pendingFeedbackCount - keys.length);
       setFeedbackPending(remainingFeedback);
       setPendingFeedbackCount(remainingCount);
+      feedbackPreloadGenerationRef.current += 1;
+      feedbackPreloadRef.current?.controller.abort();
+      feedbackPreloadRef.current = null;
       feedbackPendingCacheRef.current = { items: remainingFeedback, count: remainingCount };
       workflow.batch = null;
       workflow.batchId = "";
