@@ -13719,6 +13719,7 @@ class AutoReplyStore:
                     coalesce(ra.id, 0) as attempt_id,
                     coalesce(ra.agent_run_id, 0) as agent_run_id,
                     coalesce(ra.codex_session_id, '') as codex_session_id,
+                    coalesce(ar.role, '') as attempt_role,
                     coalesce(ra.conversation_title, '') as conversation_title,
                     coalesce(ra.trigger_sender, '') as trigger_sender,
                     coalesce(ra.trigger_text, '') as trigger_text,
@@ -13736,6 +13737,8 @@ class AutoReplyStore:
                     on latest.feedback_token = fe.feedback_token
                 left join reply_attempts ra
                     on ra.id = latest.attempt_id
+                left join agent_runs ar
+                    on ar.id = ra.agent_run_id
                 left join feedback_processing_items pi
                     on pi.feedback_key = fe.key
                 order by fe.received_at desc, fe.updated_at desc
