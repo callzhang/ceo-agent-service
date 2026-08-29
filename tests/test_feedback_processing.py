@@ -179,6 +179,10 @@ def test_batch_reopen_requires_same_normalized_key_set(tmp_path: Path):
         store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-1")
     assert store.get_feedback_processing_batch("batch-1").requested_count == 2
 
+    with pytest.raises(FeedbackProcessingBatchError):
+        store.claim_feedback_processing_items("batch-1", ["feedback-1"])
+    assert store.get_feedback_processing_batch("batch-1").requested_count == 2
+
 
 def test_legacy_text_processing_ids_are_read_as_integers(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "legacy-ids.sqlite3")
@@ -206,6 +210,10 @@ def test_resolved_event_projection_and_status_transition_are_consistent(tmp_path
 
     with pytest.raises(ValueError):
         store.patch_feedback_processing_item_evidence("feedback-1", status="pending")
+
+    with pytest.raises(FeedbackProcessingBatchError):
+        store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-new")
+    assert store.get_feedback_processing_batch("batch-new") is None
 
 
 def test_processing_model_rejects_string_attempt_ids():

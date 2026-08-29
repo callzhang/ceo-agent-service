@@ -13056,9 +13056,14 @@ class AutoReplyStore:
                 return self._feedback_processing_batch_from_row(existing_batch)
             conflicting = db.execute(
                 """
-                select feedback_key from feedback_processing_items
-                where feedback_key in ({}) and trim(batch_id) <> ''
-                  and status in ('pending', 'processing')
+                select pi.feedback_key from feedback_processing_items pi
+                left join feedback_events fe on fe.key=pi.feedback_key
+                where pi.feedback_key in ({})
+                  and (
+                      trim(pi.batch_id) <> ''
+                      or pi.status='resolved'
+                      or trim(coalesce(fe.resolved_at, '')) <> ''
+                  )
                 """.format(",".join("?" for _ in keys) or "null"),
                 keys,
             ).fetchall()
@@ -13120,6 +13125,20 @@ class AutoReplyStore:
             return []
         with self._connect() as db:
             db.execute("begin immediate")
+            existing_batch = db.execute(
+                "select 1 from feedback_processing_batches where batch_id=?",
+                (cleaned_batch_id,),
+            ).fetchone()
+            if existing_batch is not None:
+                existing_keys = {
+                    str(row["feedback_key"])
+                    for row in db.execute(
+                        "select feedback_key from feedback_processing_items where batch_id=?",
+                        (cleaned_batch_id,),
+                    )
+                }
+                if existing_keys != set(keys):
+                    raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
             placeholders = ",".join("?" for _ in keys)
             existing = db.execute(
                 f"""
