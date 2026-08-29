@@ -28,10 +28,8 @@ from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_skill_usage import LoadedSkillReceipt
 from app.agent_turn_runner import (
     AgentTurnProcess,
-    _dingtalk_message_readback_proof,
     _is_dingtalk_chat_send_argv,
     _json_digest,
-    _message_rendered_text_digest,
     _metadata_matches_action,
 )
 from app.agent_wire_contracts import AuditAgentWireResult

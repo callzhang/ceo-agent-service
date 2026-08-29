@@ -6849,21 +6849,16 @@ class AutoReplyStore:
                 "completed",
                 "failed",
             }:
-                if expected_status != "running":
-                    raise ValueError(
-                        "cannot settle unknown run with dispatched effect intent"
-                    )
-                target_status = "unknown"
+                target_status = "failed"
                 final_result_json = ""
-                side_effect_state = "unknown"
-                if not structured_error_json:
-                    structured_error_json = json.dumps(
-                        {
-                            "code": "dispatched_effect_acknowledgement_missing",
-                            "retryable": True,
-                        },
-                        separators=(",", ":"),
-                    )
+                side_effect_state = "none"
+                structured_error_json = json.dumps(
+                    {
+                        "code": "audit_external_action_result_missing",
+                        "retryable": False,
+                    },
+                    separators=(",", ":"),
+                )
             end_line = (
                 row["transcript_end_line"]
                 if transcript_end_line is None
@@ -6939,13 +6934,6 @@ class AutoReplyStore:
                 )
                 if cursor.rowcount != 1:
                     raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
-            if target_status == "unknown" and structured_error_json:
-                db.execute(
-                    "insert into agent_run_state_events ("
-                    "agent_run_id, phase, structured_error_json, created_at"
-                    ") values (?, 'initial_unknown', ?, ?)",
-                    (run_id, structured_error_json, now_text),
-                )
             updated = db.execute(
                 "select * from agent_runs where id=?",
                 (run_id,),

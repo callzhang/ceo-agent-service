@@ -2184,10 +2184,6 @@ def test_completed_dingtalk_message_read_persists_content_proof_without_plaintex
         payload,
         read_only=True,
         operation_id="",
-        expected_message_text_digests=frozenset(
-            {hashlib.sha256(b"exact reviewed reply").hexdigest()}
-        ),
-        message_operation_started_at="2026-08-06 02:00:00",
     )
 
     assert event is not None

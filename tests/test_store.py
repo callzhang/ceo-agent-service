@@ -4212,6 +4212,55 @@ def test_prepared_effect_intent_cannot_dispatch_after_run_is_terminal(
         )
 
 
+def test_dispatched_effect_result_is_terminal_failure_without_unknown_state(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    run = _claim_audit_run(
+        store, task_id, "initial", owner="worker-1",
+        now="2026-08-21 00:00:00",
+    ).run
+    authorization = _effect_intent_authorization("authorization-dispatched")
+    store.prepare_agent_effect_intents(
+        run.id, (authorization,), owner="worker-1", now="2026-08-21 00:00:01",
+    )
+    store.dispatch_agent_effect_intent(
+        run.id, authorization, now="2026-08-21 00:00:02",
+    )
+
+    completed = store.complete_agent_run(
+        run.id,
+        {"outcome": "executed", "summary": "provider result omitted"},
+        owner="worker-1",
+        now="2026-08-21 00:00:03",
+    )
+
+    assert completed.status == "failed"
+    assert json.loads(completed.structured_error_json) == {
+        "code": "audit_external_action_result_missing",
+        "retryable": False,
+    }
+    with sqlite3.connect(tmp_path / "worker.sqlite3") as db:
+        row = db.execute(
+            "select status, side_effect_state from agent_runs where id=?",
+            (run.id,),
+        ).fetchone()
+    assert row == ("failed", "none")
+    retry_claim = store.claim_agent_run(
+        task_id,
+        "initial",
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id=run.operation_id,
+        owner="worker-2",
+    )
+    assert retry_claim.claimed is False
+    assert retry_claim.run.status == "failed"
+
+
 def test_agent_run_concurrent_event_writers_do_not_drop_events(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     first_store = AutoReplyStore(db_path)
@@ -8270,10 +8319,14 @@ def test_prior_schema_reopen_creates_durable_effect_state_machine_tables(
         authorization,
         now="2026-08-22 00:00:02",
     )
-    unknown = reopened.fail_agent_run(
+    failed = reopened.fail_agent_run(
         run.id,
         {"code": "post_dispatch_disconnect", "retryable": True},
         owner="worker-1",
         now="2026-08-22 00:00:03",
     )
-    assert unknown.status == "unknown"
+    assert failed.status == "failed"
+    assert json.loads(failed.structured_error_json) == {
+        "code": "audit_external_action_result_missing",
+        "retryable": False,
+    }

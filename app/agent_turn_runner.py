@@ -3,14 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generic, TypeVar, cast
 
-from markdown_it import MarkdownIt
 from pydantic import ValidationError
 
 from app.agent_contracts import (
@@ -1699,9 +1697,6 @@ class AgentTurnProcess(Generic[ResultT]):
         read_only: bool = False,
         operation_id: str = "",
         require_recovery_authorization: bool = False,
-        expected_message_text_digests: frozenset[str] = frozenset(),
-        expected_message_rendered_text_digests: frozenset[str] = frozenset(),
-        message_operation_started_at: str = "",
     ) -> dict[str, object] | None:
         """Normalize provider output into append-only runtime trace data.
 
@@ -1710,9 +1705,7 @@ class AgentTurnProcess(Generic[ResultT]):
         trace records and are never converted into an application recovery
         state.
         """
-        del (read_only, require_recovery_authorization,
-             expected_message_text_digests, expected_message_rendered_text_digests,
-             message_operation_started_at)
+        del read_only, require_recovery_authorization
         event_type = payload.get("type")
         if event_type not in {"item.started", "item.completed", "item.failed"}:
             return None
@@ -2315,124 +2308,6 @@ def _json_digest(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def _message_text_digest(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-_MARKDOWN_RENDERER = MarkdownIt("commonmark", {"html": False})
-
-
-def _message_rendered_text_digest(text: str) -> str:
-    """Digest visible Markdown content, ignoring transport-only formatting."""
-    visible: list[str] = []
-    for token in _MARKDOWN_RENDERER.parse(text):
-        children = token.children or ()
-        for child in children:
-            if child.type in {"text", "code_inline", "image"}:
-                visible.append(child.content)
-            elif child.type in {"softbreak", "hardbreak"}:
-                visible.append(" ")
-        if token.type in {"code_block", "fence"}:
-            visible.append(token.content)
-    normalized = unicodedata.normalize("NFC", "".join(visible))
-    compact = " ".join(normalized.split())
-    return _message_text_digest(compact)
-
-
-def _dingtalk_message_readback_proof(
-    receipt: dict[str, object],
-    *,
-    native_cli: str,
-    operation: str,
-    expected_message_text_digests: frozenset[str],
-    operation_started_at: str,
-    expected_message_rendered_text_digests: frozenset[str] = frozenset(),
-) -> dict[str, object]:
-    """Reduce a scoped DingTalk history read to privacy-safe content evidence."""
-    if native_cli != "dws" or not operation.startswith("chat "):
-        return {}
-    stdout = receipt.get("stdout")
-    if not isinstance(stdout, str) or not stdout:
-        return {}
-    try:
-        payload = json.loads(stdout)
-    except (json.JSONDecodeError, ValueError, RecursionError, MemoryError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    messages = payload.get("messages")
-    if not isinstance(messages, list):
-        return {}
-    matched: set[str] = set()
-    rendered_matched: set[str] = set()
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        text = message.get("text")
-        message_id = message.get("messageId")
-        conversation_id = message.get("conversationId")
-        if (
-            not isinstance(text, str)
-            or not isinstance(message_id, str)
-            or not message_id
-            or not isinstance(conversation_id, str)
-            or not conversation_id
-        ):
-            continue
-        digest = _message_text_digest(text)
-        if digest in expected_message_text_digests:
-            matched.add(digest)
-        rendered_digest = _message_rendered_text_digest(text)
-        if rendered_digest in expected_message_rendered_text_digests:
-            rendered_matched.add(rendered_digest)
-    complete = (
-        payload.get("complete") is True
-        and payload.get("hasMore") is False
-        and payload.get("paginationKnown") is True
-        and payload.get("failures") == []
-    )
-    return {
-        "message_readback_complete": complete,
-        "message_readback_window_matches": _message_readback_window_matches(
-            payload,
-            operation_started_at=operation_started_at,
-        ),
-        "message_text_digests": sorted(matched),
-        "message_rendered_text_digests": sorted(rendered_matched),
-    }
-
-
-def _message_readback_window_matches(
-    payload: dict[str, object],
-    *,
-    operation_started_at: str,
-) -> bool:
-    query_range = payload.get("queryRange")
-    if not isinstance(query_range, dict):
-        return False
-    start = _parse_check_timestamp(query_range.get("startTime"))
-    end = _parse_check_timestamp(query_range.get("endTime"))
-    operation_started = _parse_check_timestamp(operation_started_at)
-    if start is None or end is None or operation_started is None:
-        return False
-    return start <= operation_started < end and timedelta(0) < end - start <= timedelta(
-        hours=2
-    )
-
-
-def _parse_check_timestamp(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    normalized = value.strip().replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _trusted_claude_effect_event(
