@@ -708,3 +708,80 @@ def test_scan_rejects_non_integral_provider_coordinates(
             EmailStore(tmp_path / "worker.sqlite3"),
             EmailScanConfig.cold_start(),
         )
+
+
+def test_uid_search_is_sorted_deduplicated_before_limit_and_cursor_paging(
+    tmp_path: Path,
+):
+    class PagingSession:
+        def __init__(self):
+            self.calls: list[tuple[object, ...]] = []
+            self.search_results = iter((b"12 8 9 8", b"12"))
+
+        def select(self, mailbox: str, readonly: bool = False):
+            self.calls.append(("select", mailbox, readonly))
+            return "OK", [b"4"]
+
+        def response(self, code: str):
+            self.calls.append(("response", code))
+            return code, [b"42"]
+
+        def uid(self, command: str, *args):
+            self.calls.append(("uid", command, *args))
+            if command == "SEARCH":
+                return "OK", [next(self.search_results)]
+            uid = int(args[0])
+            raw = (
+                b"From: sender@example.com\r\n"
+                b"To: derek@example.com\r\n"
+                + f"Subject: message {uid}\r\n".encode()
+                + f"Message-ID: <message-{uid}@example.com>\r\n".encode()
+                + b"Content-Type: text/plain\r\n\r\nbody\r\n"
+            )
+            return "OK", [(b"header", raw)]
+
+        def logout(self):
+            return "BYE", []
+
+    class AnyClassifier:
+        def predict_message(self, message):
+            del message
+            return FakePrediction("work", 0.61, 0.03, {"work": 0.61})
+
+    session = PagingSession()
+    adapter = ImapReadonlyAdapter(session, account_id="account-a")
+    store = EmailStore(tmp_path / "paging.sqlite3")
+
+    first = scan_readonly_batch(
+        adapter,
+        AnyClassifier(),
+        store,
+        EmailScanConfig.cold_start(),
+        limit=2,
+    )
+
+    assert first.fetched_count == 2
+    assert [
+        call[2]
+        for call in session.calls
+        if call[:2] == ("uid", "FETCH")
+    ] == [b"8", b"9"]
+    assert store.get_scan_cursor("account-a", "INBOX")["last_seen_uid"] == 9
+
+    second = scan_readonly_batch(
+        adapter,
+        AnyClassifier(),
+        store,
+        EmailScanConfig.cold_start(),
+        limit=2,
+    )
+
+    assert second.fetched_count == 1
+    searches = [call for call in session.calls if call[:2] == ("uid", "SEARCH")]
+    assert searches[-1] == ("uid", "SEARCH", None, "UID 10:*")
+    assert [
+        call[2]
+        for call in session.calls
+        if call[:2] == ("uid", "FETCH")
+    ] == [b"8", b"9", b"12"]
+    assert store.get_scan_cursor("account-a", "INBOX")["last_seen_uid"] == 12

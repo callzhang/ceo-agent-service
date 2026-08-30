@@ -445,7 +445,12 @@ def _require_ok(status: object, message: str) -> None:
 def _search_uids(data: object) -> list[bytes]:
     if not isinstance(data, (list, tuple)) or not data or not isinstance(data[0], bytes):
         return []
-    return [uid for uid in data[0].split() if uid.isdigit()]
+    values = {
+        int(uid)
+        for uid in data[0].split()
+        if uid.isdigit() and int(uid) > 0
+    }
+    return [str(uid).encode("ascii") for uid in sorted(values)]
 
 
 def _fetch_payload(data: object) -> bytes:
