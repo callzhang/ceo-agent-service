@@ -90,6 +90,30 @@ export interface HistoryItem { id: string; occurred_at: string; title: string; t
 export interface HistoryChart { labels: string[]; series: Array<{ name: string; data: number[] }>; total: number; range: string; }
 export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; detail_label: string; detail: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
 export interface FeedbackReference { label: string; route: string; }
+export interface FeedbackProcessingRound {
+  id: number;
+  feedback_key: string;
+  round_number: number;
+  batch_id: string;
+  status: "processing" | "resolved";
+  workbench_task_id: string;
+  workbench_turn_id: string;
+  attempt_id: number;
+  agent_run_id: number;
+  commit_sha: string;
+  test_evidence: Record<string, unknown>;
+  restart_evidence: Record<string, unknown>;
+  health_evidence: Record<string, unknown>;
+  backlog_evidence?: Record<string, unknown>;
+  receipt_version: 1 | 2;
+  note: string;
+  started_at: string;
+  resolved_at: string;
+  reopened_at: string;
+  reopen_reason: string;
+  created_at: string;
+  updated_at: string;
+}
 export interface FeedbackItem {
   id: string;
   feedback_key?: string;
@@ -104,6 +128,8 @@ export interface FeedbackItem {
   references: FeedbackReference[];
   batch_id: string;
   processing_task_id: string;
+  current_processing?: FeedbackProcessingRound | null;
+  processing_history?: FeedbackProcessingRound[];
 }
 export interface FeedbackList extends ConsoleList<FeedbackItem> { pending_count?: number; }
 export interface SentTodoItem { id: string; kind: string; kind_label: string; sent_at: string; status: string; owner: string; project_title: string; todo_title: string; description: string; original_text: string; deadline: string; priority: string; target: string; external_id: string; detail_url: string; }
@@ -217,6 +243,10 @@ export function listFeedback(params: Record<string, string | number | undefined>
   });
 }
 
+export function getFeedbackDetail(feedbackKey: string, signal?: AbortSignal) {
+  return request<ConsoleResource<FeedbackItem>>(`/api/console/feedback/${encodeURIComponent(feedbackKey)}`, { signal });
+}
+
 export function getStatus(signal?: AbortSignal) {
   return request<{ item: Record<string, unknown>; meta: { snapshot_at: string } }>("/api/console/status", { signal });
 }
@@ -234,6 +264,9 @@ export function command(path: string, body: Record<string, unknown> = {}) {
 }
 
 export function resolveFeedback(id: string) { return command(`/api/console/feedback/${encodeURIComponent(id)}/resolve`); }
+export function reopenFeedback(feedbackKey: string, reason: string) {
+  return command(`/api/console/feedback/items/${encodeURIComponent(feedbackKey)}/reopen`, { reason });
+}
 export function syncFeedback() { return command("/api/console/feedback/sync"); }
 export function saveSettings(section: string, fields: Record<string, unknown>, extras: Record<string, unknown> = {}) {
   return command(`/api/console/settings/${encodeURIComponent(section)}`, { ...extras, fields });
