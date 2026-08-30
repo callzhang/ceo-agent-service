@@ -430,6 +430,62 @@ def test_next_registry_model_marks_only_new_snapshot_without_reassigning_old_sam
     )
 
 
+def test_later_retrain_rejects_correction_to_previously_included_training_sample(
+    tmp_path: Path, monkeypatch
+):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    first = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 45, 30, tzinfo=timezone.utc),
+    )
+    prior_active = registry.active_manifest()
+    historical = store.list_training_examples(include_inclusion=True)[0]
+    assert historical["included_in_model_id"] == first.model_id
+    for index, category in enumerate((EmailCategory.WORK, EmailCategory.JUNK), 30):
+        row = store.upsert_classification(
+            _classification(f"later-{index}", category),
+            model_text=f"__subject__later-{index} {category.value}",
+        )
+        store.confirm_classification(row["id"], category)
+
+    original_stage = registry.stage_candidate
+
+    def stage_before_historical_correction(*args, **kwargs):
+        result = original_stage(*args, **kwargs)
+        with store._connect() as db:
+            db.execute(
+                """
+                update email_classifications
+                set model_text=model_text || ' corrected'
+                where id=?
+                """,
+                (historical["classification_id"],),
+            )
+        return result
+
+    monkeypatch.setattr(registry, "stage_candidate", stage_before_historical_correction)
+    monkeypatch.setattr(
+        "app.email_classifier_training._promotion_rejection",
+        lambda _registry, _metadata: None,
+    )
+
+    with pytest.raises(EmailTrainingInclusionConflict):
+        train_and_promote(
+            store,
+            registry,
+            trained_at=datetime(2026, 8, 29, 21, 46, 30, tzinfo=timezone.utc),
+        )
+
+    assert registry.active_manifest() == prior_active
+    corrected = {
+        row["message_id"]: row for row in store.list_unincluded_training_examples()
+    }[historical["message_id"]]
+    assert corrected["included_in_model_id"] is None
+    assert corrected["sample_digest"] != historical["sample_digest"]
+
+
 def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
     tmp_path: Path, monkeypatch
 ):

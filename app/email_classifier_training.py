@@ -241,12 +241,13 @@ def train_and_promote(
     )
     if not readiness.ready:
         raise TrainingNotReady("; ".join(readiness.reasons))
-    new_sample_snapshots = tuple(
-        dict(example)
-        for example in examples
+    validation_snapshots = tuple(dict(example) for example in examples)
+    inclusion_snapshots = tuple(
+        example
+        for example in validation_snapshots
         if example["included_in_model_id"] is None
     )
-    if not new_sample_snapshots:
+    if not inclusion_snapshots:
         raise TrainingNotReady("no unincluded authoritative feedback")
 
     validation_method, expected, predicted = _validation_predictions(examples, c=c)
@@ -297,7 +298,7 @@ def train_and_promote(
             training_started_at=started.isoformat(),
             training_finished_at=finished.astimezone(timezone.utc).isoformat(),
             sample_count=len(examples),
-            new_sample_count=len(new_sample_snapshots),
+            new_sample_count=len(inclusion_snapshots),
             category_counts=readiness.category_counts,
             account_counts=dict(Counter(str(item["account_id"]) for item in examples)),
             validation_method=validation_method,
@@ -339,7 +340,8 @@ def train_and_promote(
     manifest_snapshot = registry.snapshot_manifests()
     try:
         store.commit_training_promotion(
-            new_sample_snapshots,
+            validation_snapshots,
+            inclusion_snapshots=inclusion_snapshots,
             model_id=model_id,
             promote=lambda: registry.promote(
                 model_id, reason="candidate_validation_passed"

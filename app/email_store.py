@@ -2706,26 +2706,64 @@ class EmailStore:
 
     def commit_training_promotion(
         self,
-        samples: Sequence[Mapping[str, object]],
+        validation_snapshots: Sequence[Mapping[str, object]],
         *,
+        inclusion_snapshots: Sequence[Mapping[str, object]] | None = None,
         model_id: str,
         promote: Callable[[], object],
         restore: Callable[[], object],
     ) -> None:
-        snapshots = {str(item.get("message_id", "")): item for item in samples}
-        identities = tuple(snapshots)
-        if not identities or not model_id.strip():
+        validation_by_identity = {
+            str(item.get("message_id", "")): item for item in validation_snapshots
+        }
+        inclusion_items = (
+            validation_snapshots
+            if inclusion_snapshots is None
+            else inclusion_snapshots
+        )
+        inclusion_by_identity = {
+            str(item.get("message_id", "")): item for item in inclusion_items
+        }
+        validation_identities = tuple(validation_by_identity)
+        inclusion_identities = tuple(inclusion_by_identity)
+        if (
+            not validation_identities
+            or not inclusion_identities
+            or not model_id.strip()
+        ):
             raise ValueError("sample identities and model_id are required")
+        if len(validation_by_identity) != len(validation_snapshots) or len(
+            inclusion_by_identity
+        ) != len(inclusion_items):
+            raise ValueError("training sample identities must be unique")
+        if not set(inclusion_identities).issubset(validation_by_identity):
+            raise ValueError("inclusion snapshots must be part of validation snapshots")
+        for identity, inclusion_snapshot in inclusion_by_identity.items():
+            validation_snapshot = validation_by_identity[identity]
+            if (
+                inclusion_snapshot.get("sample_digest")
+                != validation_snapshot.get("sample_digest")
+                or inclusion_snapshot.get("included_in_model_id") is not None
+            ):
+                raise ValueError(
+                    "inclusion snapshots must match unincluded validation snapshots"
+                )
         db = self._connect()
         promotion_attempted = False
         try:
             db.execute("begin immediate")
             self._verify_training_snapshots(
-                db, snapshots, identities, model_id=model_id
+                db,
+                validation_by_identity,
+                validation_identities,
+                inclusion_identities=inclusion_identities,
+                model_id=model_id,
             )
             promotion_attempted = True
             promote()
-            self._update_training_inclusion(db, identities, model_id=model_id)
+            self._update_training_inclusion(
+                db, inclusion_identities, model_id=model_id
+            )
             db.commit()
         except Exception as exc:
             db.rollback()
@@ -2742,7 +2780,12 @@ class EmailStore:
 
     @staticmethod
     def _verify_training_snapshots(
-        db, snapshots, identities, *, model_id: str
+        db,
+        snapshots,
+        identities,
+        *,
+        inclusion_identities,
+        model_id: str,
     ) -> None:
         placeholders = ",".join("?" for _ in identities)
         rows = db.execute(
@@ -2764,6 +2807,7 @@ class EmailStore:
             raise EmailTrainingInclusionConflict(
                 "training sample set changed before inclusion"
             )
+        inclusion_identity_set = set(inclusion_identities)
         for row in rows:
             current = {
                 "message_id": row["stable_message_identity"],
@@ -2783,12 +2827,19 @@ class EmailStore:
                 raise EmailTrainingInclusionConflict(
                     "training sample changed before inclusion"
                 )
-        if any(
-            row["included_in_model_id"] not in (None, model_id) for row in rows
-        ):
-            raise EmailTrainingInclusionConflict(
-                "training sample is already included in another model"
+            expected_inclusion = snapshots[row["stable_message_identity"]].get(
+                "included_in_model_id"
             )
+            current_inclusion = row["included_in_model_id"]
+            idempotent_inclusion = (
+                row["stable_message_identity"] in inclusion_identity_set
+                and expected_inclusion is None
+                and current_inclusion == model_id
+            )
+            if current_inclusion != expected_inclusion and not idempotent_inclusion:
+                raise EmailTrainingInclusionConflict(
+                    "training sample inclusion changed before promotion"
+                )
 
     @staticmethod
     def _update_training_inclusion(db, identities, *, model_id: str) -> None:
