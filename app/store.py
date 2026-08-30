@@ -1245,10 +1245,7 @@ class AutoReplyStore:
                      select 1 from feedback_events fe
                       where fe.key=feedback_processing_items.feedback_key
                         and trim(fe.resolved_at) <> ''
-                        and (
-                            feedback_processing_items.status <> 'resolved'
-                            or feedback_processing_items.resolved_at <> fe.resolved_at
-                        )
+                        and feedback_processing_items.status <> 'resolved'
                  );
                 create table if not exists service_bugfix_candidates (
                     id integer primary key autoincrement,

@@ -285,7 +285,7 @@ def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
         db.execute(
             """
             update feedback_events
-               set resolved_at='2026-08-02 03:00:00'
+               set resolved_at='2026-08-02 04:00:00'
              where key='feedback-resolved'
             """
         )
@@ -378,6 +378,16 @@ def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
         assert resolved["resolved_at"] == "2026-08-02 03:00:00"
         assert resolved["created_at"] == "2026-08-02 01:05:00"
         assert resolved["updated_at"] == "2026-08-02 03:05:00"
+        legacy_item = db.execute(
+            """
+            select resolved_at, updated_at
+              from feedback_processing_items
+             where feedback_key='feedback-resolved'
+            """
+        ).fetchone()
+        assert legacy_item is not None
+        assert legacy_item["resolved_at"] == "2026-08-02 03:00:00"
+        assert legacy_item["updated_at"] == "2026-08-02 03:05:00"
         assert pointers["feedback-pending"] == 0
         assert pointers["feedback-processing"] == processing["id"]
         assert pointers["feedback-resolved"] == resolved["id"]
