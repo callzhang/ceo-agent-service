@@ -25,6 +25,7 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     EmailProviderLocator,
     build_email_action_plan,
+    build_versioned_email_action_plan,
 )
 
 
@@ -2865,6 +2866,37 @@ class EmailStore:
     def confirm_classification(
         self, row_id: int, category: EmailCategory
     ) -> dict[str, Any] | None:
+        return self._apply_human_classification(
+            row_id,
+            category,
+            allow_processed_correction=False,
+            created_at=None,
+        )
+
+    def apply_human_classification(
+        self,
+        row_id: int,
+        category: EmailCategory,
+        *,
+        created_at: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Confirm or correct a classification under one durable write lease."""
+
+        return self._apply_human_classification(
+            row_id,
+            category,
+            allow_processed_correction=True,
+            created_at=created_at,
+        )
+
+    def _apply_human_classification(
+        self,
+        row_id: int,
+        category: EmailCategory,
+        *,
+        allow_processed_correction: bool,
+        created_at: datetime | None,
+    ) -> dict[str, Any] | None:
         with self._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
@@ -2872,47 +2904,43 @@ class EmailStore:
             ).fetchone()
             if row is None:
                 return None
-            if row["status"] != EmailClassificationStatus.PENDING_FEEDBACK.value:
+            if row["status"] == EmailClassificationStatus.PENDING_FEEDBACK.value:
+                action_plan_version = 1
+                expected_current_action_plan_id = None
+            elif (
+                row["status"] == EmailClassificationStatus.PROCESSED.value
+                and allow_processed_correction
+            ):
+                expected_current_action_plan_id = row["current_action_plan_id"]
+                if not expected_current_action_plan_id:
+                    raise EmailActionPlanConflict(
+                        "processed classification has no current ActionPlan"
+                    )
+                current_plan = db.execute(
+                    """
+                    select action_plan_version
+                    from email_action_plans
+                    where action_plan_id=? and classification_id=?
+                    """,
+                    (expected_current_action_plan_id, row_id),
+                ).fetchone()
+                if current_plan is None:
+                    raise EmailActionPlanConflict(
+                        "processed classification current ActionPlan is missing"
+                    )
+                action_plan_version = int(current_plan["action_plan_version"]) + 1
+            else:
                 raise EmailClassificationConflict(
                     "email classification is no longer pending feedback"
                 )
-            selected_config = db.execute(
-                """
-                select actions_json, action_parameters_json, enabled, config_version
-                from email_category_configs where category=?
-                """,
-                (category.value,),
-            ).fetchone()
-            if selected_config is None:
-                actions: tuple[EmailAction, ...] = ()
-                action_parameters: dict[EmailAction, dict[str, object]] = {}
-                config_version = row["config_version"]
-            else:
-                stored_actions = _json_load(
-                    selected_config["actions_json"],
-                    field="actions_json",
-                    expected_type=list,
-                )
-                stored_parameters = _json_load(
-                    selected_config["action_parameters_json"],
-                    field="action_parameters_json",
-                    expected_type=dict,
-                )
-                actions = (
-                    tuple(EmailAction(value) for value in stored_actions)
-                    if selected_config["enabled"]
-                    else ()
-                )
-                action_parameters = (
-                    {
-                        EmailAction(action): dict(parameters)
-                        for action, parameters in stored_parameters.items()
-                    }
-                    if selected_config["enabled"]
-                    else {}
-                )
-                config_version = selected_config["config_version"]
-            action_plan = build_email_action_plan(
+            actions, action_parameters, config_version = self._category_action_snapshot(
+                db,
+                category=category,
+                fallback_config_version=row["config_version"],
+            )
+            plan_created_at = created_at or datetime.now(timezone.utc)
+            action_plan = build_versioned_email_action_plan(
+                action_plan_version=action_plan_version,
                 classification_id=row["id"],
                 account_id=row["account_id"],
                 category=category,
@@ -2922,7 +2950,7 @@ class EmailStore:
                 config_version=config_version,
                 actions=actions,
                 action_parameters=action_parameters,
-                created_at=datetime.now(timezone.utc),
+                created_at=plan_created_at,
             )
             now = self._now()
             self._persist_action_plan(db, action_plan, now=now)
@@ -2934,7 +2962,9 @@ class EmailStore:
                     action_plan_json=?, current_action_plan_id=?,
                     legacy_processed_without_plan=0,
                     confirmed_at=?, updated_at=?
-                where id=? and status=?
+                where id=?
+                  and status=?
+                  and current_action_plan_id is ?
                 """,
                 (
                     category.value,
@@ -2946,18 +2976,60 @@ class EmailStore:
                     now,
                     now,
                     row_id,
-                    EmailClassificationStatus.PENDING_FEEDBACK.value,
+                    row["status"],
+                    expected_current_action_plan_id,
                 ),
             ).rowcount
             if updated_count != 1:
                 raise EmailClassificationConflict(
-                    "email classification was confirmed concurrently"
+                    "email classification was changed concurrently"
                 )
             updated = db.execute(
                 "select * from email_classifications where id=?", (row_id,)
             ).fetchone()
         assert updated is not None
         return self._classification_row(updated)
+
+    @staticmethod
+    def _category_action_snapshot(
+        db: sqlite3.Connection,
+        *,
+        category: EmailCategory,
+        fallback_config_version: str,
+    ) -> tuple[
+        tuple[EmailAction, ...],
+        dict[EmailAction, dict[str, object]],
+        str,
+    ]:
+        selected_config = db.execute(
+            """
+            select actions_json, action_parameters_json, enabled, config_version
+            from email_category_configs where category=?
+            """,
+            (category.value,),
+        ).fetchone()
+        if selected_config is None:
+            return (), {}, fallback_config_version
+        stored_actions = _json_load(
+            selected_config["actions_json"],
+            field="actions_json",
+            expected_type=list,
+        )
+        stored_parameters = _json_load(
+            selected_config["action_parameters_json"],
+            field="action_parameters_json",
+            expected_type=dict,
+        )
+        if not selected_config["enabled"]:
+            return (), {}, selected_config["config_version"]
+        return (
+            tuple(EmailAction(value) for value in stored_actions),
+            {
+                EmailAction(action): dict(parameters)
+                for action, parameters in stored_parameters.items()
+            },
+            selected_config["config_version"],
+        )
 
     def append_action_plan_version(
         self,

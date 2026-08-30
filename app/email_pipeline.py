@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Mapping
 
 from app.email_classifier_contracts import (
@@ -12,7 +12,6 @@ from app.email_classifier_contracts import (
     EmailCategory,
     EmailClassificationStatus,
     build_email_action_plan,
-    build_versioned_email_action_plan,
 )
 from app.email_classifier_training import CategoryEligibility
 from app.email_store import EmailStore
@@ -139,81 +138,8 @@ def apply_human_confirmation(
     *,
     now: datetime,
 ) -> dict[str, object] | None:
-    current = store.get_classification(classification_id)
-    if current is None:
-        return None
-    if current["status"] == EmailClassificationStatus.PENDING_FEEDBACK.value:
-        return store.confirm_classification(classification_id, category)
-
-    current_plan = current.get("action_plan")
-    if not isinstance(current_plan, dict):
-        raise ValueError("processed classification has no current ActionPlan")
-    category_config = _stored_category_config(store, category, current)
-    version = int(current_plan["action_plan_version"]) + 1
-    created_at = now.astimezone(timezone.utc)
-    action_plan = build_versioned_email_action_plan(
-        action_plan_version=version,
-        classification_id=classification_id,
-        account_id=str(current["account_id"]),
-        category=category,
-        classification_source="user",
-        confidence=float(current["confidence"]),
-        model_id=str(current["model_id"]),
-        config_version=category_config.config_version,
-        actions=category_config.actions,
-        action_parameters=category_config.action_parameters,
-        created_at=created_at,
-    )
-    return store.append_action_plan_version(
+    return store.apply_human_classification(
         classification_id,
-        action_plan,
-        confirmed_category=category,
-    )
-
-
-def _stored_category_config(
-    store: EmailStore,
-    category: EmailCategory,
-    classification: Mapping[str, object],
-) -> EmailCategoryConfig:
-    selected = next(
-        (
-            config
-            for config in store.list_configs()
-            if config["category"] == category.value
-        ),
-        None,
-    )
-    if selected is None:
-        return EmailCategoryConfig(
-            category=category,
-            description="",
-            threshold=1.0,
-            actions=(),
-            action_parameters={},
-            enabled=False,
-            config_version=str(classification["config_version"]),
-        )
-    enabled = bool(selected["enabled"])
-    actions = (
-        tuple(EmailAction(value) for value in selected["actions"])
-        if enabled
-        else ()
-    )
-    parameters = (
-        {
-            EmailAction(action): dict(values)
-            for action, values in selected["action_parameters"].items()
-        }
-        if enabled
-        else {}
-    )
-    return EmailCategoryConfig(
-        category=category,
-        description=str(selected["description"]),
-        threshold=float(selected["threshold"]),
-        actions=actions,
-        action_parameters=parameters,
-        enabled=enabled,
-        config_version=str(selected["config_version"]),
+        category,
+        created_at=now,
     )

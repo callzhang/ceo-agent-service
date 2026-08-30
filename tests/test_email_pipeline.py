@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
+from threading import Event, Thread
 
 import pytest
 from pydantic import ValidationError
@@ -296,3 +297,104 @@ def test_human_confirmation_uses_primary_key_lookup_not_classification_paging(
 
     assert confirmed is not None
     assert confirmed["status"] == "processed"
+
+
+def test_processed_correction_reads_config_after_acquiring_write_lease(
+    tmp_path: Path,
+):
+    database = tmp_path / "email.sqlite3"
+    setup_store = EmailStore(database)
+    processed = _persist_decision(setup_store, _decision())
+    setup_store.upsert_config(
+        category=EmailCategory.IMPORTANT,
+        description="important",
+        threshold=0.97,
+        actions=(EmailAction.ARCHIVE,),
+        action_parameters={},
+        enabled=True,
+        config_version="important-v1",
+    )
+
+    correction_begin_attempted = Event()
+
+    class SignalingConnection(sqlite3.Connection):
+        def execute(self, sql, parameters=(), /):
+            if " ".join(sql.lower().split()) == "begin immediate":
+                correction_begin_attempted.set()
+            return super().execute(sql, parameters)
+
+    class SignalingStore(EmailStore):
+        def _connect(self):
+            db = sqlite3.connect(
+                self.path,
+                timeout=30,
+                factory=SignalingConnection,
+            )
+            db.execute("pragma busy_timeout = 30000")
+            db.execute("pragma foreign_keys = on")
+            db.row_factory = sqlite3.Row
+            return db
+
+    correction_store = SignalingStore(database)
+    correction_begin_attempted.clear()
+    writer = sqlite3.connect(database, timeout=30)
+    writer.execute("begin immediate")
+    writer.execute(
+        """
+        update email_category_configs
+        set actions_json='["move"]',
+            action_parameters_json='{"move":{"target_folder":"Important"}}',
+            config_version='important-v2'
+        where category='important'
+        """
+    )
+    results = []
+    failures = []
+
+    def correct():
+        try:
+            results.append(
+                apply_human_confirmation(
+                    correction_store,
+                    processed["id"],
+                    EmailCategory.IMPORTANT,
+                    now=NOW,
+                )
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    thread = Thread(target=correct)
+    thread.start()
+    assert correction_begin_attempted.wait(timeout=2)
+    writer.commit()
+    writer.close()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert failures == []
+    assert len(results) == 1
+    corrected = results[0]
+    assert corrected is not None
+    assert corrected["config_version"] == "important-v2"
+    assert corrected["action_plan"]["config_version"] == "important-v2"
+    assert corrected["action_plan"]["actions"] == ["move"]
+    assert corrected["action_plan"]["action_parameters"] == {
+        "move": {"target_folder": "Important"}
+    }
+    with sqlite3.connect(database) as db:
+        committed_config_version = db.execute(
+            "select config_version from email_category_configs where category='important'"
+        ).fetchone()[0]
+        current_plan_and_action = db.execute(
+            """
+            select p.config_version, a.config_version
+            from email_classifications c
+            join email_action_plans p on p.action_plan_id=c.current_action_plan_id
+            join email_actions a on a.action_plan_id=p.action_plan_id
+            where c.id=? and a.action_type='move'
+            """,
+            (processed["id"],),
+        ).fetchone()
+    assert committed_config_version == "important-v2"
+    assert current_plan_and_action == ("important-v2", "important-v2")
