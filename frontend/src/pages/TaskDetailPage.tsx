@@ -10,7 +10,8 @@ import { SnapshotBadge } from "../components/status/SnapshotBadge";
 
 function sourceLabel(source: unknown) {
   const value = displayValue(source);
-  return value.split(/[\\/]/).filter(Boolean).at(-1) || value;
+  const path = value.split("#", 1)[0];
+  return path.split(/[\\/]/).filter(Boolean).at(-1) || path || value;
 }
 
 export function TaskDetailPage({ projectId }: { projectId: string }) {

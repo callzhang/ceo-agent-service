@@ -85,6 +85,7 @@ def register_console_routes(
         q: str = "",
         category: str = "",
         task_state: str = "",
+        sort: str = "",
     ):
         return task_list_response(
             store_factory(),
@@ -93,6 +94,7 @@ def register_console_routes(
             query=q,
             category=category,
             task_state=task_state,
+            sort=sort,
             row_builder=task_row_builder,
         )
 

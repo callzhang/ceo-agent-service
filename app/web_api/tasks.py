@@ -359,6 +359,7 @@ def task_list_response(
     query: str = "",
     category: str = "",
     task_state: str = "",
+    sort: str = "",
     row_builder=None,
 ) -> ConsoleTaskListEnvelope:
     rows = []
@@ -401,6 +402,39 @@ def task_list_response(
         if task_state.strip() and row["status"] != task_state.strip():
             continue
         rows.append(row)
+    if sort == "project_asc":
+        rows.sort(key=lambda row: row["title"].casefold())
+    elif sort == "project_desc":
+        rows.sort(key=lambda row: row["title"].casefold(), reverse=True)
+    elif sort == "priority_desc":
+        priority_rank = {
+            "p0": 60,
+            "critical": 60,
+            "urgent": 50,
+            "high": 40,
+            "p1": 40,
+            "medium": 30,
+            "p2": 30,
+            "low": 20,
+            "p3": 20,
+        }
+        rows.sort(
+            key=lambda row: (
+                priority_rank.get(row["priority"].strip().casefold(), 0),
+                row["title"].casefold(),
+            ),
+            reverse=True,
+        )
+    elif sort == "progress_desc":
+        rows.sort(
+            key=lambda row: (row["progress_ratio"], row["title"].casefold()),
+            reverse=True,
+        )
+    elif sort == "todos_desc":
+        rows.sort(
+            key=lambda row: (row["todo_count"], row["title"].casefold()),
+            reverse=True,
+        )
     total = len(rows)
     start = (page - 1) * page_size
     page_rows = rows[start : start + page_size]
