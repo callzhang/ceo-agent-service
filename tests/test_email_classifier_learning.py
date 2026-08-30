@@ -19,6 +19,7 @@ def _classification(message_id: str, category: EmailCategory) -> EmailClassifica
     ) & ((1 << 63) - 1) or 1
     return EmailClassification(
         classification_id=classification_id,
+        stable_message_identity=f"test-account:imap:INBOX:1:{classification_id}",
         provider_locator=EmailProviderLocator(
             account_id="test-account",
             folder="INBOX",

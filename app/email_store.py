@@ -11,22 +11,25 @@ import json
 import re
 import sqlite3
 from datetime import datetime, timezone
-from hashlib import sha256
 from pathlib import Path
 from typing import Any, Mapping
 
 from app.email_classifier_contracts import (
     EmailAction,
-    EmailActionPlan,
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
+    build_email_action_plan,
 )
 
 
 _UNREDACTED_EMAIL = re.compile(
     r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])"
 )
+
+
+class EmailClassificationConflict(RuntimeError):
+    """The classification was already resolved by another confirmation."""
 
 
 def _validate_model_text(model_text: str) -> None:
@@ -146,6 +149,7 @@ class EmailStore:
     ) -> dict[str, Any]:
         _validate_model_text(model_text)
         locator = classification.provider_locator
+        stable_message_identity = classification.stable_message_identity
         now = self._now()
         action_plan_json = (
             "null"
@@ -210,7 +214,7 @@ class EmailStore:
                     locator.uid,
                     locator.rfc_message_id,
                     locator.thread_id,
-                    locator.stable_message_identity,
+                    stable_message_identity,
                     sender,
                     subject,
                     preview,
@@ -233,7 +237,7 @@ class EmailStore:
                 select * from email_classifications
                 where stable_message_identity=?
                 """,
-                (locator.stable_message_identity,),
+                (stable_message_identity,),
             ).fetchone()
         assert row is not None
         return self._classification_row(row)
@@ -282,15 +286,16 @@ class EmailStore:
         self, row_id: int, category: EmailCategory
     ) -> dict[str, Any] | None:
         with self._connect() as db:
+            db.execute("begin immediate")
             row = db.execute(
                 "select * from email_classifications where id=?", (row_id,)
             ).fetchone()
-            if (
-                row is None
-                or row["status"]
-                != EmailClassificationStatus.PENDING_FEEDBACK.value
-            ):
+            if row is None:
                 return None
+            if row["status"] != EmailClassificationStatus.PENDING_FEEDBACK.value:
+                raise EmailClassificationConflict(
+                    "email classification is no longer pending feedback"
+                )
             selected_config = db.execute(
                 """
                 select actions_json, action_parameters_json, enabled, config_version
@@ -320,17 +325,7 @@ class EmailStore:
                 }
                 config_version = selected_config["config_version"]
             created_at = datetime.now(timezone.utc)
-            action_plan = EmailActionPlan(
-                action_plan_id=_action_plan_id(
-                    classification_id=row["id"],
-                    account_id=row["account_id"],
-                    category=category,
-                    model_id=row["model_id"],
-                    config_version=config_version,
-                    actions=actions,
-                    action_parameters=action_parameters,
-                ),
-                action_plan_version=1,
+            action_plan = build_email_action_plan(
                 classification_id=row["id"],
                 account_id=row["account_id"],
                 category=category,
@@ -343,12 +338,12 @@ class EmailStore:
                 created_at=created_at,
             )
             now = self._now()
-            db.execute(
+            updated_count = db.execute(
                 """
                 update email_classifications
                 set category=?, status=?, classification_source='user',
                     config_version=?, action_plan_json=?, confirmed_at=?, updated_at=?
-                where id=?
+                where id=? and status=?
                 """,
                 (
                     category.value,
@@ -358,8 +353,13 @@ class EmailStore:
                     now,
                     now,
                     row_id,
+                    EmailClassificationStatus.PENDING_FEEDBACK.value,
                 ),
-            )
+            ).rowcount
+            if updated_count != 1:
+                raise EmailClassificationConflict(
+                    "email classification was confirmed concurrently"
+                )
             updated = db.execute(
                 "select * from email_classifications where id=?", (row_id,)
             ).fetchone()
@@ -456,9 +456,7 @@ def _validate_config(
     action_parameters: Mapping[EmailAction, Mapping[str, object]],
     config_version: str,
 ) -> None:
-    EmailActionPlan(
-        action_plan_id="configuration-validation",
-        action_plan_version=1,
+    build_email_action_plan(
         classification_id=1,
         account_id="configuration-validation",
         category=category,
@@ -473,34 +471,3 @@ def _validate_config(
         },
         created_at=datetime.now(timezone.utc),
     )
-
-
-def _action_plan_id(
-    *,
-    classification_id: int,
-    account_id: str,
-    category: EmailCategory,
-    model_id: str,
-    config_version: str,
-    actions: tuple[EmailAction, ...],
-    action_parameters: Mapping[EmailAction, Mapping[str, object]],
-) -> str:
-    snapshot = json.dumps(
-        {
-            "classification_id": classification_id,
-            "account_id": account_id,
-            "category": category.value,
-            "classification_source": "user",
-            "model_id": model_id,
-            "config_version": config_version,
-            "actions": [action.value for action in actions],
-            "action_parameters": {
-                action.value: dict(parameters)
-                for action, parameters in action_parameters.items()
-            },
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return f"email-action-plan:{sha256(snapshot.encode('utf-8')).hexdigest()}"

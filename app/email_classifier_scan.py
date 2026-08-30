@@ -6,18 +6,19 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
-import json
+from types import MappingProxyType
 from typing import Mapping, Protocol
 
 from app.email_classifier_contracts import (
     EmailAction,
-    EmailActionPlan,
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
+    build_email_action_plan,
 )
 from app.email_classifier_model import email_message_to_text
+from app.email_classifier_training import CategoryEligibility
 from app.email_store import EmailStore
 
 
@@ -38,6 +39,9 @@ class EmailScanConfig:
     config_version: str
     thresholds: Mapping[EmailCategory, float]
     actions: Mapping[EmailCategory, tuple[EmailAction, ...]]
+    category_eligibility: Mapping[EmailCategory, CategoryEligibility] = field(
+        default_factory=dict
+    )
     action_parameters: Mapping[
         EmailCategory, Mapping[EmailAction, Mapping[str, object]]
     ] = field(default_factory=dict)
@@ -49,6 +53,17 @@ class EmailScanConfig:
             config_version=config_version,
             thresholds={category: 0.95 for category in EmailCategory},
             actions={},
+            category_eligibility={
+                category: CategoryEligibility(
+                    category=category,
+                    configured_threshold=0.95,
+                    validated_precision=None,
+                    validation_sample_count=0,
+                    auto_action_eligible=False,
+                    reason="cold_start",
+                )
+                for category in EmailCategory
+            },
             action_parameters={},
         )
 
@@ -59,9 +74,34 @@ class EmailScanConfig:
             threshold = self.thresholds.get(category)
             if threshold is None or not 0 <= threshold <= 1:
                 raise ValueError(f"missing or invalid threshold for {category.value}")
+        eligibility = dict(self.category_eligibility)
+        if not eligibility:
+            eligibility = {
+                category: CategoryEligibility(
+                    category=category,
+                    configured_threshold=self.thresholds[category],
+                    validated_precision=None,
+                    validation_sample_count=0,
+                    auto_action_eligible=False,
+                    reason="eligibility_not_provided",
+                )
+                for category in EmailCategory
+            }
+        if set(eligibility) != set(EmailCategory):
+            raise ValueError("category_eligibility must cover every email category")
+        for category, category_eligibility in eligibility.items():
+            if category_eligibility.category is not category:
+                raise ValueError("category_eligibility category keys must match values")
+            if category_eligibility.configured_threshold != self.thresholds[category]:
+                raise ValueError("category eligibility threshold must match scan threshold")
         unexpected_categories = set(self.action_parameters) - set(self.actions)
         if unexpected_categories:
             raise ValueError("action parameters contain a category with no actions")
+        object.__setattr__(
+            self,
+            "category_eligibility",
+            MappingProxyType(eligibility),
+        )
 
 
 @dataclass(frozen=True)
@@ -94,7 +134,10 @@ def scan_readonly_batch(
         prediction = classifier.predict_message(message)
         category = EmailCategory(str(prediction.label))
         threshold = config.thresholds[category]
-        eligible = float(prediction.probability) >= threshold
+        eligible = (
+            float(prediction.probability) >= threshold
+            and config.category_eligibility[category].auto_action_eligible
+        )
         status = (
             EmailClassificationStatus.PROCESSED
             if eligible
@@ -103,22 +146,13 @@ def scan_readonly_batch(
         actions = config.actions.get(category, ())
         action_parameters = config.action_parameters.get(category, {})
         locator = _provider_locator(message)
-        classification_id = _classification_id(locator.stable_message_identity)
+        stable_message_identity = _stable_message_identity(message, locator)
+        classification_id = _classification_id(stable_message_identity)
         model_id = str(prediction.model_version).strip()
         created_at = datetime.now(timezone.utc)
         action_plan = None
         if status is EmailClassificationStatus.PROCESSED:
-            action_plan = EmailActionPlan(
-                action_plan_id=_action_plan_id(
-                    classification_id=classification_id,
-                    account_id=locator.account_id,
-                    category=category,
-                    model_id=model_id,
-                    config_version=config.config_version,
-                    actions=actions,
-                    action_parameters=action_parameters,
-                ),
-                action_plan_version=1,
+            action_plan = build_email_action_plan(
                 classification_id=classification_id,
                 account_id=locator.account_id,
                 category=category,
@@ -135,6 +169,7 @@ def scan_readonly_batch(
             )
         classification = EmailClassification(
             classification_id=classification_id,
+            stable_message_identity=stable_message_identity,
             provider_locator=locator,
             category=category,
             confidence=float(prediction.probability),
@@ -175,8 +210,26 @@ def _provider_locator(message: Mapping[str, object]) -> EmailProviderLocator:
     )
 
 
+def _stable_message_identity(
+    message: Mapping[str, object], locator: EmailProviderLocator
+) -> str:
+    if locator.rfc_message_id is not None:
+        return locator.stable_message_identity
+    existing = message.get("stableMessageIdentity")
+    if existing is None:
+        return locator.stable_message_identity
+    if not isinstance(existing, str) or not existing.strip():
+        raise ValueError("stableMessageIdentity must be a non-blank string")
+    stable_message_identity = existing.strip()
+    if not stable_message_identity.startswith(f"{locator.account_id}:"):
+        raise ValueError("stableMessageIdentity must be scoped to accountId")
+    return stable_message_identity
+
+
 def _positive_int(value: object, field: str) -> int:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise ValueError(f"{field} must be a positive integer")
+    if isinstance(value, str) and not value.isdecimal():
         raise ValueError(f"{field} must be a positive integer")
     try:
         parsed = int(value)
@@ -192,37 +245,6 @@ def _classification_id(stable_message_identity: str) -> int:
         sha256(stable_message_identity.encode("utf-8")).digest()[:8], "big"
     ) & ((1 << 63) - 1)
     return value or 1
-
-
-def _action_plan_id(
-    *,
-    classification_id: int,
-    account_id: str,
-    category: EmailCategory,
-    model_id: str,
-    config_version: str,
-    actions: tuple[EmailAction, ...],
-    action_parameters: Mapping[EmailAction, Mapping[str, object]],
-) -> str:
-    snapshot = json.dumps(
-        {
-            "classification_id": classification_id,
-            "account_id": account_id,
-            "category": category.value,
-            "model_id": model_id,
-            "config_version": config_version,
-            "actions": [action.value for action in actions],
-            "action_parameters": {
-                action.value: dict(parameters)
-                for action, parameters in action_parameters.items()
-            },
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    digest = sha256(snapshot.encode("utf-8")).hexdigest()
-    return f"email-action-plan:{digest}"
 
 
 def _redacted_preview(message: Mapping[str, object], *, limit: int = 280) -> str:

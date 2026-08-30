@@ -5,6 +5,7 @@ import pytest
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_contracts import EmailCategory
 from app.email_classifier_scan import EmailScanConfig
+from app.email_classifier_training import CategoryEligibility
 from app.email_store import EmailStore
 from app.email_classifier_runtime import (
     EmailClassifierUnavailable,
@@ -75,6 +76,17 @@ def test_runtime_loads_model_and_runs_only_readonly_scan(tmp_path: Path):
         config_version="runtime-scan-v1",
         thresholds={category: 0.0 for category in EmailCategory},
         actions={},
+        category_eligibility={
+            category: CategoryEligibility(
+                category=category,
+                configured_threshold=0.0,
+                validated_precision=1.0,
+                validation_sample_count=30,
+                auto_action_eligible=True,
+                reason="precision_and_sample_gate_met",
+            )
+            for category in EmailCategory
+        },
     )
 
     result = scan_with_active_model(

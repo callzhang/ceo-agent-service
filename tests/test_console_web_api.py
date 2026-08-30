@@ -733,6 +733,9 @@ def test_console_email_tabs_and_feedback_are_local_classifier_operations(
     classification = EmailClassification.model_validate(
         {
             "classification_id": 1,
+            "stable_message_identity": (
+                "dingtalk-account:message-id:<email-1@example.test>"
+            ),
             "provider_locator": {
                 "account_id": "dingtalk-account",
                 "folder": "INBOX",
@@ -800,6 +803,9 @@ def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Pat
     classification = EmailClassification.model_validate(
         {
             "classification_id": 2,
+            "stable_message_identity": (
+                "dingtalk-account:message-id:<email-learning-1@example.test>"
+            ),
             "provider_locator": {
                 "account_id": "dingtalk-account",
                 "folder": "INBOX",

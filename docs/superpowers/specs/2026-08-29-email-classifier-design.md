@@ -70,7 +70,7 @@ IMAP 只读连接器
     -> EmailDecision（分类、置信度、模型版本、动作计划）
        ├─ 低置信度/需确认 -> Email 页面“待反馈”（status=pending_feedback，action_plan=None）
        ├─ 用户确认类别     -> 反馈集 + 后台全量重训
-       └─ 达到配置阈值     -> 固定动作候选，先 dry-run，再进入执行闭环
+       └─ 达到消息阈值且类别具备自动动作资格 -> 形成固定动作计划，先 dry-run，再进入执行闭环
 ```
 
 分类器只输出分类事实和配置对应的动作计划，不直接连接 CEO Agent session，不直接发送邮件，不直接
@@ -111,7 +111,8 @@ IMAP 只读连接器
 2. 邮件执行层只消费 `direct_actions`，不得扩大或改写计划中的动作和参数；
 3. 后续 Agent 路由只消费 `agent_actions`，并且仅对 `auto_reply`、`unsubscribe`
    应用 Agent/Audit 生命周期；
-4. 分类概率和类别阈值决定是否形成计划，但不能授权计划之外的动作。
+4. 只有消息置信度达到类别阈值且该类别 `auto_action_eligible=true` 才形成计划，
+   但不能授权计划之外的动作。
 
 ### 建议的分阶段接入
 
@@ -204,7 +205,7 @@ provider readback。
     -> balanced LogisticRegression
     -> softmax 多分类
     -> 类别级置信度阈值
-    -> 通过阈值则执行该类别固定动作，否则请求用户决策
+    -> 通过阈值且类别具备自动动作资格才形成固定动作计划，否则请求用户决策
 ```
 
 Logistic 被选为当前默认方案的原因是：在修正后的数据上，它的 Macro F1
@@ -248,7 +249,7 @@ MVP 采用八个互斥训练类别：
 `unknown` 不是训练类别。它表示分类器的 top-1 结果没有达到该类别的自动处理阈值，属于拒绝自动决策的状态：
 
 ```text
-top-1 类别未达到类别阈值
+top-1 类别未达到类别阈值，或类别 `auto_action_eligible=false`
     -> 暂不执行类别动作
     -> 暴露给用户
     -> 用户选择八个真实类别之一
@@ -532,7 +533,7 @@ Email“待反馈”，状态为 `pending_feedback` 且 `action_plan=None`；已
 `unsubscribe` 进入 Agent/Audit 生命周期。
 
 在此契约之上，`email_classifier_pipeline.py` 提供了一个无连接器的批量
-编排入口：逐封调用分类器，将低于类别阈值的决策交给本地
+编排入口：逐封调用分类器，将低于类别阈值或类别不具备自动动作资格的决策交给本地
 `email_review_queue.py`，并返回 review/auto-candidate 统计。review queue
 使用 SQLite 按 `message_id` 幂等保存决策；它不保存原始正文。这个入口是
 未来 IMAP readonly adapter 与 CEO Agent adapter 之间的最小接缝，当前仍
@@ -601,11 +602,11 @@ Attention 页面或 launchd 配置。
 模型。CLI `retrain` 使用同一流程并返回拒绝原因。该流程属于模型完整性和
 学习闭环，不改变 CEO Agent 的外部动作授权边界。
 
-Phase-C 的 `email_action_dry_run.py` 只根据达到类别阈值的
+Phase-C 的 `email_action_dry_run.py` 只根据达到类别阈值且类别具备自动动作资格的
 `EmailDecision` 生成动作预览，不调用 connector。对 `subscription`，它只
 接受 `List-Unsubscribe` 或正文中明确退订行里的 HTTPS 链接；只有 `mailto:`
-或没有入口时返回 `unavailable`，不猜测 URL。低于阈值的决策不生成任何
-动作。该模块是展示/验证接口，不是退订、删除、归档或回复执行器。
+或没有入口时返回 `unavailable`，不猜测 URL。低于阈值或类别不具备自动动作资格的
+决策不生成任何动作。该模块是展示/验证接口，不是退订、删除、归档或回复执行器。
 
 模型保留：
 

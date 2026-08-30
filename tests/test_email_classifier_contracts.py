@@ -13,6 +13,7 @@ from app.email_classifier_contracts import (
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
+    build_email_action_plan,
 )
 
 
@@ -36,8 +37,6 @@ def _locator(
 
 def _plan(**overrides: object) -> EmailActionPlan:
     values: dict[str, object] = {
-        "action_plan_id": "plan-1",
-        "action_plan_version": 1,
         "classification_id": 11,
         "account_id": "account-1",
         "category": EmailCategory.WORK,
@@ -58,13 +57,14 @@ def _plan(**overrides: object) -> EmailActionPlan:
         "created_at": CREATED_AT,
     }
     values.update(overrides)
-    return EmailActionPlan.model_validate(values)
+    return build_email_action_plan(**values)  # type: ignore[arg-type]
 
 
 def _classification(**overrides: object) -> EmailClassification:
     plan = overrides.pop("action_plan", _plan())
     values: dict[str, object] = {
         "classification_id": 11,
+        "stable_message_identity": "account-1:message-id:<Msg-1@example.com>",
         "provider_locator": _locator(),
         "category": EmailCategory.WORK,
         "confidence": 0.93,
@@ -140,6 +140,48 @@ def test_provider_locator_normalizes_rfc_message_id_and_is_account_aware():
 
 def test_provider_locator_falls_back_to_account_folder_and_imap_uid():
     locator = _locator(rfc_message_id="not a valid message id")
+
+    assert locator.rfc_message_id is None
+    assert locator.stable_message_identity == "account-1:imap:INBOX:42:7"
+
+
+def test_classification_preserves_business_identity_separately_from_moved_locator():
+    original = _locator(rfc_message_id=None)
+
+    moved = EmailProviderLocator(
+        account_id="account-1",
+        folder="Archive/2026",
+        uidvalidity=84,
+        uid=91,
+        rfc_message_id=None,
+    )
+    classification = _classification(
+        stable_message_identity=original.stable_message_identity,
+        provider_locator=moved,
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        action_plan=None,
+    )
+
+    assert moved.folder == "Archive/2026"
+    assert moved.uidvalidity == 84
+    assert moved.uid == 91
+    assert moved.stable_message_identity != original.stable_message_identity
+    assert classification.stable_message_identity == original.stable_message_identity
+
+
+@pytest.mark.parametrize(
+    "message_id",
+    (
+        "<<message@example.com>>",
+        "<message..part@example.com>",
+        "<.message@example.com>",
+        "<message@example..com>",
+        "<message@-example.com>",
+        "<message@example.com",
+    ),
+)
+def test_provider_locator_rejects_malformed_rfc_message_ids(message_id: str):
+    locator = _locator(rfc_message_id=message_id)
 
     assert locator.rfc_message_id is None
     assert locator.stable_message_identity == "account-1:imap:INBOX:42:7"
@@ -308,6 +350,22 @@ def test_action_plan_is_an_immutable_execution_authorization_snapshot():
     with pytest.raises(TypeError):
         plan.action_parameters[EmailAction.LABEL]["labels"] = ("changed",)
     assert "is_execution_authorization" not in EmailActionPlan.model_fields
+
+
+def test_action_plan_rejects_reusing_an_identity_for_changed_snapshot_facts():
+    plan = _plan()
+    changed_snapshot = plan.model_dump()
+    changed_snapshot["confidence"] = 0.5
+
+    with pytest.raises(ValidationError, match="action plan identity"):
+        EmailActionPlan.model_validate(changed_snapshot)
+
+
+def test_action_plan_identity_includes_created_at():
+    first = _plan(created_at=datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc))
+    second = _plan(created_at=datetime(2026, 8, 29, 16, 1, tzinfo=timezone.utc))
+
+    assert first.action_plan_id != second.action_plan_id
 
 
 @pytest.mark.parametrize(

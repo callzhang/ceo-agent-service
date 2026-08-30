@@ -1,8 +1,11 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from app.email_classifier_contracts import EmailAction, EmailCategory, EmailClassificationStatus
 from app.email_classifier_scan import EmailScanConfig, scan_readonly_batch
+from app.email_classifier_training import CategoryEligibility
 from app.email_imap_readonly import ImapReadonlyAdapter, parse_rfc822_message
 from app.email_store import EmailStore
 
@@ -114,6 +117,21 @@ def _scan_config() -> EmailScanConfig:
         config_version="email-scan-v1",
         thresholds={category: 0.8 for category in EmailCategory},
         actions={EmailCategory.WORK: (EmailAction.LABEL,)},
+        category_eligibility={
+            category: CategoryEligibility(
+                category=category,
+                configured_threshold=0.8,
+                validated_precision=(0.99 if category is EmailCategory.WORK else None),
+                validation_sample_count=(30 if category is EmailCategory.WORK else 0),
+                auto_action_eligible=category is EmailCategory.WORK,
+                reason=(
+                    "precision_and_sample_gate_met"
+                    if category is EmailCategory.WORK
+                    else "insufficient_validation_samples"
+                ),
+            )
+            for category in EmailCategory
+        },
         action_parameters={
             EmailCategory.WORK: {
                 EmailAction.LABEL: {"labels": ["work"]},
@@ -183,3 +201,97 @@ def test_scan_persists_processed_or_pending_without_mailbox_actions(tmp_path: Pa
     assert pending[0]["action_plan"] is None
     assert "https://" not in pending[0]["preview"]
     assert "123456" not in pending[0]["preview"]
+
+
+def test_scan_preserves_business_identity_when_provider_locator_moves(tmp_path: Path):
+    source = FakeSource(
+        messages=[
+            {
+                "messageId": None,
+                "accountId": "dingtalk-account",
+                "folder": "INBOX",
+                "uidValidity": 42,
+                "uid": 1,
+                "from": {"email": "sender@example.com"},
+                "subject": "Move me",
+                "textBody": "Stable identity",
+            }
+        ]
+    )
+    classifier = FakeClassifier(
+        {"None": FakePrediction("work", 0.61, 0.03, {"work": 0.61})}
+    )
+    store = EmailStore(tmp_path / "worker.sqlite3")
+
+    scan_readonly_batch(source, classifier, store, EmailScanConfig.cold_start())
+    first, first_total = store.list_classifications(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        limit=10,
+        offset=0,
+    )
+    assert first_total == 1
+    stable_identity = first[0]["stable_message_identity"]
+
+    source.messages = [
+        {
+            "messageId": None,
+            "stableMessageIdentity": stable_identity,
+            "accountId": "dingtalk-account",
+            "folder": "Archive/2026",
+            "uidValidity": 84,
+            "uid": 91,
+            "from": {"email": "sender@example.com"},
+            "subject": "Move me",
+            "textBody": "Stable identity",
+        }
+    ]
+    scan_readonly_batch(source, classifier, store, EmailScanConfig.cold_start())
+
+    moved, moved_total = store.list_classifications(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        limit=10,
+        offset=0,
+    )
+    assert moved_total == 1
+    assert moved[0]["stable_message_identity"] == stable_identity
+    assert moved[0]["folder"] == "Archive/2026"
+    assert moved[0]["uidvalidity"] == 84
+    assert moved[0]["uid"] == 91
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("uidValidity", 42.5), ("uid", 1.5)),
+)
+def test_scan_rejects_non_integral_provider_coordinates(
+    tmp_path: Path,
+    field: str,
+    value: float,
+):
+    message: dict[str, object] = {
+        "messageId": "<message-float@example.com>",
+        "accountId": "dingtalk-account",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 1,
+        "from": {"email": "sender@example.com"},
+        "subject": "Invalid coordinates",
+        "textBody": "Reject truncation",
+    }
+    message[field] = value
+    source = FakeSource(messages=[message])
+    classifier = FakeClassifier(
+        {
+            "<message-float@example.com>": FakePrediction(
+                "work", 0.61, 0.03, {"work": 0.61}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match=f"{field} must be a positive integer"):
+        scan_readonly_batch(
+            source,
+            classifier,
+            EmailStore(tmp_path / "worker.sqlite3"),
+            EmailScanConfig.cold_start(),
+        )

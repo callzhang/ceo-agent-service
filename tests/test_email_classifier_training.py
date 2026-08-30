@@ -76,6 +76,7 @@ def _classification(message_id: str, category: EmailCategory) -> EmailClassifica
     ) & ((1 << 63) - 1) or 1
     return EmailClassification(
         classification_id=classification_id,
+        stable_message_identity=f"test-account:imap:INBOX:1:{classification_id}",
         provider_locator=EmailProviderLocator(
             account_id="test-account",
             folder="INBOX",
@@ -128,7 +129,7 @@ def test_feedback_keeps_redacted_model_text_for_training(tmp_path: Path):
 
     assert store.list_training_examples() == [
         {
-            "message_id": classification.provider_locator.stable_message_identity,
+            "message_id": classification.stable_message_identity,
             "model_text": "__from_domain__example.test __subject__项目 工作",
             "label": "important",
         }

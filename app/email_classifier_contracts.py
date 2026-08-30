@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from hashlib import sha256
+import json
+import re
+from typing import Literal, Mapping
 
 from pydantic import (
     BaseModel,
@@ -44,6 +47,14 @@ DIRECT_ACTIONS = (
     EmailAction.TRASH,
 )
 AGENT_ACTIONS = (EmailAction.AUTO_REPLY, EmailAction.UNSUBSCRIBE)
+
+
+_MESSAGE_ID_ATOM = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+_MESSAGE_ID_DOMAIN_ATOM = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+_RFC_MESSAGE_ID = re.compile(
+    rf"^(?P<local>{_MESSAGE_ID_ATOM}(?:\.{_MESSAGE_ID_ATOM})*)@"
+    rf"(?P<domain>{_MESSAGE_ID_DOMAIN_ATOM}(?:\.{_MESSAGE_ID_DOMAIN_ATOM})*)$"
+)
 
 
 class EmailClassificationStatus(StrEnum):
@@ -104,14 +115,19 @@ class EmailProviderLocator(BaseModel):
         if not isinstance(value, str):
             raise ValueError("rfc_message_id must be a string or null")
         candidate = value.strip()
-        if candidate.startswith("<") and candidate.endswith(">"):
+        if candidate.startswith("<") or candidate.endswith(">"):
+            if not (
+                candidate.startswith("<")
+                and candidate.endswith(">")
+                and candidate.count("<") == 1
+                and candidate.count(">") == 1
+            ):
+                return None
             candidate = candidate[1:-1].strip()
-        if candidate.count("@") != 1 or any(character.isspace() for character in candidate):
+        match = _RFC_MESSAGE_ID.fullmatch(candidate)
+        if match is None:
             return None
-        local_part, domain = candidate.split("@", 1)
-        if not local_part or not domain:
-            return None
-        return f"<{local_part}@{domain.lower()}>"
+        return f"<{match.group('local')}@{match.group('domain').lower()}>"
 
     @field_validator("thread_id", mode="before")
     @classmethod
@@ -119,7 +135,7 @@ class EmailProviderLocator(BaseModel):
         if value is None:
             return None
         if not isinstance(value, str):
-            raise ValueError("thread_id must be a string or null")
+            raise ValueError("optional locator values must be strings or null")
         return value.strip() or None
 
     @property
@@ -141,6 +157,46 @@ class EmailAttachmentMetadata(BaseModel):
     mime_type: str
     size_bytes: int = Field(ge=0)
     inline: bool
+
+
+def _action_plan_identity(
+    *,
+    action_plan_version: int,
+    classification_id: int,
+    account_id: str,
+    category: EmailCategory,
+    classification_source: Literal["model", "user"],
+    confidence: float,
+    model_id: str,
+    config_version: str,
+    actions: tuple[EmailAction, ...],
+    action_parameters: Mapping[EmailAction, Mapping[str, object]],
+    created_at: datetime,
+) -> str:
+    """Identify the complete immutable plan snapshot, including creation time."""
+
+    snapshot = json.dumps(
+        {
+            "action_plan_version": action_plan_version,
+            "classification_id": classification_id,
+            "account_id": account_id,
+            "category": category.value,
+            "classification_source": classification_source,
+            "confidence": confidence,
+            "model_id": model_id,
+            "config_version": config_version,
+            "actions": [action.value for action in actions],
+            "action_parameters": {
+                action.value: dict(parameters)
+                for action, parameters in action_parameters.items()
+            },
+            "created_at": created_at.isoformat(),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"email-action-plan:{sha256(snapshot.encode('utf-8')).hexdigest()}"
 
 
 class EmailActionPlan(BaseModel):
@@ -229,6 +285,22 @@ class EmailActionPlan(BaseModel):
             if not isinstance(instruction, str) or not instruction.strip():
                 raise ValueError("auto_reply action requires a non-blank instruction")
 
+        expected_identity = _action_plan_identity(
+            action_plan_version=self.action_plan_version,
+            classification_id=self.classification_id,
+            account_id=self.account_id,
+            category=self.category,
+            classification_source=self.classification_source,
+            confidence=self.confidence,
+            model_id=self.model_id,
+            config_version=self.config_version,
+            actions=self.actions,
+            action_parameters=self.action_parameters,
+            created_at=self.created_at,
+        )
+        if self.action_plan_id != expected_identity:
+            raise ValueError("action plan identity does not match its immutable snapshot")
+
         object.__setattr__(self, "action_parameters", _freeze(self.action_parameters))
         return self
 
@@ -241,12 +313,61 @@ class EmailActionPlan(BaseModel):
         return tuple(action for action in self.actions if action in AGENT_ACTIONS)
 
 
+def build_email_action_plan(
+    *,
+    classification_id: int,
+    account_id: str,
+    category: EmailCategory,
+    classification_source: Literal["model", "user"],
+    confidence: float,
+    model_id: str,
+    config_version: str,
+    actions: tuple[EmailAction, ...],
+    action_parameters: Mapping[EmailAction, Mapping[str, object]],
+    created_at: datetime,
+) -> EmailActionPlan:
+    """Build one version-1 plan whose ID covers the complete immutable snapshot."""
+
+    action_plan_version = 1
+    copied_parameters = {
+        action: dict(parameters)
+        for action, parameters in action_parameters.items()
+    }
+    return EmailActionPlan(
+        action_plan_id=_action_plan_identity(
+            action_plan_version=action_plan_version,
+            classification_id=classification_id,
+            account_id=account_id,
+            category=category,
+            classification_source=classification_source,
+            confidence=confidence,
+            model_id=model_id,
+            config_version=config_version,
+            actions=actions,
+            action_parameters=copied_parameters,
+            created_at=created_at,
+        ),
+        action_plan_version=action_plan_version,
+        classification_id=classification_id,
+        account_id=account_id,
+        category=category,
+        classification_source=classification_source,
+        confidence=confidence,
+        model_id=model_id,
+        config_version=config_version,
+        actions=actions,
+        action_parameters=copied_parameters,
+        created_at=created_at,
+    )
+
+
 class EmailClassification(BaseModel):
     """One model suggestion and, only when processed, its authorized action plan."""
 
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     classification_id: int = Field(gt=0)
+    stable_message_identity: str = Field(min_length=1)
     provider_locator: EmailProviderLocator
     category: EmailCategory
     confidence: float = Field(ge=0.0, le=1.0)
@@ -258,7 +379,7 @@ class EmailClassification(BaseModel):
     classification_source: Literal["model", "user"]
     action_plan: EmailActionPlan | None
 
-    @field_validator("model_id", "config_version")
+    @field_validator("stable_message_identity", "model_id", "config_version")
     @classmethod
     def strip_required_strings(cls, value: str) -> str:
         value = value.strip()
@@ -268,6 +389,15 @@ class EmailClassification(BaseModel):
 
     @model_validator(mode="after")
     def validate_consistency(self) -> "EmailClassification":
+        account_identity_prefix = f"{self.provider_locator.account_id}:"
+        if not self.stable_message_identity.startswith(account_identity_prefix):
+            raise ValueError("stable message identity must be scoped to account_id")
+        if (
+            self.provider_locator.rfc_message_id is not None
+            and self.stable_message_identity
+            != self.provider_locator.stable_message_identity
+        ):
+            raise ValueError("RFC Message-ID must define the stable message identity")
         if (
             self.classification_source == "user"
             and self.status is not EmailClassificationStatus.PROCESSED

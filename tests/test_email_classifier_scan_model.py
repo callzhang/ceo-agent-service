@@ -1,8 +1,14 @@
+from dataclasses import dataclass
 from pathlib import Path
 
-from app.email_classifier_contracts import EmailCategory, EmailClassificationStatus
+from app.email_classifier_contracts import (
+    EmailAction,
+    EmailCategory,
+    EmailClassificationStatus,
+)
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_scan import EmailScanConfig, scan_readonly_batch
+from app.email_classifier_training import CategoryEligibility
 from app.email_store import EmailStore
 
 
@@ -14,6 +20,62 @@ class FakeSource:
     def fetch_recent(self, mailbox: str = "INBOX", *, limit: int = 50):
         self.calls.append((mailbox, limit))
         return self.messages
+
+
+@dataclass
+class StaticPrediction:
+    label: str
+    probability: float
+    margin: float = 0.1
+    model_version: str = "static-model-v1"
+
+    @property
+    def probabilities(self) -> dict[str, float]:
+        return {self.label: self.probability}
+
+
+@dataclass
+class StaticClassifier:
+    prediction: StaticPrediction
+
+    def predict_message(self, message):
+        del message
+        return self.prediction
+
+
+def _category_eligibility(
+    *,
+    eligible: tuple[EmailCategory, ...] = (),
+    threshold: float = 0.8,
+) -> dict[EmailCategory, CategoryEligibility]:
+    return {
+        category: CategoryEligibility(
+            category=category,
+            configured_threshold=threshold,
+            validated_precision=0.99 if category in eligible else None,
+            validation_sample_count=30 if category in eligible else 0,
+            auto_action_eligible=category in eligible,
+            reason=(
+                "precision_and_sample_gate_met"
+                if category in eligible
+                else "insufficient_validation_samples"
+            ),
+        )
+        for category in EmailCategory
+    }
+
+
+def _message() -> dict[str, object]:
+    return {
+        "messageId": "<message-1@example.com>",
+        "accountId": "dingtalk-account",
+        "folder": "INBOX",
+        "uidValidity": 42,
+        "uid": 1,
+        "from": {"email": "team@stardust.ai"},
+        "subject": "project deadline",
+        "textBody": "please confirm the work sprint",
+    }
 
 
 def _training_messages() -> tuple[list[dict[str, object]], list[str]]:
@@ -63,6 +125,10 @@ def test_cpu_model_feeds_readonly_scan_and_persists_only_classification(tmp_path
         config_version="scan-model-test-v1",
         thresholds={category: 0.0 for category in EmailCategory},
         actions={},
+        category_eligibility=_category_eligibility(
+            eligible=tuple(EmailCategory),
+            threshold=0.0,
+        ),
     )
 
     result = scan_readonly_batch(source, classifier, store, config, limit=2)
@@ -137,3 +203,125 @@ def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: P
         != processed[0]["stable_message_identity"]
     )
     assert len(store.list_training_examples()) == 1
+
+
+def test_high_confidence_is_pending_when_category_lacks_validation_samples(
+    tmp_path: Path,
+):
+    eligibility = _category_eligibility()
+    eligibility[EmailCategory.WORK] = CategoryEligibility(
+        category=EmailCategory.WORK,
+        configured_threshold=0.8,
+        validated_precision=0.99,
+        validation_sample_count=2,
+        auto_action_eligible=False,
+        reason="sample_gate_not_met",
+    )
+    config = EmailScanConfig(
+        config_version="eligibility-samples-v1",
+        thresholds={category: 0.8 for category in EmailCategory},
+        actions={EmailCategory.WORK: (EmailAction.LABEL,)},
+        category_eligibility=eligibility,
+        action_parameters={
+            EmailCategory.WORK: {
+                EmailAction.LABEL: {"labels": ["work"]},
+            }
+        },
+    )
+    store = EmailStore(tmp_path / "email.sqlite3")
+
+    result = scan_readonly_batch(
+        FakeSource([_message()]),
+        StaticClassifier(StaticPrediction("work", 0.99)),
+        store,
+        config,
+    )
+
+    assert result.processed_count == 0
+    assert result.pending_feedback_count == 1
+    rows, total = store.list_classifications(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        limit=10,
+        offset=0,
+    )
+    assert total == 1
+    assert rows[0]["action_plan"] is None
+
+
+def test_high_confidence_eligible_category_creates_action_plan(tmp_path: Path):
+    config = EmailScanConfig(
+        config_version="eligibility-approved-v1",
+        thresholds={category: 0.8 for category in EmailCategory},
+        actions={EmailCategory.WORK: (EmailAction.LABEL,)},
+        category_eligibility=_category_eligibility(eligible=(EmailCategory.WORK,)),
+        action_parameters={
+            EmailCategory.WORK: {
+                EmailAction.LABEL: {"labels": ["work"]},
+            }
+        },
+    )
+    store = EmailStore(tmp_path / "email.sqlite3")
+
+    result = scan_readonly_batch(
+        FakeSource([_message()]),
+        StaticClassifier(StaticPrediction("work", 0.99)),
+        store,
+        config,
+    )
+
+    assert result.processed_count == 1
+    assert result.pending_feedback_count == 0
+    rows, total = store.list_classifications(
+        status=EmailClassificationStatus.PROCESSED,
+        limit=10,
+        offset=0,
+    )
+    assert total == 1
+    assert rows[0]["action_plan"]["actions"] == ["label"]
+
+
+def test_processed_model_rescan_changes_plan_identity_when_snapshot_facts_change(
+    tmp_path: Path,
+):
+    classifier = StaticClassifier(StaticPrediction("work", 0.91))
+    source = FakeSource([_message()])
+    store = EmailStore(tmp_path / "email.sqlite3")
+    config = EmailScanConfig(
+        config_version="plan-identity-v1",
+        thresholds={category: 0.8 for category in EmailCategory},
+        actions={EmailCategory.WORK: (EmailAction.LABEL,)},
+        category_eligibility=_category_eligibility(
+            eligible=(EmailCategory.WORK,)
+        ),
+        action_parameters={
+            EmailCategory.WORK: {
+                EmailAction.LABEL: {"labels": ["work"]},
+            }
+        },
+    )
+
+    scan_readonly_batch(source, classifier, store, config)
+    first_rows, _ = store.list_classifications(
+        status=EmailClassificationStatus.PROCESSED,
+        limit=10,
+        offset=0,
+    )
+    first_plan = first_rows[0]["action_plan"]
+
+    classifier.prediction = StaticPrediction(
+        "work", 0.99, model_version="static-model-v2"
+    )
+    scan_readonly_batch(source, classifier, store, config)
+    second_rows, _ = store.list_classifications(
+        status=EmailClassificationStatus.PROCESSED,
+        limit=10,
+        offset=0,
+    )
+    second_plan = second_rows[0]["action_plan"]
+
+    assert first_plan["confidence"] == 0.91
+    assert second_plan["confidence"] == 0.99
+    assert first_plan["model_id"] == "static-model-v1"
+    assert second_plan["model_id"] == "static-model-v2"
+    assert first_plan["action_plan_version"] == second_plan["action_plan_version"] == 1
+    assert first_plan["action_plan_id"] != second_plan["action_plan_id"]

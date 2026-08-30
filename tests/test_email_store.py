@@ -1,6 +1,8 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -9,8 +11,9 @@ from app.email_classifier_contracts import (
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
+    build_email_action_plan,
 )
-from app.email_store import EmailStore
+from app.email_store import EmailClassificationConflict, EmailStore
 
 
 def _classification(
@@ -25,25 +28,27 @@ def _classification(
     ) & ((1 << 63) - 1) or 1
     action_plan = None
     if status is EmailClassificationStatus.PROCESSED:
-        action_plan = {
-            "action_plan_id": f"plan-{classification_id}",
-            "action_plan_version": 1,
-            "classification_id": classification_id,
-            "account_id": "dingtalk-account",
-            "category": EmailCategory.WORK,
-            "classification_source": "model",
-            "confidence": confidence,
-            "model_id": model_id,
-            "config_version": "email-v1",
-            "actions": (EmailAction.LABEL,),
-            "action_parameters": {
+        created_at = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
+        action_plan = build_email_action_plan(
+            classification_id=classification_id,
+            account_id="dingtalk-account",
+            category=EmailCategory.WORK,
+            classification_source="model",
+            confidence=confidence,
+            model_id=model_id,
+            config_version="email-v1",
+            actions=(EmailAction.LABEL,),
+            action_parameters={
                 EmailAction.LABEL: {"labels": ["work"]},
             },
-            "created_at": datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc),
-        }
+            created_at=created_at,
+        )
     return EmailClassification.model_validate(
         {
             "classification_id": classification_id,
+            "stable_message_identity": (
+                f"dingtalk-account:message-id:<{message_id}@example.com>"
+            ),
             "provider_locator": {
                 "account_id": "dingtalk-account",
                 "folder": "INBOX",
@@ -160,7 +165,51 @@ def test_processed_email_cannot_be_confirmed_as_new_feedback(tmp_path: Path):
         _classification(status=EmailClassificationStatus.PROCESSED)
     )
 
-    assert store.confirm_classification(row["id"], EmailCategory.IMPORTANT) is None
+    with pytest.raises(EmailClassificationConflict):
+        store.confirm_classification(row["id"], EmailCategory.IMPORTANT)
+
+
+def test_concurrent_feedback_allows_one_confirmation_and_one_conflict(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "worker.sqlite3")
+    row = store.upsert_classification(
+        _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
+        model_text="__subject__concurrent-confirmation",
+    )
+    ready = Barrier(2)
+
+    def confirm(category: EmailCategory):
+        ready.wait()
+        try:
+            return store.confirm_classification(row["id"], category)
+        except EmailClassificationConflict as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                confirm,
+                (EmailCategory.IMPORTANT, EmailCategory.PERSONAL),
+            )
+        )
+
+    confirmed = [result for result in results if isinstance(result, dict)]
+    conflicts = [
+        result
+        for result in results
+        if isinstance(result, EmailClassificationConflict)
+    ]
+    assert len(confirmed) == 1
+    assert len(conflicts) == 1
+    persisted, total = store.list_classifications(
+        status=EmailClassificationStatus.PROCESSED,
+        limit=10,
+        offset=0,
+    )
+    assert total == 1
+    assert persisted[0]["category"] == confirmed[0]["category"]
+    assert len(store.list_training_examples()) == 1
 
 
 def test_rescan_preserves_a_user_confirmed_category(tmp_path: Path):

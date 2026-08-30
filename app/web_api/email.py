@@ -18,7 +18,7 @@ from app.email_classifier_contracts import (
     EmailCategory,
     EmailClassificationStatus,
 )
-from app.email_store import EmailStore
+from app.email_store import EmailClassificationConflict, EmailStore
 
 
 class EmailConfigPayload(BaseModel):
@@ -27,6 +27,7 @@ class EmailConfigPayload(BaseModel):
     description: str = ""
     threshold: float = Field(ge=0.0, le=1.0)
     actions: list[str] = Field(default_factory=list)
+    action_parameters: dict[str, dict[str, object]] = Field(default_factory=dict)
     enabled: bool = True
     config_version: str = Field(min_length=1)
 
@@ -91,13 +92,24 @@ def register_email_routes(
         except (ValueError, TypeError, ValidationError) as exc:
             raise HTTPException(status_code=400, detail="category is invalid") from exc
         learning_result = None
-        if email_learning_factory is not None:
-            learning_result = email_learning_factory().confirm_and_maybe_retrain(
-                classification_id, category
+        try:
+            if email_learning_factory is not None:
+                learning_result = email_learning_factory().confirm_and_maybe_retrain(
+                    classification_id, category
+                )
+                row = None if learning_result is None else learning_result.confirmed
+            else:
+                row = store().confirm_classification(classification_id, category)
+        except EmailClassificationConflict as exc:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "email_classification_conflict",
+                    "message": str(exc),
+                    "details": {},
+                },
+                status_code=409,
             )
-            row = None if learning_result is None else learning_result.confirmed
-        else:
-            row = store().confirm_classification(classification_id, category)
         if row is None:
             return JSONResponse(
                 {
@@ -141,17 +153,30 @@ def register_email_routes(
             raise HTTPException(status_code=400, detail="invalid email category config") from exc
         try:
             actions = tuple(EmailAction(action) for action in payload.actions)
+            action_parameters = {
+                EmailAction(action): dict(parameters)
+                for action, parameters in payload.action_parameters.items()
+            }
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="actions contain an invalid value") from exc
+            raise HTTPException(
+                status_code=400,
+                detail="actions or action_parameters contain an invalid value",
+            ) from exc
         if len(actions) != len(set(actions)):
             raise HTTPException(status_code=400, detail="actions must be unique")
-        row = store().upsert_config(
-            category=email_category,
-            description=payload.description,
-            threshold=payload.threshold,
-            actions=actions,
-            action_parameters={},
-            enabled=payload.enabled,
-            config_version=payload.config_version,
-        )
+        try:
+            row = store().upsert_config(
+                category=email_category,
+                description=payload.description,
+                threshold=payload.threshold,
+                actions=actions,
+                action_parameters=action_parameters,
+                enabled=payload.enabled,
+                config_version=payload.config_version,
+            )
+        except (ValidationError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="invalid email action parameters",
+            ) from exc
         return {"ok": True, "item": row, "message": "邮件配置已保存"}
