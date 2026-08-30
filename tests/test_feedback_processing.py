@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from app.feedback_processing import (
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
     FeedbackProcessingItem,
+    FeedbackProcessingRound,
     ResolutionEvidence,
     build_feedback_start_message,
     detail_references,
@@ -217,6 +219,38 @@ def test_feedback_round_models_are_strict():
     assert FeedbackProcessingItem(feedback_key="feedback-1").current_round_id == 0
 
 
+@pytest.mark.parametrize("round_number", [0, -1])
+def test_feedback_round_model_requires_positive_round_number(round_number: int):
+    with pytest.raises(ValidationError):
+        FeedbackProcessingRound(
+            id=1,
+            feedback_key="feedback-positive-model",
+            round_number=round_number,
+            batch_id="batch-positive-model",
+            status="processing",
+        )
+
+
+@pytest.mark.parametrize("round_number", [0, -1])
+def test_feedback_round_schema_requires_positive_round_number(
+    tmp_path: Path, round_number: int
+):
+    store = AutoReplyStore(tmp_path / f"positive-round-{round_number}.sqlite3")
+    with pytest.raises(sqlite3.IntegrityError), store._connect() as db:
+        db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status
+            ) values (?, ?, ?, 'processing')
+            """,
+            (
+                f"feedback-positive-schema-{round_number}",
+                round_number,
+                f"batch-positive-schema-{round_number}",
+            ),
+        )
+
+
 def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
     tmp_path: Path,
 ):
@@ -419,6 +453,165 @@ def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
                 """
             )
         ] == source_before
+
+
+def test_feedback_round_backfill_self_heals_current_schema_and_interruption(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "self-heal-rounds.sqlite3"
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    store = AutoReplyStore(db_path)
+    store.upsert_feedback_event(
+        key="feedback-claimed",
+        feedback_token="token-claimed",
+        comment="claimed source",
+        original_text="claimed original",
+    )
+    store.upsert_feedback_event(
+        key="feedback-pending",
+        feedback_token="token-pending",
+        comment="pending source",
+        original_text="pending original",
+    )
+    claimed = store.claim_feedback_processing_items(
+        "batch-self-heal", ["feedback-claimed"]
+    )
+    assert len(claimed) == 1
+    store.associate_feedback_processing_turn(
+        "feedback-claimed",
+        workbench_task_id="task-self-heal",
+        workbench_turn_id="turn-self-heal",
+        attempt_id=31,
+        agent_run_id=41,
+    )
+    store.patch_feedback_processing_item_evidence(
+        "feedback-claimed",
+        commit_sha="c" * 40,
+        test_evidence={"pytest": {"exit_code": 0}},
+        restart_evidence={"before_pid": 301, "after_pid": 302},
+        health_evidence={"ok": True, "status_code": 200},
+        note="self-heal note",
+    )
+
+    expected_item = store.get_feedback_processing_item("feedback-claimed")
+    expected_pending = store.get_feedback_processing_item("feedback-pending")
+    expected_source = store.get_feedback_event("feedback-claimed")
+    assert expected_item is not None
+    assert expected_item.current_round_id == 0
+    assert expected_pending is not None
+    assert expected_pending.current_round_id == 0
+    assert expected_source is not None
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from feedback_processing_rounds"
+        ).fetchone()[0] == 0
+
+    # A new process sees a structurally current schema. It must still repair
+    # eligible legacy projections without forcing a schema-version downgrade.
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    repaired = AutoReplyStore(db_path)
+    repaired_item = repaired.get_feedback_processing_item("feedback-claimed")
+    repaired_pending = repaired.get_feedback_processing_item("feedback-pending")
+    repaired_source = repaired.get_feedback_event("feedback-claimed")
+    assert repaired_item is not None
+    assert repaired_pending is not None
+    assert repaired_source is not None
+    with repaired._connect() as db:
+        rows = db.execute(
+            "select * from feedback_processing_rounds order by id"
+        ).fetchall()
+        assert len(rows) == 1
+        round_row = dict(rows[0])
+        assert repaired_item.current_round_id == round_row["id"]
+        assert round_row["feedback_key"] == expected_item.feedback_key
+        assert round_row["round_number"] == 1
+        assert round_row["batch_id"] == expected_item.batch_id
+        assert round_row["status"] == expected_item.status
+        assert round_row["workbench_task_id"] == expected_item.workbench_task_id
+        assert round_row["workbench_turn_id"] == expected_item.workbench_turn_id
+        assert round_row["attempt_id"] == expected_item.attempt_id
+        assert round_row["agent_run_id"] == expected_item.agent_run_id
+        assert round_row["commit_sha"] == expected_item.commit_sha
+        assert json.loads(round_row["test_evidence_json"]) == (
+            expected_item.test_evidence
+        )
+        assert json.loads(round_row["restart_evidence_json"]) == (
+            expected_item.restart_evidence
+        )
+        assert json.loads(round_row["health_evidence_json"]) == (
+            expected_item.health_evidence
+        )
+        assert round_row["note"] == expected_item.note
+        assert round_row["started_at"] == expected_item.created_at
+        assert round_row["resolved_at"] == expected_item.resolved_at
+        assert round_row["created_at"] == expected_item.created_at
+        assert round_row["updated_at"] == expected_item.updated_at
+        assert repaired_pending == expected_pending
+        assert repaired_pending.current_round_id == 0
+        assert db.execute(
+            """
+            select count(*) from feedback_processing_rounds
+             where feedback_key='feedback-pending'
+            """
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "select count(*) from feedback_processing_transitions"
+        ).fetchone()[0] == 0
+
+        # Simulate an interrupted migration after the additive tables and
+        # pointer column exist but before the eligible round is durable.
+        db.execute(
+            "delete from feedback_processing_rounds where feedback_key=?",
+            ("feedback-claimed",),
+        )
+        db.execute(
+            """
+            update feedback_processing_items set current_round_id=0
+             where feedback_key=?
+            """,
+            ("feedback-claimed",),
+        )
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    repaired_again = AutoReplyStore(db_path)
+    repaired_again_item = repaired_again.get_feedback_processing_item(
+        "feedback-claimed"
+    )
+    assert repaired_again_item is not None
+    with repaired_again._connect() as db:
+        rows = db.execute(
+            """
+            select * from feedback_processing_rounds
+             where feedback_key='feedback-claimed'
+            """
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["round_number"] == 1
+        assert repaired_again_item.current_round_id == rows[0]["id"]
+        repaired_round_id = rows[0]["id"]
+        assert repaired_again_item.model_copy(
+            update={"current_round_id": expected_item.current_round_id}
+        ) == expected_item
+        assert repaired_again.get_feedback_event("feedback-claimed") == expected_source
+        assert db.execute(
+            "select count(*) from feedback_processing_transitions"
+        ).fetchone()[0] == 0
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    idempotent = AutoReplyStore(db_path)
+    with idempotent._connect() as db:
+        rows = db.execute(
+            """
+            select id, round_number from feedback_processing_rounds
+             where feedback_key='feedback-claimed'
+            """
+        ).fetchall()
+        assert [(row["id"], row["round_number"]) for row in rows] == [
+            (repaired_round_id, 1)
+        ]
+        assert db.execute(
+            "select count(*) from feedback_processing_transitions"
+        ).fetchone()[0] == 0
 
 
 def test_claim_associate_patch_and_resolve_feedback_batch(tmp_path: Path):

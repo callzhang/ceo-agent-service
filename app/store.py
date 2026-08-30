@@ -933,12 +933,118 @@ class AutoReplyStore:
                     return
                 self._ensure_wal_journal_mode()
                 if self._schema_is_current_after_lock_retry():
+                    self._reconcile_feedback_processing_round_backfill()
                     _INITIALIZED_STORE_PATHS.add(path_key)
                     return
                 self._initialize()
                 self.backfill_oa_audit_metadata()
                 self.set_service_state(STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION)
                 _INITIALIZED_STORE_PATHS.add(path_key)
+
+    @staticmethod
+    def _feedback_processing_round_backfill_needed(
+        db: sqlite3.Connection,
+    ) -> bool:
+        return (
+            db.execute(
+                """
+                select 1
+                  from feedback_processing_items item
+                 where item.status in ('processing', 'resolved')
+                   and (
+                       trim(item.batch_id) <> ''
+                       or trim(item.workbench_task_id) <> ''
+                       or trim(item.workbench_turn_id) <> ''
+                       or cast(item.attempt_id as integer) > 0
+                       or cast(item.agent_run_id as integer) > 0
+                       or trim(item.commit_sha) <> ''
+                       or trim(item.test_evidence_json) not in ('', '{}')
+                       or trim(item.restart_evidence_json) not in ('', '{}')
+                       or trim(item.health_evidence_json) not in ('', '{}')
+                       or trim(item.note) <> ''
+                   )
+                   and (
+                       item.current_round_id=0
+                       or not exists (
+                           select 1
+                             from feedback_processing_rounds current_round
+                            where current_round.id=item.current_round_id
+                       )
+                   )
+                 limit 1
+                """
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
+    def _backfill_feedback_processing_rounds(db: sqlite3.Connection) -> None:
+        db.execute(
+            """
+            insert or ignore into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status,
+                workbench_task_id, workbench_turn_id, attempt_id,
+                agent_run_id, commit_sha, test_evidence_json,
+                restart_evidence_json, health_evidence_json, note,
+                started_at, resolved_at, created_at, updated_at
+            )
+            select feedback_key, 1, batch_id, status,
+                   workbench_task_id, workbench_turn_id, attempt_id,
+                   agent_run_id, commit_sha, test_evidence_json,
+                   restart_evidence_json, health_evidence_json, note,
+                   created_at, resolved_at, created_at, updated_at
+              from feedback_processing_items
+             where status in ('processing', 'resolved')
+               and (
+                   trim(batch_id) <> ''
+                   or trim(workbench_task_id) <> ''
+                   or trim(workbench_turn_id) <> ''
+                   or cast(attempt_id as integer) > 0
+                   or cast(agent_run_id as integer) > 0
+                   or trim(commit_sha) <> ''
+                   or trim(test_evidence_json) not in ('', '{}')
+                   or trim(restart_evidence_json) not in ('', '{}')
+                   or trim(health_evidence_json) not in ('', '{}')
+                   or trim(note) <> ''
+               )
+            """
+        )
+        db.execute(
+            """
+            update feedback_processing_items
+               set current_round_id=(
+                   select first_round.id
+                     from feedback_processing_rounds first_round
+                    where first_round.feedback_key=
+                          feedback_processing_items.feedback_key
+                      and first_round.round_number=1
+               )
+             where (
+                       current_round_id=0
+                       or not exists (
+                           select 1
+                             from feedback_processing_rounds current_round
+                            where current_round.id=
+                                  feedback_processing_items.current_round_id
+                       )
+                   )
+               and exists (
+                   select 1
+                     from feedback_processing_rounds first_round
+                    where first_round.feedback_key=
+                          feedback_processing_items.feedback_key
+                      and first_round.round_number=1
+               )
+            """
+        )
+
+    def _reconcile_feedback_processing_round_backfill(self) -> None:
+        with self._connect() as db:
+            if not self._feedback_processing_round_backfill_needed(db):
+                return
+        with self._immediate_write_transaction() as db:
+            if self._feedback_processing_round_backfill_needed(db):
+                self._backfill_feedback_processing_rounds(db)
 
     def _ensure_wal_journal_mode(self) -> None:
         with self._connect() as db:
@@ -1186,7 +1292,7 @@ class AutoReplyStore:
                 create table if not exists feedback_processing_rounds (
                     id integer primary key autoincrement,
                     feedback_key text not null,
-                    round_number integer not null,
+                    round_number integer not null check (round_number > 0),
                     batch_id text not null default '',
                     status text not null
                         check (status in ('processing', 'resolved')),
@@ -2501,56 +2607,7 @@ class AutoReplyStore:
                     if "duplicate column name" not in str(exc):
                         raise
 
-            db.execute(
-                """
-                insert or ignore into feedback_processing_rounds (
-                    feedback_key, round_number, batch_id, status,
-                    workbench_task_id, workbench_turn_id, attempt_id,
-                    agent_run_id, commit_sha, test_evidence_json,
-                    restart_evidence_json, health_evidence_json, note,
-                    started_at, resolved_at, created_at, updated_at
-                )
-                select feedback_key, 1, batch_id, status,
-                       workbench_task_id, workbench_turn_id, attempt_id,
-                       agent_run_id, commit_sha, test_evidence_json,
-                       restart_evidence_json, health_evidence_json, note,
-                       created_at, resolved_at, created_at, updated_at
-                  from feedback_processing_items
-                 where status in ('processing', 'resolved')
-                   and (
-                       trim(batch_id) <> ''
-                       or trim(workbench_task_id) <> ''
-                       or trim(workbench_turn_id) <> ''
-                       or cast(attempt_id as integer) > 0
-                       or cast(agent_run_id as integer) > 0
-                       or trim(commit_sha) <> ''
-                       or trim(test_evidence_json) not in ('', '{}')
-                       or trim(restart_evidence_json) not in ('', '{}')
-                       or trim(health_evidence_json) not in ('', '{}')
-                       or trim(note) <> ''
-                   )
-                """
-            )
-            db.execute(
-                """
-                update feedback_processing_items
-                   set current_round_id=(
-                       select round.id
-                         from feedback_processing_rounds round
-                        where round.feedback_key=
-                              feedback_processing_items.feedback_key
-                          and round.round_number=1
-                   )
-                 where current_round_id=0
-                   and exists (
-                       select 1
-                         from feedback_processing_rounds round
-                        where round.feedback_key=
-                              feedback_processing_items.feedback_key
-                          and round.round_number=1
-                   )
-                """
-            )
+            self._backfill_feedback_processing_rounds(db)
 
             db.execute(
                 """

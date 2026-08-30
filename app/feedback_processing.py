@@ -78,7 +78,7 @@ class FeedbackProcessingRound(_StrictProcessingModel):
 
     id: int
     feedback_key: str
-    round_number: int
+    round_number: int = Field(gt=0)
     batch_id: str
     status: Literal["processing", "resolved"]
     workbench_task_id: str = ""
