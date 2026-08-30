@@ -12,9 +12,12 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from hashlib import sha256
 from html.parser import HTMLParser
+import ipaddress
+import json
 import re
+import socket
 from typing import Callable, Literal, Mapping, Protocol
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 from app.email_store import (
     EmailStore,
@@ -62,6 +65,7 @@ class UnsubscribeEntrySource(str, Enum):
 
 
 class UnsubscribeOperationKind(str, Enum):
+    POST_ONE_CLICK = "post_one_click"
     OPEN_ENTRY = "open_entry"
     FOLLOW_REDIRECT = "follow_redirect"
     SUBMIT_FORM = "submit_form"
@@ -86,6 +90,187 @@ class UnsubscribeProviderAuthError(RuntimeError):
     """The provider could not authenticate a read or write operation."""
 
 
+def _canonical_origin(value: str) -> str:
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme.casefold() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("browser network policy origin is invalid")
+    scheme = parsed.scheme.casefold()
+    try:
+        port = parsed.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        raise ValueError("browser network policy origin is invalid") from None
+    host = parsed.hostname.casefold().rstrip(".")
+    rendered_host = f"[{host}]" if ":" in host else host
+    return f"{scheme}://{rendered_host}:{port}"
+
+
+def _default_resolve_host(host: str, port: int) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                str(item[4][0])
+                for item in socket.getaddrinfo(
+                    host,
+                    port,
+                    type=socket.SOCK_STREAM,
+                )
+            }
+        )
+    )
+
+
+def _is_forbidden_production_address(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return True
+    return not address.is_global
+
+
+@dataclass(frozen=True)
+class BrowserNetworkPolicy:
+    """Fail-closed exact-origin policy for every browser network request."""
+
+    allowed_origins: frozenset[str]
+    allow_loopback_for_tests: bool = False
+    resolver: Callable[[str, int], tuple[str, ...]] = field(
+        default=_default_resolve_host,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        if not self.allowed_origins:
+            raise ValueError("browser network policy requires allowed origins")
+        canonical: set[str] = set()
+        for value in self.allowed_origins:
+            origin = _canonical_origin(value)
+            parsed = urlsplit(origin)
+            host = parsed.hostname or ""
+            if host in {"metadata.google.internal", "metadata.internal"} or (
+                not self.allow_loopback_for_tests
+                and (host == "localhost" or host.endswith(".localhost"))
+            ):
+                raise ValueError("browser network policy origin is rejected")
+            try:
+                literal = ipaddress.ip_address(host)
+            except ValueError:
+                literal = None
+            if literal is not None and (
+                not self.allow_loopback_for_tests or not literal.is_loopback
+            ) and _is_forbidden_production_address(str(literal)):
+                raise ValueError("browser network policy origin is rejected")
+            if not self.allow_loopback_for_tests and parsed.scheme != "https":
+                raise ValueError("browser network policy origin is rejected")
+            canonical.add(origin)
+        object.__setattr__(self, "allowed_origins", frozenset(canonical))
+
+    def validate_url(self, value: str) -> str:
+        try:
+            parsed = urlsplit(value)
+            origin = _canonical_origin(
+                f"{parsed.scheme}://{parsed.netloc}"
+            )
+            if origin not in self.allowed_origins:
+                raise ValueError
+            host = parsed.hostname or ""
+            port = parsed.port or (443 if parsed.scheme.casefold() == "https" else 80)
+            if host in {"metadata.google.internal", "metadata.internal"} or (
+                not self.allow_loopback_for_tests
+                and (host == "localhost" or host.endswith(".localhost"))
+            ):
+                raise ValueError
+            addresses = self.resolver(host, port)
+            if not addresses:
+                raise ValueError
+            for address in addresses:
+                parsed_address = ipaddress.ip_address(address)
+                if parsed_address.is_loopback and self.allow_loopback_for_tests:
+                    continue
+                if _is_forbidden_production_address(address):
+                    raise ValueError
+        except Exception:
+            raise UnsubscribeBrowserError("browser network request rejected") from None
+        return value
+
+
+def unsubscribe_control_reference(
+    *,
+    tag: str,
+    label: str,
+    method: str = "",
+    ordinal: int = 0,
+) -> str:
+    """Return a stable opaque control reference from bounded DOM semantics."""
+
+    if ordinal < 0:
+        raise ValueError("control ordinal must be non-negative")
+    normalized = {
+        "tag": " ".join(tag.casefold().split()),
+        "label": " ".join(label.casefold().split())[:512],
+        "method": " ".join(method.casefold().split()),
+        "ordinal": ordinal,
+    }
+    if not normalized["tag"] or not normalized["label"]:
+        raise ValueError("control semantics must be non-empty")
+    canonical = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+    return "unsubscribe-control:" + sha256(canonical.encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class ConfirmationNavigationTarget:
+    private_url: str = field(repr=False)
+    target_reference: str
+    confirmation_message_identity: str
+    effect_digest: str
+
+    def __post_init__(self) -> None:
+        _assert_strict_opaque_reference(
+            self.target_reference,
+            field_name="target_reference",
+        )
+        _assert_opaque_reference(
+            self.confirmation_message_identity,
+            field_name="confirmation_message_identity",
+        )
+        if re.fullmatch(r"[0-9a-f]{64}", self.effect_digest) is None:
+            raise ValueError("effect_digest must be canonical sha256 hex")
+
+
+@dataclass(frozen=True)
+class UnsubscribeAuthenticationEvidence:
+    """Redacted authentication facts proving RFC 8058 header coverage."""
+
+    dkim_covers_list_unsubscribe: bool
+    dkim_covers_list_unsubscribe_post: bool
+    evidence_reference: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.dkim_covers_list_unsubscribe, bool) or not isinstance(
+            self.dkim_covers_list_unsubscribe_post, bool
+        ):
+            raise TypeError("DKIM coverage facts must be boolean")
+        _assert_strict_opaque_reference(
+            self.evidence_reference,
+            field_name="evidence_reference",
+        )
+
+    @property
+    def one_click_verified(self) -> bool:
+        return (
+            self.dkim_covers_list_unsubscribe
+            and self.dkim_covers_list_unsubscribe_post
+        )
+
+
 def _assert_opaque_reference(value: str, *, field_name: str) -> None:
     if (
         not isinstance(value, str)
@@ -98,10 +283,10 @@ def _assert_opaque_reference(value: str, *, field_name: str) -> None:
         raise ValueError(f"{field_name} must be an opaque redacted reference")
     try:
         assert_no_credentials(value)
-    except ValueError as exc:
+    except ValueError:
         raise ValueError(
             f"{field_name} must be an opaque redacted reference"
-        ) from exc
+        ) from None
 
 
 def _assert_strict_opaque_reference(value: str, *, field_name: str) -> None:
@@ -122,8 +307,10 @@ def _assert_strict_opaque_reference(value: str, *, field_name: str) -> None:
         raise ValueError(f"{field_name} must be an opaque redacted reference")
     try:
         assert_no_credentials(value)
-    except ValueError as exc:
-        raise ValueError(f"{field_name} must be an opaque redacted reference") from exc
+    except ValueError:
+        raise ValueError(
+            f"{field_name} must be an opaque redacted reference"
+        ) from None
 
 
 def _is_private_https_url(value: str) -> bool:
@@ -397,6 +584,32 @@ class UnsubscribeBrowser(Protocol):
     ) -> UnsubscribeObservation: ...
 
 
+@dataclass(frozen=True)
+class UnsubscribeDiscoveredControl:
+    reference: str
+    kind: Literal["form", "link", "button"]
+    intent: Literal["continue", "unsubscribe", "confirm"]
+
+
+@dataclass(frozen=True)
+class UnsubscribePageDiscovery:
+    state: UnsubscribePageState
+    state_reference: str
+    controls: tuple[UnsubscribeDiscoveredControl, ...]
+
+
+def confirmation_target_reference(
+    confirmation_message_identity: str,
+) -> str:
+    _assert_opaque_reference(
+        confirmation_message_identity,
+        field_name="confirmation_message_identity",
+    )
+    return "confirmation-target:" + sha256(
+        confirmation_message_identity.encode()
+    ).hexdigest()
+
+
 class PlaywrightUnsubscribeBrowser:
     """Bounded sync-Playwright adapter; Playwright remains an optional dependency."""
 
@@ -405,36 +618,231 @@ class PlaywrightUnsubscribeBrowser:
         page: object,
         *,
         timeout_ms: int = 5_000,
-        allowed_hosts: frozenset[str] | None = None,
+        network_policy: BrowserNetworkPolicy | None = None,
         confirmation_receipt_resolver: Callable[
             [EmailUnsubscribeEffect], UnsubscribeTerminalReceipt | None
         ]
         | None = None,
-        confirmation_url_resolver: Callable[[EmailUnsubscribeEffect], str | None]
+        confirmation_target_resolver: Callable[
+            [EmailUnsubscribeEffect], ConfirmationNavigationTarget | None
+        ]
         | None = None,
     ) -> None:
         if timeout_ms <= 0:
             raise ValueError("timeout_ms must be positive")
+        if network_policy is None:
+            raise ValueError("browser network policy is required")
         self.page = page
         self.timeout_ms = timeout_ms
-        self.allowed_hosts = allowed_hosts
+        self.network_policy = network_policy
         self.confirmation_receipt_resolver = confirmation_receipt_resolver
-        self.confirmation_url_resolver = confirmation_url_resolver
+        self.confirmation_target_resolver = confirmation_target_resolver
+        self._blocked_request = False
+        self._blocked_popup = False
+        self._blocked_download = False
+        self._context = self.page.context
+        if getattr(self._context, "service_workers", []):
+            raise ValueError("browser network policy requires a clean context")
+        self._context.set_default_timeout(timeout_ms)
+        self._context.set_default_navigation_timeout(timeout_ms)
+        self._context.route("**/*", self._guard_request)
+        self.page.route("**/*", self._guard_request)
+        self._context.on("page", self._reject_new_page)
+        self.page.on("download", self._reject_download)
+        self.page.add_init_script(
+            """
+            (() => {
+              window.open = () => null;
+              if (navigator.serviceWorker) {
+                navigator.serviceWorker.register = () =>
+                  Promise.reject(new Error('service worker rejected'));
+              }
+              const nativeSubmit = HTMLFormElement.prototype.submit;
+              HTMLFormElement.prototype.submit = function() {
+                if (this.target === '_blank') throw new Error('popup rejected');
+                return nativeSubmit.call(this);
+              };
+              const nativeRequestSubmit = HTMLFormElement.prototype.requestSubmit;
+              HTMLFormElement.prototype.requestSubmit = function(submitter) {
+                if (this.target === '_blank') throw new Error('popup rejected');
+                return nativeRequestSubmit.call(this, submitter);
+              };
+              document.addEventListener('click', event => {
+                const link = event.target && event.target.closest
+                  ? event.target.closest('a') : null;
+                if (link && (link.hasAttribute('download') || link.target === '_blank')) {
+                  event.preventDefault();
+                  event.stopImmediatePropagation();
+                }
+              }, true);
+            })();
+            """
+        )
+
+    def _guard_request(self, route: object, request: object) -> None:
+        try:
+            self.network_policy.validate_url(request.url)
+            response = route.fetch(max_redirects=0, timeout=self.timeout_ms)
+            self.network_policy.validate_url(response.url)
+            location = response.headers.get("location")
+            if location:
+                self.network_policy.validate_url(urljoin(request.url, location))
+        except Exception:
+            self._blocked_request = True
+            route.abort()
+            return
+        route.fulfill(response=response)
+
+    def _reject_new_page(self, page: object) -> None:
+        if page is self.page:
+            return
+        self._blocked_popup = True
+        try:
+            page.close()
+        except Exception:
+            pass
+
+    def _reject_download(self, download: object) -> None:
+        self._blocked_download = True
+        try:
+            download.cancel()
+        except Exception:
+            pass
+
+    def _raise_if_blocked(self) -> None:
+        if self._blocked_request:
+            raise UnsubscribeBrowserError("browser network request rejected")
+        if self._blocked_popup:
+            raise UnsubscribeBrowserError("browser popup rejected")
+        if self._blocked_download:
+            raise UnsubscribeBrowserError("browser download rejected")
 
     def _validate_navigation_target(self, value: str) -> str:
-        parsed = urlsplit(value)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or (
-                self.allowed_hosts is not None
-                and parsed.hostname not in self.allowed_hosts
+        return self.network_policy.validate_url(value)
+
+    def _visible_text(self) -> str:
+        text = self.page.locator("body").inner_text(timeout=self.timeout_ms).strip()
+        if not text:
+            raise UnsubscribeBrowserError("unsubscribe page has no visible state")
+        return text[:16_384]
+
+    def _ordinary_controls(self) -> tuple[tuple[UnsubscribeDiscoveredControl, object], ...]:
+        elements = self.page.locator("form, a[href], button, input[type=submit]")
+        count = min(elements.count(), 64)
+        controls: list[tuple[UnsubscribeDiscoveredControl, object]] = []
+        for index in range(count):
+            element = elements.nth(index)
+            if not element.is_visible():
+                continue
+            tag = str(element.evaluate("node => node.tagName")).casefold()
+            if tag in {"button", "input"} and element.evaluate(
+                "node => Boolean(node.closest('form'))"
+            ):
+                continue
+            label = (
+                element.inner_text(timeout=self.timeout_ms)
+                if tag != "input"
+                else element.get_attribute("value") or ""
+            ).strip()
+            if not label:
+                label = element.get_attribute("aria-label") or ""
+            if not label:
+                continue
+            normalized_label = " ".join(label.casefold().split())
+            if any(marker in normalized_label for marker in ("unsubscribe", "退订")):
+                intent: Literal["continue", "unsubscribe", "confirm"] = "unsubscribe"
+            elif any(marker in normalized_label for marker in ("confirm", "确认")):
+                intent = "confirm"
+            elif any(marker in normalized_label for marker in ("continue", "next", "继续")):
+                intent = "continue"
+            else:
+                continue
+            method = (element.get_attribute("method") or "").casefold()
+            kind: Literal["form", "link", "button"] = (
+                "form" if tag == "form" else "link" if tag == "a" else "button"
+            )
+            reference = element.get_attribute("data-operation-reference") or (
+                unsubscribe_control_reference(
+                    tag=kind,
+                    label=label,
+                    method=method,
+                    ordinal=len(controls),
+                )
+            )
+            _assert_strict_opaque_reference(reference, field_name="control_reference")
+            controls.append(
+                (
+                    UnsubscribeDiscoveredControl(
+                        reference=reference,
+                        kind=kind,
+                        intent=intent,
+                    ),
+                    element,
+                )
+            )
+        return tuple(controls)
+
+    @staticmethod
+    def _state_from_text(text: str) -> UnsubscribePageState | None:
+        normalized = " ".join(text.casefold().split())
+        if any(marker in normalized for marker in ("captcha", "验证码")):
+            return UnsubscribePageState.CAPTCHA
+        if any(
+            marker in normalized
+            for marker in ("payment", "credit card", "付款", "付费")
+        ):
+            return UnsubscribePageState.PAYMENT
+        if any(marker in normalized for marker in ("sign in", "log in", "login", "password", "登录")):
+            return UnsubscribePageState.LOGIN_REQUIRED
+        if any(marker in normalized for marker in ("already unsubscribed", "no longer subscribed", "已经退订")):
+            return UnsubscribePageState.ALREADY_UNSUBSCRIBED
+        if any(
+            marker in normalized
+            for marker in (
+                "successfully unsubscribed",
+                "you are unsubscribed",
+                "unsubscribe complete",
+                "unsubscribe confirmation complete",
+                "subscription cancelled",
+                "退订成功",
             )
         ):
-            raise UnsubscribeBrowserError("browser navigation target rejected")
-        return value
+            return UnsubscribePageState.DONE
+        return None
+
+    def discover_current_page(
+        self,
+        effect: EmailUnsubscribeEffect,
+    ) -> UnsubscribePageDiscovery:
+        """Read only the already-loaded unsubscribe page and expose opaque controls."""
+
+        self._raise_if_blocked()
+        current_url = getattr(self.page, "url")
+        if current_url == "about:blank":
+            return UnsubscribePageDiscovery(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-not-opened",
+                controls=(),
+            )
+        self._validate_navigation_target(current_url)
+        text = self._visible_text()
+        state = self._state_from_text(text)
+        controls = tuple(item[0] for item in self._ordinary_controls())
+        if state is None:
+            state = UnsubscribePageState.ACTION_REQUIRED
+            if not controls and not any(
+                operation.kind is UnsubscribeOperationKind.CONFIRM_EMAIL
+                for operation in effect.operations
+            ):
+                raise UnsubscribeBrowserError("unsubscribe page state is unknown")
+        state_reference = "state:" + sha256(
+            f"{state.value}\n{' '.join(text.casefold().split())}".encode()
+        ).hexdigest()
+        return UnsubscribePageDiscovery(
+            state=state,
+            state_reference=state_reference,
+            controls=controls,
+        )
 
     def find_confirmation_receipt(
         self,
@@ -446,17 +854,16 @@ class PlaywrightUnsubscribeBrowser:
             return self.confirmation_receipt_resolver(effect)
         except UnsubscribeProviderAuthError:
             raise
-        except Exception as exc:
+        except Exception:
             raise UnsubscribeBrowserError(
                 "confirmation receipt readback failed"
-            ) from exc
+            ) from None
 
     def inspect_current_state(
         self,
         effect: EmailUnsubscribeEffect,
         private_url: str,
     ) -> UnsubscribeObservation:
-        del private_url
         try:
             if getattr(self.page, "url") == "about:blank":
                 if not effect.operations:
@@ -468,47 +875,52 @@ class PlaywrightUnsubscribeBrowser:
                     state_reference="state-not-opened",
                     next_operation_reference=effect.operations[0].operation_reference,
                 )
-            root = self.page.locator("[data-unsubscribe-state]")
-            root.wait_for(state="visible", timeout=self.timeout_ms)
-            visible_text = root.inner_text(timeout=self.timeout_ms).strip()
-            if not visible_text:
-                raise UnsubscribeBrowserError("unsubscribe page has no visible state")
-            state_value = root.get_attribute("data-unsubscribe-state")
-            state_reference = root.get_attribute("data-state-reference")
-            if not state_value or not state_reference:
-                raise UnsubscribeBrowserError("unsubscribe page state is incomplete")
-            state = UnsubscribePageState(state_value)
+            del private_url
+            discovery = self.discover_current_page(effect)
+            state = discovery.state
+            state_reference = discovery.state_reference
             if state is UnsubscribePageState.ACTION_REQUIRED:
-                next_reference = root.get_attribute("data-next-operation-reference")
-                if not next_reference:
-                    raise UnsubscribeBrowserError(
-                        "unsubscribe page has no accepted next operation"
+                if discovery.controls:
+                    target_reference = discovery.controls[0].reference
+                    operation = next(
+                        (
+                            item
+                            for item in effect.operations
+                            if item.target_reference == target_reference
+                        ),
+                        None,
                     )
+                else:
+                    operation = next(
+                        (
+                            item
+                            for item in effect.operations
+                            if item.kind is UnsubscribeOperationKind.CONFIRM_EMAIL
+                        ),
+                        None,
+                    )
+                if operation is None:
+                    raise UnsubscribeBrowserError("unsubscribe page has no accepted next operation")
                 return UnsubscribeObservation(
                     state=state,
                     state_reference=state_reference,
-                    next_operation_reference=next_reference,
+                    next_operation_reference=operation.operation_reference,
                 )
-            receipt_id = root.get_attribute("data-receipt-id")
-            evidence = root.get_attribute("data-evidence")
-            if not receipt_id or not evidence:
-                raise UnsubscribeBrowserError(
-                    "unsubscribe terminal page has no receipt"
-                )
+            receipt_id = f"unsubscribe-receipt:{effect.effect_digest[:24]}:{state.value}"
             return UnsubscribeObservation(
                 state=state,
                 state_reference=state_reference,
                 receipt=UnsubscribeTerminalReceipt(
                     receipt_id=receipt_id,
-                    evidence=evidence,
+                    evidence="terminal-page",
                     entry_reference=effect.entry_reference,
                     effect_digest=effect.effect_digest,
                 ),
             )
         except UnsubscribeBrowserError:
             raise
-        except Exception as exc:
-            raise UnsubscribeBrowserError("browser state readback failed") from exc
+        except Exception:
+            raise UnsubscribeBrowserError("browser state readback failed") from None
 
     def execute_operation(
         self,
@@ -516,22 +928,61 @@ class PlaywrightUnsubscribeBrowser:
         private_url: str,
         operation: UnsubscribeOperation,
     ) -> UnsubscribeObservation:
-        selector = f'[data-operation-reference="{operation.target_reference}"]'
         try:
-            if operation.kind in {
-                UnsubscribeOperationKind.OPEN_ENTRY,
-                UnsubscribeOperationKind.FOLLOW_REDIRECT,
-            }:
+            if operation.kind is UnsubscribeOperationKind.POST_ONE_CLICK:
+                self._validate_navigation_target(private_url)
+                isolated = self._context.browser.new_context(accept_downloads=False)
+                try:
+                    response = isolated.request.post(
+                        private_url,
+                        data="List-Unsubscribe=One-Click",
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        max_redirects=0,
+                        timeout=self.timeout_ms,
+                    )
+                    self._validate_navigation_target(response.url)
+                    if response.status < 200 or response.status >= 300:
+                        raise UnsubscribeBrowserError("one-click provider response rejected")
+                    visible = response.text()[:16_384]
+                finally:
+                    isolated.close()
+                state = self._state_from_text(visible)
+                if state not in {
+                    UnsubscribePageState.DONE,
+                    UnsubscribePageState.ALREADY_UNSUBSCRIBED,
+                }:
+                    raise UnsubscribeBrowserError("one-click outcome is unverified")
+                return UnsubscribeObservation(
+                    state=state,
+                    state_reference="state-one-click-terminal",
+                    receipt=UnsubscribeTerminalReceipt(
+                        receipt_id=f"unsubscribe-receipt:{effect.effect_digest[:24]}:one-click",
+                        evidence="one-click-provider",
+                        entry_reference=effect.entry_reference,
+                        effect_digest=effect.effect_digest,
+                    ),
+                )
+            if operation.kind is UnsubscribeOperationKind.OPEN_ENTRY:
                 self.page.goto(
                     self._validate_navigation_target(private_url),
                     wait_until="domcontentloaded",
                     timeout=self.timeout_ms,
                 )
+                self._raise_if_blocked()
+                self._validate_navigation_target(getattr(self.page, "url"))
+            elif operation.kind is UnsubscribeOperationKind.FOLLOW_REDIRECT:
+                self._raise_if_blocked()
+                self._validate_navigation_target(getattr(self.page, "url"))
             elif operation.kind is UnsubscribeOperationKind.SUBMIT_FORM:
-                control = self.page.locator(selector)
-                control.wait_for(state="visible", timeout=self.timeout_ms)
-                tag_name = control.evaluate("element => element.tagName")
-                if str(tag_name).casefold() == "form":
+                control = next(
+                    (element for discovered, element in self._ordinary_controls() if discovered.reference == operation.target_reference),
+                    None,
+                )
+                if control is None:
+                    raise UnsubscribeBrowserError("accepted browser control is unavailable")
+                if control.get_attribute("target") == "_blank" or control.get_attribute("download") is not None:
+                    raise UnsubscribeBrowserError("browser popup or download rejected")
+                if str(control.evaluate("element => element.tagName")).casefold() == "form":
                     control.locator("button[type=submit]").click(
                         timeout=self.timeout_ms
                     )
@@ -541,36 +992,73 @@ class PlaywrightUnsubscribeBrowser:
                     "domcontentloaded",
                     timeout=self.timeout_ms,
                 )
+                self._raise_if_blocked()
             elif operation.kind is UnsubscribeOperationKind.CLICK_CONFIRMATION:
-                control = self.page.locator(selector)
-                control.wait_for(state="visible", timeout=self.timeout_ms)
+                control = next(
+                    (element for discovered, element in self._ordinary_controls() if discovered.reference == operation.target_reference),
+                    None,
+                )
+                if control is None:
+                    raise UnsubscribeBrowserError("accepted browser control is unavailable")
+                if control.get_attribute("target") == "_blank" or control.get_attribute("download") is not None:
+                    raise UnsubscribeBrowserError("browser popup or download rejected")
                 control.click(timeout=self.timeout_ms)
                 self.page.wait_for_load_state(
                     "domcontentloaded",
                     timeout=self.timeout_ms,
                 )
+                self._raise_if_blocked()
             elif operation.kind is UnsubscribeOperationKind.CONFIRM_EMAIL:
-                if self.confirmation_url_resolver is None:
+                if self.confirmation_target_resolver is None:
                     raise UnsubscribeProviderAuthError(
                         "confirmation mailbox provider is unavailable"
                     )
-                confirmation_url = self.confirmation_url_resolver(effect)
-                if not confirmation_url:
+                target = self.confirmation_target_resolver(effect)
+                if target is None:
                     raise UnsubscribeBrowserError(
                         "confirmation email has no accepted entry"
                     )
+                expected_reference = confirmation_target_reference(
+                    target.confirmation_message_identity,
+                )
+                if (
+                    target.effect_digest != effect.effect_digest
+                    or target.target_reference != operation.target_reference
+                    or target.target_reference != expected_reference
+                ):
+                    raise UnsubscribeBrowserError("confirmation target binding rejected")
                 self.page.goto(
-                    self._validate_navigation_target(confirmation_url),
+                    self._validate_navigation_target(target.private_url),
                     wait_until="domcontentloaded",
                     timeout=self.timeout_ms,
                 )
+                self._raise_if_blocked()
             else:
                 raise UnsubscribeBrowserError("browser operation kind rejected")
-            return self.inspect_current_state(effect, private_url)
+            observation = self.inspect_current_state(effect, private_url)
+            if (
+                operation.kind is UnsubscribeOperationKind.CONFIRM_EMAIL
+                and observation.receipt is not None
+            ):
+                target = self.confirmation_target_resolver(effect)
+                assert target is not None
+                observation = UnsubscribeObservation(
+                    state=observation.state,
+                    state_reference=observation.state_reference,
+                    receipt=UnsubscribeTerminalReceipt(
+                        receipt_id=observation.receipt.receipt_id,
+                        evidence="confirmation-mail:" + sha256(
+                            target.confirmation_message_identity.encode()
+                        ).hexdigest(),
+                        entry_reference=effect.entry_reference,
+                        effect_digest=effect.effect_digest,
+                    ),
+                )
+            return observation
         except (UnsubscribeBrowserError, UnsubscribeProviderAuthError):
             raise
-        except Exception as exc:
-            raise UnsubscribeBrowserError("browser operation failed") from exc
+        except Exception:
+            raise UnsubscribeBrowserError("browser operation failed") from None
 
 
 def _header_values(value: str) -> tuple[str, ...]:
@@ -651,6 +1139,7 @@ def extract_unsubscribe_entries(
     list_unsubscribe_post: str = "",
     body_text: str = "",
     body_html: str = "",
+    authentication_evidence: UnsubscribeAuthenticationEvidence | None = None,
 ) -> tuple[UnsubscribeEntry, ...]:
     """Extract standard and explicit body entries, retaining URLs in memory only."""
 
@@ -658,6 +1147,8 @@ def extract_unsubscribe_entries(
     one_click = (
         "".join(list_unsubscribe_post.casefold().split())
         == "list-unsubscribe=one-click"
+        and authentication_evidence is not None
+        and authentication_evidence.one_click_verified
     )
     for value in _header_values(list_unsubscribe):
         if _is_private_https_url(value):
@@ -1048,18 +1539,19 @@ class UnsubscribeExecutor:
                 error_code="email_unsubscribe_operation_mismatch",
             )
 
+        if not self._claim_write(effect):
+            return _result(
+                UnsubscribeOutcome.FAILED_BROWSER,
+                journal,
+                error_code="email_unsubscribe_authorization_stale",
+            )
+
         for operation in effect.operations[resume_index:]:
             if observation.next_operation_reference != operation.operation_reference:
                 return _result(
                     UnsubscribeOutcome.FAILED_BROWSER,
                     journal,
                     error_code="email_unsubscribe_operation_mismatch",
-                )
-            if not self._claim_write(effect):
-                return _result(
-                    UnsubscribeOutcome.FAILED_BROWSER,
-                    journal,
-                    error_code="email_unsubscribe_authorization_stale",
                 )
             if reconcile_step is not None:
                 try:

@@ -82,11 +82,31 @@ runtime's opaque entry and control references. Audit Agent B must review those
 exact operations before any external write; neither agent may replace them with
 an unreviewed navigation, form submission, or confirmation click.
 
+Treat RFC one-click as authenticated one-click only when typed provider evidence
+confirms that valid DKIM covers both `List-Unsubscribe` and
+`List-Unsubscribe-Post`. Without that evidence, downgrade the HTTPS entry to an
+ordinary audited browser flow. A verified one-click operation is an isolated
+HTTPS POST with the exact RFC body and no mailbox browser cookies or credentials;
+it is never a GET.
+
+Browser execution is restricted to the exact pre-authorized origins and opaque
+controls supplied for this effect. Every redirect, form action, frame,
+subresource, fetch, confirmation navigation, and resolved URL must remain in
+that allowlist. Popup and download flows are rejected. The read-only discovery
+interface may describe the already-loaded unsubscribe page and return opaque
+control references; it does not authorize arbitrary browsing or attachment
+access.
+
 On every initial run and retry, reconcile the current page, provider state, safe
 prior receipt, and confirmation mail before another write. A verified completed
 or already-unsubscribed state ends the flow without repeating an operation. Do
 not treat a click alone as success: require a terminal page, provider response,
 or confirmation-mail receipt.
+
+After a terminated in-flight claim, an uncertain effect is reconciliation-only.
+A blank or missing browser page and an earlier journal step do not prove that a
+write was not dispatched. Without exact effect-bound terminal evidence, report
+the fixed unresolved technical failure and do not replay an operation.
 
 Never place a full unsubscribe URL or query token in the proposal, step journal,
 History, status, or error. The private URL may appear only in the restricted

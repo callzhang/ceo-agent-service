@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 import json
 from pathlib import PurePosixPath, PureWindowsPath
@@ -25,7 +25,9 @@ from app.email_store import EmailStore
 from app.email_reply_delivery import EmailReplyEffect, email_action_identity
 from app.email_unsubscribe import (
     EmailUnsubscribeEffect,
+    UnsubscribeAuthenticationEvidence,
     UnsubscribeOperation,
+    extract_unsubscribe_entries,
 )
 from app.leak_check import (
     assert_no_credentials,
@@ -267,6 +269,11 @@ class EmailAgentTaskInput:
     thread_messages: tuple[EmailThreadMessage, ...] = ()
     attachments: tuple[EmailAttachmentMetadata, ...] = ()
     prior_receipts: tuple[PriorReceipt, ...] = ()
+    list_unsubscribe: str = field(default="", repr=False)
+    list_unsubscribe_post: str = field(default="", repr=False)
+    body_text: str = field(default="", repr=False)
+    body_html: str = field(default="", repr=False)
+    unsubscribe_authentication: UnsubscribeAuthenticationEvidence | None = None
 
     def __post_init__(self) -> None:
         if not self.stable_message_identity.strip():
@@ -285,6 +292,13 @@ class EmailAgentTaskInput:
             raise TypeError("attachments must contain EmailAttachmentMetadata")
         if any(not isinstance(item, PriorReceipt) for item in self.prior_receipts):
             raise TypeError("prior_receipts must contain PriorReceipt")
+        if self.unsubscribe_authentication is not None and not isinstance(
+            self.unsubscribe_authentication,
+            UnsubscribeAuthenticationEvidence,
+        ):
+            raise TypeError(
+                "unsubscribe_authentication must be UnsubscribeAuthenticationEvidence"
+            )
 
 
 @dataclass(frozen=True)
@@ -423,6 +437,23 @@ def accepted_email_unsubscribe_effect(
     ):
         raise ValueError("accepted unsubscribe target does not match its email task")
 
+    entry_reference = accepted_action.target.get("entry_reference")
+    projected_entries = metadata.get("unsubscribe_entries")
+    if not isinstance(projected_entries, list):
+        raise ValueError("accepted unsubscribe proposal is invalid")
+    projected_entry = next(
+        (
+            item
+            for item in projected_entries
+            if isinstance(item, Mapping)
+            and set(item) == {"source", "reference", "priority"}
+            and item.get("reference") == entry_reference
+        ),
+        None,
+    )
+    if projected_entry is None:
+        raise ValueError("accepted unsubscribe proposal is invalid")
+
     def required_text(source: Mapping[str, object], name: str) -> str:
         value = source.get(name)
         if not isinstance(value, str) or not value.strip():
@@ -445,6 +476,23 @@ def accepted_email_unsubscribe_effect(
             for item in operations_value
             if isinstance(item, Mapping)
         )
+        if any(
+            operation.kind.value in {"open_entry", "post_one_click"}
+            and operation.target_reference != entry_reference
+            for operation in operations
+        ):
+            raise ValueError("accepted unsubscribe entry operation is invalid")
+        if any(
+            operation.kind.value == "post_one_click"
+            for operation in operations
+        ):
+            authentication = metadata.get("unsubscribe_authentication")
+            if (
+                projected_entry.get("source") != "header_one_click_https"
+                or not isinstance(authentication, Mapping)
+                or authentication.get("one_click_verified") is not True
+            ):
+                raise ValueError("accepted one-click unsubscribe is not authenticated")
         return EmailUnsubscribeEffect(
             action_identity=required_text(metadata, "action_identity"),
             action_plan_id=required_text(metadata, "action_plan_id"),
@@ -597,6 +645,24 @@ class EmailAgentTaskAdapter:
             "config_version": action_plan.config_version,
             "action_parameters": parameters,
         }
+        if action_type is EmailAction.UNSUBSCRIBE:
+            entries = extract_unsubscribe_entries(
+                list_unsubscribe=task_input.list_unsubscribe,
+                list_unsubscribe_post=task_input.list_unsubscribe_post,
+                body_text=task_input.body_text,
+                body_html=task_input.body_html,
+                authentication_evidence=task_input.unsubscribe_authentication,
+            )
+            payload["unsubscribe_entries"] = [entry.redacted for entry in entries]
+            evidence = task_input.unsubscribe_authentication
+            payload["unsubscribe_authentication"] = (
+                None
+                if evidence is None
+                else {
+                    "evidence_reference": evidence.evidence_reference,
+                    "one_click_verified": evidence.one_click_verified,
+                }
+            )
         _assert_safe_email_metadata(payload)
         return payload
 

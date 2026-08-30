@@ -4794,6 +4794,81 @@ def test_uncertain_unsubscribe_claim_cannot_be_reacquired_for_blind_write(
     assert persisted["lease_token"] == _UNSUBSCRIBE_OWNER_A["lease_token"]
 
 
+def test_dispatching_unsubscribe_claim_is_not_reacquired_by_same_owner(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "unsubscribe-same-owner.sqlite3")
+    authorization = _unsubscribe_authorization(store)
+
+    first = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    second = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+
+    assert first is not None and first["acquired"] is True
+    assert second is not None and second["acquired"] is False
+    assert second["status"] == "dispatching"
+
+
+def test_no_claim_terminal_rejects_forged_unsubscribe_action_identity(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "unsubscribe-forged-terminal.sqlite3")
+    authorization = _unsubscribe_authorization(store)
+    forged = {**authorization, "action_identity": "email-action:forged"}
+    forged["effect_digest"] = email_unsubscribe_effect_digest(
+        **{key: value for key, value in forged.items() if key != "effect_digest"}
+    )
+
+    with pytest.raises(EmailUnsubscribeReceiptConflict, match="identity"):
+        store.persist_email_unsubscribe_terminal(
+            **forged,
+            outcome="skipped_no_reliable_entry",
+            receipt_id="unsubscribe-receipt:forged",
+            evidence="entry-selection",
+            final_step=None,
+            claim_owner=None,
+        )
+
+
+def test_startup_rejects_forged_durable_unsubscribe_action_identity(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "unsubscribe-forged-startup.sqlite3"
+    store = EmailStore(database)
+    authorization = _unsubscribe_authorization(store)
+    claim = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    assert claim is not None and claim["acquired"] is True
+    forged_identity = "email-action:forged"
+    forged_digest = email_unsubscribe_effect_digest(
+        **{
+            **{
+                key: value
+                for key, value in authorization.items()
+                if key != "effect_digest"
+            },
+            "action_identity": forged_identity,
+        }
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute(
+            "update email_unsubscribe_claims "
+            "set action_identity=?, effect_digest=?",
+            (forged_identity, forged_digest),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="ActionPlan"):
+        EmailStore(database)
+
+
 def test_unsubscribe_receipt_is_exactly_bound_and_terminal_write_is_atomic(
     tmp_path: Path,
 ) -> None:

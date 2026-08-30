@@ -20,6 +20,8 @@ from app.email_classifier_contracts import (
 )
 from app.email_store import EmailStore, email_action_identity
 from app.email_unsubscribe import (
+    BrowserNetworkPolicy,
+    ConfirmationNavigationTarget,
     EmailUnsubscribeEffect,
     PlaywrightUnsubscribeBrowser,
     UnsubscribeEntry,
@@ -28,7 +30,9 @@ from app.email_unsubscribe import (
     UnsubscribeOperation,
     UnsubscribeOperationKind,
     UnsubscribeOutcome,
+    confirmation_target_reference,
     unsubscribe_entry_reference,
+    unsubscribe_control_reference,
 )
 
 
@@ -60,28 +64,18 @@ def _page(
     evidence: str = "terminal_page",
     content: str = "",
 ) -> bytes:
-    attributes = [
-        f'data-unsubscribe-state="{state}"',
-        f'data-state-reference="state-{state}"',
-    ]
-    if next_step:
-        attributes.append(f'data-next-operation-reference="{next_step}"')
-    if receipt:
-        attributes.extend(
-            (
-                f'data-receipt-id="{receipt}"',
-                f'data-evidence="{evidence}"',
-            )
-        )
+    del state, next_step, receipt, evidence
     return (
         "<!doctype html><html><body>"
-        f"<main {' '.join(attributes)}><h1>{visible_text}</h1>{content}</main>"
+        f"<main><h1>{visible_text}</h1>{content}</main>"
         "</body></html>"
     ).encode("utf-8")
 
 
 class _FixtureHandler(BaseHTTPRequestHandler):
     requests: list[tuple[str, str]] = []
+    request_details: list[dict[str, str]] = []
+    blocked_origin = ""
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
@@ -104,6 +98,79 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     receipt="receipt-direct",
                 )
             )
+        elif path == "/malicious-redirect":
+            self.send_response(302)
+            self.send_header("Location", f"{type(self).blocked_origin}/effect")
+            self.end_headers()
+        elif path == "/malicious-iframe":
+            self._send(
+                _page(
+                    "action_required",
+                    "Choose unsubscribe",
+                    content=f'<iframe src="{type(self).blocked_origin}/effect"></iframe>',
+                )
+            )
+        elif path == "/malicious-fetch":
+            self._send(
+                _page(
+                    "action_required",
+                    "Choose unsubscribe",
+                    content=(
+                        "<script>fetch('"
+                        f"{type(self).blocked_origin}/effect"
+                        "')</script>"
+                    ),
+                )
+            )
+        elif path == "/malicious-image":
+            self._send(
+                _page(
+                    "action_required",
+                    "Choose unsubscribe",
+                    content=f'<img src="{type(self).blocked_origin}/effect">',
+                )
+            )
+        elif path == "/malicious-form":
+            self._send(
+                _page(
+                    "action_required",
+                    "Choose unsubscribe",
+                    content=(
+                        f'<form method="post" action="{type(self).blocked_origin}/effect">'
+                        '<button type="submit">Unsubscribe</button></form>'
+                    ),
+                )
+            )
+        elif path == "/malicious-popup":
+            self._send(
+                _page(
+                    "action_required",
+                    "Choose unsubscribe",
+                    content=(
+                        f'<a target="_blank" href="{type(self).blocked_origin}/effect">'
+                        "Confirm</a>"
+                    ),
+                )
+            )
+        elif path == "/malicious-download":
+            self._send(
+                _page(
+                    "action_required",
+                    "Choose unsubscribe",
+                    content=(
+                        f'<a download href="{type(self).blocked_origin}/effect">'
+                        "Confirm</a>"
+                    ),
+                )
+            )
+        elif path == "/unknown":
+            self._send(
+                _page(
+                    "action_required",
+                    "Account preferences",
+                    content='<a href="/terminal-click">Learn more</a>',
+                )
+            )
         elif path == "/redirect":
             self.send_response(302)
             self.send_header("Location", "/terminal-redirect")
@@ -124,7 +191,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     next_step="step-2",
                     content=(
                         '<form method="post" action="/two-step-second" '
-                        'data-operation-reference="control-2">'
+                        '>'
                         '<button type="submit">Continue</button></form>'
                     ),
                 )
@@ -137,7 +204,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     next_step="step-2",
                     content=(
                         '<a href="/terminal-click" '
-                        'data-operation-reference="control-2">Confirm</a>'
+                        '>Confirm</a>'
                     ),
                 )
             )
@@ -145,7 +212,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
             self._send(
                 _page(
                     "done",
-                    "Final confirmation complete",
+                    "Unsubscribe confirmation complete",
                     receipt="receipt-click",
                 )
             )
@@ -183,6 +250,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                 _page(
                     "done",
                     "Confirmation email link completed",
+                    content="<p>You are unsubscribed.</p>",
                     receipt="receipt-confirmation-mail",
                     evidence="confirmation_mail",
                 )
@@ -192,9 +260,15 @@ class _FixtureHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         content_length = int(self.headers.get("Content-Length", "0"))
-        if content_length:
-            self.rfile.read(content_length)
+        body = self.rfile.read(content_length) if content_length else b""
         type(self).requests.append(("POST", self.path))
+        type(self).request_details.append(
+            {
+                "body": body.decode("utf-8"),
+                "cookie": self.headers.get("Cookie", ""),
+                "content_type": self.headers.get("Content-Type", ""),
+            }
+        )
         path = urlsplit(self.path).path
         if path == "/two-step-second":
             self._send(
@@ -204,7 +278,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     next_step="step-3",
                     content=(
                         '<form method="post" action="/two-step-terminal" '
-                        'data-operation-reference="control-3">'
+                        '>'
                         '<button type="submit">Unsubscribe</button></form>'
                     ),
                 )
@@ -217,8 +291,28 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     receipt="receipt-two-step",
                 )
             )
+        elif path == "/one-click":
+            self._send(_page("done", "You are unsubscribed"))
         else:
             self._send(b"not found", status=404)
+
+
+class _BlockedHandler(BaseHTTPRequestHandler):
+    requests: list[tuple[str, str]] = []
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+    def _record(self, method: str) -> None:
+        type(self).requests.append((method, self.path))
+        self.send_response(204)
+        self.end_headers()
+
+    def do_GET(self) -> None:  # noqa: N802
+        self._record("GET")
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._record("POST")
 
 
 class _LoopbackHTTPServer(ThreadingHTTPServer):
@@ -229,6 +323,7 @@ class _LoopbackHTTPServer(ThreadingHTTPServer):
 @contextmanager
 def _loopback_server():
     _FixtureHandler.requests = []
+    _FixtureHandler.request_details = []
     server = _LoopbackHTTPServer(("127.0.0.1", 0), _FixtureHandler)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -244,6 +339,35 @@ def _loopback_server():
         assert not thread.is_alive()
 
 
+@contextmanager
+def _loopback_server_pair():
+    _FixtureHandler.requests = []
+    _FixtureHandler.request_details = []
+    _BlockedHandler.requests = []
+    blocked = _LoopbackHTTPServer(("127.0.0.1", 0), _BlockedHandler)
+    blocked_thread = Thread(target=blocked.serve_forever, daemon=True)
+    blocked_thread.start()
+    blocked_origin = f"http://127.0.0.1:{blocked.server_port}"
+    _FixtureHandler.blocked_origin = blocked_origin
+    allowed = _LoopbackHTTPServer(("127.0.0.1", 0), _FixtureHandler)
+    allowed_thread = Thread(target=allowed.serve_forever, daemon=True)
+    allowed_thread.start()
+    try:
+        yield f"http://127.0.0.1:{allowed.server_port}", blocked_origin
+    finally:
+        for server, thread in (
+            (allowed, allowed_thread),
+            (blocked, blocked_thread),
+        ):
+            shutdown = Thread(target=server.shutdown, daemon=True)
+            shutdown.start()
+            shutdown.join(timeout=5)
+            server.server_close()
+            thread.join(timeout=5)
+            assert not shutdown.is_alive()
+            assert not thread.is_alive()
+
+
 @pytest.fixture(scope="module")
 def chrome_browser():
     with sync_playwright() as playwright:
@@ -256,15 +380,43 @@ def chrome_browser():
         browser.close()
 
 
-def _operations(*kinds: UnsubscribeOperationKind) -> tuple[UnsubscribeOperation, ...]:
+def _operations(
+    *kinds: UnsubscribeOperationKind,
+    targets: tuple[str, ...] = (),
+) -> tuple[UnsubscribeOperation, ...]:
     return tuple(
         UnsubscribeOperation(
             operation_reference=f"step-{index}",
             kind=kind,
-            target_reference="entry" if index == 1 else f"control-{index}",
+            target_reference=(
+                "entry" if index == 1 else targets[index - 2]
+            ),
         )
         for index, kind in enumerate(kinds, start=1)
     )
+
+
+def test_browser_requires_mandatory_exact_origin_policy(chrome_browser) -> None:
+    context = chrome_browser.new_context()
+    page = context.new_page()
+    try:
+        with pytest.raises(ValueError, match="network policy"):
+            PlaywrightUnsubscribeBrowser(page, timeout_ms=500)
+    finally:
+        context.close()
+
+
+def test_production_policy_rejects_private_and_loopback_origins() -> None:
+    for origin in (
+        "http://127.0.0.1:8080",
+        "https://localhost:443",
+        "https://10.0.0.4:443",
+        "https://169.254.169.254:443",
+        "https://metadata.google.internal:443",
+    ):
+        with pytest.raises(ValueError, match="network policy") as error:
+            BrowserNetworkPolicy(allowed_origins=frozenset({origin}))
+        assert origin not in str(error.value)
 
 
 def _setup(
@@ -368,6 +520,7 @@ def _run(
     path: str,
     operations: tuple[UnsubscribeOperation, ...],
     confirmation_path: str = "",
+    confirmation_binding: str = "valid",
     recover_uncertain: bool = False,
 ):
     with _loopback_server() as origin:
@@ -388,27 +541,36 @@ def _run(
             owner = _RESTART_OWNER
         context = chrome_browser.new_context()
         page = context.new_page()
-        blocked: list[str] = []
-
-        def guard(route, request) -> None:
-            parsed = urlsplit(request.url)
-            if parsed.scheme in {"http", "https"} and parsed.hostname not in {
-                "127.0.0.1",
-                "localhost",
-                "::1",
-            }:
-                blocked.append(request.url)
-                route.abort()
-                return
-            route.continue_()
-
-        page.route("**/*", guard)
+        confirmation_message_identity = (
+            "wrong-confirmation-message"
+            if confirmation_binding == "wrong_mail"
+            else "fixture-confirmation-message"
+        )
+        confirmation_reference = (
+            "confirmation-target:wrong"
+            if confirmation_binding == "wrong_target"
+            else confirmation_target_reference("fixture-confirmation-message")
+        )
         browser = PlaywrightUnsubscribeBrowser(
             page,
             timeout_ms=3_000,
-            allowed_hosts=frozenset({"127.0.0.1"}),
-            confirmation_url_resolver=(
-                (lambda _effect: f"{origin}{confirmation_path}")
+            network_policy=BrowserNetworkPolicy(
+                allowed_origins=frozenset({origin}),
+                allow_loopback_for_tests=True,
+            ),
+            confirmation_target_resolver=(
+                (
+                    lambda candidate: ConfirmationNavigationTarget(
+                        private_url=f"{origin}{confirmation_path}",
+                        target_reference=confirmation_reference,
+                        confirmation_message_identity=confirmation_message_identity,
+                        effect_digest=(
+                            "0" * 64
+                            if confirmation_binding == "wrong_effect"
+                            else candidate.effect_digest
+                        ),
+                    )
+                )
                 if confirmation_path
                 else None
             ),
@@ -422,7 +584,6 @@ def _run(
         finally:
             context.close()
 
-        assert blocked == []
         if recover_uncertain:
             assert _FixtureHandler.requests == []
         else:
@@ -468,10 +629,77 @@ def test_two_step_form_fixture(tmp_path: Path, chrome_browser) -> None:
             UnsubscribeOperationKind.OPEN_ENTRY,
             UnsubscribeOperationKind.SUBMIT_FORM,
             UnsubscribeOperationKind.SUBMIT_FORM,
+            targets=(
+                unsubscribe_control_reference(
+                    tag="form", label="Continue", method="post"
+                ),
+                unsubscribe_control_reference(
+                    tag="form", label="Unsubscribe", method="post"
+                ),
+            ),
         ),
     )
     assert result.outcome is UnsubscribeOutcome.DONE
     assert [method for method, _ in requests] == ["GET", "POST", "POST"]
+
+
+def test_read_only_discovery_returns_only_ordinary_opaque_controls(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    with _loopback_server() as origin:
+        private_url = f"{origin}/two-step?opaque=private-fixture-token"
+        target = unsubscribe_control_reference(
+            tag="form",
+            label="Continue",
+            method="post",
+        )
+        _, effect, _ = _setup(
+            tmp_path,
+            private_url,
+            _operations(
+                UnsubscribeOperationKind.OPEN_ENTRY,
+                UnsubscribeOperationKind.SUBMIT_FORM,
+                targets=(target,),
+            ),
+        )
+        context = chrome_browser.new_context()
+        browser = PlaywrightUnsubscribeBrowser(
+            context.new_page(),
+            timeout_ms=2_000,
+            network_policy=BrowserNetworkPolicy(
+                allowed_origins=frozenset({origin}),
+                allow_loopback_for_tests=True,
+            ),
+        )
+        try:
+            browser.execute_operation(
+                effect,
+                private_url,
+                effect.operations[0],
+            )
+            discovery = browser.discover_current_page(effect)
+        finally:
+            context.close()
+
+    assert [control.reference for control in discovery.controls] == [target]
+    serialized = repr(discovery)
+    assert "private-fixture-token" not in serialized
+    assert origin not in serialized
+
+
+def test_unknown_ordinary_page_fails_closed(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    result, _ = _run(
+        tmp_path,
+        chrome_browser,
+        path="/unknown",
+        operations=_operations(UnsubscribeOperationKind.OPEN_ENTRY),
+    )
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
 
 
 def test_final_confirmation_click_fixture(tmp_path: Path, chrome_browser) -> None:
@@ -482,6 +710,9 @@ def test_final_confirmation_click_fixture(tmp_path: Path, chrome_browser) -> Non
         operations=_operations(
             UnsubscribeOperationKind.OPEN_ENTRY,
             UnsubscribeOperationKind.CLICK_CONFIRMATION,
+            targets=(
+                unsubscribe_control_reference(tag="link", label="Confirm"),
+            ),
         ),
     )
     assert result.outcome is UnsubscribeOutcome.DONE
@@ -531,13 +762,44 @@ def test_confirmation_email_fixture(tmp_path: Path, chrome_browser) -> None:
         operations=_operations(
             UnsubscribeOperationKind.OPEN_ENTRY,
             UnsubscribeOperationKind.CONFIRM_EMAIL,
+            targets=(
+                confirmation_target_reference("fixture-confirmation-message"),
+            ),
         ),
         confirmation_path="/confirmation-receipt",
     )
     assert result.outcome is UnsubscribeOutcome.DONE
     assert result.receipt is not None
-    assert result.receipt.evidence == "confirmation_mail"
+    assert result.receipt.evidence.startswith("confirmation-mail:")
     assert requests[-1] == ("GET", "/confirmation-receipt")
+
+
+@pytest.mark.parametrize(
+    "binding",
+    ("wrong_effect", "wrong_mail", "wrong_target"),
+)
+def test_confirmation_email_target_is_bound_to_effect_mail_and_control(
+    tmp_path: Path,
+    chrome_browser,
+    binding: str,
+) -> None:
+    result, requests = _run(
+        tmp_path,
+        chrome_browser,
+        path="/confirmation-email",
+        operations=_operations(
+            UnsubscribeOperationKind.OPEN_ENTRY,
+            UnsubscribeOperationKind.CONFIRM_EMAIL,
+            targets=(
+                confirmation_target_reference("fixture-confirmation-message"),
+            ),
+        ),
+        confirmation_path="/confirmation-receipt",
+        confirmation_binding=binding,
+    )
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert all(path != "/confirmation-receipt" for _, path in requests)
 
 
 def test_uncertain_claim_on_fresh_blank_page_never_navigates(
@@ -555,3 +817,148 @@ def test_uncertain_claim_on_fresh_blank_page_never_navigates(
     assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
     assert result.error_code == "email_unsubscribe_outcome_unresolved"
     assert requests == ()
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/malicious-redirect",
+        "/malicious-iframe",
+        "/malicious-fetch",
+        "/malicious-image",
+    ),
+)
+def test_unapproved_redirect_and_subresources_are_blocked_before_request(
+    tmp_path: Path,
+    chrome_browser,
+    path: str,
+) -> None:
+    with _loopback_server_pair() as (allowed_origin, _blocked_origin):
+        private_url = f"{allowed_origin}{path}"
+        store, effect, entry = _setup(
+            tmp_path,
+            private_url,
+            _operations(UnsubscribeOperationKind.OPEN_ENTRY),
+        )
+        context = chrome_browser.new_context()
+        browser = PlaywrightUnsubscribeBrowser(
+            context.new_page(),
+            timeout_ms=2_000,
+            network_policy=BrowserNetworkPolicy(
+                allowed_origins=frozenset({allowed_origin}),
+                allow_loopback_for_tests=True,
+            ),
+        )
+        try:
+            result = UnsubscribeExecutor(
+                store, browser, owner=_BROWSER_OWNER
+            ).execute(effect, (entry,))
+        finally:
+            context.close()
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert _BlockedHandler.requests == []
+
+
+@pytest.mark.parametrize(
+    ("path", "kind", "target"),
+    (
+        (
+            "/malicious-form",
+            UnsubscribeOperationKind.SUBMIT_FORM,
+            unsubscribe_control_reference(
+                tag="form", label="Unsubscribe", method="post"
+            ),
+        ),
+        (
+            "/malicious-popup",
+            UnsubscribeOperationKind.CLICK_CONFIRMATION,
+            unsubscribe_control_reference(tag="link", label="Confirm"),
+        ),
+        (
+            "/malicious-download",
+            UnsubscribeOperationKind.CLICK_CONFIRMATION,
+            unsubscribe_control_reference(tag="link", label="Confirm"),
+        ),
+    ),
+)
+def test_unapproved_form_popup_and_download_have_zero_external_effect(
+    tmp_path: Path,
+    chrome_browser,
+    path: str,
+    kind: UnsubscribeOperationKind,
+    target: str,
+) -> None:
+    with _loopback_server_pair() as (allowed_origin, _blocked_origin):
+        private_url = f"{allowed_origin}{path}"
+        operations = _operations(
+            UnsubscribeOperationKind.OPEN_ENTRY,
+            kind,
+            targets=(target,),
+        )
+        store, effect, entry = _setup(tmp_path, private_url, operations)
+        context = chrome_browser.new_context(accept_downloads=False)
+        browser = PlaywrightUnsubscribeBrowser(
+            context.new_page(),
+            timeout_ms=2_000,
+            network_policy=BrowserNetworkPolicy(
+                allowed_origins=frozenset({allowed_origin}),
+                allow_loopback_for_tests=True,
+            ),
+        )
+        try:
+            result = UnsubscribeExecutor(
+                store, browser, owner=_BROWSER_OWNER
+            ).execute(effect, (entry,))
+        finally:
+            context.close()
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert _BlockedHandler.requests == []
+
+
+def test_verified_one_click_posts_exact_body_without_cookie(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    with _loopback_server() as origin:
+        private_url = f"{origin}/one-click"
+        store, effect, entry = _setup(
+            tmp_path,
+            private_url,
+            _operations(UnsubscribeOperationKind.POST_ONE_CLICK),
+        )
+        context = chrome_browser.new_context()
+        context.add_cookies(
+            [
+                {
+                    "name": "session",
+                    "value": "must-not-leak",
+                    "url": origin,
+                }
+            ]
+        )
+        browser = PlaywrightUnsubscribeBrowser(
+            context.new_page(),
+            timeout_ms=2_000,
+            network_policy=BrowserNetworkPolicy(
+                allowed_origins=frozenset({origin}),
+                allow_loopback_for_tests=True,
+            ),
+        )
+        try:
+            result = UnsubscribeExecutor(
+                store, browser, owner=_BROWSER_OWNER
+            ).execute(effect, (entry,))
+        finally:
+            context.close()
+
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert _FixtureHandler.requests == [("POST", "/one-click")]
+    assert _FixtureHandler.request_details == [
+        {
+            "body": "List-Unsubscribe=One-Click",
+            "cookie": "",
+            "content_type": "application/x-www-form-urlencoded",
+        }
+    ]

@@ -1179,6 +1179,7 @@ def _validate_unsubscribe_operations(
     if not isinstance(operations, Sequence) or isinstance(operations, (str, bytes)):
         raise TypeError("unsubscribe operations must be a sequence")
     approved_kinds = {
+        "post_one_click",
         "open_entry",
         "follow_redirect",
         "submit_form",
@@ -2951,6 +2952,13 @@ class EmailStore:
                 or message["account_id"] != claim["account_id"]
                 or message["thread_identity"] != claim["thread_identity"]
                 or EmailAction.UNSUBSCRIBE not in plan.agent_actions
+                or claim["action_identity"]
+                != email_action_identity(
+                    account_id=claim["account_id"],
+                    stable_message_identity=claim["stable_message_identity"],
+                    action_type=EmailAction.UNSUBSCRIBE,
+                    action_plan_version=claim["action_plan_version"],
+                )
             ):
                 raise EmailPersistenceCorruption(
                     "unsubscribe claim does not match its immutable ActionPlan"
@@ -4643,13 +4651,8 @@ class EmailStore:
                     raise EmailUnsubscribeClaimConflict(
                         "unsubscribe identity is bound to another accepted effect"
                     )
-                same_owner = (
-                    persisted["owner_id"] == owner["owner_id"]
-                    and persisted["owner_generation"] == owner["generation"]
-                    and persisted["lease_token"] == owner["lease_token"]
-                )
                 if persisted["status"] == "dispatching":
-                    return {**persisted, "acquired": same_owner}
+                    return {**persisted, "acquired": False}
                 return {**persisted, "acquired": False}
             else:
                 db.execute(
@@ -4971,19 +4974,37 @@ class EmailStore:
             plan = db.execute(
                 """
                 select plans.*, classifications.stable_message_identity
-                  as classification_message_identity
+                  as classification_message_identity,
+                       messages.account_id as message_account_id,
+                       messages.thread_identity as message_thread_identity
                 from email_action_plans as plans
                 join email_classifications as classifications
                   on classifications.id=plans.classification_id
+                join email_messages as messages
+                  on messages.account_id=classifications.account_id
+                 and messages.stable_message_identity=
+                     classifications.stable_message_identity
                 where plans.action_plan_id=? and plans.classification_id=?
                 """,
                 (action_plan_id, classification_id),
             ).fetchone()
+            expected_action_identity = email_action_identity(
+                account_id=account_id,
+                stable_message_identity=stable_message_identity,
+                action_type=EmailAction.UNSUBSCRIBE,
+                action_plan_version=action_plan_version,
+            )
+            if action_identity != expected_action_identity:
+                raise EmailUnsubscribeReceiptConflict(
+                    "unsubscribe terminal action identity is invalid"
+                )
             if (
                 plan is None
                 or plan["action_plan_version"] != action_plan_version
                 or plan["account_id"] != account_id
                 or plan["classification_message_identity"] != stable_message_identity
+                or plan["message_account_id"] != account_id
+                or plan["message_thread_identity"] != thread_identity
                 or EmailAction.UNSUBSCRIBE.value
                 not in _json_load(
                     plan["actions_json"],

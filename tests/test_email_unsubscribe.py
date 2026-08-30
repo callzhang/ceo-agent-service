@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -17,7 +19,9 @@ from app.email_classifier_contracts import (
 )
 from app.email_store import EmailStore, email_action_identity
 from app.email_unsubscribe import (
+    BrowserNetworkPolicy,
     EmailUnsubscribeEffect,
+    UnsubscribeAuthenticationEvidence,
     UnsubscribeBrowserError,
     UnsubscribeDisposition,
     UnsubscribeEntrySource,
@@ -75,7 +79,7 @@ def _operations(*kinds: UnsubscribeOperationKind) -> tuple[UnsubscribeOperation,
             operation_reference=f"step-{index}",
             kind=kind,
             target_reference=(
-                "entry"
+                unsubscribe_entry_reference(TOKEN_URL)
                 if kind is UnsubscribeOperationKind.OPEN_ENTRY
                 else f"control-{index}"
             ),
@@ -111,6 +115,14 @@ def _task() -> ReplyTask:
         "account_id": "account-primary",
         "stable_message_identity": "account-primary:message-id:<mail-41@example.com>",
         "thread_identity": "thread-41",
+        "unsubscribe_entries": [
+            {
+                "source": "header_https",
+                "reference": unsubscribe_entry_reference(TOKEN_URL),
+                "priority": 10,
+            }
+        ],
+        "unsubscribe_authentication": None,
     }
     return ReplyTask(
         id=9,
@@ -150,7 +162,7 @@ def _accepted_action() -> ProposedAction:
                     {
                         "operation_reference": "step-1",
                         "kind": "open_entry",
-                        "target_reference": "entry",
+                        "target_reference": unsubscribe_entry_reference(TOKEN_URL),
                     },
                     {
                         "operation_reference": "step-2",
@@ -179,6 +191,23 @@ def test_unsubscribe_outcome_contract_is_exact() -> None:
     }
 
 
+def test_network_policy_is_exact_origin_and_rejects_private_dns_resolution() -> None:
+    public = BrowserNetworkPolicy(
+        allowed_origins=frozenset({"https://mail.example.com"}),
+        resolver=lambda _host, _port: ("93.184.216.34",),
+    )
+    private = BrowserNetworkPolicy(
+        allowed_origins=frozenset({"https://mail.example.com:443"}),
+        resolver=lambda _host, _port: ("10.0.0.7",),
+    )
+
+    assert public.validate_url("https://mail.example.com/unsubscribe")
+    with pytest.raises(UnsubscribeBrowserError, match="request rejected"):
+        public.validate_url("https://mail.example.com:444/unsubscribe")
+    with pytest.raises(UnsubscribeBrowserError, match="request rejected"):
+        private.validate_url("https://mail.example.com/unsubscribe")
+
+
 def test_extracts_and_prioritizes_rfc_entries_without_rendering_private_urls() -> None:
     entries = extract_unsubscribe_entries(
         list_unsubscribe=(
@@ -186,6 +215,11 @@ def test_extracts_and_prioritizes_rfc_entries_without_rendering_private_urls() -
             f"<{TOKEN_URL}>"
         ),
         list_unsubscribe_post="List-Unsubscribe=One-Click",
+        authentication_evidence=UnsubscribeAuthenticationEvidence(
+            dkim_covers_list_unsubscribe=True,
+            dkim_covers_list_unsubscribe_post=True,
+            evidence_reference="dkim-evidence:message-41",
+        ),
         body_text=(
             "Manage your subscription: "
             "https://body.example.com/preferences/unsubscribe?id=body-token"
@@ -204,6 +238,46 @@ def test_extracts_and_prioritizes_rfc_entries_without_rendering_private_urls() -
         [entry.redacted for entry in entries],
         sort_keys=True,
     )
+
+
+def test_unverified_rfc_one_click_is_downgraded_to_ordinary_https() -> None:
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe=f"<{TOKEN_URL}>",
+        list_unsubscribe_post="List-Unsubscribe=One-Click",
+    )
+
+    assert len(entries) == 1
+    assert entries[0].source is UnsubscribeEntrySource.HEADER_HTTPS
+    assert entries[0].priority == 10
+
+
+def test_rfc_one_click_requires_both_dkim_covered_headers() -> None:
+    entries = extract_unsubscribe_entries(
+        list_unsubscribe=f"<{TOKEN_URL}>",
+        list_unsubscribe_post="List-Unsubscribe=One-Click",
+        authentication_evidence=UnsubscribeAuthenticationEvidence(
+            dkim_covers_list_unsubscribe=True,
+            dkim_covers_list_unsubscribe_post=False,
+            evidence_reference="dkim-evidence:message-41",
+        ),
+    )
+
+    assert entries[0].source is UnsubscribeEntrySource.HEADER_HTTPS
+
+
+def test_unverified_one_click_operation_is_rejected_by_task_projection() -> None:
+    task = _task()
+    action = _accepted_action().model_copy(deep=True)
+    action.payload["operations"] = [
+        {
+            "operation_reference": "step-1",
+            "kind": "post_one_click",
+            "target_reference": unsubscribe_entry_reference(TOKEN_URL),
+        }
+    ]
+
+    with pytest.raises(ValueError, match="proposal is invalid"):
+        accepted_email_unsubscribe_effect(task, action)
 
 
 def test_extracts_only_explicit_body_unsubscribe_links() -> None:
@@ -414,6 +488,39 @@ class _TerminateAfterExternalEffectBrowser(_ScriptedBrowser):
     ) -> UnsubscribeObservation:
         self.calls.append(operation.operation_reference)
         raise KeyboardInterrupt("simulated termination after provider effect")
+
+
+class _ConcurrentWinnerBrowser(_ScriptedBrowser):
+    def __init__(self, barrier: Barrier, effect: EmailUnsubscribeEffect) -> None:
+        super().__init__([])
+        self.barrier = barrier
+        self.effect = effect
+
+    def inspect_current_state(
+        self,
+        effect: EmailUnsubscribeEffect,
+        private_url: str,
+    ) -> UnsubscribeObservation:
+        self.calls.append("inspect")
+        self.barrier.wait(timeout=2)
+        return UnsubscribeObservation(
+            state=UnsubscribePageState.ACTION_REQUIRED,
+            state_reference="state-ready",
+            next_operation_reference="step-1",
+        )
+
+    def execute_operation(
+        self,
+        effect: EmailUnsubscribeEffect,
+        private_url: str,
+        operation: UnsubscribeOperation,
+    ) -> UnsubscribeObservation:
+        self.calls.append(operation.operation_reference)
+        return UnsubscribeObservation(
+            state=UnsubscribePageState.DONE,
+            state_reference="state-done",
+            receipt=_terminal_receipt(self.effect),
+        )
 
 
 def _entry():
@@ -676,6 +783,36 @@ def test_restart_reads_durable_terminal_receipt_without_browser_replay(
     assert replay.receipt == first.receipt
     assert replay.journal == first.journal
     assert restarted_browser.calls == []
+
+
+def test_same_owner_concurrent_executor_has_exactly_one_write_winner(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    effect = _effect()
+    barrier = Barrier(2)
+    browsers = [
+        _ConcurrentWinnerBrowser(barrier, effect),
+        _ConcurrentWinnerBrowser(barrier, effect),
+    ]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda browser: UnsubscribeExecutor(
+                    store,
+                    browser,
+                    owner=UNSUBSCRIBE_OWNER,
+                ).execute(effect, (_entry(),)),
+                browsers,
+            )
+        )
+
+    assert sum(browser.calls.count("step-1") for browser in browsers) == 1
+    assert sorted(result.outcome.value for result in results) == [
+        "done",
+        "failed_browser",
+    ]
 
 
 def test_terminated_claim_after_external_effect_is_reconciliation_only(

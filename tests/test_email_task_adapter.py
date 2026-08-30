@@ -10,6 +10,7 @@ from urllib.parse import quote
 import pytest
 
 from app.agent_context import PriorReceipt
+from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
     EmailAttachmentMetadata,
@@ -26,9 +27,11 @@ from app.email_task_adapter import (
     EmailAgentTaskMetadataError,
     EmailThreadMessage,
     _assert_safe_email_metadata,
+    accepted_email_unsubscribe_effect,
     email_action_identity,
     email_conversation_id,
 )
+from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 from app.store import AutoReplyStore
 
 
@@ -345,6 +348,72 @@ def test_persisted_payload_is_traceable_without_message_secrets_or_attachments(
         "application/pdf",
     ):
         assert forbidden not in encoded
+
+
+def test_unsubscribe_task_projects_only_redacted_real_entry_references(
+    tmp_path: Path,
+) -> None:
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
+    private_url = "https://news.example.com/unsubscribe?token=private-token"
+    task_input = replace(
+        _task_input(),
+        list_unsubscribe=f"<{private_url}>",
+        list_unsubscribe_post="List-Unsubscribe=One-Click",
+        unsubscribe_authentication=UnsubscribeAuthenticationEvidence(
+            dkim_covers_list_unsubscribe=True,
+            dkim_covers_list_unsubscribe_post=True,
+            evidence_reference="dkim-evidence:mail-41",
+        ),
+    )
+
+    route = _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
+        plan, task_input
+    )[0]
+    payload = json.loads(route.task.trigger_message_json)
+    entries = payload["unsubscribe_entries"]
+
+    assert entries == [
+        {
+            "priority": 0,
+            "reference": entries[0]["reference"],
+            "source": "header_one_click_https",
+        }
+    ]
+    assert entries[0]["reference"].startswith("unsubscribe-entry:")
+    assert payload["unsubscribe_authentication"] == {
+        "evidence_reference": "dkim-evidence:mail-41",
+        "one_click_verified": True,
+    }
+    assert private_url not in route.task.trigger_message_json
+    assert private_url not in repr(task_input)
+
+    accepted = ProposedAction.model_validate(
+        {
+            "description": "Unsubscribe the current sender",
+            "capability": "email_browser",
+            "operation": "unsubscribe",
+            "target": {
+                "action_identity": payload["action_identity"],
+                "account_id": payload["account_id"],
+                "stable_message_identity": payload["stable_message_identity"],
+                "thread_identity": payload["thread_identity"],
+                "entry_reference": entries[0]["reference"],
+            },
+            "payload": {
+                "operations": [
+                    {
+                        "operation_reference": "step-1",
+                        "kind": "post_one_click",
+                        "target_reference": entries[0]["reference"],
+                    }
+                ]
+            },
+            "expected_verification": "Read terminal provider evidence.",
+        }
+    )
+
+    effect = accepted_email_unsubscribe_effect(route.task, accepted)
+    assert effect.entry_reference == entries[0]["reference"]
 
 
 @pytest.mark.parametrize(
