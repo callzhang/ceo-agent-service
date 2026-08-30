@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { displayValue, getSettings, listAttention, listWechat, listWechatTargets, saveSettings, saveWechatReplyScope, type WechatScopeTarget } from "../api/console";
@@ -27,8 +27,14 @@ function fieldsOf(payload: RecordValue) {
 }
 
 function SectionNav({ section, attentionCount }: { section: SettingsSection; attentionCount: number }) {
+  const activeLink = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    if (typeof activeLink.current?.scrollIntoView === "function") {
+      activeLink.current.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+    }
+  }, [section]);
   return <nav className="settings-nav-react" aria-label="Settings navigation">
-    {sections.map(([key, label]) => <Link key={key} to={`/settings?tab=${key}`} className={section === key ? "active" : ""} aria-current={section === key ? "page" : undefined}>{label}{key === "attention" && attentionCount > 0 && <span className="settings-nav-badge" aria-label={`${attentionCount} 个未解决问题`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}</Link>)}
+    {sections.map(([key, label]) => <Link key={key} ref={section === key ? activeLink : undefined} to={`/settings?tab=${key}`} className={section === key ? "active" : ""} aria-current={section === key ? "page" : undefined}>{label}{key === "attention" && attentionCount > 0 && <span className="settings-nav-badge" aria-label={`${attentionCount} 个未解决问题`}>{attentionCount > 99 ? "99+" : attentionCount}</span>}</Link>)}
   </nav>;
 }
 
@@ -37,7 +43,7 @@ function SettingsCard({ children }: { children: ReactNode }) {
 }
 
 function SaveBar({ state }: { state: "idle" | "saving" | "saved" | "error" }) {
-  return <div className="settings-save-row"><button type="submit" className="primary-button" disabled={state === "saving"}>{state === "saving" ? "保存中…" : "保存"}</button>{state === "saved" && <span className="save-success" role="status">已保存</span>}{state === "error" && <span className="save-error" role="alert">保存失败，草稿仍保留</span>}</div>;
+  return <div className="settings-save-row"><button type="submit" name="settings-save" className="primary-button" disabled={state === "saving"}>{state === "saving" ? "保存中…" : "保存"}</button>{state === "saved" && <span className="save-success" role="status">已保存</span>}{state === "error" && <span className="save-error" role="alert">保存失败，草稿仍保留</span>}</div>;
 }
 
 function ConfigTable({ groups, compatibility, draft, setDraft }: { groups: RecordValue[]; compatibility: RecordValue[]; draft: RecordValue; setDraft: (value: RecordValue) => void }) {
@@ -64,22 +70,24 @@ function escapeRegExp(value: string) {
 function highlightRenderedPreview(template: string, preview: string): ReactNode {
   const parts = template.split(/(\{\{[^{}]+\}\})/g);
   if (!parts.some((part) => /^\{\{[^{}]+\}\}$/.test(part))) return preview;
-  const groups: string[] = [];
+  if (!parts.some((part) => part && !/^\{\{[^{}]+\}\}$/.test(part))) return preview;
   const pattern = parts.map((part) => {
     if (/^\{\{[^{}]+\}\}$/.test(part)) {
-      groups.push(part);
       return "([\\s\\S]*?)";
     }
     return escapeRegExp(part);
   }).join("");
-  const match = new RegExp(`^${pattern}$`).exec(preview);
+  const match = new RegExp(pattern).exec(preview);
   if (!match) return preview;
   let groupIndex = 1;
-  return parts.map((part, index) => {
+  const highlighted = parts.map((part, index) => {
     if (!/^\{\{[^{}]+\}\}$/.test(part)) return <span key={index}>{part}</span>;
     const value = match[groupIndex++] || "";
     return <mark key={index} title={`运行时变量 ${part}`}>{value}</mark>;
   });
+  const prefix = preview.slice(0, match.index);
+  const suffix = preview.slice(match.index + match[0].length);
+  return <>{prefix && <span>{prefix}</span>}{highlighted}{suffix && <span>{suffix}</span>}</>;
 }
 
 function InfoPanel({ payload }: { payload: RecordValue }) {
@@ -140,34 +148,45 @@ function WechatReplyScopePanel() {
   const [targets, setTargets] = useState<WechatScopeTarget[]>([]);
   const [accountId, setAccountId] = useState("");
   const [search, setSearch] = useState("");
+  const [hasSearched, setHasSearched] = useState(false);
+  const [searchTotal, setSearchTotal] = useState(0);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [searchState, setSearchState] = useState<"idle" | "loading" | "error">("idle");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState("");
   const [searchError, setSearchError] = useState("");
 
-  useEffect(() => {
-    const controller = new AbortController();
+  async function loadScope(signal?: AbortSignal) {
     setLoadState("loading");
-    listWechat("/api/console/wechat/conversations", controller.signal).then((response) => {
+    setError("");
+    try {
+      const response = await listWechat("/api/console/wechat/conversations", signal);
+      if (signal?.aborted) return;
       const scopes = response.items.map(toWechatTarget).filter((item): item is WechatScopeTarget => item !== null);
       const chosen = scopes.filter((item) => item.enabled !== false);
       setAccountId(scopes.find((item) => item.account_id)?.account_id || "");
       setSelected(new Map(chosen.map((item) => [scopeKey(item), item])));
       setSavedKeys(new Set(chosen.map(scopeKey)));
-      setTargets(chosen);
+      setTargets([]);
       setLoadState("ready");
-      setError("");
-    }).catch((reason: unknown) => {
-      if (controller.signal.aborted) return;
+    } catch (reason: unknown) {
+      if (signal?.aborted) return;
       setError(reason instanceof Error ? reason.message : "回复范围加载失败");
       setLoadState("error");
-    });
+    }
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadScope(controller.signal);
     return () => controller.abort();
   }, []);
 
   const selectedTargets = Array.from(selected.values());
+  const availableTargets = targets.filter((target) => !selected.has(scopeKey(target)));
   const dirty = selected.size !== savedKeys.size || selectedTargets.some((item) => !savedKeys.has(scopeKey(item)));
+  const syncLabel = loadState === "loading" ? "正在同步" : loadState === "error" ? "加载失败" : dirty ? "有未保存更改" : saveState === "saved" ? "已保存" : "已同步";
+  const syncClass = loadState === "error" ? "is-error" : dirty ? "is-dirty" : "";
 
   function toggleTarget(target: WechatScopeTarget) {
     setSaveState("idle");
@@ -187,6 +206,8 @@ function WechatReplyScopePanel() {
       setAccountId((current) => current || response.account_id);
       const next = response.items.map(toWechatTarget).filter((item): item is WechatScopeTarget => item !== null);
       setTargets(next);
+      setSearchTotal(response.meta.total || next.length);
+      setHasSearched(true);
       setSearchState("idle");
     } catch (reason: unknown) {
       setSearchError(reason instanceof Error ? reason.message : "联系人读取失败");
@@ -213,12 +234,12 @@ function WechatReplyScopePanel() {
   }
 
   return <div className="wechat-scope-panel" id="wechat-reply-scope-panel">
-    <div className="wechat-scope-heading"><div><h3>微信自动回复对象</h3><p className="muted">只处理这里明确选中的好友和群聊。好友触发模式为接收任意消息，群聊触发模式为提及当前账号。</p></div><span className={`wechat-scope-state ${dirty ? "is-dirty" : ""}`} role="status">{dirty ? "有未保存更改" : saveState === "saved" ? "已保存" : "已同步"}</span></div>
+    <div className="wechat-scope-heading"><div><h3>微信自动回复对象</h3><p className="muted">只处理这里明确选中的好友和群聊。好友触发模式为接收任意消息，群聊触发模式为提及当前账号。</p></div><span className={`wechat-scope-state ${syncClass}`} role="status" aria-label="回复范围同步状态">{syncLabel}</span></div>
     {loadState === "loading" && <div className="page-state" role="status">正在加载已保存的回复范围…</div>}
-    {loadState === "error" && <div className="page-state page-state-error" role="alert">{error}</div>}
+    {loadState === "error" && <div className="page-state page-state-error wechat-load-error" role="alert"><span>{error}</span><button type="button" className="secondary-button" onClick={() => void loadScope()}>重试加载回复范围</button></div>}
     {loadState === "ready" && <>
       <div className="wechat-selected-block"><div className="wechat-section-label">当前回复范围 <span>{selectedTargets.length} 个对象</span></div>{selectedTargets.length ? <div className="wechat-target-list">{selectedTargets.map((target) => <WechatTargetRow key={scopeKey(target)} target={target} selected onToggle={toggleTarget} />)}</div> : <p className="wechat-empty">尚未选择对象。搜索并勾选后，点击“保存回复范围”。</p>}</div>
-      <div className="wechat-target-picker"><div className="wechat-section-label">添加或调整对象</div><div className="wechat-search-row"><SearchField id="wechat-target-search" label="搜索好友或群聊" value={search} placeholder="按名称或 ID 搜索" onChange={(value) => { setSaveState("idle"); setSearch(value); }} onClear={() => { setSaveState("idle"); setSearch(""); }} /><button type="button" className="secondary-button" onClick={() => void searchTargets()} disabled={searchState === "loading"}>{searchState === "loading" ? "搜索中…" : "搜索"}</button></div>{searchError && <p className="field-error" role="alert">{searchError}</p>}{targets.length > 0 && <div className="wechat-target-list">{targets.map((target) => <WechatTargetRow key={scopeKey(target)} target={target} selected={selected.has(scopeKey(target))} onToggle={toggleTarget} />)}</div>}{!targets.length && <p className="wechat-empty">点击搜索读取可用的微信好友和群聊。</p>}</div>
+      <div className="wechat-target-picker"><div className="wechat-section-label">添加或调整对象</div><form className="wechat-search-row" onSubmit={(event) => { event.preventDefault(); void searchTargets(); }}><SearchField id="wechat-target-search" label="搜索好友或群聊" value={search} placeholder="按名称或 ID 搜索" onChange={(value) => { setSaveState("idle"); setSearch(value); setTargets([]); setSearchTotal(0); setHasSearched(false); setSearchError(""); }} onClear={() => { setSaveState("idle"); setSearch(""); setTargets([]); setSearchTotal(0); setHasSearched(false); setSearchError(""); }} /><button type="submit" className="secondary-button" disabled={searchState === "loading"}>{searchState === "loading" ? "搜索中…" : "搜索"}</button></form>{searchError && <p className="field-error" role="alert">{searchError}</p>}{hasSearched && availableTargets.length > 0 && <><p className="muted wechat-search-summary" role="status">共匹配 {searchTotal} 个，当前显示 {availableTargets.length} 个可添加对象。</p><div className="wechat-target-list">{availableTargets.map((target) => <WechatTargetRow key={scopeKey(target)} target={target} selected={false} onToggle={toggleTarget} />)}</div></>}{hasSearched && targets.length > 0 && !availableTargets.length && <p className="wechat-empty">共匹配 {searchTotal} 个，均已在当前回复范围。</p>}{hasSearched && !targets.length && <p className="wechat-empty">没有找到匹配的好友或群聊。</p>}{!hasSearched && <p className="wechat-empty">输入名称或 ID 后搜索；留空可浏览全部对象。</p>}</div>
       <div className="wechat-scope-actions"><button type="button" className="primary-button" onClick={() => void saveScope()} disabled={!dirty || saveState === "saving"}>{saveState === "saving" ? "保存中…" : "保存回复范围"}</button>{saveState === "saved" && <span className="save-success" role="status">回复范围已保存</span>}{saveState === "error" && <span className="save-error" role="alert">保存失败，当前选择仍保留</span>}</div>
     </>}
     {error && loadState === "ready" && <p className="field-error" role="alert">{error}</p>}
@@ -346,5 +367,5 @@ export function SettingsPage() {
   }, [section]);
   async function save() { if (!payload) return; setSaveState("saving"); try { const fields = section === "prompts" ? { template: displayValue(draft[`${prompt}_template`]) } : section === "audit-rules" ? { template: displayValue(draft.template) } : draft; await saveSettings(section, fields, section === "prompts" ? { prompt } : {}); setSaveState("saved"); } catch { setSaveState("error"); } }
   const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} onAttentionCountChange={setAttentionCount} />;
-  return <main className="console-page settings-page" aria-labelledby="settings-page-title"><h1 id="settings-page-title" className="sr-only">Settings</h1><div className="settings-layout-react"><SectionNav section={section} attentionCount={attentionCount} /><div className="settings-content" onSubmit={(event) => { if ((event.target as HTMLFormElement).tagName === "FORM") { event.preventDefault(); void save(); } }}>{content}</div></div></main>;
+  return <main className="console-page settings-page" aria-labelledby="settings-page-title"><h1 id="settings-page-title" className="sr-only">Settings</h1><div className="settings-layout-react"><SectionNav section={section} attentionCount={attentionCount} /><div className="settings-content" onSubmit={(event) => { const form = event.target as HTMLFormElement; if (form.tagName === "FORM" && form.elements.namedItem("settings-save")) { event.preventDefault(); void save(); } }}>{content}</div></div></main>;
 }

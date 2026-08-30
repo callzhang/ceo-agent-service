@@ -67,6 +67,58 @@ trigger/channel 1 ── 1 current reply_attempt
 或 Audit run，但不能编辑或覆盖旧 run。原始失败、session、runtime attempt、tool
 event 和 provider 结果仍然作为 append-only 事实保留。
 
+## 用户反馈处理轮次
+
+用户反馈处理有自己的当前投影：
+
+```text
+pending -> processing -> resolved -> pending
+```
+
+它不使用普通 Agent 任务的 `running` / `done` 状态。其中 `pending` 是待领取，
+`processing` 是已被唯一批次领取，`resolved` 是当前处理轮次完整结案。
+从 `resolved` 重新打开时，本地 API 必须收到不为空的原始 `reason`。该转换只把
+当前投影返回 `pending`，记录转换和理由，不创建新轮次。
+
+之后的 claim 才会创建新批次和下一个处理轮次。每个轮次的 Workbench 任务/
+turn、attempt/run、commit 和测试/重启/健康证据都归属该轮次。新轮次以空关联和
+空证据开始；旧批次、旧轮次和旧回执始终不可变，也不参与新轮次的结案。
+
+只有当前 `processing` 轮次可以接收关联或证据 PATCH，且一个批次只有在所有
+当前轮次都满足下列条件时才能原子进入 `resolved`：
+
+- 代码修改、所需测试和 commit 都已完成，commit 存在且是本地 `main` 的祖先；
+- launchd 标签是 `com.ceo-agent-service.main`，重启前后是两个不同的正 PID；
+- 本地 `/healthz` 返回 HTTP 200 且 `ok=true`；
+- 后端使用权威实时数据读取 backlog，`processing` / `failed` / `retryable` 全部为零；
+- 同一轮次的关联、证据和结果已通过 Feedback API 持久化并回读一致。
+
+任一检查失败都保留整个批次为 `processing`，不部分结案。Feedback API 是现有
+本地后端边界内的操作接口，供 Workbench 和仓库 Agent 共用；它不对公网暴露，
+也不增加 feedback 专用鉴权或第二套 Agent 流程。
+
+### Email task 的运行边界
+
+Email 的分类确认不是 Agent 运行。确认后生成的不可变 `ActionPlan` 只有包含
+`auto_reply` 或 `unsubscribe` 时，才创建 `channel=email` 的 `reply_task`；零 Agent
+动作和所有确定性邮箱动作都不会创建任务。
+
+Email action task 的去重身份由以下四项确定：
+
+```text
+account_id + stable_message_identity + action_type + action_plan_version
+```
+
+账户与稳定 thread 身份确定 `conversation_id`，上述动作身份确定
+`trigger_message_id`，继续依赖现有 `(channel, conversation_id, trigger_message_id)`
+唯一约束。幂等重放返回已有任务，不重置其状态或 execution generation。
+
+Adapter 只创建 `pending` task 和受限上下文，不直接发送邮件、打开网页或写入新的任务
+状态。邮件正文和 thread 纯文本在运行时上下文中提供；附件只有 metadata material，
+没有读取命令和 image path。持久 trigger payload 不包含凭证、附件内容、本地路径或
+完整退订 URL。之后仍由标准执行 Agent 产生候选、Audit Agent 审核和执行、反馈产生
+新 revision；旧 run、session、receipt 和失败事实保持不可变。
+
 ## 统一禁止事项
 
 - 所有任务都不得使用 `discard` 动作。

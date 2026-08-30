@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -8,6 +10,14 @@ from fastapi.testclient import TestClient
 import app.audit_web as audit_web_module
 import app.config as app_config_module
 from app.audit_web import create_audit_app
+from app.email_classifier_contracts import (
+    EmailCategory,
+    EmailClassification,
+    EmailClassificationStatus,
+)
+from app.email_store import EmailStore
+from app.email_classifier_learning import EmailClassifierLearningService
+from app.email_model_registry import EmailModelRegistry
 from app.store import AutoReplyStore
 from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
@@ -43,7 +53,13 @@ class NonExecutingExecutor:
         return True
 
 
-def _client(tmp_path: Path, *, spa_enabled: bool = False, asset: bytes = b""):
+def _client(
+    tmp_path: Path,
+    *,
+    spa_enabled: bool = False,
+    asset: bytes = b"",
+    email_learning_factory=None,
+):
     assets = tmp_path / "assets"
     assets.mkdir()
     (assets / "index.html").write_bytes(asset)
@@ -54,6 +70,7 @@ def _client(tmp_path: Path, *, spa_enabled: bool = False, asset: bytes = b""):
             workbench_workspace=tmp_path,
             workbench_executor=NonExecutingExecutor(tmp_path),
             spa_enabled=spa_enabled,
+            email_learning_factory=email_learning_factory,
         ),
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
@@ -164,7 +181,9 @@ def test_feedback_item_invalid_status_does_not_mutate_association(tmp_path: Path
     assert item.workbench_turn_id == ""
 
 
-def test_feedback_history_with_corrected_reply_is_resolved_and_not_claimable(tmp_path: Path):
+def test_pending_feedback_projection_with_corrected_reply_remains_claimable(
+    tmp_path: Path,
+):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
     store.record_sent_reply("cid-1", "msg-1", "先按A方案走", feedback_token="token-1")
@@ -172,14 +191,18 @@ def test_feedback_history_with_corrected_reply_is_resolved_and_not_claimable(tmp
     store.record_reply_feedback(attempt_id, feedback="已修正", corrected_reply_text="修正版")
 
     with _client(tmp_path) as client:
-        listed = client.get("/api/console/feedback?status=resolved")
-        conflict = client.post("/api/console/feedback/batches", json={"feedback_keys": ["feedback-1"]})
+        listed = client.get("/api/console/feedback?status=pending")
+        rendered = audit_web_module.render_user_feedback_list(store)
+        claimed = client.post(
+            "/api/console/feedback/batches",
+            json={"feedback_keys": ["feedback-1"]},
+        )
 
     assert listed.status_code == 200
-    assert listed.json()["items"][0]["status"] == "resolved"
-    assert 'status-resolved">resolved</span>' in audit_web_module.render_user_feedback_list(store)
-    assert conflict.status_code == 409
-    assert conflict.json()["code"] == "feedback_already_processing"
+    assert listed.json()["items"][0]["status"] == "pending"
+    assert 'status-pending">pending</span>' in rendered
+    assert claimed.status_code == 200
+    assert claimed.json()["item"]["status"] == "processing"
 
 
 def test_feedback_claim_returns_associated_item_receipts(tmp_path: Path):
@@ -321,6 +344,43 @@ def test_console_history_includes_chart_snapshot(tmp_path: Path):
     assert len(payload["chart"]["labels"]) == 24
 
 
+def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-console-1",
+        title="项目评审会",
+        source_json='{"summary":"讨论上线范围"}',
+        participants_json='[{"name":"Derek"},{"name":"Mina"}]',
+        ended_at="2026-08-29T10:00:00Z",
+        eligible_at="2026-08-29T10:05:00Z",
+        status="pending",
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="sent",
+        final_message="会后对齐：请确认上线范围。",
+    )
+    run_id = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="internal-session-must-not-leak",
+        decision_json='{"action":"send"}',
+        audit_summary="上线范围需要确认。",
+        status="sent",
+        error="",
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/console/meeting-attempts/{run_id}")
+
+    assert response.status_code == 200
+    item = response.json()["item"]
+    assert item["id"] == run_id
+    assert item["title"] == "项目评审会"
+    assert item["decision"] == {"action": "send"}
+    assert item["output"] == "会后对齐：请确认上线范围。"
+    assert "codex_session_id" not in json.dumps(item)
+
+
 def test_console_feedback_pending_badge_is_global_when_filtered_to_resolved(
     tmp_path: Path,
 ):
@@ -353,7 +413,7 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
     monkeypatch.setattr(
         audit_web_module,
         "build_worker_status_payload",
-        lambda store: {
+        lambda store, **_kwargs: {
             "service": {"state": "ok"},
             "connectors": {"dingtalk": {"status": "ready"}},
             "non_json_display": {"text": "safe"},
@@ -368,6 +428,127 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
     assert payload["item"]["service"]["state"] == "ok"
     assert payload["meta"]["snapshot_at"]
     json.dumps(payload, ensure_ascii=False)
+
+
+def test_console_status_worker_snapshot_is_not_blocked_by_wechat_probe(
+    monkeypatch, tmp_path: Path,
+):
+    probe_started = threading.Event()
+    release_probe = threading.Event()
+
+    def blocked_wechat_probe(_store):
+        probe_started.set()
+        assert release_probe.wait(timeout=2)
+        return {"reader": {"status": "ready"}}
+
+    monkeypatch.setattr(audit_web_module, "_wechat_status_snapshot", blocked_wechat_probe)
+    monkeypatch.setattr(audit_web_module, "_connector_status_snapshots", lambda: {})
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {
+            "label": label,
+            "ok": True,
+            "state": "running",
+            "detail": "running",
+            "pid": "12345",
+            "runs": "1",
+            "initialized": "1",
+        },
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "_system_health_snapshot",
+        lambda store, service: {
+            "state": "healthy",
+            "detail": "No current quality-gate violations.",
+            "checked_at": "2026-08-30T00:00:00Z",
+            "violations": 0,
+        },
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"待处理事项"}')
+
+    try:
+        with _client(tmp_path) as client:
+            try:
+                assert probe_started.wait(timeout=1)
+                item = {}
+                for _ in range(30):
+                    item = client.get("/api/console/status").json()["item"]
+                    if item.get("service", {}).get("state") == "running":
+                        break
+                    time.sleep(0.01)
+
+                assert item["service"]["state"] == "running"
+                assert item["summary"]["attention"] == 1
+            finally:
+                release_probe.set()
+    finally:
+        release_probe.set()
+
+
+def test_console_status_worker_snapshot_is_not_blocked_by_system_health_scan(
+    monkeypatch, tmp_path: Path,
+):
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+
+    def blocked_system_health_scan(_store, _service):
+        scan_started.set()
+        assert release_scan.wait(timeout=2)
+        return {
+            "state": "healthy",
+            "detail": "No current quality-gate violations.",
+            "checked_at": "2026-08-30T00:00:00Z",
+            "violations": 0,
+        }
+
+    monkeypatch.setattr(
+        audit_web_module,
+        "_system_health_snapshot",
+        blocked_system_health_scan,
+    )
+    monkeypatch.setattr(audit_web_module, "_connector_status_snapshots", lambda: {})
+    monkeypatch.setattr(
+        audit_web_module,
+        "_wechat_status_snapshot",
+        lambda store: {"reader": {"status": "ready"}},
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {
+            "label": label,
+            "ok": True,
+            "state": "running",
+            "detail": "running",
+            "pid": "12345",
+            "runs": "1",
+            "initialized": "1",
+        },
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"待处理事项"}')
+
+    try:
+        with _client(tmp_path) as client:
+            try:
+                assert scan_started.wait(timeout=1)
+                item = {}
+                for _ in range(30):
+                    item = client.get("/api/console/status").json()["item"]
+                    if item.get("service", {}).get("state") == "running":
+                        break
+                    time.sleep(0.01)
+
+                assert item["service"]["state"] == "running"
+                assert item["summary"]["attention"] == 1
+                assert item["system_health"]["state"] == "refreshing"
+            finally:
+                release_scan.set()
+    finally:
+        release_scan.set()
 
 
 def test_console_audit_rules_template_preview_is_rendered_but_template_is_preserved(
@@ -653,6 +834,7 @@ def test_spa_mode_serves_same_react_index_for_business_deep_links_and_keeps_api_
         "/wechat/review",
         "/wechat/memory-review",
         "/wechat/deliveries",
+        "/unknown-business-path",
     )
 
     with _client(tmp_path, spa_enabled=True, asset=expected) as client:
@@ -710,3 +892,311 @@ def test_console_wechat_targets_and_reply_scope_use_json_contract(
     assert saved.status_code == 200
     assert saved.json()["item"] == {"account_id": "wx-account", "saved": 1}
     assert [scope.target_id for scope in store.list_wechat_reply_scopes("wx-account", enabled_only=True)] == ["team"]
+
+
+def test_console_email_tabs_and_feedback_are_local_classifier_operations(
+    tmp_path: Path,
+):
+    email_store = EmailStore(tmp_path / "worker.sqlite3")
+    classification = EmailClassification.model_validate(
+        {
+            "classification_id": 1,
+            "stable_message_identity": (
+                "dingtalk-account:message-id:<email-1@example.test>"
+            ),
+            "provider_locator": {
+                "account_id": "dingtalk-account",
+                "folder": "INBOX",
+                "uidvalidity": 1,
+                "uid": 1,
+                "rfc_message_id": "<email-1@example.test>",
+            },
+            "category": EmailCategory.WORK,
+            "confidence": 0.61,
+            "margin": 0.04,
+            "probabilities": {"work": 0.61, "important": 0.57},
+            "model_id": "email/logistic/model-1",
+            "config_version": "email-v1",
+            "status": EmailClassificationStatus.PENDING_FEEDBACK,
+            "classification_source": "model",
+            "action_plan": None,
+        }
+    )
+    row = email_store.upsert_classification(
+        classification, sender="sender@example.com", subject="Please decide"
+    )
+
+    with _client(tmp_path) as client:
+        default_tab = client.get("/api/console/email/classifications")
+        pending_tab = client.get(
+            "/api/console/email/classifications?status=pending_feedback"
+        )
+        feedback = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "feedback_request_id": "console-feedback-1",
+                "expected_current_action_plan_id": None,
+            },
+        )
+        processed_tab = client.get("/api/console/email/classifications")
+
+    assert default_tab.status_code == 200
+    assert default_tab.json()["items"] == []
+    assert pending_tab.status_code == 200
+    assert pending_tab.json()["items"][0]["subject"] == "Please decide"
+    assert feedback.status_code == 200
+    assert feedback.json()["item"]["classification_source"] == "user"
+    assert feedback.json()["feedback"] == {
+        "feedback_request_id": "console-feedback-1",
+        "expected_current_action_plan_id": None,
+        "resulting_action_plan_id": feedback.json()["item"]["current_action_plan_id"],
+        "applied": True,
+        "replayed": False,
+    }
+    assert processed_tab.json()["items"][0]["category"] == "important"
+
+
+def test_console_email_feedback_validates_intent_and_replays_idempotently(
+    tmp_path: Path,
+):
+    email_store = EmailStore(tmp_path / "worker.sqlite3")
+    row = email_store.upsert_classification(
+        EmailClassification.model_validate(
+            {
+                "classification_id": 11,
+                "stable_message_identity": (
+                    "dingtalk-account:message-id:<email-idempotent@example.test>"
+                ),
+                "provider_locator": {
+                    "account_id": "dingtalk-account",
+                    "folder": "INBOX",
+                    "uidvalidity": 1,
+                    "uid": 11,
+                    "rfc_message_id": "<email-idempotent@example.test>",
+                },
+                "category": EmailCategory.WORK,
+                "confidence": 0.61,
+                "margin": 0.04,
+                "probabilities": {"work": 0.61, "important": 0.57},
+                "model_id": "email/logistic/model-1",
+                "config_version": "email-v1",
+                "status": EmailClassificationStatus.PENDING_FEEDBACK,
+                "classification_source": "model",
+                "action_plan": None,
+            }
+        )
+    )
+
+    with _client(tmp_path) as client:
+        missing_request_id = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "expected_current_action_plan_id": None,
+            },
+        )
+        missing_pointer = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "feedback_request_id": "console-idempotent-1",
+            },
+        )
+        first = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "feedback_request_id": "console-idempotent-1",
+                "expected_current_action_plan_id": None,
+            },
+        )
+        replay = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "feedback_request_id": "console-idempotent-1",
+                "expected_current_action_plan_id": None,
+            },
+        )
+        unknown = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "feedback_request_id": "console-idempotent-2",
+                "expected_current_action_plan_id": None,
+            },
+        )
+        mismatched_replay = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "personal",
+                "feedback_request_id": "console-idempotent-1",
+                "expected_current_action_plan_id": None,
+            },
+        )
+
+    assert missing_request_id.status_code == 400
+    assert missing_pointer.status_code == 400
+    assert first.status_code == 200
+    assert first.json()["feedback"]["applied"] is True
+    assert replay.status_code == 200
+    assert replay.json()["feedback"]["replayed"] is True
+    assert replay.json()["item"] == first.json()["item"]
+    assert unknown.status_code == 409
+    assert unknown.json()["code"] == "email_classification_conflict"
+    assert mismatched_replay.status_code == 409
+    assert mismatched_replay.json()["code"] == "email_classification_conflict"
+
+
+def test_console_email_config_is_separate_from_provider_actions(tmp_path: Path):
+    with _client(tmp_path) as client:
+        saved = client.put(
+            "/api/console/email/config/subscription",
+            json={
+                "description": "营销订阅",
+                "threshold": 0.98,
+                "actions": ["archive"],
+                "enabled": True,
+                "config_version": "email-v2",
+            },
+        )
+        listed = client.get("/api/console/email/config")
+
+    assert saved.status_code == 200
+    assert saved.json()["item"]["actions"] == ["archive"]
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["category"] == "subscription"
+
+
+def test_console_email_accounts_are_registered_and_keep_classifier_config_global(
+    tmp_path: Path,
+):
+    account = {
+        "account_id": "console_mail",
+        "display_name": "Console Mail",
+        "email_address": "console-mail@example.test",
+        "imap_host": "imap.example.test",
+        "imap_port": 993,
+        "imap_tls": True,
+        "imap_username": "console-mail@example.test",
+        "imap_secret_reference": "CEO_EMAIL_CONSOLE_MAIL_IMAP_SECRET",
+        "smtp_host": "smtp.example.test",
+        "smtp_port": 465,
+        "smtp_tls": True,
+        "smtp_username": "console-mail@example.test",
+        "smtp_secret_reference": "CEO_EMAIL_CONSOLE_MAIL_SMTP_SECRET",
+        "enabled": True,
+        "scan_folders": ["INBOX"],
+        "scan_interval_seconds": 60,
+    }
+
+    with _client(tmp_path) as client:
+        config = client.put(
+            "/api/console/email/config/work",
+            json={
+                "description": "Work",
+                "threshold": 0.91,
+                "actions": ["archive"],
+                "enabled": True,
+                "config_version": "email-config-v1",
+            },
+        )
+        created = client.post("/api/console/email/accounts", json=account)
+        listed = client.get("/api/console/email/accounts")
+
+    assert config.status_code == 200
+    assert created.status_code == 201
+    assert created.json()["restart_required"] is True
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["account_id"] == "console_mail"
+    assert "threshold" not in listed.json()["items"][0]
+    assert "model_id" not in listed.json()["items"][0]
+
+
+def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Path):
+    email_store = EmailStore(tmp_path / "worker.sqlite3")
+    classification = EmailClassification.model_validate(
+        {
+            "classification_id": 2,
+            "stable_message_identity": (
+                "dingtalk-account:message-id:<email-learning-1@example.test>"
+            ),
+            "provider_locator": {
+                "account_id": "dingtalk-account",
+                "folder": "INBOX",
+                "uidvalidity": 1,
+                "uid": 2,
+                "rfc_message_id": "<email-learning-1@example.test>",
+            },
+            "category": EmailCategory.WORK,
+            "confidence": 0.61,
+            "margin": 0.04,
+            "probabilities": {"work": 0.61, "important": 0.57},
+            "model_id": "email/logistic/model-1",
+            "config_version": "email-v1",
+            "status": EmailClassificationStatus.PENDING_FEEDBACK,
+            "classification_source": "model",
+            "action_plan": None,
+        }
+    )
+    row = email_store.upsert_classification(
+        classification,
+        sender="sender@example.com",
+        subject="Please decide",
+        model_text="__from_domain__example.com __subject__项目 工作",
+    )
+    learning_service = EmailClassifierLearningService(
+        email_store,
+        registry=EmailModelRegistry(tmp_path / "models"),
+        retrain_state_path=tmp_path / "models" / "retrain-state.json",
+    )
+
+    with _client(
+        tmp_path, email_learning_factory=lambda: learning_service
+    ) as client:
+        feedback = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "feedback_request_id": "console-learning-feedback-1",
+                "expected_current_action_plan_id": None,
+            },
+        )
+
+    assert feedback.status_code == 200
+    assert feedback.json()["item"]["classification_source"] == "user"
+    assert feedback.json()["learning"] == {
+        "retrain_due": False,
+        "retrain_reason": None,
+        "training_run_id": None,
+        "training_status": None,
+        "promoted": False,
+        "error": None,
+    }
+    assert (tmp_path / "models" / "retrain-state.json").exists()
+
+
+def test_console_email_manual_training_returns_only_sanitized_durable_decision(
+    tmp_path: Path,
+):
+    result = SimpleNamespace(
+        decision=SimpleNamespace(due=True, reason="manual", pending_examples=5),
+        training_run=SimpleNamespace(run_id="run-safe", status="running"),
+    )
+    service = SimpleNamespace(request_manual_training=lambda: result)
+
+    with _client(tmp_path, email_learning_factory=lambda: service) as client:
+        response = client.post("/api/console/email/training", json={})
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "ok": True,
+        "learning": {
+            "retrain_due": True,
+            "retrain_reason": "manual",
+            "pending_examples": 5,
+            "training_run_id": "run-safe",
+            "training_status": "running",
+        },
+    }

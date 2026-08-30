@@ -83,11 +83,37 @@ function query(params: Record<string, string | number | undefined>) {
 }
 
 export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; }
-export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; }
+export interface TaskFilters { categories: string[]; task_states: string[]; }
+export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
+export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; }
 export interface HistoryChart { labels: string[]; series: Array<{ name: string; data: number[] }>; total: number; range: string; }
 export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; detail_label: string; detail: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
 export interface FeedbackReference { label: string; route: string; }
+export interface FeedbackProcessingRound {
+  id: number;
+  feedback_key: string;
+  round_number: number;
+  batch_id: string;
+  status: "processing" | "resolved";
+  workbench_task_id: string;
+  workbench_turn_id: string;
+  attempt_id: number;
+  agent_run_id: number;
+  commit_sha: string;
+  test_evidence: Record<string, unknown>;
+  restart_evidence: Record<string, unknown>;
+  health_evidence: Record<string, unknown>;
+  backlog_evidence?: Record<string, unknown>;
+  receipt_version: 1 | 2;
+  note: string;
+  started_at: string;
+  resolved_at: string;
+  reopened_at: string;
+  reopen_reason: string;
+  created_at: string;
+  updated_at: string;
+}
 export interface FeedbackItem {
   id: string;
   feedback_key?: string;
@@ -102,6 +128,8 @@ export interface FeedbackItem {
   references: FeedbackReference[];
   batch_id: string;
   processing_task_id: string;
+  current_processing?: FeedbackProcessingRound | null;
+  processing_history?: FeedbackProcessingRound[];
 }
 export interface FeedbackList extends ConsoleList<FeedbackItem> { pending_count?: number; }
 export interface SentTodoItem { id: string; kind: string; kind_label: string; sent_at: string; status: string; owner: string; project_title: string; todo_title: string; description: string; original_text: string; deadline: string; priority: string; target: string; external_id: string; detail_url: string; }
@@ -158,13 +186,18 @@ function mapTaskDetail(value: unknown): TaskDetail {
     todos: Array.isArray(payload.todos) ? payload.todos.map(asRecord) : [],
     updates: Array.isArray(payload.updates) ? payload.updates.map(asRecord) : [],
     memory: project.memory_context && isRecord(project.memory_context) ? [project.memory_context] : [],
+    unlinked_follow_ups: Array.isArray(payload.unlinked_follow_ups) ? payload.unlinked_follow_ups.map(asRecord) : [],
   };
 }
 
 export function listTasks(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal) {
   return request<unknown>(`/api/console/tasks${query(params)}`, { signal }).then((value) => {
     const page = parseConsoleList(value);
-    return { ...page, items: page.items.map(mapTaskSummary) };
+    const payload = asRecord(value);
+    const filters = asRecord(payload.filters);
+    const categories = Array.isArray(filters.categories) ? filters.categories.map(displayValue).filter((item) => item !== "未提供") : [];
+    const taskStates = Array.isArray(filters.task_states) ? filters.task_states.map(displayValue).filter((item) => item !== "未提供") : [];
+    return { ...page, items: page.items.map(mapTaskSummary), filters: { categories, task_states: taskStates } } satisfies TaskList;
   });
 }
 
@@ -210,6 +243,10 @@ export function listFeedback(params: Record<string, string | number | undefined>
   });
 }
 
+export function getFeedbackDetail(feedbackKey: string, signal?: AbortSignal) {
+  return request<ConsoleResource<FeedbackItem>>(`/api/console/feedback/${encodeURIComponent(feedbackKey)}`, { signal });
+}
+
 export function getStatus(signal?: AbortSignal) {
   return request<{ item: Record<string, unknown>; meta: { snapshot_at: string } }>("/api/console/status", { signal });
 }
@@ -227,6 +264,9 @@ export function command(path: string, body: Record<string, unknown> = {}) {
 }
 
 export function resolveFeedback(id: string) { return command(`/api/console/feedback/${encodeURIComponent(id)}/resolve`); }
+export function reopenFeedback(feedbackKey: string, reason: string) {
+  return command(`/api/console/feedback/items/${encodeURIComponent(feedbackKey)}/reopen`, { reason });
+}
 export function syncFeedback() { return command("/api/console/feedback/sync"); }
 export function saveSettings(section: string, fields: Record<string, unknown>, extras: Record<string, unknown> = {}) {
   return command(`/api/console/settings/${encodeURIComponent(section)}`, { ...extras, fields });

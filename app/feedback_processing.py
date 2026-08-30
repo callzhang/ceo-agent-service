@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 FEEDBACK_PROCESSING_CLAIM_ERROR = "feedback processing claim rejected"
 FEEDBACK_PROCESSING_ALREADY_PROCESSING_ERROR = "feedback_already_processing"
 FEEDBACK_PROCESSING_BATCH_ERROR = "feedback processing batch definition conflict"
+FEEDBACK_PROCESSING_CURRENT_ROUND_ID_INVALID = (
+    "feedback_processing_current_round_id_invalid"
+)
+FEEDBACK_REOPEN_INVALID = "feedback_reopen_invalid"
+FEEDBACK_REOPEN_PROCESSING = "feedback_reopen_processing"
+FEEDBACK_REOPEN_HISTORY_INCOMPLETE = "feedback_reopen_history_incomplete"
 FEEDBACK_PROCESSING_SKILL_PATH = "skills/ceo-feedback-processing/SKILL.md"
 
 
@@ -30,6 +36,14 @@ class FeedbackProcessingClaimError(ValueError):
 
 class FeedbackProcessingBatchError(ValueError):
     """Raised when a batch id is reused with a different key set."""
+
+
+class FeedbackProcessingReopenError(ValueError):
+    """Raised when a feedback item cannot be reopened safely."""
+
+    def __init__(self, message: str, *, error_code: str) -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 class _StrictProcessingModel(BaseModel):
@@ -56,6 +70,7 @@ class FeedbackProcessingItem(_StrictProcessingModel):
     """Persisted state and evidence for one feedback event."""
 
     feedback_key: str
+    current_round_id: int = 0
     batch_id: str = ""
     status: Literal["pending", "processing", "resolved"] = "pending"
     workbench_task_id: str = ""
@@ -70,6 +85,48 @@ class FeedbackProcessingItem(_StrictProcessingModel):
     resolved_at: str = ""
     created_at: str = ""
     updated_at: str = ""
+
+
+class FeedbackProcessingRound(_StrictProcessingModel):
+    """One immutable processing attempt for a stable feedback key."""
+
+    id: int
+    feedback_key: str
+    round_number: int = Field(gt=0)
+    batch_id: str
+    status: Literal["processing", "resolved"]
+    workbench_task_id: str = ""
+    workbench_turn_id: str = ""
+    attempt_id: int = 0
+    agent_run_id: int = 0
+    commit_sha: str = ""
+    test_evidence: dict[str, object] = Field(default_factory=dict)
+    restart_evidence: dict[str, object] = Field(default_factory=dict)
+    health_evidence: dict[str, object] = Field(default_factory=dict)
+    backlog_evidence: dict[str, object] = Field(default_factory=dict)
+    receipt_version: Literal[1, 2] = 1
+    note: str = ""
+    started_at: str = ""
+    resolved_at: str = ""
+    reopened_at: str = ""
+    reopen_reason: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class FeedbackProcessingTransition(_StrictProcessingModel):
+    """One append-only feedback processing status transition."""
+
+    id: int
+    feedback_key: str
+    round_id: int = 0
+    batch_id: str = ""
+    from_status: Literal["", "pending", "processing", "resolved"]
+    to_status: Literal["pending", "processing", "resolved"]
+    reason: str = ""
+    workbench_task_id: str = ""
+    workbench_turn_id: str = ""
+    created_at: str = ""
 
 
 class FeedbackImportItem(_StrictProcessingModel):
@@ -93,6 +150,15 @@ class FeedbackImportItem(_StrictProcessingModel):
         return self.summary
 
 
+class FeedbackProcessingAssociation(_StrictProcessingModel):
+    """Exact durable association for one feedback item receipt."""
+
+    workbench_task_id: str
+    workbench_turn_id: str
+    attempt_id: int
+    agent_run_id: int
+
+
 class ResolutionEvidence(_StrictProcessingModel):
     """Evidence receipt required before a processing batch can be resolved."""
 
@@ -106,19 +172,23 @@ class ResolutionEvidence(_StrictProcessingModel):
     health_evidence: dict[str, Any] = Field(
         default_factory=dict, validation_alias=AliasChoices("health_evidence", "health")
     )
+    backlog_evidence: dict[str, Any]
     # Optional association map used by API callers.  The store also verifies
     # the durable per-item associations, so callers cannot bypass that check.
-    associations: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    associations: dict[str, FeedbackProcessingAssociation] = Field(default_factory=dict)
 
 
 def project_feedback_status(source: object, processing: object | None = None) -> str:
     """Return the canonical status shared by API and HTML feedback projections.
 
-    Source-of-truth completion fields win over the processing projection so a
-    reviewed attempt cannot remain visibly pending while its processing row is
-    still catching up.
+    An explicit processing projection is authoritative for reopen rounds.
+    Historical source completion fields are only a fallback when no processing
+    item has been persisted.
     """
 
+    if processing is not None:
+        status = str(getattr(processing, "status", "pending") or "pending").strip().casefold()
+        return status if status in {"pending", "processing", "resolved"} else "pending"
     if any(
         str(getattr(source, field, "") or "").strip()
         for field in ("resolved_at", "reviewer_feedback", "corrected_reply_text")
@@ -242,16 +312,54 @@ def _all_test_exit_codes_zero(value: object) -> tuple[bool, bool]:
 
 
 def validate_resolution_evidence(
-    evidence: ResolutionEvidence, *, current_head: str
+    evidence: ResolutionEvidence,
+    *,
+    commit_is_ancestor: bool,
 ) -> None:
     """Raise ``ValueError`` unless a complete successful receipt is present."""
 
+    _validate_resolution_evidence_without_backlog(
+        evidence,
+        commit_is_ancestor=commit_is_ancestor,
+    )
+    backlog = evidence.backlog_evidence
+    required_backlog_counts = {"processing", "failed", "retryable"}
+    if not required_backlog_counts <= set(backlog):
+        raise ValueError("resolution requires processing, failed, and retryable backlog counts")
+    if any(
+        not isinstance(backlog[name], int)
+        or isinstance(backlog[name], bool)
+        or backlog[name] != 0
+        for name in required_backlog_counts
+    ):
+        raise ValueError("resolution requires zero processing, failed, and retryable backlog")
+
+
+def validate_legacy_resolution_evidence(
+    evidence: ResolutionEvidence,
+    *,
+    commit_is_ancestor: bool,
+) -> None:
+    """Validate the complete pre-backlog receipt contract for version 1 rounds."""
+
+    _validate_resolution_evidence_without_backlog(
+        evidence,
+        commit_is_ancestor=commit_is_ancestor,
+    )
+
+
+def _validate_resolution_evidence_without_backlog(
+    evidence: ResolutionEvidence,
+    *,
+    commit_is_ancestor: bool,
+) -> None:
+    """Validate evidence fields shared by receipt versions 1 and 2."""
+
     commit_sha = evidence.commit_sha.strip()
-    head = current_head.strip()
     if not _COMMIT_SHA_RE.fullmatch(commit_sha):
         raise ValueError("resolution requires a 40-character commit SHA")
-    if not _COMMIT_SHA_RE.fullmatch(head) or commit_sha.lower() != head.lower():
-        raise ValueError("resolution commit does not match current HEAD")
+    if not isinstance(commit_is_ancestor, bool) or not commit_is_ancestor:
+        raise ValueError("resolution commit is not an ancestor of local main")
     test_codes_ok, has_test_code = _all_test_exit_codes_zero(evidence.test_evidence)
     if not evidence.test_evidence or not has_test_code or not test_codes_ok:
         raise ValueError("resolution requires successful test evidence")

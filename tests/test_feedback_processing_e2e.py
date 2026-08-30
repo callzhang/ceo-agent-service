@@ -7,13 +7,15 @@ and references; no model invocation is involved in the import step.
 
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
+import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import app.web_api.registration as registration_module
 from app.audit_web import create_audit_app
 from app.store import AutoReplyStore
+from app.web_api.registration import register_console_routes
 
 
 class _NonExecutingExecutor:
@@ -54,6 +56,35 @@ def _client(tmp_path: Path) -> TestClient:
         ),
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
+    )
+
+
+def _registered_route_client(
+    tmp_path: Path,
+    *,
+    feedback_backlog_factory,
+    status_payload_factory=lambda: {
+        "service": {"state": "refreshing"},
+        "summary": {"processing": 0, "failed": 0, "retryable": 0},
+    },
+) -> tuple[TestClient, AutoReplyStore]:
+    db_path = tmp_path / "route-worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    app = FastAPI()
+    register_console_routes(
+        app,
+        store_factory=lambda: store,
+        status_payload_factory=status_payload_factory,
+        feedback_backlog_factory=feedback_backlog_factory,
+        attention_rows_factory=lambda: [],
+    )
+    return (
+        TestClient(
+            app,
+            client=("127.0.0.1", 50000),
+            headers={"Host": "127.0.0.1:8765"},
+        ),
+        store,
     )
 
 
@@ -119,6 +150,292 @@ def _seed_attempt_8308(store: AutoReplyStore) -> tuple[int, str]:
     return attempt_id, token
 
 
+def _resolution_receipt(
+    commit_sha: str,
+    *,
+    test_name: str,
+    before_pid: int,
+    after_pid: int,
+) -> dict[str, object]:
+    return {
+        "commit_sha": commit_sha,
+        "test_evidence": {test_name: {"exit_code": 0}},
+        "restart_evidence": {
+            "launchd_label": "com.ceo-agent-service.main",
+            "before_pid": before_pid,
+            "after_pid": after_pid,
+        },
+        "health_evidence": {
+            "url": "http://127.0.0.1:8765/healthz",
+            "status_code": 200,
+            "ok": True,
+        },
+    }
+
+
+def _seed_processing_batch_for_resolution(
+    store: AutoReplyStore,
+    *,
+    batch_id: str,
+    receipt: dict[str, object],
+) -> None:
+    store.upsert_feedback_event(
+        key="feedback-backlog",
+        feedback_token="feedback-backlog-token",
+    )
+    store.claim_feedback_processing_items(batch_id, ["feedback-backlog"])
+    store.associate_feedback_processing_turn(
+        "feedback-backlog",
+        workbench_task_id="task-backlog",
+        workbench_turn_id="turn-backlog",
+        attempt_id=1,
+        agent_run_id=2,
+    )
+    store.patch_feedback_processing_item_evidence(
+        "feedback-backlog",
+        commit_sha=receipt["commit_sha"],
+        test_evidence=receipt["test_evidence"],
+        restart_evidence=receipt["restart_evidence"],
+        health_evidence=receipt["health_evidence"],
+    )
+
+
+def _main_receipt() -> dict[str, object]:
+    commit_sha = subprocess.run(
+        ["git", "rev-parse", "main"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    return _resolution_receipt(
+        commit_sha,
+        test_name="backlog-contract",
+        before_pid=300,
+        after_pid=301,
+    )
+
+
+def _seed_feedback_noise(
+    store: AutoReplyStore,
+    *,
+    count: int,
+    received_at: str = "2030-01-01 00:00:00",
+) -> None:
+    with store._connect() as db:
+        db.executemany(
+            """
+            insert into feedback_events (
+                key, feedback_token, received_at
+            ) values (?, ?, ?)
+            """,
+            [
+                (f"noise-{index:05d}", f"noise-token-{index:05d}", received_at)
+                for index in range(count)
+            ],
+        )
+
+
+def test_batch_detail_reads_exact_item_beyond_general_feedback_limit(tmp_path: Path):
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: {
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0,
+        },
+    )
+    store.upsert_feedback_event(
+        key="feedback-outside-limit",
+        feedback_token="target-token",
+        received_at="2000-01-01 00:00:00",
+    )
+    store.claim_feedback_processing_items(
+        "batch-outside-limit",
+        ["feedback-outside-limit"],
+    )
+    _seed_feedback_noise(store, count=10_001)
+
+    with client:
+        response = client.get(
+            "/api/console/feedback/batches/batch-outside-limit"
+        )
+
+    assert response.status_code == 200
+    batch = response.json()["item"]
+    assert batch["requested_count"] == 1
+    assert len(batch["items"]) == batch["requested_count"]
+    assert batch["items"][0]["feedback_key"] == "feedback-outside-limit"
+
+
+def test_batch_detail_database_query_count_is_bounded_by_batch_not_total_feedback(
+    tmp_path: Path,
+    monkeypatch,
+):
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: {
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0,
+        },
+    )
+    store.upsert_feedback_event(
+        key="feedback-query-bound",
+        feedback_token="target-token",
+    )
+    store.claim_feedback_processing_items(
+        "batch-query-bound",
+        ["feedback-query-bound"],
+    )
+    _seed_feedback_noise(store, count=250)
+
+    queries: list[str] = []
+    original_open_connection = AutoReplyStore._open_connection
+
+    def traced_open_connection(self):
+        connection = original_open_connection(self)
+        connection.set_trace_callback(
+            lambda statement: queries.append(statement)
+            if statement.lstrip().casefold().startswith(("select", "with"))
+            else None
+        )
+        return connection
+
+    monkeypatch.setattr(AutoReplyStore, "_open_connection", traced_open_connection)
+    with client:
+        response = client.get(
+            "/api/console/feedback/batches/batch-query-bound"
+        )
+
+    assert response.status_code == 200
+    assert len(response.json()["item"]["items"]) == 1
+    assert len(queries) <= 4
+
+
+def test_resolve_ignores_cached_refreshing_zero_and_uses_fresh_backlog(
+    tmp_path: Path,
+):
+    receipt = _main_receipt()
+    with _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: {
+            "processing": 1,
+            "failed": 0,
+            "retryable": 0,
+        },
+    )[0] as client:
+        store = AutoReplyStore(tmp_path / "route-worker.sqlite3")
+        _seed_processing_batch_for_resolution(
+            store,
+            batch_id="batch-fresh-backlog",
+            receipt=receipt,
+        )
+        response = client.post(
+            "/api/console/feedback/batches/batch-fresh-backlog/resolve",
+            json=receipt,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_resolution_incomplete"
+    assert store.get_feedback_processing_batch("batch-fresh-backlog").status == "processing"
+
+
+def test_resolve_fails_closed_when_fresh_backlog_factory_raises(tmp_path: Path):
+    receipt = _main_receipt()
+
+    def unavailable_backlog():
+        raise RuntimeError("fresh backlog unavailable")
+
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=unavailable_backlog,
+    )
+    _seed_processing_batch_for_resolution(
+        store,
+        batch_id="batch-backlog-error",
+        receipt=receipt,
+    )
+    with client:
+        response = client.post(
+            "/api/console/feedback/batches/batch-backlog-error/resolve",
+            json=receipt,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_resolution_incomplete"
+    assert "fresh backlog unavailable" not in response.text
+    assert store.get_feedback_processing_batch("batch-backlog-error").status == "processing"
+
+
+def test_resolve_does_not_call_cached_status_factory(tmp_path: Path):
+    receipt = _main_receipt()
+
+    def cached_status_failure():
+        raise RuntimeError("cached status must not be used for resolution")
+
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: {
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0,
+        },
+        status_payload_factory=cached_status_failure,
+    )
+    _seed_processing_batch_for_resolution(
+        store,
+        batch_id="batch-no-cache",
+        receipt=receipt,
+    )
+    with client:
+        response = client.post(
+            "/api/console/feedback/batches/batch-no-cache/resolve",
+            json=receipt,
+        )
+
+    assert response.status_code == 200
+    assert store.get_feedback_processing_batch("batch-no-cache").status == "resolved"
+
+
+@pytest.mark.parametrize(
+    "backlog",
+    [
+        {},
+        {"processing": 0, "failed": 0},
+        {"state": "refreshing", "summary": {"processing": 0, "failed": 0, "retryable": 0}},
+        {"state": "unavailable"},
+        {"processing": False, "failed": 0, "retryable": 0},
+        {"processing": "0", "failed": 0, "retryable": 0},
+        {"processing": 0, "failed": 1, "retryable": 0},
+        {"processing": 0, "failed": 0, "retryable": 1},
+    ],
+)
+def test_resolve_requires_strict_fresh_zero_backlog(
+    tmp_path: Path,
+    backlog: dict[str, object],
+):
+    receipt = _main_receipt()
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: backlog,
+    )
+    _seed_processing_batch_for_resolution(
+        store,
+        batch_id="batch-strict-backlog",
+        receipt=receipt,
+    )
+    with client:
+        response = client.post(
+            "/api/console/feedback/batches/batch-strict-backlog/resolve",
+            json=receipt,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_resolution_incomplete"
+    assert store.get_feedback_processing_batch("batch-strict-backlog").status == "processing"
+
+
 def test_attempt_8308_feedback_processing_requires_complete_receipts(
     tmp_path: Path, monkeypatch
 ):
@@ -126,6 +443,57 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
     store = AutoReplyStore(db_path)
     attempt_id, _token = _seed_attempt_8308(store)
     original_comment = store.get_feedback_event("feedback-8308").comment
+
+    valid_commit = "a" * 40
+    missing_commit = "b" * 40
+    nonancestor_commit = "c" * 40
+    git_calls: list[list[str]] = []
+    original_subprocess_run = subprocess.run
+
+    def checked_git(command, **kwargs):
+        assert isinstance(command, list)
+        if not command or command[0] != "git":
+            return original_subprocess_run(command, **kwargs)
+        assert kwargs.get("shell", False) is False
+        git_calls.append(command)
+        if command == ["git", "cat-file", "-e", f"{missing_commit}^{{commit}}"]:
+            return subprocess.CompletedProcess(command, 1, "", "missing commit")
+        if command == ["git", "cat-file", "-e", f"{nonancestor_commit}^{{commit}}"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command == [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            nonancestor_commit,
+            "main",
+        ]:
+            return subprocess.CompletedProcess(command, 1, "", "")
+        if command == ["git", "cat-file", "-e", f"{valid_commit}^{{commit}}"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command == [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            valid_commit,
+            "main",
+        ]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        raise AssertionError(f"unexpected git command: {command}")
+
+    monkeypatch.setattr(registration_module.subprocess, "run", checked_git)
+
+    round_one_receipt = _resolution_receipt(
+        valid_commit,
+        test_name="round-one",
+        before_pid=100,
+        after_pid=101,
+    )
+    round_two_receipt = _resolution_receipt(
+        valid_commit,
+        test_name="round-two",
+        before_pid=200,
+        after_pid=201,
+    )
 
     with _client(tmp_path) as client:
         health = client.get("/healthz")
@@ -141,6 +509,51 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         assert {reference["label"] for reference in row["references"]} >= {"attempt#8308", "run#445"}
         assert {reference["route"] for reference in row["references"] if reference["label"] == "attempt#8308"} == {"/attempts/8308"}
 
+        unknown = client.post(
+            "/api/console/feedback/items/unknown/reopen",
+            json={"reason": "The earlier resolution was premature."},
+        )
+        assert unknown.status_code == 404
+        assert unknown.json()["code"] == "not_found"
+        for invalid_body in (
+            {},
+            {"reason": "   "},
+            {"reason": "premature", "extra": True},
+        ):
+            invalid = client.post(
+                "/api/console/feedback/items/feedback-8308/reopen",
+                json=invalid_body,
+            )
+            assert invalid.status_code == 422
+            assert invalid.json()["code"] == "feedback_reopen_invalid"
+        for invalid_request in (
+            client.post(
+                "/api/console/feedback/items/feedback-8308/reopen",
+                json=[],
+            ),
+            client.post(
+                "/api/console/feedback/items/feedback-8308/reopen",
+                content="not-json",
+                headers={"Content-Type": "application/json"},
+            ),
+            client.post(
+                "/api/console/feedback/items/feedback-8308/reopen",
+                content='{"reason":"premature"}',
+                headers={"Content-Type": "text/plain"},
+            ),
+        ):
+            assert invalid_request.status_code == 422
+            assert invalid_request.json()["code"] == "feedback_reopen_invalid"
+
+        pending_reopen = client.post(
+            "/api/console/feedback/items/feedback-8308/reopen",
+            json={"reason": "Pending retry is idempotent."},
+        )
+        assert pending_reopen.status_code == 200
+        assert pending_reopen.json()["item"]["status"] == "pending"
+        assert pending_reopen.json()["item"]["current_processing"] is None
+        assert pending_reopen.json()["item"]["processing_history"] == []
+
         claimed = client.post(
             "/api/console/feedback/batches",
             json={"feedback_keys": ["feedback-8308"]},
@@ -153,6 +566,14 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         assert "原始用户反馈" not in batch["start_message"]
         assert "已有摘要：反馈入口需要纳入用户反馈处理闭环。" in batch["start_message"]
 
+        round_one_id = batch["items"][0]["id"]
+        processing_reopen = client.post(
+            "/api/console/feedback/items/feedback-8308/reopen",
+            json={"reason": "Do not interrupt the active claim."},
+        )
+        assert processing_reopen.status_code == 409
+        assert processing_reopen.json()["code"] == "feedback_reopen_processing"
+
         incomplete = client.post(
             f"/api/console/feedback/batches/{batch_id}/resolve",
             json={},
@@ -160,28 +581,25 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         assert incomplete.status_code == 409
         assert incomplete.json()["code"] == "feedback_resolution_incomplete"
 
-        head = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-        ).stdout.strip()
+        user_backlog = client.post(
+            f"/api/console/feedback/batches/{batch_id}/resolve",
+            json={
+                **round_one_receipt,
+                "backlog_evidence": {
+                    "processing": 0,
+                    "failed": 0,
+                    "retryable": 0,
+                },
+            },
+        )
+        assert user_backlog.status_code == 409
+        assert user_backlog.json()["code"] == "feedback_resolution_invalid"
 
         # Even a complete-looking top-level receipt cannot resolve until the
         # item itself contains its task/turn association and matching evidence.
         blocked = client.post(
             f"/api/console/feedback/batches/{batch_id}/resolve",
-            json={
-                "commit_sha": head,
-                "test_evidence": {"pytest": {"exit_code": 0}},
-                "restart_evidence": {
-                    "launchd_label": "com.ceo-agent-service.main",
-                    "before_pid": 100,
-                    "after_pid": 101,
-                },
-                "health_evidence": {
-                    "url": "http://127.0.0.1:8765/healthz",
-                    "status_code": 200,
-                    "ok": True,
-                },
-            },
+            json=round_one_receipt,
         )
         assert blocked.status_code == 409
         assert blocked.json()["code"] == "feedback_resolution_incomplete"
@@ -194,45 +612,30 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
                 "workbench_turn_id": "turn-445",
                 "attempt_id": 8308,
                 "agent_run_id": 445,
-                "commit_sha": head,
-                "test_evidence": {"pytest": {"exit_code": 0}},
-                "restart_evidence": {
-                    "launchd_label": "com.ceo-agent-service.main",
-                    "before_pid": 100,
-                    "after_pid": 101,
-                },
-                "health_evidence": {
-                    "url": "http://127.0.0.1:8765/healthz",
-                    "status_code": 200,
-                    "ok": True,
-                },
+                **round_one_receipt,
             },
         )
         assert patched.status_code == 200
 
-        # The route obtains the current HEAD from git.  Mock that receipt so
-        # this test remains deterministic even when run from another checkout.
-        monkeypatch.setattr(
-            registration_module.subprocess,
-            "run",
-            lambda *args, **kwargs: SimpleNamespace(stdout=f"{head}\n"),
+        missing_commit_result = client.post(
+            f"/api/console/feedback/batches/{batch_id}/resolve",
+            json={**round_one_receipt, "commit_sha": missing_commit},
         )
+        assert missing_commit_result.status_code == 409
+        assert missing_commit_result.json()["code"] == "feedback_resolution_incomplete"
+        assert store.get_feedback_processing_item("feedback-8308").status == "processing"
+
+        nonancestor_result = client.post(
+            f"/api/console/feedback/batches/{batch_id}/resolve",
+            json={**round_one_receipt, "commit_sha": nonancestor_commit},
+        )
+        assert nonancestor_result.status_code == 409
+        assert nonancestor_result.json()["code"] == "feedback_resolution_incomplete"
+        assert store.get_feedback_processing_item("feedback-8308").status == "processing"
+
         resolved = client.post(
             f"/api/console/feedback/batches/{batch_id}/resolve",
-            json={
-                "commit_sha": head,
-                "test_evidence": {"pytest": {"exit_code": 0}},
-                "restart_evidence": {
-                    "launchd_label": "com.ceo-agent-service.main",
-                    "before_pid": 100,
-                    "after_pid": 101,
-                },
-                "health_evidence": {
-                    "url": "http://127.0.0.1:8765/healthz",
-                    "status_code": 200,
-                    "ok": True,
-                },
-            },
+            json=round_one_receipt,
         )
         assert resolved.status_code == 200
         assert resolved.json()["item"] == {"batch_id": batch_id, "status": "resolved"}
@@ -241,12 +644,195 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         assert detail.status_code == 200
         assert detail.json()["item"]["status"] == "resolved"
         assert detail.json()["item"]["items"][0]["status"] == "resolved"
+        assert detail.json()["item"]["items"][0]["round_number"] == 1
 
-        pending_after = client.get("/api/console/feedback?status=pending")
-        assert all(item["feedback_key"] != "feedback-8308" for item in pending_after.json()["items"])
+        resolved_item = client.get("/api/console/feedback/feedback-8308")
+        assert resolved_item.status_code == 200
+        assert resolved_item.json()["item"]["current_processing"]["id"] == round_one_id
+        assert [
+            item["round_number"]
+            for item in resolved_item.json()["item"]["processing_history"]
+        ] == [1]
+        assert resolved_item.json()["item"]["processing_history"][0][
+            "backlog_evidence"
+        ] == {"processing": 0, "failed": 0, "retryable": 0}
+
+        assert store.record_reply_feedback(
+            attempt_id,
+            feedback="Historical reviewer feedback must remain readable.",
+            corrected_reply_text="Historical corrected reply must remain readable.",
+        )
+
+        reopen_reason = "  The earlier resolution preceded the completed repair.  "
+        reopened = client.post(
+            "/api/console/feedback/items/feedback-8308/reopen",
+            json={"reason": reopen_reason},
+        )
+        assert reopened.status_code == 200
+        reopened_item = reopened.json()["item"]
+        assert reopened_item["status"] == "pending"
+        assert reopened_item["current_processing"] is None
+        assert reopened_item["processing_history"][0]["reopen_reason"] == reopen_reason
+        assert reopened_item["processing_history"][0]["id"] == round_one_id
+        historical_attempt = store.get_reply_attempt(attempt_id)
+        assert historical_attempt is not None
+        assert historical_attempt.reviewer_feedback == (
+            "Historical reviewer feedback must remain readable."
+        )
+        assert historical_attempt.corrected_reply_text == (
+            "Historical corrected reply must remain readable."
+        )
+
+        reopened_detail = client.get("/api/console/feedback/feedback-8308")
+        assert reopened_detail.status_code == 200
+        assert reopened_detail.json()["item"]["status"] == "pending"
+        assert reopened_detail.json()["item"]["current_processing"] is None
+
+        pending_again = client.post(
+            "/api/console/feedback/items/feedback-8308/reopen",
+            json={"reason": "This must not replace the first reason."},
+        )
+        assert pending_again.status_code == 200
+        assert pending_again.json()["item"]["processing_history"][0][
+            "reopen_reason"
+        ] == reopen_reason
+
+        old_batch = client.get(f"/api/console/feedback/batches/{batch_id}")
+        assert old_batch.status_code == 200
+        old_batch_item = old_batch.json()["item"]
+        assert old_batch_item["status"] == "resolved"
+        assert old_batch_item["items"][0]["id"] == round_one_id
+        assert old_batch_item["items"][0]["round_number"] == 1
+        assert old_batch_item["items"][0]["commit_sha"] == valid_commit
+
+        pending_after_reopen = client.get("/api/console/feedback?status=pending")
+        pending_rows = [
+            item
+            for item in pending_after_reopen.json()["items"]
+            if item["feedback_key"] == "feedback-8308"
+        ]
+        assert len(pending_rows) == 1
+        assert pending_rows[0]["status"] == "pending"
+        assert pending_rows[0]["batch_id"] == ""
+
+        claimed_again = client.post(
+            "/api/console/feedback/batches",
+            json={"feedback_keys": ["feedback-8308"]},
+        )
+        assert claimed_again.status_code == 200
+        batch_two = claimed_again.json()["item"]
+        batch_two_id = batch_two["batch_id"]
+        round_two = batch_two["items"][0]
+        assert batch_two_id != batch_id
+        assert round_two["round_number"] == 2
+        assert round_two["id"] != round_one_id
+        assert round_two["workbench_task_id"] == ""
+        assert round_two["workbench_turn_id"] == ""
+        assert round_two["commit_sha"] == ""
+        assert round_two["test_evidence"] == {}
+        assert round_two["restart_evidence"] == {}
+        assert round_two["health_evidence"] == {}
+
+        historical_batch_patch = client.patch(
+            f"/api/console/feedback/batches/{batch_id}",
+            json={
+                "workbench_task_id": "stale-task",
+                "workbench_turn_id": "stale-turn",
+            },
+        )
+        assert historical_batch_patch.status_code == 409
+        assert historical_batch_patch.json()["code"] == "feedback_batch_conflict"
+        round_two_after_stale_patch = client.get(
+            f"/api/console/feedback/batches/{batch_two_id}"
+        ).json()["item"]["items"][0]
+        assert round_two_after_stale_patch["workbench_task_id"] == ""
+        assert round_two_after_stale_patch["workbench_turn_id"] == ""
+
+        patched_again = client.patch(
+            "/api/console/feedback/items/feedback-8308",
+            json={
+                "workbench_task_id": "task-224",
+                "workbench_turn_id": "turn-545",
+                "attempt_id": 8308,
+                "agent_run_id": 545,
+                **round_two_receipt,
+            },
+        )
+        assert patched_again.status_code == 200
+
+        stale_round_one = client.post(
+            f"/api/console/feedback/batches/{batch_two_id}/resolve",
+            json=round_one_receipt,
+        )
+        assert stale_round_one.status_code == 409
+        assert stale_round_one.json()["code"] == "feedback_resolution_incomplete"
+        assert store.get_feedback_processing_item("feedback-8308").status == "processing"
+
+        resolved_again = client.post(
+            f"/api/console/feedback/batches/{batch_two_id}/resolve",
+            json=round_two_receipt,
+        )
+        assert resolved_again.status_code == 200
+        assert resolved_again.json()["item"] == {
+            "batch_id": batch_two_id,
+            "status": "resolved",
+        }
+
+        final_detail = client.get("/api/console/feedback/feedback-8308").json()["item"]
+        assert final_detail["current_processing"]["id"] == round_two["id"]
+        assert [item["round_number"] for item in final_detail["processing_history"]] == [2, 1]
+        assert final_detail["processing_history"][0]["test_evidence"] == round_two_receipt["test_evidence"]
+        assert final_detail["processing_history"][1]["test_evidence"] == round_one_receipt["test_evidence"]
+
+        new_batch = client.get(f"/api/console/feedback/batches/{batch_two_id}")
+        assert new_batch.status_code == 200
+        assert new_batch.json()["item"]["items"][0]["round_number"] == 2
+        old_batch_after = client.get(f"/api/console/feedback/batches/{batch_id}")
+        assert old_batch_after.json()["item"]["items"][0]["round_number"] == 1
+
+        with store._connect() as db:
+            db.execute(
+                "update feedback_processing_items set current_round_id=999999 "
+                "where feedback_key='feedback-8308'"
+            )
+        history_error = client.post(
+            "/api/console/feedback/items/feedback-8308/reopen",
+            json={"reason": "The history pointer is intentionally damaged."},
+        )
+        assert history_error.status_code == 409
+        assert history_error.json()["code"] == "feedback_reopen_history_incomplete"
+        assert store.get_feedback_event("feedback-8308").resolved_at
+        with store._connect() as db:
+            db.execute(
+                "update feedback_processing_items set current_round_id=? "
+                "where feedback_key='feedback-8308'",
+                (round_two["id"],),
+            )
+
         resolved_after = client.get("/api/console/feedback?status=resolved")
-        resolved_row = next(item for item in resolved_after.json()["items"] if item["feedback_key"] == "feedback-8308")
+        resolved_rows = [
+            item
+            for item in resolved_after.json()["items"]
+            if item["feedback_key"] == "feedback-8308"
+        ]
+        assert len(resolved_rows) == 1
+        resolved_row = resolved_rows[0]
         assert resolved_row["status"] == "resolved"
+
+    assert [call[1] for call in git_calls] == [
+        "cat-file",
+        "merge-base",
+        "cat-file",
+        "cat-file",
+        "merge-base",
+        "cat-file",
+        "merge-base",
+        "cat-file",
+        "merge-base",
+        "cat-file",
+        "merge-base",
+    ]
+    assert all("rev-parse" not in call for call in git_calls)
 
     assert store.get_feedback_event("feedback-8308").comment == original_comment
     assert store.get_feedback_processing_item("feedback-8308").status == "resolved"

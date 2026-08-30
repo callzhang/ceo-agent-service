@@ -5,7 +5,7 @@ import json
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -31,14 +31,22 @@ from app.feedback_policy import FeedbackPressureStats
 from app.feedback_processing import (
     FEEDBACK_PROCESSING_BATCH_ERROR,
     FEEDBACK_PROCESSING_CLAIM_ERROR,
+    FEEDBACK_PROCESSING_CURRENT_ROUND_ID_INVALID,
+    FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+    FEEDBACK_REOPEN_INVALID,
+    FEEDBACK_REOPEN_PROCESSING,
     FeedbackProcessingBatch,
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
     FeedbackProcessingItem,
+    FeedbackProcessingReopenError,
+    FeedbackProcessingRound,
+    FeedbackProcessingTransition,
     FeedbackImportItem,
     ResolutionEvidence,
     detail_references,
     persisted_feedback_summary,
+    validate_legacy_resolution_evidence,
     validate_resolution_evidence,
 )
 from app.config import feedback_spike_vercel_base_url
@@ -81,6 +89,8 @@ STORE_SCHEMA_VERSION = "2026-08-26.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
+    "feedback_processing_rounds",
+    "feedback_processing_transitions",
     "task_todo_sync_outbox",
     "agent_runtime_attempts",
     "conversation_runtime_sessions",
@@ -101,6 +111,11 @@ STORE_SCHEMA_REQUIRED_TABLES = (
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_items_status",
     "idx_feedback_processing_items_batch",
+    "idx_feedback_processing_rounds_feedback",
+    "idx_feedback_processing_rounds_batch",
+    "idx_feedback_processing_transitions_feedback",
+    "idx_feedback_processing_transitions_batch_round",
+    "idx_feedback_processing_transitions_round",
     "idx_reply_attempts_agent_run_recovery",
     "idx_runtime_attempt_active_route",
     "idx_runtime_attempt_active_lease",
@@ -126,6 +141,8 @@ STORE_SCHEMA_REMOVED_TABLES = (
     "universal_action_executions",
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
+    "feedback_processing_items": ("current_round_id",),
+    "feedback_processing_rounds": ("backlog_evidence_json", "receipt_version"),
     "reply_attempts": (
         "human_decision_options_json",
         "feedback_scope",
@@ -167,6 +184,8 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
+    "trg_feedback_processing_round_integer_v2_insert",
+    "trg_feedback_processing_round_integer_v2_update",
     "trg_runtime_attempt_session_evidence_trim_insert",
     "trg_runtime_attempt_session_evidence_trim_update",
     "trg_runtime_attempt_generalized_lease_insert",
@@ -174,6 +193,34 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_insert",
     "trg_runtime_attempt_lineage_update",
     "trg_runtime_attempt_lineage_immutable",
+)
+FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL = """
+CREATE TRIGGER trg_feedback_processing_round_integer_v2_insert
+before insert on feedback_processing_rounds
+when typeof(new.round_number) <> 'integer' or new.round_number <= 0
+begin
+    select raise(
+        abort,
+        'feedback_processing_round_number_must_be_positive'
+    );
+end
+""".strip()
+FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_feedback_processing_round_integer_v2_update
+before update of round_number on feedback_processing_rounds
+when typeof(new.round_number) <> 'integer' or new.round_number <= 0
+begin
+    select raise(
+        abort,
+        'feedback_processing_round_number_must_be_positive'
+    );
+end
+""".strip()
+FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR = (
+    "schema_migration_invalid_feedback_processing_round_number"
+)
+FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR = (
+    "schema_migration_invalid_feedback_processing_schema"
 )
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RUNTIME_RESULT_ENVELOPE_BYTES = 64 * 1024
@@ -192,6 +239,28 @@ MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR = (
 )
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
+
+
+def _normalize_schema_sql(value: str) -> str:
+    return value.strip().removesuffix(";").rstrip()
+
+
+STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
+    "trg_feedback_processing_round_integer_v2_insert": _normalize_schema_sql(
+        FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL
+    ),
+    "trg_feedback_processing_round_integer_v2_update": _normalize_schema_sql(
+        FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL
+    ),
+}
+
+
+class FeedbackProcessingRoundMigrationIntegrityError(RuntimeError):
+    error_code = FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR
+
+
+class FeedbackProcessingSchemaIntegrityError(RuntimeError):
+    error_code = FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR
 
 
 def _replace_text_in_json(value: object, old: str, new: str) -> object:
@@ -487,6 +556,36 @@ class ReplyTask(BaseModel):
     error: str = ""
     created_at: str
     updated_at: str
+
+
+class ReplyTaskSpec(BaseModel):
+    """Immutable input for one idempotent reply-task insertion."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    channel: str = "dingtalk"
+    conversation_id: str
+    conversation_title: str
+    single_chat: bool
+    trigger_message_id: str
+    trigger_create_time: str
+    trigger_sender: str
+    trigger_text: str
+    trigger_message_json: str = "{}"
+    available_at: str = ""
+    force_new_decision: bool = False
+    oa_url: str = ""
+    manual_rerun_attempt_id: int = 0
+    execution_generation: str = "initial"
+    error: str = ""
+
+
+class ReplyTaskIdentityConflict(RuntimeError):
+    """A queue identity already exists with different immutable input."""
+
+
+class EmailReplyTaskAuthorizationConflict(RuntimeError):
+    """The requested email plan is not the current persisted authorization."""
 
 
 class AgentRole(StrEnum):
@@ -917,22 +1016,290 @@ class AutoReplyStore:
 
     def _ensure_initialized(self) -> None:
         path_key = self.path.resolve()
-        if path_key in _INITIALIZED_STORE_PATHS:
+        if self._cached_initialized_path_is_healthy(path_key):
             return
         with _INITIALIZE_LOCK:
-            if path_key in _INITIALIZED_STORE_PATHS:
+            if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
-                if path_key in _INITIALIZED_STORE_PATHS:
+                if self._cached_initialized_path_is_healthy(path_key):
                     return
                 self._ensure_wal_journal_mode()
                 if self._schema_is_current_after_lock_retry():
+                    self._reconcile_feedback_processing_round_backfill()
                     _INITIALIZED_STORE_PATHS.add(path_key)
                     return
                 self._initialize()
+                if not self._schema_manifest_is_current_after_lock_retry():
+                    raise FeedbackProcessingSchemaIntegrityError(
+                        FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR
+                    )
                 self.backfill_oa_audit_metadata()
                 self.set_service_state(STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION)
                 _INITIALIZED_STORE_PATHS.add(path_key)
+
+    def _cached_initialized_path_is_healthy(self, path_key: Path) -> bool:
+        if path_key not in _INITIALIZED_STORE_PATHS:
+            return False
+        try:
+            with self._connect() as db:
+                healthy = self._feedback_processing_round_guard_state_is_valid(db)
+        except BaseException:
+            _INITIALIZED_STORE_PATHS.discard(path_key)
+            raise
+        if healthy:
+            return True
+        _INITIALIZED_STORE_PATHS.discard(path_key)
+        return False
+
+    @staticmethod
+    def _feedback_processing_round_backfill_needed(
+        db: sqlite3.Connection,
+    ) -> bool:
+        return (
+            db.execute(
+                """
+                select 1
+                  from feedback_processing_items item
+                 where item.status in ('processing', 'resolved')
+                   and (
+                       trim(item.batch_id) <> ''
+                       or trim(item.workbench_task_id) <> ''
+                       or trim(item.workbench_turn_id) <> ''
+                       or cast(item.attempt_id as integer) > 0
+                       or cast(item.agent_run_id as integer) > 0
+                       or trim(item.commit_sha) <> ''
+                       or trim(item.test_evidence_json) not in ('', '{}')
+                       or trim(item.restart_evidence_json) not in ('', '{}')
+                       or trim(item.health_evidence_json) not in ('', '{}')
+                       or trim(item.note) <> ''
+                   )
+                   and (
+                       (
+                           item.current_round_id <> 0
+                           and (
+                               not exists (
+                                   select 1
+                                     from feedback_processing_rounds current_round
+                                    where current_round.id=item.current_round_id
+                                      and current_round.feedback_key=
+                                          item.feedback_key
+                                      and current_round.batch_id=item.batch_id
+                                      and current_round.status=item.status
+                                      and current_round.round_number=(
+                                          select max(latest_round.round_number)
+                                            from feedback_processing_rounds latest_round
+                                           where latest_round.feedback_key=item.feedback_key
+                                      )
+                               )
+                               or (
+                                   select count(*)
+                                     from feedback_processing_rounds matching_round
+                                    where matching_round.feedback_key=
+                                          item.feedback_key
+                                      and matching_round.batch_id=item.batch_id
+                                      and matching_round.status=item.status
+                               ) <> 1
+                           )
+                       )
+                       or (
+                           item.current_round_id=0
+                           and (
+                               not exists (
+                                   select 1
+                                     from feedback_processing_rounds history_round
+                                    where history_round.feedback_key=
+                                          item.feedback_key
+                               )
+                               or (
+                                   select count(*)
+                                     from feedback_processing_rounds matching_round
+                                    where matching_round.feedback_key=
+                                          item.feedback_key
+                                      and matching_round.batch_id=item.batch_id
+                                      and matching_round.status=item.status
+                               ) = 1
+                               and (
+                                   select max(matching_round.round_number)
+                                     from feedback_processing_rounds matching_round
+                                    where matching_round.feedback_key=item.feedback_key
+                                      and matching_round.batch_id=item.batch_id
+                                      and matching_round.status=item.status
+                               ) = (
+                                   select max(latest_round.round_number)
+                                     from feedback_processing_rounds latest_round
+                                    where latest_round.feedback_key=item.feedback_key
+                               )
+                           )
+                       )
+                   )
+                 limit 1
+                """
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
+    def _backfill_feedback_processing_rounds(db: sqlite3.Connection) -> None:
+        db.execute(
+            """
+            insert or ignore into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status,
+                workbench_task_id, workbench_turn_id, attempt_id,
+                agent_run_id, commit_sha, test_evidence_json,
+                restart_evidence_json, health_evidence_json, note,
+                started_at, resolved_at, receipt_version, created_at, updated_at
+            )
+            select item.feedback_key, 1, item.batch_id, item.status,
+                   item.workbench_task_id, item.workbench_turn_id,
+                   item.attempt_id, item.agent_run_id, item.commit_sha,
+                   item.test_evidence_json, item.restart_evidence_json,
+                   item.health_evidence_json, item.note,
+                   item.created_at, item.resolved_at, 1,
+                   item.created_at, item.updated_at
+              from feedback_processing_items item
+             where item.status in ('processing', 'resolved')
+               and (
+                   trim(item.batch_id) <> ''
+                   or trim(item.workbench_task_id) <> ''
+                   or trim(item.workbench_turn_id) <> ''
+                   or cast(item.attempt_id as integer) > 0
+                   or cast(item.agent_run_id as integer) > 0
+                   or trim(item.commit_sha) <> ''
+                   or trim(item.test_evidence_json) not in ('', '{}')
+                   or trim(item.restart_evidence_json) not in ('', '{}')
+                   or trim(item.health_evidence_json) not in ('', '{}')
+                   or trim(item.note) <> ''
+               )
+               and not exists (
+                   select 1
+                     from feedback_processing_rounds history_round
+                    where history_round.feedback_key=item.feedback_key
+               )
+            """
+        )
+        db.execute(
+            """
+            update feedback_processing_items
+               set current_round_id=case
+                   when (
+                       select count(*)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   ) = 1
+                   and (
+                       select max(matching_round.round_number)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   ) = (
+                       select max(latest_round.round_number)
+                         from feedback_processing_rounds latest_round
+                        where latest_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                   )
+                   then (
+                       select min(matching_round.id)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   )
+                   else 0
+               end
+             where status in ('processing', 'resolved')
+               and (
+                   trim(batch_id) <> ''
+                   or trim(workbench_task_id) <> ''
+                   or trim(workbench_turn_id) <> ''
+                   or cast(attempt_id as integer) > 0
+                   or cast(agent_run_id as integer) > 0
+                   or trim(commit_sha) <> ''
+                   or trim(test_evidence_json) not in ('', '{}')
+                   or trim(restart_evidence_json) not in ('', '{}')
+                   or trim(health_evidence_json) not in ('', '{}')
+                   or trim(note) <> ''
+               )
+               and (
+                   not exists (
+                       select 1
+                         from feedback_processing_rounds current_round
+                        where current_round.id=
+                              feedback_processing_items.current_round_id
+                          and current_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and current_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and current_round.status=
+                              feedback_processing_items.status
+                          and current_round.round_number=(
+                              select max(latest_round.round_number)
+                                from feedback_processing_rounds latest_round
+                               where latest_round.feedback_key=
+                                     feedback_processing_items.feedback_key
+                          )
+                   )
+                   or (
+                       select count(*)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   ) <> 1
+               )
+               and (
+                   current_round_id <> 0
+                   or (
+                       select count(*)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   ) = 1
+                   and (
+                       select max(matching_round.round_number)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   ) = (
+                       select max(latest_round.round_number)
+                         from feedback_processing_rounds latest_round
+                        where latest_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                   )
+               )
+            """
+        )
+
+    def _reconcile_feedback_processing_round_backfill(self) -> None:
+        with self._connect() as db:
+            if not self._feedback_processing_round_backfill_needed(db):
+                return
+        with self._immediate_write_transaction() as db:
+            if self._feedback_processing_round_backfill_needed(db):
+                self._backfill_feedback_processing_rounds(db)
 
     def _ensure_wal_journal_mode(self) -> None:
         with self._connect() as db:
@@ -965,6 +1332,162 @@ class AutoReplyStore:
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
+    @staticmethod
+    def _feedback_processing_round_storage_is_valid(
+        db: sqlite3.Connection,
+    ) -> bool:
+        return (
+            db.execute(
+                """
+                select 1
+                  from feedback_processing_rounds
+                 where typeof(round_number) <> 'integer'
+                    or round_number <= 0
+                 limit 1
+                """
+            ).fetchone()
+            is None
+        )
+
+    @classmethod
+    def _validate_feedback_processing_round_storage(
+        cls,
+        db: sqlite3.Connection,
+    ) -> None:
+        if not cls._feedback_processing_round_storage_is_valid(db):
+            raise FeedbackProcessingRoundMigrationIntegrityError(
+                FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR
+            )
+
+    @classmethod
+    def _replace_feedback_processing_round_guards_atomically(
+        cls,
+        db: sqlite3.Connection,
+    ) -> None:
+        db.execute("begin immediate")
+        try:
+            db.execute(
+                "drop trigger if exists "
+                "trg_feedback_processing_round_integer_v2_insert"
+            )
+            db.execute(
+                "drop trigger if exists "
+                "trg_feedback_processing_round_integer_v2_update"
+            )
+            db.execute(FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL)
+            db.execute(FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL)
+            cls._validate_feedback_processing_round_storage(db)
+        except BaseException:
+            db.execute("rollback")
+            raise
+        else:
+            db.execute("commit")
+
+    @classmethod
+    def _feedback_processing_round_guard_state_is_valid(
+        cls,
+        db: sqlite3.Connection,
+    ) -> bool:
+        round_table_present = db.execute(
+            """
+            select 1 from sqlite_master
+             where type='table' and name='feedback_processing_rounds'
+            """
+        ).fetchone()
+        if round_table_present is None:
+            return False
+        cls._validate_feedback_processing_round_storage(db)
+        trigger_definitions = {
+            str(row["name"]): _normalize_schema_sql(str(row["sql"] or ""))
+            for row in db.execute(
+                """
+                select name, sql from sqlite_master
+                 where type='trigger' and name in (?, ?)
+                """,
+                tuple(STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS),
+            )
+        }
+        return all(
+            trigger_definitions.get(trigger_name) == required_sql
+            for trigger_name, required_sql in (
+                STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS.items()
+            )
+        )
+
+    def _schema_manifest_is_current_in_connection(
+        self,
+        db: sqlite3.Connection,
+    ) -> bool:
+        present_tables = {
+            str(item["name"])
+            for item in db.execute(
+                "select name from sqlite_master where type='table'"
+            )
+        }
+        present_indexes = {
+            str(item["name"])
+            for item in db.execute(
+                "select name from sqlite_master where type='index'"
+            )
+        }
+        trigger_rows = db.execute(
+            "select name, sql from sqlite_master where type='trigger'"
+        ).fetchall()
+        present_triggers = {str(item["name"]) for item in trigger_rows}
+        present_trigger_definitions = {
+            str(item["name"]): _normalize_schema_sql(str(item["sql"] or ""))
+            for item in trigger_rows
+        }
+        required_trigger_definitions_present = all(
+            present_trigger_definitions.get(trigger_name) == required_sql
+            for trigger_name, required_sql in (
+                STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS.items()
+            )
+        )
+        feedback_processing_round_storage_valid = (
+            "feedback_processing_rounds" in present_tables
+            and self._feedback_processing_round_storage_is_valid(db)
+        )
+        required_columns_present = all(
+            set(required_columns).issubset(
+                {
+                    str(item["name"])
+                    for item in db.execute(f"pragma table_info({table_name})")
+                }
+            )
+            for table_name, required_columns in STORE_SCHEMA_REQUIRED_COLUMNS.items()
+        )
+        return (
+            set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
+            and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
+            and set(STORE_SCHEMA_REQUIRED_TRIGGERS).issubset(present_triggers)
+            and required_trigger_definitions_present
+            and feedback_processing_round_storage_valid
+            and required_columns_present
+            and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
+        )
+
+    def _schema_manifest_is_current(self) -> bool:
+        try:
+            with self._connect() as db:
+                return self._schema_manifest_is_current_in_connection(db)
+        except sqlite3.OperationalError as exc:
+            if _is_sqlite_lock_error(exc):
+                raise
+            return False
+
+    def _schema_manifest_is_current_after_lock_retry(self) -> bool:
+        for attempt in range(SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS):
+            try:
+                return self._schema_manifest_is_current()
+            except sqlite3.OperationalError as exc:
+                if not _is_sqlite_lock_error(exc):
+                    raise
+                if attempt + 1 >= SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS:
+                    raise
+                time.sleep(SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS)
+        raise RuntimeError("schema manifest check retry loop exhausted")
+
     def _schema_is_current(self) -> bool:
         try:
             with self._connect() as db:
@@ -972,50 +1495,15 @@ class AutoReplyStore:
                     "select value from service_state where key=?",
                     (STORE_SCHEMA_VERSION_KEY,),
                 ).fetchone()
-                if row is None or str(row["value"] or "") != STORE_SCHEMA_VERSION:
-                    return False
-                present_tables = {
-                    str(item["name"])
-                    for item in db.execute(
-                        "select name from sqlite_master where type='table'"
-                    )
-                }
-                present_indexes = {
-                    str(item["name"])
-                    for item in db.execute(
-                        "select name from sqlite_master where type='index'"
-                    )
-                }
-                present_triggers = {
-                    str(item["name"])
-                    for item in db.execute(
-                        "select name from sqlite_master where type='trigger'"
-                    )
-                }
-                required_columns_present = all(
-                    set(required_columns).issubset(
-                        {
-                            str(item["name"])
-                            for item in db.execute(
-                                f"pragma table_info({table_name})"
-                            )
-                        }
-                    )
-                    for table_name, required_columns in (
-                        STORE_SCHEMA_REQUIRED_COLUMNS.items()
-                    )
+                return bool(
+                    row is not None
+                    and str(row["value"] or "") == STORE_SCHEMA_VERSION
+                    and self._schema_manifest_is_current_in_connection(db)
                 )
         except sqlite3.OperationalError as exc:
             if _is_sqlite_lock_error(exc):
                 raise
             return False
-        return (
-            set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
-            and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
-            and set(STORE_SCHEMA_REQUIRED_TRIGGERS).issubset(present_triggers)
-            and required_columns_present
-            and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
-        )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -1156,6 +1644,7 @@ class AutoReplyStore:
                 );
                 create table if not exists feedback_processing_items (
                     feedback_key text primary key,
+                    current_round_id integer not null default 0,
                     batch_id text not null default '',
                     status text not null default 'pending'
                         check (status in ('pending', 'processing', 'resolved')),
@@ -1176,6 +1665,62 @@ class AutoReplyStore:
                     on feedback_processing_items(status);
                 create index if not exists idx_feedback_processing_items_batch
                     on feedback_processing_items(batch_id);
+                create table if not exists feedback_processing_rounds (
+                    id integer primary key autoincrement,
+                    feedback_key text not null,
+                    round_number integer not null
+                        check (
+                            typeof(round_number) = 'integer'
+                            and round_number > 0
+                        ),
+                    batch_id text not null default '',
+                    status text not null
+                        check (status in ('processing', 'resolved')),
+                    workbench_task_id text not null default '',
+                    workbench_turn_id text not null default '',
+                    attempt_id integer not null default 0,
+                    agent_run_id integer not null default 0,
+                    commit_sha text not null default '',
+                    test_evidence_json text not null default '{}',
+                    restart_evidence_json text not null default '{}',
+                    health_evidence_json text not null default '{}',
+                    backlog_evidence_json text not null default '{}',
+                    receipt_version integer not null default 1
+                        check (receipt_version in (1, 2)),
+                    note text not null default '',
+                    started_at text not null default '',
+                    resolved_at text not null default '',
+                    reopened_at text not null default '',
+                    reopen_reason text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique (feedback_key, round_number),
+                    unique (feedback_key, batch_id)
+                );
+                create index if not exists idx_feedback_processing_rounds_feedback
+                    on feedback_processing_rounds(feedback_key, round_number desc);
+                create index if not exists idx_feedback_processing_rounds_batch
+                    on feedback_processing_rounds(batch_id);
+                create table if not exists feedback_processing_transitions (
+                    id integer primary key autoincrement,
+                    feedback_key text not null,
+                    round_id integer not null default 0,
+                    batch_id text not null default '',
+                    from_status text not null default ''
+                        check (from_status in ('', 'pending', 'processing', 'resolved')),
+                    to_status text not null
+                        check (to_status in ('pending', 'processing', 'resolved')),
+                    reason text not null default '',
+                    workbench_task_id text not null default '',
+                    workbench_turn_id text not null default '',
+                    created_at text not null default current_timestamp
+                );
+                create index if not exists idx_feedback_processing_transitions_feedback
+                    on feedback_processing_transitions(feedback_key, id desc);
+                create index if not exists idx_feedback_processing_transitions_batch_round
+                    on feedback_processing_transitions(batch_id, round_id, id);
+                create index if not exists idx_feedback_processing_transitions_round
+                    on feedback_processing_transitions(round_id, id);
                 insert or ignore into feedback_processing_items (
                     feedback_key, status, resolved_at
                 )
@@ -1193,6 +1738,7 @@ class AutoReplyStore:
                      select 1 from feedback_events fe
                       where fe.key=feedback_processing_items.feedback_key
                         and trim(fe.resolved_at) <> ''
+                        and feedback_processing_items.status <> 'resolved'
                  );
                 create table if not exists service_bugfix_candidates (
                     id integer primary key autoincrement,
@@ -2109,6 +2655,7 @@ class AutoReplyStore:
                 );
                 """
             )
+            self._replace_feedback_processing_round_guards_atomically(db)
             workbench_turn_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(workbench_turns)").fetchall()
@@ -2431,6 +2978,60 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table feedback_events add column {column} {definition}"
                     )
+
+            feedback_processing_item_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(feedback_processing_items)"
+                ).fetchall()
+            }
+            if "current_round_id" not in feedback_processing_item_columns:
+                try:
+                    db.execute(
+                        "alter table feedback_processing_items add column "
+                        "current_round_id integer not null default 0"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc):
+                        raise
+
+            feedback_processing_round_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(feedback_processing_rounds)"
+                ).fetchall()
+            }
+            if "backlog_evidence_json" not in feedback_processing_round_columns:
+                try:
+                    db.execute(
+                        "alter table feedback_processing_rounds add column "
+                        "backlog_evidence_json text not null default '{}'"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc):
+                        raise
+            if "receipt_version" not in feedback_processing_round_columns:
+                try:
+                    db.execute(
+                        "alter table feedback_processing_rounds add column "
+                        "receipt_version integer not null default 1"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc):
+                        raise
+                for row in db.execute(
+                    "select id, backlog_evidence_json from feedback_processing_rounds"
+                ).fetchall():
+                    if self._feedback_backlog_receipt_is_complete(
+                        row["backlog_evidence_json"]
+                    ):
+                        db.execute(
+                            "update feedback_processing_rounds set receipt_version=2 "
+                            "where id=?",
+                            (int(row["id"]),),
+                        )
+
+            self._backfill_feedback_processing_rounds(db)
 
             db.execute(
                 """
@@ -4011,6 +4612,237 @@ class AutoReplyStore:
                 ),
             )
             return cursor.rowcount == 1
+
+    def ensure_reply_task(
+        self,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        single_chat: bool,
+        trigger_message_id: str,
+        trigger_create_time: str,
+        trigger_sender: str,
+        trigger_text: str,
+        trigger_message_json: str = "{}",
+        available_at: str = "",
+        force_new_decision: bool = False,
+        oa_url: str = "",
+        manual_rerun_attempt_id: int = 0,
+        error: str = "",
+        channel: str = "dingtalk",
+        execution_generation: str = "initial",
+    ) -> ReplyTask:
+        """Create one queue identity or return its original immutable task."""
+
+        if (
+            not isinstance(execution_generation, str)
+            or not execution_generation.strip()
+        ):
+            raise ValueError("execution_generation must be non-empty")
+        with self._immediate_write_transaction() as db:
+            db.execute(
+                """
+                insert or ignore into reply_tasks (
+                    channel,
+                    conversation_id,
+                    conversation_title,
+                    single_chat,
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    available_at,
+                    force_new_decision,
+                    oa_url,
+                    manual_rerun_attempt_id,
+                    execution_generation,
+                    error
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    channel,
+                    conversation_id,
+                    conversation_title,
+                    int(single_chat),
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    available_at,
+                    int(force_new_decision),
+                    oa_url,
+                    manual_rerun_attempt_id,
+                    execution_generation,
+                    error,
+                ),
+            )
+            row = db.execute(
+                """
+                select * from reply_tasks
+                where channel=? and conversation_id=? and trigger_message_id=?
+                """,
+                (channel, conversation_id, trigger_message_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("reply task was not persisted")
+            return self._reply_task_from_row(row)
+
+    def ensure_reply_tasks(
+        self,
+        task_specs: Sequence[ReplyTaskSpec | Mapping[str, object]],
+    ) -> tuple[ReplyTask, ...]:
+        """Atomically ensure a strict group of immutable queue identities."""
+
+        specs = self._normalize_reply_task_specs(task_specs)
+        if not specs:
+            return ()
+        with self._immediate_write_transaction() as db:
+            return self._ensure_reply_tasks_in_transaction(db, specs)
+
+    def ensure_authorized_email_reply_tasks(
+        self,
+        *,
+        classification_id: int,
+        account_id: str,
+        stable_message_identity: str,
+        thread_identity: str,
+        action_plan_id: str,
+        task_specs: Sequence[ReplyTaskSpec | Mapping[str, object]],
+    ) -> tuple[ReplyTask, ...]:
+        """Atomically authorize the current email plan and enqueue all its tasks."""
+
+        specs = self._normalize_reply_task_specs(task_specs)
+        if not specs:
+            return ()
+        with self._immediate_write_transaction() as db:
+            authorization = self._get_current_email_task_authorization(
+                db,
+                classification_id,
+            )
+            if authorization is None or any(
+                (
+                    authorization["account_id"] != account_id,
+                    authorization["stable_message_identity"]
+                    != stable_message_identity,
+                    str(authorization["thread_identity"]).strip()
+                    != thread_identity,
+                    authorization["current_action_plan_id"] != action_plan_id,
+                )
+            ):
+                raise EmailReplyTaskAuthorizationConflict(
+                    "email plan is not the current persisted authorization"
+                )
+            return self._ensure_reply_tasks_in_transaction(db, specs)
+
+    @staticmethod
+    def _normalize_reply_task_specs(
+        task_specs: Sequence[ReplyTaskSpec | Mapping[str, object]],
+    ) -> tuple[ReplyTaskSpec, ...]:
+        specs = tuple(ReplyTaskSpec.model_validate(spec) for spec in task_specs)
+        for spec in specs:
+            if not spec.execution_generation.strip():
+                raise ValueError("execution_generation must be non-empty")
+        return specs
+
+    @staticmethod
+    def _get_current_email_task_authorization(
+        db: sqlite3.Connection,
+        classification_id: int,
+    ) -> sqlite3.Row | None:
+        return db.execute(
+            """
+            select
+                classifications.id as classification_id,
+                classifications.account_id as account_id,
+                classifications.stable_message_identity
+                    as stable_message_identity,
+                messages.thread_identity as thread_identity,
+                classifications.current_action_plan_id
+                    as current_action_plan_id
+            from email_classifications as classifications
+            join email_messages as messages
+              on messages.account_id=classifications.account_id
+             and messages.stable_message_identity=
+                 classifications.stable_message_identity
+            where classifications.id=?
+              and classifications.status='processed'
+              and classifications.current_action_plan_id is not null
+            """,
+            (classification_id,),
+        ).fetchone()
+
+    def _ensure_reply_tasks_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        specs: Sequence[ReplyTaskSpec],
+    ) -> tuple[ReplyTask, ...]:
+        tasks: list[ReplyTask] = []
+        for spec in specs:
+            db.execute(
+                """
+                insert or ignore into reply_tasks (
+                    channel,
+                    conversation_id,
+                    conversation_title,
+                    single_chat,
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    available_at,
+                    force_new_decision,
+                    oa_url,
+                    manual_rerun_attempt_id,
+                    execution_generation,
+                    error
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    spec.channel,
+                    spec.conversation_id,
+                    spec.conversation_title,
+                    int(spec.single_chat),
+                    spec.trigger_message_id,
+                    spec.trigger_create_time,
+                    spec.trigger_sender,
+                    spec.trigger_text,
+                    spec.trigger_message_json,
+                    spec.available_at,
+                    int(spec.force_new_decision),
+                    spec.oa_url,
+                    spec.manual_rerun_attempt_id,
+                    spec.execution_generation,
+                    spec.error,
+                ),
+            )
+            row = db.execute(
+                """
+                select * from reply_tasks
+                where channel=? and conversation_id=? and trigger_message_id=?
+                """,
+                (
+                    spec.channel,
+                    spec.conversation_id,
+                    spec.trigger_message_id,
+                ),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("reply task was not persisted")
+            task = self._reply_task_from_row(row)
+            if any(
+                getattr(task, field_name) != expected
+                for field_name, expected in spec.model_dump().items()
+            ):
+                raise ReplyTaskIdentityConflict(
+                    "reply task identity is bound to different immutable input"
+                )
+            tasks.append(task)
+        return tuple(tasks)
 
     def enqueue_manual_rerun_reply_task(
         self,
@@ -13016,8 +13848,45 @@ class AutoReplyStore:
             )
 
     @staticmethod
+    def _feedback_processing_round_pointer(
+        row: sqlite3.Row,
+        *,
+        require_positive: bool,
+    ) -> int:
+        raw = row["current_round_id"]
+        if (
+            type(raw) is not int
+            or raw < 0
+            or (require_positive and raw <= 0)
+        ):
+            raise ValueError(FEEDBACK_PROCESSING_CURRENT_ROUND_ID_INVALID)
+        return raw
+
+    @staticmethod
+    def _feedback_backlog_receipt_is_complete(raw: object) -> bool:
+        try:
+            parsed = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            return False
+        required = ("processing", "failed", "retryable")
+        return isinstance(parsed, dict) and all(
+            type(parsed.get(name)) is int and parsed[name] == 0 for name in required
+        )
+
+    @staticmethod
+    def _feedback_processing_receipt_version(row: sqlite3.Row) -> int:
+        raw = row["receipt_version"]
+        if type(raw) is not int or raw not in (1, 2):
+            raise ValueError("feedback processing receipt version is invalid")
+        return raw
+
+    @staticmethod
     def _feedback_processing_item_from_row(row: sqlite3.Row) -> FeedbackProcessingItem:
         values = dict(row)
+        values["current_round_id"] = AutoReplyStore._feedback_processing_round_pointer(
+            row,
+            require_positive=False,
+        )
         for field in ("attempt_id", "agent_run_id"):
             raw = values.get(field, 0)
             if raw in (None, ""):
@@ -13035,6 +13904,116 @@ class AutoReplyStore:
                 parsed = {}
             values[field] = parsed if isinstance(parsed, dict) else {}
         return FeedbackProcessingItem.model_validate(values)
+
+    @staticmethod
+    def _feedback_processing_round_from_row(
+        row: sqlite3.Row,
+    ) -> FeedbackProcessingRound:
+        values = dict(row)
+        values["receipt_version"] = AutoReplyStore._feedback_processing_receipt_version(
+            row
+        )
+        for field in (
+            "test_evidence",
+            "restart_evidence",
+            "health_evidence",
+            "backlog_evidence",
+        ):
+            raw = values.pop(f"{field}_json", "{}")
+            parsed = json.loads(raw or "{}")
+            if not isinstance(parsed, dict):
+                raise ValueError(f"feedback processing round {field} must be an object")
+            values[field] = parsed
+        return FeedbackProcessingRound.model_validate(values)
+
+    @staticmethod
+    def _feedback_processing_transition_from_row(
+        row: sqlite3.Row,
+    ) -> FeedbackProcessingTransition:
+        return FeedbackProcessingTransition.model_validate(dict(row))
+
+    @staticmethod
+    def _validate_resolved_feedback_processing_round(
+        item: sqlite3.Row,
+        current_round: sqlite3.Row,
+    ) -> None:
+        evidence = AutoReplyStore._resolved_feedback_processing_round_evidence(
+            current_round
+        )
+        association_fields = (
+            "workbench_task_id",
+            "workbench_turn_id",
+            "attempt_id",
+            "agent_run_id",
+        )
+        if (
+            not str(current_round["resolved_at"] or "").strip()
+            or str(item["resolved_at"] or "") != str(current_round["resolved_at"] or "")
+            or any(item[field] != current_round[field] for field in association_fields)
+            or not str(current_round["workbench_task_id"] or "").strip()
+            or not str(current_round["workbench_turn_id"] or "").strip()
+            or type(current_round["attempt_id"]) is not int
+            or int(current_round["attempt_id"]) <= 0
+            or type(current_round["agent_run_id"]) is not int
+            or int(current_round["agent_run_id"]) <= 0
+            or str(item["commit_sha"] or "") != str(current_round["commit_sha"] or "")
+            or str(item["note"] or "") != str(current_round["note"] or "")
+        ):
+            raise ValueError("resolved feedback processing round is incomplete")
+        for name, persisted in (
+            ("test_evidence", evidence.test_evidence),
+            ("restart_evidence", evidence.restart_evidence),
+            ("health_evidence", evidence.health_evidence),
+        ):
+            if json.loads(item[f"{name}_json"] or "{}") != persisted:
+                raise ValueError("resolved feedback projection does not match round")
+
+    @staticmethod
+    def _resolved_feedback_processing_round_evidence(
+        current_round: sqlite3.Row,
+    ) -> ResolutionEvidence:
+        if (
+            not str(current_round["resolved_at"] or "").strip()
+            or not str(current_round["workbench_task_id"] or "").strip()
+            or not str(current_round["workbench_turn_id"] or "").strip()
+            or type(current_round["attempt_id"]) is not int
+            or current_round["attempt_id"] <= 0
+            or type(current_round["agent_run_id"]) is not int
+            or current_round["agent_run_id"] <= 0
+        ):
+            raise ValueError("resolved feedback processing round is incomplete")
+        evidence_by_name: dict[str, dict[str, object]] = {}
+        for name in (
+            "test_evidence",
+            "restart_evidence",
+            "health_evidence",
+            "backlog_evidence",
+        ):
+            parsed = json.loads(current_round[f"{name}_json"] or "{}")
+            if not isinstance(parsed, dict):
+                raise ValueError("resolved feedback processing evidence is invalid")
+            evidence_by_name[name] = parsed
+        evidence = ResolutionEvidence(
+            commit_sha=str(current_round["commit_sha"] or ""),
+            test_evidence=evidence_by_name["test_evidence"],
+            restart_evidence=evidence_by_name["restart_evidence"],
+            health_evidence=evidence_by_name["health_evidence"],
+            backlog_evidence=evidence_by_name["backlog_evidence"],
+        )
+        receipt_version = AutoReplyStore._feedback_processing_receipt_version(
+            current_round
+        )
+        if receipt_version == 1:
+            validate_legacy_resolution_evidence(
+                evidence,
+                commit_is_ancestor=True,
+            )
+        else:
+            validate_resolution_evidence(
+                evidence,
+                commit_is_ancestor=True,
+            )
+        return evidence
 
     @staticmethod
     def _feedback_processing_batch_from_row(
@@ -13157,10 +14136,18 @@ class AutoReplyStore:
             return []
         with self._immediate_write_transaction() as db:
             existing_batch = db.execute(
-                "select 1 from feedback_processing_batches where batch_id=?",
+                """
+                select status, requested_count
+                  from feedback_processing_batches where batch_id=?
+                """,
                 (cleaned_batch_id,),
             ).fetchone()
             if existing_batch is not None:
+                if (
+                    type(existing_batch["requested_count"]) is not int
+                    or existing_batch["requested_count"] != len(keys)
+                ):
+                    raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
                 existing_keys = {
                     str(row["feedback_key"])
                     for row in db.execute(
@@ -13176,7 +14163,8 @@ class AutoReplyStore:
                 select fe.key as feedback_key,
                        fe.resolved_at as event_resolved_at,
                        coalesce(pi.status, 'pending') as item_status,
-                       coalesce(pi.batch_id, '') as item_batch_id
+                       coalesce(pi.batch_id, '') as item_batch_id,
+                       coalesce(pi.current_round_id, 0) as current_round_id
                 from feedback_events fe
                 left join feedback_processing_items pi on pi.feedback_key=fe.key
                 where fe.key in ({placeholders})
@@ -13184,6 +14172,18 @@ class AutoReplyStore:
                 keys,
             ).fetchall()
             by_key = {str(row["feedback_key"]): row for row in existing}
+            try:
+                pointers_by_key = {
+                    key: self._feedback_processing_round_pointer(
+                        row,
+                        require_positive=False,
+                    )
+                    for key, row in by_key.items()
+                }
+            except ValueError as exc:
+                raise FeedbackProcessingClaimError(
+                    FEEDBACK_PROCESSING_CLAIM_ERROR
+                ) from exc
             # A retry from the same Workbench turn is idempotent: return the
             # original claims without creating another batch or duplicate row.
             same_batch_processing = all(
@@ -13191,9 +14191,20 @@ class AutoReplyStore:
                 and not str(by_key[key]["event_resolved_at"] or "").strip()
                 and str(by_key[key]["item_status"] or "") == "processing"
                 and str(by_key[key]["item_batch_id"] or "").strip() == cleaned_batch_id
+                and pointers_by_key[key] > 0
                 for key in keys
             ) and len(existing) == len(keys)
             if same_batch_processing:
+                try:
+                    self._validate_current_feedback_processing_batch_lineage(
+                        db,
+                        batch_id=cleaned_batch_id,
+                        expected_status="processing",
+                    )
+                except ValueError as exc:
+                    raise FeedbackProcessingClaimError(
+                        FEEDBACK_PROCESSING_CLAIM_ERROR
+                    ) from exc
                 rows = db.execute(
                     f"""
                     select * from feedback_processing_items
@@ -13202,7 +14213,11 @@ class AutoReplyStore:
                     """,
                     [*keys, cleaned_batch_id],
                 ).fetchall()
+                if len(rows) != len(keys):
+                    raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
                 return [self._feedback_processing_item_from_row(row) for row in rows]
+            if existing_batch is not None and str(existing_batch["status"] or "") != "pending":
+                raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
             invalid = [
                 key for key in keys
                 if key not in by_key
@@ -13215,6 +14230,25 @@ class AutoReplyStore:
             ]
             if invalid or len(existing) != len(keys):
                 raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
+            for key in keys:
+                if pointers_by_key[key] != 0:
+                    raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
+                history = db.execute(
+                    """
+                    select status, reopened_at, reopen_reason
+                      from feedback_processing_rounds
+                     where feedback_key=?
+                     order by round_number desc, id desc
+                    """,
+                    (key,),
+                ).fetchall()
+                if history and (
+                    str(history[0]["status"] or "") != "resolved"
+                    or not str(history[0]["reopened_at"] or "").strip()
+                    or not str(history[0]["reopen_reason"] or "").strip()
+                    or any(str(row["status"] or "") != "resolved" for row in history)
+                ):
+                    raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
             db.execute(
                 """
                 insert or ignore into feedback_processing_batches
@@ -13223,24 +14257,62 @@ class AutoReplyStore:
                 """,
                 (cleaned_batch_id, len(keys)),
             )
-            cursor = db.execute(
-                f"""
-                update feedback_processing_items
-                set batch_id=?, status='processing', updated_at=current_timestamp
-                where feedback_key in ({placeholders})
-                  and status in ('pending', 'processing')
-                """,
-                [cleaned_batch_id, *keys],
-            )
-            if cursor.rowcount != len(keys):
-                raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
+            claim_timestamp_row = db.execute(
+                "select current_timestamp as claim_timestamp"
+            ).fetchone()
+            claim_timestamp = str(claim_timestamp_row["claim_timestamp"])
+            for key in keys:
+                row = db.execute(
+                    """
+                    select coalesce(max(round_number), 0) + 1 as next_round_number
+                      from feedback_processing_rounds
+                     where feedback_key=?
+                    """,
+                    (key,),
+                ).fetchone()
+                next_round_number = int(row["next_round_number"] or 1)
+                cursor = db.execute(
+                    """
+                    insert into feedback_processing_rounds (
+                        feedback_key, round_number, batch_id, status,
+                        receipt_version, started_at
+                    ) values (?, ?, ?, 'processing', 2, ?)
+                    """,
+                    (key, next_round_number, cleaned_batch_id, claim_timestamp),
+                )
+                round_id = int(cursor.lastrowid)
+                cursor = db.execute(
+                    """
+                    update feedback_processing_items
+                       set current_round_id=?, batch_id=?, status='processing',
+                           workbench_task_id='', workbench_turn_id='',
+                           attempt_id=0, agent_run_id=0, commit_sha='',
+                           test_evidence_json='{}', restart_evidence_json='{}',
+                           health_evidence_json='{}', note='', resolved_at='',
+                           updated_at=current_timestamp
+                     where feedback_key=? and status='pending'
+                       and current_round_id=0
+                    """,
+                    (round_id, cleaned_batch_id, key),
+                )
+                if cursor.rowcount != 1:
+                    raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
+                db.execute(
+                    """
+                    insert into feedback_processing_transitions (
+                        feedback_key, round_id, batch_id,
+                        from_status, to_status, created_at
+                    ) values (?, ?, ?, 'pending', 'processing', ?)
+                    """,
+                    (key, round_id, cleaned_batch_id, claim_timestamp),
+                )
             db.execute(
                 """
                 update feedback_processing_batches
-                set status='processing', requested_count=?, updated_at=current_timestamp
+                set status='processing', updated_at=current_timestamp
                 where batch_id=?
                 """,
-                (len(keys), cleaned_batch_id),
+                (cleaned_batch_id,),
             )
             rows = db.execute(
                 f"""
@@ -13255,10 +14327,239 @@ class AutoReplyStore:
                 raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
         return [self._feedback_processing_item_from_row(row) for row in rows]
 
+    def reopen_feedback_processing_item(
+        self, feedback_key: str, *, reason: str
+    ) -> FeedbackProcessingItem | None:
+        """Return one resolved item to pending without changing its old receipt."""
+        cleaned_key = feedback_key.strip()
+        if not reason.strip():
+            raise FeedbackProcessingReopenError(
+                "feedback reopen reason must not be blank",
+                error_code=FEEDBACK_REOPEN_INVALID,
+            )
+        if not cleaned_key:
+            return None
+        with self._immediate_write_transaction() as db:
+            item = db.execute(
+                "select * from feedback_processing_items where feedback_key=?",
+                (cleaned_key,),
+            ).fetchone()
+            if item is None:
+                return None
+            status = str(item["status"] or "")
+            if status == "pending":
+                return self._feedback_processing_item_from_row(item)
+            if status == "processing":
+                raise FeedbackProcessingReopenError(
+                    "feedback is currently processing",
+                    error_code=FEEDBACK_REOPEN_PROCESSING,
+                )
+            if status != "resolved":
+                raise FeedbackProcessingReopenError(
+                    "feedback reopen state is invalid",
+                    error_code=FEEDBACK_REOPEN_INVALID,
+                )
+            try:
+                round_id = self._feedback_processing_round_pointer(
+                    item,
+                    require_positive=True,
+                )
+            except ValueError as exc:
+                raise FeedbackProcessingReopenError(
+                    "feedback processing history is incomplete",
+                    error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+                ) from exc
+            current_round = db.execute(
+                """
+                select * from feedback_processing_rounds
+                 where id=? and feedback_key=? and batch_id=? and status='resolved'
+                   and round_number=(
+                       select max(latest_round.round_number)
+                         from feedback_processing_rounds latest_round
+                        where latest_round.feedback_key=?
+                   )
+                """,
+                (
+                    round_id,
+                    cleaned_key,
+                    str(item["batch_id"] or ""),
+                    cleaned_key,
+                ),
+            ).fetchone()
+            source = db.execute(
+                "select resolved_at from feedback_events where key=?",
+                (cleaned_key,),
+            ).fetchone()
+            batch = db.execute(
+                "select status, requested_count, resolved_at, updated_at "
+                "from feedback_processing_batches where batch_id=?",
+                (str(item["batch_id"] or ""),),
+            ).fetchone()
+            if (
+                current_round is None
+                or source is None
+                or not str(source["resolved_at"] or "").strip()
+                or batch is None
+                or str(batch["status"] or "") != "resolved"
+                or str(current_round["reopened_at"] or "").strip()
+                or str(current_round["reopen_reason"] or "").strip()
+            ):
+                raise FeedbackProcessingReopenError(
+                    "feedback processing history is incomplete",
+                    error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+                )
+            try:
+                self._validate_resolved_feedback_processing_batch(
+                    db,
+                    batch_id=str(item["batch_id"] or ""),
+                    requested_count=batch["requested_count"],
+                    batch_resolved_at=str(batch["resolved_at"] or ""),
+                    batch_updated_at=str(batch["updated_at"] or ""),
+                    evidence=None,
+                )
+                self._validate_resolved_feedback_processing_round(item, current_round)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise FeedbackProcessingReopenError(
+                    "feedback processing history is incomplete",
+                    error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+                ) from exc
+            reopen_timestamp_row = db.execute(
+                "select current_timestamp as reopen_timestamp"
+            ).fetchone()
+            reopen_timestamp = str(reopen_timestamp_row["reopen_timestamp"])
+            cursor = db.execute(
+                """
+                update feedback_processing_rounds
+                   set reopened_at=?, reopen_reason=?
+                 where id=? and feedback_key=? and batch_id=? and status='resolved'
+                   and trim(reopened_at)='' and trim(reopen_reason)=''
+                """,
+                (
+                    reopen_timestamp,
+                    reason,
+                    round_id,
+                    cleaned_key,
+                    str(item["batch_id"] or ""),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise FeedbackProcessingReopenError(
+                    "feedback processing history is incomplete",
+                    error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+                )
+            db.execute(
+                """
+                insert into feedback_processing_transitions (
+                    feedback_key, round_id, batch_id, from_status, to_status,
+                    reason, workbench_task_id, workbench_turn_id, created_at
+                ) values (?, ?, ?, 'resolved', 'pending', ?, ?, ?, ?)
+                """,
+                (
+                    cleaned_key,
+                    round_id,
+                    str(current_round["batch_id"] or ""),
+                    reason,
+                    str(current_round["workbench_task_id"] or ""),
+                    str(current_round["workbench_turn_id"] or ""),
+                    reopen_timestamp,
+                ),
+            )
+            cursor = db.execute(
+                """
+                update feedback_processing_items
+                   set current_round_id=0, batch_id='', status='pending',
+                       workbench_task_id='', workbench_turn_id='',
+                       attempt_id=0, agent_run_id=0, commit_sha='',
+                       test_evidence_json='{}', restart_evidence_json='{}',
+                       health_evidence_json='{}', note='', resolved_at='',
+                       updated_at=current_timestamp
+                 where feedback_key=? and status='resolved' and current_round_id=?
+                """,
+                (cleaned_key, round_id),
+            )
+            if cursor.rowcount != 1:
+                raise FeedbackProcessingReopenError(
+                    "feedback processing history is incomplete",
+                    error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+                )
+            cursor = db.execute(
+                """
+                update feedback_events
+                   set resolved_at='', updated_at=current_timestamp
+                 where key=? and trim(resolved_at)<>''
+                """,
+                (cleaned_key,),
+            )
+            if cursor.rowcount != 1:
+                raise FeedbackProcessingReopenError(
+                    "feedback processing history is incomplete",
+                    error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+                )
+            refreshed = db.execute(
+                "select * from feedback_processing_items where feedback_key=?",
+                (cleaned_key,),
+            ).fetchone()
+        assert refreshed is not None
+        return self._feedback_processing_item_from_row(refreshed)
+
+    def list_feedback_processing_rounds(
+        self, feedback_key: str
+    ) -> list[FeedbackProcessingRound]:
+        cleaned_key = feedback_key.strip()
+        if not cleaned_key:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from feedback_processing_rounds
+                 where feedback_key=?
+                 order by round_number desc, id desc
+                """,
+                (cleaned_key,),
+            ).fetchall()
+        return [self._feedback_processing_round_from_row(row) for row in rows]
+
+    def list_feedback_processing_rounds_for_batch(
+        self, batch_id: str
+    ) -> list[FeedbackProcessingRound]:
+        """Read the exact round rows owned by one batch through its index."""
+
+        cleaned_batch_id = batch_id.strip()
+        if not cleaned_batch_id:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from feedback_processing_rounds
+                 where batch_id=?
+                 order by feedback_key asc, id asc
+                """,
+                (cleaned_batch_id,),
+            ).fetchall()
+        return [self._feedback_processing_round_from_row(row) for row in rows]
+
+    def list_feedback_processing_transitions(
+        self, feedback_key: str
+    ) -> list[FeedbackProcessingTransition]:
+        cleaned_key = feedback_key.strip()
+        if not cleaned_key:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from feedback_processing_transitions
+                 where feedback_key=?
+                 order by id desc
+                """,
+                (cleaned_key,),
+            ).fetchall()
+        return [self._feedback_processing_transition_from_row(row) for row in rows]
+
     def associate_feedback_processing_turn(
         self,
         feedback_key: str,
         *,
+        expected_batch_id: str | None = None,
         workbench_task_id: str = "",
         workbench_turn_id: str = "",
         attempt_id: int = 0,
@@ -13267,13 +14568,62 @@ class AutoReplyStore:
         cleaned_key = feedback_key.strip()
         if not cleaned_key:
             return None
-        with self._connect() as db:
-            db.execute(
+        with self._immediate_write_transaction() as db:
+            current = db.execute(
+                "select * from feedback_processing_items where feedback_key=?",
+                (cleaned_key,),
+            ).fetchone()
+            if current is None:
+                return None
+            round_id = self._feedback_processing_round_pointer(
+                current,
+                require_positive=True,
+            )
+            batch_id = str(current["batch_id"] or "")
+            if expected_batch_id is not None and (
+                not expected_batch_id.strip() or expected_batch_id.strip() != batch_id
+            ):
+                raise ValueError(
+                    "feedback association requires the exact current processing batch"
+                )
+            current_round = db.execute(
+                """
+                select * from feedback_processing_rounds
+                 where id=? and feedback_key=? and batch_id=? and status='processing'
+                """,
+                (round_id, cleaned_key, batch_id),
+            ).fetchone()
+            if (
+                str(current["status"] or "") != "processing"
+                or round_id <= 0
+                or not batch_id.strip()
+                or current_round is None
+            ):
+                raise ValueError("feedback association requires the exact current processing round")
+            round_cursor = db.execute(
+                """
+                update feedback_processing_rounds
+                   set workbench_task_id=?, workbench_turn_id=?, attempt_id=?,
+                       agent_run_id=?, updated_at=current_timestamp
+                 where id=? and feedback_key=? and batch_id=? and status='processing'
+                """,
+                (
+                    workbench_task_id,
+                    workbench_turn_id,
+                    attempt_id,
+                    agent_run_id,
+                    round_id,
+                    cleaned_key,
+                    batch_id,
+                ),
+            )
+            item_cursor = db.execute(
                 """
                 update feedback_processing_items
                 set workbench_task_id=?, workbench_turn_id=?, attempt_id=?,
                     agent_run_id=?, updated_at=current_timestamp
-                where feedback_key=?
+                where feedback_key=? and current_round_id=? and batch_id=?
+                  and status='processing'
                 """,
                 (
                     workbench_task_id,
@@ -13281,8 +14631,12 @@ class AutoReplyStore:
                     attempt_id,
                     agent_run_id,
                     cleaned_key,
+                    round_id,
+                    batch_id,
                 ),
             )
+            if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
+                raise ValueError("feedback association requires the exact current processing round")
             row = db.execute(
                 "select * from feedback_processing_items where feedback_key=?",
                 (cleaned_key,),
@@ -13330,6 +14684,8 @@ class AutoReplyStore:
             raise ValueError("only batch resolution may mark feedback resolved")
         if status == "processing":
             raise ValueError("only atomic batch claim may mark feedback processing")
+        if status is not None:
+            raise ValueError("evidence patch cannot change feedback processing status")
         assignments: list[str] = ["updated_at=current_timestamp"]
         args: list[object] = []
         for field, value in (
@@ -13346,24 +14702,32 @@ class AutoReplyStore:
             if value is not None:
                 assignments.append(f"{field}=?")
                 args.append(value)
-        if status == "resolved":
-            assignments.append("resolved_at=current_timestamp")
-        args.append(cleaned_key)
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             current = db.execute(
                 "select * from feedback_processing_items where feedback_key=?",
                 (cleaned_key,),
             ).fetchone()
             if current is None:
                 return None
-            current_status = str(current["status"] or "pending")
-            if status is not None and (
-                current_status == "resolved" and status != "resolved"
-                or current_status == "processing" and status == "pending"
+            round_id = self._feedback_processing_round_pointer(
+                current,
+                require_positive=True,
+            )
+            batch_id = str(current["batch_id"] or "")
+            current_round = db.execute(
+                """
+                select * from feedback_processing_rounds
+                 where id=? and feedback_key=? and batch_id=? and status='processing'
+                """,
+                (round_id, cleaned_key, batch_id),
+            ).fetchone()
+            if (
+                str(current["status"] or "") != "processing"
+                or round_id <= 0
+                or not batch_id.strip()
+                or current_round is None
             ):
-                raise ValueError(
-                    f"invalid feedback processing status transition: {current_status}->{status}"
-                )
+                raise ValueError("evidence patch requires the exact current processing round")
             changed = False
             for field, value in (
                 ("test_evidence_json", test_evidence),
@@ -13372,29 +14736,673 @@ class AutoReplyStore:
             ):
                 if value is not None:
                     old = json.loads(current[field] or "{}")
-                    if json.dumps(old, ensure_ascii=False, sort_keys=True, separators=(",", ":")) != json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")):
+                    round_old = json.loads(current_round[field] or "{}")
+                    serialized = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                    if (
+                        json.dumps(old, ensure_ascii=False, sort_keys=True, separators=(",", ":")) != serialized
+                        or json.dumps(round_old, ensure_ascii=False, sort_keys=True, separators=(",", ":")) != serialized
+                    ):
                         changed = True
             for field, value in (("commit_sha", commit_sha), ("note", note), ("status", status)):
-                if value is not None and str(current[field] or "") != str(value):
+                if value is not None and (
+                    str(current[field] or "") != str(value)
+                    or str(current_round[field] or "") != str(value)
+                ):
                     changed = True
             if not changed:
                 return self._feedback_processing_item_from_row(current)
-            db.execute(
-                f"update feedback_processing_items set {', '.join(assignments)} where feedback_key=?",
-                args,
+            round_cursor = db.execute(
+                f"update feedback_processing_rounds set {', '.join(assignments)} "
+                "where id=? and feedback_key=? and batch_id=? and status='processing'",
+                [*args, round_id, cleaned_key, batch_id],
             )
+            item_cursor = db.execute(
+                f"update feedback_processing_items set {', '.join(assignments)} "
+                "where feedback_key=? and current_round_id=? and batch_id=? "
+                "and status='processing'",
+                [*args, cleaned_key, round_id, batch_id],
+            )
+            if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
+                raise ValueError("evidence patch requires the exact current processing round")
             row = db.execute(
                 "select * from feedback_processing_items where feedback_key=?",
                 (cleaned_key,),
             ).fetchone()
         return self._feedback_processing_item_from_row(row) if row else None
 
+    @classmethod
+    def _validate_feedback_processing_transition_multiset(
+        cls,
+        db: sqlite3.Connection,
+        current_round: sqlite3.Row,
+        transitions: Sequence[sqlite3.Row] | None = None,
+    ) -> None:
+        receipt_version = cls._feedback_processing_receipt_version(current_round)
+        status = str(current_round["status"] or "")
+        reopened_at = str(current_round["reopened_at"] or "").strip()
+        reopen_reason = str(current_round["reopen_reason"] or "").strip()
+        if (
+            status not in {"processing", "resolved"}
+            or bool(reopened_at) != bool(reopen_reason)
+            or (status == "processing" and reopened_at)
+        ):
+            raise ValueError("feedback processing transition history is incomplete")
+        if transitions is None:
+            transitions = db.execute(
+                "select * from feedback_processing_transitions "
+                "where round_id=? order by id",
+                (int(current_round["id"]),),
+            ).fetchall()
+        by_pair: dict[tuple[str, str], list[sqlite3.Row]] = {}
+        for transition in transitions:
+            if (
+                str(transition["feedback_key"]) != str(current_round["feedback_key"])
+                or str(transition["batch_id"] or "")
+                != str(current_round["batch_id"] or "")
+            ):
+                raise ValueError("feedback processing transition history is incomplete")
+            pair = (
+                str(transition["from_status"] or ""),
+                str(transition["to_status"] or ""),
+            )
+            by_pair.setdefault(pair, []).append(transition)
+
+        claim = by_pair.pop(("pending", "processing"), [])
+        completion = by_pair.pop(("processing", "resolved"), [])
+        reopen = by_pair.pop(("resolved", "pending"), [])
+        if by_pair:
+            raise ValueError("feedback processing transition history is incomplete")
+        if receipt_version == 2:
+            expected_counts = (
+                1,
+                1 if status == "resolved" else 0,
+                1 if reopened_at else 0,
+            )
+        else:
+            expected_counts = (
+                0,
+                len(completion) if status == "resolved" and len(completion) <= 1 else 0,
+                1 if reopened_at else 0,
+            )
+        if (len(claim), len(completion), len(reopen)) != expected_counts:
+            raise ValueError("feedback processing transition history is incomplete")
+        if claim and (
+            not str(current_round["started_at"] or "").strip()
+            or str(claim[0]["reason"] or "")
+            or str(claim[0]["workbench_task_id"] or "")
+            or str(claim[0]["workbench_turn_id"] or "")
+            or str(claim[0]["created_at"] or "")
+            != str(current_round["started_at"] or "")
+        ):
+            raise ValueError("feedback processing claim transition is incomplete")
+        if completion and (
+            not str(current_round["resolved_at"] or "").strip()
+            or str(completion[0]["reason"] or "")
+            or str(completion[0]["workbench_task_id"] or "")
+            != str(current_round["workbench_task_id"] or "")
+            or str(completion[0]["workbench_turn_id"] or "")
+            != str(current_round["workbench_turn_id"] or "")
+            or str(completion[0]["created_at"] or "")
+            != str(current_round["resolved_at"] or "")
+        ):
+            raise ValueError("feedback processing completion transition is incomplete")
+        if reopen and (
+            str(reopen[0]["reason"] or "") != reopen_reason
+            or str(reopen[0]["workbench_task_id"] or "")
+            != str(current_round["workbench_task_id"] or "")
+            or str(reopen[0]["workbench_turn_id"] or "")
+            != str(current_round["workbench_turn_id"] or "")
+            or str(reopen[0]["created_at"] or "") != reopened_at
+        ):
+            raise ValueError("feedback processing reopen transition is incomplete")
+
+    @classmethod
+    def _validate_current_processing_round_projection(
+        cls,
+        item: sqlite3.Row,
+        current_round: sqlite3.Row,
+    ) -> None:
+        receipt_version = cls._feedback_processing_receipt_version(current_round)
+        if (
+            str(item["status"] or "") != "processing"
+            or str(current_round["status"] or "") != "processing"
+            or str(item["batch_id"] or "") != str(current_round["batch_id"] or "")
+            or str(item["workbench_task_id"] or "")
+            != str(current_round["workbench_task_id"] or "")
+            or str(item["workbench_turn_id"] or "")
+            != str(current_round["workbench_turn_id"] or "")
+            or type(item["attempt_id"]) is not int
+            or type(current_round["attempt_id"]) is not int
+            or item["attempt_id"] < 0
+            or item["attempt_id"] != current_round["attempt_id"]
+            or type(item["agent_run_id"]) is not int
+            or type(current_round["agent_run_id"]) is not int
+            or item["agent_run_id"] < 0
+            or item["agent_run_id"] != current_round["agent_run_id"]
+            or str(item["commit_sha"] or "") != str(current_round["commit_sha"] or "")
+            or str(item["note"] or "") != str(current_round["note"] or "")
+            or str(item["resolved_at"] or "")
+            or str(current_round["resolved_at"] or "")
+        ):
+            raise ValueError("resolved batch current processing lineage is incomplete")
+        for field in (
+            "test_evidence_json",
+            "restart_evidence_json",
+            "health_evidence_json",
+        ):
+            item_evidence = json.loads(item[field] or "{}")
+            round_evidence = json.loads(current_round[field] or "{}")
+            if (
+                not isinstance(item_evidence, dict)
+                or not isinstance(round_evidence, dict)
+                or item_evidence != round_evidence
+            ):
+                raise ValueError(
+                    "resolved batch current processing evidence is incomplete"
+                )
+        backlog_evidence = json.loads(current_round["backlog_evidence_json"] or "{}")
+        if not isinstance(backlog_evidence, dict) or (
+            receipt_version == 2 and backlog_evidence
+        ):
+            raise ValueError("resolved batch current processing backlog is incomplete")
+
+    @classmethod
+    def _validate_feedback_processing_batch_transition_ownership(
+        cls,
+        db: sqlite3.Connection,
+        batch_id: str,
+        batch_rounds: Sequence[sqlite3.Row],
+    ) -> dict[int, list[sqlite3.Row]]:
+        round_by_id: dict[int, sqlite3.Row] = {}
+        for round_row in batch_rounds:
+            round_id = round_row["id"]
+            if (
+                type(round_id) is not int
+                or round_id <= 0
+                or str(round_row["batch_id"] or "") != batch_id
+                or round_id in round_by_id
+            ):
+                raise ValueError(
+                    "feedback processing batch transition ownership is incomplete"
+                )
+            round_by_id[round_id] = round_row
+        if not round_by_id:
+            raise ValueError(
+                "feedback processing batch transition ownership is incomplete"
+            )
+        batch_transitions = db.execute(
+            "select * from feedback_processing_transitions "
+            "where batch_id=? order by round_id, id",
+            (batch_id,),
+        ).fetchall()
+        for transition in batch_transitions:
+            transition_round_id = transition["round_id"]
+            owned_round = (
+                round_by_id.get(transition_round_id)
+                if type(transition_round_id) is int
+                else None
+            )
+            if owned_round is None or str(transition["feedback_key"]) != str(
+                owned_round["feedback_key"]
+            ):
+                raise ValueError(
+                    "feedback processing batch transition ownership is incomplete"
+                )
+        placeholders = ",".join("?" for _ in round_by_id)
+        round_transitions = db.execute(
+            "select * from feedback_processing_transitions "
+            f"where round_id in ({placeholders}) order by round_id, id",
+            list(round_by_id),
+        ).fetchall()
+        transitions_by_round = {
+            round_id: [] for round_id in round_by_id
+        }
+        for transition in round_transitions:
+            transition_round_id = transition["round_id"]
+            if (
+                type(transition_round_id) is not int
+                or transition_round_id not in transitions_by_round
+            ):
+                raise ValueError(
+                    "feedback processing batch transition ownership is incomplete"
+                )
+            transitions_by_round[transition_round_id].append(transition)
+        return transitions_by_round
+
+    @classmethod
+    def _validate_current_feedback_processing_batch_lineage(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        batch_id: str,
+        expected_status: str,
+    ) -> None:
+        stable_error = "resolved batch newer lineage is incomplete"
+        try:
+            if expected_status not in {"processing", "resolved"}:
+                raise ValueError(stable_error)
+            batch = db.execute(
+                "select status, requested_count, resolved_at, updated_at "
+                "from feedback_processing_batches where batch_id=?",
+                (batch_id,),
+            ).fetchone()
+            if (
+                batch is None
+                or str(batch["status"] or "") != expected_status
+                or type(batch["requested_count"]) is not int
+                or batch["requested_count"] <= 0
+            ):
+                raise ValueError(stable_error)
+            requested_count = batch["requested_count"]
+            items = db.execute(
+                "select * from feedback_processing_items "
+                "where batch_id=? order by feedback_key",
+                (batch_id,),
+            ).fetchall()
+            rounds = db.execute(
+                "select * from feedback_processing_rounds "
+                "where batch_id=? order by feedback_key, id",
+                (batch_id,),
+            ).fetchall()
+            item_keys = [str(item["feedback_key"]) for item in items]
+            round_keys = [str(round_row["feedback_key"]) for round_row in rounds]
+            if (
+                len(items) != requested_count
+                or len(rounds) != requested_count
+                or len(set(item_keys)) != requested_count
+                or len(set(round_keys)) != requested_count
+                or set(item_keys) != set(round_keys)
+            ):
+                raise ValueError(stable_error)
+            placeholders = ",".join("?" for _ in item_keys)
+            sources = db.execute(
+                f"select key, resolved_at, updated_at from feedback_events "
+                f"where key in ({placeholders})",
+                item_keys,
+            ).fetchall()
+            source_by_key = {str(source["key"]): source for source in sources}
+            if len(source_by_key) != requested_count:
+                raise ValueError(stable_error)
+            round_by_id = {int(round_row["id"]): round_row for round_row in rounds}
+            if len(round_by_id) != requested_count:
+                raise ValueError(stable_error)
+            transitions_by_round = (
+                cls._validate_feedback_processing_batch_transition_ownership(
+                    db,
+                    batch_id,
+                    rounds,
+                )
+            )
+
+            version_two_rounds: list[sqlite3.Row] = []
+            version_two_claim_timestamps: set[str] = set()
+            receipt_versions: set[int] = set()
+            common_resolved_receipt: ResolutionEvidence | None = None
+            for item in items:
+                round_id = cls._feedback_processing_round_pointer(
+                    item,
+                    require_positive=True,
+                )
+                current_round = round_by_id.get(round_id)
+                feedback_key = str(item["feedback_key"])
+                source = source_by_key[feedback_key]
+                if (
+                    str(item["status"] or "") != expected_status
+                    or current_round is None
+                    or str(current_round["feedback_key"]) != feedback_key
+                    or str(current_round["batch_id"] or "") != batch_id
+                    or str(current_round["status"] or "") != expected_status
+                    or int(current_round["round_number"])
+                    != db.execute(
+                        "select max(round_number) "
+                        "from feedback_processing_rounds where feedback_key=?",
+                        (feedback_key,),
+                    ).fetchone()[0]
+                ):
+                    raise ValueError(stable_error)
+                receipt_version = cls._feedback_processing_receipt_version(
+                    current_round
+                )
+                receipt_versions.add(receipt_version)
+                cls._validate_feedback_processing_transition_multiset(
+                    db,
+                    current_round,
+                    transitions_by_round[round_id],
+                )
+                if receipt_version == 2:
+                    version_two_claim_timestamps.add(
+                        str(current_round["started_at"] or "")
+                    )
+                if expected_status == "processing":
+                    if str(source["resolved_at"] or "").strip():
+                        raise ValueError(stable_error)
+                    cls._validate_current_processing_round_projection(
+                        item,
+                        current_round,
+                    )
+                    continue
+
+                member_receipt = cls._resolved_feedback_processing_round_evidence(
+                    current_round
+                )
+                cls._validate_resolved_feedback_processing_round(item, current_round)
+                if common_resolved_receipt is None:
+                    common_resolved_receipt = member_receipt
+                elif (
+                    member_receipt.commit_sha != common_resolved_receipt.commit_sha
+                    or member_receipt.test_evidence
+                    != common_resolved_receipt.test_evidence
+                    or member_receipt.restart_evidence
+                    != common_resolved_receipt.restart_evidence
+                    or member_receipt.health_evidence
+                    != common_resolved_receipt.health_evidence
+                    or member_receipt.backlog_evidence
+                    != common_resolved_receipt.backlog_evidence
+                ):
+                    raise ValueError(stable_error)
+                if str(source["resolved_at"] or "") != str(
+                    current_round["resolved_at"] or ""
+                ):
+                    raise ValueError(stable_error)
+                if receipt_version == 2:
+                    version_two_rounds.append(current_round)
+                    if (
+                        str(item["updated_at"] or "")
+                        != str(current_round["resolved_at"] or "")
+                        or str(source["updated_at"] or "")
+                        != str(current_round["resolved_at"] or "")
+                    ):
+                        raise ValueError(stable_error)
+
+            if len(receipt_versions) != 1:
+                raise ValueError(stable_error)
+            if version_two_claim_timestamps and (
+                len(version_two_claim_timestamps) != 1
+                or not next(iter(version_two_claim_timestamps)).strip()
+            ):
+                raise ValueError(stable_error)
+            if expected_status == "processing":
+                if str(batch["resolved_at"] or "").strip():
+                    raise ValueError(stable_error)
+                return
+            if (
+                not str(batch["resolved_at"] or "").strip()
+                or not str(batch["updated_at"] or "").strip()
+            ):
+                raise ValueError(stable_error)
+            if version_two_rounds:
+                timestamps = {
+                    str(round_row["resolved_at"] or "")
+                    for round_row in version_two_rounds
+                }
+                if (
+                    len(timestamps) != 1
+                    or str(batch["resolved_at"] or "") not in timestamps
+                    or str(batch["updated_at"] or "") not in timestamps
+                    or any(
+                        str(round_row["updated_at"] or "") not in timestamps
+                        for round_row in version_two_rounds
+                    )
+                ):
+                    raise ValueError(stable_error)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            if str(exc) == FEEDBACK_PROCESSING_CURRENT_ROUND_ID_INVALID:
+                raise
+            raise ValueError(stable_error) from exc
+
+    @classmethod
+    def _validate_resolved_feedback_processing_batch(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        batch_id: str,
+        requested_count: int,
+        batch_resolved_at: str,
+        batch_updated_at: str,
+        evidence: ResolutionEvidence | None,
+    ) -> None:
+        if type(requested_count) is not int or requested_count <= 0:
+            raise ValueError("resolution requires valid batch membership")
+        if not batch_resolved_at.strip() or not batch_updated_at.strip():
+            raise ValueError("resolved batch completion timestamp is incomplete")
+        rounds = db.execute(
+            "select * from feedback_processing_rounds "
+            "where batch_id=? order by feedback_key, id",
+            (batch_id,),
+        ).fetchall()
+        round_keys = [str(round_row["feedback_key"]) for round_row in rounds]
+        if (
+            len(rounds) != requested_count
+            or len(set(round_keys)) != requested_count
+            or any(str(round_row["status"] or "") != "resolved" for round_row in rounds)
+        ):
+            raise ValueError("resolved batch history is incomplete")
+        transitions_by_round = (
+            cls._validate_feedback_processing_batch_transition_ownership(
+                db,
+                batch_id,
+                rounds,
+            )
+        )
+        if evidence is not None and evidence.associations and set(
+            evidence.associations
+        ) != set(round_keys):
+            raise ValueError("resolution receipt associations do not match batch")
+
+        version_two_rounds = [
+            round_row
+            for round_row in rounds
+            if cls._feedback_processing_receipt_version(round_row) == 2
+        ]
+        if len(
+            {
+                cls._feedback_processing_receipt_version(round_row)
+                for round_row in rounds
+            }
+        ) != 1:
+            raise ValueError("resolved batch receipt versions are inconsistent")
+        if version_two_rounds:
+            resolution_timestamps = {
+                str(round_row["resolved_at"] or "")
+                for round_row in version_two_rounds
+            }
+            if (
+                len(resolution_timestamps) != 1
+                or not next(iter(resolution_timestamps)).strip()
+                or batch_resolved_at not in resolution_timestamps
+                or batch_updated_at not in resolution_timestamps
+                or any(
+                    str(round_row["updated_at"] or "") not in resolution_timestamps
+                    for round_row in version_two_rounds
+                )
+            ):
+                raise ValueError("resolved batch completion timestamp is incomplete")
+            claim_timestamps = {
+                str(round_row["started_at"] or "")
+                for round_row in version_two_rounds
+            }
+            if (
+                len(claim_timestamps) != 1
+                or not next(iter(claim_timestamps)).strip()
+            ):
+                raise ValueError("resolved batch claim timestamp is incomplete")
+
+        association_fields = (
+            "workbench_task_id",
+            "workbench_turn_id",
+            "attempt_id",
+            "agent_run_id",
+        )
+        validated_newer_batches: set[tuple[str, str]] = set()
+        common_persisted_receipt: ResolutionEvidence | None = None
+        for resolved_round in rounds:
+            persisted_evidence = cls._resolved_feedback_processing_round_evidence(
+                resolved_round
+            )
+            feedback_key = str(resolved_round["feedback_key"])
+            receipt_version = cls._feedback_processing_receipt_version(resolved_round)
+            cls._validate_feedback_processing_transition_multiset(
+                db,
+                resolved_round,
+                transitions_by_round[int(resolved_round["id"])],
+            )
+            if common_persisted_receipt is None:
+                common_persisted_receipt = persisted_evidence
+            elif (
+                persisted_evidence.commit_sha
+                != common_persisted_receipt.commit_sha
+                or persisted_evidence.test_evidence
+                != common_persisted_receipt.test_evidence
+                or persisted_evidence.restart_evidence
+                != common_persisted_receipt.restart_evidence
+                or persisted_evidence.health_evidence
+                != common_persisted_receipt.health_evidence
+                or persisted_evidence.backlog_evidence
+                != common_persisted_receipt.backlog_evidence
+            ):
+                raise ValueError("resolved batch persisted receipt is inconsistent")
+            if evidence is not None:
+                if (
+                    persisted_evidence.commit_sha != evidence.commit_sha
+                    or persisted_evidence.test_evidence != evidence.test_evidence
+                    or persisted_evidence.restart_evidence != evidence.restart_evidence
+                    or persisted_evidence.health_evidence != evidence.health_evidence
+                    or persisted_evidence.backlog_evidence
+                    != evidence.backlog_evidence
+                ):
+                    raise ValueError("resolution receipt does not match batch history")
+                if evidence.associations:
+                    association = evidence.associations[feedback_key]
+                    if any(
+                        getattr(association, field) != resolved_round[field]
+                        for field in association_fields
+                    ):
+                        raise ValueError(
+                            "resolution receipt association does not match batch history"
+                        )
+
+            reopened_at = str(resolved_round["reopened_at"] or "").strip()
+            reopen_reason = str(resolved_round["reopen_reason"] or "").strip()
+            if bool(reopened_at) != bool(reopen_reason):
+                raise ValueError("resolved batch reopen history is incomplete")
+            item = db.execute(
+                "select * from feedback_processing_items where feedback_key=?",
+                (feedback_key,),
+            ).fetchone()
+            source = db.execute(
+                "select resolved_at, updated_at from feedback_events where key=?",
+                (feedback_key,),
+            ).fetchone()
+            if item is None or source is None:
+                raise ValueError("resolved batch source history is incomplete")
+            if not reopened_at:
+                if (
+                    str(item["status"] or "") != "resolved"
+                    or cls._feedback_processing_round_pointer(
+                        item, require_positive=True
+                    )
+                    != int(resolved_round["id"])
+                    or str(item["batch_id"] or "") != batch_id
+                    or str(source["resolved_at"] or "")
+                    != str(resolved_round["resolved_at"] or "")
+                ):
+                    raise ValueError("resolved batch current projection is incomplete")
+                cls._validate_resolved_feedback_processing_round(item, resolved_round)
+                if receipt_version == 2 and (
+                    str(item["updated_at"] or "")
+                    != str(resolved_round["resolved_at"] or "")
+                    or str(source["updated_at"] or "")
+                    != str(resolved_round["resolved_at"] or "")
+                ):
+                    raise ValueError("resolved batch terminal timestamp is incomplete")
+                continue
+
+            current_round_id = cls._feedback_processing_round_pointer(
+                item,
+                require_positive=False,
+            )
+            if current_round_id == 0:
+                if (
+                    str(item["status"] or "") != "pending"
+                    or str(item["batch_id"] or "")
+                    or str(item["workbench_task_id"] or "")
+                    or str(item["workbench_turn_id"] or "")
+                    or type(item["attempt_id"]) is not int
+                    or item["attempt_id"] != 0
+                    or type(item["agent_run_id"]) is not int
+                    or item["agent_run_id"] != 0
+                    or str(item["commit_sha"] or "")
+                    or json.loads(item["test_evidence_json"] or "{}") != {}
+                    or json.loads(item["restart_evidence_json"] or "{}") != {}
+                    or json.loads(item["health_evidence_json"] or "{}") != {}
+                    or str(item["note"] or "")
+                    or str(item["resolved_at"] or "")
+                    or str(source["resolved_at"] or "").strip()
+                ):
+                    raise ValueError("resolved batch reopened projection is incomplete")
+                continue
+            current_round = db.execute(
+                """
+                select * from feedback_processing_rounds
+                 where id=? and feedback_key=? and batch_id=? and status=?
+                   and round_number>?
+                   and round_number=(
+                       select max(latest_round.round_number)
+                         from feedback_processing_rounds latest_round
+                        where latest_round.feedback_key=?
+                   )
+                """,
+                (
+                    current_round_id,
+                    feedback_key,
+                    str(item["batch_id"] or ""),
+                    str(item["status"] or ""),
+                    int(resolved_round["round_number"]),
+                    feedback_key,
+                ),
+            ).fetchone()
+            if current_round is None:
+                raise ValueError("resolved batch current lineage is incomplete")
+            newer_batch_key = (
+                str(item["batch_id"] or ""),
+                str(item["status"] or ""),
+            )
+            if newer_batch_key not in validated_newer_batches:
+                cls._validate_current_feedback_processing_batch_lineage(
+                    db,
+                    batch_id=newer_batch_key[0],
+                    expected_status=newer_batch_key[1],
+                )
+                validated_newer_batches.add(newer_batch_key)
+            if str(item["status"] or "") == "resolved":
+                if str(source["resolved_at"] or "") != str(
+                    current_round["resolved_at"] or ""
+                ):
+                    raise ValueError("resolved batch source lineage is incomplete")
+                cls._validate_resolved_feedback_processing_round(item, current_round)
+                if cls._feedback_processing_receipt_version(current_round) == 2 and (
+                    str(current_round["updated_at"] or "")
+                    != str(current_round["resolved_at"] or "")
+                    or str(item["updated_at"] or "")
+                    != str(current_round["resolved_at"] or "")
+                    or str(source["updated_at"] or "")
+                    != str(current_round["resolved_at"] or "")
+                ):
+                    raise ValueError("resolved batch current lineage timestamp is incomplete")
+            else:
+                if str(source["resolved_at"] or "").strip():
+                    raise ValueError("resolved batch current lineage is incomplete")
+                cls._validate_current_processing_round_projection(
+                    item,
+                    current_round,
+                )
+
     def resolve_feedback_processing_batch(
         self,
         batch_id: str,
         evidence: ResolutionEvidence | dict[str, object] | None = None,
         *,
-        current_head: str | None = None,
+        commit_is_ancestor: bool,
     ) -> bool:
         """Resolve all items together after validating completion evidence.
 
@@ -13406,6 +15414,8 @@ class AutoReplyStore:
         cleaned_batch_id = batch_id.strip()
         if not cleaned_batch_id:
             return False
+        if not isinstance(commit_is_ancestor, bool) or not commit_is_ancestor:
+            raise ValueError("resolution commit is not an ancestor of local main")
         normalized_evidence = (
             evidence
             if isinstance(evidence, ResolutionEvidence)
@@ -13414,107 +15424,255 @@ class AutoReplyStore:
             else None
         )
         if normalized_evidence is not None:
-            if current_head is None:
-                raise ValueError("current_head is required when resolving with evidence")
-            validate_resolution_evidence(normalized_evidence, current_head=current_head)
+            validate_resolution_evidence(
+                normalized_evidence,
+                commit_is_ancestor=commit_is_ancestor,
+            )
         with self._immediate_write_transaction() as db:
             batch = db.execute(
-                "select status, requested_count from feedback_processing_batches where batch_id=?",
+                "select status, requested_count, resolved_at, updated_at "
+                "from feedback_processing_batches where batch_id=?",
                 (cleaned_batch_id,),
             ).fetchone()
             if batch is None:
                 return False
-            row = db.execute(
+            if str(batch["status"] or "") == "resolved":
+                self._validate_resolved_feedback_processing_batch(
+                    db,
+                    batch_id=cleaned_batch_id,
+                    requested_count=batch["requested_count"],
+                    batch_resolved_at=str(batch["resolved_at"] or ""),
+                    batch_updated_at=str(batch["updated_at"] or ""),
+                    evidence=normalized_evidence,
+                )
+                return True
+            if normalized_evidence is None:
+                return False
+            if str(batch["status"] or "") != "processing":
+                raise ValueError("resolution requires a processing batch")
+            self._validate_current_feedback_processing_batch_lineage(
+                db,
+                batch_id=cleaned_batch_id,
+                expected_status="processing",
+            )
+            requested_count = batch["requested_count"]
+            if type(requested_count) is not int or requested_count <= 0:
+                raise ValueError("resolution requires valid batch membership")
+            rows = db.execute(
                 """
-                select count(*) as total,
-                       sum(case when status='resolved' then 1 else 0 end) as resolved
-                from feedback_processing_items where batch_id=?
+                select * from feedback_processing_items
+                 where batch_id=? order by feedback_key
                 """,
                 (cleaned_batch_id,),
+            ).fetchall()
+            round_rows = db.execute(
+                """
+                select * from feedback_processing_rounds
+                 where batch_id=? order by feedback_key, id
+                """,
+                (cleaned_batch_id,),
+            ).fetchall()
+            item_keys = [str(item["feedback_key"]) for item in rows]
+            round_keys = [str(round_row["feedback_key"]) for round_row in round_rows]
+            if (
+                len(rows) != requested_count
+                or len(round_rows) != requested_count
+                or len(set(item_keys)) != requested_count
+                or len(set(round_keys)) != requested_count
+                or set(item_keys) != set(round_keys)
+            ):
+                raise ValueError("resolution requires complete batch round membership")
+            if normalized_evidence.associations and set(
+                normalized_evidence.associations
+            ) != set(item_keys):
+                raise ValueError("resolution receipt associations do not match batch")
+            round_by_id = {int(round_row["id"]): round_row for round_row in round_rows}
+            verified: list[tuple[sqlite3.Row, sqlite3.Row]] = []
+            for item in rows:
+                round_id = self._feedback_processing_round_pointer(
+                    item,
+                    require_positive=True,
+                )
+                current_round = round_by_id.get(round_id)
+                if (
+                    str(item["status"] or "") != "processing"
+                    or current_round is None
+                    or str(current_round["feedback_key"]) != str(item["feedback_key"])
+                    or str(current_round["batch_id"] or "") != cleaned_batch_id
+                    or str(current_round["status"] or "") != "processing"
+                ):
+                    raise ValueError("resolution requires every item to be processing")
+                association_fields = (
+                    "workbench_task_id",
+                    "workbench_turn_id",
+                    "attempt_id",
+                    "agent_run_id",
+                )
+                if any(
+                    item[field] != current_round[field]
+                    for field in association_fields
+                ):
+                    raise ValueError("resolution item association does not match current round")
+                if (
+                    not str(current_round["workbench_task_id"] or "").strip()
+                    or not str(current_round["workbench_turn_id"] or "").strip()
+                    or int(current_round["attempt_id"] or 0) <= 0
+                    or int(current_round["agent_run_id"] or 0) <= 0
+                ):
+                    raise ValueError("resolution requires complete item associations")
+                feedback_key = str(item["feedback_key"])
+                if normalized_evidence.associations:
+                    association = normalized_evidence.associations.get(feedback_key)
+                    if association is None or any(
+                        getattr(association, field) != current_round[field]
+                        for field in association_fields
+                    ):
+                        raise ValueError(
+                            "resolution receipt association does not match current round"
+                        )
+                item_commit = str(current_round["commit_sha"] or "").strip()
+                if (
+                    str(item["commit_sha"] or "").strip().lower()
+                    != item_commit.lower()
+                    or item_commit.lower()
+                    != normalized_evidence.commit_sha.strip().lower()
+                ):
+                    raise ValueError("resolution item commit does not match receipt")
+                test_json = json.loads(current_round["test_evidence_json"] or "{}")
+                restart_json = json.loads(
+                    current_round["restart_evidence_json"] or "{}"
+                )
+                health_json = json.loads(current_round["health_evidence_json"] or "{}")
+                for field, parsed, receipt_value in (
+                    ("test_evidence_json", test_json, normalized_evidence.test_evidence),
+                    (
+                        "restart_evidence_json",
+                        restart_json,
+                        normalized_evidence.restart_evidence,
+                    ),
+                    (
+                        "health_evidence_json",
+                        health_json,
+                        normalized_evidence.health_evidence,
+                    ),
+                ):
+                    if (
+                        json.loads(item[field] or "{}") != parsed
+                        or parsed != receipt_value
+                    ):
+                        raise ValueError(
+                            "resolution item evidence does not match current round receipt"
+                        )
+                validate_resolution_evidence(
+                    ResolutionEvidence(
+                        commit_sha=item_commit,
+                        test_evidence=test_json,
+                        restart_evidence=restart_json,
+                        health_evidence=health_json,
+                        backlog_evidence=normalized_evidence.backlog_evidence,
+                    ),
+                    commit_is_ancestor=commit_is_ancestor,
+                )
+                verified.append((item, current_round))
+            placeholders = ",".join("?" for _ in item_keys)
+            source_rows = db.execute(
+                f"""
+                select key, resolved_at from feedback_events
+                 where key in ({placeholders})
+                """,
+                item_keys,
+            ).fetchall()
+            if (
+                len(source_rows) != requested_count
+                or {str(source["key"]) for source in source_rows} != set(item_keys)
+                or any(str(source["resolved_at"] or "").strip() for source in source_rows)
+            ):
+                raise ValueError("resolution requires complete source feedback membership")
+            backlog_json = json.dumps(
+                normalized_evidence.backlog_evidence,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            resolution_timestamp_row = db.execute(
+                "select current_timestamp as resolution_timestamp"
             ).fetchone()
-            total = int(row["total"] or 0) if row else 0
-            resolved = int(row["resolved"] or 0) if row else 0
-            requested_count = int(batch["requested_count"] or 0)
-            if normalized_evidence is not None:
-                if str(batch["status"] or "") == "resolved":
-                    return True
-                if str(batch["status"] or "") != "processing":
-                    raise ValueError("resolution requires a processing batch")
-                if requested_count <= 0 or total != requested_count:
-                    raise ValueError("resolution requires complete batch item associations")
-                rows = db.execute(
-                    "select * from feedback_processing_items where batch_id=? order by feedback_key",
-                    (cleaned_batch_id,),
-                ).fetchall()
-                for row in rows:
-                    if str(row["status"] or "") != "processing":
-                        raise ValueError("resolution requires every item to be processing")
-                    if not str(row["workbench_task_id"] or "").strip() or not str(row["workbench_turn_id"] or "").strip() or int(row["attempt_id"] or 0) <= 0 or int(row["agent_run_id"] or 0) <= 0:
-                        raise ValueError("resolution requires complete item associations")
-                    item_commit = str(row["commit_sha"] or "").strip()
-                    if item_commit.lower() != normalized_evidence.commit_sha.strip().lower():
-                        raise ValueError("resolution item commit does not match receipt")
-                    test_json = json.loads(row["test_evidence_json"] or "{}")
-                    restart_json = json.loads(row["restart_evidence_json"] or "{}")
-                    health_json = json.loads(row["health_evidence_json"] or "{}")
-                    validate_resolution_evidence(
-                        ResolutionEvidence(
-                            commit_sha=item_commit,
-                            test_evidence=test_json,
-                            restart_evidence=restart_json,
-                            health_evidence=health_json,
-                        ),
-                        current_head=current_head,
-                    )
-                    db.execute(
-                        """
-                        update feedback_processing_items
-                        set commit_sha=?, test_evidence_json=?, restart_evidence_json=?,
-                            health_evidence_json=?, status='resolved',
-                            resolved_at=current_timestamp, updated_at=current_timestamp
-                        where feedback_key=? and batch_id=?
-                        """,
-                        (
-                            item_commit,
-                            json.dumps(test_json, ensure_ascii=False, sort_keys=True),
-                            json.dumps(restart_json, ensure_ascii=False, sort_keys=True),
-                            json.dumps(health_json, ensure_ascii=False, sort_keys=True),
-                            row["feedback_key"],
-                            cleaned_batch_id,
-                        ),
-                    )
+            resolution_timestamp = str(
+                resolution_timestamp_row["resolution_timestamp"]
+            )
+            for item, current_round in verified:
+                round_cursor = db.execute(
+                    """
+                    update feedback_processing_rounds
+                       set status='resolved', resolved_at=?,
+                           backlog_evidence_json=?, updated_at=?
+                     where id=? and feedback_key=? and batch_id=?
+                       and status='processing'
+                    """,
+                    (
+                        resolution_timestamp,
+                        backlog_json,
+                        resolution_timestamp,
+                        int(current_round["id"]),
+                        str(item["feedback_key"]),
+                        cleaned_batch_id,
+                    ),
+                )
+                item_cursor = db.execute(
+                    """
+                    update feedback_processing_items
+                       set status='resolved', resolved_at=?, updated_at=?
+                     where feedback_key=? and batch_id=? and current_round_id=?
+                       and status='processing'
+                    """,
+                    (
+                        resolution_timestamp,
+                        resolution_timestamp,
+                        str(item["feedback_key"]),
+                        cleaned_batch_id,
+                        int(current_round["id"]),
+                    ),
+                )
+                if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
+                    raise ValueError("resolution current round changed during update")
                 db.execute(
                     """
-                    update feedback_events
-                    set resolved_at=coalesce(nullif(resolved_at, ''), current_timestamp),
-                        updated_at=current_timestamp
-                    where key in (select feedback_key from feedback_processing_items where batch_id=?)
+                    insert into feedback_processing_transitions (
+                        feedback_key, round_id, batch_id,
+                        from_status, to_status,
+                        workbench_task_id, workbench_turn_id, created_at
+                    ) values (?, ?, ?, 'processing', 'resolved', ?, ?, ?)
                     """,
-                    (cleaned_batch_id,),
+                    (
+                        str(item["feedback_key"]),
+                        int(current_round["id"]),
+                        cleaned_batch_id,
+                        str(current_round["workbench_task_id"] or ""),
+                        str(current_round["workbench_turn_id"] or ""),
+                        resolution_timestamp,
+                    ),
                 )
-                cursor = db.execute(
-                    """
-                    update feedback_processing_batches
-                    set status='resolved', resolved_at=current_timestamp, updated_at=current_timestamp
-                    where batch_id=? and status<>'resolved'
-                    """,
-                    (cleaned_batch_id,),
-                )
-                return cursor.rowcount == 1
-            if requested_count <= 0 or total != requested_count or total != resolved:
-                return False
-            if str(batch["status"] or "") == "resolved":
-                return True
+            source_cursor = db.execute(
+                f"""
+                update feedback_events
+                   set resolved_at=?, updated_at=?
+                 where key in ({placeholders}) and trim(resolved_at)=''
+                """,
+                [resolution_timestamp, resolution_timestamp, *item_keys],
+            )
+            if source_cursor.rowcount != requested_count:
+                raise ValueError("resolution source feedback changed during update")
             cursor = db.execute(
                 """
                 update feedback_processing_batches
-                set status='resolved', resolved_at=current_timestamp,
-                    updated_at=current_timestamp
-                where batch_id=? and status<>'resolved'
+                   set status='resolved', resolved_at=?, updated_at=?
+                 where batch_id=? and status='processing'
                 """,
-                (cleaned_batch_id,),
+                (resolution_timestamp, resolution_timestamp, cleaned_batch_id),
             )
-        return cursor.rowcount == 1
+            if cursor.rowcount != 1:
+                raise ValueError("resolution batch changed during update")
+            return True
+        return False
 
     def list_feedback_events_for_token(self, feedback_token: str) -> list[FeedbackEvent]:
         if not feedback_token.strip():
@@ -13759,6 +15917,88 @@ class AutoReplyStore:
                 (limit, max(0, offset)),
             ).fetchall()
             return [UserFeedbackItem.model_validate(dict(row)) for row in rows]
+
+    def list_user_feedback_items_by_keys(
+        self, feedback_keys: Sequence[str]
+    ) -> list[UserFeedbackItem]:
+        """Bulk-load source projections for exact feedback identities."""
+
+        keys = list(
+            dict.fromkeys(key.strip() for key in feedback_keys if key.strip())
+        )
+        if not keys:
+            return []
+        placeholders = ",".join("?" for _ in keys)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                with requested_feedback as (
+                    select * from feedback_events
+                     where key in ({placeholders})
+                ), latest_attempt_by_token as (
+                    select
+                        sr.feedback_token as feedback_token,
+                        max(ra.id) as attempt_id
+                    from sent_replies sr
+                    join requested_feedback requested
+                        on requested.feedback_token = sr.feedback_token
+                    join reply_attempts ra
+                        on ra.conversation_id = sr.conversation_id
+                       and ra.trigger_message_id = sr.trigger_message_id
+                    where trim(sr.feedback_token) <> ''
+                    group by sr.feedback_token
+                ), manual_attempt_by_key as (
+                    select
+                        fe.key as feedback_key,
+                        max(ra.id) as attempt_id
+                    from requested_feedback fe
+                    join reply_attempts ra
+                        on ra.id = cast(substr(fe.key, 8) as integer)
+                    where fe.key like 'manual:%'
+                    group by fe.key
+                )
+                select
+                    fe.key,
+                    fe.feedback_token,
+                    fe.rating,
+                    fe.rating_label,
+                    fe.comment,
+                    fe.source,
+                    fe.received_at,
+                    coalesce(ra.id, 0) as attempt_id,
+                    coalesce(ra.agent_run_id, 0) as agent_run_id,
+                    coalesce(ra.codex_session_id, '') as codex_session_id,
+                    coalesce(ar.role, '') as attempt_role,
+                    coalesce(ra.conversation_title, '') as conversation_title,
+                    coalesce(ra.trigger_sender, '') as trigger_sender,
+                    coalesce(ra.trigger_text, '') as trigger_text,
+                    coalesce(ra.final_reply_text, '') as final_reply_text,
+                    coalesce(ra.draft_reply_text, '') as draft_reply_text,
+                    coalesce(ra.codex_reason, '') as codex_reason,
+                    coalesce(ra.audit_summary, '') as audit_summary,
+                    case when latest.attempt_id is not null
+                         then coalesce(ra.reviewer_feedback, '') else '' end as reviewer_feedback,
+                    case when latest.attempt_id is not null
+                         then coalesce(ra.corrected_reply_text, '') else '' end as corrected_reply_text,
+                    coalesce(pi.status, case when trim(fe.resolved_at) <> '' then 'resolved' else 'pending' end) as processing_status,
+                    fe.resolved_at,
+                    fe.updated_at
+                from requested_feedback fe
+                left join latest_attempt_by_token latest
+                    on latest.feedback_token = fe.feedback_token
+                left join manual_attempt_by_key manual
+                    on manual.feedback_key = fe.key
+                left join reply_attempts ra
+                    on ra.id = coalesce(latest.attempt_id, manual.attempt_id)
+                left join agent_runs ar
+                    on ar.id = ra.agent_run_id
+                left join feedback_processing_items pi
+                    on pi.feedback_key = fe.key
+                order by fe.key asc
+                """,
+                keys,
+            ).fetchall()
+        return [UserFeedbackItem.model_validate(dict(row)) for row in rows]
 
     def count_user_feedback_items(self) -> int:
         with self._connect() as db:

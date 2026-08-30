@@ -16,6 +16,7 @@ tests, which inject a fake runner.
 from __future__ import annotations
 
 import hashlib
+import time as system_time
 from dataclasses import dataclass
 
 
@@ -364,7 +365,8 @@ class MacWechatAccessibility:
     BUNDLE_ID = "com.tencent.xinWeChat"
 
     def __init__(self, *, settle: float = 1.4, restore_focus: bool = True,
-                 idle_seconds: float | None = None, idle_max_wait: float = 120.0):
+                 idle_seconds: float | None = None, idle_max_wait: float = 120.0,
+                 min_interaction_interval: float | None = None):
         self.settle = settle
         # After a send, re-activate whatever app was frontmost so switching to
         # WeChat to pick the target chat only steals focus for ~1s.
@@ -381,6 +383,23 @@ class MacWechatAccessibility:
         # idle_max_wait, then proceed so the reply is not starved).
         self.idle_seconds = idle_seconds
         self.idle_max_wait = idle_max_wait
+        if min_interaction_interval is None:
+            try:
+                from app import config
+                min_interaction_interval = config.wechat_send_min_interval_seconds()
+            except Exception:
+                min_interaction_interval = 1.0
+        self.min_interaction_interval = max(0.0, min_interaction_interval)
+        self._last_interaction_started_at: float | None = None
+
+    def _wait_for_interaction_slot(self, *, sleep, monotonic) -> None:
+        """Keep foreground navigation spaced even when several deliveries queue."""
+        if self._last_interaction_started_at is not None:
+            elapsed = monotonic() - self._last_interaction_started_at
+            remaining = self.min_interaction_interval - elapsed
+            if remaining > 0:
+                sleep(remaining)
+        self._last_interaction_started_at = monotonic()
 
     def _wait_until_idle(self) -> None:
         import time
@@ -601,6 +620,10 @@ class MacWechatAccessibility:
         try:
             # --- navigation (needs a real click; briefly foreground WeChat) ---
             self._wait_until_idle()   # don't interrupt the user mid-typing
+            self._wait_for_interaction_slot(
+                sleep=time.sleep,
+                monotonic=system_time.monotonic,
+            )
             if not _activate_wait(
                 pid,
                 first=first,
@@ -753,6 +776,10 @@ class MacWechatAccessibility:
         prev_app = self._frontmost_app()
         try:
             self._wait_until_idle()
+            self._wait_for_interaction_slot(
+                sleep=time.sleep,
+                monotonic=system_time.monotonic,
+            )
             _activate_wait(pid, first=first, sleep=time.sleep, reactivate=self._reactivate)
             composer = _open_target(
                 target_label, first=first, click=click,

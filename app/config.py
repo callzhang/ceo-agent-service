@@ -1,10 +1,21 @@
+import base64
+from contextlib import contextmanager
 import os
+import re
+import stat
+import tempfile
+import threading
 from datetime import timedelta
 from pathlib import Path
 
 
 DEFAULT_CEO_CODEX_MODEL = "gpt-5.5"
 DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT = "medium"
+_ENCODED_ENV_VALUE_PREFIX = "__CEO_ENV_B64_V1__:"
+_EMAIL_SECRET_ENV_KEY = re.compile(
+    r"^CEO_EMAIL_[A-Z0-9_]+_(?:IMAP|SMTP)_SECRET$"
+)
+_ENV_WRITE_THREAD_LOCK = threading.RLock()
 
 
 def repo_root() -> Path:
@@ -42,16 +53,24 @@ def read_env_file(path: Path | None = None) -> dict[str, str]:
         key = key.strip()
         if not key:
             continue
-        values[key] = _decode_env_value(value.strip())
+        values[key] = _decode_env_value(key, value.strip())
     return values
 
 
 def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
+    if any("\x00" in key or "\x00" in value for key, value in updates.items()):
+        raise ValueError("environment updates must not contain NUL")
     env_path = path or env_file_path()
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    with _env_write_lock(env_path):
+        return _write_env_values_locked(updates, env_path)
+
+
+def _write_env_values_locked(updates: dict[str, str], env_path: Path) -> Path:
     existing_lines = (
         env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
     )
-    remaining = dict(updates)
+    written: set[str] = set()
     lines: list[str] = []
     for raw_line in existing_lines:
         stripped = raw_line.strip()
@@ -59,29 +78,117 @@ def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
             lines.append(raw_line)
             continue
         key = stripped.split("=", 1)[0].strip()
-        if key in remaining:
-            lines.append(f"{key}={_encode_env_value(remaining.pop(key))}")
+        if key in updates:
+            if key not in written:
+                lines.append(f"{key}={_encode_env_value(key, updates[key])}")
+                written.add(key)
         else:
             lines.append(raw_line)
-    for key, value in remaining.items():
-        lines.append(f"{key}={_encode_env_value(value)}")
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    for key, value in updates.items():
+        if key not in written:
+            lines.append(f"{key}={_encode_env_value(key, value)}")
+    mode = stat.S_IMODE(env_path.stat().st_mode) if env_path.exists() else 0o600
+    fd, temporary_name = tempfile.mkstemp(
+        dir=env_path.parent,
+        prefix=f".{env_path.name}.",
+    )
+    replaced = False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as temporary:
+            _apply_temp_file_mode(temporary.fileno(), temporary_name, mode)
+            temporary.write("\n".join(lines).rstrip() + "\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_name, env_path)
+        replaced = True
+    finally:
+        if not replaced:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
     for key, value in updates.items():
         os.environ[key] = value
     return env_path
 
 
-def _decode_env_value(value: str) -> str:
+def _apply_temp_file_mode(descriptor: int, temporary_name: str, mode: int) -> None:
+    fchmod = getattr(os, "fchmod", None)
+    if callable(fchmod):
+        fchmod(descriptor, mode)
+    else:
+        os.chmod(temporary_name, mode)
+
+
+@contextmanager
+def _env_write_lock(env_path: Path):
+    lock_path = env_path.with_name(f".{env_path.name}-write.lock")
+    with _ENV_WRITE_THREAD_LOCK:
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                if os.fstat(descriptor).st_size == 0:
+                    os.write(descriptor, b"0")
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if os.name == "nt":
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def effective_env_values(path: Path | None = None) -> dict[str, str]:
+    """Return file defaults overlaid by the authoritative process environment."""
+
+    values = read_env_file(path)
+    values.update(os.environ)
+    return values
+
+
+def _decode_env_value(key: str, value: str) -> str:
+    if _EMAIL_SECRET_ENV_KEY.fullmatch(key) and value.startswith(
+        _ENCODED_ENV_VALUE_PREFIX
+    ):
+        encoded = value.removeprefix(_ENCODED_ENV_VALUE_PREFIX)
+        try:
+            return base64.b64decode(encoded, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError("invalid encoded environment value") from exc
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         value = value[1:-1]
     return os.path.expandvars(value)
 
 
-def _encode_env_value(value: str) -> str:
-    if not value or any(character.isspace() for character in value):
-        return '"' + value.replace('"', '\\"') + '"'
-    return value
+def _encode_env_value(key: str, value: str) -> str:
+    if _EMAIL_SECRET_ENV_KEY.fullmatch(key) is None:
+        if not value or any(character.isspace() for character in value):
+            return '"' + value.replace('"', '\\"') + '"'
+        return value
+    safe_punctuation = frozenset("._:/@+-")
+    if (
+        value
+        and not value.startswith(_ENCODED_ENV_VALUE_PREFIX)
+        and all(
+            character.isascii()
+            and (character.isalnum() or character in safe_punctuation)
+            for character in value
+        )
+    ):
+        return value
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return _ENCODED_ENV_VALUE_PREFIX + encoded
 
 
 load_env_file()
@@ -447,6 +554,20 @@ def wechat_send_idle_seconds() -> float:
         return float(os.getenv("CEO_WECHAT_SEND_IDLE_SECONDS", "10"))
     except ValueError:
         return 10.0
+
+
+def wechat_send_min_interval_seconds() -> float:
+    """Minimum spacing between WeChat Accessibility navigation attempts.
+
+    The sender is intentionally conservative because each navigation briefly
+    foregrounds the personal WeChat client. This limits queued deliveries from
+    turning into a burst of UI activity while leaving message content and target
+    checks unchanged.
+    """
+    try:
+        return max(0.0, float(os.getenv("CEO_WECHAT_SEND_MIN_INTERVAL_SECONDS", "1")))
+    except ValueError:
+        return 1.0
 
 
 def wechat_send_mode() -> str:

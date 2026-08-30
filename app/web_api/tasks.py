@@ -126,8 +126,16 @@ class ConsoleTaskDetail(BaseModel):
     unlinked_follow_ups: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ConsoleTaskFilters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    categories: list[str] = Field(default_factory=list)
+    task_states: list[str] = Field(default_factory=list)
+
+
 class ConsoleTaskListEnvelope(ApiListEnvelope):
     items: list[ConsoleTaskSummary] = Field(default_factory=list)
+    filters: ConsoleTaskFilters = Field(default_factory=ConsoleTaskFilters)
 
 
 class ConsoleTaskDetailEnvelope(ApiItemEnvelope):
@@ -359,9 +367,12 @@ def task_list_response(
     query: str = "",
     category: str = "",
     task_state: str = "",
+    sort: str = "",
     row_builder=None,
 ) -> ConsoleTaskListEnvelope:
     rows = []
+    categories: set[str] = set()
+    task_states: set[str] = set()
     needle = query.strip().casefold()
     for project in store.list_work_projects(limit=None):
         todos = store.list_work_todos(project_id=project.id)
@@ -387,6 +398,11 @@ def task_list_response(
                         "todo_count": int(built.get("todoCount", row["todo_count"])),
                     }
                 )
+        row["title"] = row["title"].strip() or f"Project {row['id']}"
+        if row["category"].strip():
+            categories.add(row["category"])
+        if row["status"].strip():
+            task_states.add(row["status"])
         haystack = " ".join(
             [
                 row["title"], row["category"], row["project_status"], row["owner_name"],
@@ -401,12 +417,49 @@ def task_list_response(
         if task_state.strip() and row["status"] != task_state.strip():
             continue
         rows.append(row)
+    if sort == "project_asc":
+        rows.sort(key=lambda row: row["title"].casefold())
+    elif sort == "project_desc":
+        rows.sort(key=lambda row: row["title"].casefold(), reverse=True)
+    elif sort == "priority_desc":
+        priority_rank = {
+            "p0": 60,
+            "critical": 60,
+            "urgent": 50,
+            "high": 40,
+            "p1": 40,
+            "medium": 30,
+            "p2": 30,
+            "low": 20,
+            "p3": 20,
+        }
+        rows.sort(
+            key=lambda row: (
+                priority_rank.get(row["priority"].strip().casefold(), 0),
+                row["title"].casefold(),
+            ),
+            reverse=True,
+        )
+    elif sort == "progress_desc":
+        rows.sort(
+            key=lambda row: (row["progress_ratio"], row["title"].casefold()),
+            reverse=True,
+        )
+    elif sort == "todos_desc":
+        rows.sort(
+            key=lambda row: (row["todo_count"], row["title"].casefold()),
+            reverse=True,
+        )
     total = len(rows)
     start = (page - 1) * page_size
     page_rows = rows[start : start + page_size]
     has_more = start + page_size < total
     return ConsoleTaskListEnvelope(
         items=[ConsoleTaskSummary.model_validate(row) for row in page_rows],
+        filters=ConsoleTaskFilters(
+            categories=sorted(categories, key=str.casefold),
+            task_states=sorted(task_states, key=str.casefold),
+        ),
         meta=ApiListMeta(
             snapshot_at=snapshot_at(),
             page=page,

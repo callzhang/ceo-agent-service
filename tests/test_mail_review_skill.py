@@ -45,7 +45,9 @@ def test_mail_review_skill_defines_complete_review_workflow():
         "Inspect every linked material needed for the requested judgment",
         "Check the current thread, sent state, and safe prior receipts before proposing a reply",
         "Do not propose or execute a duplicate reply",
-        "Propose a mail reply only when the current request explicitly authorizes replying",
+        "Every reply requires explicit reply authorization",
+        "For a DingTalk or Lark review, the current request must explicitly authorize replying",
+        "For `channel=email`, the current immutable ActionPlan is the authorization",
         "Review-only, summarize-only, or approval-only requests do not authorize a mail reply",
         "The agent performs the business judgment",
         "The service supplies references and exact commands without interpreting mail or linked content",
@@ -57,8 +59,20 @@ def test_mail_review_skill_uses_only_specific_missing_material_questions():
     text = _skill_prose()
 
     assert "ask one concrete question naming the specifically missing mail or linked material" in text
+    assert "explain why it is needed for the requested judgment" in text
     assert "Do not ask for a generic resend" in text
     assert "Do not infer or invent unread content" in text
+
+
+def test_mail_review_skill_separates_linked_materials_from_email_attachments():
+    text = _skill_prose()
+
+    assert "A linked material is not an email attachment" in text
+    assert "DingTalk or Lark interactive mail review" in text
+    assert "Do not open or inspect linked content for a `channel=email` task" in text
+    assert "Do not open or inspect attachment content" in text
+    assert "attachment metadata only" in text
+    assert "Task 11 unsubscribe browser execution" in text
 
 
 def test_canonical_prompt_delegates_mail_policy_to_skill():

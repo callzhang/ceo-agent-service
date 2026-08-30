@@ -71,6 +71,63 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 下切换查看多个底层 `agent_runs`。因此“当前结果可以被修正”与“执行历史不可抹除”
 可以同时成立：列表显示最新结论，详情保留每一次 run 的真实轨迹。
 
+### 用户反馈处理投影与重新打开
+
+用户反馈处理使用稳定的 `pending -> processing -> resolved` 当前投影；
+这组状态与普通 Agent 任务的 `pending -> running -> done` 不是同一状态机。
+`pending` 表示未领取，`processing` 表示已被一个批次原子领取，`resolved`
+表示当前处理轮次已用完整回执结案。页面上的“未完成”是
+`{pending, processing}` 的合集，不增加第四个存储状态。
+
+重新打开是唯一合法的 `resolved -> pending` 转换。调用者通过现有本地
+Feedback API 提交一个不为空的确切 `reason`；服务不生成、重写或补默认理由。
+重新打开只清除当前处理投影，不创建新轮次，也不直接进入
+`processing`。下一次原子 claim 才创建新批次和新的不可变处理轮次。
+历史批次、轮次、Workbench 关联和回执仍可读且不得被覆盖；证据写入和
+结案只能作用于当前 `processing` 轮次，旧轮次的证据不能满足新一轮。
+
+Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 Agent
+共用；它不对公网暴露，也不增加 feedback 专用鉴权。完成一个当前轮次时，
+后端必须从当前轮次回执中同时确认：代码已实现，测试成功，提交存在且是
+本地 `main` 的祖先，`com.ceo-agent-service.main` 已重启且 PID 实际变更，
+本地健康接口返回 HTTP 200 和 `ok=true`，权威实时的 `processing` / `failed` /
+`retryable` 数量都是零，并且状态和证据已经通过 API 持久化后回读一致。
+
+该能力不在 Agent 页面增加第二套流程，也不使用模型合成重新打开理由或新回执。
+
+### Email Agent task 映射
+
+Email 分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。如果当前计划没有
+Agent 动作，就不会创建 `reply_task`。确定性的 `label`、`mark_read`、`archive`、
+`move` 和 `trash` 也不进入 Agent 队列；只有计划明确授权的 `auto_reply` 和
+`unsubscribe` 才映射为 `channel=email` 的 `pending` 任务。
+
+Email task 继续使用现有唯一键 `(channel, conversation_id, trigger_message_id)`：
+
+```text
+conversation_id
+  = digest(account_id + stable_thread_identity)
+
+trigger_message_id
+  = digest(account_id + stable_message_identity
+           + action_type + action_plan_version)
+```
+
+同一 ActionPlan 的重复扫描、进程重启或模型重训只会取回原任务，不改写原任务、
+generation 或运行历史。新的计划版本获得新的动作身份，因此可以在保留旧 run 的同时
+形成新的受审 revision 生命周期。
+
+任务的 `trigger_message_json` 只保存可追溯的动作身份、账户/邮件/thread 身份、
+ActionPlan、分类、模型和配置版本，以及经过凭证、URL 和本地路径检查的当前动作参数。
+它不复制邮箱凭证、附件字节、本地附件路径、邮件正文或完整退订 URL。
+
+运行时 `AgentTaskContext` 从 Email 数据源读取当前邮件和 thread 的纯文本；附件只投影
+为文件名、MIME、字节大小和 inline 标记，material 没有读取命令，并固定
+`image_paths=()`。上下文可以携带已有的 sent/unsubscribe state receipt。当前不可变
+ActionPlan 是唯一动作授权；Adapter 只排队，不发送、不打开退订页面，也不改变现有
+Consumer A → Audit Agent B → feedback/revision 生命周期。外部写仍只能由 Audit 接受
+候选后执行并读回。
+
 ### Repository Upgrade
 
 服务周期性读取配置的 `origin/main`，只识别可安全 fast-forward 的更新；分叉、状态指纹变化或

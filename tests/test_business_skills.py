@@ -37,6 +37,28 @@ def test_bundled_business_skill_inventory_is_exact_and_valid():
     assert all(skill.managed_by == "ceo-agent-service" for skill in skills)
 
 
+def test_ceo_mail_review_uses_immutable_email_authorization_and_metadata_only():
+    skill = next(
+        item for item in load_bundled_business_skills() if item.name == "ceo-mail-review"
+    )
+    text = skill.content
+
+    assert "immutable ActionPlan" in text
+    assert "auto_reply" in text
+    assert "unsubscribe" in text
+    assert "attachment metadata only" in text
+    assert "image_paths=()" in text
+    assert "sent state" in text
+    assert "unsubscribe state" in text
+    assert "Do not open or inspect attachment content" in text
+    assert "Do not open or inspect linked content" in text
+    assert "Do not invent attachment facts" in text
+    automatic_action = text.split("## Automatic Email Action", 1)[1].split(
+        "## Authorization And Outcome", 1
+    )[0]
+    assert "Inspect every linked material" not in automatic_action
+
+
 def test_installed_business_skill_catalog_and_protocol_are_explicit(
     tmp_path: Path,
 ):
