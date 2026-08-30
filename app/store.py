@@ -114,6 +114,8 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_rounds_feedback",
     "idx_feedback_processing_rounds_batch",
     "idx_feedback_processing_transitions_feedback",
+    "idx_feedback_processing_transitions_batch_round",
+    "idx_feedback_processing_transitions_round",
     "idx_reply_attempts_agent_run_recovery",
     "idx_runtime_attempt_active_route",
     "idx_runtime_attempt_active_lease",
@@ -1685,6 +1687,10 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_feedback_processing_transitions_feedback
                     on feedback_processing_transitions(feedback_key, id desc);
+                create index if not exists idx_feedback_processing_transitions_batch_round
+                    on feedback_processing_transitions(batch_id, round_id, id);
+                create index if not exists idx_feedback_processing_transitions_round
+                    on feedback_processing_transitions(round_id, id);
                 insert or ignore into feedback_processing_items (
                     feedback_key, status, resolved_at
                 )
@@ -14124,14 +14130,10 @@ class AutoReplyStore:
                 (cleaned_key,),
             ).fetchone()
             batch = db.execute(
-                "select status from feedback_processing_batches where batch_id=?",
+                "select status, requested_count, resolved_at, updated_at "
+                "from feedback_processing_batches where batch_id=?",
                 (str(item["batch_id"] or ""),),
             ).fetchone()
-            batch_rounds = db.execute(
-                "select * from feedback_processing_rounds "
-                "where batch_id=? order by feedback_key, id",
-                (str(item["batch_id"] or ""),),
-            ).fetchall()
             if (
                 current_round is None
                 or source is None
@@ -14146,16 +14148,15 @@ class AutoReplyStore:
                     error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
                 )
             try:
-                self._validate_feedback_processing_batch_transition_ownership(
+                self._validate_resolved_feedback_processing_batch(
                     db,
-                    str(item["batch_id"] or ""),
-                    batch_rounds,
+                    batch_id=str(item["batch_id"] or ""),
+                    requested_count=batch["requested_count"],
+                    batch_resolved_at=str(batch["resolved_at"] or ""),
+                    batch_updated_at=str(batch["updated_at"] or ""),
+                    evidence=None,
                 )
                 self._validate_resolved_feedback_processing_round(item, current_round)
-                self._validate_feedback_processing_transition_multiset(
-                    db,
-                    current_round,
-                )
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 raise FeedbackProcessingReopenError(
                     "feedback processing history is incomplete",
@@ -14487,6 +14488,7 @@ class AutoReplyStore:
         cls,
         db: sqlite3.Connection,
         current_round: sqlite3.Row,
+        transitions: Sequence[sqlite3.Row] | None = None,
     ) -> None:
         receipt_version = cls._feedback_processing_receipt_version(current_round)
         status = str(current_round["status"] or "")
@@ -14498,11 +14500,12 @@ class AutoReplyStore:
             or (status == "processing" and reopened_at)
         ):
             raise ValueError("feedback processing transition history is incomplete")
-        transitions = db.execute(
-            "select * from feedback_processing_transitions "
-            "where round_id=? order by id",
-            (int(current_round["id"]),),
-        ).fetchall()
+        if transitions is None:
+            transitions = db.execute(
+                "select * from feedback_processing_transitions "
+                "where round_id=? order by id",
+                (int(current_round["id"]),),
+            ).fetchall()
         by_pair: dict[tuple[str, str], list[sqlite3.Row]] = {}
         for transition in transitions:
             if (
@@ -14622,7 +14625,7 @@ class AutoReplyStore:
         db: sqlite3.Connection,
         batch_id: str,
         batch_rounds: Sequence[sqlite3.Row],
-    ) -> None:
+    ) -> dict[int, list[sqlite3.Row]]:
         round_by_id: dict[int, sqlite3.Row] = {}
         for round_row in batch_rounds:
             round_id = round_row["id"]
@@ -14636,12 +14639,16 @@ class AutoReplyStore:
                     "feedback processing batch transition ownership is incomplete"
                 )
             round_by_id[round_id] = round_row
-        transitions = db.execute(
-            "select round_id, feedback_key "
-            "from feedback_processing_transitions where batch_id=?",
+        if not round_by_id:
+            raise ValueError(
+                "feedback processing batch transition ownership is incomplete"
+            )
+        batch_transitions = db.execute(
+            "select * from feedback_processing_transitions "
+            "where batch_id=? order by round_id, id",
             (batch_id,),
         ).fetchall()
-        for transition in transitions:
+        for transition in batch_transitions:
             transition_round_id = transition["round_id"]
             owned_round = (
                 round_by_id.get(transition_round_id)
@@ -14654,6 +14661,26 @@ class AutoReplyStore:
                 raise ValueError(
                     "feedback processing batch transition ownership is incomplete"
                 )
+        placeholders = ",".join("?" for _ in round_by_id)
+        round_transitions = db.execute(
+            "select * from feedback_processing_transitions "
+            f"where round_id in ({placeholders}) order by round_id, id",
+            list(round_by_id),
+        ).fetchall()
+        transitions_by_round = {
+            round_id: [] for round_id in round_by_id
+        }
+        for transition in round_transitions:
+            transition_round_id = transition["round_id"]
+            if (
+                type(transition_round_id) is not int
+                or transition_round_id not in transitions_by_round
+            ):
+                raise ValueError(
+                    "feedback processing batch transition ownership is incomplete"
+                )
+            transitions_by_round[transition_round_id].append(transition)
+        return transitions_by_round
 
     @classmethod
     def _validate_current_feedback_processing_batch_lineage(
@@ -14712,10 +14739,12 @@ class AutoReplyStore:
             round_by_id = {int(round_row["id"]): round_row for round_row in rounds}
             if len(round_by_id) != requested_count:
                 raise ValueError(stable_error)
-            cls._validate_feedback_processing_batch_transition_ownership(
-                db,
-                batch_id,
-                rounds,
+            transitions_by_round = (
+                cls._validate_feedback_processing_batch_transition_ownership(
+                    db,
+                    batch_id,
+                    rounds,
+                )
             )
 
             version_two_rounds: list[sqlite3.Row] = []
@@ -14751,6 +14780,7 @@ class AutoReplyStore:
                 cls._validate_feedback_processing_transition_multiset(
                     db,
                     current_round,
+                    transitions_by_round[round_id],
                 )
                 if receipt_version == 2:
                     version_two_claim_timestamps.add(
@@ -14860,10 +14890,12 @@ class AutoReplyStore:
             or any(str(round_row["status"] or "") != "resolved" for round_row in rounds)
         ):
             raise ValueError("resolved batch history is incomplete")
-        cls._validate_feedback_processing_batch_transition_ownership(
-            db,
-            batch_id,
-            rounds,
+        transitions_by_round = (
+            cls._validate_feedback_processing_batch_transition_ownership(
+                db,
+                batch_id,
+                rounds,
+            )
         )
         if evidence is not None and evidence.associations and set(
             evidence.associations
@@ -14915,6 +14947,7 @@ class AutoReplyStore:
             "agent_run_id",
         )
         validated_newer_batches: set[tuple[str, str]] = set()
+        common_persisted_receipt: ResolutionEvidence | None = None
         for resolved_round in rounds:
             persisted_evidence = cls._resolved_feedback_processing_round_evidence(
                 resolved_round
@@ -14924,7 +14957,23 @@ class AutoReplyStore:
             cls._validate_feedback_processing_transition_multiset(
                 db,
                 resolved_round,
+                transitions_by_round[int(resolved_round["id"])],
             )
+            if common_persisted_receipt is None:
+                common_persisted_receipt = persisted_evidence
+            elif (
+                persisted_evidence.commit_sha
+                != common_persisted_receipt.commit_sha
+                or persisted_evidence.test_evidence
+                != common_persisted_receipt.test_evidence
+                or persisted_evidence.restart_evidence
+                != common_persisted_receipt.restart_evidence
+                or persisted_evidence.health_evidence
+                != common_persisted_receipt.health_evidence
+                or persisted_evidence.backlog_evidence
+                != common_persisted_receipt.backlog_evidence
+            ):
+                raise ValueError("resolved batch persisted receipt is inconsistent")
             if evidence is not None:
                 if (
                     persisted_evidence.commit_sha != evidence.commit_sha

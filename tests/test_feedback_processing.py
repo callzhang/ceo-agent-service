@@ -149,6 +149,8 @@ def test_feedback_round_schema_is_additive_and_idempotent(tmp_path: Path):
             "idx_feedback_processing_rounds_feedback",
             "idx_feedback_processing_rounds_batch",
             "idx_feedback_processing_transitions_feedback",
+            "idx_feedback_processing_transitions_batch_round",
+            "idx_feedback_processing_transitions_round",
         } <= indexes
 
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
@@ -160,6 +162,90 @@ def test_feedback_round_schema_is_additive_and_idempotent(tmp_path: Path):
         assert db.execute(
             "select count(*) from feedback_processing_transitions"
         ).fetchone()[0] == 0
+
+
+def test_feedback_transition_indexes_are_additive_manifested_and_idempotent(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "transition-indexes.sqlite3"
+    store = AutoReplyStore(db_path)
+    expected = {
+        "idx_feedback_processing_transitions_batch_round": (
+            "batch_id",
+            "round_id",
+            "id",
+        ),
+        "idx_feedback_processing_transitions_round": ("round_id", "id"),
+    }
+    assert set(expected) <= set(store_module.STORE_SCHEMA_REQUIRED_INDEXES)
+
+    with store._connect() as db:
+        for index_name, columns in expected.items():
+            assert tuple(
+                row["name"] for row in db.execute(f"pragma index_info({index_name})")
+            ) == columns
+            db.execute(f"drop index {index_name}")
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    migrated = AutoReplyStore(db_path)
+    with migrated._connect() as db:
+        first_indexes = {
+            str(row["name"])
+            for row in db.execute(
+                "select name from sqlite_master where type='index'"
+            )
+        }
+        assert set(expected) <= first_indexes
+        for index_name, columns in expected.items():
+            assert tuple(
+                row["name"] for row in db.execute(f"pragma index_info({index_name})")
+            ) == columns
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        second_indexes = {
+            str(row[0])
+            for row in db.execute(
+                "select name from sqlite_master where type='index'"
+            )
+        }
+    assert second_indexes == first_indexes
+
+
+def test_feedback_transition_batch_queries_use_expected_indexes(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "transition-query-plan.sqlite3")
+    _prepare_two_member_processing_batch(store)
+
+    with store._connect() as db:
+        round_ids = [
+            int(row["id"])
+            for row in db.execute(
+                "select id from feedback_processing_rounds "
+                "where batch_id='batch-1' order by id"
+            )
+        ]
+        batch_plan = " ".join(
+            str(row["detail"])
+            for row in db.execute(
+                "explain query plan select * "
+                "from feedback_processing_transitions "
+                "where batch_id=? order by round_id, id",
+                ("batch-1",),
+            )
+        )
+        round_plan = " ".join(
+            str(row["detail"])
+            for row in db.execute(
+                "explain query plan select * "
+                "from feedback_processing_transitions "
+                "where round_id in (?, ?) order by round_id, id",
+                round_ids,
+            )
+        )
+
+    assert "idx_feedback_processing_transitions_batch_round" in batch_plan
+    assert "idx_feedback_processing_transitions_round" in round_plan
 
 
 def test_feedback_round_models_are_strict():
@@ -4136,6 +4222,185 @@ def test_multi_item_resolved_batch_can_reopen_one_member(tmp_path: Path):
     assert store.get_feedback_event("feedback-1").resolved_at == ""
     assert store.get_feedback_event("feedback-2").resolved_at
     assert store.list_feedback_processing_rounds("feedback-2") == second_round_before
+
+
+def _corrupt_resolved_batch_sibling(
+    store: AutoReplyStore,
+    *,
+    damage: str,
+) -> None:
+    with store._connect() as db:
+        sibling_round = db.execute(
+            "select id from feedback_processing_rounds "
+            "where batch_id='batch-1' and feedback_key='feedback-2'"
+        ).fetchone()
+        assert sibling_round is not None
+        if damage == "missing-completion":
+            db.execute(
+                "delete from feedback_processing_transitions "
+                "where round_id=? and from_status='processing' "
+                "and to_status='resolved'",
+                (int(sibling_round["id"]),),
+            )
+        elif damage == "wrong-completion":
+            db.execute(
+                "update feedback_processing_transitions set reason='wrong' "
+                "where round_id=? and from_status='processing' "
+                "and to_status='resolved'",
+                (int(sibling_round["id"]),),
+            )
+        elif damage == "source-timestamp":
+            db.execute(
+                "update feedback_events set resolved_at='1999-01-01 00:00:00' "
+                "where key='feedback-2'"
+            )
+        elif damage == "requested-count":
+            db.execute(
+                "update feedback_processing_batches set requested_count=3 "
+                "where batch_id='batch-1'"
+            )
+        else:
+            assert damage == "receipt-mismatch"
+            different_commit = "d" * 40
+            db.execute(
+                "update feedback_processing_rounds set commit_sha=? "
+                "where id=?",
+                (different_commit, int(sibling_round["id"])),
+            )
+            db.execute(
+                "update feedback_processing_items set commit_sha=? "
+                "where feedback_key='feedback-2'",
+                (different_commit,),
+            )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    (
+        "missing-completion",
+        "wrong-completion",
+        "source-timestamp",
+        "requested-count",
+        "receipt-mismatch",
+    ),
+)
+def test_reopen_requires_complete_resolved_sibling_batch_closure(
+    tmp_path: Path,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"reopen-sibling-{damage}.sqlite3")
+    _prepare_resolved_two_member_batch(store)
+    _corrupt_resolved_batch_sibling(store, damage=damage)
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(
+        feedback_processing_module.FeedbackProcessingReopenError
+    ) as error:
+        store.reopen_feedback_processing_item(
+            "feedback-1",
+            reason="the full sibling batch must be intact",
+        )
+
+    assert error.value.error_code == "feedback_reopen_history_incomplete"
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize(
+    "receipt_field",
+    ("commit", "test", "restart", "health", "backlog"),
+)
+def test_resolved_batch_no_evidence_retry_requires_common_persisted_receipt(
+    tmp_path: Path,
+    receipt_field: str,
+):
+    store = AutoReplyStore(
+        tmp_path / f"no-evidence-common-receipt-{receipt_field}.sqlite3"
+    )
+    _prepare_resolved_two_member_batch(store)
+    with store._connect() as db:
+        if receipt_field == "commit":
+            different_value: object = "d" * 40
+            column = "commit_sha"
+        else:
+            different_receipts: dict[str, dict[str, object]] = {
+                "test": {"pytest": {"exit_code": 0}, "variant": "different"},
+                "restart": {
+                    "launchd_label": "com.ceo-agent-service.main",
+                    "before_pid": 10,
+                    "after_pid": 11,
+                    "variant": "different",
+                },
+                "health": {
+                    "url": "http://127.0.0.1:8765/healthz",
+                    "status_code": 200,
+                    "ok": True,
+                    "variant": "different",
+                },
+                "backlog": {
+                    "processing": 0,
+                    "failed": 0,
+                    "retryable": 0,
+                    "variant": "different",
+                },
+            }
+            different_value = json.dumps(different_receipts[receipt_field])
+            column = f"{receipt_field}_evidence_json"
+        db.execute(
+            f"update feedback_processing_rounds set {column}=? "
+            "where feedback_key='feedback-2'",
+            (different_value,),
+        )
+        if receipt_field != "backlog":
+            db.execute(
+                f"update feedback_processing_items set {column}=? "
+                "where feedback_key='feedback-2'",
+                (different_value,),
+            )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1",
+            commit_is_ancestor=True,
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+def test_resolved_batch_transition_validation_uses_two_bounded_queries(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "bounded-transition-queries.sqlite3")
+    _prepare_resolved_two_member_batch(store)
+    statements: list[str] = []
+
+    with store._connect() as db:
+        batch = db.execute(
+            "select requested_count, resolved_at, updated_at "
+            "from feedback_processing_batches where batch_id='batch-1'"
+        ).fetchone()
+        assert batch is not None
+        db.set_trace_callback(statements.append)
+        try:
+            AutoReplyStore._validate_resolved_feedback_processing_batch(
+                db,
+                batch_id="batch-1",
+                requested_count=batch["requested_count"],
+                batch_resolved_at=str(batch["resolved_at"]),
+                batch_updated_at=str(batch["updated_at"]),
+                evidence=None,
+            )
+        finally:
+            db.set_trace_callback(None)
+
+    transition_queries = [
+        statement.lower()
+        for statement in statements
+        if "from feedback_processing_transitions" in statement.lower()
+    ]
+    assert len(transition_queries) == 2
+    assert any("where batch_id=" in statement for statement in transition_queries)
+    assert any("where round_id in (" in statement for statement in transition_queries)
 
 
 @pytest.mark.parametrize("operation", ("first-resolve", "same-batch-retry"))
