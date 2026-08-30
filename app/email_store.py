@@ -179,17 +179,22 @@ class EmailStore:
 
     def _initialize(self) -> None:
         with self._connect() as db:
-            try:
-                db.execute("pragma journal_mode = wal")
-            except sqlite3.OperationalError as exc:
-                if "locked" not in str(exc).lower():
-                    raise
             db.execute("begin")
             latest_version = self._read_schema_version(db)
             if latest_version == EMAIL_SCHEMA_VERSION:
                 self._validate_durable_state(db)
                 return
+            if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
+                raise EmailPersistenceCorruption(
+                    f"database has newer schema version {latest_version}; "
+                    f"this runtime supports {EMAIL_SCHEMA_VERSION}"
+                )
             db.rollback()
+            try:
+                db.execute("pragma journal_mode = wal")
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
             db.execute("begin immediate")
             self._create_migration_table(db)
             latest_version = self._read_schema_version(db)

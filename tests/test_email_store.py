@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import gc
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -954,12 +955,17 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
-def test_current_schema_initialization_uses_read_only_snapshot(
+def test_current_schema_initialization_preserves_delete_journal_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     database = tmp_path / "current-schema-read-snapshot.sqlite3"
     EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        journal_mode = db.execute("pragma journal_mode = delete").fetchone()[0]
+    assert journal_mode == "delete"
+
     statements: list[str] = []
     original_connect = EmailStore._connect
 
@@ -972,9 +978,13 @@ def test_current_schema_initialization_uses_read_only_snapshot(
 
     EmailStore(database)
 
+    with sqlite3.connect(database) as db:
+        journal_mode = db.execute("pragma journal_mode").fetchone()[0]
     normalized = [" ".join(statement.lower().split()) for statement in statements]
+    assert journal_mode == "delete"
     assert "begin" in normalized
     assert "begin immediate" not in normalized
+    assert not any(statement.startswith("pragma journal_mode") for statement in normalized)
     assert not any(
         statement.startswith(("create ", "alter ", "insert ", "update ", "delete "))
         for statement in normalized
