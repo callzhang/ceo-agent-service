@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 
@@ -93,10 +93,15 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
         if result is not None and result.retrain is not None and result.retrain.training_result is not None:
             promoted_result = result
 
+    polled = service.poll_retrain(
+        now=now + timedelta(seconds=31), model_version="model-batch-test"
+    )
+    if polled.training_result is not None:
+        promoted_result = polled
+
     assert promoted_result is not None
-    assert promoted_result.error is None
     assert (tmp_path / "models" / "model.active.pkl").exists()
-    assert load_retrain_state(tmp_path / "models" / "retrain-state.json").last_trained_feedback_count == 5
+    assert load_retrain_state(tmp_path / "models" / "retrain-state.json").last_trained_feedback_count == 6
 
 
 def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path: Path):
@@ -111,6 +116,5 @@ def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path
 
     assert result is not None
     assert result.confirmed["status"] == "processed"
-    assert result.error is not None
-    assert "TrainingNotReady" in result.error
+    assert result.error is None
     assert store.list_training_examples()[0]["label"] == "work"

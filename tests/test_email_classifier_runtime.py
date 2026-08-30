@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,8 @@ from app.email_classifier_runtime import (
     load_active_classifier,
     scan_with_active_model,
 )
+from app.email_classifier_retrain import TrainingSubprocessController
+from app.email_model_registry import EmailModelRegistry
 
 
 def _model() -> CpuTfidfLogisticClassifier:
@@ -100,3 +103,27 @@ def test_runtime_loads_model_and_runs_only_readonly_scan(tmp_path: Path):
 
     assert result.loaded.path == active
     assert result.scan.persisted_count == 1
+
+
+def test_training_subprocess_is_nonblocking_and_durably_polled(tmp_path: Path):
+    class FakeProcess:
+        pid = 4321
+
+        def __init__(self):
+            self.exit_code = None
+
+        def poll(self):
+            return self.exit_code
+
+    process = FakeProcess()
+    controller = TrainingSubprocessController(
+        EmailModelRegistry(tmp_path / "registry"),
+        launcher=lambda command: process,
+    )
+    now = datetime(2026, 8, 29, 21, 0, tzinfo=timezone.utc)
+
+    run = controller.start(["python", "-m", "trainer"], now=now)
+    assert run.status == "running"
+    assert controller.poll(run.run_id, now=now).status == "running"
+    process.exit_code = 0
+    assert controller.poll(run.run_id, now=now).status == "succeeded"

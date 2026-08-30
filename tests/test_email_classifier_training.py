@@ -22,6 +22,7 @@ from app.email_classifier_training import (
     assess_feedback_readiness,
     train_and_promote,
 )
+from app.email_model_registry import EmailModelRegistry
 from app.email_classifier_retrain import (
     RetrainPolicy,
     RetrainState,
@@ -369,6 +370,24 @@ def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Pa
     assert previous.exists()
 
 
+def test_registry_promotion_marks_only_authoritative_samples_after_success(tmp_path: Path):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+
+    result = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 45, 30, tzinfo=timezone.utc),
+    )
+
+    assert result.promoted is True
+    assert result.model_id.startswith("email-tfidf-lr-20260829T214530Z-")
+    assert result.prediction_latency_p95_ms < 100
+    assert registry.active_manifest().model_id == result.model_id  # type: ignore[union-attr]
+    for example in store.list_training_examples():
+        assert registry.included_model_id(example["message_id"]) == result.model_id
+
+
 def test_training_not_ready_does_not_create_active_model(tmp_path: Path):
     store = EmailStore(tmp_path / "email.sqlite3")
     row = store.upsert_classification(
@@ -389,18 +408,17 @@ def test_retrain_policy_coalesces_feedback_until_batch_or_idle_window():
     policy = RetrainPolicy(minimum_new_examples=5, idle_seconds=30)
 
     not_due = evaluate_retrain(state, feedback_count=1, now=now, policy=policy)
-    due = evaluate_retrain(
-        state, feedback_count=5, now=now, policy=policy
+    due = evaluate_retrain(state, feedback_count=5, now=now, policy=policy)
+    idle_not_due = evaluate_retrain(
+        state, feedback_count=1, now=now + timedelta(seconds=31), policy=policy
     )
     idle_due = evaluate_retrain(
-        state,
-        feedback_count=1,
-        now=now + timedelta(seconds=31),
-        policy=policy,
+        state, feedback_count=5, now=now + timedelta(seconds=31), policy=policy
     )
 
     assert not_due.due is False
-    assert due.reason == "minimum_new_examples"
+    assert due.due is False
+    assert idle_not_due.due is False
     assert idle_due.reason == "idle_debounce"
 
 
@@ -425,12 +443,12 @@ def test_retrain_if_due_advances_state_only_after_promotion(tmp_path: Path):
         RetrainState().record_feedback(now),
         active,
         previous,
-        now=now,
+        now=now + timedelta(seconds=31),
         model_version="email-model-triggered",
         policy=RetrainPolicy(minimum_new_examples=5),
     )
 
-    assert result.decision.reason == "minimum_new_examples"
+    assert result.decision.reason == "idle_debounce"
     assert result.training_result is not None
     assert result.state.last_trained_feedback_count == 6
     assert active.exists()
@@ -452,7 +470,7 @@ def test_retrain_failure_does_not_advance_state_or_create_model(tmp_path: Path):
             state,
             active,
             tmp_path / "models" / "model.previous.pkl",
-            now=now,
+            now=now + timedelta(seconds=31),
             model_version="should-not-promote",
             policy=RetrainPolicy(minimum_new_examples=1),
         )
