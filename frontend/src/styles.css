@@ -331,6 +331,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
    while the row action must remain a single, readable control. Mobile keeps the
    shared card layout below. */
 @media (min-width: 721px) {
+  .feedback-workspace-card .responsive-data-list table { table-layout: fixed; }
+  .feedback-workspace-card .responsive-data-list th:nth-child(1),
+  .feedback-workspace-card .responsive-data-list tr:not(.responsive-expanded-row) > td:nth-child(1),
+  .feedback-workspace-card .responsive-data-list th:nth-child(2),
+  .feedback-workspace-card .responsive-data-list tr:not(.responsive-expanded-row) > td:nth-child(2) { width: 72px; }
+  .feedback-workspace-card .responsive-data-list th:nth-child(3),
+  .feedback-workspace-card .responsive-data-list tr:not(.responsive-expanded-row) > td:nth-child(3) { width: 18%; }
+  .feedback-workspace-card .responsive-data-list th:nth-child(4),
+  .feedback-workspace-card .responsive-data-list tr:not(.responsive-expanded-row) > td:nth-child(4) { width: 30%; }
+  .feedback-workspace-card .responsive-data-list th:nth-child(5),
+  .feedback-workspace-card .responsive-data-list tr:not(.responsive-expanded-row) > td:nth-child(5) { width: 110px; }
+  .feedback-workspace-card .responsive-data-list th:nth-child(6),
+  .feedback-workspace-card .responsive-data-list tr:not(.responsive-expanded-row) > td:nth-child(6) { width: 220px; }
+  .feedback-workspace-card .responsive-data-list th:last-child,
+  .feedback-workspace-card .responsive-data-list tr:not(.responsive-expanded-row) > td:last-child { width: 84px; }
+  .feedback-workspace-card .details-toggle { min-width: 72px; white-space: nowrap; }
   .task-facts-section .responsive-table-wrap { overflow-x: visible; }
   .task-facts-section .responsive-data-list table { table-layout: fixed; }
   .task-facts-section .responsive-data-list th:nth-child(1),
