@@ -17479,6 +17479,70 @@ class AutoReplyStore:
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
+    def list_current_unresolved_problem_attempt_summaries(
+        self, *, limit: int = 50
+    ) -> list[dict[str, str]]:
+        """Return list-view fields without loading large attempt payloads."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select attempts.id, attempts.channel, attempts.conversation_id,
+                       attempts.trigger_message_id, attempts.send_status,
+                       attempts.conversation_title, attempts.trigger_text,
+                       attempts.updated_at, attempts.send_error
+                from reply_attempts as attempts
+                where attempts.send_status in ('needs_human', 'blocked', 'failed')
+                  and (
+                      (
+                          attempts.send_status = 'needs_human'
+                          and attempts.reviewed_at is null
+                          and not exists (
+                              select 1
+                              from reply_tasks as tasks
+                              where tasks.channel=attempts.channel
+                                and tasks.conversation_id=attempts.conversation_id
+                                and tasks.trigger_message_id=attempts.trigger_message_id
+                                and tasks.status in ('done', 'pending', 'processing')
+                          )
+                      )
+                      or (
+                          attempts.send_status != 'needs_human'
+                          and not exists (
+                              select 1
+                              from reply_tasks as tasks
+                              where tasks.channel=attempts.channel
+                                and tasks.conversation_id=attempts.conversation_id
+                                and tasks.trigger_message_id=attempts.trigger_message_id
+                                and tasks.status in ('done', 'pending', 'processing')
+                          )
+                      )
+                  )
+                  and attempts.id=(
+                      select max(latest.id)
+                      from reply_attempts as latest
+                      where latest.conversation_id=attempts.conversation_id
+                        and latest.trigger_message_id=attempts.trigger_message_id
+                  )
+                order by attempts.id desc
+                limit ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+            return [
+                {
+                    "id": str(row["id"] or ""),
+                    "channel": str(row["channel"] or ""),
+                    "conversation_id": str(row["conversation_id"] or ""),
+                    "trigger_message_id": str(row["trigger_message_id"] or ""),
+                    "send_status": str(row["send_status"] or ""),
+                    "conversation_title": str(row["conversation_title"] or ""),
+                    "trigger_text": str(row["trigger_text"] or ""),
+                    "updated_at": str(row["updated_at"] or ""),
+                    "send_error": str(row["send_error"] or ""),
+                }
+                for row in rows
+            ]
+
     def count_current_unresolved_problem_attempts(self) -> int:
         with self._connect() as db:
             row = db.execute(

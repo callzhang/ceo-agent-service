@@ -2789,23 +2789,23 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                         "detail_url": f"/history/errors/{int(row['id'])}",
                     }
                 )
-    for attempt in store.list_current_unresolved_problem_attempts(limit=limit):
+    for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
         trigger_key = (
-            attempt.channel,
-            attempt.conversation_id,
-            attempt.trigger_message_id,
+            attempt["channel"],
+            attempt["conversation_id"],
+            attempt["trigger_message_id"],
         )
         if trigger_key in active_reply_task_triggers:
             continue
         rows.append(
             {
                 "category": "Reply",
-                "id": str(attempt.id),
-                "status": attempt.send_status,
-                "context": attempt.conversation_title,
-                "summary": attempt.trigger_text,
-                "updated_at": attempt.updated_at,
-                "error": attempt.send_error,
+                "id": attempt["id"],
+                "status": attempt["send_status"],
+                "context": attempt["conversation_title"],
+                "summary": attempt["trigger_text"],
+                "updated_at": attempt["updated_at"],
+                "error": attempt["send_error"],
             }
         )
     rows.sort(key=lambda row: (_attention_status_rank(row["status"]), row["updated_at"]), reverse=False)

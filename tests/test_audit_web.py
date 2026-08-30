@@ -7229,6 +7229,45 @@ def test_worker_attention_collapses_reply_attempt_into_matching_reply_task(
     ]
 
 
+def test_worker_attention_uses_lightweight_unresolved_attempt_projection(
+    tmp_path: Path,
+    monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-lightweight-attention",
+        conversation_title="Operations",
+        trigger_message_id="msg-lightweight-attention",
+        trigger_sender="Mina",
+        trigger_text="Please review the incident.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    store.update_reply_attempt(attempt_id, send_error="temporary provider failure")
+
+    monkeypatch.setattr(
+        store,
+        "list_current_unresolved_problem_attempts",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("full rows loaded")),
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert {
+        "category": "Reply",
+        "id": str(attempt_id),
+        "status": "failed",
+        "context": "Operations",
+        "summary": "Please review the incident.",
+        "error": "temporary provider failure",
+    }.items() <= next(
+        row.items()
+        for row in rows
+        if row["category"] == "Reply" and row["id"] == str(attempt_id)
+    )
+
+
 def test_worker_attention_excludes_healthy_follow_up_drafts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = store.create_work_project(
