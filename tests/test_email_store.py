@@ -280,6 +280,180 @@ def _create_prototype_database(
         )
 
 
+def _create_v2_processed_without_plan_database(database: Path) -> None:
+    now = "2026-08-29T16:00:00+00:00"
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            create table email_schema_migrations (
+                version integer primary key,
+                applied_at text not null
+            );
+            create table email_classifications (
+                id integer primary key,
+                account_id text not null,
+                folder text not null,
+                uidvalidity integer not null,
+                uid integer not null,
+                rfc_message_id text,
+                thread_id text,
+                stable_message_identity text not null unique,
+                sender text not null default '',
+                subject text not null default '',
+                preview text not null default '',
+                model_text text not null default '',
+                received_at text not null default '',
+                category text not null,
+                predicted_category text,
+                confirmed_category text,
+                confidence real not null,
+                margin real not null,
+                probabilities_json text not null,
+                model_id text not null,
+                config_version text not null,
+                status text not null,
+                classification_source text not null,
+                action_plan_json text not null default 'null',
+                current_action_plan_id text,
+                confirmed_at text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp
+            );
+            create table email_messages (
+                id integer primary key autoincrement,
+                account_id text not null,
+                stable_message_identity text not null unique,
+                folder text not null,
+                uidvalidity integer not null check(uidvalidity > 0),
+                uid integer not null check(uid > 0),
+                rfc_message_id text not null,
+                thread_identity text not null,
+                sender text not null,
+                recipients_json text not null check(json_valid(recipients_json)),
+                subject text not null,
+                normalized_text text not null,
+                preview text not null,
+                attachment_metadata_json text not null
+                    check(json_valid(attachment_metadata_json)),
+                received_at text not null,
+                created_at text not null,
+                updated_at text not null
+            );
+            create table email_category_configs (
+                category text primary key,
+                description text not null default '',
+                threshold real not null,
+                actions_json text not null,
+                action_parameters_json text not null default '{}',
+                enabled integer not null default 1,
+                config_version text not null,
+                updated_at text not null default current_timestamp
+            );
+            create table email_retraining_state (
+                state_key text primary key,
+                state_json text not null
+            );
+            """
+        )
+        db.execute(
+            "insert into email_schema_migrations values (?, ?)",
+            (2, now),
+        )
+        db.execute(
+            """
+            insert into email_classifications (
+                id, account_id, folder, uidvalidity, uid, rfc_message_id,
+                thread_id, stable_message_identity, sender, subject, preview,
+                model_text, received_at, category, predicted_category,
+                confirmed_category, confidence, margin, probabilities_json,
+                model_id, config_version, status, classification_source,
+                action_plan_json, current_action_plan_id, confirmed_at,
+                created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                2002,
+                "dingtalk-account",
+                "INBOX",
+                42,
+                7,
+                "<msg-v2@example.com>",
+                "thread-v2",
+                "dingtalk-account:message-id:<msg-v2@example.com>",
+                "classification-sender",
+                "Classification subject",
+                "Classification preview",
+                "__subject__v2 confirmed example",
+                "2026-08-29T15:59:00+00:00",
+                "important",
+                "work",
+                "important",
+                0.61,
+                0.09,
+                '{"important":0.61,"work":0.52}',
+                "email/logistic/v2-model",
+                "v2-classification-config",
+                "processed",
+                "user",
+                "null",
+                None,
+                now,
+                now,
+                now,
+            ),
+        )
+        db.execute(
+            """
+            insert into email_messages (
+                account_id, stable_message_identity, folder, uidvalidity, uid,
+                rfc_message_id, thread_identity, sender, recipients_json,
+                subject, normalized_text, preview, attachment_metadata_json,
+                received_at, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "dingtalk-account",
+                "dingtalk-account:message-id:<msg-v2@example.com>",
+                "INBOX",
+                42,
+                7,
+                "<msg-v2@example.com>",
+                "thread-v2",
+                "message-snapshot-sender",
+                '["recipient@example.com"]',
+                "Original v2 message subject",
+                "__subject__original v2 message",
+                "Original v2 preview",
+                "[]",
+                "2026-08-29T15:59:00+00:00",
+                now,
+                now,
+            ),
+        )
+        db.execute(
+            """
+            insert into email_category_configs (
+                category, description, threshold, actions_json,
+                action_parameters_json, enabled, config_version, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "important",
+                "v2 important config",
+                0.97,
+                "[]",
+                "{}",
+                1,
+                "v2-config",
+                now,
+            ),
+        )
+        db.execute(
+            "insert into email_retraining_state values (?, ?)",
+            ("current", '{"last_feedback_count":7}'),
+        )
+
+
 def _create_action_with_attempts(
     database: Path,
     statuses: tuple[str, ...],
@@ -455,6 +629,49 @@ def test_concurrent_feedback_allows_one_confirmation_and_one_conflict(
     assert total == 1
     assert persisted[0]["category"] == confirmed[0]["category"]
     assert len(store.list_training_examples()) == 1
+
+
+def test_training_examples_exclude_pending_or_unconfirmed_user_rows_without_reopen(
+    tmp_path: Path,
+):
+    database = tmp_path / "training-boundary.sqlite3"
+    store = EmailStore(database)
+    contaminated = _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            message_id="pending-contamination",
+        ),
+    )
+    confirmed = _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            message_id="confirmed-training-example",
+        ),
+    )
+    confirmed_row = store.confirm_classification(
+        confirmed["id"],
+        EmailCategory.IMPORTANT,
+    )
+    assert confirmed_row is not None
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_classifications
+            set classification_source='user'
+            where id=?
+            """,
+            (contaminated["id"],),
+        )
+
+    assert store.list_training_examples() == [
+        {
+            "message_id": confirmed_row["stable_message_identity"],
+            "model_text": "__subject__need a decision",
+            "label": "important",
+        }
+    ]
 
 
 def test_rescan_preserves_a_user_confirmed_category(tmp_path: Path):
@@ -735,6 +952,87 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_classifications")) == 1
     assert len(_fetchall(database, "select * from email_action_plans")) == 1
     assert len(_fetchall(database, "select * from email_actions")) == 1
+
+
+def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
+    tmp_path: Path,
+):
+    database = tmp_path / "v2-processed-without-plan.sqlite3"
+    _create_v2_processed_without_plan_database(database)
+
+    store = EmailStore(database)
+
+    classification = _fetchall(
+        database,
+        "select * from email_classifications",
+    )[0]
+    assert classification["legacy_processed_without_plan"] == 1
+    assert classification["predicted_category"] == "work"
+    assert classification["confirmed_category"] == "important"
+    assert classification["classification_source"] == "user"
+    assert classification["model_text"] == "__subject__v2 confirmed example"
+    assert classification["model_id"] == "email/logistic/v2-model"
+    assert classification["config_version"] == "v2-classification-config"
+    assert classification["confirmed_at"] == "2026-08-29T16:00:00+00:00"
+    assert store.list_training_examples() == [
+        {
+            "message_id": "dingtalk-account:message-id:<msg-v2@example.com>",
+            "model_text": "__subject__v2 confirmed example",
+            "label": "important",
+        }
+    ]
+    assert store.list_configs()[0]["description"] == "v2 important config"
+    assert _fetchall(
+        database,
+        "select state_json from email_retraining_state",
+    )[0]["state_json"] == '{"last_feedback_count":7}'
+    message_before = dict(_fetchall(database, "select * from email_messages")[0])
+    assert message_before["sender"] == "message-snapshot-sender"
+    assert _fetchall(database, "select * from email_action_plans") == []
+    assert _fetchall(database, "select * from email_actions") == []
+    assert [
+        row["version"]
+        for row in _fetchall(
+            database,
+            "select version from email_schema_migrations order by version",
+        )
+    ] == [2, 3]
+
+    EmailStore(database)
+
+    reopened = _fetchall(database, "select * from email_classifications")[0]
+    assert dict(reopened) == dict(classification)
+    assert dict(_fetchall(database, "select * from email_messages")[0]) == message_before
+    assert _fetchall(database, "select * from email_action_plans") == []
+    assert _fetchall(database, "select * from email_actions") == []
+
+
+def test_v2_upgrade_does_not_reapply_prototype_classification_backfill(
+    tmp_path: Path,
+):
+    database = tmp_path / "v2-model-processed.sqlite3"
+    _create_v2_processed_without_plan_database(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_classifications
+            set classification_source='model', confirmed_category=null,
+                confirmed_at=''
+            """
+        )
+
+    store = EmailStore(database)
+
+    classification = _fetchall(
+        database,
+        "select confirmed_category, legacy_processed_without_plan "
+        "from email_classifications",
+    )[0]
+    assert classification["confirmed_category"] is None
+    assert classification["legacy_processed_without_plan"] == 1
+    assert store.list_training_examples() == []
+    assert _fetchall(database, "select * from email_action_plans") == []
+    assert _fetchall(database, "select * from email_actions") == []
 
 
 def test_future_email_schema_version_fails_closed_before_schema_changes(
@@ -1134,6 +1432,74 @@ def test_startup_rejects_pending_feedback_with_action_plan(tmp_path: Path):
 
     with pytest.raises(EmailPersistenceCorruption, match="pending feedback.*ActionPlan"):
         EmailStore(database)
+
+
+def test_startup_rejects_pending_feedback_with_user_source(tmp_path: Path):
+    database = tmp_path / "pending-user-source.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_classifications set classification_source='user'"
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="pending feedback.*model"):
+        EmailStore(database)
+
+
+def test_startup_rejects_pending_feedback_with_legacy_marker(tmp_path: Path):
+    database = tmp_path / "pending-legacy.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_classifications set legacy_processed_without_plan=1"
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="pending feedback.*legacy"):
+        EmailStore(database)
+
+
+def test_startup_rejects_legacy_user_processed_with_mismatched_confirmation(
+    tmp_path: Path,
+):
+    database = tmp_path / "legacy-user-confirmation-mismatch.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_classifications
+            set status='processed', classification_source='user',
+                category='important', confirmed_category='work',
+                legacy_processed_without_plan=1
+            """
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="user-confirmed.*category"):
+        EmailStore(database)
+
+
+def test_startup_accepts_model_processed_without_user_confirmation(tmp_path: Path):
+    database = tmp_path / "model-processed-unconfirmed.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("update email_classifications set confirmed_category=null")
+
+    EmailStore(database)
 
 
 def test_startup_rejects_normal_processed_classification_without_plan(

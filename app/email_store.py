@@ -201,12 +201,13 @@ class EmailStore:
             self._create_indexes_and_triggers(db)
             if latest_version < EMAIL_SCHEMA_VERSION:
                 is_prototype = latest_version == 0
-                self._migrate_prototype_schema(
-                    db,
-                    mark_legacy_processed_without_plan=is_prototype,
-                )
+                if latest_version < 2:
+                    self._migrate_prototype_schema(db)
+                self._ensure_legacy_processed_without_plan_column(db)
                 if is_prototype:
                     self._backfill_prototype_rows(db)
+                if latest_version in {0, 2}:
+                    self._mark_legacy_processed_without_plan(db)
                 db.execute(
                     "insert into email_schema_migrations(version, applied_at) values (?, ?)",
                     (EMAIL_SCHEMA_VERSION, self._now()),
@@ -297,8 +298,6 @@ class EmailStore:
     def _migrate_prototype_schema(
         cls,
         db: sqlite3.Connection,
-        *,
-        mark_legacy_processed_without_plan: bool,
     ) -> None:
         for column in ("predicted_category", "confirmed_category"):
             cls._ensure_column(
@@ -312,12 +311,6 @@ class EmailStore:
             table="email_classifications",
             column="current_action_plan_id",
             declaration="text",
-        )
-        cls._ensure_column(
-            db,
-            table="email_classifications",
-            column="legacy_processed_without_plan",
-            declaration="integer not null default 0",
         )
         db.execute(
             """
@@ -333,16 +326,36 @@ class EmailStore:
             where confirmed_category is null or confirmed_category=''
             """
         )
-        if mark_legacy_processed_without_plan:
-            db.execute(
-                """
-                update email_classifications
-                set legacy_processed_without_plan=1
-                where status='processed'
-                  and (action_plan_json='null' or action_plan_json='')
-                  and current_action_plan_id is null
-                """
-            )
+
+    @classmethod
+    def _ensure_legacy_processed_without_plan_column(
+        cls,
+        db: sqlite3.Connection,
+    ) -> None:
+        cls._ensure_column(
+            db,
+            table="email_classifications",
+            column="legacy_processed_without_plan",
+            declaration="integer not null default 0",
+        )
+
+    @staticmethod
+    def _mark_legacy_processed_without_plan(db: sqlite3.Connection) -> None:
+        db.execute(
+            """
+            update email_classifications
+            set legacy_processed_without_plan=1
+            where status='processed'
+              and coalesce(action_plan_json, '') in ('', 'null')
+              and current_action_plan_id is null
+              and legacy_processed_without_plan=0
+              and not exists (
+                  select 1
+                  from email_action_plans
+                  where email_action_plans.classification_id=email_classifications.id
+              )
+            """
+        )
 
     @staticmethod
     def _create_durable_tables(db: sqlite3.Connection) -> None:
@@ -747,6 +760,14 @@ class EmailStore:
             classification_plans = plans_by_classification.get(row["id"], [])
             has_plan_snapshot = row["action_plan_json"] not in {"", "null"}
             if row["status"] == EmailClassificationStatus.PENDING_FEEDBACK.value:
+                if row["classification_source"] != "model":
+                    raise EmailPersistenceCorruption(
+                        f"pending feedback classification {row['id']} must use model source"
+                    )
+                if row["legacy_processed_without_plan"] != 0:
+                    raise EmailPersistenceCorruption(
+                        f"pending feedback classification {row['id']} carries a legacy marker"
+                    )
                 if (
                     has_plan_snapshot
                     or row["current_action_plan_id"] is not None
@@ -760,6 +781,21 @@ class EmailStore:
                         f"pending feedback classification {row['id']} is confirmed"
                     )
                 continue
+            if (
+                row["classification_source"] == "user"
+                and row["confirmed_category"] != row["category"]
+            ):
+                raise EmailPersistenceCorruption(
+                    f"user-confirmed classification {row['id']} has inconsistent category"
+                )
+            if (
+                row["classification_source"] == "model"
+                and row["confirmed_category"] is not None
+                and row["confirmed_category"] != row["category"]
+            ):
+                raise EmailPersistenceCorruption(
+                    f"model-processed classification {row['id']} has inconsistent category"
+                )
             if row["current_action_plan_id"] is None:
                 if (
                     has_plan_snapshot
@@ -806,10 +842,6 @@ class EmailStore:
             if plan_fields != expected_fields:
                 raise EmailPersistenceCorruption(
                     f"current ActionPlan classification fields mismatch for {row['id']}"
-                )
-            if row["confirmed_category"] != row["category"]:
-                raise EmailPersistenceCorruption(
-                    f"processed classification {row['id']} has inconsistent final category"
                 )
             if row["action_plan_json"] != current_plan.model_dump_json():
                 raise EmailPersistenceCorruption(
@@ -1613,9 +1645,13 @@ class EmailStore:
             rows = db.execute(
                 """
                 select stable_message_identity, model_text,
-                       coalesce(confirmed_category, category) as label
+                       confirmed_category as label
                 from email_classifications
-                where classification_source='user' and model_text != ''
+                where classification_source='user'
+                  and status='processed'
+                  and confirmed_category is not null
+                  and confirmed_category != ''
+                  and trim(model_text) != ''
                 order by id asc
                 """
             ).fetchall()

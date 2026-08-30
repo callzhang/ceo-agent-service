@@ -38,8 +38,7 @@ def register_email_routes(
     *,
     email_learning_factory: Any | None = None,
 ) -> None:
-    def store() -> EmailStore:
-        return email_store_factory()
+    email_store: EmailStore = email_store_factory()
 
     def meta(*, page: int | None = None, page_size: int | None = None, total: int | None = None) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -73,7 +72,7 @@ def register_email_routes(
                 },
                 status_code=400,
             )
-        rows, total = store().list_classifications(
+        rows, total = email_store.list_classifications(
             status=classification_status,
             limit=page_size,
             offset=(page - 1) * page_size,
@@ -99,7 +98,7 @@ def register_email_routes(
                 )
                 row = None if learning_result is None else learning_result.confirmed
             else:
-                row = store().confirm_classification(classification_id, category)
+                row = email_store.confirm_classification(classification_id, category)
         except EmailClassificationConflict as exc:
             return JSONResponse(
                 {
@@ -137,7 +136,7 @@ def register_email_routes(
 
     @app.get("/api/console/email/config")
     def email_config():
-        return {"items": store().list_configs(), "meta": meta()}
+        return {"items": email_store.list_configs(), "meta": meta()}
 
     @app.put("/api/console/email/config/{category}")
     async def email_config_update(category: str, request: Request):
@@ -165,7 +164,7 @@ def register_email_routes(
         if len(actions) != len(set(actions)):
             raise HTTPException(status_code=400, detail="actions must be unique")
         try:
-            row = store().upsert_config(
+            row = email_store.upsert_config(
                 category=email_category,
                 description=payload.description,
                 threshold=payload.threshold,
