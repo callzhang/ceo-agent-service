@@ -268,6 +268,33 @@ def test_audit_app_starts_when_current_email_schema_is_missing_a_column(
     _assert_audit_app_email_unavailable(database, tmp_path)
 
 
+def test_audit_app_isolates_weakened_current_email_schema_declarations(
+    tmp_path: Path,
+):
+    database = tmp_path / "audit-app-weakened-email-schema.sqlite3"
+    AutoReplyStore(database)
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            alter table email_scan_cursors rename to old_email_scan_cursors;
+            create table email_scan_cursors (
+                account_id text not null,
+                folder text not null,
+                uidvalidity text,
+                last_seen_uid text,
+                last_success_at text,
+                last_error text,
+                primary key (account_id, folder)
+            );
+            drop table old_email_scan_cursors;
+            """
+        )
+
+    _assert_audit_app_email_unavailable(database, tmp_path)
+
+
 def test_audit_app_starts_when_email_json_contains_invalid_utf8_blob(
     tmp_path: Path,
 ):

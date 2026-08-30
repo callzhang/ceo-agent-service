@@ -38,156 +38,187 @@ _DIRECT_ACTION_VALUES = frozenset(action.value for action in DIRECT_ACTIONS)
 _UNREDACTED_EMAIL = re.compile(
     r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])"
 )
+_ColumnContract = tuple[str, bool, str | None]
+_REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
+    "email_schema_migrations": {
+        "version": ("integer", False, None),
+        "applied_at": ("text", True, None),
+    },
+    "email_classifications": {
+        "id": ("integer", False, None),
+        "account_id": ("text", True, None),
+        "folder": ("text", True, None),
+        "uidvalidity": ("integer", True, None),
+        "uid": ("integer", True, None),
+        "rfc_message_id": ("text", False, None),
+        "thread_id": ("text", False, None),
+        "stable_message_identity": ("text", True, None),
+        "sender": ("text", True, "''"),
+        "subject": ("text", True, "''"),
+        "preview": ("text", True, "''"),
+        "model_text": ("text", True, "''"),
+        "received_at": ("text", True, "''"),
+        "category": ("text", True, None),
+        "predicted_category": ("text", False, None),
+        "confirmed_category": ("text", False, None),
+        "confidence": ("real", True, None),
+        "margin": ("real", True, None),
+        "probabilities_json": ("text", True, None),
+        "model_id": ("text", True, None),
+        "config_version": ("text", True, None),
+        "status": ("text", True, None),
+        "classification_source": ("text", True, None),
+        "action_plan_json": ("text", True, "'null'"),
+        "current_action_plan_id": ("text", False, None),
+        "legacy_processed_without_plan": ("integer", True, "0"),
+        "confirmed_at": ("text", True, "''"),
+        "created_at": ("text", True, "current_timestamp"),
+        "updated_at": ("text", True, "current_timestamp"),
+    },
+    "email_category_configs": {
+        "category": ("text", False, None),
+        "description": ("text", True, "''"),
+        "threshold": ("real", True, None),
+        "actions_json": ("text", True, None),
+        "action_parameters_json": ("text", True, "'{}'"),
+        "enabled": ("integer", True, "1"),
+        "config_version": ("text", True, None),
+        "updated_at": ("text", True, "current_timestamp"),
+    },
+    "email_accounts": {
+        "account_id": ("text", False, None),
+        "display_name": ("text", True, None),
+        "email_address": ("text", True, None),
+        "imap_host": ("text", True, None),
+        "imap_port": ("integer", True, None),
+        "imap_tls": ("integer", True, None),
+        "imap_username": ("text", True, None),
+        "imap_secret_reference": ("text", True, None),
+        "smtp_host": ("text", True, None),
+        "smtp_port": ("integer", True, None),
+        "smtp_tls": ("integer", True, None),
+        "smtp_username": ("text", True, None),
+        "smtp_secret_reference": ("text", True, None),
+        "enabled": ("integer", True, None),
+        "scan_folders_json": ("text", True, None),
+        "scan_interval_seconds": ("integer", True, None),
+        "created_at": ("text", True, None),
+        "updated_at": ("text", True, None),
+    },
+    "email_scan_cursors": {
+        "account_id": ("text", True, None),
+        "folder": ("text", True, None),
+        "uidvalidity": ("integer", True, None),
+        "last_seen_uid": ("integer", True, None),
+        "last_success_at": ("text", True, "''"),
+        "last_error": ("text", True, "''"),
+    },
+    "email_messages": {
+        "id": ("integer", False, None),
+        "account_id": ("text", True, None),
+        "stable_message_identity": ("text", True, None),
+        "folder": ("text", True, None),
+        "uidvalidity": ("integer", True, None),
+        "uid": ("integer", True, None),
+        "rfc_message_id": ("text", True, None),
+        "thread_identity": ("text", True, None),
+        "sender": ("text", True, None),
+        "recipients_json": ("text", True, None),
+        "subject": ("text", True, None),
+        "normalized_text": ("text", True, None),
+        "preview": ("text", True, None),
+        "attachment_metadata_json": ("text", True, None),
+        "received_at": ("text", True, None),
+        "created_at": ("text", True, None),
+        "updated_at": ("text", True, None),
+    },
+    "email_action_plans": {
+        "action_plan_id": ("text", False, None),
+        "action_plan_version": ("integer", True, None),
+        "classification_id": ("integer", True, None),
+        "account_id": ("text", True, None),
+        "category": ("text", True, None),
+        "classification_source": ("text", True, None),
+        "confidence": ("real", True, None),
+        "model_id": ("text", True, None),
+        "config_version": ("text", True, None),
+        "actions_json": ("text", True, None),
+        "action_parameters_json": ("text", True, None),
+        "created_at": ("text", True, None),
+    },
+    "email_actions": {
+        "action_id": ("text", False, None),
+        "action_plan_id": ("text", True, None),
+        "classification_id": ("integer", True, None),
+        "account_id": ("text", True, None),
+        "action_type": ("text", True, None),
+        "parameters_json": ("text", True, None),
+        "config_version": ("text", True, None),
+        "status": ("text", True, None),
+        "attempt_count": ("integer", True, "0"),
+        "started_at": ("text", True, "''"),
+        "finished_at": ("text", True, "''"),
+        "provider_operation": ("text", True, "''"),
+        "provider_target": ("text", True, "''"),
+        "provider_result_id": ("text", True, "''"),
+        "error": ("text", True, "''"),
+        "created_at": ("text", True, None),
+        "updated_at": ("text", True, None),
+    },
+    "email_action_attempts": {
+        "id": ("integer", False, None),
+        "action_id": ("text", True, None),
+        "attempt_number": ("integer", True, None),
+        "status": ("text", True, None),
+        "provider_operation": ("text", True, None),
+        "provider_target": ("text", True, None),
+        "provider_result_id": ("text", True, None),
+        "error": ("text", True, None),
+        "started_at": ("text", True, None),
+        "finished_at": ("text", True, None),
+    },
+}
 _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
-    "email_schema_migrations": frozenset({"version", "applied_at"}),
-    "email_classifications": frozenset(
-        {
-            "id",
-            "account_id",
-            "folder",
-            "uidvalidity",
-            "uid",
-            "rfc_message_id",
-            "thread_id",
-            "stable_message_identity",
-            "sender",
-            "subject",
-            "preview",
-            "model_text",
-            "received_at",
-            "category",
-            "predicted_category",
-            "confirmed_category",
-            "confidence",
-            "margin",
-            "probabilities_json",
-            "model_id",
-            "config_version",
-            "status",
-            "classification_source",
-            "action_plan_json",
-            "current_action_plan_id",
-            "legacy_processed_without_plan",
-            "confirmed_at",
-            "created_at",
-            "updated_at",
-        }
+    table: frozenset(columns)
+    for table, columns in _REQUIRED_COLUMN_CONTRACTS.items()
+}
+_REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
+    "email_classifications": ("legacy_processed_without_plan in (0, 1)",),
+    "email_accounts": (
+        "imap_port between 1 and 65535",
+        "imap_tls in (0, 1)",
+        "smtp_port between 1 and 65535",
+        "smtp_tls in (0, 1)",
+        "enabled in (0, 1)",
+        "json_valid(scan_folders_json)",
+        "scan_interval_seconds > 0",
     ),
-    "email_category_configs": frozenset(
-        {
-            "category",
-            "description",
-            "threshold",
-            "actions_json",
-            "action_parameters_json",
-            "enabled",
-            "config_version",
-            "updated_at",
-        }
+    "email_scan_cursors": (
+        "uidvalidity > 0",
+        "last_seen_uid >= 0",
     ),
-    "email_accounts": frozenset(
-        {
-            "account_id",
-            "display_name",
-            "email_address",
-            "imap_host",
-            "imap_port",
-            "imap_tls",
-            "imap_username",
-            "imap_secret_reference",
-            "smtp_host",
-            "smtp_port",
-            "smtp_tls",
-            "smtp_username",
-            "smtp_secret_reference",
-            "enabled",
-            "scan_folders_json",
-            "scan_interval_seconds",
-            "created_at",
-            "updated_at",
-        }
+    "email_messages": (
+        "uidvalidity > 0",
+        "uid > 0",
+        "json_valid(recipients_json)",
+        "json_valid(attachment_metadata_json)",
     ),
-    "email_scan_cursors": frozenset(
-        {
-            "account_id",
-            "folder",
-            "uidvalidity",
-            "last_seen_uid",
-            "last_success_at",
-            "last_error",
-        }
+    "email_action_plans": (
+        "action_plan_version > 0",
+        "classification_source in ('model', 'user')",
+        "confidence >= 0.0 and confidence <= 1.0",
+        "json_valid(actions_json)",
+        "json_valid(action_parameters_json)",
     ),
-    "email_messages": frozenset(
-        {
-            "id",
-            "account_id",
-            "stable_message_identity",
-            "folder",
-            "uidvalidity",
-            "uid",
-            "rfc_message_id",
-            "thread_identity",
-            "sender",
-            "recipients_json",
-            "subject",
-            "normalized_text",
-            "preview",
-            "attachment_metadata_json",
-            "received_at",
-            "created_at",
-            "updated_at",
-        }
+    "email_actions": (
+        "action_type in ('label', 'mark_read', 'archive', 'move', 'trash')",
+        "json_valid(parameters_json)",
+        "status in ('pending', 'processing', 'done', 'failed')",
+        "attempt_count >= 0",
     ),
-    "email_action_plans": frozenset(
-        {
-            "action_plan_id",
-            "action_plan_version",
-            "classification_id",
-            "account_id",
-            "category",
-            "classification_source",
-            "confidence",
-            "model_id",
-            "config_version",
-            "actions_json",
-            "action_parameters_json",
-            "created_at",
-        }
-    ),
-    "email_actions": frozenset(
-        {
-            "action_id",
-            "action_plan_id",
-            "classification_id",
-            "account_id",
-            "action_type",
-            "parameters_json",
-            "config_version",
-            "status",
-            "attempt_count",
-            "started_at",
-            "finished_at",
-            "provider_operation",
-            "provider_target",
-            "provider_result_id",
-            "error",
-            "created_at",
-            "updated_at",
-        }
-    ),
-    "email_action_attempts": frozenset(
-        {
-            "id",
-            "action_id",
-            "attempt_number",
-            "status",
-            "provider_operation",
-            "provider_target",
-            "provider_result_id",
-            "error",
-            "started_at",
-            "finished_at",
-        }
+    "email_action_attempts": (
+        "attempt_number > 0",
+        "status in ('done', 'failed')",
     ),
 }
 _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
@@ -332,6 +363,148 @@ def _json_load(raw: str, *, field: str, expected_type: type[Any]) -> Any:
 
 def _normalize_schema_sql(value: str) -> str:
     return " ".join(value.lower().split())
+
+
+def _schema_sql_tokens(value: str) -> tuple[str, ...]:
+    tokens: list[str] = []
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if character.isspace():
+            index += 1
+            continue
+        if character == "'":
+            end = index + 1
+            while end < len(value):
+                if value[end] == "'":
+                    if end + 1 < len(value) and value[end + 1] == "'":
+                        end += 2
+                        continue
+                    end += 1
+                    break
+                end += 1
+            else:
+                raise EmailPersistenceCorruption("malformed email table SQL")
+            tokens.append(value[index:end])
+            index = end
+            continue
+        if character in {'"', "`"}:
+            end = index + 1
+            while end < len(value):
+                if value[end] == character:
+                    if end + 1 < len(value) and value[end + 1] == character:
+                        end += 2
+                        continue
+                    end += 1
+                    break
+                end += 1
+            else:
+                raise EmailPersistenceCorruption("malformed email table SQL")
+            tokens.append(value[index:end].lower())
+            index = end
+            continue
+        if character == "[":
+            end = value.find("]", index + 1)
+            if end < 0:
+                raise EmailPersistenceCorruption("malformed email table SQL")
+            end += 1
+            tokens.append(value[index:end].lower())
+            index = end
+            continue
+        if value[index : index + 2] == "--":
+            end = value.find("\n", index + 2)
+            index = len(value) if end < 0 else end + 1
+            continue
+        if value[index : index + 2] == "/*":
+            end = value.find("*/", index + 2)
+            if end < 0:
+                raise EmailPersistenceCorruption("malformed email table SQL")
+            index = end + 2
+            continue
+        if character.isalpha() or character == "_":
+            end = index + 1
+            while end < len(value) and (
+                value[end].isalnum() or value[end] in {"_", "$"}
+            ):
+                end += 1
+            tokens.append(value[index:end].lower())
+            index = end
+            continue
+        if character.isdigit():
+            end = index + 1
+            while end < len(value) and (
+                value[end].isdigit() or value[end] == "."
+            ):
+                end += 1
+            tokens.append(value[index:end])
+            index = end
+            continue
+        two_character_operator = value[index : index + 2]
+        if two_character_operator in {"<=", ">=", "!=", "<>", "=="}:
+            tokens.append(two_character_operator)
+            index += 2
+            continue
+        if character in "(),.;:+-*/%<>=|&~!?":
+            tokens.append(character)
+            index += 1
+            continue
+        raise EmailPersistenceCorruption("malformed email table SQL")
+    return tuple(tokens)
+
+
+def _strip_wrapping_parentheses(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    while len(tokens) >= 2 and tokens[0] == "(" and tokens[-1] == ")":
+        depth = 0
+        wraps_expression = True
+        for index, token in enumerate(tokens):
+            if token == "(":
+                depth += 1
+            elif token == ")":
+                depth -= 1
+                if depth == 0 and index != len(tokens) - 1:
+                    wraps_expression = False
+                    break
+            if depth < 0:
+                raise EmailPersistenceCorruption("malformed email table SQL")
+        if depth != 0:
+            raise EmailPersistenceCorruption("malformed email table SQL")
+        if not wraps_expression:
+            break
+        tokens = tokens[1:-1]
+    return tokens
+
+
+def _extract_schema_checks(value: str) -> frozenset[tuple[str, ...]]:
+    tokens = _schema_sql_tokens(value)
+    checks: set[tuple[str, ...]] = set()
+    index = 0
+    while index < len(tokens):
+        if tokens[index] != "check":
+            index += 1
+            continue
+        if index + 1 >= len(tokens) or tokens[index + 1] != "(":
+            raise EmailPersistenceCorruption("malformed email table CHECK")
+        depth = 1
+        end = index + 2
+        while end < len(tokens) and depth:
+            if tokens[end] == "(":
+                depth += 1
+            elif tokens[end] == ")":
+                depth -= 1
+            end += 1
+        if depth:
+            raise EmailPersistenceCorruption("malformed email table CHECK")
+        checks.add(_strip_wrapping_parentheses(tokens[index + 2 : end - 1]))
+        index = end
+    return frozenset(checks)
+
+
+def _normalize_column_default(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise EmailPersistenceCorruption("malformed email column default")
+    return " ".join(_schema_sql_tokens(value))
 
 
 def _require_positive_int(value: int, *, field: str) -> None:
@@ -614,7 +787,10 @@ class EmailStore:
             db,
             table="email_classifications",
             column="legacy_processed_without_plan",
-            declaration="integer not null default 0",
+            declaration=(
+                "integer not null default 0 "
+                "check(legacy_processed_without_plan in (0, 1))"
+            ),
         )
 
     @staticmethod
@@ -877,12 +1053,13 @@ class EmailStore:
     @classmethod
     def _validate_schema_shape(cls, db: sqlite3.Connection) -> None:
         try:
-            table_names = {
-                row["name"]
+            table_rows = {
+                row["name"]: row
                 for row in db.execute(
-                    "select name from sqlite_master where type='table'"
+                    "select name, sql from sqlite_master where type='table'"
                 )
             }
+            table_names = set(table_rows)
             missing_tables = set(_REQUIRED_TABLE_COLUMNS) - table_names
             if missing_tables:
                 missing = ", ".join(sorted(missing_tables))
@@ -911,6 +1088,23 @@ class EmailStore:
                     raise EmailPersistenceCorruption(
                         f"required primary key for {table} is missing or malformed"
                     )
+                columns_by_name = {row["name"]: row for row in column_rows}
+                for column, expected in _REQUIRED_COLUMN_CONTRACTS[table].items():
+                    column_row = columns_by_name[column]
+                    declared_type = column_row["type"]
+                    if not isinstance(declared_type, str):
+                        raise EmailPersistenceCorruption(
+                            f"{table} column {column} has malformed declaration"
+                        )
+                    actual = (
+                        declared_type.strip().lower(),
+                        bool(column_row["notnull"]),
+                        _normalize_column_default(column_row["dflt_value"]),
+                    )
+                    if actual != expected:
+                        raise EmailPersistenceCorruption(
+                            f"{table} column {column} has malformed declaration"
+                        )
 
                 indexes = {
                     row["name"]: row
@@ -944,6 +1138,23 @@ class EmailStore:
                         raise EmailPersistenceCorruption(
                             f"required foreign key for {table} is missing or malformed"
                         )
+
+                required_checks = _REQUIRED_TABLE_CHECKS.get(table, ())
+                if required_checks:
+                    table_sql = table_rows[table]["sql"]
+                    if not isinstance(table_sql, str):
+                        raise EmailPersistenceCorruption(
+                            f"required checks for {table} are missing or malformed"
+                        )
+                    actual_checks = _extract_schema_checks(table_sql)
+                    for required_check in required_checks:
+                        expected_check = _strip_wrapping_parentheses(
+                            _schema_sql_tokens(required_check)
+                        )
+                        if expected_check not in actual_checks:
+                            raise EmailPersistenceCorruption(
+                                f"required check for {table} is missing or malformed"
+                            )
 
             for index_name, (table, required_columns) in _REQUIRED_INDEXES.items():
                 index_row = indexes_by_table[table].get(index_name)

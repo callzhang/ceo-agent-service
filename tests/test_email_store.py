@@ -190,6 +190,107 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
         return db.execute(sql, parameters).fetchall()
 
 
+def _replace_email_scan_cursors(database: Path, *, columns_sql: str) -> None:
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            f"""
+            alter table email_scan_cursors rename to old_email_scan_cursors;
+            create table email_scan_cursors (
+                {columns_sql},
+                primary key (account_id, folder)
+            );
+            drop table old_email_scan_cursors;
+            """
+        )
+
+
+def _replace_email_action_attempts(
+    database: Path,
+    *,
+    attempt_number_declaration: str,
+    status_declaration: str,
+) -> None:
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            f"""
+            alter table email_action_attempts rename to old_email_action_attempts;
+            create table email_action_attempts (
+                id integer primary key autoincrement,
+                action_id text not null,
+                attempt_number {attempt_number_declaration},
+                status {status_declaration},
+                provider_operation text not null,
+                provider_target text not null,
+                provider_result_id text not null,
+                error text not null,
+                started_at text not null,
+                finished_at text not null,
+                unique(action_id, attempt_number),
+                foreign key(action_id) references email_actions(action_id)
+                    on delete restrict
+            );
+            drop table old_email_action_attempts;
+            """
+        )
+
+
+def _replace_email_actions(
+    database: Path,
+    *,
+    action_type_declaration: str,
+    status_declaration: str,
+) -> None:
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            f"""
+            drop table email_action_attempts;
+            alter table email_actions rename to old_email_actions;
+            create table email_actions (
+                action_id text primary key,
+                action_plan_id text not null,
+                classification_id integer not null,
+                account_id text not null,
+                action_type {action_type_declaration},
+                parameters_json text not null check(json_valid(parameters_json)),
+                config_version text not null,
+                status {status_declaration},
+                attempt_count integer not null default 0 check(attempt_count >= 0),
+                started_at text not null default '',
+                finished_at text not null default '',
+                provider_operation text not null default '',
+                provider_target text not null default '',
+                provider_result_id text not null default '',
+                error text not null default '',
+                created_at text not null,
+                updated_at text not null,
+                unique(action_plan_id, action_type),
+                foreign key(action_plan_id) references email_action_plans(action_plan_id)
+                    on delete restrict,
+                foreign key(classification_id) references email_classifications(id)
+                    on delete restrict
+            );
+            drop table old_email_actions;
+            create index idx_email_actions_status
+                on email_actions(status, updated_at, action_id);
+            create table email_action_attempts (
+                id integer primary key autoincrement,
+                action_id text not null,
+                attempt_number integer not null check(attempt_number > 0),
+                status text not null check(status in ('done', 'failed')),
+                provider_operation text not null,
+                provider_target text not null,
+                provider_result_id text not null,
+                error text not null,
+                started_at text not null,
+                finished_at text not null,
+                unique(action_id, attempt_number),
+                foreign key(action_id) references email_actions(action_id)
+                    on delete restrict
+            );
+            """
+        )
+
+
 def _insert_account_with_scan_folders_json(database: Path, value: object) -> None:
     with sqlite3.connect(database) as db:
         db.execute("pragma ignore_check_constraints = on")
@@ -1078,7 +1179,9 @@ def test_current_schema_allows_unrelated_extra_tables_and_columns(tmp_path: Path
     with sqlite3.connect(database) as db:
         db.executescript(
             """
-            alter table email_messages add column unrelated_extension text;
+            alter table email_messages add column unrelated_extension
+                text collate "NOCASE" default 'Mixed Case'
+                check(length(unrelated_extension) >= 0);
             create table unrelated_email_extension (
                 extension_id integer primary key,
                 payload text
@@ -1087,6 +1190,195 @@ def test_current_schema_allows_unrelated_extra_tables_and_columns(tmp_path: Path
         )
 
     EmailStore(database)
+
+
+def test_current_schema_rejects_weakened_cursor_column_declarations_and_checks(
+    tmp_path: Path,
+):
+    database = tmp_path / "weakened-cursor-schema.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    _replace_email_scan_cursors(
+        database,
+        columns_sql="""
+            account_id text not null,
+            folder text not null,
+            uidvalidity text,
+            last_seen_uid text,
+            last_success_at text,
+            last_error text
+        """,
+    )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="email_scan_cursors.*uidvalidity",
+    ):
+        EmailStore(database)
+
+
+@pytest.mark.parametrize(
+    ("action_type_declaration", "status_declaration"),
+    (
+        (
+            "text not null check(action_type in "
+            "('label', 'mark_read', 'archive', 'move', 'trash', 'auto_reply'))",
+            "text not null check(status in ('pending', 'processing', 'done', 'failed'))",
+        ),
+        (
+            "text not null check(action_type in "
+            "('label', 'mark_read', 'archive', 'move', 'trash'))",
+            "text not null check(status in "
+            "('pending', 'processing', 'done', 'failed', 'skipped'))",
+        ),
+    ),
+)
+def test_current_schema_rejects_weakened_direct_action_checks(
+    tmp_path: Path,
+    action_type_declaration: str,
+    status_declaration: str,
+):
+    database = tmp_path / "weakened-direct-action-check.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    _replace_email_actions(
+        database,
+        action_type_declaration=action_type_declaration,
+        status_declaration=status_declaration,
+    )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="required check.*email_actions",
+    ):
+        EmailStore(database)
+
+
+@pytest.mark.parametrize(
+    ("attempt_number_declaration", "status_declaration"),
+    (
+        (
+            "integer not null check(attempt_number >= 0)",
+            "text not null check(status in ('done', 'failed'))",
+        ),
+        (
+            "integer not null check(attempt_number > 0)",
+            "text not null check(status in ('processing', 'done', 'failed'))",
+        ),
+    ),
+)
+def test_current_schema_rejects_weakened_action_attempt_checks(
+    tmp_path: Path,
+    attempt_number_declaration: str,
+    status_declaration: str,
+):
+    database = tmp_path / "weakened-action-attempt-check.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    _replace_email_action_attempts(
+        database,
+        attempt_number_declaration=attempt_number_declaration,
+        status_declaration=status_declaration,
+    )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="required check.*email_action_attempts",
+    ):
+        EmailStore(database)
+
+
+def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path):
+    database = tmp_path / "wrong-account-nullability.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            alter table email_accounts rename to old_email_accounts;
+            create table email_accounts (
+                account_id text primary key,
+                display_name text,
+                email_address text not null,
+                imap_host text not null,
+                imap_port integer not null check(imap_port between 1 and 65535),
+                imap_tls integer not null check(imap_tls in (0, 1)),
+                imap_username text not null,
+                imap_secret_reference text not null,
+                smtp_host text not null,
+                smtp_port integer not null check(smtp_port between 1 and 65535),
+                smtp_tls integer not null check(smtp_tls in (0, 1)),
+                smtp_username text not null,
+                smtp_secret_reference text not null,
+                enabled integer not null check(enabled in (0, 1)),
+                scan_folders_json text not null check(json_valid(scan_folders_json)),
+                scan_interval_seconds integer not null check(scan_interval_seconds > 0),
+                created_at text not null,
+                updated_at text not null
+            );
+            drop table old_email_accounts;
+            """
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="email_accounts.*display_name",
+    ):
+        EmailStore(database)
+
+
+@pytest.mark.parametrize(
+    "damaged_declaration",
+    (
+        "threshold text not null",
+        "description text not null default 'missing-default-contract'",
+    ),
+)
+def test_current_schema_rejects_wrong_config_column_type_or_default(
+    tmp_path: Path,
+    damaged_declaration: str,
+):
+    database = tmp_path / "wrong-config-declaration.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    description_declaration = (
+        damaged_declaration
+        if damaged_declaration.startswith("description")
+        else "description text not null default ''"
+    )
+    threshold_declaration = (
+        damaged_declaration
+        if damaged_declaration.startswith("threshold")
+        else "threshold real not null"
+    )
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            f"""
+            alter table email_category_configs rename to old_email_category_configs;
+            create table email_category_configs (
+                category text primary key,
+                {description_declaration},
+                {threshold_declaration},
+                actions_json text not null,
+                action_parameters_json text not null default '{{}}',
+                enabled integer not null default 1,
+                config_version text not null,
+                updated_at text not null default current_timestamp
+            );
+            drop table old_email_category_configs;
+            """
+        )
+
+    expected_column = (
+        "description"
+        if damaged_declaration.startswith("description")
+        else "threshold"
+    )
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match=rf"email_category_configs.*{expected_column}",
+    ):
+        EmailStore(database)
 
 
 def test_durable_validation_boundary_normalizes_missing_row_field(
