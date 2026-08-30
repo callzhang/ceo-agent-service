@@ -751,7 +751,12 @@ class EmailStore:
 
     @staticmethod
     def _table_columns(db: sqlite3.Connection, table: str) -> set[str]:
-        return {row["name"] for row in db.execute(f"pragma table_info({table})")}
+        return {
+            _schema_identifier(
+                row["name"], field="pragma table_info migration column name"
+            )
+            for row in db.execute(f"pragma table_info({table})")
+        }
 
     @classmethod
     def _ensure_column(

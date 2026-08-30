@@ -1145,6 +1145,89 @@ def test_migration_preserves_prototype_feedback_config_and_unrelated_state(
     assert legacy["legacy_processed_without_plan"] == 1
 
 
+def test_prototype_migration_rejects_non_text_column_metadata_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    database = tmp_path / "prototype-invalid-column-metadata.sqlite3"
+    classification = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="prototype-invalid-column-metadata",
+    )
+    _create_prototype_database(database, classification, action_plan_json="null")
+    with sqlite3.connect(database) as db:
+        schema_before = db.execute(
+            "select type, name, tbl_name, sql from sqlite_master order by type, name"
+        ).fetchall()
+
+    original = email_store_module._schema_identifier
+
+    def inject_invalid_identifier(value: object, *, field: str) -> str:
+        if field == "pragma table_info migration column name":
+            value = sqlite3.Binary(b"predicted_category")
+        return original(value, field=field)
+
+    monkeypatch.setattr(
+        email_store_module,
+        "_schema_identifier",
+        inject_invalid_identifier,
+    )
+
+    with pytest.raises(EmailPersistenceCorruption, match="schema identifier"):
+        EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        schema_after = db.execute(
+            "select type, name, tbl_name, sql from sqlite_master order by type, name"
+        ).fetchall()
+        assert db.execute(
+            "select 1 from sqlite_master "
+            "where type='table' and name='email_schema_migrations'"
+        ).fetchone() is None
+    assert schema_after == schema_before
+
+
+def test_prototype_migration_recognizes_quoted_mixed_case_existing_columns(
+    tmp_path: Path,
+):
+    database = tmp_path / "prototype-quoted-existing-columns.sqlite3"
+    classification = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="prototype-quoted-existing-columns",
+    )
+    _create_prototype_database(database, classification, action_plan_json="null")
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            alter table email_classifications
+                add column "PREDICTED_CATEGORY" text;
+            alter table email_classifications
+                add column `Confirmed_Category` text;
+            alter table email_classifications
+                add column [CURRENT_ACTION_PLAN_ID] text;
+            alter table email_classifications
+                add column "Legacy_Processed_Without_Plan"
+                    integer not null default 0
+                    check("Legacy_Processed_Without_Plan" in (0, 1));
+            """
+        )
+
+    EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        columns = [
+            row[1].casefold()
+            for row in db.execute("pragma table_info(email_classifications)")
+        ]
+    for column in (
+        "predicted_category",
+        "confirmed_category",
+        "current_action_plan_id",
+        "legacy_processed_without_plan",
+    ):
+        assert columns.count(column) == 1
+
+
 def test_email_store_migration_is_idempotent(tmp_path: Path):
     database = tmp_path / "idempotent.sqlite3"
     store = EmailStore(database)
