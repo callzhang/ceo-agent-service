@@ -1,6 +1,7 @@
 import importlib
 import importlib.util
 import os
+import socketserver
 import threading
 from pathlib import Path
 from uuid import uuid4
@@ -116,6 +117,12 @@ def test_sender_client_round_trip_over_owner_only_socket():
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_sender_server_serializes_accessibility_requests():
+    module = _module()
+
+    assert not issubclass(module.WechatSenderUnixServer, socketserver.ThreadingMixIn)
 
 
 def test_sender_client_fails_closed_when_helper_is_not_running(tmp_path):

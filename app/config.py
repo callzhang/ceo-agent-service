@@ -548,6 +548,20 @@ def wechat_send_idle_seconds() -> float:
         return 10.0
 
 
+def wechat_send_min_interval_seconds() -> float:
+    """Minimum spacing between WeChat Accessibility navigation attempts.
+
+    The sender is intentionally conservative because each navigation briefly
+    foregrounds the personal WeChat client. This limits queued deliveries from
+    turning into a burst of UI activity while leaving message content and target
+    checks unchanged.
+    """
+    try:
+        return max(0.0, float(os.getenv("CEO_WECHAT_SEND_MIN_INTERVAL_SECONDS", "30")))
+    except ValueError:
+        return 30.0
+
+
 def wechat_send_mode() -> str:
     """'confirm' (default): hold ready_to_send deliveries for explicit user
     approval; 'auto': the sender loop sends them automatically."""

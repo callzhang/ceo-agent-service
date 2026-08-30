@@ -362,6 +362,29 @@ def test_open_target_waits_for_async_composer_after_session_click():
     assert clicked == [(row, 1)]
 
 
+def test_accessibility_spaces_foreground_interactions():
+    runner = MacWechatAccessibility(min_interaction_interval=30)
+    now = [100.0]
+    sleeps = []
+
+    runner._wait_for_interaction_slot(
+        sleep=sleeps.append,
+        monotonic=lambda: now[0],
+    )
+    now[0] = 112.0
+    runner._wait_for_interaction_slot(
+        sleep=sleeps.append,
+        monotonic=lambda: now[0],
+    )
+    now[0] = 142.0
+    runner._wait_for_interaction_slot(
+        sleep=sleeps.append,
+        monotonic=lambda: now[0],
+    )
+
+    assert sleeps == [18.0]
+
+
 def test_open_target_selects_unique_sidebar_row_by_recent_message():
     wrong_row = object()
     expected_row = object()

@@ -12,13 +12,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Dedicated local WeChat sender")
     parser.add_argument("serve", nargs="?", default="serve", choices=["serve"])
     parser.add_argument("--socket", default=str(config.wechat_sender_socket()))
-    parser.add_argument("--idle-seconds", type=float, default=10.0)
+    parser.add_argument(
+        "--idle-seconds",
+        type=float,
+        default=config.wechat_send_idle_seconds(),
+    )
+    parser.add_argument(
+        "--min-interaction-interval",
+        type=float,
+        default=config.wechat_send_min_interval_seconds(),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    runner = MacWechatAccessibility(idle_seconds=max(0.0, args.idle_seconds))
+    runner = MacWechatAccessibility(
+        idle_seconds=max(0.0, args.idle_seconds),
+        min_interaction_interval=max(0.0, args.min_interaction_interval),
+    )
     server = WechatSenderUnixServer(
         args.socket, WechatSenderRpcService(runner),
     )

@@ -123,7 +123,11 @@ Privacy & Security → Accessibility and restart its LaunchAgent. The AX runner
 resolves the actual WeChat application by bundle ID, waits for asynchronous UI
 state, and navigates duplicate direct-chat names with the stable target ID before
 requiring the composer title to match the expected display name. Group navigation
-uses the verified unique group name.
+uses the verified unique group name. The Sender serves one Accessibility request
+at a time and spaces foreground navigation attempts by 30 seconds by default
+(`CEO_WECHAT_SEND_MIN_INTERVAL_SECONDS`), preventing queued deliveries from
+causing concurrent or burst UI interaction. This affects only navigation pacing;
+it does not relax target binding, compose, or send confirmation checks.
 
 Preflight is ready only when both a visible WeChat process window and a usable
 Accessibility `AXWindows` tree are present. A composited but inaccessible

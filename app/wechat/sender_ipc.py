@@ -123,8 +123,8 @@ class _SenderRequestHandler(socketserver.StreamRequestHandler):
             return
 
 
-class WechatSenderUnixServer(socketserver.ThreadingUnixStreamServer):
-    daemon_threads = True
+class WechatSenderUnixServer(socketserver.UnixStreamServer):
+    """Run one Accessibility request at a time against the shared WeChat UI."""
     allow_reuse_address = False
 
     def __init__(
