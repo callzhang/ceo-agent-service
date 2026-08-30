@@ -18,6 +18,11 @@ describe("StatusBadge", () => {
     ["needs_action", "需要处理", "status-warning"],
     ["wechat_window_unavailable", "微信窗口不可用", "status-danger"],
     ["screen_locked", "屏幕已锁定", "status-danger"],
+    ["granted", "已允许", "status-success"],
+    ["connected", "已连接", "status-success"],
+    ["denied", "已拒绝", "status-danger"],
+    ["default", "未设置", "status-warning"],
+    ["unsupported", "浏览器不支持", "status-danger"],
     ["unknown", "未知", "status-neutral"],
   ])("maps %s to a stable label and semantic tone", (value, label, tone) => {
     render(<StatusBadge value={value} />);

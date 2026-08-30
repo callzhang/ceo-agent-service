@@ -9,23 +9,23 @@ import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { StatusBadge } from "../components/status/StatusBadge";
 
 function NotificationStatusPanel() {
-  const [permission, setPermission] = useState("检查中");
-  const [worker, setWorker] = useState("检查中");
+  const [permission, setPermission] = useState("checking");
+  const [worker, setWorker] = useState("checking");
 
   useEffect(() => {
     if ("Notification" in window) {
-      setPermission(Notification.permission === "granted" ? "已允许" : Notification.permission === "denied" ? "已拒绝" : "未设置");
+      setPermission(Notification.permission);
     } else {
-      setPermission("浏览器不支持");
+      setPermission("unsupported");
     }
     if (!("serviceWorker" in navigator)) {
-      setWorker("浏览器不支持");
+      setWorker("unsupported");
       return;
     }
     navigator.serviceWorker.register("/notification-service-worker.js")
       .then(() => navigator.serviceWorker.ready)
-      .then(() => setWorker("已连接"))
-      .catch(() => setWorker("连接失败"));
+      .then(() => setWorker("connected"))
+      .catch(() => setWorker("disconnected"));
   }, []);
 
   return <section className="console-card notification-status-panel" aria-labelledby="notification-status-title">
@@ -34,8 +34,8 @@ function NotificationStatusPanel() {
       <span className="console-card-muted">不会自动申请通知权限</span>
     </div>
     <div className="notification-status-grid">
-      <div className="notification-status-item"><span>通知权限</span><strong>{permission}</strong><small>需要在浏览器设置中允许后，才能显示桌面提醒。</small></div>
-      <div className="notification-status-item"><span>Service Worker</span><strong>{worker}</strong><small>负责接收事件并处理通知点击跳转。</small></div>
+      <div className="notification-status-item"><span className="notification-status-label">通知权限</span><StatusBadge value={permission} /><small>需要在浏览器设置中允许后，才能显示桌面提醒。</small></div>
+      <div className="notification-status-item"><span className="notification-status-label">Service Worker</span><StatusBadge value={worker} /><small>负责接收事件并处理通知点击跳转。</small></div>
     </div>
     <p className="field-help" aria-live="polite">实时事件流仍由本地服务维护；本页仅展示连接与权限状态。</p>
   </section>;

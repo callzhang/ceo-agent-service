@@ -276,7 +276,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .notification-status-panel { margin-bottom: 16px; }
 .notification-status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .notification-status-item { display: grid; gap: 7px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-muted); }
-.notification-status-item span { color: var(--ink-soft); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.05em; text-transform: uppercase; }
+.notification-status-label { color: var(--ink-soft); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.05em; text-transform: uppercase; }
 .notification-status-item strong { overflow-wrap: anywhere; }
 .notification-status-item small { color: var(--ink-soft); line-height: 1.5; }
 .token-editor-field { display: grid; gap: 7px; margin-top: 16px; }
