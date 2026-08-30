@@ -2139,6 +2139,7 @@ def build_worker_status_payload(
     store: AutoReplyStore,
     *,
     launchd_label: str = "com.ceo-agent-service.main",
+    include_system_health: bool = True,
 ) -> dict[str, object]:
     service = _launchd_service_status(launchd_label)
     # The worker performs short SQLite writes in parallel.  Render every
@@ -2147,10 +2148,8 @@ def build_worker_status_payload(
     with store.read_snapshot():
         queues = _queue_status_snapshots(store)
         attention_rows = _queue_attention_rows(store)
-    system_health = _system_health_snapshot(store, service)
-    return {
+    payload: dict[str, object] = {
         "service": service,
-        "system_health": system_health,
         "components": _service_component_snapshots(),
         # Connector probes have their own cache so a slow CLI/live probe never
         # delays the queue/status snapshot used by /workers and /attention.
@@ -2167,6 +2166,9 @@ def build_worker_status_payload(
             "attention": len(attention_rows),
         },
     }
+    if include_system_health:
+        payload["system_health"] = _system_health_snapshot(store, service)
+    return payload
 
 
 def _system_health_snapshot(
@@ -9658,6 +9660,9 @@ def create_audit_app(
     wechat_status_cache = _RecentPayloadCache(
         DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
     )
+    system_health_cache = _RecentPayloadCache(
+        DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
+    )
 
     def render_default_attempt_list() -> str:
         return render_attempt_list(
@@ -9674,7 +9679,14 @@ def create_audit_app(
         )
 
     def render_worker_status_payload() -> dict[str, object]:
-        return build_worker_status_payload(audit_store)
+        return build_worker_status_payload(
+            audit_store,
+            include_system_health=False,
+        )
+
+    def render_system_health_payload() -> dict[str, object]:
+        service = _launchd_service_status("com.ceo-agent-service.main")
+        return _system_health_snapshot(audit_store, service)
 
     def worker_status_refreshing_payload() -> dict[str, object]:
         return {
@@ -9720,10 +9732,20 @@ def create_audit_app(
                 "account": {"ready": False, "account_id": ""},
             },
         )
+        system_health = system_health_cache.get_or_refresh(
+            render_system_health_payload,
+            lambda: {
+                "state": "refreshing",
+                "detail": "System health refresh in progress.",
+                "checked_at": "",
+                "violations": 0,
+            },
+        )
         return {
             **payload,
             "connectors": connector_statuses,
             "wechat": wechat_status,
+            "system_health": system_health,
         }
 
     @asynccontextmanager
@@ -9735,6 +9757,7 @@ def create_audit_app(
         wechat_status_cache.refresh_in_background(
             lambda: _wechat_status_snapshot(audit_store)
         )
+        system_health_cache.refresh_in_background(render_system_health_payload)
         try:
             # Recovery is best-effort at startup.  The worker may hold the
             # SQLite write lock while the web child is being restarted; a

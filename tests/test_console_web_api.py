@@ -369,7 +369,7 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
     monkeypatch.setattr(
         audit_web_module,
         "build_worker_status_payload",
-        lambda store: {
+        lambda store, **_kwargs: {
             "service": {"state": "ok"},
             "connectors": {"dingtalk": {"status": "ready"}},
             "non_json_display": {"text": "safe"},
@@ -442,6 +442,69 @@ def test_console_status_worker_snapshot_is_not_blocked_by_wechat_probe(
                 release_probe.set()
     finally:
         release_probe.set()
+
+
+def test_console_status_worker_snapshot_is_not_blocked_by_system_health_scan(
+    monkeypatch, tmp_path: Path,
+):
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+
+    def blocked_system_health_scan(_store, _service):
+        scan_started.set()
+        assert release_scan.wait(timeout=2)
+        return {
+            "state": "healthy",
+            "detail": "No current quality-gate violations.",
+            "checked_at": "2026-08-30T00:00:00Z",
+            "violations": 0,
+        }
+
+    monkeypatch.setattr(
+        audit_web_module,
+        "_system_health_snapshot",
+        blocked_system_health_scan,
+    )
+    monkeypatch.setattr(audit_web_module, "_connector_status_snapshots", lambda: {})
+    monkeypatch.setattr(
+        audit_web_module,
+        "_wechat_status_snapshot",
+        lambda store: {"reader": {"status": "ready"}},
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {
+            "label": label,
+            "ok": True,
+            "state": "running",
+            "detail": "running",
+            "pid": "12345",
+            "runs": "1",
+            "initialized": "1",
+        },
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"待处理事项"}')
+
+    try:
+        with _client(tmp_path) as client:
+            try:
+                assert scan_started.wait(timeout=1)
+                item = {}
+                for _ in range(30):
+                    item = client.get("/api/console/status").json()["item"]
+                    if item.get("service", {}).get("state") == "running":
+                        break
+                    time.sleep(0.01)
+
+                assert item["service"]["state"] == "running"
+                assert item["summary"]["attention"] == 1
+                assert item["system_health"]["state"] == "refreshing"
+            finally:
+                release_scan.set()
+    finally:
+        release_scan.set()
 
 
 def test_console_audit_rules_template_preview_is_rendered_but_template_is_preserved(
