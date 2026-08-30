@@ -21,7 +21,6 @@ from app.cli import (
     export_feedback_command,
     probe_dws,
     rerun_message_command,
-    resolve_agent_run_command,
     reset_codex_sessions_command,
     run_consumer_loop,
     run_follow_up_delivery_loop,
@@ -44,7 +43,7 @@ from app.cli import (
 from app.corpus import CorpusRecord, append_records
 from app.dws_client import DwsError
 from app.external_retry import ExternalDependencyError
-from app.store import AgentRole, AutoReplyStore
+from app.store import AutoReplyStore
 from app.task_models import TaskAgentDecision, WorkItem
 
 
@@ -79,6 +78,286 @@ def enqueue_trigger_task(
             ensure_ascii=False,
         ),
     )
+
+
+def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, int]:
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="wechat-user-1",
+        conversation_title="Alex",
+        single_chat=True,
+        trigger_message_id="wechat-message-1",
+        trigger_create_time="2026-08-30T17:00:00",
+        trigger_sender="Alex",
+        trigger_text="hi",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="wechat-user-1",
+        conversation_title="Alex",
+        trigger_message_id="wechat-message-1",
+        trigger_sender="Alex",
+        trigger_text="hi",
+        action="send_reply",
+        sensitivity_kind="normal",
+        send_status="pending",
+        channel="wechat",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1,
+        account_id="wechat-account-1",
+        target_type="direct",
+        target_id="wechat-user-1",
+        conversation_id="wechat-user-1",
+        reply_text="reply",
+    )
+    store.mark_wechat_delivery_sending(
+        delivery_id,
+        now="2026-08-30 17:07:23",
+    )
+    store.set_wechat_delivery_status(
+        delivery_id,
+        "failed",
+        error="target_open_failed",
+        pre_action_failure=True,
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set retry_count=2 where id=?",
+            (attempt_id,),
+        )
+    return delivery_id, attempt_id
+
+
+def test_skip_stale_wechat_delivery_command_closes_exact_eligible_delivery(
+    tmp_path, capsys
+):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+    store = AutoReplyStore(settings.db_path)
+    delivery_id, attempt_id = seed_exhausted_stale_wechat_delivery(store)
+
+    cli.skip_stale_wechat_delivery_command(
+        settings,
+        delivery_id=delivery_id,
+        inactive_before="2026-08-30 18:00:00",
+        reason="stale_after_exhausted_pre_action_retries",
+        max_retries=2,
+    )
+
+    assert capsys.readouterr().out == f"wechat-delivery skipped={delivery_id}\n"
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    attempt = store.get_reply_attempt(attempt_id)
+    assert delivery.status == "skipped"
+    assert delivery.error == "stale_after_exhausted_pre_action_retries"
+    assert delivery.pre_action_failure is False
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "stale_after_exhausted_pre_action_retries"
+
+
+def test_skip_stale_wechat_delivery_command_rejects_missing_delivery(tmp_path):
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
+
+    with pytest.raises(SystemExit, match="WeChat delivery not found: 999"):
+        cli.skip_stale_wechat_delivery_command(
+            settings,
+            delivery_id=999,
+            inactive_before="2026-08-30 18:00:00",
+            reason="stale_after_exhausted_pre_action_retries",
+            max_retries=2,
+        )
+
+
+def test_skip_stale_wechat_delivery_command_forwards_current_generation_and_inputs(
+    tmp_path, monkeypatch, capsys
+):
+    captured = {}
+
+    class FakeStore:
+        def __init__(self, db_path):
+            captured["db_path"] = db_path
+
+        def get_wechat_delivery_by_id(self, delivery_id):
+            captured["loaded_delivery_id"] = delivery_id
+            return SimpleNamespace(execution_generation="generation-current")
+
+        def skip_exhausted_stale_wechat_delivery(self, delivery_id, **arguments):
+            captured["skipped_delivery_id"] = delivery_id
+            captured.update(arguments)
+
+    monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
+    db_path = tmp_path / "worker.sqlite3"
+
+    cli.skip_stale_wechat_delivery_command(
+        WorkerSettings(db_path=db_path),
+        delivery_id=81,
+        inactive_before="2026-08-30 18:00:00",
+        reason="stale_after_exhausted_pre_action_retries",
+        max_retries=3,
+    )
+
+    assert captured == {
+        "db_path": db_path,
+        "loaded_delivery_id": 81,
+        "skipped_delivery_id": 81,
+        "expected_execution_generation": "generation-current",
+        "inactive_before": "2026-08-30 18:00:00",
+        "reason": "stale_after_exhausted_pre_action_retries",
+        "max_retries": 3,
+    }
+    assert capsys.readouterr().out == "wechat-delivery skipped=81\n"
+
+
+def test_parser_supports_skip_stale_wechat_delivery_with_default_retry_limit():
+    args = build_parser().parse_args(
+        [
+            "skip-stale-wechat-delivery",
+            "--delivery-id",
+            "81",
+            "--inactive-before",
+            "2026-08-30 18:00:00",
+            "--reason",
+            "stale_after_exhausted_pre_action_retries",
+        ]
+    )
+
+    assert args.command == "skip-stale-wechat-delivery"
+    assert args.delivery_id == 81
+    assert args.inactive_before == "2026-08-30 18:00:00"
+    assert args.reason == "stale_after_exhausted_pre_action_retries"
+    assert args.max_retries == 2
+
+
+@pytest.mark.parametrize("missing_option", ["--inactive-before", "--reason"])
+def test_parser_requires_skip_stale_wechat_delivery_text(missing_option, capsys):
+    arguments = [
+        "skip-stale-wechat-delivery",
+        "--delivery-id",
+        "81",
+        "--inactive-before",
+        "2026-08-30 18:00:00",
+        "--reason",
+        "stale",
+    ]
+    option_index = arguments.index(missing_option)
+    del arguments[option_index : option_index + 2]
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(arguments)
+
+    captured = capsys.readouterr()
+    assert "the following arguments are required" in captured.err
+    assert missing_option in captured.err
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        [
+            "--delivery-id",
+            "0",
+            "--inactive-before",
+            "2026-08-30 18:00:00",
+            "--reason",
+            "stale",
+        ],
+        [
+            "--delivery-id",
+            "81",
+            "--inactive-before",
+            "2026-08-30 18:00:00",
+            "--reason",
+            "stale",
+            "--max-retries",
+            "0",
+        ],
+    ],
+)
+def test_parser_rejects_non_positive_skip_stale_wechat_delivery_ids(
+    arguments, capsys
+):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["skip-stale-wechat-delivery", *arguments])
+
+    assert "must be a positive integer" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("--inactive-before", "   "),
+        ("--reason", ""),
+    ],
+)
+def test_parser_rejects_blank_skip_stale_wechat_delivery_text(
+    option, value, capsys
+):
+    arguments = [
+        "skip-stale-wechat-delivery",
+        "--delivery-id",
+        "81",
+        "--inactive-before",
+        "2026-08-30 18:00:00",
+        "--reason",
+        "stale",
+    ]
+    arguments[arguments.index(option) + 1] = value
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(arguments)
+
+    assert "must be non-blank" in capsys.readouterr().err
+
+
+def test_main_dispatches_skip_stale_wechat_delivery_without_runtime_components(
+    tmp_path, monkeypatch
+):
+    captured = {}
+
+    def fake_command(settings, **arguments):
+        captured.update(db_path=settings.db_path, **arguments)
+
+    def forbidden_component(*_args, **_kwargs):
+        pytest.fail("skip-stale-wechat-delivery constructed a runtime component")
+
+    monkeypatch.setattr(cli, "skip_stale_wechat_delivery_command", fake_command)
+    for component_name in (
+        "create_worker",
+        "initialize_agent_runtime_routes",
+        "DwsClient",
+        "CodexDecisionRunner",
+        "TaskAgentCodexRunner",
+        "MeetingAlignmentCodexRunner",
+        "_run_wechat_loop",
+    ):
+        monkeypatch.setattr(cli, component_name, forbidden_component)
+    db_path = tmp_path / "worker.sqlite3"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ceo-agent",
+            "skip-stale-wechat-delivery",
+            "--db",
+            str(db_path),
+            "--delivery-id",
+            "81",
+            "--inactive-before",
+            "2026-08-30 18:00:00",
+            "--reason",
+            "stale_after_exhausted_pre_action_retries",
+            "--max-retries",
+            "3",
+        ],
+    )
+
+    cli.main()
+
+    assert captured == {
+        "db_path": db_path,
+        "delivery_id": 81,
+        "inactive_before": "2026-08-30 18:00:00",
+        "reason": "stale_after_exhausted_pre_action_retries",
+        "max_retries": 3,
+    }
 
 
 def test_parser_supports_worker_commands():
