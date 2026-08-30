@@ -791,6 +791,7 @@ def test_spa_mode_serves_same_react_index_for_business_deep_links_and_keeps_api_
         "/wechat/review",
         "/wechat/memory-review",
         "/wechat/deliveries",
+        "/unknown-business-path",
     )
 
     with _client(tmp_path, spa_enabled=True, asset=expected) as client:

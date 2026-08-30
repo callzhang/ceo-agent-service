@@ -10555,6 +10555,13 @@ def create_audit_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return JSONResponse(result)
 
+    @app.api_route("/{spa_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    def spa_not_found_fallback(spa_path: str) -> Response:
+        normalized = spa_path.strip("/")
+        if not spa_enabled or normalized == "api" or normalized.startswith("api/"):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return _spa_index_response(asset_dir)
+
     return app
 
 
