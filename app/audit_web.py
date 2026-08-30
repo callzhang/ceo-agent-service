@@ -2155,7 +2155,6 @@ def build_worker_status_payload(
         # Connector probes have their own cache so a slow CLI/live probe never
         # delays the queue/status snapshot used by /workers and /attention.
         "connectors": {},
-        "wechat": _wechat_status_snapshot(store),
         "queues": queues,
         "attention_rows": attention_rows,
         "database": {"path": str(store.path)},
@@ -9656,6 +9655,9 @@ def create_audit_app(
     connector_status_cache = _RecentPayloadCache(
         DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
     )
+    wechat_status_cache = _RecentPayloadCache(
+        DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
+    )
 
     def render_default_attempt_list() -> str:
         return render_attempt_list(
@@ -9709,9 +9711,20 @@ def create_audit_app(
             _connector_status_snapshots,
             lambda: {},
         )
-        if not connector_statuses:
-            return payload
-        return {**payload, "connectors": connector_statuses}
+        wechat_status = wechat_status_cache.get_or_refresh(
+            lambda: _wechat_status_snapshot(audit_store),
+            lambda: {
+                "reader": {"status": "refreshing"},
+                "sender": {"status": "refreshing"},
+                "preflight": {"status": "refreshing"},
+                "account": {"ready": False, "account_id": ""},
+            },
+        )
+        return {
+            **payload,
+            "connectors": connector_statuses,
+            "wechat": wechat_status,
+        }
 
     @asynccontextmanager
     async def audit_lifespan(_app: FastAPI):
@@ -9719,6 +9732,9 @@ def create_audit_app(
         default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
         worker_status_cache.refresh_in_background(render_worker_status_payload)
         connector_status_cache.refresh_in_background(_connector_status_snapshots)
+        wechat_status_cache.refresh_in_background(
+            lambda: _wechat_status_snapshot(audit_store)
+        )
         try:
             # Recovery is best-effort at startup.  The worker may hold the
             # SQLite write lock while the web child is being restarted; a

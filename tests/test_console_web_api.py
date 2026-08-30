@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -382,6 +384,64 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
     assert payload["item"]["service"]["state"] == "ok"
     assert payload["meta"]["snapshot_at"]
     json.dumps(payload, ensure_ascii=False)
+
+
+def test_console_status_worker_snapshot_is_not_blocked_by_wechat_probe(
+    monkeypatch, tmp_path: Path,
+):
+    probe_started = threading.Event()
+    release_probe = threading.Event()
+
+    def blocked_wechat_probe(_store):
+        probe_started.set()
+        assert release_probe.wait(timeout=2)
+        return {"reader": {"status": "ready"}}
+
+    monkeypatch.setattr(audit_web_module, "_wechat_status_snapshot", blocked_wechat_probe)
+    monkeypatch.setattr(audit_web_module, "_connector_status_snapshots", lambda: {})
+    monkeypatch.setattr(
+        audit_web_module,
+        "_launchd_service_status",
+        lambda label: {
+            "label": label,
+            "ok": True,
+            "state": "running",
+            "detail": "running",
+            "pid": "12345",
+            "runs": "1",
+            "initialized": "1",
+        },
+    )
+    monkeypatch.setattr(
+        audit_web_module,
+        "_system_health_snapshot",
+        lambda store, service: {
+            "state": "healthy",
+            "detail": "No current quality-gate violations.",
+            "checked_at": "2026-08-30T00:00:00Z",
+            "violations": 0,
+        },
+    )
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"待处理事项"}')
+
+    try:
+        with _client(tmp_path) as client:
+            try:
+                assert probe_started.wait(timeout=1)
+                item = {}
+                for _ in range(30):
+                    item = client.get("/api/console/status").json()["item"]
+                    if item.get("service", {}).get("state") == "running":
+                        break
+                    time.sleep(0.01)
+
+                assert item["service"]["state"] == "running"
+                assert item["summary"]["attention"] == 1
+            finally:
+                release_probe.set()
+    finally:
+        release_probe.set()
 
 
 def test_console_audit_rules_template_preview_is_rendered_but_template_is_preserved(
