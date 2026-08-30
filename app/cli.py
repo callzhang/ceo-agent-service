@@ -83,7 +83,7 @@ from app.org_cache import (
     CachedOrgDirectory,
     refresh_org_cache,
 )
-from app.store import AutoReplyStore
+from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_agent import TaskAgentCodexRunner, TaskAgentRunner, process_work_item
 from app.task_memory_backfill import (
     ProjectMemoryContextCodexRunner,
@@ -248,6 +248,27 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _non_blank(value: str) -> str:
+    if not value.strip():
+        raise argparse.ArgumentTypeError("must be non-blank")
+    return value
+
+
+def _iso8601_timestamp(value: str) -> str:
+    normalized = _non_blank(value).strip()
+    try:
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "must be an ISO-8601 timestamp"
+        ) from exc
+    timespec = "microseconds" if parsed.microsecond else "seconds"
+    if parsed.utcoffset() is not None:
+        utc_timestamp = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return f"{utc_timestamp.isoformat(sep=' ', timespec=timespec)}Z"
+    return parsed.isoformat(sep=" ", timespec=timespec)
+
+
 def _non_negative_int(value: str) -> int:
     parsed = int(value)
     if parsed < 0:
@@ -287,6 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
         "consume",
         "process-work-items",
         "retry-work-summary-input",
+        "skip-stale-wechat-delivery",
         "backfill-task-memory-context",
         "backfill-routine-process-todos",
         "backfill-todo-owner-ids",
@@ -464,6 +486,15 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--operation-id", required=True)
         if command == "retry-work-summary-input":
             subparser.add_argument("--input-id", type=_positive_int, required=True)
+        if command == "skip-stale-wechat-delivery":
+            subparser.add_argument("--delivery-id", type=_positive_int, required=True)
+            subparser.add_argument(
+                "--inactive-before",
+                type=_iso8601_timestamp,
+                required=True,
+            )
+            subparser.add_argument("--reason", type=_non_blank, required=True)
+            subparser.add_argument("--max-retries", type=_positive_int, default=2)
         if command == "replay-recent-meetings":
             subparser.add_argument("--limit", type=_positive_int, required=True)
             subparser.add_argument(
@@ -1172,6 +1203,34 @@ def retry_work_summary_input_command(
             f"work summary input is not a retryable failed record: {input_id}"
         )
     print(f"work-summary-input requeued={input_id}", flush=True)
+
+
+def skip_stale_wechat_delivery_command(
+    settings: WorkerSettings,
+    *,
+    delivery_id: int,
+    inactive_before: str,
+    reason: str,
+    max_retries: int = 2,
+) -> None:
+    store = AutoReplyStore(settings.db_path)
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    if delivery is None:
+        raise SystemExit(f"WeChat delivery not found: {delivery_id}")
+    try:
+        store.skip_exhausted_stale_wechat_delivery(
+            delivery_id,
+            expected_execution_generation=delivery.execution_generation,
+            reason=reason,
+            inactive_before=inactive_before,
+            max_retries=max_retries,
+        )
+    except AgentRunLeaseLostError as exc:
+        raise SystemExit(
+            f"WeChat delivery {delivery_id} was not skipped: "
+            "record changed or is ineligible"
+        ) from exc
+    print(f"wechat-delivery skipped={delivery_id}", flush=True)
 
 
 def _should_retry_work_summary_input(error: Exception | str, attempts: int) -> bool:
@@ -3501,6 +3560,14 @@ def main() -> None:
         process_work_items_command(settings)
     elif args.command == "retry-work-summary-input":
         retry_work_summary_input_command(settings, input_id=args.input_id)
+    elif args.command == "skip-stale-wechat-delivery":
+        skip_stale_wechat_delivery_command(
+            settings,
+            delivery_id=args.delivery_id,
+            inactive_before=args.inactive_before,
+            reason=args.reason,
+            max_retries=args.max_retries,
+        )
     elif args.command == "backfill-task-memory-context":
         initialize_agent_runtime_routes(settings)
         backfill_task_memory_context_command(settings)

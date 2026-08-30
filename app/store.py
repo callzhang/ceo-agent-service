@@ -11273,6 +11273,78 @@ class AutoReplyStore:
                 error=explanation,
             )
 
+    def skip_exhausted_stale_wechat_delivery(
+        self,
+        delivery_id: int,
+        *,
+        expected_execution_generation: str,
+        reason: str,
+        inactive_before: str,
+        max_retries: int = 2,
+    ) -> None:
+        generation = expected_execution_generation.strip()
+        explanation = reason.strip()
+        inactivity_cutoff = inactive_before.strip()
+        if delivery_id < 1:
+            raise ValueError("delivery_id must be positive")
+        if not generation:
+            raise ValueError("expected_execution_generation must be non-empty")
+        if not explanation:
+            raise ValueError("reason must be non-empty")
+        if not inactivity_cutoff:
+            raise ValueError("inactive_before must be non-empty")
+        if max_retries < 1:
+            raise ValueError("max_retries must be positive")
+        with self._immediate_write_transaction() as db:
+            updated = db.execute(
+                """
+                update wechat_deliveries
+                set status='skipped', error=?, pre_action_failure=0,
+                    updated_at=current_timestamp
+                where id=?
+                  and status='failed'
+                  and pre_action_failure=1
+                  and error='target_open_failed'
+                  and trim(action_started_at)<>''
+                  and datetime(action_started_at) <= datetime(?)
+                  and execution_generation=?
+                  and exists (
+                      select 1
+                      from reply_tasks as tasks
+                      where tasks.id=wechat_deliveries.reply_task_id
+                        and tasks.execution_generation=?
+                        and (
+                            select attempts.retry_count
+                            from reply_attempts as attempts
+                            where attempts.channel='wechat'
+                              and attempts.conversation_id=tasks.conversation_id
+                              and attempts.trigger_message_id=tasks.trigger_message_id
+                            order by attempts.id desc
+                            limit 1
+                        ) >= ?
+                  )
+                returning id
+                """,
+                (
+                    explanation,
+                    delivery_id,
+                    inactivity_cutoff,
+                    generation,
+                    generation,
+                    max_retries,
+                ),
+            ).fetchone()
+            if updated is None:
+                raise AgentRunLeaseLostError(
+                    f"WeChat delivery superseded or not in expected state: {delivery_id}"
+                )
+            self._sync_wechat_delivery_reply_attempt(
+                db,
+                delivery_id=delivery_id,
+                delivery_status="skipped",
+                error=explanation,
+            )
+
     def supersede_stale_ready_wechat_delivery(
         self,
         delivery_id: int,
