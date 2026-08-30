@@ -16,6 +16,7 @@ from app.email_classifier_contracts import (
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
+    EmailProviderLocator,
     _action_plan_identity,
     build_email_action_plan,
 )
@@ -992,6 +993,64 @@ def test_startup_accepts_canonical_and_empty_locator_metadata_equivalence(
     assert fallback_row["message_rfc"] == ""
     assert fallback_row["classification_thread"] is None
     assert fallback_row["message_thread"] == ""
+
+    EmailStore(database)
+
+
+def test_startup_normalizes_both_persisted_locator_metadata_sides(tmp_path: Path):
+    database = tmp_path / "semantic-locator-equivalence.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            thread_id="thread-semantic",
+        ),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_messages
+            set rfc_message_id='<msg-1@EXAMPLE.COM>',
+                thread_identity='  thread-semantic  '
+            """
+        )
+        db.execute(
+            """
+            update email_classifications
+            set rfc_message_id=' msg-1@example.com ',
+                thread_id='thread-semantic'
+            """
+        )
+
+    message = _fetchall(database, "select * from email_messages")[0]
+    classification = _fetchall(database, "select * from email_classifications")[0]
+    assert message["rfc_message_id"] != classification["rfc_message_id"]
+    assert message["thread_identity"] != classification["thread_id"]
+    message_canonical = EmailProviderLocator.model_validate(
+        {
+            "account_id": message["account_id"],
+            "folder": message["folder"],
+            "uidvalidity": message["uidvalidity"],
+            "uid": message["uid"],
+            "rfc_message_id": message["rfc_message_id"],
+            "thread_id": message["thread_identity"],
+        }
+    )
+    classification_canonical = EmailProviderLocator.model_validate(
+        {
+            "account_id": classification["account_id"],
+            "folder": classification["folder"],
+            "uidvalidity": classification["uidvalidity"],
+            "uid": classification["uid"],
+            "rfc_message_id": classification["rfc_message_id"],
+            "thread_id": classification["thread_id"],
+        }
+    )
+    assert message_canonical.rfc_message_id == "<msg-1@example.com>"
+    assert message_canonical.rfc_message_id == classification_canonical.rfc_message_id
+    assert message_canonical.thread_id == "thread-semantic"
+    assert message_canonical.thread_id == classification_canonical.thread_id
 
     EmailStore(database)
 

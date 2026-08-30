@@ -23,6 +23,7 @@ from app.email_classifier_contracts import (
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
+    EmailProviderLocator,
     _action_plan_identity,
     build_email_action_plan,
 )
@@ -700,19 +701,44 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     f"message identity mismatch for classification {row['id']}"
                 )
+            try:
+                message_provider_locator = EmailProviderLocator.model_validate(
+                    {
+                        "account_id": message["account_id"],
+                        "folder": message["folder"],
+                        "uidvalidity": message["uidvalidity"],
+                        "uid": message["uid"],
+                        "rfc_message_id": message["rfc_message_id"] or None,
+                        "thread_id": message["thread_identity"] or None,
+                    }
+                )
+                classification_provider_locator = EmailProviderLocator.model_validate(
+                    {
+                        "account_id": row["account_id"],
+                        "folder": row["folder"],
+                        "uidvalidity": row["uidvalidity"],
+                        "uid": row["uid"],
+                        "rfc_message_id": row["rfc_message_id"] or None,
+                        "thread_id": row["thread_id"] or None,
+                    }
+                )
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    f"invalid provider locator metadata for classification {row['id']}"
+                ) from exc
             message_locator = (
-                message["folder"],
-                message["uidvalidity"],
-                message["uid"],
-                message["rfc_message_id"] or "",
-                message["thread_identity"] or "",
+                message_provider_locator.folder,
+                message_provider_locator.uidvalidity,
+                message_provider_locator.uid,
+                message_provider_locator.rfc_message_id or "",
+                message_provider_locator.thread_id or "",
             )
             classification_locator = (
-                row["folder"],
-                row["uidvalidity"],
-                row["uid"],
-                row["rfc_message_id"] or "",
-                row["thread_id"] or "",
+                classification_provider_locator.folder,
+                classification_provider_locator.uidvalidity,
+                classification_provider_locator.uid,
+                classification_provider_locator.rfc_message_id or "",
+                classification_provider_locator.thread_id or "",
             )
             if message_locator != classification_locator:
                 raise EmailPersistenceCorruption(
