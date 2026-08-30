@@ -32,12 +32,15 @@ from app.email_classifier_contracts import (
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 7
+EMAIL_SCHEMA_VERSION = 8
 _CLASSIFICATION_STATUSES = frozenset(status.value for status in EmailClassificationStatus)
 _CLASSIFICATION_SOURCES = frozenset({"model", "user"})
 _CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
 _TERMINAL_ATTEMPT_STATUSES = frozenset({"done", "failed"})
 _DIRECT_ACTION_VALUES = frozenset(action.value for action in DIRECT_ACTIONS)
+_EMAIL_REPLY_CLAIM_STATUSES = frozenset({"dispatching", "uncertain", "done"})
+_OPAQUE_PROVIDER_ID = re.compile(r"[A-Za-z0-9._:@<>\[\]{}/+=,!#$%&'*?^-]+")
+_MAX_PROVIDER_IDENTIFIER_BYTES = 256
 _DIRECT_ACTION_PRIORITY = {
     action.value: priority for priority, action in enumerate(DIRECT_ACTIONS)
 }
@@ -207,6 +210,18 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "display_excerpt": ("text", True, None),
         "created_at": ("text", True, None),
     },
+    "email_reply_dispatch_claims": {
+        "action_identity": ("text", False, None),
+        "effect_digest": ("text", True, None),
+        "action_plan_id": ("text", True, None),
+        "classification_id": ("integer", True, None),
+        "account_id": ("text", True, None),
+        "stable_message_identity": ("text", True, None),
+        "outgoing_message_id": ("text", True, None),
+        "status": ("text", True, None),
+        "claimed_at": ("text", True, None),
+        "updated_at": ("text", True, None),
+    },
 }
 _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
     table: frozenset(columns)
@@ -265,6 +280,14 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(provider_result_id) != ''",
         "json_valid(provider_receipt_json)",
     ),
+    "email_reply_dispatch_claims": (
+        "trim(action_identity) != ''",
+        "trim(effect_digest) != ''",
+        "trim(outgoing_message_id) != ''",
+        "status in ('dispatching', 'uncertain', 'done')",
+        "trim(claimed_at) != ''",
+        "trim(updated_at) != ''",
+    ),
 }
 _REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
     {
@@ -284,6 +307,7 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_action_attempts": ("id",),
     "email_feedback_requests": ("feedback_request_id",),
     "email_reply_receipts": ("action_identity",),
+    "email_reply_dispatch_claims": ("action_identity",),
 }
 _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_classifications": (("stable_message_identity",),),
@@ -296,6 +320,7 @@ _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
         ("expected_current_action_plan_id",),
     ),
     "email_reply_receipts": (("outgoing_message_id",),),
+    "email_reply_dispatch_claims": (("outgoing_message_id",),),
 }
 _REQUIRED_FOREIGN_KEYS: Mapping[
     str,
@@ -328,6 +353,10 @@ _REQUIRED_FOREIGN_KEYS: Mapping[
         ("action_plan_id", "email_action_plans", "action_plan_id", "RESTRICT"),
         ("classification_id", "email_classifications", "id", "RESTRICT"),
     ),
+    "email_reply_dispatch_claims": (
+        ("action_plan_id", "email_action_plans", "action_plan_id", "RESTRICT"),
+        ("classification_id", "email_classifications", "id", "RESTRICT"),
+    ),
 }
 _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_classifications_status": (
@@ -345,6 +374,10 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_actions_status": (
         "email_actions",
         ("status", "updated_at", "action_id"),
+    ),
+    "idx_email_reply_dispatch_claims_status": (
+        "email_reply_dispatch_claims",
+        ("status", "updated_at", "action_identity"),
     ),
 }
 _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
@@ -397,6 +430,18 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
             where id=new.id;
         end
     """,
+    "trg_email_reply_dispatch_blocks_plan_switch": """
+        create trigger trg_email_reply_dispatch_blocks_plan_switch
+        before update of current_action_plan_id on email_classifications
+        when old.current_action_plan_id is not new.current_action_plan_id
+         and exists (
+            select 1 from email_reply_dispatch_claims
+            where classification_id=old.id and status='dispatching'
+         )
+        begin
+            select raise(abort, 'email_reply_dispatch_in_flight');
+        end
+    """,
 }
 
 
@@ -445,6 +490,10 @@ class EmailActionAttemptConflict(RuntimeError):
 
 class EmailReplyReceiptConflict(RuntimeError):
     """A stable automatic-reply identity conflicts with durable provider evidence."""
+
+
+class EmailReplyDispatchConflict(RuntimeError):
+    """An automatic reply dispatch claim conflicts with authorization history."""
 
 
 @dataclass(frozen=True)
@@ -803,6 +852,39 @@ def _validate_expected_action_plan_id(value: str | None) -> str | None:
         raise ValueError(
             "expected_current_action_plan_id must be null or a non-empty identifier"
         )
+    return value
+
+
+def _validate_opaque_provider_identifier(
+    value: str,
+    *,
+    field: str,
+    allow_empty: bool = False,
+) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be text")
+    if not value:
+        if allow_empty:
+            return value
+        raise ValueError(f"{field} must be non-empty")
+    if (
+        value != value.strip()
+        or len(value.encode("utf-8")) > _MAX_PROVIDER_IDENTIFIER_BYTES
+        or _OPAQUE_PROVIDER_ID.fullmatch(value) is None
+    ):
+        raise ValueError(f"{field} must be a bounded opaque identifier")
+    return value
+
+
+def _validate_provider_location(value: str, *, field: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value.encode("utf-8")) > _MAX_PROVIDER_IDENTIFIER_BYTES
+        or any(ord(character) < 32 or ord(character) > 126 for character in value)
+    ):
+        raise ValueError(f"{field} must be a bounded single-line provider location")
     return value
 
 
@@ -1289,6 +1371,30 @@ class EmailStore:
                     on delete restrict
             )
             """,
+            """
+            create table if not exists email_reply_dispatch_claims (
+                action_identity text primary key
+                    check(trim(action_identity) != ''),
+                effect_digest text not null
+                    check(trim(effect_digest) != ''),
+                action_plan_id text not null,
+                classification_id integer not null,
+                account_id text not null,
+                stable_message_identity text not null,
+                outgoing_message_id text not null unique
+                    check(trim(outgoing_message_id) != ''),
+                status text not null
+                    check(status in ('dispatching', 'uncertain', 'done')),
+                claimed_at text not null check(trim(claimed_at) != ''),
+                updated_at text not null check(trim(updated_at) != ''),
+                foreign key(action_plan_id)
+                    references email_action_plans(action_plan_id)
+                    on delete restrict,
+                foreign key(classification_id)
+                    references email_classifications(id)
+                    on delete restrict
+            )
+            """,
         )
         for statement in statements:
             db.execute(statement)
@@ -1311,6 +1417,10 @@ class EmailStore:
             """
             create index if not exists idx_email_actions_status
             on email_actions(status, updated_at, action_id)
+            """,
+            """
+            create index if not exists idx_email_reply_dispatch_claims_status
+            on email_reply_dispatch_claims(status, updated_at, action_identity)
             """,
             """
             create trigger if not exists trg_email_classification_status_insert
@@ -1342,6 +1452,18 @@ class EmailStore:
             when new.classification_source not in ('model', 'user')
             begin
                 select raise(abort, 'invalid email classification source');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_reply_dispatch_blocks_plan_switch
+            before update of current_action_plan_id on email_classifications
+            when old.current_action_plan_id is not new.current_action_plan_id
+             and exists (
+                select 1 from email_reply_dispatch_claims
+                where classification_id=old.id and status='dispatching'
+             )
+            begin
+                select raise(abort, 'email_reply_dispatch_in_flight');
             end
             """,
         )
@@ -1921,9 +2043,30 @@ class EmailStore:
                 )
             try:
                 assert_no_credentials(provider_receipt)
+                _validate_opaque_provider_identifier(
+                    receipt["outgoing_message_id"],
+                    field="outgoing_message_id",
+                )
+                _validate_opaque_provider_identifier(
+                    receipt["provider_target"],
+                    field="provider_target",
+                )
+                _validate_opaque_provider_identifier(
+                    receipt["provider_result_id"],
+                    field="provider_result_id",
+                )
+                _validate_provider_location(
+                    provider_receipt["sent_folder"],
+                    field="sent_folder",
+                )
+                _validate_opaque_provider_identifier(
+                    provider_receipt["smtp_acceptance_id"],
+                    field="smtp_acceptance_id",
+                    allow_empty=True,
+                )
             except ValueError as exc:
                 raise EmailPersistenceCorruption(
-                    "email reply provider receipt contains credentials"
+                    "email reply provider receipt is not a safe opaque receipt"
                 ) from exc
             plan = plans.get(receipt["action_plan_id"])
             classification = classifications.get(receipt["classification_id"])
@@ -1945,6 +2088,31 @@ class EmailStore:
             ):
                 raise EmailPersistenceCorruption(
                     "email reply receipt does not match its immutable ActionPlan"
+                )
+
+        for row in db.execute("select * from email_reply_dispatch_claims"):
+            claim = self._email_reply_dispatch_claim_row(row)
+            plan = plans.get(claim["action_plan_id"])
+            classification = classifications.get(claim["classification_id"])
+            if (
+                claim["status"] not in _EMAIL_REPLY_CLAIM_STATUSES
+                or plan is None
+                or classification is None
+                or plan.classification_id != claim["classification_id"]
+                or plan.account_id != claim["account_id"]
+                or classification["stable_message_identity"]
+                != claim["stable_message_identity"]
+                or EmailAction.AUTO_REPLY not in plan.agent_actions
+            ):
+                raise EmailPersistenceCorruption(
+                    "email reply dispatch claim does not match its ActionPlan"
+                )
+            if claim["status"] == "done" and db.execute(
+                "select 1 from email_reply_receipts where action_identity=?",
+                (claim["action_identity"],),
+            ).fetchone() is None:
+                raise EmailPersistenceCorruption(
+                    "done email reply dispatch claim has no durable receipt"
                 )
 
         for row in db.execute(
@@ -2764,8 +2932,9 @@ class EmailStore:
     def get_email_reply_delivery_authorization(
         self,
         classification_id: int,
+        action_plan_id: str,
     ) -> dict[str, Any] | None:
-        """Read the current immutable auto-reply authorization and mail identity."""
+        """Read one immutable auto-reply authorization and current-plan relation."""
 
         with self._connect() as db:
             row = db.execute(
@@ -2778,6 +2947,7 @@ class EmailStore:
                     classifications.current_action_plan_id
                         as current_action_plan_id,
                     messages.thread_identity as thread_identity,
+                    plans.action_plan_id as action_plan_id,
                     plans.action_plan_version as action_plan_version,
                     plans.actions_json as actions_json
                 from email_classifications as classifications
@@ -2786,12 +2956,12 @@ class EmailStore:
                  and messages.stable_message_identity=
                      classifications.stable_message_identity
                 join email_action_plans as plans
-                  on plans.action_plan_id=classifications.current_action_plan_id
+                  on plans.classification_id=classifications.id
+                 and plans.action_plan_id=?
                 where classifications.id=?
                   and classifications.status='processed'
-                  and classifications.current_action_plan_id is not null
                 """,
-                (classification_id,),
+                (action_plan_id, classification_id),
             ).fetchone()
         if row is None:
             return None
@@ -2801,6 +2971,7 @@ class EmailStore:
             "stable_message_identity": row["stable_message_identity"],
             "thread_identity": row["thread_identity"],
             "current_action_plan_id": row["current_action_plan_id"],
+            "action_plan_id": row["action_plan_id"],
             "action_plan_version": row["action_plan_version"],
             "actions": _json_load(
                 row["actions_json"],
@@ -2819,6 +2990,180 @@ class EmailStore:
                 (action_identity,),
             ).fetchone()
         return None if row is None else self._email_reply_receipt_row(row)
+
+    def claim_email_reply_dispatch(
+        self,
+        *,
+        action_identity: str,
+        effect_digest: str,
+        action_plan_id: str,
+        classification_id: int,
+        account_id: str,
+        stable_message_identity: str,
+        outgoing_message_id: str,
+    ) -> dict[str, Any] | None:
+        """Atomically bind a current auto-reply authorization to one dispatcher."""
+
+        claimed_at = self._now()
+        immutable = {
+            "action_identity": action_identity,
+            "effect_digest": effect_digest,
+            "action_plan_id": action_plan_id,
+            "classification_id": classification_id,
+            "account_id": account_id,
+            "stable_message_identity": stable_message_identity,
+            "outgoing_message_id": outgoing_message_id,
+        }
+        if any(
+            not isinstance(value, str) or not value or value != value.strip()
+            for key, value in immutable.items()
+            if key != "classification_id"
+        ) or classification_id <= 0:
+            raise ValueError("email reply dispatch identity is invalid")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            authorization = db.execute(
+                """
+                select plans.actions_json
+                from email_classifications as classifications
+                join email_action_plans as plans
+                  on plans.action_plan_id=classifications.current_action_plan_id
+                 and plans.classification_id=classifications.id
+                where classifications.id=?
+                  and classifications.status='processed'
+                  and classifications.current_action_plan_id=?
+                  and classifications.account_id=?
+                  and classifications.stable_message_identity=?
+                """,
+                (
+                    classification_id,
+                    action_plan_id,
+                    account_id,
+                    stable_message_identity,
+                ),
+            ).fetchone()
+            if authorization is None or EmailAction.AUTO_REPLY.value not in _json_load(
+                authorization["actions_json"],
+                field="actions_json",
+                expected_type=list,
+            ):
+                return None
+            receipt = db.execute(
+                "select 1 from email_reply_receipts where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            if receipt is not None:
+                return {**immutable, "status": "done", "acquired": False}
+            existing = db.execute(
+                "select * from email_reply_dispatch_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            if existing is not None:
+                claim = self._email_reply_dispatch_claim_row(existing)
+                if any(claim[key] != value for key, value in immutable.items()):
+                    raise EmailReplyDispatchConflict(
+                        "email reply action identity is bound to another dispatch"
+                    )
+                return {**claim, "acquired": False}
+            db.execute(
+                """
+                insert into email_reply_dispatch_claims (
+                    action_identity, effect_digest, action_plan_id,
+                    classification_id, account_id, stable_message_identity,
+                    outgoing_message_id, status, claimed_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, 'dispatching', ?, ?)
+                """,
+                (
+                    action_identity,
+                    effect_digest,
+                    action_plan_id,
+                    classification_id,
+                    account_id,
+                    stable_message_identity,
+                    outgoing_message_id,
+                    claimed_at,
+                    claimed_at,
+                ),
+            )
+            row = db.execute(
+                "select * from email_reply_dispatch_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            assert row is not None
+            return {**self._email_reply_dispatch_claim_row(row), "acquired": True}
+
+    def mark_email_reply_dispatch_uncertain(self, action_identity: str) -> None:
+        """Release plan correction while retaining a no-resend dispatch fact."""
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            db.execute(
+                """
+                update email_reply_dispatch_claims
+                set status='uncertain', updated_at=?
+                where action_identity=? and status='dispatching'
+                """,
+                (self._now(), action_identity),
+            )
+
+    def mark_email_reply_dispatch_done(self, action_identity: str) -> None:
+        """Mark a claim done only after durable Sent receipt persistence."""
+
+        with self._connect() as db:
+            db.execute("begin immediate")
+            receipt = db.execute(
+                "select 1 from email_reply_receipts where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            if receipt is None:
+                raise EmailReplyDispatchConflict(
+                    "email reply dispatch cannot finish without a durable receipt"
+                )
+            db.execute(
+                """
+                update email_reply_dispatch_claims
+                set status='done', updated_at=?
+                where action_identity=?
+                """,
+                (self._now(), action_identity),
+            )
+
+    def recover_stale_email_reply_dispatch_claims(
+        self,
+        *,
+        stale_before: str,
+        recovered_at: str,
+    ) -> int:
+        """Turn interrupted possible dispatches into reconciliation-only facts."""
+
+        stale_before = _required_utc_timestamp(stale_before, field="stale_before")
+        recovered_at = _required_utc_timestamp(recovered_at, field="recovered_at")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            updated = db.execute(
+                """
+                update email_reply_dispatch_claims
+                set status='uncertain', updated_at=?
+                where status='dispatching' and claimed_at < ?
+                """,
+                (recovered_at, stale_before),
+            ).rowcount
+            return updated
+
+    @staticmethod
+    def _email_reply_dispatch_claim_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "action_identity": row["action_identity"],
+            "effect_digest": row["effect_digest"],
+            "action_plan_id": row["action_plan_id"],
+            "classification_id": row["classification_id"],
+            "account_id": row["account_id"],
+            "stable_message_identity": row["stable_message_identity"],
+            "outgoing_message_id": row["outgoing_message_id"],
+            "status": row["status"],
+            "claimed_at": row["claimed_at"],
+            "updated_at": row["updated_at"],
+        }
 
     def persist_email_reply_receipt(
         self,
@@ -2856,12 +3201,28 @@ class EmailStore:
             for value in text_fields.values()
         ):
             raise ValueError("email reply receipt fields must be non-empty")
-        if not sent_folder or sent_folder != sent_folder.strip():
-            raise ValueError("sent_folder must be non-empty")
+        if provider_operation not in {
+            "sent_readback",
+            "sent_equivalent_readback",
+        }:
+            raise ValueError("provider_operation is not an approved receipt operation")
+        _validate_opaque_provider_identifier(
+            outgoing_message_id,
+            field="outgoing_message_id",
+        )
+        _validate_opaque_provider_identifier(provider_target, field="provider_target")
+        _validate_opaque_provider_identifier(
+            provider_result_id,
+            field="provider_result_id",
+        )
+        _validate_provider_location(sent_folder, field="sent_folder")
         if classification_id <= 0 or sent_uidvalidity <= 0 or sent_uid <= 0:
             raise ValueError("email reply receipt numeric fields must be positive")
-        if not isinstance(smtp_acceptance_id, str):
-            raise TypeError("smtp_acceptance_id must be text")
+        _validate_opaque_provider_identifier(
+            smtp_acceptance_id,
+            field="smtp_acceptance_id",
+            allow_empty=True,
+        )
         provider_receipt = {
             "sent_folder": sent_folder,
             "sent_uidvalidity": sent_uidvalidity,
@@ -3533,6 +3894,7 @@ class EmailStore:
                 raise EmailClassificationConflict(
                     "email classification is no longer pending feedback"
                 )
+            self._assert_no_email_reply_dispatch_in_flight(db, row_id)
             actions, action_parameters, config_version = self._category_action_snapshot(
                 db,
                 category=category,
@@ -3672,6 +4034,7 @@ class EmailStore:
                 raise EmailActionPlanConflict(f"unknown classification {classification_id}")
             if row["account_id"] != action_plan.account_id:
                 raise EmailActionPlanConflict("ActionPlan account does not match")
+            self._assert_no_email_reply_dispatch_in_flight(db, classification_id)
             existing = db.execute(
                 "select action_plan_id from email_action_plans where action_plan_id=?",
                 (action_plan.action_plan_id,),
@@ -3715,6 +4078,20 @@ class EmailStore:
             ).fetchone()
         assert updated is not None
         return self._classification_row(updated)
+
+    @staticmethod
+    def _assert_no_email_reply_dispatch_in_flight(
+        db: sqlite3.Connection,
+        classification_id: int,
+    ) -> None:
+        if db.execute(
+            """
+            select 1 from email_reply_dispatch_claims
+            where classification_id=? and status='dispatching'
+            """,
+            (classification_id,),
+        ).fetchone() is not None:
+            raise EmailReplyDispatchConflict("email_reply_dispatch_in_flight")
 
     def append_action_attempt(
         self,
