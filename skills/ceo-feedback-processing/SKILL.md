@@ -51,6 +51,9 @@ copy or reuse old evidence or old Workbench associations: prior rounds and
 receipts are historical only, and batch resolution accepts only the current
 round receipt.
 
+The observed judgment failures and corrected behaviors behind these rules are
+recorded in [Pressure-test evidence](pressure-test-evidence.md).
+
 Complete the code change, regression/focused/broad tests, commit, restart with a
 new PID, `/healthz`, and authoritative zero `processing`, `failed`, and
 `retryable` backlog checks for the new round. Persist all current-round evidence

@@ -46,6 +46,7 @@ def register_console_routes(
     store_factory: Callable[[], Any],
     *,
     status_payload_factory: Callable[[], Any],
+    feedback_backlog_factory: Callable[[], Any],
     attention_rows_factory: Callable[[], Any],
     task_row_builder: Callable[[Any, list[Any]], Any] | None = None,
     history_chart_factory: Callable[[], Any] | None = None,
@@ -76,6 +77,20 @@ def register_console_routes(
     def command_result(*, item: Any = None, message: str = "已完成", ok: bool = True):
         return {"ok": ok, "item": json_safe(item), "message": message,
                 "meta": {"updated_at": snapshot_at()}}
+
+    def fresh_zero_feedback_backlog() -> dict[str, int]:
+        """Read strict, synchronous queue evidence for feedback resolution."""
+
+        backlog = feedback_backlog_factory()
+        if not isinstance(backlog, dict):
+            raise ValueError("fresh local backlog evidence is unavailable")
+        evidence: dict[str, int] = {}
+        for name in ("processing", "failed", "retryable"):
+            value = backlog.get(name)
+            if type(value) is not int or value != 0:
+                raise ValueError("fresh local backlog evidence is unavailable or non-zero")
+            evidence[name] = value
+        return evidence
 
     if email_store_factory is not None:
         register_email_routes(
@@ -420,9 +435,6 @@ def register_console_routes(
         missing = [key for key in keys if key not in known_keys]
         if missing:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {"feedback_keys": missing}}, status_code=404)
-        historical = [row.key for row in known_rows if row.key in keys and (row.resolved_at.strip() or row.reviewer_feedback.strip() or row.corrected_reply_text.strip())]
-        if historical:
-            return JSONResponse({"ok": False, "code": "feedback_already_processing", "message": "反馈已完成处理，不能重新领取", "details": {"feedback_keys": historical}}, status_code=409)
         try:
             claimed = claim_store.claim_feedback_processing_items(cleaned_batch_id, keys)
         except FeedbackProcessingClaimError as exc:
@@ -432,7 +444,12 @@ def register_console_routes(
         store = store_factory()
         if task_id or turn_id:
             for item in claimed:
-                store.associate_feedback_processing_turn(item.feedback_key, workbench_task_id=(task_id or "").strip(), workbench_turn_id=(turn_id or "").strip())
+                store.associate_feedback_processing_turn(
+                    item.feedback_key,
+                    expected_batch_id=cleaned_batch_id,
+                    workbench_task_id=(task_id or "").strip(),
+                    workbench_turn_id=(turn_id or "").strip(),
+                )
         imports = [item for item in store.list_feedback_import_items(limit=10000, offset=0) if item.feedback_key in keys]
         imports.sort(key=lambda item: keys.index(item.feedback_key))
         refreshed_batch = store.get_feedback_processing_batch(cleaned_batch_id)
@@ -458,8 +475,18 @@ def register_console_routes(
         batch = store.get_feedback_processing_batch(batch_id)
         if batch is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
-        for item in _feedback_items_for_batch(store, batch.batch_id):
-            store.associate_feedback_processing_turn(item["feedback_key"], workbench_task_id=task_id.strip(), workbench_turn_id=turn_id.strip())
+        if batch.status != "processing":
+            return JSONResponse({"ok": False, "code": "feedback_batch_conflict", "message": "Only the current processing batch may be associated", "details": {}}, status_code=409)
+        try:
+            for item in _feedback_items_for_batch(store, batch.batch_id):
+                store.associate_feedback_processing_turn(
+                    item["feedback_key"],
+                    expected_batch_id=batch.batch_id,
+                    workbench_task_id=task_id.strip(),
+                    workbench_turn_id=turn_id.strip(),
+                )
+        except ValueError:
+            return JSONResponse({"ok": False, "code": "feedback_batch_conflict", "message": "Only the current processing batch may be associated", "details": {}}, status_code=409)
         refreshed = store.get_feedback_processing_batch(batch.batch_id)
         return command_result(item={"batch_id": batch.batch_id, "status": refreshed.status if refreshed else batch.status, "requested_count": refreshed.requested_count if refreshed else batch.requested_count, "items": _feedback_items_for_batch(store, batch.batch_id), "workbench_task_id": task_id.strip(), "workbench_turn_id": turn_id.strip()}, message="反馈批次关联已保存")
 
@@ -502,7 +529,17 @@ def register_console_routes(
         if not isinstance(task_id, str) or not isinstance(turn_id, str) or not isinstance(attempt_id, int) or isinstance(attempt_id, bool) or not isinstance(agent_run_id, int) or isinstance(agent_run_id, bool):
             raise HTTPException(status_code=400, detail="feedback associations have invalid types")
         if "associations" in payload or any(name in payload for name in ("workbench_task_id", "task_id", "workbench_turn_id", "turn_id", "attempt_id", "agent_run_id")):
-            store.associate_feedback_processing_turn(feedback_id, workbench_task_id=task_id.strip(), workbench_turn_id=turn_id.strip(), attempt_id=attempt_id, agent_run_id=agent_run_id)
+            try:
+                store.associate_feedback_processing_turn(
+                    feedback_id,
+                    expected_batch_id=current.batch_id,
+                    workbench_task_id=task_id.strip(),
+                    workbench_turn_id=turn_id.strip(),
+                    attempt_id=attempt_id,
+                    agent_run_id=agent_run_id,
+                )
+            except ValueError as exc:
+                return JSONResponse({"ok": False, "code": "feedback_evidence_invalid", "message": str(exc), "details": {}}, status_code=409)
         try:
             item = store.patch_feedback_processing_item_evidence(feedback_id, **kwargs)
         except (TypeError, ValueError) as exc:
@@ -584,12 +621,18 @@ def register_console_routes(
                 },
                 status_code=409,
             )
-        status_payload = json_safe(status_payload_factory())
-        summary = status_payload.get("summary", {}) if isinstance(status_payload, dict) else {}
-        backlog_evidence = {
-            name: summary.get(name) if isinstance(summary, dict) else None
-            for name in ("processing", "failed", "retryable")
-        }
+        try:
+            backlog_evidence = fresh_zero_feedback_backlog()
+        except Exception:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "feedback_resolution_incomplete",
+                    "message": "Fresh local backlog evidence is unavailable or non-zero",
+                    "details": {},
+                },
+                status_code=409,
+            )
         try:
             evidence = ResolutionEvidence.model_validate(
                 {**payload, "backlog_evidence": backlog_evidence}

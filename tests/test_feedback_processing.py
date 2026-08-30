@@ -2446,6 +2446,33 @@ def test_association_and_evidence_patch_update_only_exact_current_round(tmp_path
     assert old_round.note == "old note"
 
 
+def test_association_rejects_historical_expected_batch_without_current_round_mutation(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "association-expected-batch.sqlite3")
+    _seed_resolved_feedback_round(store, "feedback-1")
+    store.reopen_feedback_processing_item("feedback-1", reason="premature")
+    current = store.claim_feedback_processing_items("batch-2", ["feedback-1"])[0]
+
+    with pytest.raises(ValueError, match="exact current processing batch"):
+        store.associate_feedback_processing_turn(
+            "feedback-1",
+            expected_batch_id="batch-1",
+            workbench_task_id="stale-task",
+            workbench_turn_id="stale-turn",
+            attempt_id=999,
+            agent_run_id=1000,
+        )
+
+    assert store.get_feedback_processing_item("feedback-1") == current
+    rounds = store.list_feedback_processing_rounds("feedback-1")
+    assert rounds[0].batch_id == "batch-2"
+    assert rounds[0].workbench_task_id == ""
+    assert rounds[0].workbench_turn_id == ""
+    assert rounds[0].attempt_id == 0
+    assert rounds[0].agent_run_id == 0
+
+
 @pytest.mark.parametrize("operation", ["associate", "patch"])
 def test_stale_or_ambiguous_current_round_cannot_be_mutated(
     tmp_path: Path, operation: str

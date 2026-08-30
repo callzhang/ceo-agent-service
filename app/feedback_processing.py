@@ -181,11 +181,14 @@ class ResolutionEvidence(_StrictProcessingModel):
 def project_feedback_status(source: object, processing: object | None = None) -> str:
     """Return the canonical status shared by API and HTML feedback projections.
 
-    Source-of-truth completion fields win over the processing projection so a
-    reviewed attempt cannot remain visibly pending while its processing row is
-    still catching up.
+    An explicit processing projection is authoritative for reopen rounds.
+    Historical source completion fields are only a fallback when no processing
+    item has been persisted.
     """
 
+    if processing is not None:
+        status = str(getattr(processing, "status", "pending") or "pending").strip().casefold()
+        return status if status in {"pending", "processing", "resolved"} else "pending"
     if any(
         str(getattr(source, field, "") or "").strip()
         for field in ("resolved_at", "reviewer_feedback", "corrected_reply_text")

@@ -8,11 +8,14 @@ and references; no model invocation is involved in the import step.
 import subprocess
 from pathlib import Path
 
+import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import app.web_api.registration as registration_module
 from app.audit_web import create_audit_app
 from app.store import AutoReplyStore
+from app.web_api.registration import register_console_routes
 
 
 class _NonExecutingExecutor:
@@ -53,6 +56,35 @@ def _client(tmp_path: Path) -> TestClient:
         ),
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
+    )
+
+
+def _registered_route_client(
+    tmp_path: Path,
+    *,
+    feedback_backlog_factory,
+    status_payload_factory=lambda: {
+        "service": {"state": "refreshing"},
+        "summary": {"processing": 0, "failed": 0, "retryable": 0},
+    },
+) -> tuple[TestClient, AutoReplyStore]:
+    db_path = tmp_path / "route-worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    app = FastAPI()
+    register_console_routes(
+        app,
+        store_factory=lambda: AutoReplyStore(db_path),
+        status_payload_factory=status_payload_factory,
+        feedback_backlog_factory=feedback_backlog_factory,
+        attention_rows_factory=lambda: [],
+    )
+    return (
+        TestClient(
+            app,
+            client=("127.0.0.1", 50000),
+            headers={"Host": "127.0.0.1:8765"},
+        ),
+        store,
     )
 
 
@@ -139,6 +171,172 @@ def _resolution_receipt(
             "ok": True,
         },
     }
+
+
+def _seed_processing_batch_for_resolution(
+    store: AutoReplyStore,
+    *,
+    batch_id: str,
+    receipt: dict[str, object],
+) -> None:
+    store.upsert_feedback_event(
+        key="feedback-backlog",
+        feedback_token="feedback-backlog-token",
+    )
+    store.claim_feedback_processing_items(batch_id, ["feedback-backlog"])
+    store.associate_feedback_processing_turn(
+        "feedback-backlog",
+        workbench_task_id="task-backlog",
+        workbench_turn_id="turn-backlog",
+        attempt_id=1,
+        agent_run_id=2,
+    )
+    store.patch_feedback_processing_item_evidence(
+        "feedback-backlog",
+        commit_sha=receipt["commit_sha"],
+        test_evidence=receipt["test_evidence"],
+        restart_evidence=receipt["restart_evidence"],
+        health_evidence=receipt["health_evidence"],
+    )
+
+
+def _main_receipt() -> dict[str, object]:
+    commit_sha = subprocess.run(
+        ["git", "rev-parse", "main"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    return _resolution_receipt(
+        commit_sha,
+        test_name="backlog-contract",
+        before_pid=300,
+        after_pid=301,
+    )
+
+
+def test_resolve_ignores_cached_refreshing_zero_and_uses_fresh_backlog(
+    tmp_path: Path,
+):
+    receipt = _main_receipt()
+    with _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: {
+            "processing": 1,
+            "failed": 0,
+            "retryable": 0,
+        },
+    )[0] as client:
+        store = AutoReplyStore(tmp_path / "route-worker.sqlite3")
+        _seed_processing_batch_for_resolution(
+            store,
+            batch_id="batch-fresh-backlog",
+            receipt=receipt,
+        )
+        response = client.post(
+            "/api/console/feedback/batches/batch-fresh-backlog/resolve",
+            json=receipt,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_resolution_incomplete"
+    assert store.get_feedback_processing_batch("batch-fresh-backlog").status == "processing"
+
+
+def test_resolve_fails_closed_when_fresh_backlog_factory_raises(tmp_path: Path):
+    receipt = _main_receipt()
+
+    def unavailable_backlog():
+        raise RuntimeError("fresh backlog unavailable")
+
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=unavailable_backlog,
+    )
+    _seed_processing_batch_for_resolution(
+        store,
+        batch_id="batch-backlog-error",
+        receipt=receipt,
+    )
+    with client:
+        response = client.post(
+            "/api/console/feedback/batches/batch-backlog-error/resolve",
+            json=receipt,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_resolution_incomplete"
+    assert "fresh backlog unavailable" not in response.text
+    assert store.get_feedback_processing_batch("batch-backlog-error").status == "processing"
+
+
+def test_resolve_does_not_call_cached_status_factory(tmp_path: Path):
+    receipt = _main_receipt()
+
+    def cached_status_failure():
+        raise RuntimeError("cached status must not be used for resolution")
+
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: {
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0,
+        },
+        status_payload_factory=cached_status_failure,
+    )
+    _seed_processing_batch_for_resolution(
+        store,
+        batch_id="batch-no-cache",
+        receipt=receipt,
+    )
+    with client:
+        response = client.post(
+            "/api/console/feedback/batches/batch-no-cache/resolve",
+            json=receipt,
+        )
+
+    assert response.status_code == 200
+    assert store.get_feedback_processing_batch("batch-no-cache").status == "resolved"
+
+
+@pytest.mark.parametrize(
+    "backlog",
+    [
+        {},
+        {"processing": 0, "failed": 0},
+        {"state": "refreshing", "summary": {"processing": 0, "failed": 0, "retryable": 0}},
+        {"state": "unavailable"},
+        {"processing": False, "failed": 0, "retryable": 0},
+        {"processing": "0", "failed": 0, "retryable": 0},
+        {"processing": 0, "failed": 1, "retryable": 0},
+        {"processing": 0, "failed": 0, "retryable": 1},
+    ],
+)
+def test_resolve_requires_strict_fresh_zero_backlog(
+    tmp_path: Path,
+    backlog: dict[str, object],
+):
+    receipt = _main_receipt()
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: backlog,
+    )
+    _seed_processing_batch_for_resolution(
+        store,
+        batch_id="batch-strict-backlog",
+        receipt=receipt,
+    )
+    with client:
+        response = client.post(
+            "/api/console/feedback/batches/batch-strict-backlog/resolve",
+            json=receipt,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "feedback_resolution_incomplete"
+    assert store.get_feedback_processing_batch("batch-strict-backlog").status == "processing"
 
 
 def test_attempt_8308_feedback_processing_requires_complete_receipts(
@@ -362,6 +560,12 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
             "backlog_evidence"
         ] == {"processing": 0, "failed": 0, "retryable": 0}
 
+        assert store.record_reply_feedback(
+            attempt_id,
+            feedback="Historical reviewer feedback must remain readable.",
+            corrected_reply_text="Historical corrected reply must remain readable.",
+        )
+
         reopen_reason = "  The earlier resolution preceded the completed repair.  "
         reopened = client.post(
             "/api/console/feedback/items/feedback-8308/reopen",
@@ -373,6 +577,19 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         assert reopened_item["current_processing"] is None
         assert reopened_item["processing_history"][0]["reopen_reason"] == reopen_reason
         assert reopened_item["processing_history"][0]["id"] == round_one_id
+        historical_attempt = store.get_reply_attempt(attempt_id)
+        assert historical_attempt is not None
+        assert historical_attempt.reviewer_feedback == (
+            "Historical reviewer feedback must remain readable."
+        )
+        assert historical_attempt.corrected_reply_text == (
+            "Historical corrected reply must remain readable."
+        )
+
+        reopened_detail = client.get("/api/console/feedback/feedback-8308")
+        assert reopened_detail.status_code == 200
+        assert reopened_detail.json()["item"]["status"] == "pending"
+        assert reopened_detail.json()["item"]["current_processing"] is None
 
         pending_again = client.post(
             "/api/console/feedback/items/feedback-8308/reopen",
@@ -398,6 +615,7 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
             if item["feedback_key"] == "feedback-8308"
         ]
         assert len(pending_rows) == 1
+        assert pending_rows[0]["status"] == "pending"
         assert pending_rows[0]["batch_id"] == ""
 
         claimed_again = client.post(
@@ -417,6 +635,21 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         assert round_two["test_evidence"] == {}
         assert round_two["restart_evidence"] == {}
         assert round_two["health_evidence"] == {}
+
+        historical_batch_patch = client.patch(
+            f"/api/console/feedback/batches/{batch_id}",
+            json={
+                "workbench_task_id": "stale-task",
+                "workbench_turn_id": "stale-turn",
+            },
+        )
+        assert historical_batch_patch.status_code == 409
+        assert historical_batch_patch.json()["code"] == "feedback_batch_conflict"
+        round_two_after_stale_patch = client.get(
+            f"/api/console/feedback/batches/{batch_two_id}"
+        ).json()["item"]["items"][0]
+        assert round_two_after_stale_patch["workbench_task_id"] == ""
+        assert round_two_after_stale_patch["workbench_turn_id"] == ""
 
         patched_again = client.patch(
             "/api/console/feedback/items/feedback-8308",

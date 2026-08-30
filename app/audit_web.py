@@ -171,7 +171,6 @@ from app.store import (
     SentTodoRecord,
     ReplyTask,
     SentReply,
-    UserFeedbackItem,
 )
 from app.setup_wizard import (
     build_wizard_status,
@@ -9685,6 +9684,18 @@ def create_audit_app(
             include_system_health=False,
         )
 
+    def read_fresh_feedback_backlog() -> dict[str, object]:
+        """Synchronously read authoritative queue counts for resolution."""
+
+        payload = build_worker_status_payload(
+            audit_store,
+            include_system_health=False,
+        )
+        summary = payload.get("summary")
+        if not isinstance(summary, dict):
+            raise RuntimeError("fresh worker backlog summary is unavailable")
+        return summary
+
     def render_system_health_payload() -> dict[str, object]:
         service = _launchd_service_status("com.ceo-agent-service.main")
         return _system_health_snapshot(audit_store, service)
@@ -9822,6 +9833,7 @@ def create_audit_app(
         app,
         store_factory=lambda: AutoReplyStore(db_path),
         status_payload_factory=render_settings_status_payload,
+        feedback_backlog_factory=read_fresh_feedback_backlog,
         attention_rows_factory=lambda: _queue_attention_rows(audit_store),
         task_row_builder=_task_row_payload,
         history_chart_factory=lambda: _history_chart_payload(_audit_store(db_path)),

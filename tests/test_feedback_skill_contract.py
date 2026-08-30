@@ -3,6 +3,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = ROOT / "skills" / "ceo-feedback-processing" / "SKILL.md"
+PRESSURE_EVIDENCE_PATH = (
+    ROOT
+    / "skills"
+    / "ceo-feedback-processing"
+    / "pressure-test-evidence.md"
+)
 
 
 def _skill_text() -> str:
@@ -122,3 +128,30 @@ def test_feedback_processing_skill_requires_fresh_current_round_after_reopen():
 
     assert "direct sqlite" in text
     assert "before marking the item resolved" in text
+
+
+def test_feedback_processing_skill_links_persisted_pressure_test_evidence():
+    skill_text = _skill_text()
+    assert "[Pressure-test evidence](pressure-test-evidence.md)" in skill_text
+    assert PRESSURE_EVIDENCE_PATH.is_file()
+
+    evidence = PRESSURE_EVIDENCE_PATH.read_text(encoding="utf-8")
+    for required in (
+        "# Feedback Reopen Pressure-Test Evidence",
+        "## RED baseline",
+        "## Observed failures and rationalizations",
+        "could not name the reopen endpoint",
+        '“created or selected”',
+        '“may avoid another code change”',
+        "omitted explicit `retryable=0`",
+        "## GREEN observable behaviors",
+        "reopen creates no round",
+        "claim creates the new batch and round",
+        "old evidence and associations remain historical",
+        "zero `processing`, `failed`, and `retryable`",
+        "API persist and readback before resolution",
+    ):
+        assert required in evidence
+
+    assert evidence.endswith("\n")
+    assert "copy this prompt" not in evidence.casefold()

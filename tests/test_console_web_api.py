@@ -181,7 +181,9 @@ def test_feedback_item_invalid_status_does_not_mutate_association(tmp_path: Path
     assert item.workbench_turn_id == ""
 
 
-def test_feedback_history_with_corrected_reply_is_resolved_and_not_claimable(tmp_path: Path):
+def test_pending_feedback_projection_with_corrected_reply_remains_claimable(
+    tmp_path: Path,
+):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
     store.record_sent_reply("cid-1", "msg-1", "先按A方案走", feedback_token="token-1")
@@ -189,14 +191,18 @@ def test_feedback_history_with_corrected_reply_is_resolved_and_not_claimable(tmp
     store.record_reply_feedback(attempt_id, feedback="已修正", corrected_reply_text="修正版")
 
     with _client(tmp_path) as client:
-        listed = client.get("/api/console/feedback?status=resolved")
-        conflict = client.post("/api/console/feedback/batches", json={"feedback_keys": ["feedback-1"]})
+        listed = client.get("/api/console/feedback?status=pending")
+        rendered = audit_web_module.render_user_feedback_list(store)
+        claimed = client.post(
+            "/api/console/feedback/batches",
+            json={"feedback_keys": ["feedback-1"]},
+        )
 
     assert listed.status_code == 200
-    assert listed.json()["items"][0]["status"] == "resolved"
-    assert 'status-resolved">resolved</span>' in audit_web_module.render_user_feedback_list(store)
-    assert conflict.status_code == 409
-    assert conflict.json()["code"] == "feedback_already_processing"
+    assert listed.json()["items"][0]["status"] == "pending"
+    assert 'status-pending">pending</span>' in rendered
+    assert claimed.status_code == 200
+    assert claimed.json()["item"]["status"] == "processing"
 
 
 def test_feedback_claim_returns_associated_item_receipts(tmp_path: Path):

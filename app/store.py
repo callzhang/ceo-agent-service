@@ -14356,6 +14356,7 @@ class AutoReplyStore:
         self,
         feedback_key: str,
         *,
+        expected_batch_id: str | None = None,
         workbench_task_id: str = "",
         workbench_turn_id: str = "",
         attempt_id: int = 0,
@@ -14376,6 +14377,12 @@ class AutoReplyStore:
                 require_positive=True,
             )
             batch_id = str(current["batch_id"] or "")
+            if expected_batch_id is not None and (
+                not expected_batch_id.strip() or expected_batch_id.strip() != batch_id
+            ):
+                raise ValueError(
+                    "feedback association requires the exact current processing batch"
+                )
             current_round = db.execute(
                 """
                 select * from feedback_processing_rounds
