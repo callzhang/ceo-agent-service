@@ -200,7 +200,10 @@ def register_email_routes(
                 try:
                     client.logout()
                 except Exception:
-                    pass
+                    try:
+                        client.shutdown()
+                    except Exception:
+                        pass
 
     def test_smtp(account: dict[str, Any], secret: str | None) -> dict[str, Any]:
         if not secret:
@@ -217,7 +220,10 @@ def register_email_routes(
                 try:
                     client.quit()
                 except Exception:
-                    pass
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
 
     @app.exception_handler(_EmailStoreUnavailable)
     async def email_store_unavailable(

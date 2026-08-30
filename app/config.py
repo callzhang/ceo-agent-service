@@ -95,7 +95,7 @@ def _write_env_values_locked(updates: dict[str, str], env_path: Path) -> Path:
     replaced = False
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as temporary:
-            os.fchmod(temporary.fileno(), mode)
+            _apply_temp_file_mode(temporary.fileno(), temporary_name, mode)
             temporary.write("\n".join(lines).rstrip() + "\n")
             temporary.flush()
             os.fsync(temporary.fileno())
@@ -110,6 +110,14 @@ def _write_env_values_locked(updates: dict[str, str], env_path: Path) -> Path:
     for key, value in updates.items():
         os.environ[key] = value
     return env_path
+
+
+def _apply_temp_file_mode(descriptor: int, temporary_name: str, mode: int) -> None:
+    fchmod = getattr(os, "fchmod", None)
+    if callable(fchmod):
+        fchmod(descriptor, mode)
+    else:
+        os.chmod(temporary_name, mode)
 
 
 @contextmanager

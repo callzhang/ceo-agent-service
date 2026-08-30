@@ -123,6 +123,21 @@ def test_env_writer_replace_failure_preserves_existing_file_and_process_env(
     assert list(tmp_path.glob(".env.*")) == []
 
 
+def test_env_writer_uses_path_chmod_when_fchmod_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    env_file = tmp_path / ".env"
+    env_file.write_text("KEEP=unchanged\n", encoding="utf-8")
+    env_file.chmod(0o640)
+    monkeypatch.setattr(app_config.os, "fchmod", None)
+
+    app_config.write_env_values({"NEW": "value"}, env_file)
+
+    assert app_config.read_env_file(env_file)["NEW"] == "value"
+    assert env_file.stat().st_mode & 0o777 == 0o640
+
+
 def test_env_writer_serializes_full_read_merge_replace_across_threads(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -760,3 +775,59 @@ def test_connectivity_failure_returns_sanitized_per_protocol_diagnostics(
     }
     assert IMAP_SECRET not in response.text
     assert SMTP_SECRET not in response.text
+
+
+def test_connectivity_cleanup_falls_back_to_local_close_without_changing_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    events: list[str] = []
+
+    class CleanupImap:
+        def __init__(self, _host: str, _port: int):
+            pass
+
+        def login(self, _username: str, _secret: str):
+            return "OK", []
+
+        def select(self, _folder: str, readonly: bool = False):
+            assert readonly is True
+            return "OK", []
+
+        def logout(self):
+            events.append("imap.logout")
+            raise OSError("cleanup only")
+
+        def shutdown(self):
+            events.append("imap.shutdown")
+
+    class CleanupSmtp:
+        def __init__(self, _host: str, _port: int):
+            pass
+
+        def login(self, _username: str, _secret: str):
+            return 235, b"ok"
+
+        def quit(self):
+            events.append("smtp.quit")
+            raise OSError("cleanup only")
+
+        def close(self):
+            events.append("smtp.close")
+
+    monkeypatch.setenv("CEO_EMAIL_WORK_MAIL_IMAP_SECRET", IMAP_SECRET)
+    monkeypatch.setenv("CEO_EMAIL_WORK_MAIL_SMTP_SECRET", SMTP_SECRET)
+    client, _, _ = _client(
+        tmp_path,
+        imap_client_factory=CleanupImap,
+        smtp_client_factory=CleanupSmtp,
+    )
+    assert client.post(
+        "/api/console/email/accounts", json=_account_payload()
+    ).status_code == 201
+
+    response = client.post("/api/console/email/accounts/work_mail/test")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert events == ["imap.logout", "imap.shutdown", "smtp.quit", "smtp.close"]
