@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 from pathlib import PurePosixPath, PureWindowsPath
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from app.agent_context import (
     AgentContextMessage,
@@ -19,8 +20,18 @@ from app.email_classifier_contracts import (
     EmailActionPlan,
     EmailAttachmentMetadata,
 )
-from app.leak_check import assert_no_credentials, contains_local_runtime_leak
-from app.store import AutoReplyStore, ReplyTask
+from app.email_store import EmailStore
+from app.leak_check import (
+    assert_no_credentials,
+    contains_local_runtime_leak,
+    is_sensitive_field_name,
+)
+from app.store import (
+    AutoReplyStore,
+    ReplyTask,
+    ReplyTaskIdentityConflict,
+    ReplyTaskSpec,
+)
 
 
 _PAYLOAD_SCHEMA = "email_agent_action.v1"
@@ -34,13 +45,105 @@ class EmailAgentTaskMetadataError(ValueError):
     """Action metadata is unsafe for the durable task and Agent context."""
 
 
+def _decode_metadata_token(value: str) -> str:
+    decoded = value
+    for _ in range(2):
+        expanded = unquote(decoded)
+        if expanded == decoded:
+            break
+        decoded = expanded
+    return decoded
+
+
+def _contains_home_relative_path(candidate: str) -> bool:
+    normalized = candidate.replace("\\", "/")
+    if not normalized.startswith("~") or "/" not in normalized:
+        return False
+    home_prefix = normalized.split("/", 1)[0]
+    return home_prefix == "~" or len(home_prefix) > 1
+
+
+def _contains_local_path_token(candidate: str) -> bool:
+    decoded = _decode_metadata_token(candidate)
+    return (
+        _contains_home_relative_path(decoded)
+        or PurePosixPath(decoded).is_absolute()
+        or PureWindowsPath(decoded).is_absolute()
+    )
+
+
 def _contains_absolute_local_path(text: str) -> bool:
     for token in text.split():
         candidate = token.strip("'\"()[]{}<>,.;")
-        if PurePosixPath(candidate).is_absolute() or PureWindowsPath(
-            candidate
-        ).is_absolute():
+        if _contains_local_path_token(candidate):
             return True
+    return False
+
+
+def _url_component_is_sensitive(name: str) -> bool:
+    normalized = "".join(
+        character for character in name.casefold() if character.isalnum()
+    )
+    return (
+        is_sensitive_field_name(name)
+        or normalized in {"auth", "key", "sig"}
+        or "signed" in normalized
+        or normalized.startswith("xamz") and "signature" in normalized
+    )
+
+
+def _is_unsubscribe_target(value: str) -> bool:
+    normalized = value.casefold().replace("\\", "/")
+    for delimiter in ".?&=#_":
+        normalized = normalized.replace(delimiter, "/")
+    segments = {
+        "".join(character for character in segment if character.isalnum())
+        for segment in normalized.split("/")
+        if segment
+    }
+    return bool(segments & {"unsubscribe", "optout"})
+
+
+def _contains_forbidden_url(text: str) -> bool:
+    for token in text.split():
+        candidate = _decode_metadata_token(
+            token.strip("'\"()[]{}<>,.;")
+        )
+        parsed = urlsplit(candidate)
+        scheme = parsed.scheme.casefold()
+        if scheme == "file":
+            return True
+        if scheme == "http":
+            return True
+        if scheme != "https":
+            continue
+        if (
+            not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            return True
+        if _is_unsubscribe_target(
+            _decode_metadata_token(f"{parsed.hostname or ''}/{parsed.path}")
+        ):
+            return True
+        components = list(parse_qsl(parsed.query, keep_blank_values=True))
+        fragment = _decode_metadata_token(parsed.fragment)
+        components.extend(parse_qsl(fragment, keep_blank_values=True))
+        if fragment and "=" not in fragment:
+            components.append((fragment, ""))
+        for name, component_value in components:
+            decoded_name = _decode_metadata_token(name)
+            decoded_value = _decode_metadata_token(component_value)
+            if (
+                _url_component_is_sensitive(decoded_name)
+                or _url_component_is_sensitive(decoded_value)
+                or _is_unsubscribe_target(decoded_name)
+                or _is_unsubscribe_target(decoded_value)
+                or _contains_local_path_token(decoded_value)
+                or urlsplit(decoded_value).scheme.casefold() == "file"
+            ):
+                return True
     return False
 
 
@@ -56,12 +159,10 @@ def _contains_forbidden_metadata(value: object) -> bool:
         )
     if not isinstance(value, str):
         return False
-    lowered = value.casefold()
     return (
         contains_local_runtime_leak(value)
         or _contains_absolute_local_path(value)
-        or "http://" in lowered
-        or "https://" in lowered
+        or _contains_forbidden_url(value)
     )
 
 
@@ -112,6 +213,7 @@ class EmailAgentTaskInput:
             raise ValueError("stable_message_identity must be non-empty")
         if not self.thread_identity.strip():
             raise ValueError("thread_identity must be non-empty")
+        object.__setattr__(self, "thread_identity", self.thread_identity.strip())
         if self.trigger.message_id != self.stable_message_identity:
             raise ValueError("trigger message must match stable_message_identity")
         if any(not isinstance(item, EmailThreadMessage) for item in self.thread_messages):
@@ -185,18 +287,34 @@ def email_action_identity(
 class EmailAgentTaskAdapter:
     """Create Email tasks while leaving execution and Audit to the existing runtime."""
 
-    def __init__(self, store: AutoReplyStore):
+    def __init__(self, store: AutoReplyStore, email_store: EmailStore):
         self.store = store
+        self.email_store = email_store
 
     def ensure_action_plan_tasks(
         self,
         action_plan: EmailActionPlan,
         task_input: EmailAgentTaskInput,
     ) -> tuple[EmailAgentTaskRoute, ...]:
-        if not task_input.stable_message_identity.startswith(
-            f"{action_plan.account_id}:"
+        if not action_plan.agent_actions:
+            return ()
+        authorization = self.email_store.get_agent_task_authorization(
+            action_plan.classification_id
+        )
+        if authorization is None or any(
+            (
+                authorization["account_id"] != action_plan.account_id,
+                authorization["stable_message_identity"]
+                != task_input.stable_message_identity,
+                str(authorization["thread_identity"]).strip()
+                != task_input.thread_identity,
+                authorization["current_action_plan_id"]
+                != action_plan.action_plan_id,
+            )
         ):
-            raise ValueError("email task input must be scoped to ActionPlan account")
+            raise EmailAgentTaskConflict(
+                "email ActionPlan is not the current persisted message authorization"
+            )
         _assert_safe_email_metadata(
             [
                 {
@@ -213,7 +331,7 @@ class EmailAgentTaskAdapter:
             action_plan.account_id,
             task_input.thread_identity,
         )
-        routes: list[EmailAgentTaskRoute] = []
+        prepared: list[tuple[EmailAction, dict[str, object], ReplyTaskSpec]] = []
         for action_type in action_plan.agent_actions:
             payload = self._safe_action_metadata(
                 action_plan=action_plan,
@@ -226,23 +344,36 @@ class EmailAgentTaskAdapter:
                 sort_keys=True,
                 separators=(",", ":"),
             )
-            task = self.store.ensure_reply_task(
-                channel="email",
-                conversation_id=conversation_id,
-                conversation_title=f"Email {action_type.value}",
-                single_chat=False,
-                trigger_message_id=str(payload["action_identity"]),
-                trigger_create_time=task_input.trigger.create_time,
-                trigger_sender=task_input.trigger.sender,
-                trigger_text=(
-                    f"Immutable ActionPlan authorizes {action_type.value}."
-                ),
-                trigger_message_json=payload_json,
-            )
-            if task.trigger_message_json != payload_json:
-                raise EmailAgentTaskConflict(
-                    "email action identity is bound to different metadata"
+            prepared.append(
+                (
+                    action_type,
+                    payload,
+                    ReplyTaskSpec(
+                        channel="email",
+                        conversation_id=conversation_id,
+                        conversation_title=f"Email {action_type.value}",
+                        single_chat=False,
+                        trigger_message_id=str(payload["action_identity"]),
+                        trigger_create_time=task_input.trigger.create_time,
+                        trigger_sender=task_input.trigger.sender,
+                        trigger_text=(
+                            f"Immutable ActionPlan authorizes {action_type.value}."
+                        ),
+                        trigger_message_json=payload_json,
+                    ),
                 )
+            )
+        try:
+            tasks = self.store.ensure_reply_tasks(
+                tuple(spec for _, _, spec in prepared)
+            )
+        except ReplyTaskIdentityConflict as exc:
+            raise EmailAgentTaskConflict(
+                "email action identity is bound to different metadata"
+            ) from exc
+
+        routes: list[EmailAgentTaskRoute] = []
+        for (action_type, payload, _), task in zip(prepared, tasks, strict=True):
             routes.append(
                 EmailAgentTaskRoute(
                     action_type=action_type,

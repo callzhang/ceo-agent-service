@@ -5,7 +5,7 @@ import json
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -487,6 +487,32 @@ class ReplyTask(BaseModel):
     error: str = ""
     created_at: str
     updated_at: str
+
+
+class ReplyTaskSpec(BaseModel):
+    """Immutable input for one idempotent reply-task insertion."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    channel: str = "dingtalk"
+    conversation_id: str
+    conversation_title: str
+    single_chat: bool
+    trigger_message_id: str
+    trigger_create_time: str
+    trigger_sender: str
+    trigger_text: str
+    trigger_message_json: str = "{}"
+    available_at: str = ""
+    force_new_decision: bool = False
+    oa_url: str = ""
+    manual_rerun_attempt_id: int = 0
+    execution_generation: str = "initial"
+    error: str = ""
+
+
+class ReplyTaskIdentityConflict(RuntimeError):
+    """A queue identity already exists with different immutable input."""
 
 
 class AgentRole(StrEnum):
@@ -4088,6 +4114,85 @@ class AutoReplyStore:
             if row is None:
                 raise RuntimeError("reply task was not persisted")
             return self._reply_task_from_row(row)
+
+    def ensure_reply_tasks(
+        self,
+        task_specs: Sequence[ReplyTaskSpec | Mapping[str, object]],
+    ) -> tuple[ReplyTask, ...]:
+        """Atomically ensure a strict group of immutable queue identities."""
+
+        specs = tuple(ReplyTaskSpec.model_validate(spec) for spec in task_specs)
+        for spec in specs:
+            if not spec.execution_generation.strip():
+                raise ValueError("execution_generation must be non-empty")
+        if not specs:
+            return ()
+
+        tasks: list[ReplyTask] = []
+        with self._immediate_write_transaction() as db:
+            for spec in specs:
+                db.execute(
+                    """
+                    insert or ignore into reply_tasks (
+                        channel,
+                        conversation_id,
+                        conversation_title,
+                        single_chat,
+                        trigger_message_id,
+                        trigger_create_time,
+                        trigger_sender,
+                        trigger_text,
+                        trigger_message_json,
+                        available_at,
+                        force_new_decision,
+                        oa_url,
+                        manual_rerun_attempt_id,
+                        execution_generation,
+                        error
+                    )
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        spec.channel,
+                        spec.conversation_id,
+                        spec.conversation_title,
+                        int(spec.single_chat),
+                        spec.trigger_message_id,
+                        spec.trigger_create_time,
+                        spec.trigger_sender,
+                        spec.trigger_text,
+                        spec.trigger_message_json,
+                        spec.available_at,
+                        int(spec.force_new_decision),
+                        spec.oa_url,
+                        spec.manual_rerun_attempt_id,
+                        spec.execution_generation,
+                        spec.error,
+                    ),
+                )
+                row = db.execute(
+                    """
+                    select * from reply_tasks
+                    where channel=? and conversation_id=? and trigger_message_id=?
+                    """,
+                    (
+                        spec.channel,
+                        spec.conversation_id,
+                        spec.trigger_message_id,
+                    ),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("reply task was not persisted")
+                task = self._reply_task_from_row(row)
+                if any(
+                    getattr(task, field_name) != expected
+                    for field_name, expected in spec.model_dump().items()
+                ):
+                    raise ReplyTaskIdentityConflict(
+                        "reply task identity is bound to different immutable input"
+                    )
+                tasks.append(task)
+        return tuple(tasks)
 
     def enqueue_manual_rerun_reply_task(
         self,

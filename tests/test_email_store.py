@@ -763,6 +763,33 @@ def test_email_store_gets_one_classification_directly_by_primary_key(tmp_path: P
     assert store.get_classification(999) is None
 
 
+def test_agent_task_authorization_requires_matching_persisted_message(tmp_path: Path):
+    database = tmp_path / "worker.sqlite3"
+    store = EmailStore(database)
+    classification = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        thread_id="thread-customer-41",
+    )
+    persisted = store.upsert_classification(classification)
+
+    authorization = store.get_agent_task_authorization(persisted["id"])
+
+    assert authorization == {
+        "classification_id": persisted["id"],
+        "account_id": "dingtalk-account",
+        "stable_message_identity": classification.stable_message_identity,
+        "thread_identity": "thread-customer-41",
+        "current_action_plan_id": classification.action_plan.action_plan_id,
+    }
+
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_messages set stable_message_identity='wrong-message'"
+        )
+
+    assert store.get_agent_task_authorization(persisted["id"]) is None
+
+
 def test_email_store_rejects_unredacted_model_text(tmp_path: Path):
     store = EmailStore(tmp_path / "email.sqlite3")
 
