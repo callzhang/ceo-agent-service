@@ -1,6 +1,11 @@
 import pytest
 
-from app.external_retry import ExternalAttempt, ExternalDependencyError, run_external
+from app.external_retry import (
+    ExternalAttempt,
+    ExternalDependencyError,
+    retry_delay_seconds,
+    run_external,
+)
 
 
 def test_run_external_retries_then_returns_value():
@@ -62,3 +67,10 @@ def test_run_external_rejects_invalid_attempt_count():
 def test_run_external_rejects_invalid_backoff_multiplier():
     with pytest.raises(ValueError, match="backoff_multiplier"):
         run_external("dws", lambda: None, backoff_multiplier=0)
+
+
+def test_retry_delay_seconds_uses_exponential_backoff_with_ceiling():
+    assert retry_delay_seconds(0.25, 0, max_delay_seconds=0.75) == 0.25
+    assert retry_delay_seconds(0.25, 1, max_delay_seconds=0.75) == 0.5
+    assert retry_delay_seconds(0.25, 2, max_delay_seconds=0.75) == 0.75
+    assert retry_delay_seconds(0.25, 3, max_delay_seconds=0.75) == 0.75
