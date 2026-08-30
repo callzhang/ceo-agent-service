@@ -14,6 +14,7 @@ import json
 import re
 import sqlite3
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from app.email_classifier_contracts import (
@@ -36,6 +37,9 @@ _CLASSIFICATION_SOURCES = frozenset({"model", "user"})
 _CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
 _TERMINAL_ATTEMPT_STATUSES = frozenset({"done", "failed"})
 _DIRECT_ACTION_VALUES = frozenset(action.value for action in DIRECT_ACTIONS)
+_DIRECT_ACTION_PRIORITY = {
+    action.value: priority for priority, action in enumerate(DIRECT_ACTIONS)
+}
 _UNREDACTED_EMAIL = re.compile(
     r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])"
 )
@@ -409,6 +413,42 @@ class EmailActionAttemptConflict(RuntimeError):
     """A direct-action attempt conflicts with append-only history."""
 
 
+@dataclass(frozen=True)
+class StoredEmailLocator:
+    """Provider coordinates plus the durable message identity used for receipts."""
+
+    account_id: str
+    folder: str
+    uidvalidity: int
+    uid: int
+    rfc_message_id: str | None
+    thread_id: str | None
+    stable_message_identity: str
+
+
+@dataclass(frozen=True)
+class StoredEmailAction:
+    """One claimed deterministic action built from immutable persisted state."""
+
+    action_id: str
+    action_plan_id: str
+    classification_id: int
+    account_id: str
+    action_type: EmailAction
+    parameters: Mapping[str, object]
+    config_version: str
+    locator: StoredEmailLocator
+    attempt_number: int
+    claim_started_at: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "parameters",
+            _freeze_action_parameters(self.parameters),
+        )
+
+
 class EmailAccountConflict(RuntimeError):
     """An account ID or unshared email address conflicts with stored config."""
 
@@ -438,6 +478,39 @@ def _json_dump(value: object) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _freeze_action_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_action_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_action_value(item) for item in value)
+    return value
+
+
+def _freeze_action_parameters(
+    parameters: Mapping[str, object],
+) -> Mapping[str, object]:
+    return MappingProxyType(
+        {
+            str(key): _freeze_action_value(value)
+            for key, value in parameters.items()
+        }
+    )
+
+
+def _required_utc_timestamp(value: str, *, field: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{field} must be a non-empty timestamp")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field} must include a timezone")
+    return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
 def _json_load(raw: str, *, field: str, expected_type: type[Any]) -> Any:
@@ -3440,6 +3513,308 @@ class EmailStore:
             ).fetchone()
         assert row is not None
         return dict(row)
+
+    def claim_next_direct_action(
+        self,
+        *,
+        claimed_at: str,
+    ) -> StoredEmailAction | None:
+        """Claim one retryable action from the current immutable ActionPlan."""
+
+        claimed_at = _required_utc_timestamp(claimed_at, field="claimed_at")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                       c.thread_id, c.stable_message_identity
+                from email_actions as a
+                join email_classifications as c on c.id=a.classification_id
+                where a.status in ('pending', 'failed')
+                  and c.status='processed'
+                  and c.current_action_plan_id=a.action_plan_id
+                """
+            ).fetchall()
+            if not rows:
+                return None
+            row = min(
+                rows,
+                key=lambda candidate: (
+                    candidate["updated_at"],
+                    candidate["classification_id"],
+                    _DIRECT_ACTION_PRIORITY[candidate["action_type"]],
+                    candidate["action_id"],
+                ),
+            )
+            attempt_number = int(row["attempt_count"]) + 1
+            updated = db.execute(
+                """
+                update email_actions
+                set status='processing', started_at=?, finished_at='',
+                    provider_operation='', provider_target='',
+                    provider_result_id='', error='', updated_at=?
+                where action_id=? and status=? and attempt_count=?
+                """,
+                (
+                    claimed_at,
+                    claimed_at,
+                    row["action_id"],
+                    row["status"],
+                    row["attempt_count"],
+                ),
+            ).rowcount
+            if updated != 1:
+                raise EmailActionAttemptConflict(
+                    f"direct action claim changed for {row['action_id']}"
+                )
+            return self._claimed_direct_action(
+                row,
+                attempt_number=attempt_number,
+                claimed_at=claimed_at,
+            )
+
+    @staticmethod
+    def _claimed_direct_action(
+        row: sqlite3.Row,
+        *,
+        attempt_number: int,
+        claimed_at: str,
+    ) -> StoredEmailAction:
+        try:
+            action_type = EmailAction(row["action_type"])
+        except ValueError as exc:
+            raise EmailPersistenceCorruption(
+                f"invalid direct action type for {row['action_id']}"
+            ) from exc
+        if action_type.value not in _DIRECT_ACTION_VALUES:
+            raise EmailPersistenceCorruption(
+                f"non-direct action claimed for {row['action_id']}"
+            )
+        parameters = _json_load(
+            row["parameters_json"],
+            field="parameters_json",
+            expected_type=dict,
+        )
+        return StoredEmailAction(
+            action_id=row["action_id"],
+            action_plan_id=row["action_plan_id"],
+            classification_id=row["classification_id"],
+            account_id=row["account_id"],
+            action_type=action_type,
+            parameters=parameters,
+            config_version=row["config_version"],
+            locator=StoredEmailLocator(
+                account_id=row["account_id"],
+                folder=row["folder"],
+                uidvalidity=row["uidvalidity"],
+                uid=row["uid"],
+                rfc_message_id=row["rfc_message_id"] or None,
+                thread_id=row["thread_id"] or None,
+                stable_message_identity=row["stable_message_identity"],
+            ),
+            attempt_number=attempt_number,
+            claim_started_at=claimed_at,
+        )
+
+    def complete_direct_action_attempt(
+        self,
+        action: StoredEmailAction,
+        *,
+        status: str,
+        provider_operation: str,
+        provider_target: str,
+        provider_result_id: str,
+        error: str,
+        finished_at: str,
+    ) -> dict[str, Any]:
+        """Append a terminal attempt and update its current projection atomically."""
+
+        if status not in _TERMINAL_ATTEMPT_STATUSES:
+            raise ValueError("attempt status must be done or failed")
+        if not provider_operation:
+            raise ValueError("provider_operation must be non-empty")
+        if provider_target != action.locator.stable_message_identity:
+            raise ValueError("provider_target must match the stable message identity")
+        if status == "done" and (not provider_result_id or error):
+            raise ValueError("done attempts require readback receipt and no error")
+        if status == "failed" and not error:
+            raise ValueError("failed attempts require an error")
+        finished_at = _required_utc_timestamp(finished_at, field="finished_at")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                """
+                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                       c.thread_id, c.stable_message_identity
+                from email_actions as a
+                join email_classifications as c on c.id=a.classification_id
+                where a.action_id=?
+                """,
+                (action.action_id,),
+            ).fetchone()
+            if row is None:
+                raise EmailActionAttemptConflict(
+                    f"unknown direct email action {action.action_id}"
+                )
+            expected = self._claimed_direct_action(
+                row,
+                attempt_number=action.attempt_number,
+                claimed_at=action.claim_started_at,
+            )
+            immutable_fields = (
+                "action_id",
+                "action_plan_id",
+                "classification_id",
+                "account_id",
+                "action_type",
+                "parameters",
+                "config_version",
+                "attempt_number",
+            )
+            if any(
+                getattr(expected, field) != getattr(action, field)
+                for field in immutable_fields
+            ) or (
+                expected.locator.stable_message_identity
+                != action.locator.stable_message_identity
+            ):
+                raise EmailActionAttemptConflict(
+                    f"immutable direct action changed for {action.action_id}"
+                )
+            if (
+                row["status"] != "processing"
+                or row["started_at"] != action.claim_started_at
+                or int(row["attempt_count"]) != action.attempt_number - 1
+            ):
+                raise EmailActionAttemptConflict(
+                    f"direct action claim changed for {action.action_id}"
+                )
+            cursor = db.execute(
+                """
+                insert into email_action_attempts (
+                    action_id, attempt_number, status, provider_operation,
+                    provider_target, provider_result_id, error, started_at,
+                    finished_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    action.action_id,
+                    action.attempt_number,
+                    status,
+                    provider_operation,
+                    provider_target,
+                    provider_result_id,
+                    error,
+                    action.claim_started_at,
+                    finished_at,
+                ),
+            )
+            updated = db.execute(
+                """
+                update email_actions
+                set status=?, attempt_count=?, finished_at=?,
+                    provider_operation=?, provider_target=?, provider_result_id=?,
+                    error=?, updated_at=?
+                where action_id=? and status='processing' and started_at=?
+                  and attempt_count=?
+                """,
+                (
+                    status,
+                    action.attempt_number,
+                    finished_at,
+                    provider_operation,
+                    provider_target,
+                    provider_result_id,
+                    error,
+                    finished_at,
+                    action.action_id,
+                    action.claim_started_at,
+                    action.attempt_number - 1,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise EmailActionAttemptConflict(
+                    f"direct action claim changed for {action.action_id}"
+                )
+            attempt = db.execute(
+                "select * from email_action_attempts where id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+        assert attempt is not None
+        return dict(attempt)
+
+    def recover_stale_processing_actions(
+        self,
+        *,
+        stale_before: str,
+        recovered_at: str,
+    ) -> int:
+        """Record interrupted claims as failed so current actions can be retried."""
+
+        stale_before = _required_utc_timestamp(
+            stale_before,
+            field="stale_before",
+        )
+        recovered_at = _required_utc_timestamp(
+            recovered_at,
+            field="recovered_at",
+        )
+        with self._connect() as db:
+            db.execute("begin immediate")
+            rows = db.execute(
+                """
+                select a.*, c.stable_message_identity
+                from email_actions as a
+                join email_classifications as c on c.id=a.classification_id
+                where a.status='processing' and a.started_at < ?
+                order by a.action_id
+                """,
+                (stale_before,),
+            ).fetchall()
+            for row in rows:
+                attempt_number = int(row["attempt_count"]) + 1
+                db.execute(
+                    """
+                    insert into email_action_attempts (
+                        action_id, attempt_number, status, provider_operation,
+                        provider_target, provider_result_id, error, started_at,
+                        finished_at
+                    ) values (?, ?, 'failed', 'startup_recovery', ?, '',
+                              'stale_processing_recovered', ?, ?)
+                    """,
+                    (
+                        row["action_id"],
+                        attempt_number,
+                        row["stable_message_identity"],
+                        row["started_at"],
+                        recovered_at,
+                    ),
+                )
+                updated = db.execute(
+                    """
+                    update email_actions
+                    set status='failed', attempt_count=?, finished_at=?,
+                        provider_operation='startup_recovery', provider_target=?,
+                        provider_result_id='', error='stale_processing_recovered',
+                        updated_at=?
+                    where action_id=? and status='processing' and started_at=?
+                      and attempt_count=?
+                    """,
+                    (
+                        attempt_number,
+                        recovered_at,
+                        row["stable_message_identity"],
+                        recovered_at,
+                        row["action_id"],
+                        row["started_at"],
+                        row["attempt_count"],
+                    ),
+                ).rowcount
+                if updated != 1:
+                    raise EmailActionAttemptConflict(
+                        f"direct action claim changed for {row['action_id']}"
+                    )
+            return len(rows)
 
     def list_action_attempts(self, action_id: str) -> list[dict[str, Any]]:
         with self._connect() as db:

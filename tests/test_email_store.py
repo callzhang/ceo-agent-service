@@ -3593,6 +3593,332 @@ def test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected(
             )
 
 
+def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
+    tmp_path: Path,
+):
+    database = tmp_path / "claim-current-plan.sqlite3"
+    store = EmailStore(database)
+    original = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        actions=(EmailAction.ARCHIVE,),
+        action_parameters={},
+        stable_message_identity="dingtalk-account:imap:INBOX:42:7",
+        uid=7,
+    )
+    _persist_scan(store, original)
+    store.upsert_config(
+        category=EmailCategory.IMPORTANT,
+        description="Move important mail",
+        threshold=0.9,
+        actions=(EmailAction.MOVE,),
+        action_parameters={
+            EmailAction.MOVE: {"target_folder": "Important"},
+        },
+        enabled=True,
+        config_version="important-v2",
+    )
+    assert original.action_plan is not None
+    application = store.apply_human_classification(
+        original.classification_id,
+        EmailCategory.IMPORTANT,
+        feedback_request_id="feedback-current-plan",
+        expected_current_action_plan_id=original.action_plan.action_plan_id,
+        created_at=datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc),
+    )
+    assert application is not None
+
+    claimed = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:01:00+00:00"
+    )
+
+    assert claimed is not None
+    assert claimed.action_plan_id == application.resulting_action_plan_id
+    assert claimed.action_type is EmailAction.MOVE
+    assert dict(claimed.parameters) == {"target_folder": "Important"}
+    assert claimed.config_version == "important-v2"
+    assert claimed.locator.stable_message_identity == (
+        "dingtalk-account:imap:INBOX:42:7"
+    )
+    assert claimed.locator.folder == "INBOX"
+    assert claimed.attempt_number == 1
+    with pytest.raises(TypeError):
+        claimed.parameters["target_folder"] = "Mutated"
+
+    old_action = _fetchall(
+        database,
+        "select * from email_actions where action_plan_id=?",
+        (original.action_plan.action_plan_id,),
+    )[0]
+    assert old_action["status"] == "pending"
+
+
+def test_concurrent_direct_action_claim_has_one_winner(tmp_path: Path):
+    database = tmp_path / "concurrent-action-claim.sqlite3"
+    seed = EmailStore(database)
+    _persist_scan(
+        seed,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    stores = (EmailStore(database), EmailStore(database))
+    barrier = Barrier(2)
+
+    def claim(store: EmailStore):
+        barrier.wait()
+        return store.claim_next_direct_action(
+            claimed_at="2026-08-30T12:00:00+00:00"
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(claim, stores))
+
+    assert sum(result is not None for result in results) == 1
+    current = _fetchall(database, "select * from email_actions")[0]
+    assert current["status"] == "processing"
+    assert current["attempt_count"] == 0
+
+
+def test_destination_action_is_claimed_after_locator_preserving_actions(
+    tmp_path: Path,
+):
+    database = tmp_path / "destination-action-last.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(
+                EmailAction.ARCHIVE,
+                EmailAction.MARK_READ,
+                EmailAction.LABEL,
+            ),
+            action_parameters={
+                EmailAction.LABEL: {"labels": ["work"]},
+            },
+            stable_message_identity="dingtalk-account:imap:INBOX:42:7",
+            uid=7,
+        ),
+    )
+
+    claimed_types: list[EmailAction] = []
+    for attempt_index in range(3):
+        claimed = store.claim_next_direct_action(
+            claimed_at=f"2026-08-30T12:0{attempt_index}:00+00:00"
+        )
+        assert claimed is not None
+        claimed_types.append(claimed.action_type)
+        store.complete_direct_action_attempt(
+            claimed,
+            status="done",
+            provider_operation="readback_noop",
+            provider_target=claimed.locator.stable_message_identity,
+            provider_result_id=f"revision-{attempt_index}",
+            error="",
+            finished_at=f"2026-08-30T12:0{attempt_index}:01+00:00",
+        )
+
+    assert claimed_types == [
+        EmailAction.LABEL,
+        EmailAction.MARK_READ,
+        EmailAction.ARCHIVE,
+    ]
+
+
+def test_complete_direct_action_appends_attempt_and_updates_current_atomically(
+    tmp_path: Path,
+):
+    database = tmp_path / "complete-action.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    claimed = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:00:00+00:00"
+    )
+    assert claimed is not None
+
+    attempt = store.complete_direct_action_attempt(
+        claimed,
+        status="done",
+        provider_operation="STORE LABELS",
+        provider_target=claimed.locator.stable_message_identity,
+        provider_result_id="revision-1",
+        error="",
+        finished_at="2026-08-30T12:00:01+00:00",
+    )
+
+    assert attempt["attempt_number"] == 1
+    assert attempt["status"] == "done"
+    current = _fetchall(
+        database,
+        "select * from email_actions where action_id=?",
+        (claimed.action_id,),
+    )[0]
+    assert current["status"] == "done"
+    assert current["attempt_count"] == 1
+    assert current["provider_result_id"] == "revision-1"
+    EmailStore(database)
+    assert store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:02:00+00:00"
+    ) is None
+
+
+def test_locator_refresh_does_not_invalidate_stable_claim_identity(tmp_path: Path):
+    database = tmp_path / "locator-refresh-during-action.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    claimed = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:00:00+00:00"
+    )
+    assert claimed is not None
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_classifications
+            set folder='Archive', uidvalidity=43, uid=8
+            where id=?
+            """,
+            (claimed.classification_id,),
+        )
+
+    attempt = store.complete_direct_action_attempt(
+        claimed,
+        status="done",
+        provider_operation="STORE LABELS",
+        provider_target=claimed.locator.stable_message_identity,
+        provider_result_id="revision-1",
+        error="",
+        finished_at="2026-08-30T12:00:01+00:00",
+    )
+
+    assert attempt["status"] == "done"
+    assert attempt["provider_target"] == claimed.locator.stable_message_identity
+
+
+def test_direct_action_completion_rolls_back_attempt_and_current_state_together(
+    tmp_path: Path,
+):
+    database = tmp_path / "complete-action-rollback.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    claimed = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:00:00+00:00"
+    )
+    assert claimed is not None
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            create trigger reject_email_action_attempt
+            before insert on email_action_attempts
+            begin
+                select raise(abort, 'injected attempt failure');
+            end
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="injected attempt failure"):
+        store.complete_direct_action_attempt(
+            claimed,
+            status="failed",
+            provider_operation="STORE LABELS",
+            provider_target=claimed.locator.stable_message_identity,
+            provider_result_id="",
+            error="provider_apply_failed:TimeoutError",
+            finished_at="2026-08-30T12:00:01+00:00",
+        )
+
+    assert store.list_action_attempts(claimed.action_id) == []
+    current = _fetchall(
+        database,
+        "select * from email_actions where action_id=?",
+        (claimed.action_id,),
+    )[0]
+    assert current["status"] == "processing"
+    assert current["attempt_count"] == 0
+    assert current["started_at"] == claimed.claim_started_at
+
+
+def test_stale_processing_recovery_records_failure_and_makes_action_claimable(
+    tmp_path: Path,
+):
+    database = tmp_path / "recover-stale-action.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    claimed = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:00:00+00:00"
+    )
+    assert claimed is not None
+
+    assert store.recover_stale_processing_actions(
+        stale_before="2026-08-30T11:59:59+00:00",
+        recovered_at="2026-08-30T12:01:00+00:00",
+    ) == 0
+    assert store.recover_stale_processing_actions(
+        stale_before="2026-08-30T12:00:01+00:00",
+        recovered_at="2026-08-30T12:02:00+00:00",
+    ) == 1
+
+    attempts = store.list_action_attempts(claimed.action_id)
+    assert [(row["attempt_number"], row["status"]) for row in attempts] == [
+        (1, "failed")
+    ]
+    assert attempts[0]["provider_operation"] == "startup_recovery"
+    assert attempts[0]["provider_target"] == (
+        claimed.locator.stable_message_identity
+    )
+    assert attempts[0]["error"] == "stale_processing_recovered"
+    EmailStore(database)
+    retried = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:03:00+00:00"
+    )
+    assert retried is not None
+    assert retried.action_id == claimed.action_id
+    assert retried.attempt_number == 2
+
+
+def test_stale_claim_cannot_complete_after_recovery_and_retry(tmp_path: Path):
+    database = tmp_path / "stale-claim-cas.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    stale = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:00:00+00:00"
+    )
+    assert stale is not None
+    store.recover_stale_processing_actions(
+        stale_before="2026-08-30T12:00:01+00:00",
+        recovered_at="2026-08-30T12:01:00+00:00",
+    )
+    current = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:02:00+00:00"
+    )
+    assert current is not None
+
+    with pytest.raises(EmailActionAttemptConflict, match="claim changed"):
+        store.complete_direct_action_attempt(
+            stale,
+            status="done",
+            provider_operation="STORE LABELS",
+            provider_target=stale.locator.stable_message_identity,
+            provider_result_id="revision-stale",
+            error="",
+            finished_at="2026-08-30T12:03:00+00:00",
+        )
+
+    assert len(store.list_action_attempts(stale.action_id)) == 1
+
+
 def test_startup_rejects_pending_action_with_historical_terminal_attempt(
     tmp_path: Path,
 ):
