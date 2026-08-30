@@ -191,6 +191,48 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
         return db.execute(sql, parameters).fetchall()
 
 
+def _rewrite_required_identifier_case(database: Path) -> None:
+    required_identifiers = set(email_store_module._REQUIRED_TABLE_COLUMNS)
+    for columns in email_store_module._REQUIRED_TABLE_COLUMNS.values():
+        required_identifiers.update(columns)
+    required_identifiers.update(email_store_module._REQUIRED_INDEXES)
+    required_identifiers.update(email_store_module._REQUIRED_TRIGGER_SQL)
+    replacements = {
+        identifier: (
+            identifier.upper()
+            if index % 2 == 0
+            else "_".join(part.capitalize() for part in identifier.split("_"))
+        )
+        for index, identifier in enumerate(sorted(required_identifiers))
+    }
+
+    def rewrite_sql(value: str) -> str:
+        return " ".join(
+            replacements.get(token, token)
+            for token in email_store_module._schema_sql_tokens(value)
+        )
+
+    with sqlite3.connect(database) as db:
+        schema_version = db.execute("pragma schema_version").fetchone()[0]
+        rows = db.execute(
+            "select rowid, name, tbl_name, sql from sqlite_master"
+        ).fetchall()
+        db.execute("pragma writable_schema = on")
+        for rowid, name, table_name, sql in rows:
+            db.execute(
+                "update sqlite_master set name=?, tbl_name=?, sql=? where rowid=?",
+                (
+                    replacements.get(name, name),
+                    replacements.get(table_name, table_name),
+                    rewrite_sql(sql) if sql is not None else None,
+                    rowid,
+                ),
+            )
+        db.execute(f"pragma schema_version = {schema_version + 1}")
+        db.commit()
+        db.execute("pragma writable_schema = off")
+
+
 def _replace_email_scan_cursors(database: Path, *, columns_sql: str) -> None:
     with sqlite3.connect(database) as db:
         db.executescript(
@@ -1146,6 +1188,44 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
     )
     assert not any(
         statement.startswith(("create ", "alter ", "insert ", "update ", "delete "))
+        for statement in normalized
+    )
+
+
+def test_current_schema_accepts_case_insensitive_required_bare_identifiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    database = tmp_path / "mixed-case-required-identifiers.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        assert db.execute("pragma journal_mode = delete").fetchone()[0] == "delete"
+    _rewrite_required_identifier_case(database)
+    with sqlite3.connect(database) as db:
+        schema_version_before = db.execute("pragma schema_version").fetchone()[0]
+
+    statements: list[str] = []
+    original_connect = EmailStore._connect
+
+    def traced_connect(self: EmailStore) -> sqlite3.Connection:
+        db = original_connect(self)
+        db.set_trace_callback(statements.append)
+        return db
+
+    monkeypatch.setattr(EmailStore, "_connect", traced_connect)
+
+    EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        assert db.execute("pragma journal_mode").fetchone()[0] == "delete"
+        assert db.execute("pragma schema_version").fetchone()[0] == schema_version_before
+    normalized = [" ".join(statement.lower().split()) for statement in statements]
+    assert "begin immediate" not in normalized
+    assert not any(
+        statement.startswith(
+            ("create ", "alter ", "insert ", "update ", "delete ", "pragma journal_mode")
+        )
         for statement in normalized
     )
 

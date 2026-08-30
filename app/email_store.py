@@ -366,10 +366,6 @@ def _json_load(raw: str, *, field: str, expected_type: type[Any]) -> Any:
     return value
 
 
-def _normalize_schema_sql(value: str) -> str:
-    return " ".join(value.lower().split())
-
-
 def _schema_sql_tokens(value: str) -> tuple[str, ...]:
     tokens: list[str] = []
     index = 0
@@ -653,16 +649,17 @@ class EmailStore:
 
     @staticmethod
     def _read_schema_version(db: sqlite3.Connection) -> int | None:
-        migration_table = db.execute(
-            """
-            select 1 from sqlite_master
-            where type='table' and name='email_schema_migrations'
-            """
-        ).fetchone()
-        if migration_table is None:
+        migration_tables = {
+            row[0].casefold()
+            for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            )
+            if isinstance(row[0], str)
+        }
+        if "email_schema_migrations" not in migration_tables:
             return None
         column_names = {
-            row["name"]
+            row["name"].casefold()
             for row in db.execute("pragma table_info(email_schema_migrations)")
         }
         missing_columns = {"version", "applied_at"} - column_names
@@ -1060,7 +1057,7 @@ class EmailStore:
     @staticmethod
     def _index_columns(db: sqlite3.Connection, index_name: str) -> tuple[str, ...]:
         return tuple(
-            row["name"]
+            row["name"].casefold()
             for row in db.execute(f"pragma index_info({json.dumps(index_name)})")
         )
 
@@ -1068,7 +1065,7 @@ class EmailStore:
     def _validate_schema_shape(cls, db: sqlite3.Connection) -> None:
         try:
             table_rows = {
-                row["name"]: row
+                row["name"].casefold(): row
                 for row in db.execute(
                     "select name, sql from sqlite_master where type='table'"
                 )
@@ -1086,7 +1083,7 @@ class EmailStore:
                 column_rows = list(
                     db.execute(f"pragma table_info({json.dumps(table)})")
                 )
-                column_names = {row["name"] for row in column_rows}
+                column_names = {row["name"].casefold() for row in column_rows}
                 missing_columns = required_columns - column_names
                 if missing_columns:
                     missing = ", ".join(sorted(missing_columns))
@@ -1094,7 +1091,7 @@ class EmailStore:
                         f"{table} is missing required columns: {missing}"
                     )
                 primary_key = tuple(
-                    row["name"]
+                    row["name"].casefold()
                     for row in sorted(column_rows, key=lambda row: row["pk"])
                     if row["pk"]
                 )
@@ -1108,7 +1105,9 @@ class EmailStore:
                         f"required declarations for {table} are missing or malformed"
                     )
                 declarations = _schema_column_declarations(table_sql)
-                columns_by_name = {row["name"]: row for row in column_rows}
+                columns_by_name = {
+                    row["name"].casefold(): row for row in column_rows
+                }
                 for column, expected in _REQUIRED_COLUMN_CONTRACTS[table].items():
                     column_row = columns_by_name[column]
                     declared_type = column_row["type"]
@@ -1126,7 +1125,7 @@ class EmailStore:
                             f"{table} column {column} has malformed declaration"
                         )
                 indexes = {
-                    row["name"]: row
+                    row["name"].casefold(): row
                     for row in db.execute(f"pragma index_list({json.dumps(table)})")
                 }
                 indexes_by_table[table] = indexes
@@ -1143,9 +1142,9 @@ class EmailStore:
 
                 foreign_keys = {
                     (
-                        row["from"],
-                        row["table"],
-                        row["to"],
+                        row["from"].casefold(),
+                        row["table"].casefold(),
+                        row["to"].casefold(),
                         row["on_delete"].upper(),
                     )
                     for row in db.execute(
@@ -1196,7 +1195,7 @@ class EmailStore:
                     )
 
             trigger_rows = {
-                row["name"]: row
+                row["name"].casefold(): row
                 for row in db.execute(
                     "select name, tbl_name, sql from sqlite_master where type='trigger'"
                 )
@@ -1205,10 +1204,10 @@ class EmailStore:
                 trigger = trigger_rows.get(trigger_name)
                 if (
                     trigger is None
-                    or trigger["tbl_name"] != "email_classifications"
+                    or trigger["tbl_name"].casefold() != "email_classifications"
                     or not isinstance(trigger["sql"], str)
-                    or _normalize_schema_sql(trigger["sql"])
-                    != _normalize_schema_sql(expected_sql)
+                    or _schema_sql_tokens(trigger["sql"])
+                    != _schema_sql_tokens(expected_sql)
                 ):
                     raise EmailPersistenceCorruption(
                         f"required trigger {trigger_name} is missing or malformed"
