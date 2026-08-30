@@ -42,6 +42,7 @@ describe("TasksPage", () => {
     listTasks.mockResolvedValue({
       items: [{ id: "836", title: "客户项目", status: "active", category: "projects", priority: "high", risk: "low", owner: "Shawn", progress: "3/5", todo_count: 5, state_summary: "等待客户确认", next_summary: "准备下一次同步" }],
       meta: { page: 1, page_size: 20, total: 45, next_cursor: "2", has_more: true, snapshot_at: "2026-08-29T00:00:00Z" },
+      filters: { categories: ["finance", "projects"], task_states: ["active", "completed"] },
     });
     listSentTodos.mockResolvedValue({
       items: [{ id: "sent-1", kind: "follow_up", kind_label: "Follow-up", sent_at: "2026-08-29", status: "sent", owner: "Alex", project_title: "客户项目", todo_title: "确认结果", description: "确认结果", original_text: "确认结果", deadline: "", priority: "", target: "cid", external_id: "", detail_url: "/tasks/836" }],
@@ -53,6 +54,8 @@ describe("TasksPage", () => {
     expect(await screen.findByRole("link", { name: "查看详情 客户项目" })).toBeInTheDocument();
     expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ page: 1, page_size: 20, sort: "project_asc" }), expect.anything());
     expect(listSentTodos).toHaveBeenCalledWith(expect.objectContaining({ page: 1, page_size: 20 }), expect.anything());
+    expect(screen.getByRole("option", { name: "finance" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "completed" })).toBeInTheDocument();
 
     await user.click(within(screen.getByRole("navigation", { name: "Task pages" })).getByRole("button", { name: "下一页" }));
     await waitFor(() => expect(listTasks).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, page_size: 20 }), expect.anything()));

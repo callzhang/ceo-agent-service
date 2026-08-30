@@ -83,6 +83,8 @@ function query(params: Record<string, string | number | undefined>) {
 }
 
 export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; }
+export interface TaskFilters { categories: string[]; task_states: string[]; }
+export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
 export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; }
 export interface HistoryChart { labels: string[]; series: Array<{ name: string; data: number[] }>; total: number; range: string; }
@@ -165,7 +167,11 @@ function mapTaskDetail(value: unknown): TaskDetail {
 export function listTasks(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal) {
   return request<unknown>(`/api/console/tasks${query(params)}`, { signal }).then((value) => {
     const page = parseConsoleList(value);
-    return { ...page, items: page.items.map(mapTaskSummary) };
+    const payload = asRecord(value);
+    const filters = asRecord(payload.filters);
+    const categories = Array.isArray(filters.categories) ? filters.categories.map(displayValue).filter((item) => item !== "未提供") : [];
+    const taskStates = Array.isArray(filters.task_states) ? filters.task_states.map(displayValue).filter((item) => item !== "未提供") : [];
+    return { ...page, items: page.items.map(mapTaskSummary), filters: { categories, task_states: taskStates } } satisfies TaskList;
   });
 }
 

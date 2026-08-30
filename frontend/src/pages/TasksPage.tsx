@@ -30,6 +30,8 @@ export function TasksPage() {
   const [sentRows, setSentRows] = useState<SentTodoItem[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [sentTotalCount, setSentTotalCount] = useState(0);
+  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
+  const [availableTaskStates, setAvailableTaskStates] = useState<string[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [sentState, setSentState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -49,7 +51,7 @@ export function TasksPage() {
     const controller = new AbortController();
     setState("loading");
     setError("");
-    listTasks({ q: query, category, task_state: taskState, sort, page, page_size: pageSize }, controller.signal).then((result) => { setRows(result.items); setTotalCount(result.meta.total || result.items.length); setSnapshot(result.meta.snapshot_at); setState("ready"); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
+    listTasks({ q: query, category, task_state: taskState, sort, page, page_size: pageSize }, controller.signal).then((result) => { setRows(result.items); setTotalCount(result.meta.total || result.items.length); setAvailableCategories(result.filters?.categories || []); setAvailableTaskStates(result.filters?.task_states || []); setSnapshot(result.meta.snapshot_at); setState("ready"); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
     return () => controller.abort();
   }, [query, category, taskState, sort, page, pageSize]);
 
@@ -60,8 +62,8 @@ export function TasksPage() {
     return () => controller.abort();
   }, [sentPage, sentPageSize]);
 
-  const categories = useMemo(() => [...new Set(rows.map((row) => row.category).filter(Boolean))].sort(), [rows]);
-  const taskStates = useMemo(() => [...new Set(rows.map((row) => row.status).filter(Boolean))].sort(), [rows]);
+  const categories = useMemo(() => [...new Set([...availableCategories, category, ...rows.map((row) => row.category)].filter(Boolean))].sort(), [availableCategories, category, rows]);
+  const taskStates = useMemo(() => [...new Set([...availableTaskStates, taskState, ...rows.map((row) => row.status)].filter(Boolean))].sort(), [availableTaskStates, taskState, rows]);
   const visibleRows = rows;
   const update = (key: string, value: string | number) => { const next = new URLSearchParams(searchParams); if (String(value)) next.set(key, String(value)); else next.delete(key); if (key !== "page") next.delete("page"); setSearchParams(next); };
   const updateSent = (key: string, value: string | number) => { const next = new URLSearchParams(searchParams); if (String(value)) next.set(key, String(value)); else next.delete(key); if (key !== "sent_page") next.delete("sent_page"); setSearchParams(next); };

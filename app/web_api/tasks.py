@@ -126,8 +126,16 @@ class ConsoleTaskDetail(BaseModel):
     unlinked_follow_ups: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ConsoleTaskFilters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    categories: list[str] = Field(default_factory=list)
+    task_states: list[str] = Field(default_factory=list)
+
+
 class ConsoleTaskListEnvelope(ApiListEnvelope):
     items: list[ConsoleTaskSummary] = Field(default_factory=list)
+    filters: ConsoleTaskFilters = Field(default_factory=ConsoleTaskFilters)
 
 
 class ConsoleTaskDetailEnvelope(ApiItemEnvelope):
@@ -363,6 +371,8 @@ def task_list_response(
     row_builder=None,
 ) -> ConsoleTaskListEnvelope:
     rows = []
+    categories: set[str] = set()
+    task_states: set[str] = set()
     needle = query.strip().casefold()
     for project in store.list_work_projects(limit=None):
         todos = store.list_work_todos(project_id=project.id)
@@ -389,6 +399,10 @@ def task_list_response(
                     }
                 )
         row["title"] = row["title"].strip() or f"Project {row['id']}"
+        if row["category"].strip():
+            categories.add(row["category"])
+        if row["status"].strip():
+            task_states.add(row["status"])
         haystack = " ".join(
             [
                 row["title"], row["category"], row["project_status"], row["owner_name"],
@@ -442,6 +456,10 @@ def task_list_response(
     has_more = start + page_size < total
     return ConsoleTaskListEnvelope(
         items=[ConsoleTaskSummary.model_validate(row) for row in page_rows],
+        filters=ConsoleTaskFilters(
+            categories=sorted(categories, key=str.casefold),
+            task_states=sorted(task_states, key=str.casefold),
+        ),
         meta=ApiListMeta(
             snapshot_at=snapshot_at(),
             page=page,
