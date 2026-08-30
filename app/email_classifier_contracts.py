@@ -313,8 +313,9 @@ class EmailActionPlan(BaseModel):
         return tuple(action for action in self.actions if action in AGENT_ACTIONS)
 
 
-def build_email_action_plan(
+def build_versioned_email_action_plan(
     *,
+    action_plan_version: int,
     classification_id: int,
     account_id: str,
     category: EmailCategory,
@@ -326,9 +327,8 @@ def build_email_action_plan(
     action_parameters: Mapping[EmailAction, Mapping[str, object]],
     created_at: datetime,
 ) -> EmailActionPlan:
-    """Build one version-1 plan whose ID covers the complete immutable snapshot."""
+    """Build an immutable plan whose identity covers its explicit history version."""
 
-    action_plan_version = 1
     copied_parameters = {
         action: dict(parameters)
         for action, parameters in action_parameters.items()
@@ -357,6 +357,36 @@ def build_email_action_plan(
         config_version=config_version,
         actions=actions,
         action_parameters=copied_parameters,
+        created_at=created_at,
+    )
+
+
+def build_email_action_plan(
+    *,
+    classification_id: int,
+    account_id: str,
+    category: EmailCategory,
+    classification_source: Literal["model", "user"],
+    confidence: float,
+    model_id: str,
+    config_version: str,
+    actions: tuple[EmailAction, ...],
+    action_parameters: Mapping[EmailAction, Mapping[str, object]],
+    created_at: datetime,
+) -> EmailActionPlan:
+    """Build the initial immutable ActionPlan version."""
+
+    return build_versioned_email_action_plan(
+        action_plan_version=1,
+        classification_id=classification_id,
+        account_id=account_id,
+        category=category,
+        classification_source=classification_source,
+        confidence=confidence,
+        model_id=model_id,
+        config_version=config_version,
+        actions=actions,
+        action_parameters=action_parameters,
         created_at=created_at,
     )
 

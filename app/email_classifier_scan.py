@@ -18,11 +18,15 @@ from app.email_classifier_contracts import (
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
-    build_email_action_plan,
 )
 from app.email_classifier_model import email_message_to_text
 from app.email_classifier_training import CategoryEligibility
 from app.email_imap_readonly import ImapUidBatch, fallback_stable_message_identity
+from app.email_pipeline import (
+    EmailCategoryConfig,
+    EmailModelPrediction,
+    decide_classification,
+)
 from app.email_store import (
     EmailActionPlanConflict,
     EmailClassificationIdentityCollision,
@@ -55,6 +59,7 @@ class EmailScanConfig:
     action_parameters: Mapping[
         EmailCategory, Mapping[EmailAction, Mapping[str, object]]
     ] = field(default_factory=dict)
+    category_enabled: Mapping[EmailCategory, bool] = field(default_factory=dict)
 
     @classmethod
     def cold_start(cls, *, config_version: str = "email-cold-start-v1") -> "EmailScanConfig":
@@ -75,6 +80,7 @@ class EmailScanConfig:
                 for category in EmailCategory
             },
             action_parameters={},
+            category_enabled={category: True for category in EmailCategory},
         )
 
     def __post_init__(self) -> None:
@@ -107,10 +113,20 @@ class EmailScanConfig:
         unexpected_categories = set(self.action_parameters) - set(self.actions)
         if unexpected_categories:
             raise ValueError("action parameters contain a category with no actions")
+        category_enabled = dict(self.category_enabled)
+        if not category_enabled:
+            category_enabled = {category: True for category in EmailCategory}
+        if set(category_enabled) != set(EmailCategory):
+            raise ValueError("category_enabled must cover every email category")
         object.__setattr__(
             self,
             "category_eligibility",
             MappingProxyType(eligibility),
+        )
+        object.__setattr__(
+            self,
+            "category_enabled",
+            MappingProxyType(category_enabled),
         )
 
 
@@ -227,15 +243,6 @@ def scan_readonly_batch(
         prediction = classifier.predict_message(message)
         category = EmailCategory(str(prediction.label))
         threshold = config.thresholds[category]
-        eligible = (
-            float(prediction.probability) >= threshold
-            and config.category_eligibility[category].auto_action_eligible
-        )
-        status = (
-            EmailClassificationStatus.PROCESSED
-            if eligible
-            else EmailClassificationStatus.PENDING_FEEDBACK
-        )
         actions = config.actions.get(category, ())
         action_parameters = config.action_parameters.get(category, {})
         locator = _provider_locator(message)
@@ -249,36 +256,44 @@ def scan_readonly_batch(
         classification_id = _classification_id(stable_message_identity)
         model_id = str(prediction.model_version).strip()
         created_at = datetime.now(timezone.utc)
-        action_plan = None
-        if status is EmailClassificationStatus.PROCESSED:
-            action_plan = build_email_action_plan(
-                classification_id=classification_id,
-                account_id=locator.account_id,
+        decision = decide_classification(
+            EmailModelPrediction(
                 category=category,
-                classification_source="model",
                 confidence=float(prediction.probability),
-                model_id=model_id,
-                config_version=config.config_version,
-                actions=actions,
-                action_parameters={
-                    action: dict(parameters)
-                    for action, parameters in action_parameters.items()
+                margin=float(prediction.margin),
+                probabilities={
+                    str(key): float(value)
+                    for key, value in prediction.probabilities.items()
                 },
-                created_at=created_at,
-            )
+                model_id=model_id,
+            ),
+            EmailCategoryConfig(
+                category=category,
+                description="",
+                threshold=threshold,
+                actions=actions,
+                action_parameters=action_parameters,
+                enabled=config.category_enabled[category],
+                config_version=config.config_version,
+            ),
+            config.category_eligibility[category],
+            classification_id=classification_id,
+            account_id=locator.account_id,
+            created_at=created_at,
+        )
         classification = EmailClassification(
             classification_id=classification_id,
             stable_message_identity=stable_message_identity,
             provider_locator=locator,
             category=category,
-            confidence=float(prediction.probability),
-            margin=float(prediction.margin),
-            probabilities={str(key): float(value) for key, value in prediction.probabilities.items()},
-            model_id=model_id,
-            config_version=config.config_version,
-            status=status,
+            confidence=decision.confidence,
+            margin=decision.margin,
+            probabilities=dict(decision.probabilities),
+            model_id=decision.model_id,
+            config_version=decision.config_version,
+            status=decision.status,
             classification_source="model",
-            action_plan=action_plan,
+            action_plan=decision.action_plan,
         )
         sender = message.get("from") or {}
         sender_value = str(sender.get("email") or sender.get("name") or "") if isinstance(sender, Mapping) else ""
@@ -302,7 +317,7 @@ def scan_readonly_batch(
         )
         reset_expectation = None
         persisted += 1
-        if eligible:
+        if decision.status is EmailClassificationStatus.PROCESSED:
             processed += 1
         else:
             pending += 1

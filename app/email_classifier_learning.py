@@ -18,6 +18,7 @@ from app.email_classifier_retrain import (
     save_retrain_state,
 )
 from app.email_model_registry import EmailModelRegistry
+from app.email_pipeline import apply_human_confirmation
 from app.email_store import EmailStore
 
 
@@ -55,10 +56,15 @@ class EmailClassifierLearningService:
         *,
         now: datetime | None = None,
     ) -> FeedbackLearningResult | None:
-        confirmed = self.store.confirm_classification(row_id, category)
+        current = now or datetime.now(timezone.utc)
+        confirmed = apply_human_confirmation(
+            self.store,
+            row_id,
+            category,
+            now=current,
+        )
         if confirmed is None:
             return None
-        current = now or datetime.now(timezone.utc)
         try:
             with retrain_state_reservation(self.retrain_state_path):
                 state = load_retrain_state(self.retrain_state_path).record_feedback(

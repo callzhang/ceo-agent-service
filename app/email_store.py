@@ -2643,6 +2643,14 @@ class EmailStore:
             ).fetchall()
         return [self._classification_row(row) for row in rows], total
 
+    def get_classification(self, classification_id: int) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_classifications where id=?",
+                (classification_id,),
+            ).fetchone()
+        return None if row is None else self._classification_row(row)
+
     def list_training_examples(
         self, *, include_inclusion: bool = False
     ) -> list[dict[str, Any]]:

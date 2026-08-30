@@ -726,6 +726,26 @@ def test_email_store_lists_pending_and_processed_separately(tmp_path: Path):
     assert "model_version" not in processed[0]
 
 
+def test_email_store_gets_one_classification_directly_by_primary_key(tmp_path: Path):
+    store = EmailStore(tmp_path / "worker.sqlite3")
+    pending = store.upsert_classification(
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            message_id="primary-key-pending",
+        )
+    )
+    processed = store.upsert_classification(
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            message_id="primary-key-processed",
+        )
+    )
+
+    assert store.get_classification(pending["id"])["status"] == "pending_feedback"
+    assert store.get_classification(processed["id"])["status"] == "processed"
+    assert store.get_classification(999) is None
+
+
 def test_email_store_rejects_unredacted_model_text(tmp_path: Path):
     store = EmailStore(tmp_path / "email.sqlite3")
 

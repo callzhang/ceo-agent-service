@@ -398,6 +398,44 @@ def test_high_confidence_is_pending_when_category_lacks_validation_samples(
     assert rows[0]["action_plan"] is None
 
 
+def test_high_confidence_is_pending_when_category_is_disabled(tmp_path: Path):
+    config = EmailScanConfig(
+        config_version="disabled-category-v1",
+        thresholds={category: 0.8 for category in EmailCategory},
+        actions={EmailCategory.WORK: (EmailAction.LABEL,)},
+        category_eligibility=_category_eligibility(
+            eligible=(EmailCategory.WORK,)
+        ),
+        action_parameters={
+            EmailCategory.WORK: {
+                EmailAction.LABEL: {"labels": ["work"]},
+            }
+        },
+        category_enabled={
+            category: category is not EmailCategory.WORK
+            for category in EmailCategory
+        },
+    )
+    store = EmailStore(tmp_path / "email.sqlite3")
+
+    result = scan_readonly_batch(
+        FakeSource([_message()]),
+        StaticClassifier(StaticPrediction("work", 0.99)),
+        store,
+        config,
+    )
+
+    assert result.processed_count == 0
+    assert result.pending_feedback_count == 1
+    rows, total = store.list_classifications(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        limit=10,
+        offset=0,
+    )
+    assert total == 1
+    assert rows[0]["action_plan"] is None
+
+
 def test_high_confidence_eligible_category_creates_action_plan(tmp_path: Path):
     config = EmailScanConfig(
         config_version="eligibility-approved-v1",

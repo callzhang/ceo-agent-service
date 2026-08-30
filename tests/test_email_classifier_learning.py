@@ -5,6 +5,7 @@ from threading import Barrier, Lock, Thread
 import time
 
 from app.email_classifier_contracts import (
+    EmailAction,
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
@@ -144,6 +145,38 @@ def test_feedback_api_service_confirms_first_and_records_state_without_retrainin
     assert result.retrain.decision.due is False
     assert result.error is None
     assert load_retrain_state(tmp_path / "models" / "retrain-state.json").last_feedback_at
+    assert store.list_training_examples()[0]["label"] == "important"
+
+
+def test_learning_service_corrects_processed_classification_through_pipeline(
+    tmp_path: Path,
+):
+    service, store, rows, _ = _service_with_pending(tmp_path)
+    now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
+    first = service.confirm_and_maybe_retrain(
+        rows[0]["id"], EmailCategory.WORK, now=now
+    )
+    assert first is not None
+    first_plan_id = first.confirmed["current_action_plan_id"]
+    store.upsert_config(
+        category=EmailCategory.IMPORTANT,
+        description="important",
+        threshold=0.97,
+        actions=(EmailAction.ARCHIVE,),
+        action_parameters={},
+        enabled=True,
+        config_version="important-learning-v2",
+    )
+
+    corrected = service.confirm_and_maybe_retrain(
+        rows[0]["id"], EmailCategory.IMPORTANT, now=now + timedelta(seconds=1)
+    )
+
+    assert corrected is not None
+    assert corrected.error is None
+    assert corrected.confirmed["confirmed_category"] == "important"
+    assert corrected.confirmed["current_action_plan_id"] != first_plan_id
+    assert corrected.confirmed["action_plan"]["action_plan_version"] == 2
     assert store.list_training_examples()[0]["label"] == "important"
 
 
