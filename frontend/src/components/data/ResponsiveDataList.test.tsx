@@ -61,4 +61,25 @@ describe("ResponsiveDataList", () => {
     expect(buttons[0]).toHaveAttribute("aria-expanded", "true");
     expect(buttons[1]).toHaveAttribute("aria-expanded", "false");
   });
+
+  it("renders expanded content in a full-width row instead of squeezing the action column", async () => {
+    const user = userEvent.setup();
+    render(
+      <ResponsiveDataList
+        ariaLabel="反馈"
+        columns={[{ key: "summary", label: "Summary" }]}
+        rows={[{ id: "feedback-1", summary: "反馈摘要" }]}
+        renderCell={(row) => row.summary}
+        expandable
+        renderExpanded={() => <section>两轮处理历史</section>}
+      />,
+    );
+
+    const toggle = screen.getByRole("button", { name: "展开详情" });
+    await user.click(toggle);
+
+    const history = screen.getByText("两轮处理历史");
+    expect(history.closest("tr")).not.toBe(toggle.closest("tr"));
+    expect(history.closest("td")).toHaveAttribute("colspan", "2");
+  });
 });

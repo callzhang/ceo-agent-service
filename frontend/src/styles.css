@@ -325,6 +325,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .responsive-data-list th { color: var(--ink-soft); font-size: 0.76rem; white-space: nowrap; }
 .details-toggle { width: fit-content; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--accent); background: var(--surface); cursor: pointer; }
 .responsive-expanded { margin-top: 8px; color: var(--ink-soft); overflow-wrap: anywhere; }
+.responsive-expanded-row > td { padding: 0 12px 14px; background: color-mix(in srgb, var(--surface-muted) 58%, transparent); }
 
 /* Facts use a comparison-friendly desktop table: descriptions and sources need room,
    while the row action must remain a single, readable control. Mobile keeps the
@@ -530,6 +531,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .responsive-data-list tr + tr { margin-top: 10px; }
   .responsive-data-list td { display: grid; grid-template-columns: minmax(90px, 0.35fr) minmax(0, 1fr); gap: 12px; padding: 7px 0; border-bottom: 0; overflow-wrap: anywhere; }
   .responsive-data-list td::before { content: attr(data-label); color: var(--ink-soft); font-size: 0.76rem; font-weight: 700; }
+  .responsive-data-list tr + tr.responsive-expanded-row { margin-top: -1px; padding-top: 0; border-top: 0; }
+  .responsive-data-list .responsive-expanded-row td { display: block; padding: 0; }
+  .responsive-data-list .responsive-expanded-row td::before { content: none; }
   .history-chart-toolbar { grid-template-columns: 1fr; }
   .history-chart-range-control { grid-template-columns: 76px minmax(100px, 1fr) auto; }
   .history-workspace-card, .tasks-workspace-card, .feedback-workspace-card, .sent-todos-section { padding: 14px; }

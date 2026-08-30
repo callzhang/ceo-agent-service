@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
 export interface DataColumn<T extends { id: string }> {
   key: keyof T & string;
@@ -50,22 +50,30 @@ export function ResponsiveDataList<T extends { id: string }>({
             {rows.map((row) => {
               const expanded = expandedId === row.id;
               return (
-                <tr key={row.id}>
-                  {columns.map((column) => <td data-label={column.label} key={column.key}>{renderCell(row, column.key)}</td>)}
-                  {expandable && (
-                    <td>
-                      <button
-                        type="button"
-                        className="details-toggle"
-                        aria-expanded={expanded}
-                        onClick={() => setExpandedId(expanded ? null : row.id)}
-                      >
-                        {expanded ? "收起详情" : "展开详情"}
-                      </button>
-                      {renderExpanded && <div className="responsive-expanded" hidden={!expanded}>{renderExpanded(row)}</div>}
-                    </td>
+                <Fragment key={row.id}>
+                  <tr>
+                    {columns.map((column) => <td data-label={column.label} key={column.key}>{renderCell(row, column.key)}</td>)}
+                    {expandable && (
+                      <td data-label="详情">
+                        <button
+                          type="button"
+                          className="details-toggle"
+                          aria-expanded={expanded}
+                          onClick={() => setExpandedId(expanded ? null : row.id)}
+                        >
+                          {expanded ? "收起详情" : "展开详情"}
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                  {expanded && renderExpanded && (
+                    <tr className="responsive-expanded-row">
+                      <td colSpan={columns.length + 1}>
+                        <div className="responsive-expanded">{renderExpanded(row)}</div>
+                      </td>
+                    </tr>
                   )}
-                </tr>
+                </Fragment>
               );
             })}
           </tbody>
