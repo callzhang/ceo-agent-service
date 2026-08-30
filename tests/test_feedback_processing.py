@@ -4515,6 +4515,112 @@ def test_grouped_reopen_transition_validation_remains_exact(
     assert _feedback_processing_snapshot(store) == before
 
 
+def _prepare_old_members_in_same_newer_resolved_batch(
+    store: AutoReplyStore,
+    *,
+    member_count: int,
+) -> None:
+    feedback_keys = [f"feedback-{index}" for index in range(1, member_count + 1)]
+    old_receipt = _complete_resolution_receipt("b" * 40)
+    for feedback_key in feedback_keys:
+        store.upsert_feedback_event(
+            key=feedback_key,
+            feedback_token=f"token-{feedback_key}",
+        )
+    store.claim_feedback_processing_items("batch-1", feedback_keys)
+    for index, feedback_key in enumerate(feedback_keys, start=1):
+        store.associate_feedback_processing_turn(
+            feedback_key,
+            workbench_task_id="task-old",
+            workbench_turn_id="turn-old",
+            attempt_id=500 + index,
+            agent_run_id=600 + index,
+        )
+        store.patch_feedback_processing_item_evidence(
+            feedback_key,
+            commit_sha=old_receipt.commit_sha,
+            test_evidence=old_receipt.test_evidence,
+            restart_evidence=old_receipt.restart_evidence,
+            health_evidence=old_receipt.health_evidence,
+            note="old receipt",
+        )
+    assert store.resolve_feedback_processing_batch(
+        "batch-1",
+        old_receipt,
+        commit_is_ancestor=True,
+    )
+    for feedback_key in feedback_keys:
+        store.reopen_feedback_processing_item(
+            feedback_key,
+            reason=f"reopen {feedback_key} into newer batch",
+        )
+
+    newer_receipt = _complete_resolution_receipt("c" * 40)
+    store.claim_feedback_processing_items("batch-2", feedback_keys)
+    for index, feedback_key in enumerate(feedback_keys, start=1):
+        store.associate_feedback_processing_turn(
+            feedback_key,
+            workbench_task_id="task-newer",
+            workbench_turn_id="turn-newer",
+            attempt_id=700 + index,
+            agent_run_id=800 + index,
+        )
+        store.patch_feedback_processing_item_evidence(
+            feedback_key,
+            commit_sha=newer_receipt.commit_sha,
+            test_evidence=newer_receipt.test_evidence,
+            restart_evidence=newer_receipt.restart_evidence,
+            health_evidence=newer_receipt.health_evidence,
+            note="newer receipt",
+        )
+    assert store.resolve_feedback_processing_batch(
+        "batch-2",
+        newer_receipt,
+        commit_is_ancestor=True,
+    )
+
+
+@pytest.mark.parametrize("member_count", (1, 2))
+def test_old_batch_reuses_grouped_newer_resolved_transition_validation(
+    tmp_path: Path,
+    member_count: int,
+):
+    store = AutoReplyStore(tmp_path / f"newer-resolved-query-{member_count}.sqlite3")
+    _prepare_old_members_in_same_newer_resolved_batch(
+        store,
+        member_count=member_count,
+    )
+    statements: list[str] = []
+
+    with store._connect() as db:
+        batch = db.execute(
+            "select requested_count, resolved_at, updated_at "
+            "from feedback_processing_batches where batch_id='batch-1'"
+        ).fetchone()
+        assert batch is not None
+        db.set_trace_callback(statements.append)
+        try:
+            AutoReplyStore._validate_resolved_feedback_processing_batch(
+                db,
+                batch_id="batch-1",
+                requested_count=batch["requested_count"],
+                batch_resolved_at=str(batch["resolved_at"]),
+                batch_updated_at=str(batch["updated_at"]),
+                evidence=None,
+            )
+        finally:
+            db.set_trace_callback(None)
+
+    transition_queries = [
+        statement.lower()
+        for statement in statements
+        if "from feedback_processing_transitions" in statement.lower()
+    ]
+    assert len(transition_queries) == 4
+    assert sum("where batch_id=" in query for query in transition_queries) == 2
+    assert sum("where round_id in (" in query for query in transition_queries) == 2
+
+
 @pytest.mark.parametrize("operation", ("first-resolve", "same-batch-retry"))
 @pytest.mark.parametrize(
     "damage",

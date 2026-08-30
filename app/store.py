@@ -15093,10 +15093,6 @@ class AutoReplyStore:
                 ):
                     raise ValueError("resolved batch source lineage is incomplete")
                 cls._validate_resolved_feedback_processing_round(item, current_round)
-                cls._validate_feedback_processing_transition_multiset(
-                    db,
-                    current_round,
-                )
                 if cls._feedback_processing_receipt_version(current_round) == 2 and (
                     str(current_round["updated_at"] or "")
                     != str(current_round["resolved_at"] or "")
