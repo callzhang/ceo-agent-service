@@ -3989,12 +3989,13 @@ def _insert_orphan_feedback_batch_transition(
     *,
     batch_id: str,
     damage: str,
+    member_feedback_key: str = "feedback-1",
 ) -> None:
     with store._connect() as db:
         member_round = db.execute(
             "select id from feedback_processing_rounds "
-            "where batch_id=? order by feedback_key limit 1",
-            (batch_id,),
+            "where batch_id=? and feedback_key=?",
+            (batch_id, member_feedback_key),
         ).fetchone()
         assert member_round is not None
         if damage == "nonexistent-round":
@@ -4048,6 +4049,93 @@ def _insert_orphan_feedback_batch_transition(
                 batch_id,
             ),
         )
+
+
+def _prepare_resolved_two_member_batch(
+    store: AutoReplyStore,
+) -> ResolutionEvidence:
+    receipt = _prepare_two_member_processing_batch(store)
+    assert store.resolve_feedback_processing_batch(
+        "batch-1",
+        receipt,
+        commit_is_ancestor=True,
+    )
+    return receipt
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ("nonexistent-round", "wrong-feedback-key", "outside-batch-round"),
+)
+def test_resolved_batch_retry_rejects_orphan_batch_transitions(
+    tmp_path: Path,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"resolved-orphan-{damage}.sqlite3")
+    receipt = _prepare_resolved_two_member_batch(store)
+    _insert_orphan_feedback_batch_transition(
+        store,
+        batch_id="batch-1",
+        damage=damage,
+    )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1",
+            receipt,
+            commit_is_ancestor=True,
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ("nonexistent-round", "wrong-feedback-key", "outside-batch-round"),
+)
+def test_reopen_rejects_orphan_transitions_anywhere_in_resolved_batch(
+    tmp_path: Path,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"reopen-orphan-{damage}.sqlite3")
+    _prepare_resolved_two_member_batch(store)
+    _insert_orphan_feedback_batch_transition(
+        store,
+        batch_id="batch-1",
+        damage=damage,
+        member_feedback_key="feedback-2",
+    )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(
+        feedback_processing_module.FeedbackProcessingReopenError
+    ) as error:
+        store.reopen_feedback_processing_item(
+            "feedback-1",
+            reason="ownership history must be complete",
+        )
+
+    assert error.value.error_code == "feedback_reopen_history_incomplete"
+    assert _feedback_processing_snapshot(store) == before
+
+
+def test_multi_item_resolved_batch_can_reopen_one_member(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "multi-item-reopen.sqlite3")
+    _prepare_resolved_two_member_batch(store)
+    second_round_before = store.list_feedback_processing_rounds("feedback-2")
+
+    reopened = store.reopen_feedback_processing_item(
+        "feedback-1",
+        reason="only the first member needs another round",
+    )
+
+    assert reopened is not None and reopened.status == "pending"
+    assert store.get_feedback_processing_item("feedback-2").status == "resolved"
+    assert store.get_feedback_processing_batch("batch-1").status == "resolved"
+    assert store.get_feedback_event("feedback-1").resolved_at == ""
+    assert store.get_feedback_event("feedback-2").resolved_at
+    assert store.list_feedback_processing_rounds("feedback-2") == second_round_before
 
 
 @pytest.mark.parametrize("operation", ("first-resolve", "same-batch-retry"))
