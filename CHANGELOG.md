@@ -1,5 +1,9 @@
 # Changelog
 
+- 2026-08-30: normalize follow-up times in `Asia/Shanghai` before applying
+  work-hour rules, so timezone-qualified model output cannot bypass the same
+  business-window validation used when persisting a task-agent decision.
+
 - 2026-08-30: recover two deterministic background-agent validation failures.
   Candidate-interview `no_action` now explicitly overrides the 1:1 meeting
   delivery-target contract, so analysis produces `target=null` and never enters

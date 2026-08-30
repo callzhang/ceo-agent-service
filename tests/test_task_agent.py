@@ -13,6 +13,7 @@ from app.task_agent import (
     build_task_agent_prompt,
     process_work_item,
     _parse_task_agent_decision,
+    _normalize_follow_up_time,
 )
 from app.task_models import TaskAgentDecision, WorkItem
 
@@ -47,6 +48,18 @@ def test_task_agent_parser_uses_valid_result_after_failed_tool_event():
     )
 
     assert _parse_task_agent_decision(raw) == TaskAgentDecision.model_validate(decision)
+
+
+def test_normalize_follow_up_time_uses_business_timezone_for_aware_input():
+    assert _normalize_follow_up_time("2026-08-30T09:30:00-07:00") == (
+        "2026-08-31T09:00:00+08:00"
+    )
+
+
+def test_normalize_follow_up_time_preserves_valid_business_window():
+    assert _normalize_follow_up_time("2026-08-31T10:30:00+08:00") == (
+        "2026-08-31T10:30:00+08:00"
+    )
 
 
 def test_task_agent_parser_recovers_complete_object_with_repeated_continuation():

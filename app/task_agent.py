@@ -1731,7 +1731,12 @@ def _normalize_follow_up_time(value: str) -> str:
     except ValueError:
         return value
 
-    adjusted = scheduled
+    local_scheduled = (
+        scheduled.replace(tzinfo=FOLLOW_UP_WORK_TZ)
+        if scheduled.tzinfo is None
+        else scheduled.astimezone(FOLLOW_UP_WORK_TZ)
+    )
+    adjusted = local_scheduled
     if adjusted.weekday() >= 5:
         days_until_monday = 7 - adjusted.weekday()
         adjusted = adjusted + timedelta(days=days_until_monday)
@@ -1759,7 +1764,7 @@ def _normalize_follow_up_time(value: str) -> str:
             microsecond=0,
         )
 
-    if adjusted == scheduled:
+    if adjusted == local_scheduled:
         return value
     return adjusted.isoformat(timespec="seconds")
 
