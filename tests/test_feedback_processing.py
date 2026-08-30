@@ -3572,3 +3572,252 @@ def test_old_resolved_batch_idempotency_requires_complete_newer_membership(
         )
 
     assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize(
+    ("field", "round_value", "item_value"),
+    (
+        ("commit_sha", "d" * 40, "d" * 40),
+        (
+            "test_evidence_json",
+            '{"different":{"exit_code":0}}',
+            '{"different":{"exit_code":0}}',
+        ),
+        (
+            "restart_evidence_json",
+            '{"launchd_label":"com.ceo-agent-service.main",'
+            '"before_pid":20,"after_pid":21}',
+            '{"launchd_label":"com.ceo-agent-service.main",'
+            '"before_pid":20,"after_pid":21}',
+        ),
+        (
+            "health_evidence_json",
+            '{"url":"http://127.0.0.1:8765/healthz",'
+            '"status_code":200,"ok":true,"probe":"different"}',
+            '{"url":"http://127.0.0.1:8765/healthz",'
+            '"status_code":200,"ok":true,"probe":"different"}',
+        ),
+        (
+            "backlog_evidence_json",
+            '{"processing":0,"failed":0,"retryable":0,"scope":"different"}',
+            None,
+        ),
+    ),
+)
+def test_resolved_newer_batch_requires_one_common_member_receipt(
+    tmp_path: Path,
+    field: str,
+    round_value: object,
+    item_value: object | None,
+):
+    store = AutoReplyStore(tmp_path / f"newer-common-receipt-{field}.sqlite3")
+    old_receipt, _ = _prepare_old_batch_with_newer_batch(
+        store,
+        newer_status="resolved",
+        include_second_member=True,
+    )
+    with store._connect() as db:
+        db.execute(
+            f"update feedback_processing_rounds set {field}=? "
+            "where feedback_key='feedback-2' and batch_id='batch-2'",
+            (round_value,),
+        )
+        if item_value is not None:
+            db.execute(
+                f"update feedback_processing_items set {field}=? "
+                "where feedback_key='feedback-2' and batch_id='batch-2'",
+                (item_value,),
+            )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
+        store.resolve_feedback_processing_batch(
+            "batch-1", old_receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize("damage", ("legacy-version", "completed-backlog"))
+def test_processing_newer_batch_requires_v2_round_with_empty_backlog(
+    tmp_path: Path,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"newer-processing-contract-{damage}.sqlite3")
+    old_receipt, _ = _prepare_old_batch_with_newer_batch(
+        store,
+        newer_status="processing",
+        include_second_member=True,
+    )
+    with store._connect() as db:
+        if damage == "legacy-version":
+            db.execute(
+                "update feedback_processing_rounds set receipt_version=1 "
+                "where feedback_key='feedback-2' and batch_id='batch-2'"
+            )
+        else:
+            db.execute(
+                """
+                update feedback_processing_rounds
+                   set backlog_evidence_json=
+                       '{"processing":0,"failed":0,"retryable":0}'
+                 where feedback_key='feedback-2' and batch_id='batch-2'
+                """
+            )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
+        store.resolve_feedback_processing_batch(
+            "batch-1", old_receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize("newer_status", ("processing", "resolved"))
+def test_newer_batch_member_pointer_must_target_global_latest_round(
+    tmp_path: Path,
+    newer_status: str,
+):
+    store = AutoReplyStore(tmp_path / f"newer-global-latest-{newer_status}.sqlite3")
+    old_receipt, _ = _prepare_old_batch_with_newer_batch(
+        store,
+        newer_status=newer_status,
+        include_second_member=True,
+    )
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status,
+                receipt_version, started_at
+            ) values ('feedback-2', 2, 'batch-shadow', ?, 2,
+                      current_timestamp)
+            """,
+            (newer_status,),
+        )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
+        store.resolve_feedback_processing_batch(
+            "batch-1", old_receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize("newer_status", ("processing", "resolved"))
+@pytest.mark.parametrize("damage", ("missing", "duplicate", "wrong-fields", "time"))
+def test_v2_newer_round_requires_exact_claim_transition(
+    tmp_path: Path,
+    newer_status: str,
+    damage: str,
+):
+    store = AutoReplyStore(
+        tmp_path / f"newer-claim-transition-{newer_status}-{damage}.sqlite3"
+    )
+    old_receipt, _ = _prepare_old_batch_with_newer_batch(
+        store,
+        newer_status=newer_status,
+        include_second_member=True,
+    )
+    with store._connect() as db:
+        if damage == "missing":
+            db.execute(
+                "delete from feedback_processing_transitions "
+                "where feedback_key='feedback-2' and batch_id='batch-2' "
+                "and from_status='pending' and to_status='processing'"
+            )
+        elif damage == "duplicate":
+            db.execute(
+                """
+                insert into feedback_processing_transitions (
+                    feedback_key, round_id, batch_id, from_status, to_status,
+                    reason, workbench_task_id, workbench_turn_id, created_at
+                )
+                select feedback_key, round_id, batch_id, from_status, to_status,
+                       reason, workbench_task_id, workbench_turn_id, created_at
+                  from feedback_processing_transitions
+                 where feedback_key='feedback-2' and batch_id='batch-2'
+                   and from_status='pending' and to_status='processing'
+                """
+            )
+        elif damage == "wrong-fields":
+            db.execute(
+                """
+                update feedback_processing_transitions
+                   set workbench_turn_id='wrong-turn'
+                 where feedback_key='feedback-2' and batch_id='batch-2'
+                   and from_status='pending' and to_status='processing'
+                """
+            )
+        else:
+            db.execute(
+                """
+                update feedback_processing_transitions
+                   set created_at='1999-01-01 00:00:00'
+                 where feedback_key='feedback-2' and batch_id='batch-2'
+                   and from_status='pending' and to_status='processing'
+                """
+            )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
+        store.resolve_feedback_processing_batch(
+            "batch-1", old_receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+def test_claim_uses_one_timestamp_for_rounds_and_claim_transitions(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "claim-shared-timestamp.sqlite3")
+    for feedback_key in ("feedback-1", "feedback-2"):
+        store.upsert_feedback_event(
+            key=feedback_key,
+            feedback_token=f"token-{feedback_key}",
+        )
+
+    original_open_connection = store._open_connection
+
+    def delayed_open_connection() -> sqlite3.Connection:
+        connection = original_open_connection()
+        connection.create_function(
+            "feedback_claim_delay",
+            0,
+            lambda: time.sleep(1.1),
+        )
+        return connection
+
+    store._open_connection = delayed_open_connection  # type: ignore[method-assign]
+    with store._connect() as db:
+        db.execute(
+            """
+            create trigger delay_feedback_round_claim
+            after insert on feedback_processing_rounds
+            begin
+                select feedback_claim_delay();
+            end
+            """
+        )
+
+    store.claim_feedback_processing_items(
+        "batch-1", ["feedback-1", "feedback-2"]
+    )
+
+    with store._connect() as db:
+        timestamps = {
+            str(row["timestamp"])
+            for row in db.execute(
+                """
+                select started_at as timestamp
+                  from feedback_processing_rounds where batch_id='batch-1'
+                union all
+                select created_at
+                  from feedback_processing_transitions
+                 where batch_id='batch-1' and from_status='pending'
+                   and to_status='processing'
+                """
+            )
+        }
+    assert len(timestamps) == 1

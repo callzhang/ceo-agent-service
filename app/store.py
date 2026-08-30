@@ -13996,6 +13996,10 @@ class AutoReplyStore:
                 """,
                 (cleaned_batch_id, len(keys)),
             )
+            claim_timestamp_row = db.execute(
+                "select current_timestamp as claim_timestamp"
+            ).fetchone()
+            claim_timestamp = str(claim_timestamp_row["claim_timestamp"])
             for key in keys:
                 row = db.execute(
                     """
@@ -14011,9 +14015,9 @@ class AutoReplyStore:
                     insert into feedback_processing_rounds (
                         feedback_key, round_number, batch_id, status,
                         receipt_version, started_at
-                    ) values (?, ?, ?, 'processing', 2, current_timestamp)
+                    ) values (?, ?, ?, 'processing', 2, ?)
                     """,
-                    (key, next_round_number, cleaned_batch_id),
+                    (key, next_round_number, cleaned_batch_id, claim_timestamp),
                 )
                 round_id = int(cursor.lastrowid)
                 cursor = db.execute(
@@ -14036,10 +14040,10 @@ class AutoReplyStore:
                     """
                     insert into feedback_processing_transitions (
                         feedback_key, round_id, batch_id,
-                        from_status, to_status
-                    ) values (?, ?, ?, 'pending', 'processing')
+                        from_status, to_status, created_at
+                    ) values (?, ?, ?, 'pending', 'processing', ?)
                     """,
-                    (key, round_id, cleaned_batch_id),
+                    (key, round_id, cleaned_batch_id, claim_timestamp),
                 )
             db.execute(
                 """
@@ -14497,7 +14501,8 @@ class AutoReplyStore:
         item: sqlite3.Row,
         current_round: sqlite3.Row,
     ) -> None:
-        cls._feedback_processing_receipt_version(current_round)
+        if cls._feedback_processing_receipt_version(current_round) != 2:
+            raise ValueError("resolved batch current processing lineage is incomplete")
         if (
             str(item["status"] or "") != "processing"
             or str(current_round["status"] or "") != "processing"
@@ -14535,6 +14540,39 @@ class AutoReplyStore:
                 raise ValueError(
                     "resolved batch current processing evidence is incomplete"
                 )
+        backlog_evidence = json.loads(current_round["backlog_evidence_json"] or "{}")
+        if not isinstance(backlog_evidence, dict) or backlog_evidence:
+            raise ValueError("resolved batch current processing backlog is incomplete")
+
+    @classmethod
+    def _validate_feedback_processing_claim_transition(
+        cls,
+        db: sqlite3.Connection,
+        current_round: sqlite3.Row,
+    ) -> None:
+        if cls._feedback_processing_receipt_version(current_round) != 2:
+            return
+        claim_transitions = db.execute(
+            """
+            select * from feedback_processing_transitions
+             where feedback_key=? and round_id=? and batch_id=?
+               and from_status='pending' and to_status='processing'
+            """,
+            (
+                str(current_round["feedback_key"]),
+                int(current_round["id"]),
+                str(current_round["batch_id"]),
+            ),
+        ).fetchall()
+        if (
+            len(claim_transitions) != 1
+            or str(claim_transitions[0]["reason"] or "")
+            or str(claim_transitions[0]["workbench_task_id"] or "")
+            or str(claim_transitions[0]["workbench_turn_id"] or "")
+            or str(claim_transitions[0]["created_at"] or "")
+            != str(current_round["started_at"] or "")
+        ):
+            raise ValueError("resolved batch claim transition is incomplete")
 
     @classmethod
     def _validate_current_feedback_processing_batch_lineage(
@@ -14595,6 +14633,7 @@ class AutoReplyStore:
                 raise ValueError(stable_error)
 
             version_two_rounds: list[sqlite3.Row] = []
+            common_resolved_receipt: ResolutionEvidence | None = None
             for item in items:
                 round_id = cls._feedback_processing_round_pointer(
                     item,
@@ -14609,8 +14648,18 @@ class AutoReplyStore:
                     or str(current_round["feedback_key"]) != feedback_key
                     or str(current_round["batch_id"] or "") != batch_id
                     or str(current_round["status"] or "") != expected_status
+                    or int(current_round["round_number"])
+                    != db.execute(
+                        "select max(round_number) "
+                        "from feedback_processing_rounds where feedback_key=?",
+                        (feedback_key,),
+                    ).fetchone()[0]
                 ):
                     raise ValueError(stable_error)
+                cls._validate_feedback_processing_claim_transition(
+                    db,
+                    current_round,
+                )
                 if expected_status == "processing":
                     if str(source["resolved_at"] or "").strip():
                         raise ValueError(stable_error)
@@ -14620,7 +14669,24 @@ class AutoReplyStore:
                     )
                     continue
 
+                member_receipt = cls._resolved_feedback_processing_round_evidence(
+                    current_round
+                )
                 cls._validate_resolved_feedback_processing_round(item, current_round)
+                if common_resolved_receipt is None:
+                    common_resolved_receipt = member_receipt
+                elif (
+                    member_receipt.commit_sha != common_resolved_receipt.commit_sha
+                    or member_receipt.test_evidence
+                    != common_resolved_receipt.test_evidence
+                    or member_receipt.restart_evidence
+                    != common_resolved_receipt.restart_evidence
+                    or member_receipt.health_evidence
+                    != common_resolved_receipt.health_evidence
+                    or member_receipt.backlog_evidence
+                    != common_resolved_receipt.backlog_evidence
+                ):
+                    raise ValueError(stable_error)
                 if str(source["resolved_at"] or "") != str(
                     current_round["resolved_at"] or ""
                 ):
