@@ -173,6 +173,8 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
+    "trg_feedback_processing_round_number_positive_insert",
+    "trg_feedback_processing_round_number_positive_update",
     "trg_runtime_attempt_session_evidence_trim_insert",
     "trg_runtime_attempt_session_evidence_trim_update",
     "trg_runtime_attempt_generalized_lease_insert",
@@ -964,11 +966,46 @@ class AutoReplyStore:
                        or trim(item.note) <> ''
                    )
                    and (
-                       item.current_round_id=0
-                       or not exists (
-                           select 1
-                             from feedback_processing_rounds current_round
-                            where current_round.id=item.current_round_id
+                       (
+                           item.current_round_id <> 0
+                           and (
+                               not exists (
+                                   select 1
+                                     from feedback_processing_rounds current_round
+                                    where current_round.id=item.current_round_id
+                                      and current_round.feedback_key=
+                                          item.feedback_key
+                                      and current_round.batch_id=item.batch_id
+                                      and current_round.status=item.status
+                               )
+                               or (
+                                   select count(*)
+                                     from feedback_processing_rounds matching_round
+                                    where matching_round.feedback_key=
+                                          item.feedback_key
+                                      and matching_round.batch_id=item.batch_id
+                                      and matching_round.status=item.status
+                               ) <> 1
+                           )
+                       )
+                       or (
+                           item.current_round_id=0
+                           and (
+                               not exists (
+                                   select 1
+                                     from feedback_processing_rounds history_round
+                                    where history_round.feedback_key=
+                                          item.feedback_key
+                               )
+                               or (
+                                   select count(*)
+                                     from feedback_processing_rounds matching_round
+                                    where matching_round.feedback_key=
+                                          item.feedback_key
+                                      and matching_round.batch_id=item.batch_id
+                                      and matching_round.status=item.status
+                               ) = 1
+                           )
                        )
                    )
                  limit 1
@@ -988,12 +1025,60 @@ class AutoReplyStore:
                 restart_evidence_json, health_evidence_json, note,
                 started_at, resolved_at, created_at, updated_at
             )
-            select feedback_key, 1, batch_id, status,
-                   workbench_task_id, workbench_turn_id, attempt_id,
-                   agent_run_id, commit_sha, test_evidence_json,
-                   restart_evidence_json, health_evidence_json, note,
-                   created_at, resolved_at, created_at, updated_at
-              from feedback_processing_items
+            select item.feedback_key, 1, item.batch_id, item.status,
+                   item.workbench_task_id, item.workbench_turn_id,
+                   item.attempt_id, item.agent_run_id, item.commit_sha,
+                   item.test_evidence_json, item.restart_evidence_json,
+                   item.health_evidence_json, item.note,
+                   item.created_at, item.resolved_at,
+                   item.created_at, item.updated_at
+              from feedback_processing_items item
+             where item.status in ('processing', 'resolved')
+               and (
+                   trim(item.batch_id) <> ''
+                   or trim(item.workbench_task_id) <> ''
+                   or trim(item.workbench_turn_id) <> ''
+                   or cast(item.attempt_id as integer) > 0
+                   or cast(item.agent_run_id as integer) > 0
+                   or trim(item.commit_sha) <> ''
+                   or trim(item.test_evidence_json) not in ('', '{}')
+                   or trim(item.restart_evidence_json) not in ('', '{}')
+                   or trim(item.health_evidence_json) not in ('', '{}')
+                   or trim(item.note) <> ''
+               )
+               and not exists (
+                   select 1
+                     from feedback_processing_rounds history_round
+                    where history_round.feedback_key=item.feedback_key
+               )
+            """
+        )
+        db.execute(
+            """
+            update feedback_processing_items
+               set current_round_id=case
+                   when (
+                       select count(*)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   ) = 1
+                   then (
+                       select min(matching_round.id)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   )
+                   else 0
+               end
              where status in ('processing', 'resolved')
                and (
                    trim(batch_id) <> ''
@@ -1007,33 +1092,42 @@ class AutoReplyStore:
                    or trim(health_evidence_json) not in ('', '{}')
                    or trim(note) <> ''
                )
-            """
-        )
-        db.execute(
-            """
-            update feedback_processing_items
-               set current_round_id=(
-                   select first_round.id
-                     from feedback_processing_rounds first_round
-                    where first_round.feedback_key=
-                          feedback_processing_items.feedback_key
-                      and first_round.round_number=1
-               )
-             where (
-                       current_round_id=0
-                       or not exists (
-                           select 1
-                             from feedback_processing_rounds current_round
-                            where current_round.id=
-                                  feedback_processing_items.current_round_id
-                       )
+               and (
+                   not exists (
+                       select 1
+                         from feedback_processing_rounds current_round
+                        where current_round.id=
+                              feedback_processing_items.current_round_id
+                          and current_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and current_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and current_round.status=
+                              feedback_processing_items.status
                    )
-               and exists (
-                   select 1
-                     from feedback_processing_rounds first_round
-                    where first_round.feedback_key=
-                          feedback_processing_items.feedback_key
-                      and first_round.round_number=1
+                   or (
+                       select count(*)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   ) <> 1
+               )
+               and (
+                   current_round_id <> 0
+                   or (
+                       select count(*)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   ) = 1
                )
             """
         )
@@ -1318,6 +1412,26 @@ class AutoReplyStore:
                     on feedback_processing_rounds(feedback_key, round_number desc);
                 create index if not exists idx_feedback_processing_rounds_batch
                     on feedback_processing_rounds(batch_id);
+                create trigger if not exists
+                    trg_feedback_processing_round_number_positive_insert
+                before insert on feedback_processing_rounds
+                when new.round_number <= 0
+                begin
+                    select raise(
+                        abort,
+                        'feedback_processing_round_number_must_be_positive'
+                    );
+                end;
+                create trigger if not exists
+                    trg_feedback_processing_round_number_positive_update
+                before update of round_number on feedback_processing_rounds
+                when new.round_number <= 0
+                begin
+                    select raise(
+                        abort,
+                        'feedback_processing_round_number_must_be_positive'
+                    );
+                end;
                 create table if not exists feedback_processing_transitions (
                     id integer primary key autoincrement,
                     feedback_key text not null,

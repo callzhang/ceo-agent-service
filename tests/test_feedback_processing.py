@@ -251,6 +251,132 @@ def test_feedback_round_schema_requires_positive_round_number(
         )
 
 
+def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "upgrade-positive-round.sqlite3"
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        db.execute("drop table feedback_processing_rounds")
+        db.execute(
+            """
+            create table feedback_processing_rounds (
+                id integer primary key autoincrement,
+                feedback_key text not null,
+                round_number integer not null,
+                batch_id text not null default '',
+                status text not null
+                    check (status in ('processing', 'resolved')),
+                workbench_task_id text not null default '',
+                workbench_turn_id text not null default '',
+                attempt_id integer not null default 0,
+                agent_run_id integer not null default 0,
+                commit_sha text not null default '',
+                test_evidence_json text not null default '{}',
+                restart_evidence_json text not null default '{}',
+                health_evidence_json text not null default '{}',
+                note text not null default '',
+                started_at text not null default '',
+                resolved_at text not null default '',
+                reopened_at text not null default '',
+                reopen_reason text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                unique (feedback_key, round_number),
+                unique (feedback_key, batch_id)
+            )
+            """
+        )
+        db.execute(
+            """
+            create index idx_feedback_processing_rounds_feedback
+                on feedback_processing_rounds(feedback_key, round_number desc)
+            """
+        )
+        db.execute(
+            """
+            create index idx_feedback_processing_rounds_batch
+                on feedback_processing_rounds(batch_id)
+            """
+        )
+        db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status, note
+            ) values ('feedback-preserved', 1, 'batch-preserved',
+                      'processing', 'preserve this row')
+            """
+        )
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    upgraded = AutoReplyStore(db_path)
+    stable_error = "feedback_processing_round_number_must_be_positive"
+    with upgraded._connect() as db:
+        preserved = db.execute(
+            """
+            select feedback_key, round_number, batch_id, note
+              from feedback_processing_rounds
+             where feedback_key='feedback-preserved'
+            """
+        ).fetchone()
+        assert tuple(preserved) == (
+            "feedback-preserved",
+            1,
+            "batch-preserved",
+            "preserve this row",
+        )
+        triggers = {
+            row[0]
+            for row in db.execute(
+                """
+                select name from sqlite_master
+                 where type='trigger' and tbl_name='feedback_processing_rounds'
+                """
+            )
+        }
+        assert {
+            "trg_feedback_processing_round_number_positive_insert",
+            "trg_feedback_processing_round_number_positive_update",
+        } <= triggers
+
+        for round_number in (0, -1):
+            with pytest.raises(sqlite3.IntegrityError, match=stable_error):
+                db.execute(
+                    """
+                    insert into feedback_processing_rounds (
+                        feedback_key, round_number, batch_id, status
+                    ) values (?, ?, ?, 'processing')
+                    """,
+                    (
+                        f"feedback-invalid-{round_number}",
+                        round_number,
+                        f"batch-invalid-{round_number}",
+                    ),
+                )
+            with pytest.raises(sqlite3.IntegrityError, match=stable_error):
+                db.execute(
+                    """
+                    update feedback_processing_rounds set round_number=?
+                     where feedback_key='feedback-preserved'
+                    """,
+                    (round_number,),
+                )
+
+        db.execute(
+            """
+            update feedback_processing_rounds set round_number=2
+             where feedback_key='feedback-preserved'
+            """
+        )
+        assert db.execute(
+            """
+            select round_number from feedback_processing_rounds
+             where feedback_key='feedback-preserved'
+            """
+        ).fetchone()[0] == 2
+
+
 def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
     tmp_path: Path,
 ):
@@ -612,6 +738,308 @@ def test_feedback_round_backfill_self_heals_current_schema_and_interruption(
         assert db.execute(
             "select count(*) from feedback_processing_transitions"
         ).fetchone()[0] == 0
+
+
+def test_feedback_round_reconciliation_requires_pointer_ownership_and_batch(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "pointer-integrity.sqlite3"
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    store = AutoReplyStore(db_path)
+
+    def claim_with_evidence(feedback_key: str, batch_id: str, marker: str) -> None:
+        store.upsert_feedback_event(
+            key=feedback_key,
+            feedback_token=f"token-{feedback_key}",
+            comment=f"source-{marker}",
+        )
+        assert store.claim_feedback_processing_items(batch_id, [feedback_key])
+        store.associate_feedback_processing_turn(
+            feedback_key,
+            workbench_task_id=f"task-{marker}",
+            workbench_turn_id=f"turn-{marker}",
+            attempt_id=51,
+            agent_run_id=61,
+        )
+        store.patch_feedback_processing_item_evidence(
+            feedback_key,
+            commit_sha="d" * 40,
+            test_evidence={"marker": marker, "exit_code": 0},
+            restart_evidence={"marker": marker},
+            health_evidence={"marker": marker},
+            note=f"projection-{marker}",
+        )
+
+    claim_with_evidence("feedback-cross-a", "batch-cross-a", "cross-a")
+    claim_with_evidence("feedback-cross-b", "batch-cross-b", "cross-b")
+    claim_with_evidence("feedback-history", "batch-current", "history-current")
+    claim_with_evidence(
+        "feedback-unrepairable", "batch-unrepairable-current", "unrepairable"
+    )
+    items_before = {
+        key: store.get_feedback_processing_item(key)
+        for key in (
+            "feedback-cross-a",
+            "feedback-cross-b",
+            "feedback-history",
+            "feedback-unrepairable",
+        )
+    }
+    assert all(item is not None for item in items_before.values())
+
+    with store._connect() as db:
+        def insert_round(
+            feedback_key: str,
+            round_number: int,
+            batch_id: str,
+            marker: str,
+        ) -> int:
+            cursor = db.execute(
+                """
+                insert into feedback_processing_rounds (
+                    feedback_key, round_number, batch_id, status,
+                    test_evidence_json, note
+                ) values (?, ?, ?, 'processing', ?, ?)
+                """,
+                (
+                    feedback_key,
+                    round_number,
+                    batch_id,
+                    json.dumps({"round_marker": marker}, sort_keys=True),
+                    f"round-{marker}",
+                ),
+            )
+            return int(cursor.lastrowid)
+
+        cross_a_round_id = insert_round(
+            "feedback-cross-a", 1, "batch-cross-a", "cross-a"
+        )
+        cross_b_round_id = insert_round(
+            "feedback-cross-b", 1, "batch-cross-b", "cross-b"
+        )
+        history_old_round_id = insert_round(
+            "feedback-history", 1, "batch-old", "history-old"
+        )
+        history_current_round_id = insert_round(
+            "feedback-history", 2, "batch-current", "history-current"
+        )
+        unrepairable_old_round_id = insert_round(
+            "feedback-unrepairable", 1, "batch-unrepairable-old", "unrepairable-old"
+        )
+        db.execute(
+            """
+            update feedback_processing_items set current_round_id=?
+             where feedback_key='feedback-cross-a'
+            """,
+            (cross_b_round_id,),
+        )
+        db.execute(
+            """
+            update feedback_processing_items set current_round_id=?
+             where feedback_key='feedback-cross-b'
+            """,
+            (cross_b_round_id,),
+        )
+        db.execute(
+            """
+            update feedback_processing_items set current_round_id=?
+             where feedback_key='feedback-history'
+            """,
+            (history_old_round_id,),
+        )
+        db.execute(
+            """
+            update feedback_processing_items set current_round_id=?
+             where feedback_key='feedback-unrepairable'
+            """,
+            (unrepairable_old_round_id,),
+        )
+        rounds_before = [
+            tuple(row)
+            for row in db.execute(
+                """
+                select id, feedback_key, round_number, batch_id,
+                       status, test_evidence_json, note
+                  from feedback_processing_rounds order by id
+                """
+            )
+        ]
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    repaired = AutoReplyStore(db_path)
+    repaired_items = {
+        key: repaired.get_feedback_processing_item(key)
+        for key in items_before
+    }
+    assert repaired_items["feedback-cross-a"].current_round_id == cross_a_round_id
+    assert repaired_items["feedback-cross-b"].current_round_id == cross_b_round_id
+    assert (
+        repaired_items["feedback-history"].current_round_id
+        == history_current_round_id
+    )
+    assert repaired_items["feedback-unrepairable"].current_round_id == 0
+    for key, repaired_item in repaired_items.items():
+        assert repaired_item is not None
+        assert repaired_item.model_copy(update={"current_round_id": 0}) == (
+            items_before[key].model_copy(update={"current_round_id": 0})
+        )
+
+    with repaired._connect() as db:
+        rounds_after = [
+            tuple(row)
+            for row in db.execute(
+                """
+                select id, feedback_key, round_number, batch_id,
+                       status, test_evidence_json, note
+                  from feedback_processing_rounds order by id
+                """
+            )
+        ]
+        assert rounds_after == rounds_before
+        assert len(rounds_after) == 5
+        assert db.execute(
+            "select count(*) from feedback_processing_transitions"
+        ).fetchone()[0] == 0
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    reopened = AutoReplyStore(db_path)
+    assert {
+        key: reopened.get_feedback_processing_item(key).current_round_id
+        for key in repaired_items
+    } == {
+        "feedback-cross-a": cross_a_round_id,
+        "feedback-cross-b": cross_b_round_id,
+        "feedback-history": history_current_round_id,
+        "feedback-unrepairable": 0,
+    }
+    with reopened._connect() as db:
+        assert [
+            tuple(row)
+            for row in db.execute(
+                """
+                select id, feedback_key, round_number, batch_id,
+                       status, test_evidence_json, note
+                  from feedback_processing_rounds order by id
+                """
+            )
+        ] == rounds_before
+
+
+def test_feedback_round_reconciliation_clears_ambiguous_matching_history(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "ambiguous-pointer.sqlite3"
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    store = AutoReplyStore(db_path)
+    store.upsert_feedback_event(
+        key="feedback-ambiguous",
+        feedback_token="token-ambiguous",
+        comment="ambiguous source",
+    )
+    assert store.claim_feedback_processing_items(
+        "batch-ambiguous", ["feedback-ambiguous"]
+    )
+    store.patch_feedback_processing_item_evidence(
+        "feedback-ambiguous",
+        test_evidence={"exit_code": 0},
+        note="ambiguous projection",
+    )
+
+    with store._connect() as db:
+        db.execute("drop table feedback_processing_rounds")
+        db.execute(
+            """
+            create table feedback_processing_rounds (
+                id integer primary key autoincrement,
+                feedback_key text not null,
+                round_number integer not null check (round_number > 0),
+                batch_id text not null default '',
+                status text not null
+                    check (status in ('processing', 'resolved')),
+                workbench_task_id text not null default '',
+                workbench_turn_id text not null default '',
+                attempt_id integer not null default 0,
+                agent_run_id integer not null default 0,
+                commit_sha text not null default '',
+                test_evidence_json text not null default '{}',
+                restart_evidence_json text not null default '{}',
+                health_evidence_json text not null default '{}',
+                note text not null default '',
+                started_at text not null default '',
+                resolved_at text not null default '',
+                reopened_at text not null default '',
+                reopen_reason text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp
+            )
+            """
+        )
+        db.execute(
+            """
+            create index idx_feedback_processing_rounds_feedback
+                on feedback_processing_rounds(feedback_key, round_number desc)
+            """
+        )
+        db.execute(
+            """
+            create index idx_feedback_processing_rounds_batch
+                on feedback_processing_rounds(batch_id)
+            """
+        )
+        db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status,
+                test_evidence_json, note
+            ) values
+                ('feedback-ambiguous', 1, 'batch-ambiguous', 'processing',
+                 '{"round":"one"}', 'ambiguous-one'),
+                ('feedback-ambiguous', 2, 'batch-ambiguous', 'processing',
+                 '{"round":"two"}', 'ambiguous-two')
+            """
+        )
+        db.execute(
+            """
+            update feedback_processing_items set current_round_id=999999
+             where feedback_key='feedback-ambiguous'
+            """
+        )
+        rounds_before = [
+            tuple(row)
+            for row in db.execute(
+                """
+                select id, round_number, test_evidence_json, note
+                  from feedback_processing_rounds order by id
+                """
+            )
+        ]
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    repaired = AutoReplyStore(db_path)
+    repaired_item = repaired.get_feedback_processing_item("feedback-ambiguous")
+    assert repaired_item is not None
+    assert repaired_item.current_round_id == 0
+    assert repaired_item.test_evidence == {"exit_code": 0}
+    assert repaired_item.note == "ambiguous projection"
+    with repaired._connect() as db:
+        assert [
+            tuple(row)
+            for row in db.execute(
+                """
+                select id, round_number, test_evidence_json, note
+                  from feedback_processing_rounds order by id
+                """
+            )
+        ] == rounds_before
+        assert db.execute(
+            "select count(*) from feedback_processing_transitions"
+        ).fetchone()[0] == 0
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    reopened = AutoReplyStore(db_path)
+    assert reopened.get_feedback_processing_item(
+        "feedback-ambiguous"
+    ).current_round_id == 0
 
 
 def test_claim_associate_patch_and_resolve_feedback_batch(tmp_path: Path):
