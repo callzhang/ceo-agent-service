@@ -653,6 +653,40 @@ def test_exhausted_stale_wechat_delivery_is_skipped_with_attempt_sync(tmp_path):
     assert attempt.send_error == "stale_target_open_retry_exhausted"
 
 
+def test_exhausted_stale_wechat_delivery_second_call_is_rejected_unchanged(tmp_path):
+    store, delivery_id, _, generation = _seed_exhausted_target_open_failure(tmp_path)
+    arguments = {
+        "delivery_id": delivery_id,
+        "expected_execution_generation": generation,
+        "reason": "stale_target_open_retry_exhausted",
+        "inactive_before": "2026-07-30 10:10:00",
+    }
+    store.skip_exhausted_stale_wechat_delivery(**arguments)
+    after_first_call = _wechat_delivery_and_attempt_state(store, delivery_id)
+
+    with pytest.raises(AgentRunLeaseLostError, match="not in expected state"):
+        store.skip_exhausted_stale_wechat_delivery(**arguments)
+
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == after_first_call
+
+
+def test_exhausted_stale_wechat_delivery_rejects_unknown_positive_id_unchanged(
+    tmp_path,
+):
+    store, delivery_id, _, generation = _seed_exhausted_target_open_failure(tmp_path)
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+
+    with pytest.raises(AgentRunLeaseLostError, match="not in expected state"):
+        store.skip_exhausted_stale_wechat_delivery(
+            delivery_id + 999,
+            expected_execution_generation=generation,
+            reason="stale_target_open_retry_exhausted",
+            inactive_before="2026-07-30 10:10:00",
+        )
+
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+
+
 def test_exhausted_stale_wechat_delivery_uses_latest_attempt_retry_count(tmp_path):
     store, delivery_id, _, generation = _seed_exhausted_target_open_failure(
         tmp_path,

@@ -11296,7 +11296,7 @@ class AutoReplyStore:
         if max_retries < 1:
             raise ValueError("max_retries must be positive")
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
+            updated = db.execute(
                 """
                 update wechat_deliveries
                 set status='skipped', error=?, pre_action_failure=0,
@@ -11323,6 +11323,7 @@ class AutoReplyStore:
                             limit 1
                         ) >= ?
                   )
+                returning id
                 """,
                 (
                     explanation,
@@ -11332,8 +11333,8 @@ class AutoReplyStore:
                     generation,
                     max_retries,
                 ),
-            )
-            if cursor.rowcount != 1:
+            ).fetchone()
+            if updated is None:
                 raise AgentRunLeaseLostError(
                     f"WeChat delivery superseded or not in expected state: {delivery_id}"
                 )
