@@ -235,6 +235,7 @@ describe("SettingsPage", () => {
     await user.type(searchbox, "{Enter}");
 
     expect(listWechatTargets).toHaveBeenCalledWith({ query: "", kind: "all", limit: 50 });
+    expect(saveSettings).not.toHaveBeenCalled();
     expect(await screen.findByText("共匹配 2 个，当前显示 1 个可添加对象。")).toBeInTheDocument();
     expect(screen.getByText("Alex")).toBeInTheDocument();
   });
