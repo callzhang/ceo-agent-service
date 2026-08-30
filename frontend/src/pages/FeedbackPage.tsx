@@ -169,6 +169,8 @@ export function FeedbackPage() {
       if (generation === listGenerationRef.current) listAbortRef.current = null;
     }
   }, [page, pageSize, query, status]);
+  const loadRowsRef = useRef(loadRows);
+  loadRowsRef.current = loadRows;
 
   useEffect(() => {
     void loadRows().catch((reason: unknown) => {
@@ -261,14 +263,28 @@ export function FeedbackPage() {
   const submitReopen = async () => {
     if (!reopenTarget || reopening || !reopenReason.trim()) return;
     const key = feedbackKey(reopenTarget);
+    const requestedViewKey = listViewKeyRef.current;
     setReopening(true);
     setReopenError("");
     try {
       const response = await reopenFeedback(key, reopenReason);
       const reopened = response.item && typeof response.item === "object" ? response.item as Partial<FeedbackItem> : undefined;
-      invalidateListLoad();
       historyGenerationRef.current.set(key, (historyGenerationRef.current.get(key) || 0) + 1);
       setHistoryLoadingKey((current) => current === key ? "" : current);
+      setPendingCount((current) => current + 1);
+      restoreTriggerRef.current = false;
+      setReopenTarget(null);
+      setReopenReason("");
+      setSuccess("反馈已重新打开，已回到待处理列表。");
+      if (requestedViewKey !== listViewKeyRef.current) {
+        try {
+          await loadRowsRef.current(false);
+        } catch (reason: unknown) {
+          setError(`反馈已重新打开，但列表刷新失败：${reason instanceof Error ? reason.message : "请手动刷新"}`);
+        }
+        return;
+      }
+      invalidateListLoad();
       const projected: Partial<FeedbackItem> = {
         status: "pending",
         processing_status: "pending",
@@ -282,13 +298,8 @@ export function FeedbackPage() {
       setRows((current) => excludesPending
         ? current.filter((item) => feedbackKey(item) !== key)
         : current.map((item) => feedbackKey(item) === key ? { ...item, ...projected } : item));
-      setPendingCount((current) => current + 1);
       setTotalCount(nextTotal);
       setState("ready");
-      restoreTriggerRef.current = false;
-      setReopenTarget(null);
-      setReopenReason("");
-      setSuccess("反馈已重新打开，已回到待处理列表。");
       const maxPage = Math.max(1, Math.ceil(nextTotal / pageSize));
       if (page > maxPage) {
         const next = new URLSearchParams(searchParams);

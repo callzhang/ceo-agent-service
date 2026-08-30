@@ -271,6 +271,44 @@ describe("FeedbackPage", () => {
     expect(listFeedback).toHaveBeenCalledTimes(2);
   });
 
+  it("refreshes the current view when its filter changes before reopen completes", async () => {
+    const user = userEvent.setup();
+    const reopenResult = deferred<{
+      ok: boolean;
+      item: Partial<FeedbackItem>;
+      message: string;
+      meta: { updated_at: string };
+    }>();
+    reopenFeedback.mockReturnValueOnce(reopenResult.promise);
+    listFeedback.mockReset();
+    listFeedback
+      .mockResolvedValueOnce(page([feedback({ comment: "resolved view" })]))
+      .mockResolvedValueOnce(page([feedback({ status: "pending", processing_status: "pending", comment: "current pending view" })], 4))
+      .mockResolvedValueOnce(page([feedback({ status: "pending", processing_status: "pending", comment: "refreshed pending view" })], 5));
+    render(<MemoryRouter initialEntries={["/?status=resolved"]}><FeedbackPage /></MemoryRouter>);
+
+    await user.click(await screen.findByRole("button", { name: "重新打开反馈" }));
+    await user.type(screen.getByLabelText("重新打开原因"), "POST 返回前切换到待处理视图。");
+    await user.click(screen.getByRole("button", { name: "确认重新打开" }));
+    await user.selectOptions(screen.getByLabelText("状态"), "pending");
+    expect(await screen.findByText("current pending view")).toBeInTheDocument();
+    expect(listFeedback.mock.calls[1][0]).toMatchObject({ status: "pending", page: 1 });
+
+    reopenResult.resolve({
+      ok: true,
+      item: { feedback_key: "feedback-1", status: "pending", current_processing: null, processing_history: [round(2), round(1)] },
+      message: "反馈已重新打开",
+      meta: { updated_at: "2026-08-30T00:00:00Z" },
+    });
+
+    expect(await screen.findByText("refreshed pending view")).toBeInTheDocument();
+    expect(listFeedback).toHaveBeenCalledTimes(3);
+    expect(listFeedback.mock.calls[2][0]).toMatchObject({ status: "pending", page: 1, page_size: 20 });
+    expect(screen.queryByText("resolved view")).not.toBeInTheDocument();
+    expect(screen.getByText("待处理 5")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "操作成功" })).toHaveFocus();
+  });
+
   it("clamps a resolved-only final page after its last item reopens", async () => {
     const user = userEvent.setup();
     listFeedback.mockReset();
