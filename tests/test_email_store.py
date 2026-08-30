@@ -754,6 +754,70 @@ def _create_v2_processed_without_plan_database(database: Path) -> None:
         )
 
 
+def _create_provider_mailbox_prototype_database(database: Path) -> None:
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            create table email_classifications (
+                id integer primary key autoincrement,
+                provider text not null,
+                mailbox text not null,
+                message_id text not null,
+                thread_id text not null default '',
+                sender text not null default '',
+                subject text not null default '',
+                preview text not null default '',
+                model_text text not null default '',
+                received_at text not null default '',
+                category text not null,
+                confidence real not null,
+                margin real not null,
+                probabilities_json text not null,
+                model_version text not null,
+                config_version text not null,
+                status text not null,
+                classification_source text not null,
+                action_plan_json text not null,
+                confirmed_at text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                unique(provider, mailbox, message_id)
+            );
+            create table email_category_configs (
+                category text primary key,
+                description text not null default '',
+                threshold real not null,
+                actions_json text not null,
+                enabled integer not null default 1,
+                config_version text not null,
+                updated_at text not null default current_timestamp
+            );
+            insert into email_classifications (
+                provider, mailbox, message_id, thread_id, sender, subject,
+                preview, model_text, received_at, category, confidence, margin,
+                probabilities_json, model_version, config_version, status,
+                classification_source, action_plan_json, confirmed_at,
+                created_at, updated_at
+            ) values (
+                'dingtalk', 'INBOX', '<legacy@example.com>', 'thread-legacy',
+                'sender@example.com', 'Legacy subject', 'Legacy preview',
+                '__subject__legacy subject', '2026-08-29T15:59:00+00:00',
+                'work', 0.82, 0.32, '{"work":0.82}',
+                'email/logistic/legacy', 'legacy-config', 'pending_feedback',
+                'model', 'null', '', '2026-08-29T16:00:00+00:00',
+                '2026-08-29T16:00:00+00:00'
+            );
+            insert into email_category_configs (
+                category, description, threshold, actions_json, enabled,
+                config_version, updated_at
+            ) values (
+                'work', 'Legacy work config', 0.7, '["label"]', 1,
+                'legacy-config', '2026-08-29T16:00:00+00:00'
+            );
+            """
+        )
+
+
 def _create_action_with_attempts(
     database: Path,
     statuses: tuple[str, ...],
@@ -2424,6 +2488,38 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
     assert dict(_fetchall(database, "select * from email_messages")[0]) == message_before
     assert _fetchall(database, "select * from email_action_plans") == []
     assert _fetchall(database, "select * from email_actions") == []
+
+
+def test_provider_mailbox_prototype_schema_migrates_before_indexes(
+    tmp_path: Path,
+):
+    database = tmp_path / "provider-mailbox-prototype.sqlite3"
+    _create_provider_mailbox_prototype_database(database)
+
+    EmailStore(database)
+
+    classification = _fetchall(database, "select * from email_classifications")[0]
+    assert classification["account_id"] == "dingtalk:INBOX"
+    assert classification["folder"] == "INBOX"
+    assert classification["uid"] == classification["id"]
+    assert classification["rfc_message_id"] == "<legacy@example.com>"
+    assert classification["stable_message_identity"] == (
+        "dingtalk:INBOX:message-id:<legacy@example.com>"
+    )
+    assert classification["model_id"] == "email/logistic/legacy"
+    assert classification["predicted_category"] == "work"
+    assert classification["current_action_plan_id"] is None
+    assert _fetchall(
+        database,
+        "select version from email_schema_migrations order by version",
+    )[0]["version"] == email_store_module.EMAIL_SCHEMA_VERSION
+    assert _fetchall(
+        database,
+        "select action_parameters_json from email_category_configs",
+    )[0]["action_parameters_json"] == "{}"
+    message = _fetchall(database, "select * from email_messages")[0]
+    assert message["account_id"] == "dingtalk:INBOX"
+    assert message["stable_message_identity"] == classification["stable_message_identity"]
 
 
 def test_v2_upgrade_does_not_reapply_prototype_classification_backfill(

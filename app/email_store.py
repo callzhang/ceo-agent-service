@@ -1526,15 +1526,18 @@ class EmailStore:
             if latest_version == 10:
                 legacy_unsubscribe_claims = self._prepare_v10_unsubscribe_migration(db)
             self._create_base_tables(db)
+            prototype_migrated = False
+            if latest_version < 2:
+                self._migrate_prototype_schema(db)
+                prototype_migrated = True
             self._create_durable_tables(db)
             if legacy_reply_claims:
                 self._finish_v8_reply_claim_migration(db)
             if legacy_unsubscribe_claims:
                 self._finish_v10_unsubscribe_migration(db)
-            self._create_indexes_and_triggers(db)
             if latest_version < EMAIL_SCHEMA_VERSION:
                 is_prototype = latest_version == 0
-                if latest_version < 2:
+                if latest_version < 2 and not prototype_migrated:
                     self._migrate_prototype_schema(db)
                 self._ensure_legacy_processed_without_plan_column(db)
                 self._ensure_training_inclusion_column(db)
@@ -1547,6 +1550,7 @@ class EmailStore:
                     "insert into email_schema_migrations(version, applied_at) values (?, ?)",
                     (EMAIL_SCHEMA_VERSION, self._now()),
                 )
+            self._create_indexes_and_triggers(db)
             self._validate_durable_state(db)
 
     @classmethod
@@ -1810,6 +1814,118 @@ class EmailStore:
         cls,
         db: sqlite3.Connection,
     ) -> None:
+        columns = cls._table_columns(db, "email_classifications")
+        if (
+            "account_id" not in columns
+            and {"provider", "mailbox", "message_id", "model_version"} <= columns
+        ):
+            cls._migrate_provider_mailbox_prototype_schema(db)
+            columns = cls._table_columns(db, "email_classifications")
+        if "account_id" not in columns:
+            cls._ensure_column(
+                db,
+                table="email_classifications",
+                column="account_id",
+                declaration="text not null default 'default-email-account'",
+            )
+            if {"provider", "mailbox"} <= columns:
+                db.execute(
+                    """
+                    update email_classifications
+                    set account_id=provider || ':' || mailbox
+                    where trim(coalesce(account_id, ''))=''
+                       or account_id='default-email-account'
+                    """
+                )
+        if "folder" not in columns:
+            cls._ensure_column(
+                db,
+                table="email_classifications",
+                column="folder",
+                declaration="text not null default 'INBOX'",
+            )
+            if "mailbox" in columns:
+                db.execute(
+                    """
+                    update email_classifications
+                    set folder=coalesce(nullif(mailbox, ''), 'INBOX')
+                    where folder='INBOX'
+                    """
+                )
+        if "uidvalidity" not in columns:
+            cls._ensure_column(
+                db,
+                table="email_classifications",
+                column="uidvalidity",
+                declaration="integer not null default 1",
+            )
+        if "uid" not in columns:
+            cls._ensure_column(
+                db,
+                table="email_classifications",
+                column="uid",
+                declaration="integer not null default 1",
+            )
+            db.execute(
+                """
+                update email_classifications
+                set uid=id
+                where uid=1
+                """
+            )
+        if "rfc_message_id" not in columns:
+            cls._ensure_column(
+                db,
+                table="email_classifications",
+                column="rfc_message_id",
+                declaration="text",
+            )
+            if "message_id" in columns:
+                db.execute(
+                    """
+                    update email_classifications
+                    set rfc_message_id=message_id
+                    where coalesce(rfc_message_id, '')=''
+                    """
+                )
+        if "stable_message_identity" not in columns:
+            cls._ensure_column(
+                db,
+                table="email_classifications",
+                column="stable_message_identity",
+                declaration="text not null default ''",
+            )
+            db.execute(
+                """
+                update email_classifications
+                set stable_message_identity=account_id || ':message-id:' || rfc_message_id
+                where trim(coalesce(stable_message_identity, ''))=''
+                  and trim(coalesce(rfc_message_id, ''))<>''
+                """
+            )
+            db.execute(
+                """
+                update email_classifications
+                set stable_message_identity=account_id || ':imap:' || folder || ':' ||
+                    uidvalidity || ':' || uid
+                where trim(coalesce(stable_message_identity, ''))=''
+                """
+            )
+        if "model_id" not in columns:
+            cls._ensure_column(
+                db,
+                table="email_classifications",
+                column="model_id",
+                declaration="text not null default 'unknown-email-model'",
+            )
+            if "model_version" in columns:
+                db.execute(
+                    """
+                    update email_classifications
+                    set model_id=model_version
+                    where model_id='unknown-email-model'
+                    """
+                )
         for column in ("predicted_category", "confirmed_category"):
             cls._ensure_column(
                 db,
@@ -1837,6 +1953,114 @@ class EmailStore:
             where confirmed_category is null or confirmed_category=''
             """
         )
+
+    @classmethod
+    def _migrate_provider_mailbox_prototype_schema(
+        cls,
+        db: sqlite3.Connection,
+    ) -> None:
+        db.execute("alter table email_classifications rename to email_classifications_prototype")
+        config_columns = cls._table_columns(db, "email_category_configs")
+        migrated_configs = False
+        if config_columns and "action_parameters_json" not in config_columns:
+            db.execute("alter table email_category_configs rename to email_category_configs_prototype")
+            migrated_configs = True
+        cls._create_base_tables(db)
+        db.execute(
+            """
+            insert into email_classifications (
+                id,
+                account_id,
+                folder,
+                uidvalidity,
+                uid,
+                rfc_message_id,
+                thread_id,
+                stable_message_identity,
+                sender,
+                subject,
+                preview,
+                model_text,
+                received_at,
+                category,
+                predicted_category,
+                confirmed_category,
+                confidence,
+                margin,
+                probabilities_json,
+                model_id,
+                config_version,
+                status,
+                classification_source,
+                action_plan_json,
+                current_action_plan_id,
+                included_in_model_id,
+                legacy_processed_without_plan,
+                confirmed_at,
+                created_at,
+                updated_at
+            )
+            select
+                id,
+                provider || ':' || mailbox,
+                coalesce(nullif(mailbox, ''), 'INBOX'),
+                1,
+                id,
+                message_id,
+                nullif(thread_id, ''),
+                provider || ':' || mailbox || ':message-id:' || message_id,
+                sender,
+                subject,
+                preview,
+                model_text,
+                received_at,
+                category,
+                category,
+                case when status='processed' then category else null end,
+                confidence,
+                margin,
+                probabilities_json,
+                model_version,
+                config_version,
+                status,
+                classification_source,
+                action_plan_json,
+                null,
+                null,
+                0,
+                confirmed_at,
+                created_at,
+                updated_at
+            from email_classifications_prototype
+            """
+        )
+        db.execute("drop table email_classifications_prototype")
+        if migrated_configs:
+            db.execute(
+                """
+                insert into email_category_configs (
+                    category,
+                    description,
+                    threshold,
+                    actions_json,
+                    action_parameters_json,
+                    enabled,
+                    config_version,
+                    updated_at
+                )
+                select
+                    category,
+                    description,
+                    threshold,
+                    actions_json,
+                    '{}',
+                    enabled,
+                    config_version,
+                    updated_at
+                from email_category_configs_prototype
+                """
+            )
+            db.execute("drop table email_category_configs_prototype")
 
     @classmethod
     def _ensure_legacy_processed_without_plan_column(
