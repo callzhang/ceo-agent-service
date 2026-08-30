@@ -18,6 +18,7 @@ from robust_json import extract_all
 
 from app.config import chat_bot_names, read_env_file
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.external_retry import retry_delay_seconds
 from app.message_split import split_dingtalk_text
 
 TITLE_INFORMATION_UNIT_LIMIT = 20
@@ -2323,7 +2324,7 @@ class DwsClient:
                 last_error = exc
                 if attempt + 1 >= attempts:
                     break
-                time.sleep(self.transient_retry_delay_seconds * (attempt + 1))
+                self._sleep_before_retry(attempt)
         if last_error is not None:
             raise last_error
         raise DwsError("DingTalk OA attachment download failed")
@@ -3548,9 +3549,12 @@ class DwsClient:
         return env
 
     def _sleep_before_retry(self, attempt_index: int) -> None:
-        if self.transient_retry_delay_seconds <= 0:
-            return
-        time.sleep(self.transient_retry_delay_seconds * (attempt_index + 1))
+        delay_seconds = retry_delay_seconds(
+            self.transient_retry_delay_seconds,
+            attempt_index,
+        )
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
 
     @staticmethod
     def _run_cli_process(

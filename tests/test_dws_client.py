@@ -5923,7 +5923,7 @@ def test_run_json_uses_process_exit_code_when_dws_stderr_is_not_json(monkeypatch
     assert sleeps == [1.0]
 
 
-def test_run_json_uses_configured_retry_count_and_linear_backoff(monkeypatch):
+def test_run_json_uses_configured_retry_count_and_exponential_backoff(monkeypatch):
     calls = []
     sleeps = []
     timeout_payload = '{"error":{"category":"discovery","code":6}}'
@@ -5949,7 +5949,7 @@ def test_run_json_uses_configured_retry_count_and_linear_backoff(monkeypatch):
         ["dws", "probe"],
         ["dws", "probe"],
     ]
-    assert sleeps == [0.25, 0.5, 0.75]
+    assert sleeps == [0.25, 0.5, 1.0]
 
 
 def test_run_json_preserves_retryable_external_failure_after_local_retries(
@@ -6254,3 +6254,47 @@ def test_download_oa_process_attachment_uses_official_download_url(monkeypatch):
             None,
         )
     ]
+
+
+def test_download_oa_process_attachment_uses_shared_exponential_backoff(
+    monkeypatch,
+):
+    sleeps = []
+    calls = []
+
+    class FakeClient(DwsClient):
+        def _dingtalk_api_json(
+            self,
+            method,
+            path,
+            *,
+            params=None,
+            payload=None,
+            config_path=None,
+        ):
+            calls.append((method, path))
+            if len(calls) < 3:
+                raise TimeoutError("temporary download URL failure")
+            return {"result": {"downloadUri": "https://signed.example/download"}}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return b"docx-bytes"
+
+    monkeypatch.setattr(dws_client, "urlopen", lambda url, timeout: FakeResponse())
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert (
+        FakeClient(
+            transient_retry_attempts=3,
+            transient_retry_delay_seconds=0.25,
+        ).download_oa_process_attachment("proc-1", "file-1")
+        == b"docx-bytes"
+    )
+    assert sleeps == [0.25, 0.5]
