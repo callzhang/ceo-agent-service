@@ -1,8 +1,10 @@
 import base64
+from contextlib import contextmanager
 import os
 import re
 import stat
 import tempfile
+import threading
 from datetime import timedelta
 from pathlib import Path
 
@@ -13,6 +15,7 @@ _ENCODED_ENV_VALUE_PREFIX = "__CEO_ENV_B64_V1__:"
 _EMAIL_SECRET_ENV_KEY = re.compile(
     r"^CEO_EMAIL_[A-Z0-9_]+_(?:IMAP|SMTP)_SECRET$"
 )
+_ENV_WRITE_THREAD_LOCK = threading.RLock()
 
 
 def repo_root() -> Path:
@@ -58,10 +61,16 @@ def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
     if any("\x00" in key or "\x00" in value for key, value in updates.items()):
         raise ValueError("environment updates must not contain NUL")
     env_path = path or env_file_path()
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    with _env_write_lock(env_path):
+        return _write_env_values_locked(updates, env_path)
+
+
+def _write_env_values_locked(updates: dict[str, str], env_path: Path) -> Path:
     existing_lines = (
         env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
     )
-    remaining = dict(updates)
+    written: set[str] = set()
     lines: list[str] = []
     for raw_line in existing_lines:
         stripped = raw_line.strip()
@@ -69,13 +78,15 @@ def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
             lines.append(raw_line)
             continue
         key = stripped.split("=", 1)[0].strip()
-        if key in remaining:
-            lines.append(f"{key}={_encode_env_value(key, remaining.pop(key))}")
+        if key in updates:
+            if key not in written:
+                lines.append(f"{key}={_encode_env_value(key, updates[key])}")
+                written.add(key)
         else:
             lines.append(raw_line)
-    for key, value in remaining.items():
-        lines.append(f"{key}={_encode_env_value(key, value)}")
-    env_path.parent.mkdir(parents=True, exist_ok=True)
+    for key, value in updates.items():
+        if key not in written:
+            lines.append(f"{key}={_encode_env_value(key, value)}")
     mode = stat.S_IMODE(env_path.stat().st_mode) if env_path.exists() else 0o600
     fd, temporary_name = tempfile.mkstemp(
         dir=env_path.parent,
@@ -99,6 +110,35 @@ def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
     for key, value in updates.items():
         os.environ[key] = value
     return env_path
+
+
+@contextmanager
+def _env_write_lock(env_path: Path):
+    lock_path = env_path.with_name(f".{env_path.name}-write.lock")
+    with _ENV_WRITE_THREAD_LOCK:
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                if os.fstat(descriptor).st_size == 0:
+                    os.write(descriptor, b"0")
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if os.name == "nt":
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 
 def effective_env_values(path: Path | None = None) -> dict[str, str]:

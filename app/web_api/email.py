@@ -289,9 +289,8 @@ def register_email_routes(
                 "Email account ID cannot be changed",
                 400,
             )
-        previous = store.get_account(account_id)
         try:
-            row = store.update_account(
+            update_result = store.update_account(
                 account_id,
                 payload.stored_values(),
                 allow_shared_email=payload.allow_shared_email,
@@ -302,20 +301,20 @@ def register_email_routes(
                 "Email account conflicts with existing configuration",
                 409,
             )
-        if row is None:
+        if update_result is None:
             return error_response("not_found", "Email account not found", 404)
+        row, previous = update_result
         try:
             save_secret_values(payload)
         except (OSError, ValueError):
             compensated = False
-            if previous is not None:
-                try:
-                    compensated = store.restore_account_if_unchanged(
-                        previous,
-                        expected_updated_at=row["updated_at"],
-                    )
-                except sqlite3.DatabaseError:
-                    compensated = False
+            try:
+                compensated = store.restore_account_if_unchanged(
+                    previous,
+                    expected_updated_at=row["updated_at"],
+                )
+            except sqlite3.DatabaseError:
+                compensated = False
             return secret_write_error(compensated=compensated)
         return {
             "ok": True,

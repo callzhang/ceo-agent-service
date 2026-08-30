@@ -7,7 +7,7 @@ provider and never creates Agent, Audit, reply-task, or run records.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 import re
@@ -1085,6 +1085,20 @@ class EmailStore:
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     @staticmethod
+    def _account_now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    def _next_account_timestamp(self, existing: str | None = None) -> str:
+        candidate = self._account_now().astimezone(timezone.utc)
+        if existing:
+            previous = datetime.fromisoformat(existing)
+            if previous.tzinfo is None:
+                previous = previous.replace(tzinfo=timezone.utc)
+            if candidate <= previous:
+                candidate = previous + timedelta(microseconds=1)
+        return candidate.isoformat(timespec="microseconds")
+
+    @staticmethod
     def _index_columns(db: sqlite3.Connection, index_name: str) -> tuple[str, ...]:
         return tuple(
             _schema_identifier(
@@ -2101,6 +2115,7 @@ class EmailStore:
         """Atomically persist scan state and advance its folder cursor last."""
 
         _validate_model_text(model_text)
+        now = self._now()
         locator = classification.provider_locator
         if (cursor_uidvalidity is None) != (cursor_last_seen_uid is None):
             raise ValueError("cursor UIDVALIDITY and last UID must be supplied together")
@@ -2112,7 +2127,6 @@ class EmailStore:
             raise ValueError("cursor UIDVALIDITY must match the message locator")
         if cursor_last_seen_uid is not None and cursor_last_seen_uid < locator.uid:
             raise ValueError("cursor cannot advance behind the persisted message UID")
-        now = self._now()
         with self._connect() as db:
             db.execute("begin immediate")
             existing = self._check_classification_identity(db, classification)
@@ -2285,6 +2299,7 @@ class EmailStore:
                 str(values["email_address"]),
                 allow_shared_email=allow_shared_email,
             )
+            now = self._next_account_timestamp()
             self._insert_account(db, values, created_at=now, updated_at=now)
             row = db.execute(
                 "select * from email_accounts where account_id=?",
@@ -2299,15 +2314,17 @@ class EmailStore:
         values: Mapping[str, object],
         *,
         allow_shared_email: bool = False,
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
         with self._connect() as db:
             db.execute("begin immediate")
             existing = db.execute(
-                "select 1 from email_accounts where account_id=?",
+                "select * from email_accounts where account_id=?",
                 (account_id,),
             ).fetchone()
             if existing is None:
                 return None
+            previous = self._account_row(existing)
+            updated_at = self._next_account_timestamp(existing["updated_at"])
             self._assert_email_address_available(
                 db,
                 str(values["email_address"]),
@@ -2340,7 +2357,7 @@ class EmailStore:
                     int(bool(values["enabled"])),
                     _json_dump(list(values["scan_folders"])),
                     values["scan_interval_seconds"],
-                    self._now(),
+                    updated_at,
                     account_id,
                 ),
             )
@@ -2349,7 +2366,7 @@ class EmailStore:
                 (account_id,),
             ).fetchone()
         assert row is not None
-        return self._account_row(row)
+        return self._account_row(row), previous
 
     def delete_account_if_unchanged(
         self,

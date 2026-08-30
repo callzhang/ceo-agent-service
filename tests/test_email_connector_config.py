@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import threading
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -119,6 +121,75 @@ def test_env_writer_replace_failure_preserves_existing_file_and_process_env(
     assert key not in os.environ
 
     assert list(tmp_path.glob(".env.*")) == []
+
+
+def test_env_writer_serializes_full_read_merge_replace_across_threads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    env_file = tmp_path / ".env"
+    env_file.write_text("KEEP=unchanged\n", encoding="utf-8")
+    first_at_replace = threading.Event()
+    allow_first = threading.Event()
+    second_at_replace = threading.Event()
+    real_replace = app_config.os.replace
+    call_count = 0
+    count_lock = threading.Lock()
+
+    def coordinated_replace(source, destination):
+        nonlocal call_count
+        with count_lock:
+            call_count += 1
+            current = call_count
+        if current == 1:
+            first_at_replace.set()
+            assert allow_first.wait(2)
+        else:
+            second_at_replace.set()
+        real_replace(source, destination)
+
+    monkeypatch.setattr(app_config.os, "replace", coordinated_replace)
+    first = threading.Thread(
+        target=app_config.write_env_values,
+        args=({"FIRST": "one"}, env_file),
+    )
+    second = threading.Thread(
+        target=app_config.write_env_values,
+        args=({"SECOND": "two"}, env_file),
+    )
+    first.start()
+    assert first_at_replace.wait(2)
+    second.start()
+    assert not second_at_replace.wait(0.1)
+    allow_first.set()
+    first.join(2)
+    second.join(2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert app_config.read_env_file(env_file) == {
+        "KEEP": "unchanged",
+        "FIRST": "one",
+        "SECOND": "two",
+    }
+
+
+def test_env_writer_removes_later_duplicate_updated_keys(tmp_path: Path):
+    env_file = tmp_path / ".env"
+    key = "CEO_EMAIL_DUPLICATE_IMAP_SECRET"
+    env_file.write_text(
+        f"# keep comment\n{key}=old-first\nOTHER=keep\n{key}=old-last\n",
+        encoding="utf-8",
+    )
+
+    app_config.write_env_values({key: "new value"}, env_file)
+    os.environ.pop(key, None)
+    text = env_file.read_text(encoding="utf-8")
+
+    assert text.count(f"{key}=") == 1
+    assert "# keep comment" in text
+    assert "OTHER=keep" in text
+    assert app_config.read_env_file(env_file)[key] == "new value"
 
 
 def _account_payload(account_id: str = "work_mail") -> dict[str, object]:
@@ -372,6 +443,37 @@ def test_whitespace_equivalent_email_is_stored_canonically_and_conflicts(
     shared = client.post("/api/console/email/accounts", json=second)
     assert shared.status_code == 201
     assert store.get_account("second_mail")["email_address"] == "user@example.test"
+
+
+def test_account_versions_increase_and_stale_compensation_cannot_touch_newer_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store = EmailStore(tmp_path / "worker.sqlite3")
+    frozen = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(store, "_account_now", lambda: frozen)
+    first_payload = EmailAccountPayload.model_validate_json(
+        json.dumps(_account_payload())
+    ).stored_values()
+    created = store.create_account(first_payload)
+    second_payload = dict(first_payload)
+    second_payload["display_name"] = "Second"
+    updated, previous = store.update_account("work_mail", second_payload)
+    third_payload = dict(second_payload)
+    third_payload["display_name"] = "Third"
+    newest, second_snapshot = store.update_account("work_mail", third_payload)
+
+    assert created["updated_at"] < updated["updated_at"] < newest["updated_at"]
+    assert datetime.fromisoformat(newest["updated_at"]).tzinfo is not None
+    assert previous == created
+    assert second_snapshot == updated
+    assert store.delete_account_if_unchanged(
+        "work_mail", expected_updated_at=created["updated_at"]
+    ) is False
+    assert store.restore_account_if_unchanged(
+        previous, expected_updated_at=updated["updated_at"]
+    ) is False
+    assert store.get_account("work_mail") == newest
 
 
 def test_account_api_hides_nested_secret_input_on_validation_error(tmp_path: Path):
