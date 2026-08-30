@@ -1,5 +1,6 @@
-from pathlib import Path
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +12,8 @@ from app.email_classifier_contracts import (
     EmailProviderLocator,
 )
 from app.email_classifier_training import (
+    CandidateAssessment,
+    CategoryEligibility,
     CategoryValidation,
     EligibilityRequirement,
     TrainingNotReady,
@@ -28,6 +31,43 @@ from app.email_classifier_retrain import (
     save_retrain_state,
 )
 from app.email_store import EmailStore
+
+
+def _assess_important(
+    *,
+    readiness: bool = True,
+    validation_score: float = 0.61,
+    validated_precision: float | None = 0.95,
+    validation_sample_count: int = 30,
+    include_metrics: bool = True,
+) -> CandidateAssessment:
+    per_category = (
+        {
+            EmailCategory.IMPORTANT: CategoryValidation(
+                validated_precision=validated_precision,
+                validation_sample_count=validation_sample_count,
+            )
+        }
+        if include_metrics
+        else {}
+    )
+    return assess_candidate(
+        TrainingReadiness(
+            ready=readiness,
+            example_count=73,
+            category_counts={"important": 8, "work": 10, "junk": 18},
+            reasons=() if readiness else ("feedback not ready",),
+        ),
+        validation_score=validation_score,
+        per_category=per_category,
+        category_requirements={
+            EmailCategory.IMPORTANT: EligibilityRequirement(
+                configured_threshold=0.85,
+                minimum_precision=0.95,
+                minimum_validation_samples=30,
+            )
+        },
+    )
 
 
 def _classification(message_id: str, category: EmailCategory) -> EmailClassification:
@@ -138,6 +178,164 @@ def test_model_promotion_does_not_imply_category_action_eligibility():
     assert important.validated_precision == 0.84
     assert important.validation_sample_count == 19
     assert important.reason == "precision_and_sample_gate_not_met"
+
+
+@pytest.mark.parametrize(
+    ("precision", "sample_count", "eligible", "reason"),
+    [
+        (0.96, 31, True, "precision_and_sample_gate_met"),
+        (0.94, 31, False, "precision_gate_not_met"),
+        (0.96, 29, False, "sample_gate_not_met"),
+        (0.94, 29, False, "precision_and_sample_gate_not_met"),
+    ],
+)
+def test_category_eligibility_truth_table(
+    precision: float,
+    sample_count: int,
+    eligible: bool,
+    reason: str,
+):
+    assessment = _assess_important(
+        validated_precision=precision,
+        validation_sample_count=sample_count,
+    )
+
+    result = assessment.categories[EmailCategory.IMPORTANT]
+    assert result.auto_action_eligible is eligible
+    assert result.reason == reason
+
+
+def test_category_eligibility_accepts_exact_precision_and_sample_boundaries():
+    assessment = _assess_important(
+        validated_precision=0.95,
+        validation_sample_count=30,
+    )
+
+    result = assessment.categories[EmailCategory.IMPORTANT]
+    assert result.auto_action_eligible is True
+    assert result.reason == "precision_and_sample_gate_met"
+
+
+def test_missing_category_metrics_fail_closed():
+    assessment = _assess_important(include_metrics=False)
+
+    result = assessment.categories[EmailCategory.IMPORTANT]
+    assert result.auto_action_eligible is False
+    assert result.validated_precision is None
+    assert result.validation_sample_count == 0
+    assert result.reason == "precision_and_sample_gate_not_met"
+
+
+def test_missing_category_precision_fails_closed():
+    assessment = _assess_important(
+        validated_precision=None,
+        validation_sample_count=30,
+    )
+
+    result = assessment.categories[EmailCategory.IMPORTANT]
+    assert result.auto_action_eligible is False
+    assert result.reason == "precision_gate_not_met"
+
+
+def test_feedback_readiness_prevents_model_promotion():
+    assessment = _assess_important(readiness=False)
+
+    assert assessment.promote_model is False
+    assert assessment.promotion_reason == "feedback_not_ready"
+    assert assessment.categories[EmailCategory.IMPORTANT].auto_action_eligible is True
+
+
+@pytest.mark.parametrize(
+    "validation_score",
+    [float("nan"), float("inf"), float("-inf"), -0.01, 1.01, True, 1],
+)
+def test_global_validation_score_must_be_a_finite_float_in_unit_interval(
+    validation_score: object,
+):
+    with pytest.raises(ValueError, match="validation_score"):
+        _assess_important(validation_score=validation_score)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "validated_precision",
+    [float("nan"), float("inf"), float("-inf"), -0.01, 1.01, True, 1],
+)
+def test_category_precision_must_be_a_finite_float_in_unit_interval(
+    validated_precision: object,
+):
+    with pytest.raises(ValueError, match="validated_precision"):
+        CategoryValidation(
+            validated_precision=validated_precision,  # type: ignore[arg-type]
+            validation_sample_count=30,
+        )
+
+
+@pytest.mark.parametrize("validation_sample_count", [-1, 1.5, True])
+def test_validation_sample_count_must_be_a_non_negative_non_bool_integer(
+    validation_sample_count: object,
+):
+    with pytest.raises(ValueError, match="validation_sample_count"):
+        CategoryValidation(
+            validated_precision=0.95,
+            validation_sample_count=validation_sample_count,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("field_name", ["configured_threshold", "minimum_precision"])
+@pytest.mark.parametrize(
+    "invalid_value",
+    [float("nan"), float("inf"), float("-inf"), -0.01, 1.01, True, 1],
+)
+def test_eligibility_probabilities_must_be_finite_floats_in_unit_interval(
+    field_name: str,
+    invalid_value: object,
+):
+    values: dict[str, object] = {
+        "configured_threshold": 0.85,
+        "minimum_precision": 0.95,
+        "minimum_validation_samples": 30,
+    }
+    values[field_name] = invalid_value
+
+    with pytest.raises(ValueError, match=field_name):
+        EligibilityRequirement(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("minimum_validation_samples", [-1, 0, 1.5, True])
+def test_minimum_validation_samples_must_be_a_positive_non_bool_integer(
+    minimum_validation_samples: object,
+):
+    with pytest.raises(ValueError, match="minimum_validation_samples"):
+        EligibilityRequirement(
+            configured_threshold=0.85,
+            minimum_precision=0.95,
+            minimum_validation_samples=minimum_validation_samples,  # type: ignore[arg-type]
+        )
+
+
+def test_candidate_assessment_defensively_copies_and_freezes_categories():
+    eligibility = CategoryEligibility(
+        category=EmailCategory.IMPORTANT,
+        configured_threshold=0.85,
+        validated_precision=0.95,
+        validation_sample_count=30,
+        auto_action_eligible=True,
+        reason="precision_and_sample_gate_met",
+    )
+    source = {EmailCategory.IMPORTANT: eligibility}
+    assessment = CandidateAssessment(
+        promote_model=True,
+        promotion_reason="candidate_validation_passed",
+        categories=source,
+    )
+
+    source.clear()
+
+    assert assessment.categories[EmailCategory.IMPORTANT] is eligibility
+    with pytest.raises(TypeError):
+        assessment.categories[EmailCategory.IMPORTANT] = eligibility  # type: ignore[index]
+    with pytest.raises(FrozenInstanceError):
+        assessment.categories = {}  # type: ignore[misc]
 
 
 def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Path):

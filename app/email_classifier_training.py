@@ -20,6 +20,17 @@ class TrainingNotReady(ValueError):
     """Confirmed feedback is insufficient for a candidate model."""
 
 
+def _validate_unit_interval_float(name: str, value: object) -> None:
+    if not isinstance(value, float) or not math.isfinite(value) or not 0 <= value <= 1:
+        raise ValueError(f"{name} must be a finite float between 0 and 1")
+
+
+def _validate_integer(name: str, value: object, *, minimum: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        qualifier = "positive" if minimum == 1 else "non-negative"
+        raise ValueError(f"{name} must be a {qualifier} integer")
+
+
 @dataclass(frozen=True)
 class TrainingReadiness:
     ready: bool
@@ -33,12 +44,32 @@ class CategoryValidation:
     validated_precision: float | None
     validation_sample_count: int
 
+    def __post_init__(self) -> None:
+        if self.validated_precision is not None:
+            _validate_unit_interval_float(
+                "validated_precision", self.validated_precision
+            )
+        _validate_integer(
+            "validation_sample_count", self.validation_sample_count, minimum=0
+        )
+
 
 @dataclass(frozen=True)
 class EligibilityRequirement:
     configured_threshold: float
     minimum_precision: float
     minimum_validation_samples: int
+
+    def __post_init__(self) -> None:
+        _validate_unit_interval_float(
+            "configured_threshold", self.configured_threshold
+        )
+        _validate_unit_interval_float("minimum_precision", self.minimum_precision)
+        _validate_integer(
+            "minimum_validation_samples",
+            self.minimum_validation_samples,
+            minimum=1,
+        )
 
 
 @dataclass(frozen=True)
@@ -79,12 +110,10 @@ def assess_candidate(
 ) -> CandidateAssessment:
     """Assess model promotion and category action eligibility independently."""
 
+    _validate_unit_interval_float("validation_score", validation_score)
     if not readiness.ready:
         promote_model = False
         promotion_reason = "feedback_not_ready"
-    elif not math.isfinite(validation_score):
-        promote_model = False
-        promotion_reason = "candidate_validation_not_finite"
     else:
         promote_model = True
         promotion_reason = "candidate_validation_passed"
