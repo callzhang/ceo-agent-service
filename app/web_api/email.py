@@ -94,8 +94,13 @@ def register_email_routes(
 
     def account_response(account: dict[str, Any]) -> dict[str, Any]:
         env = secret_environment()
+        operational_fields = {
+            key: value
+            for key, value in account.items()
+            if key not in {"imap_secret_reference", "smtp_secret_reference"}
+        }
         return {
-            **account,
+            **operational_fields,
             "imap_secret_configured": bool(
                 resolve_secret(account["imap_secret_reference"], env)
             ),

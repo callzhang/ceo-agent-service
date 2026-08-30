@@ -92,6 +92,29 @@ def test_email_account_payload_forbids_extra_fields():
         EmailAccountPayload.model_validate(payload)
 
 
+def test_email_account_payload_canonicalizes_whitespace_around_addr_spec():
+    payload = _account_payload()
+    payload["email_address"] = "  user@example.test  "
+    payload["scan_folders"] = tuple(payload["scan_folders"])
+
+    parsed = EmailAccountPayload.model_validate(payload)
+
+    assert parsed.email_address == "user@example.test"
+
+
+def test_email_account_validation_error_hides_nested_secret_input():
+    sentinel = "known-nested-secret-sentinel"
+    payload = _account_payload()
+    payload["imap_secret"] = {"nested": sentinel}
+
+    with pytest.raises(ValidationError) as captured:
+        EmailAccountPayload.model_validate(payload)
+
+    assert sentinel not in str(captured.value)
+    assert sentinel not in repr(captured.value)
+    assert sentinel not in json.dumps(captured.value.errors(), default=str)
+
+
 def test_resolve_secret_accepts_only_secret_references_without_leaking_values():
     env = {"CEO_EMAIL_WORK_MAIL_IMAP_SECRET": IMAP_SECRET}
 
@@ -129,6 +152,8 @@ def test_account_api_redacts_and_preserves_or_updates_env_secrets(
         assert SMTP_SECRET not in serialized
         assert 'imap_secret"' not in serialized
         assert 'smtp_secret"' not in serialized
+        assert "imap_secret_reference" not in serialized
+        assert "smtp_secret_reference" not in serialized
     assert f"CEO_EMAIL_WORK_MAIL_IMAP_SECRET={IMAP_SECRET}" in env_file.read_text()
     assert f"CEO_EMAIL_WORK_MAIL_SMTP_SECRET={SMTP_SECRET}" in env_file.read_text()
     assert IMAP_SECRET not in json.dumps(store.list_accounts())
@@ -148,6 +173,8 @@ def test_account_api_redacts_and_preserves_or_updates_env_secrets(
     assert IMAP_SECRET not in saved.text
     assert SMTP_SECRET not in saved.text
     assert UPDATED_SMTP_SECRET not in saved.text
+    assert "imap_secret_reference" not in saved.text
+    assert "smtp_secret_reference" not in saved.text
 
     monkeypatch.delenv("CEO_EMAIL_WORK_MAIL_IMAP_SECRET")
     monkeypatch.delenv("CEO_EMAIL_WORK_MAIL_SMTP_SECRET")
@@ -221,6 +248,38 @@ def test_email_address_is_unique_unless_request_explicitly_allows_sharing(
     assert conflict.json()["code"] == "email_address_conflict"
     assert first["email_address"] not in conflict.text
     assert shared.status_code == 201
+
+
+def test_whitespace_equivalent_email_is_stored_canonically_and_conflicts(
+    tmp_path: Path,
+):
+    client, store, _ = _client(tmp_path)
+    first = _account_payload("first_mail")
+    first["email_address"] = "user@example.test"
+    second = _account_payload("second_mail")
+    second["email_address"] = "  user@example.test  "
+
+    assert client.post("/api/console/email/accounts", json=first).status_code == 201
+    conflict = client.post("/api/console/email/accounts", json=second)
+
+    assert conflict.status_code == 409
+    assert store.list_accounts()[0]["email_address"] == "user@example.test"
+    second["allow_shared_email"] = True
+    shared = client.post("/api/console/email/accounts", json=second)
+    assert shared.status_code == 201
+    assert store.get_account("second_mail")["email_address"] == "user@example.test"
+
+
+def test_account_api_hides_nested_secret_input_on_validation_error(tmp_path: Path):
+    client, _, _ = _client(tmp_path)
+    sentinel = "known-nested-secret-sentinel"
+    payload = _account_payload()
+    payload["imap_secret"] = {"nested": sentinel}
+
+    response = client.post("/api/console/email/accounts", json=payload)
+
+    assert response.status_code == 400
+    assert sentinel not in response.text
 
 
 @pytest.mark.parametrize(

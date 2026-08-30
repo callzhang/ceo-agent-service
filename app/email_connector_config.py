@@ -25,7 +25,11 @@ _SECRET_REFERENCE_PATTERN = re.compile(r"^CEO_EMAIL_[A-Z0-9_]+_(?:IMAP|SMTP)_SEC
 class EmailAccountPayload(BaseModel):
     """Strict account save request; secret values are never serialized."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        hide_input_in_errors=True,
+    )
 
     account_id: str = Field(pattern=_ACCOUNT_ID_PATTERN)
     display_name: str = Field(min_length=1, max_length=120)
@@ -46,6 +50,13 @@ class EmailAccountPayload(BaseModel):
     allow_shared_email: bool = False
     imap_secret: SecretStr | None = Field(default=None, exclude=True)
     smtp_secret: SecretStr | None = Field(default=None, exclude=True)
+
+    @field_validator("imap_secret", "smtp_secret", mode="before")
+    @classmethod
+    def redact_malformed_secret_inputs(cls, value: object) -> object:
+        if value is not None and not isinstance(value, (str, SecretStr)):
+            return 0
+        return value
 
     @field_validator(
         "display_name",
@@ -69,7 +80,7 @@ class EmailAccountPayload(BaseModel):
             raise ValueError("email address is invalid") from exc
         if not address.username or not address.domain:
             raise ValueError("email address is invalid")
-        return value
+        return address.addr_spec
 
     @field_validator("scan_folders")
     @classmethod
