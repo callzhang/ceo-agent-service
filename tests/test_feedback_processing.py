@@ -3232,3 +3232,193 @@ def test_supplied_association_objects_are_strict(association: dict[str, object])
                 "associations": {"feedback-1": association},
             }
         )
+
+
+def _prepare_resolved_v2_batch(
+    store: AutoReplyStore,
+) -> ResolutionEvidence:
+    _, receipt = _prepare_processing_round(store)
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", receipt, commit_is_ancestor=True
+    )
+    return receipt
+
+
+@pytest.mark.parametrize(
+    "damage_sql",
+    (
+        "update feedback_processing_batches set resolved_at='' "
+        "where batch_id='batch-1'",
+        "update feedback_processing_batches set updated_at='1999-01-01 00:00:00' "
+        "where batch_id='batch-1'",
+    ),
+    ids=("missing-resolved-at", "updated-at-mismatch"),
+)
+def test_resolved_batch_idempotency_requires_shared_batch_completion_timestamp(
+    tmp_path: Path,
+    damage_sql: str,
+):
+    store = AutoReplyStore(tmp_path / "resolved-batch-timestamp.sqlite3")
+    receipt = _prepare_resolved_v2_batch(store)
+    with store._connect() as db:
+        db.execute(damage_sql)
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ("missing", "duplicate", "mismatched", "timestamp"),
+)
+def test_resolved_v2_batch_idempotency_requires_exact_completion_transition(
+    tmp_path: Path,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"resolved-transition-{damage}.sqlite3")
+    receipt = _prepare_resolved_v2_batch(store)
+    with store._connect() as db:
+        if damage == "missing":
+            db.execute(
+                "delete from feedback_processing_transitions "
+                "where batch_id='batch-1' and from_status='processing' "
+                "and to_status='resolved'"
+            )
+        elif damage == "duplicate":
+            db.execute(
+                """
+                insert into feedback_processing_transitions (
+                    feedback_key, round_id, batch_id, from_status, to_status,
+                    reason, workbench_task_id, workbench_turn_id, created_at
+                )
+                select feedback_key, round_id, batch_id, from_status, to_status,
+                       reason, workbench_task_id, workbench_turn_id, created_at
+                  from feedback_processing_transitions
+                 where batch_id='batch-1' and from_status='processing'
+                   and to_status='resolved'
+                """
+            )
+        elif damage == "mismatched":
+            db.execute(
+                """
+                update feedback_processing_transitions
+                   set workbench_task_id='wrong-task'
+                 where batch_id='batch-1' and from_status='processing'
+                   and to_status='resolved'
+                """
+            )
+        else:
+            db.execute(
+                """
+                update feedback_processing_transitions
+                   set created_at='1999-01-01 00:00:00'
+                 where batch_id='batch-1' and from_status='processing'
+                   and to_status='resolved'
+                """
+            )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize("damage", ("source-timestamp", "item-note"))
+def test_current_resolved_batch_idempotency_requires_exact_terminal_projection(
+    tmp_path: Path,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"resolved-current-{damage}.sqlite3")
+    receipt = _prepare_resolved_v2_batch(store)
+    with store._connect() as db:
+        if damage == "source-timestamp":
+            db.execute(
+                "update feedback_events set resolved_at='1999-01-01 00:00:00' "
+                "where key='feedback-1'"
+            )
+        else:
+            db.execute(
+                "update feedback_processing_items set note='wrong-note' "
+                "where feedback_key='feedback-1'"
+            )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("batch_id", "old-batch"),
+        ("workbench_task_id", "old-task"),
+        ("workbench_turn_id", "old-turn"),
+        ("attempt_id", 12),
+        ("agent_run_id", 34),
+        ("commit_sha", "a" * 40),
+        ("test_evidence_json", '{"pytest":{"exit_code":0}}'),
+        ("restart_evidence_json", '{"launchd_label":"old"}'),
+        ("health_evidence_json", '{"status_code":200}'),
+        ("note", "old-note"),
+        ("resolved_at", "1999-01-01 00:00:00"),
+    ),
+)
+def test_reopened_resolved_batch_idempotency_requires_cleared_pending_projection(
+    tmp_path: Path,
+    field: str,
+    value: object,
+):
+    store = AutoReplyStore(tmp_path / f"reopened-clear-{field}.sqlite3")
+    receipt = _prepare_resolved_v2_batch(store)
+    reopened = store.reopen_feedback_processing_item(
+        "feedback-1", reason="needs another round"
+    )
+    assert reopened is not None and reopened.current_round_id == 0
+    with store._connect() as db:
+        db.execute(
+            f"update feedback_processing_items set {field}=? "
+            "where feedback_key='feedback-1'",
+            (value,),
+        )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+def test_old_resolved_batch_idempotency_validates_newer_processing_lineage(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "resolved-newer-processing-lineage.sqlite3")
+    receipt = _prepare_resolved_v2_batch(store)
+    store.reopen_feedback_processing_item("feedback-1", reason="needs another round")
+    store.claim_feedback_processing_items("batch-2", ["feedback-1"])
+    with store._connect() as db:
+        db.execute(
+            "update feedback_processing_items set note='projection-only-corruption' "
+            "where feedback_key='feedback-1'"
+        )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before

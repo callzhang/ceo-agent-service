@@ -13690,6 +13690,7 @@ class AutoReplyStore:
             or type(current_round["agent_run_id"]) is not int
             or int(current_round["agent_run_id"]) <= 0
             or str(item["commit_sha"] or "") != str(current_round["commit_sha"] or "")
+            or str(item["note"] or "") != str(current_round["note"] or "")
         ):
             raise ValueError("resolved feedback processing round is incomplete")
         for name, persisted in (
@@ -14459,16 +14460,97 @@ class AutoReplyStore:
         return self._feedback_processing_item_from_row(row) if row else None
 
     @classmethod
+    def _validate_feedback_processing_completion_transition(
+        cls,
+        db: sqlite3.Connection,
+        resolved_round: sqlite3.Row,
+    ) -> None:
+        if cls._feedback_processing_receipt_version(resolved_round) != 2:
+            return
+        completion_transitions = db.execute(
+            """
+            select * from feedback_processing_transitions
+             where feedback_key=? and round_id=? and batch_id=?
+               and from_status='processing' and to_status='resolved'
+            """,
+            (
+                str(resolved_round["feedback_key"]),
+                int(resolved_round["id"]),
+                str(resolved_round["batch_id"]),
+            ),
+        ).fetchall()
+        if (
+            len(completion_transitions) != 1
+            or str(completion_transitions[0]["reason"] or "")
+            or str(completion_transitions[0]["workbench_task_id"] or "")
+            != str(resolved_round["workbench_task_id"] or "")
+            or str(completion_transitions[0]["workbench_turn_id"] or "")
+            != str(resolved_round["workbench_turn_id"] or "")
+            or str(completion_transitions[0]["created_at"] or "")
+            != str(resolved_round["resolved_at"] or "")
+        ):
+            raise ValueError("resolved batch completion transition is incomplete")
+
+    @classmethod
+    def _validate_current_processing_round_projection(
+        cls,
+        item: sqlite3.Row,
+        current_round: sqlite3.Row,
+    ) -> None:
+        cls._feedback_processing_receipt_version(current_round)
+        if (
+            str(item["status"] or "") != "processing"
+            or str(current_round["status"] or "") != "processing"
+            or str(item["batch_id"] or "") != str(current_round["batch_id"] or "")
+            or str(item["workbench_task_id"] or "")
+            != str(current_round["workbench_task_id"] or "")
+            or str(item["workbench_turn_id"] or "")
+            != str(current_round["workbench_turn_id"] or "")
+            or type(item["attempt_id"]) is not int
+            or type(current_round["attempt_id"]) is not int
+            or item["attempt_id"] < 0
+            or item["attempt_id"] != current_round["attempt_id"]
+            or type(item["agent_run_id"]) is not int
+            or type(current_round["agent_run_id"]) is not int
+            or item["agent_run_id"] < 0
+            or item["agent_run_id"] != current_round["agent_run_id"]
+            or str(item["commit_sha"] or "") != str(current_round["commit_sha"] or "")
+            or str(item["note"] or "") != str(current_round["note"] or "")
+            or str(item["resolved_at"] or "")
+            or str(current_round["resolved_at"] or "")
+        ):
+            raise ValueError("resolved batch current processing lineage is incomplete")
+        for field in (
+            "test_evidence_json",
+            "restart_evidence_json",
+            "health_evidence_json",
+        ):
+            item_evidence = json.loads(item[field] or "{}")
+            round_evidence = json.loads(current_round[field] or "{}")
+            if (
+                not isinstance(item_evidence, dict)
+                or not isinstance(round_evidence, dict)
+                or item_evidence != round_evidence
+            ):
+                raise ValueError(
+                    "resolved batch current processing evidence is incomplete"
+                )
+
+    @classmethod
     def _validate_resolved_feedback_processing_batch(
         cls,
         db: sqlite3.Connection,
         *,
         batch_id: str,
         requested_count: int,
+        batch_resolved_at: str,
+        batch_updated_at: str,
         evidence: ResolutionEvidence | None,
     ) -> None:
         if type(requested_count) is not int or requested_count <= 0:
             raise ValueError("resolution requires valid batch membership")
+        if not batch_resolved_at.strip() or not batch_updated_at.strip():
+            raise ValueError("resolved batch completion timestamp is incomplete")
         rounds = db.execute(
             "select * from feedback_processing_rounds "
             "where batch_id=? order by feedback_key, id",
@@ -14486,6 +14568,28 @@ class AutoReplyStore:
         ) != set(round_keys):
             raise ValueError("resolution receipt associations do not match batch")
 
+        version_two_rounds = [
+            round_row
+            for round_row in rounds
+            if cls._feedback_processing_receipt_version(round_row) == 2
+        ]
+        if version_two_rounds:
+            resolution_timestamps = {
+                str(round_row["resolved_at"] or "")
+                for round_row in version_two_rounds
+            }
+            if (
+                len(resolution_timestamps) != 1
+                or not next(iter(resolution_timestamps)).strip()
+                or batch_resolved_at not in resolution_timestamps
+                or batch_updated_at not in resolution_timestamps
+                or any(
+                    str(round_row["updated_at"] or "") not in resolution_timestamps
+                    for round_row in version_two_rounds
+                )
+            ):
+                raise ValueError("resolved batch completion timestamp is incomplete")
+
         association_fields = (
             "workbench_task_id",
             "workbench_turn_id",
@@ -14497,6 +14601,11 @@ class AutoReplyStore:
                 resolved_round
             )
             feedback_key = str(resolved_round["feedback_key"])
+            receipt_version = cls._feedback_processing_receipt_version(resolved_round)
+            cls._validate_feedback_processing_completion_transition(
+                db,
+                resolved_round,
+            )
             if evidence is not None:
                 if (
                     persisted_evidence.commit_sha != evidence.commit_sha
@@ -14526,7 +14635,7 @@ class AutoReplyStore:
                 (feedback_key,),
             ).fetchone()
             source = db.execute(
-                "select resolved_at from feedback_events where key=?",
+                "select resolved_at, updated_at from feedback_events where key=?",
                 (feedback_key,),
             ).fetchone()
             if item is None or source is None:
@@ -14539,10 +14648,18 @@ class AutoReplyStore:
                     )
                     != int(resolved_round["id"])
                     or str(item["batch_id"] or "") != batch_id
-                    or not str(source["resolved_at"] or "").strip()
+                    or str(source["resolved_at"] or "")
+                    != str(resolved_round["resolved_at"] or "")
                 ):
                     raise ValueError("resolved batch current projection is incomplete")
                 cls._validate_resolved_feedback_processing_round(item, resolved_round)
+                if receipt_version == 2 and (
+                    str(item["updated_at"] or "")
+                    != str(resolved_round["resolved_at"] or "")
+                    or str(source["updated_at"] or "")
+                    != str(resolved_round["resolved_at"] or "")
+                ):
+                    raise ValueError("resolved batch terminal timestamp is incomplete")
                 continue
 
             transition_count = db.execute(
@@ -14569,6 +14686,19 @@ class AutoReplyStore:
             if current_round_id == 0:
                 if (
                     str(item["status"] or "") != "pending"
+                    or str(item["batch_id"] or "")
+                    or str(item["workbench_task_id"] or "")
+                    or str(item["workbench_turn_id"] or "")
+                    or type(item["attempt_id"]) is not int
+                    or item["attempt_id"] != 0
+                    or type(item["agent_run_id"]) is not int
+                    or item["agent_run_id"] != 0
+                    or str(item["commit_sha"] or "")
+                    or json.loads(item["test_evidence_json"] or "{}") != {}
+                    or json.loads(item["restart_evidence_json"] or "{}") != {}
+                    or json.loads(item["health_evidence_json"] or "{}") != {}
+                    or str(item["note"] or "")
+                    or str(item["resolved_at"] or "")
                     or str(source["resolved_at"] or "").strip()
                 ):
                     raise ValueError("resolved batch reopened projection is incomplete")
@@ -14596,14 +14726,31 @@ class AutoReplyStore:
             if current_round is None:
                 raise ValueError("resolved batch current lineage is incomplete")
             if str(item["status"] or "") == "resolved":
-                if not str(source["resolved_at"] or "").strip():
+                if str(source["resolved_at"] or "") != str(
+                    current_round["resolved_at"] or ""
+                ):
                     raise ValueError("resolved batch source lineage is incomplete")
                 cls._validate_resolved_feedback_processing_round(item, current_round)
-            elif (
-                str(item["status"] or "") != "processing"
-                or str(source["resolved_at"] or "").strip()
-            ):
-                raise ValueError("resolved batch current lineage is incomplete")
+                cls._validate_feedback_processing_completion_transition(
+                    db,
+                    current_round,
+                )
+                if cls._feedback_processing_receipt_version(current_round) == 2 and (
+                    str(current_round["updated_at"] or "")
+                    != str(current_round["resolved_at"] or "")
+                    or str(item["updated_at"] or "")
+                    != str(current_round["resolved_at"] or "")
+                    or str(source["updated_at"] or "")
+                    != str(current_round["resolved_at"] or "")
+                ):
+                    raise ValueError("resolved batch current lineage timestamp is incomplete")
+            else:
+                if str(source["resolved_at"] or "").strip():
+                    raise ValueError("resolved batch current lineage is incomplete")
+                cls._validate_current_processing_round_projection(
+                    item,
+                    current_round,
+                )
 
     def resolve_feedback_processing_batch(
         self,
@@ -14638,7 +14785,8 @@ class AutoReplyStore:
             )
         with self._immediate_write_transaction() as db:
             batch = db.execute(
-                "select status, requested_count from feedback_processing_batches where batch_id=?",
+                "select status, requested_count, resolved_at, updated_at "
+                "from feedback_processing_batches where batch_id=?",
                 (cleaned_batch_id,),
             ).fetchone()
             if batch is None:
@@ -14648,6 +14796,8 @@ class AutoReplyStore:
                     db,
                     batch_id=cleaned_batch_id,
                     requested_count=batch["requested_count"],
+                    batch_resolved_at=str(batch["resolved_at"] or ""),
+                    batch_updated_at=str(batch["updated_at"] or ""),
                     evidence=normalized_evidence,
                 )
                 return True
