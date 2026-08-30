@@ -2917,36 +2917,6 @@ class EmailStore:
             ).fetchone()
         return None if row is None else self._classification_row(row)
 
-    def get_agent_task_authorization(
-        self,
-        classification_id: int,
-    ) -> dict[str, Any] | None:
-        """Read the current plan only when its persisted message still matches."""
-
-        with self._connect() as db:
-            row = db.execute(
-                """
-                select
-                    classifications.id as classification_id,
-                    classifications.account_id as account_id,
-                    classifications.stable_message_identity
-                        as stable_message_identity,
-                    messages.thread_identity as thread_identity,
-                    classifications.current_action_plan_id
-                        as current_action_plan_id
-                from email_classifications as classifications
-                join email_messages as messages
-                  on messages.account_id=classifications.account_id
-                 and messages.stable_message_identity=
-                     classifications.stable_message_identity
-                where classifications.id=?
-                  and classifications.status='processed'
-                  and classifications.current_action_plan_id is not null
-                """,
-                (classification_id,),
-            ).fetchone()
-        return None if row is None else dict(row)
-
     def list_training_examples(
         self, *, include_inclusion: bool = False
     ) -> list[dict[str, Any]]:

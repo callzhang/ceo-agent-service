@@ -28,6 +28,7 @@ from app.leak_check import (
 )
 from app.store import (
     AutoReplyStore,
+    EmailReplyTaskAuthorizationConflict,
     ReplyTask,
     ReplyTaskIdentityConflict,
     ReplyTaskSpec,
@@ -35,6 +36,9 @@ from app.store import (
 
 
 _PAYLOAD_SCHEMA = "email_agent_action.v1"
+_MAX_METADATA_TEXT_LENGTH = 64 * 1024
+_MAX_METADATA_JSON_LENGTH = 256 * 1024
+_MAX_METADATA_DECODE_ROUNDS = 8
 
 
 class EmailAgentTaskConflict(RuntimeError):
@@ -46,13 +50,42 @@ class EmailAgentTaskMetadataError(ValueError):
 
 
 def _decode_metadata_token(value: str) -> str:
+    if len(value.encode("utf-8")) > _MAX_METADATA_TEXT_LENGTH:
+        raise EmailAgentTaskMetadataError(
+            "email action metadata is not safe for persistence"
+        )
     decoded = value
-    for _ in range(2):
+    for _ in range(_MAX_METADATA_DECODE_ROUNDS):
         expanded = unquote(decoded)
         if expanded == decoded:
-            break
+            return decoded
         decoded = expanded
+    if unquote(decoded) != decoded:
+        raise EmailAgentTaskMetadataError(
+            "email action metadata is not safe for persistence"
+        )
     return decoded
+
+
+def _canonicalize_metadata(value: object) -> object:
+    if isinstance(value, Mapping):
+        return tuple(
+            {
+                (
+                    _decode_metadata_token(key)
+                    if isinstance(key, str)
+                    else key
+                ): _canonicalize_metadata(item)
+            }
+            for key, item in value.items()
+        )
+    if isinstance(value, Sequence) and not isinstance(value, str):
+        if isinstance(value, bytes | bytearray):
+            return value
+        return tuple(_canonicalize_metadata(item) for item in value)
+    if isinstance(value, str):
+        return _decode_metadata_token(value)
+    return value
 
 
 def _contains_home_relative_path(candidate: str) -> bool:
@@ -168,18 +201,21 @@ def _contains_forbidden_metadata(value: object) -> bool:
 
 def _assert_safe_email_metadata(value: object) -> None:
     try:
-        assert_no_credentials(value)
-        json.dumps(
+        encoded = json.dumps(
             value,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         )
+        if len(encoded.encode("utf-8")) > _MAX_METADATA_JSON_LENGTH:
+            raise ValueError("email action metadata is too large")
+        canonical = _canonicalize_metadata(value)
+        assert_no_credentials(canonical)
     except (TypeError, ValueError) as exc:
         raise EmailAgentTaskMetadataError(
             "email action metadata is not safe for persistence"
         ) from exc
-    if _contains_forbidden_metadata(value):
+    if _contains_forbidden_metadata(canonical):
         raise EmailAgentTaskMetadataError(
             "email action metadata is not safe for persistence"
         )
@@ -288,8 +324,11 @@ class EmailAgentTaskAdapter:
     """Create Email tasks while leaving execution and Audit to the existing runtime."""
 
     def __init__(self, store: AutoReplyStore, email_store: EmailStore):
+        if store.path.resolve() != email_store.path.resolve():
+            raise ValueError(
+                "email task and classification stores must share one database"
+            )
         self.store = store
-        self.email_store = email_store
 
     def ensure_action_plan_tasks(
         self,
@@ -298,23 +337,6 @@ class EmailAgentTaskAdapter:
     ) -> tuple[EmailAgentTaskRoute, ...]:
         if not action_plan.agent_actions:
             return ()
-        authorization = self.email_store.get_agent_task_authorization(
-            action_plan.classification_id
-        )
-        if authorization is None or any(
-            (
-                authorization["account_id"] != action_plan.account_id,
-                authorization["stable_message_identity"]
-                != task_input.stable_message_identity,
-                str(authorization["thread_identity"]).strip()
-                != task_input.thread_identity,
-                authorization["current_action_plan_id"]
-                != action_plan.action_plan_id,
-            )
-        ):
-            raise EmailAgentTaskConflict(
-                "email ActionPlan is not the current persisted message authorization"
-            )
         _assert_safe_email_metadata(
             [
                 {
@@ -364,10 +386,18 @@ class EmailAgentTaskAdapter:
                 )
             )
         try:
-            tasks = self.store.ensure_reply_tasks(
-                tuple(spec for _, _, spec in prepared)
+            tasks = self.store.ensure_authorized_email_reply_tasks(
+                classification_id=action_plan.classification_id,
+                account_id=action_plan.account_id,
+                stable_message_identity=task_input.stable_message_identity,
+                thread_identity=task_input.thread_identity,
+                action_plan_id=action_plan.action_plan_id,
+                task_specs=tuple(spec for _, _, spec in prepared),
             )
-        except ReplyTaskIdentityConflict as exc:
+        except (
+            EmailReplyTaskAuthorizationConflict,
+            ReplyTaskIdentityConflict,
+        ) as exc:
             raise EmailAgentTaskConflict(
                 "email action identity is bound to different metadata"
             ) from exc

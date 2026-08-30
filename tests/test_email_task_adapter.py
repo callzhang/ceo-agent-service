@@ -1,8 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
 import sqlite3
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event
+from urllib.parse import quote
 
 import pytest
 
@@ -111,7 +114,14 @@ def _task_input(
 
 
 def _email_store(tmp_path: Path) -> EmailStore:
-    return EmailStore(tmp_path / "email-business.sqlite3")
+    return EmailStore(tmp_path / "email-agent.sqlite3")
+
+
+def _percent_encode(value: str, rounds: int) -> str:
+    encoded = value
+    for _ in range(rounds):
+        encoded = quote(encoded, safe="")
+    return encoded
 
 
 def _persist_authorization(
@@ -251,6 +261,16 @@ def test_classification_with_zero_agent_actions_creates_no_reply_task(tmp_path: 
 
     assert routes == ()
     assert store.count_reply_tasks(channel="email") == 0
+
+
+def test_adapter_requires_one_database_for_atomic_email_authorization(
+    tmp_path: Path,
+):
+    task_store = AutoReplyStore(tmp_path / "tasks.sqlite3")
+    email_store = EmailStore(tmp_path / "email.sqlite3")
+
+    with pytest.raises(ValueError, match="share one database"):
+        EmailAgentTaskAdapter(task_store, email_store)
 
 
 def test_action_plan_version_and_account_are_part_of_task_identity(tmp_path: Path):
@@ -457,6 +477,101 @@ def test_task_creation_rejects_wrong_persisted_message_and_historical_plan(
     assert task_store.count_reply_tasks(channel="email") == 0
 
 
+def test_current_plan_switch_cannot_interleave_after_authorization_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    database = tmp_path / "email-agent.sqlite3"
+    task_store = _store(tmp_path)
+    email_store = _email_store(tmp_path)
+    task_input = _task_input()
+    first_plan = _plan((EmailAction.AUTO_REPLY,), version=1)
+    second_plan = _plan((EmailAction.AUTO_REPLY,), version=2)
+    _persist_authorization(email_store, first_plan, task_input)
+    adapter = EmailAgentTaskAdapter(task_store, email_store)
+    authorization_checked = Event()
+    allow_insert = Event()
+
+    def observed_authorization_read(db, classification_id: int):
+        row = db.execute(
+            """
+            select
+                classifications.id as classification_id,
+                classifications.account_id as account_id,
+                classifications.stable_message_identity
+                    as stable_message_identity,
+                messages.thread_identity as thread_identity,
+                classifications.current_action_plan_id
+                    as current_action_plan_id
+            from email_classifications as classifications
+            join email_messages as messages
+              on messages.account_id=classifications.account_id
+             and messages.stable_message_identity=
+                 classifications.stable_message_identity
+            where classifications.id=?
+              and classifications.status='processed'
+              and classifications.current_action_plan_id is not null
+            """,
+            (classification_id,),
+        ).fetchone()
+        authorization_checked.set()
+        if not allow_insert.wait(timeout=2):
+            raise RuntimeError("test did not release email task insertion")
+        return row
+
+    monkeypatch.setattr(
+        task_store,
+        "_get_current_email_task_authorization",
+        observed_authorization_read,
+        raising=False,
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            adapter.ensure_action_plan_tasks,
+            first_plan,
+            task_input,
+        )
+        try:
+            assert authorization_checked.wait(timeout=1)
+            competing_email_store = EmailStore(database)
+
+            def zero_timeout_connect() -> sqlite3.Connection:
+                connection = sqlite3.connect(database, timeout=0)
+                connection.execute("pragma busy_timeout = 0")
+                connection.execute("pragma foreign_keys = on")
+                connection.row_factory = sqlite3.Row
+                return connection
+
+            monkeypatch.setattr(
+                competing_email_store,
+                "_connect",
+                zero_timeout_connect,
+            )
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                competing_email_store.append_action_plan_version(
+                    first_plan.classification_id,
+                    second_plan,
+                    confirmed_category=second_plan.category,
+                )
+        finally:
+            allow_insert.set()
+        route = future.result(timeout=2)[0]
+
+    email_store.append_action_plan_version(
+        first_plan.classification_id,
+        second_plan,
+        confirmed_category=second_plan.category,
+    )
+
+    assert json.loads(route.task.trigger_message_json)["action_plan_id"] == (
+        first_plan.action_plan_id
+    )
+    assert email_store.get_classification(first_plan.classification_id)[
+        "current_action_plan_id"
+    ] == second_plan.action_plan_id
+
+
 def test_all_agent_payloads_are_validated_before_any_task_is_persisted(
     tmp_path: Path,
 ):
@@ -544,6 +659,43 @@ def test_nested_home_relative_paths_and_file_uris_are_rejected(
 ):
     with pytest.raises(EmailAgentTaskMetadataError):
         _assert_safe_email_metadata(unsafe_metadata)
+
+
+@pytest.mark.parametrize(
+    "unsafe_value",
+    (
+        _percent_encode("file:///Users/derek/private/reply.txt", 3),
+        _percent_encode("~/private/reply.txt", 3),
+        _percent_encode("https://example.com/unsubscribe/confirm", 3),
+        _percent_encode(
+            "https://example.com/resource?token=do-not-persist",
+            3,
+        ),
+    ),
+)
+def test_metadata_canonicalization_rejects_triple_encoded_unsafe_values(
+    unsafe_value: str,
+):
+    with pytest.raises(EmailAgentTaskMetadataError) as error:
+        _assert_safe_email_metadata({"outer": [{"value": unsafe_value}]})
+
+    assert unsafe_value not in str(error.value)
+
+
+def test_metadata_canonicalization_rejects_excessive_encoding_depth():
+    unsafe_value = _percent_encode("file:///private/reply.txt", 10)
+
+    with pytest.raises(EmailAgentTaskMetadataError) as error:
+        _assert_safe_email_metadata(unsafe_value)
+
+    assert unsafe_value not in str(error.value)
+
+
+def test_metadata_canonicalization_rejects_oversized_text():
+    oversized = "a" * 70_000
+
+    with pytest.raises(EmailAgentTaskMetadataError):
+        _assert_safe_email_metadata(oversized)
 
 
 def test_safe_public_https_url_is_allowed_in_action_metadata(tmp_path: Path):
