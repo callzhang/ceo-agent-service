@@ -49,6 +49,7 @@ const labels: Record<string, string> = {
   loading: "加载中",
   refreshing: "刷新中",
   degraded: "状态降级",
+  screen_locked: "屏幕已锁定",
   permission_required: "需要权限",
   unknown: "未知",
 };
@@ -89,6 +90,7 @@ const tones: Record<string, "success" | "progress" | "warning" | "danger" | "neu
   not_configured: "warning",
   unavailable: "danger",
   wechat_window_unavailable: "danger",
+  screen_locked: "danger",
   not_ready: "danger",
   disconnected: "danger",
   failed: "danger",
