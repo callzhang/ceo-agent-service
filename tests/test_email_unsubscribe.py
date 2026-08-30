@@ -24,6 +24,9 @@ from app.email_unsubscribe import (
     UnsubscribeAuthenticationEvidence,
     UnsubscribeBrowserError,
     UnsubscribeDisposition,
+    UnsubscribeContinuationResult,
+    UnsubscribeDiscoveredControl,
+    UnsubscribeExecutionResult,
     UnsubscribeEntrySource,
     UnsubscribeExecutor,
     UnsubscribeObservation,
@@ -90,6 +93,8 @@ def _operations(*kinds: UnsubscribeOperationKind) -> tuple[UnsubscribeOperation,
 
 def _effect(
     operations: tuple[UnsubscribeOperation, ...] | None = None,
+    *,
+    previous_effect_digest: str = "",
 ) -> EmailUnsubscribeEffect:
     return EmailUnsubscribeEffect(
         action_identity=ACTION_IDENTITY,
@@ -101,6 +106,9 @@ def _effect(
         thread_identity="thread-41",
         entry_reference=unsubscribe_entry_reference(TOKEN_URL),
         operations=operations or _operations(UnsubscribeOperationKind.OPEN_ENTRY),
+        previous_effect_digest=previous_effect_digest,
+        network_policy_reference="network-policy:test",
+        network_policy_origin_references=("origin:test",),
     )
 
 
@@ -123,6 +131,8 @@ def _task() -> ReplyTask:
             }
         ],
         "unsubscribe_authentication": None,
+        "unsubscribe_network_policy_reference": "network-policy:test",
+        "unsubscribe_network_policy_origin_references": ["origin:test"],
     }
     return ReplyTask(
         id=9,
@@ -156,6 +166,8 @@ def _accepted_action() -> ProposedAction:
                 ),
                 "thread_identity": "thread-41",
                 "entry_reference": unsubscribe_entry_reference(TOKEN_URL),
+                "network_policy_reference": "network-policy:test",
+                "network_policy_origin_references": ["origin:test"],
             },
             "payload": {
                 "operations": [
@@ -163,11 +175,6 @@ def _accepted_action() -> ProposedAction:
                         "operation_reference": "step-1",
                         "kind": "open_entry",
                         "target_reference": unsubscribe_entry_reference(TOKEN_URL),
-                    },
-                    {
-                        "operation_reference": "step-2",
-                        "kind": "click_confirmation",
-                        "target_reference": "control-2",
                     },
                 ]
             },
@@ -305,10 +312,7 @@ def test_accepted_unsubscribe_effect_binds_exact_audited_operations() -> None:
     effect = accepted_email_unsubscribe_effect(_task(), _accepted_action())
 
     assert effect == _effect(
-        _operations(
-            UnsubscribeOperationKind.OPEN_ENTRY,
-            UnsubscribeOperationKind.CLICK_CONFIRMATION,
-        )
+        _operations(UnsubscribeOperationKind.OPEN_ENTRY)
     )
 
 
@@ -716,7 +720,7 @@ def test_executor_refuses_unreviewed_or_out_of_order_browser_operation(
     assert result.error_code == "email_unsubscribe_operation_mismatch"
 
 
-def test_restart_resumes_at_the_current_reviewed_operation(tmp_path: Path) -> None:
+def test_initial_effect_cannot_preapprove_a_later_control(tmp_path: Path) -> None:
     operations = _operations(
         UnsubscribeOperationKind.OPEN_ENTRY,
         UnsubscribeOperationKind.CLICK_CONFIRMATION,
@@ -741,8 +745,9 @@ def test_restart_resumes_at_the_current_reviewed_operation(tmp_path: Path) -> No
         (_entry(),),
     )
 
-    assert result.outcome is UnsubscribeOutcome.DONE
-    assert browser.calls == ["receipt", "inspect", "step-2"]
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert result.error_code == "email_unsubscribe_authorization_stale"
+    assert browser.calls == ["receipt", "inspect"]
 
 
 def test_restart_reads_durable_terminal_receipt_without_browser_replay(
@@ -841,10 +846,7 @@ def test_terminated_claim_after_external_effect_is_reconciliation_only(
     assert store.get_email_unsubscribe_claim(effect.action_identity)["status"] == (
         "dispatching"
     )
-    assert [
-        step["operation"]
-        for step in store.list_email_unsubscribe_steps(effect.action_identity)
-    ] == ["reconcile_state"]
+    assert store.list_email_unsubscribe_steps(effect.action_identity) == []
     assert store.recover_terminated_email_unsubscribe_claims(
         owner=UNSUBSCRIBE_OWNER,
         termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
@@ -869,7 +871,7 @@ def test_terminated_claim_after_external_effect_is_reconciliation_only(
     assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
     assert result.error_code == "email_unsubscribe_outcome_unresolved"
     assert restarted_browser.calls == ["receipt", "inspect"]
-    assert [step.operation for step in result.journal] == ["reconcile_state"]
+    assert result.journal == ()
     recovered_claim = store.get_email_unsubscribe_claim(effect.action_identity)
     assert recovered_claim["status"] == "uncertain"
     assert recovered_claim["owner_generation"] == UNSUBSCRIBE_OWNER["generation"]
@@ -1137,5 +1139,415 @@ def test_mail_review_skill_keeps_review_boundaries_and_adds_unsubscribe_rules() 
         "Never place a full unsubscribe URL or query token in the proposal, step journal, History, status, or error",
         "Login, CAPTCHA, and payment requirements are skipped business outcomes",
         "Browser runtime and provider authentication failures are technical failures",
+        "initial proposal contains exactly `OPEN_ENTRY`",
+        "returns a typed continuation",
+        "strict append-only extension of the persisted prefix",
+        "Execute only the newly accepted operation and never replay the prefix",
     ):
         assert unsubscribe_rule in prose
+
+
+def test_action_required_persists_typed_continuation_without_executing_control(
+    tmp_path: Path,
+) -> None:
+    initial = _effect()
+    discovered = UnsubscribeDiscoveredControl(
+        reference="control-form",
+        kind="form",
+        intent="unsubscribe",
+    )
+    browser = _ScriptedBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-not-opened",
+                next_operation_reference="step-1",
+            ),
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-form",
+                controls=(discovered,),
+            ),
+        ]
+    )
+    store = _authorized_store(tmp_path)
+
+    result = UnsubscribeExecutor(store, browser, owner=UNSUBSCRIBE_OWNER).execute(
+        initial,
+        (_entry(),),
+    )
+
+    assert isinstance(result, UnsubscribeContinuationResult)
+    assert browser.calls == ["receipt", "inspect", "step-1"]
+    assert result.continuation.effect_digest == initial.effect_digest
+    assert result.continuation.previous_effect_digest == ""
+    assert result.continuation.executed_operations == initial.operations
+    assert result.continuation.controls == (discovered,)
+    assert result.continuation.network_policy_reference == "network-policy:test"
+    assert result.continuation.network_policy_origin_references == ("origin:test",)
+    durable = store.get_email_unsubscribe_continuation(ACTION_IDENTITY)
+    assert durable is not None
+    assert durable["controls"] == [
+        {"reference": "control-form", "kind": "form", "intent": "unsubscribe"}
+    ]
+    assert store.get_email_unsubscribe_claim(ACTION_IDENTITY)["status"] == "awaiting_audit"
+
+
+def test_accepted_continuation_executes_only_new_operation_and_never_prefix(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    initial = _effect()
+    discovered = UnsubscribeDiscoveredControl(
+        reference="control-form",
+        kind="form",
+        intent="unsubscribe",
+    )
+    first_browser = _ScriptedBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-not-opened",
+                next_operation_reference="step-1",
+            ),
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-form",
+                controls=(discovered,),
+            ),
+        ]
+    )
+    first = UnsubscribeExecutor(store, first_browser, owner=UNSUBSCRIBE_OWNER).execute(
+        initial,
+        (_entry(),),
+    )
+    assert isinstance(first, UnsubscribeContinuationResult)
+    extension = _effect(
+        initial.operations
+        + (
+            UnsubscribeOperation(
+                operation_reference="step-2",
+                kind=UnsubscribeOperationKind.SUBMIT_FORM,
+                target_reference=discovered.reference,
+            ),
+        ),
+        previous_effect_digest=initial.effect_digest,
+    )
+    terminal = UnsubscribeTerminalReceipt(
+        receipt_id="provider-receipt:continued",
+        evidence="terminal_page",
+        entry_reference=extension.entry_reference,
+        effect_digest=extension.effect_digest,
+    )
+    second_browser = _ScriptedBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.DONE,
+                state_reference="state-done",
+                receipt=terminal,
+            )
+        ]
+    )
+
+    result = UnsubscribeExecutor(
+        EmailStore(store.path),
+        second_browser,
+        owner=RESTART_OWNER,
+    ).execute(extension, (_entry(),))
+
+    assert isinstance(result, UnsubscribeExecutionResult)
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert second_browser.calls == ["receipt", "step-2"]
+    assert store.get_email_unsubscribe_claim(ACTION_IDENTITY)["status"] == "done"
+
+
+def test_awaiting_audit_matching_terminal_receipt_completes_without_new_write(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    effect = _effect()
+    first_browser = _ScriptedBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-not-opened",
+                next_operation_reference="step-1",
+            ),
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-form",
+                controls=(
+                    UnsubscribeDiscoveredControl(
+                        reference="control-form",
+                        kind="form",
+                        intent="unsubscribe",
+                    ),
+                ),
+            ),
+        ]
+    )
+    assert isinstance(
+        UnsubscribeExecutor(store, first_browser, owner=UNSUBSCRIBE_OWNER).execute(
+            effect,
+            (_entry(),),
+        ),
+        UnsubscribeContinuationResult,
+    )
+    receipt_browser = _ScriptedBrowser([], receipt=_terminal_receipt(effect))
+
+    result = UnsubscribeExecutor(
+        EmailStore(store.path),
+        receipt_browser,
+        owner=RESTART_OWNER,
+    ).execute(effect, (_entry(),))
+
+    assert isinstance(result, UnsubscribeExecutionResult)
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert receipt_browser.calls == ["receipt"]
+    assert store.get_email_unsubscribe_claim(ACTION_IDENTITY)["status"] == "done"
+
+
+@pytest.mark.parametrize(
+    ("mutator", "expected_error"),
+    [
+        (lambda effect: _effect(effect.operations[1:], previous_effect_digest=effect.effect_digest), "prefix"),
+        (
+            lambda effect: EmailUnsubscribeEffect(
+                **{
+                    **effect.__dict__,
+                    "previous_effect_digest": effect.effect_digest,
+                    "network_policy_reference": "network-policy:changed",
+                    "operations": effect.operations
+                    + (
+                        UnsubscribeOperation(
+                            operation_reference="step-2",
+                            kind=UnsubscribeOperationKind.SUBMIT_FORM,
+                            target_reference="control-form",
+                        ),
+                    ),
+                }
+            ),
+            "policy",
+        ),
+        (
+            lambda effect: _effect(
+                effect.operations
+                + (
+                    UnsubscribeOperation(
+                        operation_reference="step-2",
+                        kind=UnsubscribeOperationKind.CLICK_CONFIRMATION,
+                        target_reference="control-unknown",
+                    ),
+                ),
+                previous_effect_digest=effect.effect_digest,
+            ),
+            "control",
+        ),
+        (
+            lambda effect: _effect(
+                effect.operations
+                + (
+                    UnsubscribeOperation(
+                        operation_reference="step-2",
+                        kind=UnsubscribeOperationKind.CLICK_CONFIRMATION,
+                        target_reference="control-form",
+                    ),
+                ),
+                previous_effect_digest=effect.effect_digest,
+            ),
+            "kind",
+        ),
+        (
+            lambda effect: EmailUnsubscribeEffect(
+                **{
+                    **effect.__dict__,
+                    "entry_reference": "unsubscribe-entry:other",
+                    "previous_effect_digest": effect.effect_digest,
+                    "operations": effect.operations
+                    + (
+                        UnsubscribeOperation(
+                            operation_reference="step-2",
+                            kind=UnsubscribeOperationKind.SUBMIT_FORM,
+                            target_reference="control-form",
+                        ),
+                    ),
+                }
+            ),
+            "different effect",
+        ),
+    ],
+)
+def test_store_rejects_tampered_continuation_extensions(
+    tmp_path: Path,
+    mutator,
+    expected_error: str,
+) -> None:
+    store = _authorized_store(tmp_path)
+    initial = _effect()
+    claim = store.claim_email_unsubscribe_write(
+        **UnsubscribeExecutor._store_arguments(initial),
+        owner=UNSUBSCRIBE_OWNER,
+    )
+    assert claim is not None and claim["acquired"] is True
+    store.persist_email_unsubscribe_continuation(
+        **UnsubscribeExecutor._store_arguments(initial),
+        controls=(
+            {"reference": "control-form", "kind": "form", "intent": "unsubscribe"},
+        ),
+        observation_reference="state-form",
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "action_required",
+            "reference": "step-1",
+        },
+        owner=UNSUBSCRIBE_OWNER,
+    )
+
+    with pytest.raises(Exception, match=expected_error):
+        store.claim_email_unsubscribe_write(
+            **UnsubscribeExecutor._store_arguments(mutator(initial)),
+            owner=RESTART_OWNER,
+        )
+
+
+def test_concurrent_continuation_claim_has_exactly_one_fresh_winner(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    initial = _effect()
+    assert store.claim_email_unsubscribe_write(
+        **UnsubscribeExecutor._store_arguments(initial),
+        owner=UNSUBSCRIBE_OWNER,
+    )["acquired"]
+    store.persist_email_unsubscribe_continuation(
+        **UnsubscribeExecutor._store_arguments(initial),
+        controls=(
+            {"reference": "control-form", "kind": "form", "intent": "unsubscribe"},
+        ),
+        observation_reference="state-form",
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "action_required",
+            "reference": "step-1",
+        },
+        owner=UNSUBSCRIBE_OWNER,
+    )
+    extension = _effect(
+        initial.operations
+        + (
+            UnsubscribeOperation(
+                operation_reference="step-2",
+                kind=UnsubscribeOperationKind.SUBMIT_FORM,
+                target_reference="control-form",
+            ),
+        ),
+        previous_effect_digest=initial.effect_digest,
+    )
+    owners = (
+        RESTART_OWNER,
+        {
+            "owner_id": "email-worker",
+            "generation": 33,
+            "lease_token": "unsubscribe-unit-concurrent",
+        },
+    )
+
+    def claim(owner: dict[str, object]) -> bool:
+        try:
+            result = store.claim_email_unsubscribe_write(
+                **UnsubscribeExecutor._store_arguments(extension),
+                owner=owner,
+            )
+        except Exception:
+            return False
+        return bool(result and result["acquired"])
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        acquired = list(pool.map(claim, owners))
+
+    assert acquired.count(True) == 1
+    durable = store.get_email_unsubscribe_claim(ACTION_IDENTITY)
+    assert durable is not None and durable["status"] == "dispatching"
+    assert durable["effect_digest"] == extension.effect_digest
+
+
+def test_adapter_rejects_precomputed_initial_dom_operations() -> None:
+    action = _accepted_action().model_copy(
+        update={
+            "payload": {
+                "operations": [
+                    *_accepted_action().payload["operations"],
+                    {
+                        "operation_reference": "step-2",
+                        "kind": "submit_form",
+                        "target_reference": "control-guessed",
+                    },
+                ]
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="invalid"):
+        accepted_email_unsubscribe_effect(_task(), action)
+
+
+def test_stale_plan_cannot_claim_a_persisted_continuation(tmp_path: Path) -> None:
+    store = _authorized_store(tmp_path)
+    initial = _effect()
+    assert store.claim_email_unsubscribe_write(
+        **UnsubscribeExecutor._store_arguments(initial),
+        owner=UNSUBSCRIBE_OWNER,
+    )["acquired"]
+    store.persist_email_unsubscribe_continuation(
+        **UnsubscribeExecutor._store_arguments(initial),
+        controls=(
+            {"reference": "control-form", "kind": "form", "intent": "unsubscribe"},
+        ),
+        observation_reference="state-form",
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "action_required",
+            "reference": "step-1",
+        },
+        owner=UNSUBSCRIBE_OWNER,
+    )
+    corrected = build_versioned_email_action_plan(
+        action_plan_version=2,
+        classification_id=41,
+        account_id="account-primary",
+        category=EmailCategory.SUBSCRIPTION,
+        classification_source="user",
+        confidence=1.0,
+        model_id=RUNTIME_PLAN.model_id,
+        config_version=RUNTIME_PLAN.config_version,
+        actions=(EmailAction.UNSUBSCRIBE,),
+        action_parameters={},
+        created_at=datetime(2026, 8, 30, 9, 0, tzinfo=timezone.utc),
+    )
+    store.append_action_plan_version(
+        41,
+        corrected,
+        confirmed_category=EmailCategory.SUBSCRIPTION,
+    )
+    extension = _effect(
+        initial.operations
+        + (
+            UnsubscribeOperation(
+                operation_reference="step-2",
+                kind=UnsubscribeOperationKind.SUBMIT_FORM,
+                target_reference="control-form",
+            ),
+        ),
+        previous_effect_digest=initial.effect_digest,
+    )
+
+    assert store.claim_email_unsubscribe_write(
+        **UnsubscribeExecutor._store_arguments(extension),
+        owner=RESTART_OWNER,
+    ) is None
+    assert store.get_email_unsubscribe_claim(ACTION_IDENTITY)["status"] == (
+        "awaiting_audit"
+    )

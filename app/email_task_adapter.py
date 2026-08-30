@@ -24,6 +24,7 @@ from app.email_classifier_contracts import (
 from app.email_store import EmailStore
 from app.email_reply_delivery import EmailReplyEffect, email_action_identity
 from app.email_unsubscribe import (
+    EmailUnsubscribeContinuation,
     EmailUnsubscribeEffect,
     UnsubscribeAuthenticationEvidence,
     UnsubscribeOperation,
@@ -274,6 +275,11 @@ class EmailAgentTaskInput:
     body_text: str = field(default="", repr=False)
     body_html: str = field(default="", repr=False)
     unsubscribe_authentication: UnsubscribeAuthenticationEvidence | None = None
+    unsubscribe_network_policy_reference: str = "network-policy:legacy"
+    unsubscribe_network_policy_origin_references: tuple[str, ...] = (
+        "network-origin:legacy",
+    )
+    unsubscribe_allow_loopback_for_tests: bool = False
 
     def __post_init__(self) -> None:
         if not self.stable_message_identity.strip():
@@ -299,6 +305,11 @@ class EmailAgentTaskInput:
             raise TypeError(
                 "unsubscribe_authentication must be UnsubscribeAuthenticationEvidence"
             )
+        if not self.unsubscribe_network_policy_reference.strip() or not all(
+            isinstance(item, str) and item.strip()
+            for item in self.unsubscribe_network_policy_origin_references
+        ):
+            raise ValueError("unsubscribe network policy references are invalid")
 
 
 @dataclass(frozen=True)
@@ -392,6 +403,8 @@ def accepted_email_reply_effect(
 def accepted_email_unsubscribe_effect(
     task: ReplyTask,
     accepted_action: ProposedAction,
+    *,
+    continuation: EmailUnsubscribeContinuation | None = None,
 ) -> EmailUnsubscribeEffect:
     """Freeze one exact unsubscribe proposal after Audit accepts it."""
 
@@ -425,11 +438,14 @@ def accepted_email_unsubscribe_effect(
         "account_id": metadata.get("account_id"),
         "stable_message_identity": metadata.get("stable_message_identity"),
         "thread_identity": metadata.get("thread_identity"),
+        "network_policy_reference": metadata.get(
+            "unsubscribe_network_policy_reference"
+        ),
+        "network_policy_origin_references": metadata.get(
+            "unsubscribe_network_policy_origin_references"
+        ),
     }
-    if set(accepted_action.target) != {
-        *expected_target,
-        "entry_reference",
-    }:
+    if set(accepted_action.target) != {*expected_target, "entry_reference"}:
         raise ValueError("accepted unsubscribe proposal is invalid")
     if any(
         accepted_action.target.get(name) != expected
@@ -493,6 +509,72 @@ def accepted_email_unsubscribe_effect(
                 or authentication.get("one_click_verified") is not True
             ):
                 raise ValueError("accepted one-click unsubscribe is not authenticated")
+        if continuation is None:
+            if len(operations) != 1 or operations[0].kind.value not in {
+                "open_entry",
+                "post_one_click",
+            }:
+                raise ValueError(
+                    "initial unsubscribe proposal must contain one entry operation"
+                )
+            previous_effect_digest = ""
+        else:
+            identity_fields = (
+                "action_identity",
+                "action_plan_id",
+                "action_plan_version",
+                "classification_id",
+                "account_id",
+                "stable_message_identity",
+                "thread_identity",
+                "entry_reference",
+                "network_policy_reference",
+            )
+            candidate_values = {
+                "action_identity": metadata.get("action_identity"),
+                "action_plan_id": metadata.get("action_plan_id"),
+                "action_plan_version": metadata.get("action_plan_version"),
+                "classification_id": metadata.get("classification_id"),
+                "account_id": accepted_action.target.get("account_id"),
+                "stable_message_identity": accepted_action.target.get(
+                    "stable_message_identity"
+                ),
+                "thread_identity": accepted_action.target.get("thread_identity"),
+                "entry_reference": entry_reference,
+                "network_policy_reference": accepted_action.target.get(
+                    "network_policy_reference"
+                ),
+            }
+            if any(
+                candidate_values[field_name] != getattr(continuation, field_name)
+                for field_name in identity_fields
+            ) or tuple(
+                accepted_action.target.get("network_policy_origin_references", ())
+            ) != continuation.network_policy_origin_references:
+                raise ValueError("unsubscribe continuation identity changed")
+            if (
+                operations[:-1] != continuation.executed_operations
+                or len(operations) != len(continuation.executed_operations) + 1
+            ):
+                raise ValueError("unsubscribe continuation prefix is not append-only")
+            next_operation = operations[-1]
+            control = next(
+                (
+                    item
+                    for item in continuation.controls
+                    if item.reference == next_operation.target_reference
+                ),
+                None,
+            )
+            allowed = {
+                "form": {"submit_form"},
+                "link": {"click_confirmation"},
+                "button": {"click_confirmation"},
+                "confirmation_email": {"confirm_email"},
+            }
+            if control is None or next_operation.kind.value not in allowed[control.kind]:
+                raise ValueError("unsubscribe continuation control is invalid")
+            previous_effect_digest = continuation.effect_digest
         return EmailUnsubscribeEffect(
             action_identity=required_text(metadata, "action_identity"),
             action_plan_id=required_text(metadata, "action_plan_id"),
@@ -512,6 +594,17 @@ def accepted_email_unsubscribe_effect(
                 "entry_reference",
             ),
             operations=operations,
+            previous_effect_digest=previous_effect_digest,
+            network_policy_reference=required_text(
+                accepted_action.target,
+                "network_policy_reference",
+            ),
+            network_policy_origin_references=tuple(
+                str(item)
+                for item in accepted_action.target[
+                    "network_policy_origin_references"
+                ]
+            ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("accepted unsubscribe proposal is invalid") from exc
@@ -652,6 +745,9 @@ class EmailAgentTaskAdapter:
                 body_text=task_input.body_text,
                 body_html=task_input.body_html,
                 authentication_evidence=task_input.unsubscribe_authentication,
+                allow_loopback_for_tests=(
+                    task_input.unsubscribe_allow_loopback_for_tests
+                ),
             )
             payload["unsubscribe_entries"] = [entry.redacted for entry in entries]
             evidence = task_input.unsubscribe_authentication
@@ -662,6 +758,12 @@ class EmailAgentTaskAdapter:
                     "evidence_reference": evidence.evidence_reference,
                     "one_click_verified": evidence.one_click_verified,
                 }
+            )
+            payload["unsubscribe_network_policy_reference"] = (
+                task_input.unsubscribe_network_policy_reference
+            )
+            payload["unsubscribe_network_policy_origin_references"] = list(
+                task_input.unsubscribe_network_policy_origin_references
             )
         _assert_safe_email_metadata(payload)
         return payload

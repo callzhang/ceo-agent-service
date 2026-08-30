@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -11,6 +12,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -19,6 +21,12 @@ from app.email_classifier_contracts import (
     build_versioned_email_action_plan,
 )
 from app.email_store import EmailStore, email_action_identity
+from app.email_task_adapter import (
+    EmailAgentTaskAdapter,
+    EmailAgentTaskInput,
+    EmailThreadMessage,
+    accepted_email_unsubscribe_effect,
+)
 from app.email_unsubscribe import (
     BrowserNetworkPolicy,
     ConfirmationNavigationTarget,
@@ -26,6 +34,7 @@ from app.email_unsubscribe import (
     PlaywrightUnsubscribeBrowser,
     UnsubscribeEntry,
     UnsubscribeEntrySource,
+    UnsubscribeContinuationResult,
     UnsubscribeExecutor,
     UnsubscribeOperation,
     UnsubscribeOperationKind,
@@ -34,6 +43,7 @@ from app.email_unsubscribe import (
     unsubscribe_entry_reference,
     unsubscribe_control_reference,
 )
+from app.store import AutoReplyStore
 
 
 pytestmark = pytest.mark.skipif(
@@ -494,6 +504,15 @@ def _setup(
         private_url=private_url,
         priority=30,
     )
+    parsed = urlsplit(private_url)
+    origin = (
+        f"{parsed.scheme}://{parsed.hostname}:"
+        f"{parsed.port or (443 if parsed.scheme == 'https' else 80)}"
+    )
+    policy = BrowserNetworkPolicy(
+        allowed_origins=frozenset({origin}),
+        allow_loopback_for_tests=True,
+    )
     effect = EmailUnsubscribeEffect(
         action_identity=email_action_identity(
             account_id="fixture-account",
@@ -509,6 +528,8 @@ def _setup(
         thread_identity="fixture-thread",
         entry_reference=entry.reference,
         operations=operations,
+        network_policy_reference=policy.reference,
+        network_policy_origin_references=policy.origin_references,
     )
     return store, effect, entry
 
@@ -525,7 +546,12 @@ def _run(
 ):
     with _loopback_server() as origin:
         private_url = f"{origin}{path}?opaque=private-fixture-token"
-        store, effect, entry = _setup(tmp_path, private_url, operations)
+        store, proposed_effect, entry = _setup(tmp_path, private_url, operations)
+        effect = replace(
+            proposed_effect,
+            operations=(operations[0],),
+            previous_effect_digest="",
+        )
         owner = _BROWSER_OWNER
         if recover_uncertain:
             claim = store.claim_email_unsubscribe_write(
@@ -581,6 +607,23 @@ def _run(
                 browser,
                 owner=owner,
             ).execute(effect, (entry,))
+            for index, operation in enumerate(operations[1:], start=2):
+                if not isinstance(result, UnsubscribeContinuationResult):
+                    break
+                effect = replace(
+                    effect,
+                    operations=effect.operations + (operation,),
+                    previous_effect_digest=effect.effect_digest,
+                )
+                result = UnsubscribeExecutor(
+                    store,
+                    browser,
+                    owner={
+                        "owner_id": "email-worker",
+                        "generation": 40 + index,
+                        "lease_token": f"browser-fixture-step-{index}",
+                    },
+                ).execute(effect, (entry,))
         finally:
             context.close()
 
@@ -641,6 +684,176 @@ def test_two_step_form_fixture(tmp_path: Path, chrome_browser) -> None:
     )
     assert result.outcome is UnsubscribeOutcome.DONE
     assert [method for method, _ in requests] == ["GET", "POST", "POST"]
+
+
+def test_task9_to_incremental_audit_uses_only_discovered_opaque_controls(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    with _loopback_server() as origin:
+        private_url = f"{origin}/two-step?opaque=private-fixture-token"
+        policy = BrowserNetworkPolicy(
+            allowed_origins=frozenset({origin}),
+            allow_loopback_for_tests=True,
+        )
+        initial_operation = UnsubscribeOperation(
+            operation_reference="step-1",
+            kind=UnsubscribeOperationKind.OPEN_ENTRY,
+            target_reference=unsubscribe_entry_reference(private_url),
+        )
+        email_store, _, entry = _setup(
+            tmp_path,
+            private_url,
+            (initial_operation,),
+        )
+        task_store = AutoReplyStore(email_store.path)
+        plan = build_versioned_email_action_plan(
+            action_plan_version=1,
+            classification_id=701,
+            account_id="fixture-account",
+            category=EmailCategory.SUBSCRIPTION,
+            classification_source="model",
+            confidence=0.99,
+            model_id="email-model:browser-fixture",
+            config_version="email-config:browser-fixture",
+            actions=(EmailAction.UNSUBSCRIBE,),
+            action_parameters={},
+            created_at=datetime(2026, 8, 30, 8, 0, tzinfo=timezone.utc),
+        )
+        task_input = EmailAgentTaskInput(
+            stable_message_identity=(
+                "fixture-account:message-id:<browser-701@example.com>"
+            ),
+            thread_identity="fixture-thread",
+            subject="Fixture newsletter",
+            trigger=EmailThreadMessage(
+                message_id=(
+                    "fixture-account:message-id:<browser-701@example.com>"
+                ),
+                sender="newsletter@example.com",
+                text="Newsletter body without attachment content.",
+                create_time="2026-08-30T08:00:00+00:00",
+            ),
+            list_unsubscribe=f"<{private_url}>",
+            unsubscribe_network_policy_reference=policy.reference,
+            unsubscribe_network_policy_origin_references=policy.origin_references,
+            unsubscribe_allow_loopback_for_tests=True,
+        )
+        route = EmailAgentTaskAdapter(
+            task_store,
+            email_store,
+        ).ensure_action_plan_tasks(plan, task_input)[0]
+        metadata = json.loads(route.task.trigger_message_json)
+
+        def accepted(operations: tuple[UnsubscribeOperation, ...]) -> ProposedAction:
+            return ProposedAction.model_validate(
+                {
+                    "description": "Execute one audited unsubscribe step",
+                    "capability": "email_browser",
+                    "operation": "unsubscribe",
+                    "target": {
+                        "action_identity": metadata["action_identity"],
+                        "account_id": metadata["account_id"],
+                        "stable_message_identity": metadata[
+                            "stable_message_identity"
+                        ],
+                        "thread_identity": metadata["thread_identity"],
+                        "entry_reference": metadata["unsubscribe_entries"][0][
+                            "reference"
+                        ],
+                        "network_policy_reference": metadata[
+                            "unsubscribe_network_policy_reference"
+                        ],
+                        "network_policy_origin_references": metadata[
+                            "unsubscribe_network_policy_origin_references"
+                        ],
+                    },
+                    "payload": {
+                        "operations": [
+                            {
+                                "operation_reference": item.operation_reference,
+                                "kind": item.kind.value,
+                                "target_reference": item.target_reference,
+                            }
+                            for item in operations
+                        ]
+                    },
+                    "expected_verification": "Read redacted provider state.",
+                }
+            )
+
+        effect = accepted_email_unsubscribe_effect(
+            route.task,
+            accepted((initial_operation,)),
+        )
+        context = chrome_browser.new_context()
+        browser = PlaywrightUnsubscribeBrowser(
+            context.new_page(),
+            timeout_ms=3_000,
+            network_policy=policy,
+        )
+        try:
+            first = UnsubscribeExecutor(
+                email_store,
+                browser,
+                owner=_BROWSER_OWNER,
+            ).execute(effect, (entry,))
+            assert isinstance(first, UnsubscribeContinuationResult)
+            assert [method for method, _ in _FixtureHandler.requests] == ["GET"]
+            assert len(first.continuation.controls) == 1
+
+            second_operation = UnsubscribeOperation(
+                operation_reference="step-2",
+                kind=UnsubscribeOperationKind.SUBMIT_FORM,
+                target_reference=first.continuation.controls[0].reference,
+            )
+            second_effect = accepted_email_unsubscribe_effect(
+                route.task,
+                accepted(effect.operations + (second_operation,)),
+                continuation=first.continuation,
+            )
+            second = UnsubscribeExecutor(
+                email_store,
+                browser,
+                owner=_RESTART_OWNER,
+            ).execute(second_effect, (entry,))
+            assert isinstance(second, UnsubscribeContinuationResult)
+            assert [method for method, _ in _FixtureHandler.requests] == ["GET", "POST"]
+
+            third_operation = UnsubscribeOperation(
+                operation_reference="step-3",
+                kind=UnsubscribeOperationKind.SUBMIT_FORM,
+                target_reference=second.continuation.controls[0].reference,
+            )
+            third_effect = accepted_email_unsubscribe_effect(
+                route.task,
+                accepted(second_effect.operations + (third_operation,)),
+                continuation=second.continuation,
+            )
+            terminal = UnsubscribeExecutor(
+                email_store,
+                browser,
+                owner={
+                    "owner_id": "email-worker",
+                    "generation": 43,
+                    "lease_token": "browser-fixture-final",
+                },
+            ).execute(third_effect, (entry,))
+        finally:
+            context.close()
+
+    assert terminal.outcome is UnsubscribeOutcome.DONE
+    assert [method for method, _ in _FixtureHandler.requests] == ["GET", "POST", "POST"]
+    serialized = json.dumps(
+        {
+            "first": first.redacted,
+            "second": second.redacted,
+            "terminal": terminal.redacted,
+        },
+        sort_keys=True,
+    )
+    assert private_url not in serialized
+    assert "private-fixture-token" not in serialized
 
 
 def test_read_only_discovery_returns_only_ordinary_opaque_controls(

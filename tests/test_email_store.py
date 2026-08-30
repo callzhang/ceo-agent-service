@@ -276,11 +276,6 @@ def _unsubscribe_authorization(store: EmailStore) -> dict[str, object]:
                 "kind": "open_entry",
                 "target_reference": "entry",
             },
-            {
-                "operation_reference": "step-2",
-                "kind": "click_confirmation",
-                "target_reference": "confirm-control",
-            },
         ],
     }
     authorization["effect_digest"] = email_unsubscribe_effect_digest(**authorization)
@@ -1247,6 +1242,8 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
         "email_reply_receipts",
         "email_reply_dispatch_claims",
         "email_unsubscribe_claims",
+        "email_unsubscribe_effects",
+        "email_unsubscribe_continuations",
         "email_unsubscribe_steps",
         "email_unsubscribe_receipts",
     } <= table_names
@@ -1303,7 +1300,39 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
     assert [
         row["version"]
         for row in _fetchall(database, "select version from email_schema_migrations")
-    ] == [10]
+    ] == [11]
+
+
+def test_v10_unsubscribe_claim_migrates_to_v11_effect_prefix_chain(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v10-unsubscribe-prefix-migration.sqlite3"
+    store = EmailStore(database)
+    authorization = _unsubscribe_authorization(store)
+    assert store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )["acquired"]
+    with sqlite3.connect(database) as db:
+        db.execute("drop table email_unsubscribe_continuations")
+        db.execute("drop table email_unsubscribe_effects")
+        db.execute("update email_schema_migrations set version=10")
+
+    migrated = EmailStore(database)
+
+    claim = migrated.get_email_unsubscribe_claim(authorization["action_identity"])
+    assert claim is not None
+    assert claim["effect_digest"] == authorization["effect_digest"]
+    with sqlite3.connect(database) as db:
+        effect = db.execute(
+            "select previous_effect_digest from email_unsubscribe_effects where action_identity=?",
+            (authorization["action_identity"],),
+        ).fetchone()
+        assert effect is not None
+        assert effect[0] == ""
+        assert db.execute(
+            "select max(version) from email_schema_migrations"
+        ).fetchone()[0] == 11
 
 
 def test_v9_store_atomically_adds_unsubscribe_durability_without_data_loss(
@@ -1333,7 +1362,7 @@ def test_v9_store_atomically_adds_unsubscribe_durability_without_data_loss(
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 10
+            == 11
         )
         assert {
             row[0]
@@ -2386,7 +2415,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 10]
+    ] == [2, 11]
 
     EmailStore(database)
 
@@ -4613,15 +4642,6 @@ def test_unsubscribe_schema_migrates_and_durable_journal_receipt_survive_restart
         owner=_UNSUBSCRIBE_OWNER_A,
     )
     assert claim is not None and claim["acquired"] is True
-    store.append_email_unsubscribe_step(
-        action_identity=authorization["action_identity"],
-        effect_digest=authorization["effect_digest"],
-        sequence=1,
-        operation="open_entry",
-        state="action_required",
-        reference="state-after-open",
-        owner=_UNSUBSCRIBE_OWNER_A,
-    )
     persisted = store.persist_email_unsubscribe_terminal(
         **{
             key: authorization[key]
@@ -4642,8 +4662,8 @@ def test_unsubscribe_schema_migrates_and_durable_journal_receipt_survive_restart
         receipt_id="unsubscribe-receipt:done-41",
         evidence="terminal-page",
         final_step={
-            "sequence": 2,
-            "operation": "click_confirmation",
+            "sequence": 1,
+            "operation": "open_entry",
             "state": "done",
             "reference": "unsubscribe-receipt:done-41",
         },
@@ -4659,26 +4679,17 @@ def test_unsubscribe_schema_migrates_and_durable_journal_receipt_survive_restart
         {
             "sequence": 1,
             "operation": "open_entry",
-            "state": "action_required",
-            "reference": "state-after-open",
-            "created_at": reopened.list_email_unsubscribe_steps(
-                authorization["action_identity"]
-            )[0]["created_at"],
-        },
-        {
-            "sequence": 2,
-            "operation": "click_confirmation",
             "state": "done",
             "reference": "unsubscribe-receipt:done-41",
             "created_at": reopened.list_email_unsubscribe_steps(
                 authorization["action_identity"]
-            )[1]["created_at"],
+            )[0]["created_at"],
         },
     ]
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 10
+            == 11
         )
 
 

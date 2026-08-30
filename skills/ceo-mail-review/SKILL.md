@@ -77,10 +77,25 @@ claim that an attachment was read, correct, complete, approved, or understood.
 
 An immutable ActionPlan containing `unsubscribe` does not require per-message
 confirmation. Consumer A must select only a reliable entry associated with the
-current subscription and propose the exact ordered browser operations using the
-runtime's opaque entry and control references. Audit Agent B must review those
-exact operations before any external write; neither agent may replace them with
-an unreviewed navigation, form submission, or confirmation click.
+current subscription. Its initial proposal contains exactly `OPEN_ENTRY`, or one
+authenticated `POST_ONE_CLICK`; controls on an ordinary page are not guessed or
+precomputed. At each continuation, propose the exact ordered browser operations
+consisting of the durable prefix plus one new operation. Audit Agent B must
+review those exact operations before any external write; neither agent may
+replace them with an unreviewed navigation, form
+submission, or confirmation click.
+
+When readback after an accepted operation finds another required control, stop
+before using it. The runtime persists the executed audited prefix, redacted
+observation, opaque control references, fixed control kinds and intents, and the
+unchanged exact-origin policy references, then returns a typed continuation.
+Consumer A may use only that continuation to propose one next operation. The
+next accepted effect must be a strict append-only extension of the persisted
+prefix with the same action, plan, classification, account, message, thread,
+entry, and network policy. Audit reviews that extension automatically under the
+normal feedback/revision lifecycle; no user confirmation is added. Execute only
+the newly accepted operation and never replay the prefix. Repeat this
+`awaiting_audit` cycle until exact terminal evidence is read back.
 
 Treat RFC one-click as authenticated one-click only when typed provider evidence
 confirms that valid DKIM covers both `List-Unsubscribe` and

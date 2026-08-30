@@ -398,6 +398,12 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
                 "stable_message_identity": payload["stable_message_identity"],
                 "thread_identity": payload["thread_identity"],
                 "entry_reference": entries[0]["reference"],
+                "network_policy_reference": payload[
+                    "unsubscribe_network_policy_reference"
+                ],
+                "network_policy_origin_references": payload[
+                    "unsubscribe_network_policy_origin_references"
+                ],
             },
             "payload": {
                 "operations": [
