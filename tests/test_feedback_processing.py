@@ -4403,6 +4403,118 @@ def test_resolved_batch_transition_validation_uses_two_bounded_queries(
     assert any("where round_id in (" in statement for statement in transition_queries)
 
 
+@pytest.mark.parametrize("reopened_count", (1, 2))
+def test_reopened_resolved_batch_reuses_two_grouped_transition_queries(
+    tmp_path: Path,
+    reopened_count: int,
+):
+    store = AutoReplyStore(tmp_path / f"reopened-query-count-{reopened_count}.sqlite3")
+    _prepare_resolved_two_member_batch(store)
+    for feedback_key in ("feedback-1", "feedback-2")[:reopened_count]:
+        store.reopen_feedback_processing_item(
+            feedback_key,
+            reason=f"reopen {feedback_key}",
+        )
+    statements: list[str] = []
+
+    with store._connect() as db:
+        batch = db.execute(
+            "select requested_count, resolved_at, updated_at "
+            "from feedback_processing_batches where batch_id='batch-1'"
+        ).fetchone()
+        assert batch is not None
+        db.set_trace_callback(statements.append)
+        try:
+            AutoReplyStore._validate_resolved_feedback_processing_batch(
+                db,
+                batch_id="batch-1",
+                requested_count=batch["requested_count"],
+                batch_resolved_at=str(batch["resolved_at"]),
+                batch_updated_at=str(batch["updated_at"]),
+                evidence=None,
+            )
+        finally:
+            db.set_trace_callback(None)
+
+    transition_queries = [
+        statement.lower()
+        for statement in statements
+        if "from feedback_processing_transitions" in statement.lower()
+    ]
+    assert len(transition_queries) == 2
+    assert any("where batch_id=" in statement for statement in transition_queries)
+    assert any("where round_id in (" in statement for statement in transition_queries)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    (
+        "missing",
+        "duplicate",
+        "reason",
+        "workbench-task",
+        "workbench-turn",
+        "timestamp",
+    ),
+)
+def test_grouped_reopen_transition_validation_remains_exact(
+    tmp_path: Path,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"grouped-reopen-{damage}.sqlite3")
+    receipt = _prepare_resolved_two_member_batch(store)
+    store.reopen_feedback_processing_item(
+        "feedback-1",
+        reason="exact reopen reason",
+    )
+    with store._connect() as db:
+        transition = db.execute(
+            "select * from feedback_processing_transitions "
+            "where feedback_key='feedback-1' and batch_id='batch-1' "
+            "and from_status='resolved' and to_status='pending'"
+        ).fetchone()
+        assert transition is not None
+        if damage == "missing":
+            db.execute(
+                "delete from feedback_processing_transitions where id=?",
+                (int(transition["id"]),),
+            )
+        elif damage == "duplicate":
+            db.execute(
+                """
+                insert into feedback_processing_transitions (
+                    feedback_key, round_id, batch_id, from_status, to_status,
+                    reason, workbench_task_id, workbench_turn_id, created_at
+                )
+                select feedback_key, round_id, batch_id, from_status, to_status,
+                       reason, workbench_task_id, workbench_turn_id, created_at
+                  from feedback_processing_transitions where id=?
+                """,
+                (int(transition["id"]),),
+            )
+        else:
+            column, value = {
+                "reason": ("reason", "different reason"),
+                "workbench-task": ("workbench_task_id", "different-task"),
+                "workbench-turn": ("workbench_turn_id", "different-turn"),
+                "timestamp": ("created_at", "1999-01-01 00:00:00"),
+            }[damage]
+            db.execute(
+                f"update feedback_processing_transitions set {column}=? where id=?",
+                (value, int(transition["id"])),
+            )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1",
+            receipt,
+            commit_is_ancestor=True,
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
 @pytest.mark.parametrize("operation", ("first-resolve", "same-batch-retry"))
 @pytest.mark.parametrize(
     "damage",

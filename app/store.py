@@ -15030,23 +15030,6 @@ class AutoReplyStore:
                     raise ValueError("resolved batch terminal timestamp is incomplete")
                 continue
 
-            transition_count = db.execute(
-                """
-                select count(*)
-                  from feedback_processing_transitions
-                 where feedback_key=? and round_id=? and batch_id=?
-                   and from_status='resolved' and to_status='pending'
-                   and reason=?
-                """,
-                (
-                    feedback_key,
-                    int(resolved_round["id"]),
-                    batch_id,
-                    reopen_reason,
-                ),
-            ).fetchone()[0]
-            if transition_count != 1:
-                raise ValueError("resolved batch reopen transition is incomplete")
             current_round_id = cls._feedback_processing_round_pointer(
                 item,
                 require_positive=False,
