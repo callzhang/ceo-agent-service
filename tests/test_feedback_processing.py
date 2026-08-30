@@ -231,24 +231,57 @@ def test_feedback_round_model_requires_positive_round_number(round_number: int):
         )
 
 
-@pytest.mark.parametrize("round_number", [0, -1])
+@pytest.mark.parametrize("round_number", [0, -1, 1.5, "1.5", "abc"])
 def test_feedback_round_schema_requires_positive_round_number(
-    tmp_path: Path, round_number: int
+    tmp_path: Path, round_number: object
 ):
     store = AutoReplyStore(tmp_path / f"positive-round-{round_number}.sqlite3")
-    with pytest.raises(sqlite3.IntegrityError), store._connect() as db:
+    stable_error = "feedback_processing_round_number_must_be_positive"
+    with store._connect() as db:
         db.execute(
             """
             insert into feedback_processing_rounds (
                 feedback_key, round_number, batch_id, status
-            ) values (?, ?, ?, 'processing')
-            """,
-            (
-                f"feedback-positive-schema-{round_number}",
-                round_number,
-                f"batch-positive-schema-{round_number}",
-            ),
+            ) values ('feedback-valid-schema', 1, 'batch-valid-schema',
+                      'processing')
+            """
         )
+        with pytest.raises(sqlite3.IntegrityError, match=stable_error):
+            db.execute(
+                """
+                insert into feedback_processing_rounds (
+                    feedback_key, round_number, batch_id, status
+                ) values (?, ?, ?, 'processing')
+                """,
+                (
+                    f"feedback-invalid-schema-{round_number}",
+                    round_number,
+                    f"batch-invalid-schema-{round_number}",
+                ),
+            )
+        with pytest.raises(sqlite3.IntegrityError, match=stable_error):
+            db.execute(
+                """
+                update feedback_processing_rounds set round_number=?
+                 where feedback_key='feedback-valid-schema'
+                """,
+                (round_number,),
+            )
+        db.execute(
+            """
+            update feedback_processing_rounds set round_number=2
+             where feedback_key='feedback-valid-schema'
+            """
+        )
+        assert tuple(
+            db.execute(
+                """
+                select round_number, typeof(round_number)
+                  from feedback_processing_rounds
+                 where feedback_key='feedback-valid-schema'
+                """
+            ).fetchone()
+        ) == (2, "integer")
 
 
 def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
@@ -302,6 +335,34 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
         )
         db.execute(
             """
+            create trigger
+                trg_feedback_processing_round_number_positive_insert
+            before insert on feedback_processing_rounds
+            when new.round_number <= 0
+            begin
+                select raise(
+                    abort,
+                    'feedback_processing_round_number_must_be_positive'
+                );
+            end
+            """
+        )
+        db.execute(
+            """
+            create trigger
+                trg_feedback_processing_round_number_positive_update
+            before update of round_number on feedback_processing_rounds
+            when new.round_number <= 0
+            begin
+                select raise(
+                    abort,
+                    'feedback_processing_round_number_must_be_positive'
+                );
+            end
+            """
+        )
+        db.execute(
+            """
             insert into feedback_processing_rounds (
                 feedback_key, round_number, batch_id, status, note
             ) values ('feedback-preserved', 1, 'batch-preserved',
@@ -340,7 +401,7 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
             "trg_feedback_processing_round_number_positive_update",
         } <= triggers
 
-        for round_number in (0, -1):
+        for round_number in (0, -1, 1.5, "1.5", "abc"):
             with pytest.raises(sqlite3.IntegrityError, match=stable_error):
                 db.execute(
                     """
@@ -369,12 +430,15 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
              where feedback_key='feedback-preserved'
             """
         )
-        assert db.execute(
-            """
-            select round_number from feedback_processing_rounds
-             where feedback_key='feedback-preserved'
-            """
-        ).fetchone()[0] == 2
+        assert tuple(
+            db.execute(
+                """
+                select round_number, typeof(round_number)
+                  from feedback_processing_rounds
+                 where feedback_key='feedback-preserved'
+                """
+            ).fetchone()
+        ) == (2, "integer")
 
 
 def test_feedback_round_backfill_preserves_legacy_receipts_and_source(

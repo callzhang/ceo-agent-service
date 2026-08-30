@@ -183,6 +183,18 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_update",
     "trg_runtime_attempt_lineage_immutable",
 )
+STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITION_FRAGMENTS = {
+    "trg_feedback_processing_round_number_positive_insert": (
+        "typeof(new.round_number)",
+        "new.round_number <= 0",
+        "feedback_processing_round_number_must_be_positive",
+    ),
+    "trg_feedback_processing_round_number_positive_update": (
+        "typeof(new.round_number)",
+        "new.round_number <= 0",
+        "feedback_processing_round_number_must_be_positive",
+    ),
+}
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RUNTIME_RESULT_ENVELOPE_BYTES = 64 * 1024
 MAX_RECONCILIATION_EVENTS = 256
@@ -1192,12 +1204,24 @@ class AutoReplyStore:
                         "select name from sqlite_master where type='index'"
                     )
                 }
-                present_triggers = {
-                    str(item["name"])
-                    for item in db.execute(
-                        "select name from sqlite_master where type='trigger'"
-                    )
+                trigger_rows = db.execute(
+                    "select name, sql from sqlite_master where type='trigger'"
+                ).fetchall()
+                present_triggers = {str(item["name"]) for item in trigger_rows}
+                present_trigger_definitions = {
+                    str(item["name"]): str(item["sql"] or "").casefold()
+                    for item in trigger_rows
                 }
+                required_trigger_definitions_present = all(
+                    all(
+                        fragment.casefold()
+                        in present_trigger_definitions.get(trigger_name, "")
+                        for fragment in required_fragments
+                    )
+                    for trigger_name, required_fragments in (
+                        STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITION_FRAGMENTS.items()
+                    )
+                )
                 required_columns_present = all(
                     set(required_columns).issubset(
                         {
@@ -1219,6 +1243,7 @@ class AutoReplyStore:
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
             and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
             and set(STORE_SCHEMA_REQUIRED_TRIGGERS).issubset(present_triggers)
+            and required_trigger_definitions_present
             and required_columns_present
             and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
         )
@@ -1386,7 +1411,11 @@ class AutoReplyStore:
                 create table if not exists feedback_processing_rounds (
                     id integer primary key autoincrement,
                     feedback_key text not null,
-                    round_number integer not null check (round_number > 0),
+                    round_number integer not null
+                        check (
+                            typeof(round_number) = 'integer'
+                            and round_number > 0
+                        ),
                     batch_id text not null default '',
                     status text not null
                         check (status in ('processing', 'resolved')),
@@ -1412,20 +1441,26 @@ class AutoReplyStore:
                     on feedback_processing_rounds(feedback_key, round_number desc);
                 create index if not exists idx_feedback_processing_rounds_batch
                     on feedback_processing_rounds(batch_id);
-                create trigger if not exists
+                drop trigger if exists
+                    trg_feedback_processing_round_number_positive_insert;
+                create trigger
                     trg_feedback_processing_round_number_positive_insert
                 before insert on feedback_processing_rounds
-                when new.round_number <= 0
+                when typeof(new.round_number) <> 'integer'
+                     or new.round_number <= 0
                 begin
                     select raise(
                         abort,
                         'feedback_processing_round_number_must_be_positive'
                     );
                 end;
-                create trigger if not exists
+                drop trigger if exists
+                    trg_feedback_processing_round_number_positive_update;
+                create trigger
                     trg_feedback_processing_round_number_positive_update
                 before update of round_number on feedback_processing_rounds
-                when new.round_number <= 0
+                when typeof(new.round_number) <> 'integer'
+                     or new.round_number <= 0
                 begin
                     select raise(
                         abort,
