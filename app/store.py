@@ -184,7 +184,7 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_immutable",
 )
 FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL = """
-create trigger if not exists trg_feedback_processing_round_integer_v2_insert
+create trigger trg_feedback_processing_round_integer_v2_insert
 before insert on feedback_processing_rounds
 when typeof(new.round_number) <> 'integer' or new.round_number <= 0
 begin
@@ -195,7 +195,7 @@ begin
 end
 """.strip()
 FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL = """
-create trigger if not exists trg_feedback_processing_round_integer_v2_update
+create trigger trg_feedback_processing_round_integer_v2_update
 before update of round_number on feedback_processing_rounds
 when typeof(new.round_number) <> 'integer' or new.round_number <= 0
 begin
@@ -207,6 +207,9 @@ end
 """.strip()
 FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR = (
     "schema_migration_invalid_feedback_processing_round_number"
+)
+FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR = (
+    "schema_migration_invalid_feedback_processing_schema"
 )
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RUNTIME_RESULT_ENVELOPE_BYTES = 64 * 1024
@@ -248,6 +251,10 @@ STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
 
 class FeedbackProcessingRoundMigrationIntegrityError(RuntimeError):
     error_code = FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR
+
+
+class FeedbackProcessingSchemaIntegrityError(RuntimeError):
+    error_code = FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR
 
 
 def _replace_text_in_json(value: object, old: str, new: str) -> object:
@@ -973,13 +980,13 @@ class AutoReplyStore:
 
     def _ensure_initialized(self) -> None:
         path_key = self.path.resolve()
-        if path_key in _INITIALIZED_STORE_PATHS:
+        if self._cached_initialized_path_is_healthy(path_key):
             return
         with _INITIALIZE_LOCK:
-            if path_key in _INITIALIZED_STORE_PATHS:
+            if self._cached_initialized_path_is_healthy(path_key):
                 return
             with self._schema_initialize_lock():
-                if path_key in _INITIALIZED_STORE_PATHS:
+                if self._cached_initialized_path_is_healthy(path_key):
                     return
                 self._ensure_wal_journal_mode()
                 if self._schema_is_current_after_lock_retry():
@@ -987,9 +994,27 @@ class AutoReplyStore:
                     _INITIALIZED_STORE_PATHS.add(path_key)
                     return
                 self._initialize()
+                if not self._schema_manifest_is_current_after_lock_retry():
+                    raise FeedbackProcessingSchemaIntegrityError(
+                        FEEDBACK_PROCESSING_SCHEMA_MIGRATION_INTEGRITY_ERROR
+                    )
                 self.backfill_oa_audit_metadata()
                 self.set_service_state(STORE_SCHEMA_VERSION_KEY, STORE_SCHEMA_VERSION)
                 _INITIALIZED_STORE_PATHS.add(path_key)
+
+    def _cached_initialized_path_is_healthy(self, path_key: Path) -> bool:
+        if path_key not in _INITIALIZED_STORE_PATHS:
+            return False
+        try:
+            with self._connect() as db:
+                healthy = self._feedback_processing_round_guard_state_is_valid(db)
+        except BaseException:
+            _INITIALIZED_STORE_PATHS.discard(path_key)
+            raise
+        if healthy:
+            return True
+        _INITIALIZED_STORE_PATHS.discard(path_key)
+        return False
 
     @staticmethod
     def _feedback_processing_round_backfill_needed(
@@ -1246,64 +1271,104 @@ class AutoReplyStore:
                 FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR
             )
 
-    def _schema_is_current(self) -> bool:
+    @classmethod
+    def _replace_feedback_processing_round_guards_atomically(
+        cls,
+        db: sqlite3.Connection,
+    ) -> None:
+        db.execute("begin immediate")
         try:
-            with self._connect() as db:
-                row = db.execute(
-                    "select value from service_state where key=?",
-                    (STORE_SCHEMA_VERSION_KEY,),
-                ).fetchone()
-                if row is None or str(row["value"] or "") != STORE_SCHEMA_VERSION:
-                    return False
-                present_tables = {
-                    str(item["name"])
-                    for item in db.execute(
-                        "select name from sqlite_master where type='table'"
-                    )
-                }
-                present_indexes = {
-                    str(item["name"])
-                    for item in db.execute(
-                        "select name from sqlite_master where type='index'"
-                    )
-                }
-                trigger_rows = db.execute(
-                    "select name, sql from sqlite_master where type='trigger'"
-                ).fetchall()
-                present_triggers = {str(item["name"]) for item in trigger_rows}
-                present_trigger_definitions = {
-                    str(item["name"]): _normalize_schema_sql(
-                        str(item["sql"] or "")
-                    )
-                    for item in trigger_rows
-                }
-                required_trigger_definitions_present = all(
-                    present_trigger_definitions.get(trigger_name) == required_sql
-                    for trigger_name, required_sql in (
-                        STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS.items()
-                    )
-                )
-                feedback_processing_round_storage_valid = (
-                    "feedback_processing_rounds" in present_tables
-                    and self._feedback_processing_round_storage_is_valid(db)
-                )
-                required_columns_present = all(
-                    set(required_columns).issubset(
-                        {
-                            str(item["name"])
-                            for item in db.execute(
-                                f"pragma table_info({table_name})"
-                            )
-                        }
-                    )
-                    for table_name, required_columns in (
-                        STORE_SCHEMA_REQUIRED_COLUMNS.items()
-                    )
-                )
-        except sqlite3.OperationalError as exc:
-            if _is_sqlite_lock_error(exc):
-                raise
+            db.execute(
+                "drop trigger if exists "
+                "trg_feedback_processing_round_integer_v2_insert"
+            )
+            db.execute(
+                "drop trigger if exists "
+                "trg_feedback_processing_round_integer_v2_update"
+            )
+            db.execute(FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL)
+            db.execute(FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL)
+            cls._validate_feedback_processing_round_storage(db)
+        except BaseException:
+            db.execute("rollback")
+            raise
+        else:
+            db.execute("commit")
+
+    @classmethod
+    def _feedback_processing_round_guard_state_is_valid(
+        cls,
+        db: sqlite3.Connection,
+    ) -> bool:
+        round_table_present = db.execute(
+            """
+            select 1 from sqlite_master
+             where type='table' and name='feedback_processing_rounds'
+            """
+        ).fetchone()
+        if round_table_present is None:
             return False
+        cls._validate_feedback_processing_round_storage(db)
+        trigger_definitions = {
+            str(row["name"]): _normalize_schema_sql(str(row["sql"] or ""))
+            for row in db.execute(
+                """
+                select name, sql from sqlite_master
+                 where type='trigger' and name in (?, ?)
+                """,
+                tuple(STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS),
+            )
+        }
+        return all(
+            trigger_definitions.get(trigger_name) == required_sql
+            for trigger_name, required_sql in (
+                STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS.items()
+            )
+        )
+
+    def _schema_manifest_is_current_in_connection(
+        self,
+        db: sqlite3.Connection,
+    ) -> bool:
+        present_tables = {
+            str(item["name"])
+            for item in db.execute(
+                "select name from sqlite_master where type='table'"
+            )
+        }
+        present_indexes = {
+            str(item["name"])
+            for item in db.execute(
+                "select name from sqlite_master where type='index'"
+            )
+        }
+        trigger_rows = db.execute(
+            "select name, sql from sqlite_master where type='trigger'"
+        ).fetchall()
+        present_triggers = {str(item["name"]) for item in trigger_rows}
+        present_trigger_definitions = {
+            str(item["name"]): _normalize_schema_sql(str(item["sql"] or ""))
+            for item in trigger_rows
+        }
+        required_trigger_definitions_present = all(
+            present_trigger_definitions.get(trigger_name) == required_sql
+            for trigger_name, required_sql in (
+                STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS.items()
+            )
+        )
+        feedback_processing_round_storage_valid = (
+            "feedback_processing_rounds" in present_tables
+            and self._feedback_processing_round_storage_is_valid(db)
+        )
+        required_columns_present = all(
+            set(required_columns).issubset(
+                {
+                    str(item["name"])
+                    for item in db.execute(f"pragma table_info({table_name})")
+                }
+            )
+            for table_name, required_columns in STORE_SCHEMA_REQUIRED_COLUMNS.items()
+        )
         return (
             set(STORE_SCHEMA_REQUIRED_TABLES).issubset(present_tables)
             and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
@@ -1313,6 +1378,44 @@ class AutoReplyStore:
             and required_columns_present
             and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
         )
+
+    def _schema_manifest_is_current(self) -> bool:
+        try:
+            with self._connect() as db:
+                return self._schema_manifest_is_current_in_connection(db)
+        except sqlite3.OperationalError as exc:
+            if _is_sqlite_lock_error(exc):
+                raise
+            return False
+
+    def _schema_manifest_is_current_after_lock_retry(self) -> bool:
+        for attempt in range(SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS):
+            try:
+                return self._schema_manifest_is_current()
+            except sqlite3.OperationalError as exc:
+                if not _is_sqlite_lock_error(exc):
+                    raise
+                if attempt + 1 >= SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS:
+                    raise
+                time.sleep(SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS)
+        raise RuntimeError("schema manifest check retry loop exhausted")
+
+    def _schema_is_current(self) -> bool:
+        try:
+            with self._connect() as db:
+                row = db.execute(
+                    "select value from service_state where key=?",
+                    (STORE_SCHEMA_VERSION_KEY,),
+                ).fetchone()
+                return bool(
+                    row is not None
+                    and str(row["value"] or "") == STORE_SCHEMA_VERSION
+                    and self._schema_manifest_is_current_in_connection(db)
+                )
+        except sqlite3.OperationalError as exc:
+            if _is_sqlite_lock_error(exc):
+                raise
+            return False
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -1507,28 +1610,6 @@ class AutoReplyStore:
                     on feedback_processing_rounds(feedback_key, round_number desc);
                 create index if not exists idx_feedback_processing_rounds_batch
                     on feedback_processing_rounds(batch_id);
-                create trigger if not exists
-                    trg_feedback_processing_round_integer_v2_insert
-                before insert on feedback_processing_rounds
-                when typeof(new.round_number) <> 'integer'
-                     or new.round_number <= 0
-                begin
-                    select raise(
-                        abort,
-                        'feedback_processing_round_number_must_be_positive'
-                    );
-                end;
-                create trigger if not exists
-                    trg_feedback_processing_round_integer_v2_update
-                before update of round_number on feedback_processing_rounds
-                when typeof(new.round_number) <> 'integer'
-                     or new.round_number <= 0
-                begin
-                    select raise(
-                        abort,
-                        'feedback_processing_round_number_must_be_positive'
-                    );
-                end;
                 create table if not exists feedback_processing_transitions (
                     id integer primary key autoincrement,
                     feedback_key text not null,
@@ -2479,7 +2560,7 @@ class AutoReplyStore:
                 );
                 """
             )
-            self._validate_feedback_processing_round_storage(db)
+            self._replace_feedback_processing_round_guards_atomically(db)
             workbench_turn_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(workbench_turns)").fetchall()

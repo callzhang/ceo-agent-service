@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 from pydantic import ValidationError
@@ -284,8 +285,17 @@ def test_feedback_round_schema_requires_positive_round_number(
         ) == (2, "integer")
 
 
-def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
+@pytest.mark.parametrize(
+    ("trigger_name_stem", "clear_initialized_cache"),
+    (
+        ("trg_feedback_processing_round_number_positive", True),
+        ("trg_feedback_processing_round_integer_v2", False),
+    ),
+)
+def test_feedback_round_positive_invariant_upgrades_semantic_decoy_without_rebuild(
     tmp_path: Path,
+    trigger_name_stem: str,
+    clear_initialized_cache: bool,
 ):
     db_path = tmp_path / "upgrade-positive-round.sqlite3"
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
@@ -334,9 +344,8 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
             """
         )
         db.execute(
-            """
-            create trigger
-                trg_feedback_processing_round_number_positive_insert
+            f"""
+            create trigger {trigger_name_stem}_insert
             before insert on feedback_processing_rounds
             when new.round_number <= 0
                  or typeof(new.round_number) = 'blob'
@@ -349,9 +358,8 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
             """
         )
         db.execute(
-            """
-            create trigger
-                trg_feedback_processing_round_number_positive_update
+            f"""
+            create trigger {trigger_name_stem}_update
             before update of round_number on feedback_processing_rounds
             when new.round_number <= 0
                  or typeof(new.round_number) = 'blob'
@@ -373,8 +381,10 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
         )
 
     assert store._schema_is_current() is False
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    if clear_initialized_cache:
+        store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     upgraded = AutoReplyStore(db_path)
+    assert upgraded._schema_is_current() is True
     stable_error = "feedback_processing_round_number_must_be_positive"
     with upgraded._connect() as db:
         preserved = db.execute(
@@ -566,10 +576,10 @@ def test_feedback_round_upgrade_rejects_existing_invalid_storage_without_mutatio
                 """
             )
         }
-    assert {
-        "trg_feedback_processing_round_integer_v2_insert",
-        "trg_feedback_processing_round_integer_v2_update",
-    } <= triggers
+    assert triggers == {
+        "trg_feedback_processing_round_number_positive_insert",
+        "trg_feedback_processing_round_number_positive_update",
+    }
 
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     with pytest.raises(integrity_error_type, match=stable_error) as second_error:
@@ -581,6 +591,241 @@ def test_feedback_round_upgrade_rejects_existing_invalid_storage_without_mutatio
         storage_type,
         "must remain byte-for-byte equivalent",
     )
+
+
+def _rebuild_feedback_round_table_without_integer_check(
+    db: sqlite3.Connection,
+) -> None:
+    db.execute("drop table feedback_processing_rounds")
+    db.execute(
+        """
+        create table feedback_processing_rounds (
+            id integer primary key autoincrement,
+            feedback_key text not null,
+            round_number integer not null,
+            batch_id text not null default '',
+            status text not null
+                check (status in ('processing', 'resolved')),
+            workbench_task_id text not null default '',
+            workbench_turn_id text not null default '',
+            attempt_id integer not null default 0,
+            agent_run_id integer not null default 0,
+            commit_sha text not null default '',
+            test_evidence_json text not null default '{}',
+            restart_evidence_json text not null default '{}',
+            health_evidence_json text not null default '{}',
+            note text not null default '',
+            started_at text not null default '',
+            resolved_at text not null default '',
+            reopened_at text not null default '',
+            reopen_reason text not null default '',
+            created_at text not null default current_timestamp,
+            updated_at text not null default current_timestamp,
+            unique (feedback_key, round_number),
+            unique (feedback_key, batch_id)
+        )
+        """
+    )
+    db.execute(
+        """
+        create index idx_feedback_processing_rounds_feedback
+            on feedback_processing_rounds(feedback_key, round_number desc)
+        """
+    )
+    db.execute(
+        """
+        create index idx_feedback_processing_rounds_batch
+            on feedback_processing_rounds(batch_id)
+        """
+    )
+
+
+def test_cached_store_revalidates_invalid_round_storage_before_fast_return(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "cached-invalid-round.sqlite3"
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    AutoReplyStore(db_path)
+    assert db_path.resolve() in store_module._INITIALIZED_STORE_PATHS
+
+    with sqlite3.connect(db_path) as db:
+        _rebuild_feedback_round_table_without_integer_check(db)
+        db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status, note
+            ) values ('feedback-cached-invalid', 1.5, 'batch-cached-invalid',
+                      'processing', 'preserve cached invalid row')
+            """
+        )
+
+    stable_error = "schema_migration_invalid_feedback_processing_round_number"
+    with pytest.raises(
+        store_module.FeedbackProcessingRoundMigrationIntegrityError,
+        match=stable_error,
+    ):
+        AutoReplyStore(db_path)
+
+    assert db_path.resolve() not in store_module._INITIALIZED_STORE_PATHS
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            """
+            select round_number, typeof(round_number), note
+              from feedback_processing_rounds
+             where feedback_key='feedback-cached-invalid'
+            """
+        ).fetchone() == (1.5, "real", "preserve cached invalid row")
+
+
+def test_store_rejects_post_migration_manifest_before_marker_or_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db_path = tmp_path / "post-migration-manifest-invalid.sqlite3"
+    path_key = db_path.resolve()
+    store_module._INITIALIZED_STORE_PATHS.discard(path_key)
+    stable_error = "schema_migration_invalid_feedback_processing_schema"
+    monkeypatch.setitem(
+        store_module.STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS,
+        "trg_feedback_processing_round_integer_v2_insert",
+        "canonical definition deliberately unavailable",
+    )
+    schema_error_type = store_module.FeedbackProcessingSchemaIntegrityError
+
+    with pytest.raises(schema_error_type, match=stable_error) as error:
+        AutoReplyStore(db_path)
+    assert error.value.error_code == stable_error
+    assert str(error.value) == stable_error
+
+    assert path_key not in store_module._INITIALIZED_STORE_PATHS
+    with sqlite3.connect(db_path) as db:
+        marker = db.execute(
+            "select value from service_state where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        ).fetchone()
+    assert marker is None
+
+
+def test_feedback_round_guard_installation_blocks_concurrent_invalid_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db_path = tmp_path / "atomic-round-guard.sqlite3"
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        _rebuild_feedback_round_table_without_integer_check(db)
+        db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status
+            ) values ('feedback-concurrent-existing', 1,
+                      'batch-concurrent-existing', 'processing')
+            """
+        )
+
+    guard_window = Event()
+    writer_attempted = Event()
+    writer_finished = Event()
+    original_open_connection = AutoReplyStore._open_connection
+
+    def traced_open_connection(self: AutoReplyStore) -> sqlite3.Connection:
+        db = original_open_connection(self)
+
+        def trace(sql: str) -> None:
+            normalized = " ".join(sql.casefold().split())
+            if (
+                "create trigger" in normalized
+                and "trg_feedback_processing_round_integer_v2_update"
+                in normalized
+            ):
+                guard_window.set()
+                writer_attempted.wait(timeout=5)
+                writer_finished.wait(timeout=0.25)
+
+        db.set_trace_callback(trace)
+        return db
+
+    monkeypatch.setattr(
+        AutoReplyStore,
+        "_open_connection",
+        traced_open_connection,
+    )
+    writer_results: dict[str, str] = {}
+    migration_errors: list[BaseException] = []
+
+    def concurrent_writer() -> None:
+        if not guard_window.wait(timeout=5):
+            writer_results["coordination"] = "guard window not observed"
+            writer_finished.set()
+            return
+        with sqlite3.connect(db_path, timeout=5) as db:
+            writer_attempted.set()
+            operations = {
+                "insert": (
+                    """
+                    insert into feedback_processing_rounds (
+                        feedback_key, round_number, batch_id, status
+                    ) values ('feedback-concurrent-new', 1.5,
+                              'batch-concurrent-new', 'processing')
+                    """,
+                    (),
+                ),
+                "update": (
+                    """
+                    update feedback_processing_rounds
+                       set round_number='abc'
+                     where feedback_key='feedback-concurrent-existing'
+                    """,
+                    (),
+                ),
+            }
+            for operation, (sql, parameters) in operations.items():
+                try:
+                    db.execute(sql, parameters)
+                except sqlite3.IntegrityError as exc:
+                    writer_results[operation] = str(exc)
+                else:
+                    writer_results[operation] = "succeeded"
+            db.commit()
+        writer_finished.set()
+
+    def migrate() -> None:
+        try:
+            AutoReplyStore(db_path)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            migration_errors.append(exc)
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    writer = Thread(target=concurrent_writer)
+    migrator = Thread(target=migrate)
+    writer.start()
+    migrator.start()
+    migrator.join(timeout=10)
+    writer.join(timeout=10)
+
+    assert not migrator.is_alive()
+    assert not writer.is_alive()
+    assert migration_errors == []
+    stable_error = "feedback_processing_round_number_must_be_positive"
+    assert writer_results == {
+        "insert": stable_error,
+        "update": stable_error,
+    }
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            """
+            select round_number, typeof(round_number)
+              from feedback_processing_rounds
+             where feedback_key='feedback-concurrent-existing'
+            """
+        ).fetchone() == (1, "integer")
+        assert db.execute(
+            """
+            select count(*) from feedback_processing_rounds
+             where feedback_key='feedback-concurrent-new'
+            """
+        ).fetchone()[0] == 0
 
 
 def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
