@@ -388,6 +388,7 @@ def task_list_response(
                         "todo_count": int(built.get("todoCount", row["todo_count"])),
                     }
                 )
+        row["title"] = row["title"].strip() or f"Project {row['id']}"
         haystack = " ".join(
             [
                 row["title"], row["category"], row["project_status"], row["owner_name"],

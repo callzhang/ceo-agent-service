@@ -23,6 +23,7 @@ def test_task_list_sorts_before_pagination(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     _create_project(store, "Zulu project")
     _create_project(store, "Alpha project")
+    untitled_id = _create_project(store, "")
 
     ascending = task_list_response(
         store,
@@ -38,8 +39,16 @@ def test_task_list_sorts_before_pagination(tmp_path: Path):
     )
 
     assert ascending.items[0].title == "Alpha project"
-    assert ascending.meta.total == 2
+    assert ascending.meta.total == 3
     assert descending.items[0].title == "Zulu project"
+    untitled = task_list_response(
+        store,
+        page=1,
+        page_size=10,
+    )
+    assert next(item for item in untitled.items if item.id == untitled_id).title == (
+        f"Project {untitled_id}"
+    )
 
 
 def test_task_list_uses_business_priority_order(tmp_path: Path):
