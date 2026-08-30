@@ -12,6 +12,69 @@ def _store(tmp_path):
     return AutoReplyStore(tmp_path / "worker.sqlite3")
 
 
+def _seed_exhausted_target_open_failure(tmp_path, *, retry_count=2):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="u1", conversation_title="Alex",
+        trigger_message_id="m1", trigger_sender="Alex", trigger_text="hi",
+        action="send_reply", sensitivity_kind="normal",
+        send_status="pending", channel="wechat",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="reply",
+    )
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    store.mark_wechat_delivery_sending(
+        delivery_id,
+        now="2026-07-30 10:00:00",
+    )
+    store.set_wechat_delivery_status(
+        delivery_id,
+        "failed",
+        error="target_open_failed",
+        pre_action_failure=True,
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set retry_count=? where id=?",
+            (retry_count, attempt_id),
+        )
+    return store, delivery_id, attempt_id, delivery.execution_generation
+
+
+def _wechat_delivery_and_attempt_state(store, delivery_id):
+    with store._connect() as db:
+        delivery = dict(
+            db.execute(
+                "select * from wechat_deliveries where id=?",
+                (delivery_id,),
+            ).fetchone()
+        )
+        attempts = [
+            dict(row)
+            for row in db.execute(
+                """
+                select attempts.*
+                from reply_attempts as attempts
+                join reply_tasks as tasks
+                  on tasks.conversation_id=attempts.conversation_id
+                 and tasks.trigger_message_id=attempts.trigger_message_id
+                where tasks.id=? and attempts.channel='wechat'
+                order by attempts.id
+                """,
+                (delivery["reply_task_id"],),
+            ).fetchall()
+        ]
+    return delivery, attempts
+
+
 def _open_legacy_store_in_process(db_path, barrier, results):
     try:
         barrier.wait()
@@ -537,6 +600,194 @@ def test_stale_ready_cleanup_cannot_overwrite_started_delivery(tmp_path):
         )
 
     assert store.get_wechat_delivery_by_id(delivery_id).status == "sending"
+
+
+def test_exhausted_stale_wechat_delivery_is_skipped_with_attempt_sync(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="u1", conversation_title="Alex",
+        trigger_message_id="m1", trigger_sender="Alex", trigger_text="hi",
+        action="send_reply", sensitivity_kind="normal",
+        send_status="pending", channel="wechat",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="reply",
+    )
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    store.mark_wechat_delivery_sending(
+        delivery_id,
+        now="2026-07-30 10:00:00",
+    )
+    store.set_wechat_delivery_status(
+        delivery_id,
+        "failed",
+        error="target_open_failed",
+        pre_action_failure=True,
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set retry_count=2 where id=?",
+            (attempt_id,),
+        )
+
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery_id,
+        expected_execution_generation=delivery.execution_generation,
+        reason="stale_target_open_retry_exhausted",
+        inactive_before="2026-07-30 10:10:00",
+    )
+
+    refreshed = store.get_wechat_delivery_by_id(delivery_id)
+    attempt = store.get_reply_attempt(attempt_id)
+    assert refreshed.status == "skipped"
+    assert refreshed.error == "stale_target_open_retry_exhausted"
+    assert refreshed.pre_action_failure is False
+    assert attempt.send_status == "skipped"
+    assert attempt.send_error == "stale_target_open_retry_exhausted"
+
+
+def test_exhausted_stale_wechat_delivery_uses_latest_attempt_retry_count(tmp_path):
+    store, delivery_id, _, generation = _seed_exhausted_target_open_failure(
+        tmp_path,
+        retry_count=9,
+    )
+    latest_attempt_id = store.record_reply_attempt(
+        conversation_id="u1", conversation_title="Alex",
+        trigger_message_id="m1", trigger_sender="Alex", trigger_text="hi",
+        action="send_reply", sensitivity_kind="normal",
+        send_status="failed", channel="wechat",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update reply_attempts set retry_count=1 where id=?",
+            (latest_attempt_id,),
+        )
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+
+    with pytest.raises(AgentRunLeaseLostError, match="not in expected state"):
+        store.skip_exhausted_stale_wechat_delivery(
+            delivery_id,
+            expected_execution_generation=generation,
+            reason="stale_target_open_retry_exhausted",
+            inactive_before="2026-07-30 10:10:00",
+        )
+
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+
+
+@pytest.mark.parametrize(
+    "invalid_state",
+    [
+        "wrong_failure_code",
+        "pre_action_failure_false",
+        "newer_than_cutoff",
+        "non_failed_status",
+        "blank_action_started_at",
+        "delivery_generation_mismatch",
+        "task_generation_mismatch",
+        "missing_matching_attempt",
+    ],
+)
+def test_exhausted_stale_wechat_delivery_rejects_ineligible_state_unchanged(
+    tmp_path,
+    invalid_state,
+):
+    store, delivery_id, attempt_id, generation = (
+        _seed_exhausted_target_open_failure(tmp_path)
+    )
+    expected_generation = generation
+    with store._connect() as db:
+        if invalid_state == "wrong_failure_code":
+            db.execute(
+                "update wechat_deliveries set error='target_binding_unverified' "
+                "where id=?",
+                (delivery_id,),
+            )
+        elif invalid_state == "pre_action_failure_false":
+            db.execute(
+                "update wechat_deliveries set pre_action_failure=0 where id=?",
+                (delivery_id,),
+            )
+        elif invalid_state == "newer_than_cutoff":
+            db.execute(
+                "update wechat_deliveries "
+                "set action_started_at='2026-07-30 10:20:00' where id=?",
+                (delivery_id,),
+            )
+        elif invalid_state == "non_failed_status":
+            db.execute(
+                "update wechat_deliveries set status='send_unknown' where id=?",
+                (delivery_id,),
+            )
+        elif invalid_state == "blank_action_started_at":
+            db.execute(
+                "update wechat_deliveries set action_started_at='' where id=?",
+                (delivery_id,),
+            )
+        elif invalid_state == "delivery_generation_mismatch":
+            expected_generation = "different-generation"
+        elif invalid_state == "task_generation_mismatch":
+            db.execute(
+                "update reply_tasks set execution_generation='new-generation' "
+                "where id=(select reply_task_id from wechat_deliveries where id=?)",
+                (delivery_id,),
+            )
+        elif invalid_state == "missing_matching_attempt":
+            db.execute("delete from reply_attempts where id=?", (attempt_id,))
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+
+    with pytest.raises(AgentRunLeaseLostError, match="not in expected state"):
+        store.skip_exhausted_stale_wechat_delivery(
+            delivery_id,
+            expected_execution_generation=expected_generation,
+            reason="stale_target_open_retry_exhausted",
+            inactive_before="2026-07-30 10:10:00",
+        )
+
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+
+
+@pytest.mark.parametrize(
+    "invalid_argument",
+    [
+        {"delivery_id": 0},
+        {"delivery_id": -1},
+        {"expected_execution_generation": ""},
+        {"expected_execution_generation": "   "},
+        {"reason": ""},
+        {"reason": "   "},
+        {"inactive_before": ""},
+        {"inactive_before": "   "},
+        {"max_retries": 0},
+        {"max_retries": -1},
+    ],
+)
+def test_exhausted_stale_wechat_delivery_rejects_invalid_scalar_unchanged(
+    tmp_path,
+    invalid_argument,
+):
+    store, delivery_id, _, generation = _seed_exhausted_target_open_failure(tmp_path)
+    arguments = {
+        "delivery_id": delivery_id,
+        "expected_execution_generation": generation,
+        "reason": "stale_target_open_retry_exhausted",
+        "inactive_before": "2026-07-30 10:10:00",
+        "max_retries": 2,
+    }
+    arguments.update(invalid_argument)
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+
+    with pytest.raises(ValueError):
+        store.skip_exhausted_stale_wechat_delivery(**arguments)
+
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
 
 
 def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
