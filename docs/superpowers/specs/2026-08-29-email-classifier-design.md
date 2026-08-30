@@ -68,7 +68,7 @@ IMAP 只读连接器
     -> NormalizedEmail + provider locator
     -> EmailClassifier.predict()
     -> EmailDecision（分类、置信度、模型版本、动作计划）
-       ├─ 低置信度/需关注 -> CEO Agent 注意力任务
+       ├─ 低置信度/需确认 -> Email 页面“待反馈”（status=pending_feedback，action_plan=None）
        ├─ 用户确认类别     -> 反馈集 + 后台全量重训
        └─ 达到配置阈值     -> 固定动作候选，先 dry-run，再进入执行闭环
 ```
@@ -117,8 +117,8 @@ IMAP 只读连接器
 
 | 阶段 | CEO Agent 侧变化 | 外部动作 |
 | --- | --- | --- |
-| A. 观察 | 只读扫描，分类结果和低置信度样本存本地；注意力通知可先人工触发 | 不写邮箱 |
-| B. 决策 | 用户在注意力任务中选择八类之一；反馈回 classifier store | 不写邮箱 |
+| A. 观察 | 只读扫描，分类结果和低置信度样本存本地；在 Email“待反馈”查看 | 不写邮箱 |
+| B. 决策 | 用户在 Email“待反馈”中选择八类之一；反馈回 classifier store | 不写邮箱 |
 | C. Dry-run | 生成直接动作和 Agent 动作的拟执行计划，展示目标与原因 | 不执行 |
 | D. 直接动作 | 按类别配置逐项开启 label/mark_read/archive/move/trash | 不创建 Agent/Audit 任务，记录 provider 结果 |
 | E. Agent 动作 | 单独开启 auto_reply 或 unsubscribe，并分别设阈值和停用条件 | 创建 Agent/Audit 工作并完成 readback |
@@ -225,8 +225,10 @@ HashingVectorizer + SGD Logistic 保留为在线学习对照；当前实验显�
 当前已经实现了独立、无副作用的 classifier core；它支持模型版本标识、
 模型文件原子替换，以及独立的配置/决策契约，但邮箱动作和 CEO Agent
 runtime 仍未实现。自动动作的
-开放仍等待更多人工确认数据及时间 holdout；CEO Agent 集成边界见本文的
-“CEO Agent 集成边界（待确认）”一节，进入 runtime 开发前等待用户反馈。
+开放仍等待更多人工确认数据及时间 holdout；直接动作与 Agent 动作的边界已经确认：
+`label`、`mark_read`、`archive`、`move`、`trash` 不创建 Agent/Audit 任务，
+只有 `auto_reply`、`unsubscribe` 进入 Agent/Audit 生命周期并执行 provider
+readback。
 
 ## 类别体系
 
@@ -524,12 +526,10 @@ classifier。它尚未连接邮箱或 CEO Agent，也不执行任何邮件动作
 分类器 workspace 还实现了 `email_classifier_decision.py` 作为生产侧可复用
 的纯数据契约：`ClassifierConfig` 校验八个类别的描述、标签、独立阈值、
 动作开关和自动回复模板；`build_decision` 将一次 `Prediction` 转成带
-provider locator、模型/配置版本和 `review` 或 `auto_candidate` 状态的
-`EmailDecision`。它只描述配置中命中的动作候选，`ActionPlan` 明确标记
-`is_execution_authorization=false`，不连接邮箱、不写入任务队列，也不执行
-删除、归档、退订、回复或标签操作。这样后续无论接独立 review queue 还是
-CEO Agent Attention 页面，都可以消费同一份 JSON，而不会把分类结果直接
-当作外部动作授权。
+provider locator、模型/配置版本的 `EmailDecision`。低置信度决策进入
+Email“待反馈”，状态为 `pending_feedback` 且 `action_plan=None`；已处理分类
+持有不可变 `ActionPlan`。直接动作由邮件执行层消费，只有 `auto_reply`、
+`unsubscribe` 进入 Agent/Audit 生命周期。
 
 在此契约之上，`email_classifier_pipeline.py` 提供了一个无连接器的批量
 编排入口：逐封调用分类器，将低于类别阈值的决策交给本地
@@ -585,8 +585,8 @@ required_skills      = [ceo-mail-review]
 
 它只携带分类元数据、版本、provider locator 和用户明确请求，不携带原始
 邮件正文，也不创建 `reply_task`、调用 CEO Agent 或执行邮箱动作。未来的
-CEO Agent adapter 可以在产品确认动作边界和入口后，将这个 draft 映射为
-现有生命周期中的任务提案；在此之前不修改 runtime、schema、worker gate、
+CEO Agent adapter 应遵循已确认的动作边界，只将 `auto_reply`、`unsubscribe`
+映射为现有生命周期中的任务提案；在此之前不修改 runtime、schema、worker gate、
 Attention 页面或 launchd 配置。
 
 配置支持 JSON round-trip；`email_config.example.json` 是一个完整但非激活
