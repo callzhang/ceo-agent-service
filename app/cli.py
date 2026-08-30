@@ -83,7 +83,7 @@ from app.org_cache import (
     CachedOrgDirectory,
     refresh_org_cache,
 )
-from app.store import AutoReplyStore
+from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_agent import TaskAgentCodexRunner, TaskAgentRunner, process_work_item
 from app.task_memory_backfill import (
     ProjectMemoryContextCodexRunner,
@@ -252,6 +252,17 @@ def _non_blank(value: str) -> str:
     if not value.strip():
         raise argparse.ArgumentTypeError("must be non-blank")
     return value
+
+
+def _iso8601_timestamp(value: str) -> str:
+    normalized = _non_blank(value).strip()
+    try:
+        datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "must be an ISO-8601 timestamp"
+        ) from exc
+    return normalized
 
 
 def _non_negative_int(value: str) -> int:
@@ -475,7 +486,7 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--delivery-id", type=_positive_int, required=True)
             subparser.add_argument(
                 "--inactive-before",
-                type=_non_blank,
+                type=_iso8601_timestamp,
                 required=True,
             )
             subparser.add_argument("--reason", type=_non_blank, required=True)
@@ -1202,13 +1213,19 @@ def skip_stale_wechat_delivery_command(
     delivery = store.get_wechat_delivery_by_id(delivery_id)
     if delivery is None:
         raise SystemExit(f"WeChat delivery not found: {delivery_id}")
-    store.skip_exhausted_stale_wechat_delivery(
-        delivery_id,
-        expected_execution_generation=delivery.execution_generation,
-        reason=reason,
-        inactive_before=inactive_before,
-        max_retries=max_retries,
-    )
+    try:
+        store.skip_exhausted_stale_wechat_delivery(
+            delivery_id,
+            expected_execution_generation=delivery.execution_generation,
+            reason=reason,
+            inactive_before=inactive_before,
+            max_retries=max_retries,
+        )
+    except AgentRunLeaseLostError as exc:
+        raise SystemExit(
+            f"WeChat delivery {delivery_id} was not skipped: "
+            "record changed or is ineligible"
+        ) from exc
     print(f"wechat-delivery skipped={delivery_id}", flush=True)
 
 

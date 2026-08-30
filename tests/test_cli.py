@@ -43,7 +43,7 @@ from app.cli import (
 from app.corpus import CorpusRecord, append_records
 from app.dws_client import DwsError
 from app.external_retry import ExternalDependencyError
-from app.store import AutoReplyStore
+from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_models import TaskAgentDecision, WorkItem
 
 
@@ -206,6 +206,69 @@ def test_skip_stale_wechat_delivery_command_forwards_current_generation_and_inpu
     assert capsys.readouterr().out == "wechat-delivery skipped=81\n"
 
 
+def test_skip_stale_wechat_delivery_command_reports_ineligible_state_without_receipt(
+    tmp_path, monkeypatch, capsys
+):
+    class FakeStore:
+        def __init__(self, _db_path):
+            pass
+
+        def get_wechat_delivery_by_id(self, _delivery_id):
+            return SimpleNamespace(execution_generation="generation-current")
+
+        def skip_exhausted_stale_wechat_delivery(self, _delivery_id, **_arguments):
+            raise AgentRunLeaseLostError(
+                "WeChat delivery superseded or not in expected state: 81"
+            )
+
+    monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
+
+    with pytest.raises(
+        SystemExit,
+        match=(
+            "WeChat delivery 81 was not skipped: "
+            "record changed or is ineligible"
+        ),
+    ) as raised:
+        cli.skip_stale_wechat_delivery_command(
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+            delivery_id=81,
+            inactive_before="2026-08-30 18:00:00",
+            reason="stale_after_exhausted_pre_action_retries",
+            max_retries=2,
+        )
+
+    assert isinstance(raised.value.__cause__, AgentRunLeaseLostError)
+    assert capsys.readouterr().out == ""
+
+
+def test_skip_stale_wechat_delivery_command_does_not_catch_unexpected_errors(
+    tmp_path, monkeypatch, capsys
+):
+    class FakeStore:
+        def __init__(self, _db_path):
+            pass
+
+        def get_wechat_delivery_by_id(self, _delivery_id):
+            return SimpleNamespace(execution_generation="generation-current")
+
+        def skip_exhausted_stale_wechat_delivery(self, _delivery_id, **_arguments):
+            raise RuntimeError("unexpected storage failure")
+
+    monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
+
+    with pytest.raises(RuntimeError, match="unexpected storage failure"):
+        cli.skip_stale_wechat_delivery_command(
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+            delivery_id=81,
+            inactive_before="2026-08-30 18:00:00",
+            reason="stale_after_exhausted_pre_action_retries",
+            max_retries=2,
+        )
+
+    assert capsys.readouterr().out == ""
+
+
 def test_parser_supports_skip_stale_wechat_delivery_with_default_retry_limit():
     args = build_parser().parse_args(
         [
@@ -224,6 +287,52 @@ def test_parser_supports_skip_stale_wechat_delivery_with_default_retry_limit():
     assert args.inactive_before == "2026-08-30 18:00:00"
     assert args.reason == "stale_after_exhausted_pre_action_retries"
     assert args.max_retries == 2
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "expected"),
+    [
+        ("2026-08-30T18:00:00", "2026-08-30T18:00:00"),
+        ("2026-08-30T18:00:00Z", "2026-08-30T18:00:00Z"),
+        (
+            " 2026-08-30T18:00:00-07:00 ",
+            "2026-08-30T18:00:00-07:00",
+        ),
+    ],
+)
+def test_parser_accepts_iso8601_skip_stale_wechat_delivery_timestamps(
+    timestamp, expected
+):
+    args = build_parser().parse_args(
+        [
+            "skip-stale-wechat-delivery",
+            "--delivery-id",
+            "81",
+            "--inactive-before",
+            timestamp,
+            "--reason",
+            "stale",
+        ]
+    )
+
+    assert args.inactive_before == expected
+
+
+def test_parser_rejects_malformed_skip_stale_wechat_delivery_timestamp(capsys):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            [
+                "skip-stale-wechat-delivery",
+                "--delivery-id",
+                "81",
+                "--inactive-before",
+                "not-a-time",
+                "--reason",
+                "stale",
+            ]
+        )
+
+    assert "must be an ISO-8601 timestamp" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("missing_option", ["--inactive-before", "--reason"])
