@@ -32,13 +32,15 @@ from app.email_classifier_contracts import (
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 8
+EMAIL_SCHEMA_VERSION = 9
 _CLASSIFICATION_STATUSES = frozenset(status.value for status in EmailClassificationStatus)
 _CLASSIFICATION_SOURCES = frozenset({"model", "user"})
 _CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
 _TERMINAL_ATTEMPT_STATUSES = frozenset({"done", "failed"})
 _DIRECT_ACTION_VALUES = frozenset(action.value for action in DIRECT_ACTIONS)
-_EMAIL_REPLY_CLAIM_STATUSES = frozenset({"dispatching", "uncertain", "done"})
+_EMAIL_REPLY_CLAIM_STATUSES = frozenset(
+    {"dispatching", "retryable", "uncertain", "done"}
+)
 _OPAQUE_PROVIDER_ID = re.compile(r"[A-Za-z0-9._:@<>\[\]{}/+=,!#$%&'*?^-]+")
 _MAX_PROVIDER_IDENTIFIER_BYTES = 256
 _DIRECT_ACTION_PRIORITY = {
@@ -218,6 +220,13 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "account_id": ("text", True, None),
         "stable_message_identity": ("text", True, None),
         "outgoing_message_id": ("text", True, None),
+        "owner_id": ("text", True, None),
+        "owner_generation": ("integer", True, None),
+        "lease_token": ("text", True, None),
+        "sender": ("text", True, None),
+        "thread_identity": ("text", True, None),
+        "account_updated_at": ("text", True, None),
+        "account_snapshot_json": ("text", True, None),
         "status": ("text", True, None),
         "claimed_at": ("text", True, None),
         "updated_at": ("text", True, None),
@@ -284,7 +293,14 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(action_identity) != ''",
         "trim(effect_digest) != ''",
         "trim(outgoing_message_id) != ''",
-        "status in ('dispatching', 'uncertain', 'done')",
+        "trim(owner_id) != ''",
+        "owner_generation > 0",
+        "trim(lease_token) != ''",
+        "trim(sender) != ''",
+        "trim(thread_identity) != ''",
+        "trim(account_updated_at) != ''",
+        "json_valid(account_snapshot_json)",
+        "status in ('dispatching', 'retryable', 'uncertain', 'done')",
         "trim(claimed_at) != ''",
         "trim(updated_at) != ''",
     ),
@@ -442,6 +458,65 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
             select raise(abort, 'email_reply_dispatch_in_flight');
         end
     """,
+    "trg_email_reply_dispatch_blocks_account_update": """
+        create trigger trg_email_reply_dispatch_blocks_account_update
+        before update on email_accounts
+        when exists (
+            select 1 from email_reply_dispatch_claims
+            where account_id=old.account_id and status='dispatching'
+        )
+        begin
+            select raise(abort, 'email_reply_dispatch_in_flight');
+        end
+    """,
+    "trg_email_reply_dispatch_blocks_account_delete": """
+        create trigger trg_email_reply_dispatch_blocks_account_delete
+        before delete on email_accounts
+        when exists (
+            select 1 from email_reply_dispatch_claims
+            where account_id=old.account_id and status='dispatching'
+        )
+        begin
+            select raise(abort, 'email_reply_dispatch_in_flight');
+        end
+    """,
+    "trg_email_reply_dispatch_blocks_thread_update": """
+        create trigger trg_email_reply_dispatch_blocks_thread_update
+        before update of account_id, stable_message_identity, thread_identity
+        on email_messages
+        when (
+            old.account_id is not new.account_id
+            or old.stable_message_identity is not new.stable_message_identity
+            or old.thread_identity is not new.thread_identity
+        ) and exists (
+            select 1 from email_reply_dispatch_claims
+            where account_id=old.account_id
+              and stable_message_identity=old.stable_message_identity
+              and status='dispatching'
+        )
+        begin
+            select raise(abort, 'email_reply_dispatch_in_flight');
+        end
+    """,
+    "trg_email_reply_dispatch_blocks_message_delete": """
+        create trigger trg_email_reply_dispatch_blocks_message_delete
+        before delete on email_messages
+        when exists (
+            select 1 from email_reply_dispatch_claims
+            where account_id=old.account_id
+              and stable_message_identity=old.stable_message_identity
+              and status='dispatching'
+        )
+        begin
+            select raise(abort, 'email_reply_dispatch_in_flight');
+        end
+    """,
+}
+_REQUIRED_TRIGGER_TABLES: Mapping[str, str] = {
+    "trg_email_reply_dispatch_blocks_account_update": "email_accounts",
+    "trg_email_reply_dispatch_blocks_account_delete": "email_accounts",
+    "trg_email_reply_dispatch_blocks_thread_update": "email_messages",
+    "trg_email_reply_dispatch_blocks_message_delete": "email_messages",
 }
 
 
@@ -888,6 +963,56 @@ def _validate_provider_location(value: str, *, field: str) -> str:
     return value
 
 
+def _validate_email_reply_owner(owner: Mapping[str, object]) -> dict[str, object]:
+    if not isinstance(owner, Mapping):
+        raise TypeError("email reply owner must be a mapping")
+    owner_id = _validate_opaque_provider_identifier(
+        owner.get("owner_id"),
+        field="owner_id",
+    )
+    lease_token = _validate_opaque_provider_identifier(
+        owner.get("lease_token"),
+        field="lease_token",
+    )
+    generation = owner.get("generation")
+    _require_positive_int(generation, field="owner_generation")
+    return {
+        "owner_id": owner_id,
+        "generation": generation,
+        "lease_token": lease_token,
+    }
+
+
+def email_action_identity(
+    *,
+    account_id: str,
+    stable_message_identity: str,
+    action_type: EmailAction,
+    action_plan_version: int,
+) -> str:
+    """Identify one immutable email action across scans and restarts."""
+
+    account_id = account_id.strip()
+    stable_message_identity = stable_message_identity.strip()
+    action_type = EmailAction(action_type)
+    if not account_id or not stable_message_identity:
+        raise ValueError("email action identity fields must be non-empty")
+    if action_plan_version <= 0:
+        raise ValueError("action_plan_version must be positive")
+    canonical = json.dumps(
+        {
+            "account_id": account_id,
+            "stable_message_identity": stable_message_identity,
+            "action_type": action_type.value,
+            "action_plan_version": action_plan_version,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"email-action:{sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
 def _direct_action_id(action_plan_id: str, action: EmailAction) -> str:
     digest = sha256(f"{action_plan_id}:{action.value}".encode("utf-8")).hexdigest()
     return f"email-action:{digest}"
@@ -953,8 +1078,13 @@ class EmailStore:
             if latest_version == EMAIL_SCHEMA_VERSION:
                 self._validate_durable_state(db)
                 return
+            legacy_reply_claims = False
+            if latest_version == 8:
+                legacy_reply_claims = self._prepare_v8_reply_claim_migration(db)
             self._create_base_tables(db)
             self._create_durable_tables(db)
+            if legacy_reply_claims:
+                self._finish_v8_reply_claim_migration(db)
             self._create_indexes_and_triggers(db)
             if latest_version < EMAIL_SCHEMA_VERSION:
                 is_prototype = latest_version == 0
@@ -972,6 +1102,79 @@ class EmailStore:
                     (EMAIL_SCHEMA_VERSION, self._now()),
                 )
             self._validate_durable_state(db)
+
+    @classmethod
+    def _prepare_v8_reply_claim_migration(cls, db: sqlite3.Connection) -> bool:
+        if "email_reply_dispatch_claims" not in {
+            row["name"]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }:
+            return False
+        if "owner_id" in cls._table_columns(db, "email_reply_dispatch_claims"):
+            return False
+        db.execute("drop trigger if exists trg_email_reply_dispatch_blocks_plan_switch")
+        db.execute("drop index if exists idx_email_reply_dispatch_claims_status")
+        db.execute(
+            "alter table email_reply_dispatch_claims "
+            "rename to email_reply_dispatch_claims_v8"
+        )
+        return True
+
+    @classmethod
+    def _finish_v8_reply_claim_migration(cls, db: sqlite3.Connection) -> None:
+        rows = db.execute(
+            "select * from email_reply_dispatch_claims_v8 order by action_identity"
+        ).fetchall()
+        for row in rows:
+            account = db.execute(
+                "select * from email_accounts where account_id=?",
+                (row["account_id"],),
+            ).fetchone()
+            message = db.execute(
+                """
+                select thread_identity from email_messages
+                where account_id=? and stable_message_identity=?
+                """,
+                (row["account_id"], row["stable_message_identity"]),
+            ).fetchone()
+            if account is None or message is None:
+                raise EmailPersistenceCorruption(
+                    "v8 email reply claim cannot be fenced without account history"
+                )
+            account_snapshot = cls._account_row(account)
+            lease_token = sha256(
+                f"v8:{row['action_identity']}".encode("utf-8")
+            ).hexdigest()
+            db.execute(
+                """
+                insert into email_reply_dispatch_claims (
+                    action_identity, effect_digest, action_plan_id,
+                    classification_id, account_id, stable_message_identity,
+                    outgoing_message_id, owner_id, owner_generation,
+                    lease_token, sender, thread_identity, account_updated_at,
+                    account_snapshot_json, status, claimed_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["action_identity"],
+                    row["effect_digest"],
+                    row["action_plan_id"],
+                    row["classification_id"],
+                    row["account_id"],
+                    row["stable_message_identity"],
+                    row["outgoing_message_id"],
+                    "legacy-v8",
+                    lease_token,
+                    account["email_address"],
+                    message["thread_identity"],
+                    account["updated_at"],
+                    _json_dump(account_snapshot),
+                    row["status"],
+                    row["claimed_at"],
+                    row["updated_at"],
+                ),
+            )
+        db.execute("drop table email_reply_dispatch_claims_v8")
 
     @staticmethod
     def _read_schema_version(db: sqlite3.Connection) -> int | None:
@@ -1383,8 +1586,19 @@ class EmailStore:
                 stable_message_identity text not null,
                 outgoing_message_id text not null unique
                     check(trim(outgoing_message_id) != ''),
+                owner_id text not null check(trim(owner_id) != ''),
+                owner_generation integer not null check(owner_generation > 0),
+                lease_token text not null check(trim(lease_token) != ''),
+                sender text not null check(trim(sender) != ''),
+                thread_identity text not null check(trim(thread_identity) != ''),
+                account_updated_at text not null
+                    check(trim(account_updated_at) != ''),
+                account_snapshot_json text not null
+                    check(json_valid(account_snapshot_json)),
                 status text not null
-                    check(status in ('dispatching', 'uncertain', 'done')),
+                    check(status in (
+                        'dispatching', 'retryable', 'uncertain', 'done'
+                    )),
                 claimed_at text not null check(trim(claimed_at) != ''),
                 updated_at text not null check(trim(updated_at) != ''),
                 foreign key(action_plan_id)
@@ -1462,6 +1676,59 @@ class EmailStore:
                 select 1 from email_reply_dispatch_claims
                 where classification_id=old.id and status='dispatching'
              )
+            begin
+                select raise(abort, 'email_reply_dispatch_in_flight');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_reply_dispatch_blocks_account_update
+            before update on email_accounts
+            when exists (
+                select 1 from email_reply_dispatch_claims
+                where account_id=old.account_id and status='dispatching'
+            )
+            begin
+                select raise(abort, 'email_reply_dispatch_in_flight');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_reply_dispatch_blocks_account_delete
+            before delete on email_accounts
+            when exists (
+                select 1 from email_reply_dispatch_claims
+                where account_id=old.account_id and status='dispatching'
+            )
+            begin
+                select raise(abort, 'email_reply_dispatch_in_flight');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_reply_dispatch_blocks_thread_update
+            before update of account_id, stable_message_identity, thread_identity
+            on email_messages
+            when (
+                old.account_id is not new.account_id
+                or old.stable_message_identity is not new.stable_message_identity
+                or old.thread_identity is not new.thread_identity
+            ) and exists (
+                select 1 from email_reply_dispatch_claims
+                where account_id=old.account_id
+                  and stable_message_identity=old.stable_message_identity
+                  and status='dispatching'
+            )
+            begin
+                select raise(abort, 'email_reply_dispatch_in_flight');
+            end
+            """,
+            """
+            create trigger if not exists trg_email_reply_dispatch_blocks_message_delete
+            before delete on email_messages
+            when exists (
+                select 1 from email_reply_dispatch_claims
+                where account_id=old.account_id
+                  and stable_message_identity=old.stable_message_identity
+                  and status='dispatching'
+            )
             begin
                 select raise(abort, 'email_reply_dispatch_in_flight');
             end
@@ -1717,7 +1984,10 @@ class EmailStore:
                         trigger["tbl_name"],
                         field="sqlite_master trigger table name",
                     )
-                    != "email_classifications"
+                    != _REQUIRED_TRIGGER_TABLES.get(
+                        trigger_name,
+                        "email_classifications",
+                    )
                     or not isinstance(trigger["sql"], str)
                     or _schema_sql_tokens(trigger["sql"])
                     != _schema_sql_tokens(expected_sql)
@@ -2094,6 +2364,19 @@ class EmailStore:
             claim = self._email_reply_dispatch_claim_row(row)
             plan = plans.get(claim["action_plan_id"])
             classification = classifications.get(claim["classification_id"])
+            try:
+                _validate_email_reply_owner(
+                    {
+                        "owner_id": claim["owner_id"],
+                        "generation": claim["owner_generation"],
+                        "lease_token": claim["lease_token"],
+                    }
+                )
+            except (TypeError, ValueError) as exc:
+                raise EmailPersistenceCorruption(
+                    "email reply dispatch claim has an invalid owner fence"
+                ) from exc
+            account_snapshot = claim["account_snapshot"]
             if (
                 claim["status"] not in _EMAIL_REPLY_CLAIM_STATUSES
                 or plan is None
@@ -2103,6 +2386,10 @@ class EmailStore:
                 or classification["stable_message_identity"]
                 != claim["stable_message_identity"]
                 or EmailAction.AUTO_REPLY not in plan.agent_actions
+                or account_snapshot.get("account_id") != claim["account_id"]
+                or account_snapshot.get("email_address") != claim["sender"]
+                or account_snapshot.get("updated_at")
+                != claim["account_updated_at"]
             ):
                 raise EmailPersistenceCorruption(
                     "email reply dispatch claim does not match its ActionPlan"
@@ -2114,6 +2401,25 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     "done email reply dispatch claim has no durable receipt"
                 )
+            if claim["status"] == "dispatching":
+                live_account = db.execute(
+                    "select * from email_accounts where account_id=?",
+                    (claim["account_id"],),
+                ).fetchone()
+                live_message = messages.get(claim["stable_message_identity"])
+                if (
+                    classification["current_action_plan_id"]
+                    != claim["action_plan_id"]
+                    or live_account is None
+                    or not live_account["enabled"]
+                    or live_account["email_address"] != claim["sender"]
+                    or live_account["updated_at"] != claim["account_updated_at"]
+                    or live_message is None
+                    or live_message["thread_identity"] != claim["thread_identity"]
+                ):
+                    raise EmailPersistenceCorruption(
+                        "dispatching email reply claim lost its live authorization"
+                    )
 
         for row in db.execute(
             "select category, actions_json, action_parameters_json "
@@ -3001,10 +3307,15 @@ class EmailStore:
         account_id: str,
         stable_message_identity: str,
         outgoing_message_id: str,
+        sender: str,
+        thread_identity: str,
+        expected_account_updated_at: str,
+        owner: Mapping[str, object],
     ) -> dict[str, Any] | None:
-        """Atomically bind a current auto-reply authorization to one dispatcher."""
+        """Atomically bind the complete current dispatch authorization to an owner."""
 
         claimed_at = self._now()
+        owner = _validate_email_reply_owner(owner)
         immutable = {
             "action_identity": action_identity,
             "effect_digest": effect_digest,
@@ -3013,6 +3324,8 @@ class EmailStore:
             "account_id": account_id,
             "stable_message_identity": stable_message_identity,
             "outgoing_message_id": outgoing_message_id,
+            "sender": sender,
+            "thread_identity": thread_identity,
         }
         if any(
             not isinstance(value, str) or not value or value != value.strip()
@@ -3020,15 +3333,25 @@ class EmailStore:
             if key != "classification_id"
         ) or classification_id <= 0:
             raise ValueError("email reply dispatch identity is invalid")
+        if (
+            not expected_account_updated_at
+            or expected_account_updated_at != expected_account_updated_at.strip()
+        ):
+            raise ValueError("expected_account_updated_at must be non-empty")
         with self._connect() as db:
             db.execute("begin immediate")
             authorization = db.execute(
                 """
-                select plans.actions_json
+                select plans.actions_json, plans.action_plan_version,
+                       messages.thread_identity
                 from email_classifications as classifications
                 join email_action_plans as plans
                   on plans.action_plan_id=classifications.current_action_plan_id
                  and plans.classification_id=classifications.id
+                join email_messages as messages
+                  on messages.account_id=classifications.account_id
+                 and messages.stable_message_identity=
+                     classifications.stable_message_identity
                 where classifications.id=?
                   and classifications.status='processed'
                   and classifications.current_action_plan_id=?
@@ -3042,12 +3365,34 @@ class EmailStore:
                     stable_message_identity,
                 ),
             ).fetchone()
-            if authorization is None or EmailAction.AUTO_REPLY.value not in _json_load(
-                authorization["actions_json"],
-                field="actions_json",
-                expected_type=list,
+            account = db.execute(
+                "select * from email_accounts where account_id=?",
+                (account_id,),
+            ).fetchone()
+            if (
+                authorization is None
+                or action_identity
+                != email_action_identity(
+                    account_id=account_id,
+                    stable_message_identity=stable_message_identity,
+                    action_type=EmailAction.AUTO_REPLY,
+                    action_plan_version=int(authorization["action_plan_version"]),
+                )
+                or authorization["thread_identity"] != thread_identity
+                or EmailAction.AUTO_REPLY.value
+                not in _json_load(
+                    authorization["actions_json"],
+                    field="actions_json",
+                    expected_type=list,
+                )
+                or account is None
+                or not account["enabled"]
+                or account["email_address"] != sender
+                or account["updated_at"] != expected_account_updated_at
             ):
                 return None
+            account_snapshot = self._account_row(account)
+            account_snapshot_json = _json_dump(account_snapshot)
             receipt = db.execute(
                 "select 1 from email_reply_receipts where action_identity=?",
                 (action_identity,),
@@ -3064,14 +3409,51 @@ class EmailStore:
                     raise EmailReplyDispatchConflict(
                         "email reply action identity is bound to another dispatch"
                     )
-                return {**claim, "acquired": False}
+                if claim["status"] != "retryable":
+                    return {**claim, "acquired": False}
+                updated = db.execute(
+                    """
+                    update email_reply_dispatch_claims
+                    set owner_id=?, owner_generation=?, lease_token=?,
+                        account_updated_at=?, account_snapshot_json=?,
+                        status='dispatching', claimed_at=?, updated_at=?
+                    where action_identity=? and status='retryable'
+                      and owner_id=? and owner_generation=? and lease_token=?
+                    """,
+                    (
+                        owner["owner_id"],
+                        owner["generation"],
+                        owner["lease_token"],
+                        expected_account_updated_at,
+                        account_snapshot_json,
+                        claimed_at,
+                        claimed_at,
+                        action_identity,
+                        claim["owner_id"],
+                        claim["owner_generation"],
+                        claim["lease_token"],
+                    ),
+                ).rowcount
+                if updated != 1:
+                    raise EmailReplyDispatchConflict(
+                        "email reply retryable claim changed concurrently"
+                    )
+                row = db.execute(
+                    "select * from email_reply_dispatch_claims where action_identity=?",
+                    (action_identity,),
+                ).fetchone()
+                assert row is not None
+                return {**self._email_reply_dispatch_claim_row(row), "acquired": True}
             db.execute(
                 """
                 insert into email_reply_dispatch_claims (
                     action_identity, effect_digest, action_plan_id,
                     classification_id, account_id, stable_message_identity,
-                    outgoing_message_id, status, claimed_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, 'dispatching', ?, ?)
+                    outgoing_message_id, owner_id, owner_generation, lease_token,
+                    sender, thread_identity, account_updated_at,
+                    account_snapshot_json, status, claimed_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                          'dispatching', ?, ?)
                 """,
                 (
                     action_identity,
@@ -3081,6 +3463,13 @@ class EmailStore:
                     account_id,
                     stable_message_identity,
                     outgoing_message_id,
+                    owner["owner_id"],
+                    owner["generation"],
+                    owner["lease_token"],
+                    sender,
+                    thread_identity,
+                    expected_account_updated_at,
+                    account_snapshot_json,
                     claimed_at,
                     claimed_at,
                 ),
@@ -3092,51 +3481,137 @@ class EmailStore:
             assert row is not None
             return {**self._email_reply_dispatch_claim_row(row), "acquired": True}
 
-    def mark_email_reply_dispatch_uncertain(self, action_identity: str) -> None:
-        """Release plan correction while retaining a no-resend dispatch fact."""
+    def get_email_reply_dispatch_claim(
+        self,
+        action_identity: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_reply_dispatch_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+        return None if row is None else self._email_reply_dispatch_claim_row(row)
 
+    def mark_email_reply_dispatch_uncertain(
+        self,
+        action_identity: str,
+        *,
+        owner: Mapping[str, object],
+    ) -> None:
+        """CAS one owned possible dispatch into reconciliation-only state."""
+
+        owner = _validate_email_reply_owner(owner)
         with self._connect() as db:
             db.execute("begin immediate")
-            db.execute(
+            updated = db.execute(
                 """
                 update email_reply_dispatch_claims
                 set status='uncertain', updated_at=?
                 where action_identity=? and status='dispatching'
+                  and owner_id=? and owner_generation=? and lease_token=?
                 """,
-                (self._now(), action_identity),
-            )
+                (
+                    self._now(),
+                    action_identity,
+                    owner["owner_id"],
+                    owner["generation"],
+                    owner["lease_token"],
+                ),
+            ).rowcount
+            if updated != 1:
+                raise EmailReplyDispatchConflict(
+                    "email reply dispatch owner fence changed"
+                )
 
-    def mark_email_reply_dispatch_done(self, action_identity: str) -> None:
-        """Mark a claim done only after durable Sent receipt persistence."""
+    def release_email_reply_dispatch_retryable(
+        self,
+        action_identity: str,
+        *,
+        owner: Mapping[str, object],
+    ) -> None:
+        """Release only an explicitly non-dispatched owned claim for retry."""
 
+        owner = _validate_email_reply_owner(owner)
         with self._connect() as db:
             db.execute("begin immediate")
-            receipt = db.execute(
-                "select 1 from email_reply_receipts where action_identity=?",
-                (action_identity,),
+            claim = db.execute(
+                """
+                select claims.*, classifications.current_action_plan_id,
+                       classifications.status as classification_status,
+                       plans.actions_json, accounts.enabled,
+                       accounts.email_address, accounts.updated_at as live_account_updated_at,
+                       messages.thread_identity as live_thread_identity
+                from email_reply_dispatch_claims as claims
+                join email_classifications as classifications
+                  on classifications.id=claims.classification_id
+                join email_action_plans as plans
+                  on plans.action_plan_id=claims.action_plan_id
+                join email_accounts as accounts
+                  on accounts.account_id=claims.account_id
+                join email_messages as messages
+                  on messages.account_id=claims.account_id
+                 and messages.stable_message_identity=claims.stable_message_identity
+                where claims.action_identity=? and claims.status='dispatching'
+                  and claims.owner_id=? and claims.owner_generation=?
+                  and claims.lease_token=?
+                """,
+                (
+                    action_identity,
+                    owner["owner_id"],
+                    owner["generation"],
+                    owner["lease_token"],
+                ),
             ).fetchone()
-            if receipt is None:
-                raise EmailReplyDispatchConflict(
-                    "email reply dispatch cannot finish without a durable receipt"
+            if (
+                claim is None
+                or claim["classification_status"] != "processed"
+                or claim["current_action_plan_id"] != claim["action_plan_id"]
+                or EmailAction.AUTO_REPLY.value
+                not in _json_load(
+                    claim["actions_json"],
+                    field="actions_json",
+                    expected_type=list,
                 )
-            db.execute(
+                or not claim["enabled"]
+                or claim["email_address"] != claim["sender"]
+                or claim["live_account_updated_at"] != claim["account_updated_at"]
+                or claim["live_thread_identity"] != claim["thread_identity"]
+            ):
+                raise EmailReplyDispatchConflict(
+                    "email reply retry authorization changed"
+                )
+            updated = db.execute(
                 """
                 update email_reply_dispatch_claims
-                set status='done', updated_at=?
-                where action_identity=?
+                set status='retryable', updated_at=?
+                where action_identity=? and status='dispatching'
+                  and owner_id=? and owner_generation=? and lease_token=?
                 """,
-                (self._now(), action_identity),
-            )
+                (
+                    self._now(),
+                    action_identity,
+                    owner["owner_id"],
+                    owner["generation"],
+                    owner["lease_token"],
+                ),
+            ).rowcount
+            if updated != 1:
+                raise EmailReplyDispatchConflict(
+                    "email reply dispatch owner fence changed"
+                )
 
-    def recover_stale_email_reply_dispatch_claims(
+    def recover_terminated_email_reply_dispatch_claims(
         self,
         *,
-        stale_before: str,
+        owner: Mapping[str, object],
+        termination_verifier: Callable[[Mapping[str, object]], bool],
         recovered_at: str,
     ) -> int:
-        """Turn interrupted possible dispatches into reconciliation-only facts."""
+        """Recover an owner only after the caller proves that generation terminated."""
 
-        stale_before = _required_utc_timestamp(stale_before, field="stale_before")
+        owner = _validate_email_reply_owner(owner)
+        if not termination_verifier(owner):
+            raise EmailReplyDispatchConflict("owner_termination_not_proven")
         recovered_at = _required_utc_timestamp(recovered_at, field="recovered_at")
         with self._connect() as db:
             db.execute("begin immediate")
@@ -3144,9 +3619,15 @@ class EmailStore:
                 """
                 update email_reply_dispatch_claims
                 set status='uncertain', updated_at=?
-                where status='dispatching' and claimed_at < ?
+                where status='dispatching' and owner_id=?
+                  and owner_generation=? and lease_token=?
                 """,
-                (recovered_at, stale_before),
+                (
+                    recovered_at,
+                    owner["owner_id"],
+                    owner["generation"],
+                    owner["lease_token"],
+                ),
             ).rowcount
             return updated
 
@@ -3160,6 +3641,17 @@ class EmailStore:
             "account_id": row["account_id"],
             "stable_message_identity": row["stable_message_identity"],
             "outgoing_message_id": row["outgoing_message_id"],
+            "owner_id": row["owner_id"],
+            "owner_generation": row["owner_generation"],
+            "lease_token": row["lease_token"],
+            "sender": row["sender"],
+            "thread_identity": row["thread_identity"],
+            "account_updated_at": row["account_updated_at"],
+            "account_snapshot": _json_load(
+                row["account_snapshot_json"],
+                field="account_snapshot_json",
+                expected_type=dict,
+            ),
             "status": row["status"],
             "claimed_at": row["claimed_at"],
             "updated_at": row["updated_at"],
@@ -3182,8 +3674,9 @@ class EmailStore:
         sent_uidvalidity: int,
         sent_uid: int,
         smtp_acceptance_id: str,
+        claim_owner: Mapping[str, object] | None = None,
     ) -> dict[str, Any]:
-        """Persist minimal Sent evidence before a caller completes the effect."""
+        """Atomically persist/replay Sent evidence and complete its matching claim."""
 
         text_fields = {
             "action_identity": action_identity,
@@ -3223,7 +3716,7 @@ class EmailStore:
             field="smtp_acceptance_id",
             allow_empty=True,
         )
-        provider_receipt = {
+        requested_provider_receipt = {
             "sent_folder": sent_folder,
             "sent_uidvalidity": sent_uidvalidity,
             "sent_uid": sent_uid,
@@ -3234,61 +3727,157 @@ class EmailStore:
                 "provider_operation": provider_operation,
                 "provider_target": provider_target,
                 "provider_result_id": provider_result_id,
-                "provider_receipt": provider_receipt,
+                "provider_receipt": requested_provider_receipt,
             }
         )
+        validated_claim_owner = (
+            None if claim_owner is None else _validate_email_reply_owner(claim_owner)
+        )
         created_at = self._now()
-        immutable = {
+        receipt_base = {
             **text_fields,
             "classification_id": classification_id,
-            "provider_receipt": provider_receipt,
             "display_excerpt": "Automatic email reply verified in Sent.",
         }
         with self._connect() as db:
             db.execute("begin immediate")
-            db.execute(
-                """
-                insert or ignore into email_reply_receipts (
-                    action_identity, effect_digest, action_plan_id, classification_id,
-                    account_id, stable_message_identity, outgoing_message_id,
-                    provider_operation, provider_target, provider_result_id,
-                    provider_receipt_json, display_excerpt, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    action_identity,
-                    effect_digest,
-                    action_plan_id,
-                    classification_id,
-                    account_id,
-                    stable_message_identity,
-                    outgoing_message_id,
-                    provider_operation,
-                    provider_target,
-                    provider_result_id,
-                    _json_dump(provider_receipt),
-                    immutable["display_excerpt"],
-                    created_at,
-                ),
-            )
             row = db.execute(
                 "select * from email_reply_receipts where action_identity=?",
                 (action_identity,),
             ).fetchone()
             if row is None:
-                raise EmailReplyReceiptConflict(
-                    "email reply receipt was not persisted"
+                db.execute(
+                    """
+                    insert into email_reply_receipts (
+                        action_identity, effect_digest, action_plan_id,
+                        classification_id, account_id, stable_message_identity,
+                        outgoing_message_id, provider_operation, provider_target,
+                        provider_result_id, provider_receipt_json, display_excerpt,
+                        created_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        action_identity,
+                        effect_digest,
+                        action_plan_id,
+                        classification_id,
+                        account_id,
+                        stable_message_identity,
+                        outgoing_message_id,
+                        provider_operation,
+                        provider_target,
+                        provider_result_id,
+                        _json_dump(requested_provider_receipt),
+                        receipt_base["display_excerpt"],
+                        created_at,
+                    ),
                 )
+            else:
+                persisted = self._email_reply_receipt_row(row)
+                comparable = {
+                    key: value
+                    for key, value in persisted.items()
+                    if key not in {"created_at", "provider_receipt"}
+                }
+                if comparable != receipt_base:
+                    raise EmailReplyReceiptConflict(
+                        "email reply identity is bound to different provider evidence"
+                    )
+                persisted_receipt = persisted["provider_receipt"]
+                persisted_without_smtp = {
+                    key: value
+                    for key, value in persisted_receipt.items()
+                    if key != "smtp_acceptance_id"
+                }
+                requested_without_smtp = {
+                    key: value
+                    for key, value in requested_provider_receipt.items()
+                    if key != "smtp_acceptance_id"
+                }
+                current_smtp_id = persisted_receipt["smtp_acceptance_id"]
+                requested_smtp_id = requested_provider_receipt[
+                    "smtp_acceptance_id"
+                ]
+                if persisted_without_smtp != requested_without_smtp or (
+                    current_smtp_id
+                    and requested_smtp_id
+                    and current_smtp_id != requested_smtp_id
+                ):
+                    raise EmailReplyReceiptConflict(
+                        "email reply identity is bound to different provider evidence"
+                    )
+                if not current_smtp_id and requested_smtp_id:
+                    enriched_receipt = {
+                        **persisted_receipt,
+                        "smtp_acceptance_id": requested_smtp_id,
+                    }
+                    updated = db.execute(
+                        """
+                        update email_reply_receipts set provider_receipt_json=?
+                        where action_identity=? and provider_receipt_json=?
+                        """,
+                        (
+                            _json_dump(enriched_receipt),
+                            action_identity,
+                            _json_dump(persisted_receipt),
+                        ),
+                    ).rowcount
+                    if updated != 1:
+                        raise EmailReplyReceiptConflict(
+                            "email reply receipt changed concurrently"
+                        )
+            claim = db.execute(
+                "select * from email_reply_dispatch_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            if claim is not None:
+                claim_row = self._email_reply_dispatch_claim_row(claim)
+                claim_expected = {
+                    "effect_digest": effect_digest,
+                    "action_plan_id": action_plan_id,
+                    "classification_id": classification_id,
+                    "account_id": account_id,
+                    "stable_message_identity": stable_message_identity,
+                    "outgoing_message_id": outgoing_message_id,
+                }
+                if any(
+                    claim_row[key] != value
+                    for key, value in claim_expected.items()
+                ):
+                    raise EmailReplyDispatchConflict(
+                        "email reply receipt does not match its dispatch claim"
+                    )
+                if claim_row["status"] != "done":
+                    if validated_claim_owner is None:
+                        raise EmailReplyDispatchConflict(
+                            "email reply claim completion requires its owner fence"
+                        )
+                    updated = db.execute(
+                        """
+                        update email_reply_dispatch_claims
+                        set status='done', updated_at=?
+                        where action_identity=?
+                          and status in ('dispatching', 'retryable', 'uncertain')
+                          and owner_id=? and owner_generation=? and lease_token=?
+                        """,
+                        (
+                            self._now(),
+                            action_identity,
+                            validated_claim_owner["owner_id"],
+                            validated_claim_owner["generation"],
+                            validated_claim_owner["lease_token"],
+                        ),
+                    ).rowcount
+                    if updated != 1:
+                        raise EmailReplyDispatchConflict(
+                            "email reply dispatch owner fence changed"
+                        )
+            row = db.execute(
+                "select * from email_reply_receipts where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            assert row is not None
             persisted = self._email_reply_receipt_row(row)
-            comparable = {
-                key: value
-                for key, value in persisted.items()
-                if key != "created_at"
-            }
-            if comparable != immutable:
-                raise EmailReplyReceiptConflict(
-                    "email reply identity is bound to different provider evidence"
-                )
         return persisted
 
     @staticmethod

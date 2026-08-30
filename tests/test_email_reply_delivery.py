@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
+import threading
 
 import pytest
 
@@ -21,10 +22,13 @@ from app.email_reply_delivery import (
     OutgoingEmailReply,
     SentReply,
     SentReplyQuery,
-    SmtpAcceptance,
     outgoing_message_id,
 )
-from app.email_store import EmailReplyDispatchConflict, EmailStore
+from app.email_store import (
+    EmailReplyDispatchConflict,
+    EmailReplyReceiptConflict,
+    EmailStore,
+)
 from app.email_task_adapter import (
     EmailAgentTaskAdapter,
     EmailAgentTaskInput,
@@ -55,6 +59,25 @@ ACCOUNT_VALUES = {
 }
 
 
+@dataclass(frozen=True)
+class FakeSmtpOutcome:
+    status: str
+    provider_result_id: str = ""
+    error_code: str = ""
+
+
+OWNER_A = {
+    "owner_id": "email-worker",
+    "generation": 11,
+    "lease_token": "lease-owner-a",
+}
+OWNER_B = {
+    "owner_id": "email-worker",
+    "generation": 12,
+    "lease_token": "lease-owner-b",
+}
+
+
 class FakeSmtpSentHarness:
     def __init__(self) -> None:
         self.sent: dict[str, list[SentReply]] = {}
@@ -70,6 +93,11 @@ class FakeSmtpSentHarness:
         self.after_sent_search = None
         self.before_smtp = None
         self.crash_before_acceptance = False
+        self.raise_unclassified_smtp_error = False
+        self.omit_sent_after_acceptance = False
+        self.smtp_entered: threading.Event | None = None
+        self.smtp_release: threading.Event | None = None
+        self.sent_barrier: threading.Barrier | None = None
 
     @property
     def acceptance_count(self) -> int:
@@ -82,6 +110,8 @@ class FakeSmtpSentHarness:
             raise TimeoutError("sent read timed out with private-token")
         for sent in self.sent.get(account.account_id, []):
             if sent.matches(query):
+                if self.sent_barrier is not None:
+                    self.sent_barrier.wait(timeout=5)
                 return sent
         if self.after_sent_search is not None:
             callback = self.after_sent_search
@@ -93,8 +123,12 @@ class FakeSmtpSentHarness:
         self,
         account,
         message: OutgoingEmailReply,
-    ) -> SmtpAcceptance:
+    ) -> FakeSmtpOutcome:
         self.smtp_accounts.append((account.account_id, account.smtp_host))
+        if self.smtp_entered is not None:
+            self.smtp_entered.set()
+        if self.smtp_release is not None:
+            self.smtp_release.wait(timeout=5)
         if self.before_smtp is not None:
             callback = self.before_smtp
             self.before_smtp = None
@@ -102,9 +136,15 @@ class FakeSmtpSentHarness:
         if self.crash_before_acceptance:
             self.crash_before_acceptance = False
             raise KeyboardInterrupt("simulated process crash before provider acceptance")
+        if self.raise_unclassified_smtp_error:
+            self.raise_unclassified_smtp_error = False
+            raise RuntimeError("provider adapter failed without an outcome")
         if self.timeout_before_send:
             self.timeout_before_send = False
-            raise TimeoutError("smtp timed out before acceptance password=private")
+            return FakeSmtpOutcome(
+                status="definitely_not_dispatched",
+                error_code="smtp_connect_timeout",
+            )
         self.accepted_messages.append(message)
         sent = SentReply.from_outgoing(
             message,
@@ -115,14 +155,19 @@ class FakeSmtpSentHarness:
             sent_uidvalidity=77,
             sent_uid=self.acceptance_count,
         )
-        self.sent.setdefault(account.account_id, []).append(sent)
+        if not self.omit_sent_after_acceptance:
+            self.sent.setdefault(account.account_id, []).append(sent)
         if self.timeout_after_acceptance:
             self.timeout_after_acceptance = False
-            raise TimeoutError("smtp timed out after acceptance token=private")
-        return SmtpAcceptance(
+            return FakeSmtpOutcome(
+                status="outcome_uncertain",
+                error_code="smtp_response_timeout",
+            )
+        return FakeSmtpOutcome(
+            status="accepted",
             provider_result_id=(
                 self.smtp_acceptance_id or f"smtp-{self.acceptance_count}"
-            )
+            ),
         )
 
     def add_equivalent(
@@ -261,6 +306,29 @@ def _delivery_setup(tmp_path: Path):
     return store, harness, _effect()
 
 
+def _update_account(
+    store: EmailStore,
+    **changes,
+) -> None:
+    current = store.get_account("account-primary")
+    assert current is not None
+    updated, _ = store.update_account(
+        "account-primary",
+        {**current, **changes},
+    )
+    assert updated is not None
+
+
+def _claim_status(store: EmailStore, action_identity: str) -> str:
+    with sqlite3.connect(store.path) as db:
+        row = db.execute(
+            "select status from email_reply_dispatch_claims where action_identity=?",
+            (action_identity,),
+        ).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
 def test_outgoing_message_id_is_stable_and_uses_first_32_sha256_hex() -> None:
     assert outgoing_message_id(
         "email-action:example",
@@ -268,7 +336,7 @@ def test_outgoing_message_id_is_stable_and_uses_first_32_sha256_hex() -> None:
     ) == "<ceo-email-c2ec94cd412b5ef4991dfb77edecf47b@stardust.ai>"
 
 
-def test_v7_store_migrates_reply_dispatch_claims_without_changing_existing_rows(
+def test_v7_store_migrates_fenced_reply_dispatch_claims_without_changing_rows(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "v6-migration.sqlite3"
@@ -285,10 +353,69 @@ def test_v7_store_migrates_reply_dispatch_claims_without_changing_existing_rows(
     with sqlite3.connect(database) as db:
         assert db.execute(
             "select version from email_schema_migrations order by version desc limit 1"
-        ).fetchone()[0] == 8
+        ).fetchone()[0] == 9
         assert db.execute(
             "select count(*) from email_reply_dispatch_claims"
         ).fetchone()[0] == 0
+
+
+def test_v8_store_preserves_existing_claim_as_fenced_history(tmp_path: Path) -> None:
+    store, _, effect = _delivery_setup(tmp_path)
+    with sqlite3.connect(store.path) as db:
+        for trigger in (
+            "trg_email_reply_dispatch_blocks_plan_switch",
+            "trg_email_reply_dispatch_blocks_account_update",
+            "trg_email_reply_dispatch_blocks_account_delete",
+            "trg_email_reply_dispatch_blocks_thread_update",
+            "trg_email_reply_dispatch_blocks_message_delete",
+        ):
+            db.execute(f"drop trigger {trigger}")
+        db.execute("drop table email_reply_dispatch_claims")
+        db.execute(
+            """
+            create table email_reply_dispatch_claims (
+                action_identity text primary key,
+                effect_digest text not null,
+                action_plan_id text not null,
+                classification_id integer not null,
+                account_id text not null,
+                stable_message_identity text not null,
+                outgoing_message_id text not null unique,
+                status text not null,
+                claimed_at text not null,
+                updated_at text not null
+            )
+            """
+        )
+        db.execute(
+            """
+            insert into email_reply_dispatch_claims values (
+                ?, ?, ?, ?, ?, ?, ?, 'uncertain',
+                '2026-08-30T08:00:00+00:00',
+                '2026-08-30T08:01:00+00:00'
+            )
+            """,
+            (
+                effect.action_identity,
+                effect.effect_digest,
+                effect.action_plan_id,
+                effect.classification_id,
+                effect.account_id,
+                effect.stable_message_identity,
+                outgoing_message_id(effect.action_identity, "stardust.ai"),
+            ),
+        )
+        db.execute("update email_schema_migrations set version=8")
+
+    migrated = EmailStore(store.path)
+    claim = migrated.get_email_reply_dispatch_claim(effect.action_identity)
+
+    assert claim is not None
+    assert claim["status"] == "uncertain"
+    assert claim["owner_id"] == "legacy-v8"
+    assert claim["owner_generation"] == 1
+    assert claim["sender"] == effect.sender
+    assert claim["thread_identity"] == effect.thread_identity
 
 
 def test_normal_send_preserves_exact_audit_accepted_fields_and_persists_receipt(
@@ -351,7 +478,7 @@ def test_correct_account_selects_matching_smtp_and_sent_connectors(tmp_path: Pat
     ]
 
 
-def test_timeout_before_send_becomes_reconciliation_only_without_blind_retry(
+def test_definitely_not_dispatched_releases_claim_for_one_safe_retry(
     tmp_path: Path,
 ) -> None:
     store, harness, effect = _delivery_setup(tmp_path)
@@ -362,12 +489,11 @@ def test_timeout_before_send_becomes_reconciliation_only_without_blind_retry(
     second = delivery.deliver(effect)
 
     assert first.status == "failed"
-    assert first.error_code == "email_reply_outcome_unresolved"
+    assert first.error_code == "email_reply_definitely_not_dispatched"
     assert first.retryable is True
-    assert second.status == "failed"
-    assert second.error_code == "email_reply_outcome_unresolved"
-    assert harness.acceptance_count == 0
-    assert len(harness.smtp_accounts) == 1
+    assert second.status == "done"
+    assert harness.acceptance_count == 1
+    assert len(harness.smtp_accounts) == 2
 
 
 def test_timeout_after_acceptance_reconciles_after_restart_without_resend(
@@ -402,6 +528,47 @@ def test_restart_during_post_send_reconciliation_does_not_duplicate_smtp(
     assert harness.acceptance_count == 1
 
 
+def test_unclassified_provider_exception_is_contract_error_and_never_blind_retried(
+    tmp_path: Path,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    harness.raise_unclassified_smtp_error = True
+
+    first = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+    replay = EmailReplyDelivery(store, harness, owner=OWNER_B).deliver(effect)
+
+    assert first.status == "failed"
+    assert first.error_code == "email_reply_provider_contract_error"
+    assert replay.status == "failed"
+    assert replay.error_code == "email_reply_outcome_unresolved"
+    assert len(harness.smtp_accounts) == 1
+    assert harness.acceptance_count == 0
+
+
+def test_accepted_readback_mismatch_releases_correction_but_never_resends(
+    tmp_path: Path,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    harness.omit_sent_after_acceptance = True
+
+    first = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+    assert first.status == "failed"
+    assert first.error_code == "email_reply_provider_readback_mismatch"
+    assert _claim_status(store, effect.action_identity) == "uncertain"
+    v2 = _plan(version=2)
+    store.append_action_plan_version(
+        effect.classification_id,
+        v2,
+        confirmed_category=v2.category,
+    )
+    replay = EmailReplyDelivery(store, harness, owner=OWNER_B).deliver(effect)
+
+    assert replay.status == "failed"
+    assert replay.error_code == "email_reply_outcome_unresolved"
+    assert harness.acceptance_count == 1
+    assert len(harness.smtp_accounts) == 1
+
+
 def test_current_plan_switch_after_sent_precheck_prevents_stale_smtp(
     tmp_path: Path,
 ) -> None:
@@ -422,6 +589,250 @@ def test_current_plan_switch_after_sent_precheck_prevents_stale_smtp(
     assert store.get_classification(effect.classification_id)[
         "current_action_plan_id"
     ] == v2.action_plan_id
+
+
+@pytest.mark.parametrize("mutation", ("disable", "reconfigure", "thread"))
+def test_dispatch_claim_rechecks_account_and_thread_after_sent_precheck(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+
+    def mutate_dispatch_authorization() -> None:
+        if mutation == "disable":
+            _update_account(store, enabled=False)
+        elif mutation == "reconfigure":
+            _update_account(store, smtp_host="smtp.changed.example")
+        else:
+            with sqlite3.connect(store.path) as db:
+                db.execute(
+                    """
+                    update email_messages set thread_identity='thread-changed'
+                    where stable_message_identity=?
+                    """,
+                    (effect.stable_message_identity,),
+                )
+
+    harness.after_sent_search = mutate_dispatch_authorization
+
+    result = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+
+    assert result.status == "failed"
+    assert result.error_code == "email_reply_authorization_stale"
+    assert harness.acceptance_count == 0
+    assert harness.smtp_accounts == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("disable", "reconfigure", "delete", "thread"),
+)
+def test_dispatch_claim_blocks_account_and_thread_mutation_before_smtp(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+
+    def attempt_mutation() -> None:
+        with pytest.raises(
+            (EmailReplyDispatchConflict, sqlite3.IntegrityError),
+            match="email_reply_dispatch_in_flight",
+        ):
+            if mutation == "disable":
+                _update_account(store, enabled=False)
+            elif mutation == "reconfigure":
+                _update_account(store, smtp_host="smtp.changed.example")
+            elif mutation == "delete":
+                account = store.get_account(effect.account_id)
+                assert account is not None
+                store.delete_account_if_unchanged(
+                    effect.account_id,
+                    expected_updated_at=account["updated_at"],
+                )
+            else:
+                with sqlite3.connect(store.path) as db:
+                    db.execute(
+                        """
+                        update email_messages set thread_identity='thread-changed'
+                        where stable_message_identity=?
+                        """,
+                        (effect.stable_message_identity,),
+                    )
+
+    harness.before_smtp = attempt_mutation
+
+    result = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+
+    assert result.status == "done"
+    assert harness.acceptance_count == 1
+
+
+def test_live_slow_smtp_owner_cannot_be_recovered_or_release_plan_blocker(
+    tmp_path: Path,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    harness.smtp_entered = threading.Event()
+    harness.smtp_release = threading.Event()
+    results = []
+
+    delivery_thread = threading.Thread(
+        target=lambda: results.append(
+            EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+        )
+    )
+    delivery_thread.start()
+    assert harness.smtp_entered.wait(timeout=5)
+
+    with pytest.raises(
+        EmailReplyDispatchConflict,
+        match="owner_termination_not_proven",
+    ):
+        store.recover_terminated_email_reply_dispatch_claims(
+            owner=OWNER_A,
+            termination_verifier=lambda _owner: False,
+            recovered_at="2026-08-30T09:00:00+00:00",
+        )
+    v2 = _plan(version=2)
+    with pytest.raises(
+        EmailReplyDispatchConflict,
+        match="email_reply_dispatch_in_flight",
+    ):
+        store.append_action_plan_version(
+            effect.classification_id,
+            v2,
+            confirmed_category=v2.category,
+        )
+
+    harness.smtp_release.set()
+    delivery_thread.join(timeout=5)
+    assert not delivery_thread.is_alive()
+    assert results[0].status == "done"
+    assert harness.acceptance_count == 1
+
+
+def test_terminated_owner_recovery_is_fenced_and_allows_plan_correction(
+    tmp_path: Path,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    harness.crash_before_acceptance = True
+
+    with pytest.raises(KeyboardInterrupt, match="simulated process crash"):
+        EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+
+    assert store.recover_terminated_email_reply_dispatch_claims(
+        owner=OWNER_A,
+        termination_verifier=lambda owner: owner == OWNER_A,
+        recovered_at="2026-08-30T09:00:00+00:00",
+    ) == 1
+    assert _claim_status(store, effect.action_identity) == "uncertain"
+    v2 = _plan(version=2)
+    store.append_action_plan_version(
+        effect.classification_id,
+        v2,
+        confirmed_category=v2.category,
+    )
+    replay = EmailReplyDelivery(store, harness, owner=OWNER_B).deliver(effect)
+
+    assert replay.status == "failed"
+    assert replay.error_code == "email_reply_outcome_unresolved"
+    assert harness.acceptance_count == 0
+    assert len(harness.smtp_accounts) == 1
+
+
+def test_terminated_owner_after_claim_before_provider_call_remains_reconcile_only(
+    tmp_path: Path,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    account = store.get_account(effect.account_id)
+    assert account is not None
+    claim = store.claim_email_reply_dispatch(
+        action_identity=effect.action_identity,
+        effect_digest=effect.effect_digest,
+        action_plan_id=effect.action_plan_id,
+        classification_id=effect.classification_id,
+        account_id=effect.account_id,
+        stable_message_identity=effect.stable_message_identity,
+        outgoing_message_id=outgoing_message_id(
+            effect.action_identity,
+            "stardust.ai",
+        ),
+        sender=effect.sender,
+        thread_identity=effect.thread_identity,
+        expected_account_updated_at=account["updated_at"],
+        owner=OWNER_A,
+    )
+    assert claim is not None and claim["acquired"] is True
+
+    assert store.recover_terminated_email_reply_dispatch_claims(
+        owner=OWNER_A,
+        termination_verifier=lambda owner: owner == OWNER_A,
+        recovered_at="2026-08-30T09:00:00+00:00",
+    ) == 1
+    replay = EmailReplyDelivery(store, harness, owner=OWNER_B).deliver(effect)
+
+    assert replay.status == "failed"
+    assert replay.error_code == "email_reply_outcome_unresolved"
+    assert harness.smtp_accounts == []
+    assert harness.acceptance_count == 0
+
+
+def test_non_owner_cannot_transition_live_dispatch_claim(tmp_path: Path) -> None:
+    store, _, effect = _delivery_setup(tmp_path)
+    account = store.get_account(effect.account_id)
+    assert account is not None
+    claim = store.claim_email_reply_dispatch(
+        action_identity=effect.action_identity,
+        effect_digest=effect.effect_digest,
+        action_plan_id=effect.action_plan_id,
+        classification_id=effect.classification_id,
+        account_id=effect.account_id,
+        stable_message_identity=effect.stable_message_identity,
+        outgoing_message_id=outgoing_message_id(
+            effect.action_identity,
+            "stardust.ai",
+        ),
+        sender=effect.sender,
+        thread_identity=effect.thread_identity,
+        expected_account_updated_at=account["updated_at"],
+        owner=OWNER_A,
+    )
+    assert claim is not None and claim["acquired"] is True
+
+    with pytest.raises(
+        EmailReplyDispatchConflict,
+        match="owner fence changed",
+    ):
+        store.mark_email_reply_dispatch_uncertain(
+            effect.action_identity,
+            owner=OWNER_B,
+        )
+
+    assert _claim_status(store, effect.action_identity) == "dispatching"
+
+
+def test_final_claim_transaction_rejects_forged_action_identity(tmp_path: Path) -> None:
+    store, _, effect = _delivery_setup(tmp_path)
+    account = store.get_account(effect.account_id)
+    assert account is not None
+
+    claim = store.claim_email_reply_dispatch(
+        action_identity="email-action:forged",
+        effect_digest=effect.effect_digest,
+        action_plan_id=effect.action_plan_id,
+        classification_id=effect.classification_id,
+        account_id=effect.account_id,
+        stable_message_identity=effect.stable_message_identity,
+        outgoing_message_id=outgoing_message_id(
+            "email-action:forged",
+            "stardust.ai",
+        ),
+        sender=effect.sender,
+        thread_identity=effect.thread_identity,
+        expected_account_updated_at=account["updated_at"],
+        owner=OWNER_A,
+    )
+
+    assert claim is None
 
 
 def test_dispatch_claim_blocks_plan_correction_until_dispatch_is_reconciled(
@@ -475,6 +886,52 @@ def test_historical_timeout_acceptance_reconciles_after_plan_switch_and_restart(
     assert store.get_email_reply_receipt(effect.action_identity) is not None
 
 
+def test_persisted_receipt_completes_after_account_is_disabled_without_provider_read(
+    tmp_path: Path,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    first = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+    reads_after_first = harness.sent_read_count
+    _update_account(store, enabled=False)
+
+    replay = EmailReplyDelivery(store, harness, owner=OWNER_B).deliver(effect)
+
+    assert first.status == replay.status == "done"
+    assert replay.operation == "persisted_receipt"
+    assert harness.sent_read_count == reads_after_first
+    assert harness.acceptance_count == 1
+
+
+def test_uncertain_accepted_reply_uses_frozen_account_for_readonly_reconciliation(
+    tmp_path: Path,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    harness.timeout_after_acceptance = True
+
+    first = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+    _update_account(
+        store,
+        enabled=False,
+        imap_host="imap.reconfigured.example",
+        imap_secret_reference="keychain://imap-reconfigured",
+    )
+    replay = EmailReplyDelivery(
+        EmailStore(store.path),
+        harness,
+        owner=OWNER_B,
+    ).deliver(effect)
+
+    assert first.status == "failed"
+    assert first.error_code == "email_reply_outcome_unresolved"
+    assert replay.status == "done"
+    assert replay.operation == "sent_readback"
+    assert harness.sent_accounts[-1] == (
+        "account-primary",
+        "imap.primary.example",
+    )
+    assert harness.acceptance_count == 1
+
+
 def test_historical_effect_without_sent_evidence_never_dispatches_smtp(
     tmp_path: Path,
 ) -> None:
@@ -495,27 +952,6 @@ def test_historical_effect_without_sent_evidence_never_dispatches_smtp(
     assert harness.smtp_accounts == []
 
 
-def test_stale_dispatch_claim_recovery_never_repeats_possible_smtp(
-    tmp_path: Path,
-) -> None:
-    store, harness, effect = _delivery_setup(tmp_path)
-    harness.crash_before_acceptance = True
-
-    with pytest.raises(KeyboardInterrupt, match="simulated process crash"):
-        EmailReplyDelivery(store, harness).deliver(effect)
-
-    assert store.recover_stale_email_reply_dispatch_claims(
-        stale_before="9999-01-01T00:00:00+00:00",
-        recovered_at="2026-08-30T09:00:00+00:00",
-    ) == 1
-    replay = EmailReplyDelivery(EmailStore(store.path), harness).deliver(effect)
-
-    assert replay.status == "failed"
-    assert replay.error_code == "email_reply_outcome_unresolved"
-    assert harness.acceptance_count == 0
-    assert len(harness.smtp_accounts) == 1
-
-
 def test_equivalent_reply_in_sent_is_persisted_without_smtp(tmp_path: Path) -> None:
     store, harness, effect = _delivery_setup(tmp_path)
     harness.add_equivalent(effect)
@@ -528,6 +964,143 @@ def test_equivalent_reply_in_sent_is_persisted_without_smtp(tmp_path: Path) -> N
     assert store.get_email_reply_receipt(effect.action_identity)[
         "provider_result_id"
     ] == "sent-existing"
+
+
+@pytest.mark.parametrize("claim_status", ("dispatching", "uncertain"))
+def test_receipt_replay_self_heals_matching_unfinished_claim(
+    tmp_path: Path,
+    claim_status: str,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    first = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """
+            update email_reply_dispatch_claims set status=?
+            where action_identity=?
+            """,
+            (claim_status, effect.action_identity),
+        )
+
+    replay = EmailReplyDelivery(store, harness, owner=OWNER_B).deliver(effect)
+
+    assert first.status == replay.status == "done"
+    assert replay.operation == "persisted_receipt"
+    assert _claim_status(store, effect.action_identity) == "done"
+
+
+def test_receipt_insert_and_claim_done_roll_back_as_one_transaction(
+    tmp_path: Path,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    first = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+    assert first.status == "done"
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "delete from email_reply_receipts where action_identity=?",
+            (effect.action_identity,),
+        )
+        db.execute(
+            """
+            update email_reply_dispatch_claims set status='uncertain'
+            where action_identity=?
+            """,
+            (effect.action_identity,),
+        )
+        db.execute(
+            """
+            create trigger test_abort_reply_claim_done
+            before update of status on email_reply_dispatch_claims
+            when new.status='done'
+            begin
+                select raise(abort, 'simulated_claim_done_crash');
+            end
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="simulated_claim_done_crash"):
+        EmailReplyDelivery(store, harness, owner=OWNER_B).deliver(effect)
+
+    assert store.get_email_reply_receipt(effect.action_identity) is None
+    assert _claim_status(store, effect.action_identity) == "uncertain"
+
+
+def test_receipt_replay_allows_one_way_smtp_acceptance_id_enrichment(
+    tmp_path: Path,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    harness.add_equivalent(effect)
+    first = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+    assert first.status == "done"
+    receipt = store.get_email_reply_receipt(effect.action_identity)
+    assert receipt is not None
+    provider_receipt = receipt["provider_receipt"]
+    arguments = {
+        "action_identity": receipt["action_identity"],
+        "effect_digest": receipt["effect_digest"],
+        "action_plan_id": receipt["action_plan_id"],
+        "classification_id": receipt["classification_id"],
+        "account_id": receipt["account_id"],
+        "stable_message_identity": receipt["stable_message_identity"],
+        "outgoing_message_id": receipt["outgoing_message_id"],
+        "provider_operation": receipt["provider_operation"],
+        "provider_target": receipt["provider_target"],
+        "provider_result_id": receipt["provider_result_id"],
+        "sent_folder": provider_receipt["sent_folder"],
+        "sent_uidvalidity": provider_receipt["sent_uidvalidity"],
+        "sent_uid": provider_receipt["sent_uid"],
+    }
+
+    enriched = store.persist_email_reply_receipt(
+        **arguments,
+        smtp_acceptance_id="smtp-later",
+    )
+    replay_without_id = store.persist_email_reply_receipt(
+        **arguments,
+        smtp_acceptance_id="",
+    )
+
+    assert enriched["provider_receipt"]["smtp_acceptance_id"] == "smtp-later"
+    assert replay_without_id["provider_receipt"]["smtp_acceptance_id"] == "smtp-later"
+    with pytest.raises(EmailReplyReceiptConflict):
+        store.persist_email_reply_receipt(
+            **arguments,
+            smtp_acceptance_id="smtp-different",
+        )
+
+
+def test_concurrent_reconcilers_share_one_receipt_and_finish_same_claim(
+    tmp_path: Path,
+) -> None:
+    store, harness, effect = _delivery_setup(tmp_path)
+    harness.timeout_after_acceptance = True
+    first = EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
+    assert first.status == "failed"
+    harness.sent_barrier = threading.Barrier(2)
+    results = []
+
+    threads = [
+        threading.Thread(
+            target=lambda owner=owner: results.append(
+                EmailReplyDelivery(store, harness, owner=owner).deliver(effect)
+            )
+        )
+        for owner in (OWNER_A, OWNER_B)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert [result.status for result in results] == ["done", "done"]
+    assert _claim_status(store, effect.action_identity) == "done"
+    with sqlite3.connect(store.path) as db:
+        assert db.execute(
+            "select count(*) from email_reply_receipts where action_identity=?",
+            (effect.action_identity,),
+        ).fetchone()[0] == 1
+    assert harness.acceptance_count == 1
 
 
 def test_provider_read_failure_before_smtp_is_retryable_and_redacted(tmp_path: Path) -> None:

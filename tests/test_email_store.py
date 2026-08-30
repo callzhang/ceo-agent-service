@@ -1203,10 +1203,26 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
         "resulting_action_plan_id",
         "applied_at",
     }
+    reply_claim_columns = {
+        row["name"]
+        for row in _fetchall(
+            database,
+            "pragma table_info(email_reply_dispatch_claims)",
+        )
+    }
+    assert {
+        "owner_id",
+        "owner_generation",
+        "lease_token",
+        "sender",
+        "thread_identity",
+        "account_updated_at",
+        "account_snapshot_json",
+    } <= reply_claim_columns
     assert [
         row["version"]
         for row in _fetchall(database, "select version from email_schema_migrations")
-    ] == [8]
+    ] == [9]
 
 
 def test_reopen_rejects_feedback_request_linked_to_another_classification(
@@ -2019,6 +2035,7 @@ def test_durable_validation_boundary_normalizes_missing_row_field(
     )
     gc.collect()
     with sqlite3.connect(database) as db:
+        db.execute("drop trigger trg_email_reply_dispatch_blocks_thread_update")
         db.execute("alter table email_messages drop column thread_identity")
     monkeypatch.setattr(
         EmailStore,
@@ -2248,7 +2265,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 8]
+    ] == [2, 9]
 
     EmailStore(database)
 
