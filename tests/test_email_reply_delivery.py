@@ -353,7 +353,7 @@ def test_v7_store_migrates_fenced_reply_dispatch_claims_without_changing_rows(
     with sqlite3.connect(database) as db:
         assert db.execute(
             "select version from email_schema_migrations order by version desc limit 1"
-        ).fetchone()[0] == 9
+        ).fetchone()[0] == 10
         assert db.execute(
             "select count(*) from email_reply_dispatch_claims"
         ).fetchone()[0] == 0

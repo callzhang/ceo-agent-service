@@ -205,6 +205,24 @@ def _contains_forbidden_metadata(value: object) -> bool:
     )
 
 
+def _contains_unsubscribe_url_like_text(value: str) -> bool:
+    decoded = _decode_metadata_token(value)
+    if any(marker in decoded.casefold() for marker in ("http:", "https:", "file:")):
+        return True
+    for token in decoded.split():
+        candidate = token.strip("'\"()[]{}<>,.;")
+        normalized = candidate.replace("\\", "/")
+        if (
+            normalized.startswith(("/", "//", "~/"))
+            or "/" in normalized
+            or "?" in normalized
+            or "#" in normalized
+            or urlsplit(normalized).scheme
+        ):
+            return True
+    return False
+
+
 def _assert_safe_email_metadata(value: object) -> None:
     try:
         encoded = json.dumps(
@@ -365,6 +383,12 @@ def accepted_email_unsubscribe_effect(
 
     try:
         _assert_safe_email_metadata(accepted_action.model_dump(mode="json"))
+        if _contains_unsubscribe_url_like_text(
+            accepted_action.description
+        ) or _contains_unsubscribe_url_like_text(accepted_action.expected_verification):
+            raise EmailAgentTaskMetadataError(
+                "email unsubscribe proposal contains URL-like text"
+            )
     except EmailAgentTaskMetadataError as exc:
         raise ValueError("accepted unsubscribe proposal is not redacted") from exc
     try:
@@ -388,6 +412,11 @@ def accepted_email_unsubscribe_effect(
         "stable_message_identity": metadata.get("stable_message_identity"),
         "thread_identity": metadata.get("thread_identity"),
     }
+    if set(accepted_action.target) != {
+        *expected_target,
+        "entry_reference",
+    }:
+        raise ValueError("accepted unsubscribe proposal is invalid")
     if any(
         accepted_action.target.get(name) != expected
         for name, expected in expected_target.items()

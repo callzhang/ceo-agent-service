@@ -28,8 +28,12 @@ from app.email_store import (
     EmailClassificationIdentityCollision,
     EmailPersistenceCorruption,
     EmailTrainingInclusionConflict,
+    EmailUnsubscribeClaimConflict,
+    EmailUnsubscribeReceiptConflict,
     EmailStore,
+    email_unsubscribe_effect_digest,
 )
+from app.email_task_adapter import email_action_identity
 
 
 def _classification(
@@ -207,6 +211,80 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         return db.execute(sql, parameters).fetchall()
+
+
+_UNSUBSCRIBE_OWNER_A = {
+    "owner_id": "email-worker",
+    "generation": 21,
+    "lease_token": "unsubscribe-lease-a",
+}
+_UNSUBSCRIBE_OWNER_B = {
+    "owner_id": "email-worker",
+    "generation": 22,
+    "lease_token": "unsubscribe-lease-b",
+}
+
+
+def _unsubscribe_authorization(store: EmailStore) -> dict[str, object]:
+    store.create_account(
+        {
+            "account_id": "dingtalk-account",
+            "display_name": "DingTalk",
+            "email_address": "derek@example.com",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_tls": True,
+            "imap_username": "derek@example.com",
+            "imap_secret_reference": "keychain://imap-test",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 465,
+            "smtp_tls": True,
+            "smtp_username": "derek@example.com",
+            "smtp_secret_reference": "keychain://smtp-test",
+            "enabled": True,
+            "scan_folders": ["INBOX"],
+            "scan_interval_seconds": 60,
+        }
+    )
+    classification = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        actions=(EmailAction.UNSUBSCRIBE,),
+        action_parameters={},
+        thread_id="thread-unsubscribe-41",
+    )
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    plan = classification.action_plan
+    action_identity = email_action_identity(
+        account_id=classification.provider_locator.account_id,
+        stable_message_identity=classification.stable_message_identity,
+        action_type=EmailAction.UNSUBSCRIBE,
+        action_plan_version=plan.action_plan_version,
+    )
+    authorization = {
+        "action_identity": action_identity,
+        "action_plan_id": plan.action_plan_id,
+        "action_plan_version": plan.action_plan_version,
+        "classification_id": classification.classification_id,
+        "account_id": classification.provider_locator.account_id,
+        "stable_message_identity": classification.stable_message_identity,
+        "thread_identity": "thread-unsubscribe-41",
+        "entry_reference": "unsubscribe-entry:" + "b" * 64,
+        "operations": [
+            {
+                "operation_reference": "step-1",
+                "kind": "open_entry",
+                "target_reference": "entry",
+            },
+            {
+                "operation_reference": "step-2",
+                "kind": "click_confirmation",
+                "target_reference": "confirm-control",
+            },
+        ],
+    }
+    authorization["effect_digest"] = email_unsubscribe_effect_digest(**authorization)
+    return authorization
 
 
 def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) -> None:
@@ -1163,11 +1241,14 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
         "email_classifications",
         "email_category_configs",
         "email_action_plans",
-            "email_actions",
-            "email_action_attempts",
-            "email_feedback_requests",
-            "email_reply_receipts",
-            "email_reply_dispatch_claims",
+        "email_actions",
+        "email_action_attempts",
+        "email_feedback_requests",
+        "email_reply_receipts",
+        "email_reply_dispatch_claims",
+        "email_unsubscribe_claims",
+        "email_unsubscribe_steps",
+        "email_unsubscribe_receipts",
     } <= table_names
     assert "reply_tasks" not in table_names
     assert "agent_runs" not in table_names
@@ -1222,7 +1303,46 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
     assert [
         row["version"]
         for row in _fetchall(database, "select version from email_schema_migrations")
-    ] == [9]
+    ] == [10]
+
+
+def test_v9_store_atomically_adds_unsubscribe_durability_without_data_loss(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v9-unsubscribe-migration.sqlite3"
+    store = EmailStore(database)
+    authorization = _unsubscribe_authorization(store)
+    account_before = store.get_account(str(authorization["account_id"]))
+    with sqlite3.connect(database) as db:
+        for trigger in (
+            "trg_email_unsubscribe_blocks_plan_switch",
+            "trg_email_unsubscribe_blocks_account_update",
+            "trg_email_unsubscribe_blocks_account_delete",
+            "trg_email_unsubscribe_blocks_message_update",
+            "trg_email_unsubscribe_blocks_message_delete",
+        ):
+            db.execute(f"drop trigger {trigger}")
+        db.execute("drop table email_unsubscribe_steps")
+        db.execute("drop table email_unsubscribe_receipts")
+        db.execute("drop table email_unsubscribe_claims")
+        db.execute("update email_schema_migrations set version=9")
+
+    migrated = EmailStore(database)
+
+    assert migrated.get_account(str(authorization["account_id"])) == account_before
+    with sqlite3.connect(database) as db:
+        assert (
+            db.execute("select max(version) from email_schema_migrations").fetchone()[0]
+            == 10
+        )
+        assert {
+            row[0]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        } >= {
+            "email_unsubscribe_claims",
+            "email_unsubscribe_steps",
+            "email_unsubscribe_receipts",
+        }
 
 
 def test_reopen_rejects_feedback_request_linked_to_another_classification(
@@ -2036,6 +2156,7 @@ def test_durable_validation_boundary_normalizes_missing_row_field(
     gc.collect()
     with sqlite3.connect(database) as db:
         db.execute("drop trigger trg_email_reply_dispatch_blocks_thread_update")
+        db.execute("drop trigger trg_email_unsubscribe_blocks_message_update")
         db.execute("alter table email_messages drop column thread_identity")
     monkeypatch.setattr(
         EmailStore,
@@ -2265,7 +2386,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 9]
+    ] == [2, 10]
 
     EmailStore(database)
 
@@ -4478,6 +4599,249 @@ def test_corrupt_historical_action_plan_is_rejected_on_open(tmp_path: Path):
 
     with pytest.raises(EmailPersistenceCorruption, match="ActionPlan"):
         EmailStore(database)
+
+
+def test_unsubscribe_schema_migrates_and_durable_journal_receipt_survive_restart(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "unsubscribe-durable.sqlite3"
+    store = EmailStore(database)
+    authorization = _unsubscribe_authorization(store)
+
+    claim = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    assert claim is not None and claim["acquired"] is True
+    store.append_email_unsubscribe_step(
+        action_identity=authorization["action_identity"],
+        effect_digest=authorization["effect_digest"],
+        sequence=1,
+        operation="open_entry",
+        state="action_required",
+        reference="state-after-open",
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    persisted = store.persist_email_unsubscribe_terminal(
+        **{
+            key: authorization[key]
+            for key in (
+                "action_identity",
+                "effect_digest",
+                "action_plan_id",
+                "action_plan_version",
+                "classification_id",
+                "account_id",
+                "stable_message_identity",
+                "thread_identity",
+                "entry_reference",
+                "operations",
+            )
+        },
+        outcome="done",
+        receipt_id="unsubscribe-receipt:done-41",
+        evidence="terminal-page",
+        final_step={
+            "sequence": 2,
+            "operation": "click_confirmation",
+            "state": "done",
+            "reference": "unsubscribe-receipt:done-41",
+        },
+        claim_owner=_UNSUBSCRIBE_OWNER_A,
+    )
+
+    reopened = EmailStore(database)
+    assert (
+        reopened.get_email_unsubscribe_receipt(authorization["action_identity"])
+        == persisted
+    )
+    assert reopened.list_email_unsubscribe_steps(authorization["action_identity"]) == [
+        {
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "action_required",
+            "reference": "state-after-open",
+            "created_at": reopened.list_email_unsubscribe_steps(
+                authorization["action_identity"]
+            )[0]["created_at"],
+        },
+        {
+            "sequence": 2,
+            "operation": "click_confirmation",
+            "state": "done",
+            "reference": "unsubscribe-receipt:done-41",
+            "created_at": reopened.list_email_unsubscribe_steps(
+                authorization["action_identity"]
+            )[1]["created_at"],
+        },
+    ]
+    with sqlite3.connect(database) as db:
+        assert (
+            db.execute("select max(version) from email_schema_migrations").fetchone()[0]
+            == 10
+        )
+
+
+@pytest.mark.parametrize("mutation", ("plan", "status", "account", "message"))
+def test_unsubscribe_claim_fences_current_authorization_during_browser_write(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    store = EmailStore(tmp_path / f"unsubscribe-fence-{mutation}.sqlite3")
+    authorization = _unsubscribe_authorization(store)
+    claim = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    assert claim is not None and claim["acquired"] is True
+
+    with pytest.raises(
+        sqlite3.IntegrityError, match="email_unsubscribe_write_in_flight"
+    ):
+        if mutation == "plan":
+            with sqlite3.connect(store.path) as db:
+                db.execute(
+                    "update email_classifications set current_action_plan_id=null "
+                    "where id=?",
+                    (authorization["classification_id"],),
+                )
+        elif mutation == "status":
+            with sqlite3.connect(store.path) as db:
+                db.execute(
+                    "update email_classifications set status='pending_feedback' "
+                    "where id=?",
+                    (authorization["classification_id"],),
+                )
+        elif mutation == "account":
+            current = store.get_account(str(authorization["account_id"]))
+            assert current is not None
+            store.update_account(
+                str(authorization["account_id"]),
+                {**current, "enabled": False},
+            )
+        else:
+            with sqlite3.connect(store.path) as db:
+                db.execute(
+                    "update email_messages set thread_identity='changed-thread' "
+                    "where stable_message_identity=?",
+                    (authorization["stable_message_identity"],),
+                )
+
+
+def test_unsubscribe_claim_recovery_requires_proven_owner_termination(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "unsubscribe-owner-recovery.sqlite3")
+    authorization = _unsubscribe_authorization(store)
+    store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+
+    with pytest.raises(EmailUnsubscribeClaimConflict, match="termination"):
+        store.recover_terminated_email_unsubscribe_claims(
+            owner=_UNSUBSCRIBE_OWNER_A,
+            termination_verifier=lambda _owner: False,
+            recovered_at="2026-08-30T10:00:00+00:00",
+        )
+    assert (
+        store.get_email_unsubscribe_claim(authorization["action_identity"])["status"]
+        == "dispatching"
+    )
+    assert (
+        store.recover_terminated_email_unsubscribe_claims(
+            owner=_UNSUBSCRIBE_OWNER_A,
+            termination_verifier=lambda owner: owner == _UNSUBSCRIBE_OWNER_A,
+            recovered_at="2026-08-30T10:01:00+00:00",
+        )
+        == 1
+    )
+    assert (
+        store.get_email_unsubscribe_claim(authorization["action_identity"])["status"]
+        == "uncertain"
+    )
+
+
+def test_unsubscribe_receipt_is_exactly_bound_and_terminal_write_is_atomic(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "unsubscribe-receipt-binding.sqlite3")
+    authorization = _unsubscribe_authorization(store)
+    store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    receipt_arguments = {
+        key: authorization[key]
+        for key in (
+            "action_identity",
+            "effect_digest",
+            "action_plan_id",
+            "action_plan_version",
+            "classification_id",
+            "account_id",
+            "stable_message_identity",
+            "thread_identity",
+            "entry_reference",
+            "operations",
+        )
+    }
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            """
+            create trigger test_abort_unsubscribe_claim_done
+            before update of status on email_unsubscribe_claims
+            when new.status='done'
+            begin
+                select raise(abort, 'simulated_unsubscribe_terminal_crash');
+            end
+            """
+        )
+
+    with pytest.raises(
+        sqlite3.IntegrityError,
+        match="simulated_unsubscribe_terminal_crash",
+    ):
+        store.persist_email_unsubscribe_terminal(
+            **receipt_arguments,
+            outcome="done",
+            receipt_id="unsubscribe-receipt:done-41",
+            evidence="terminal-page",
+            final_step={
+                "sequence": 1,
+                "operation": "open_entry",
+                "state": "done",
+                "reference": "unsubscribe-receipt:done-41",
+            },
+            claim_owner=_UNSUBSCRIBE_OWNER_A,
+        )
+    assert store.get_email_unsubscribe_receipt(authorization["action_identity"]) is None
+    assert store.list_email_unsubscribe_steps(authorization["action_identity"]) == []
+
+    with sqlite3.connect(store.path) as db:
+        db.execute("drop trigger test_abort_unsubscribe_claim_done")
+    store.persist_email_unsubscribe_terminal(
+        **receipt_arguments,
+        outcome="done",
+        receipt_id="unsubscribe-receipt:done-41",
+        evidence="terminal-page",
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "done",
+            "reference": "unsubscribe-receipt:done-41",
+        },
+        claim_owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    with pytest.raises(EmailUnsubscribeReceiptConflict):
+        store.persist_email_unsubscribe_terminal(
+            **{**receipt_arguments, "effect_digest": "c" * 64},
+            outcome="done",
+            receipt_id="unsubscribe-receipt:done-41",
+            evidence="terminal-page",
+            final_step=None,
+            claim_owner=None,
+        )
 
 
 def test_direct_action_parameters_must_match_immutable_plan(tmp_path: Path):

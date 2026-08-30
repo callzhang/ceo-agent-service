@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from app.agent_contracts import ProposedAction
 from app.email_task_adapter import accepted_email_unsubscribe_effect
+from app.email_classifier_contracts import (
+    EmailAction,
+    EmailCategory,
+    EmailClassification,
+    EmailClassificationStatus,
+    build_versioned_email_action_plan,
+)
+from app.email_store import EmailStore, email_action_identity
 from app.email_unsubscribe import (
     EmailUnsubscribeEffect,
     UnsubscribeBrowserError,
@@ -29,6 +38,30 @@ from app.store import ReplyTask
 
 
 TOKEN_URL = "https://news.example.com/unsubscribe?token=private-token"
+RUNTIME_PLAN = build_versioned_email_action_plan(
+    action_plan_version=1,
+    classification_id=41,
+    account_id="account-primary",
+    category=EmailCategory.SUBSCRIPTION,
+    classification_source="model",
+    confidence=0.98,
+    model_id="email-model:task11-test",
+    config_version="email-config:task11-test",
+    actions=(EmailAction.UNSUBSCRIBE,),
+    action_parameters={},
+    created_at=datetime(2026, 8, 30, 8, 0, tzinfo=timezone.utc),
+)
+ACTION_IDENTITY = email_action_identity(
+    account_id="account-primary",
+    stable_message_identity="account-primary:message-id:<mail-41@example.com>",
+    action_type=EmailAction.UNSUBSCRIBE,
+    action_plan_version=RUNTIME_PLAN.action_plan_version,
+)
+UNSUBSCRIBE_OWNER = {
+    "owner_id": "email-worker",
+    "generation": 31,
+    "lease_token": "unsubscribe-unit-owner",
+}
 
 
 def _operations(*kinds: UnsubscribeOperationKind) -> tuple[UnsubscribeOperation, ...]:
@@ -50,12 +83,12 @@ def _effect(
     operations: tuple[UnsubscribeOperation, ...] | None = None,
 ) -> EmailUnsubscribeEffect:
     return EmailUnsubscribeEffect(
-        action_identity="email-action:unsubscribe:test",
-        action_plan_id="email-plan:test",
-        action_plan_version=3,
+        action_identity=ACTION_IDENTITY,
+        action_plan_id=RUNTIME_PLAN.action_plan_id,
+        action_plan_version=RUNTIME_PLAN.action_plan_version,
         classification_id=41,
         account_id="account-primary",
-        stable_message_identity="account-primary:message:<mail-41@example.com>",
+        stable_message_identity="account-primary:message-id:<mail-41@example.com>",
         thread_identity="thread-41",
         entry_reference=unsubscribe_entry_reference(TOKEN_URL),
         operations=operations or _operations(UnsubscribeOperationKind.OPEN_ENTRY),
@@ -66,12 +99,12 @@ def _task() -> ReplyTask:
     payload = {
         "schema": "email_agent_action.v1",
         "action_type": "unsubscribe",
-        "action_identity": "email-action:unsubscribe:test",
-        "action_plan_id": "email-plan:test",
-        "action_plan_version": 3,
+        "action_identity": ACTION_IDENTITY,
+        "action_plan_id": RUNTIME_PLAN.action_plan_id,
+        "action_plan_version": RUNTIME_PLAN.action_plan_version,
         "classification_id": 41,
         "account_id": "account-primary",
-        "stable_message_identity": "account-primary:message:<mail-41@example.com>",
+        "stable_message_identity": "account-primary:message-id:<mail-41@example.com>",
         "thread_identity": "thread-41",
     }
     return ReplyTask(
@@ -99,13 +132,13 @@ def _accepted_action() -> ProposedAction:
             "capability": "email_browser",
             "operation": "unsubscribe",
             "target": {
-                "action_identity": "email-action:unsubscribe:test",
+                "action_identity": ACTION_IDENTITY,
                 "account_id": "account-primary",
                 "stable_message_identity": (
-                    "account-primary:message:<mail-41@example.com>"
+                    "account-primary:message-id:<mail-41@example.com>"
                 ),
                 "thread_identity": "thread-41",
-                "entry_reference": "unsubscribe-entry:test",
+                "entry_reference": unsubscribe_entry_reference(TOKEN_URL),
             },
             "payload": {
                 "operations": [
@@ -192,19 +225,11 @@ def test_extracts_only_explicit_body_unsubscribe_links() -> None:
 def test_accepted_unsubscribe_effect_binds_exact_audited_operations() -> None:
     effect = accepted_email_unsubscribe_effect(_task(), _accepted_action())
 
-    assert effect == EmailUnsubscribeEffect(
-        action_identity="email-action:unsubscribe:test",
-        action_plan_id="email-plan:test",
-        action_plan_version=3,
-        classification_id=41,
-        account_id="account-primary",
-        stable_message_identity="account-primary:message:<mail-41@example.com>",
-        thread_identity="thread-41",
-        entry_reference="unsubscribe-entry:test",
-        operations=_operations(
+    assert effect == _effect(
+        _operations(
             UnsubscribeOperationKind.OPEN_ENTRY,
             UnsubscribeOperationKind.CLICK_CONFIRMATION,
-        ),
+        )
     )
 
 
@@ -230,6 +255,66 @@ def test_accepted_unsubscribe_effect_rejects_private_url_in_any_proposal_field()
         accepted_email_unsubscribe_effect(_task(), action)
 
     assert "private-token" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "unsafe_value"),
+    (
+        (
+            "description",
+            "Open https://news.example.com/u/opaque-user-id?uid=42",
+        ),
+        ("expected_verification", "Open /u/opaque-user-id/42"),
+        ("description", "Open https%3A%2F%2Fnews.example.com%2Fu%2F42"),
+        ("description", "Open https%253A%252F%252Fnews.example.com%252Fu%252F42"),
+    ),
+)
+def test_unsubscribe_proposal_rejects_all_url_like_text_outside_opaque_schema(
+    field: str,
+    unsafe_value: str,
+) -> None:
+    action = _accepted_action().model_copy(update={field: unsafe_value}, deep=True)
+
+    with pytest.raises(
+        ValueError, match="accepted unsubscribe proposal is not redacted"
+    ) as error:
+        accepted_email_unsubscribe_effect(_task(), action)
+
+    assert "news.example.com" not in str(error.value)
+    assert "opaque-user-id" not in str(error.value)
+
+
+def test_unsubscribe_proposal_uses_positive_exact_target_schema() -> None:
+    action = _accepted_action().model_copy(deep=True)
+    action.target["debug_note"] = "harmless-looking-extra-field"
+
+    with pytest.raises(ValueError, match="accepted unsubscribe proposal is invalid"):
+        accepted_email_unsubscribe_effect(_task(), action)
+
+
+def test_effect_digest_binds_plan_classification_entry_and_ordered_operations() -> None:
+    effect = _effect(
+        _operations(
+            UnsubscribeOperationKind.OPEN_ENTRY,
+            UnsubscribeOperationKind.CLICK_CONFIRMATION,
+        )
+    )
+    changed_plan = EmailUnsubscribeEffect(
+        **{
+            **effect.__dict__,
+            "action_plan_version": effect.action_plan_version + 1,
+        }
+    )
+    changed_order = EmailUnsubscribeEffect(
+        **{
+            **effect.__dict__,
+            "operations": tuple(reversed(effect.operations)),
+        }
+    )
+
+    assert effect.effect_digest != changed_plan.effect_digest
+    assert effect.effect_digest != changed_order.effect_digest
+    assert len(effect.effect_digest) == 64
 
 
 @pytest.mark.parametrize(
@@ -319,18 +404,88 @@ def _entry():
     return extract_unsubscribe_entries(list_unsubscribe=f"<{TOKEN_URL}>")[0]
 
 
-def _terminal_receipt() -> UnsubscribeTerminalReceipt:
+def _authorized_store(tmp_path: Path) -> EmailStore:
+    store = EmailStore(tmp_path / "unsubscribe.sqlite3")
+    store.create_account(
+        {
+            "account_id": "account-primary",
+            "display_name": "Primary",
+            "email_address": "derek@example.com",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_tls": True,
+            "imap_username": "derek@example.com",
+            "imap_secret_reference": "keychain://imap-test",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 465,
+            "smtp_tls": True,
+            "smtp_username": "derek@example.com",
+            "smtp_secret_reference": "keychain://smtp-test",
+            "enabled": True,
+            "scan_folders": ["INBOX"],
+            "scan_interval_seconds": 60,
+        }
+    )
+    store.upsert_classification(
+        EmailClassification.model_validate(
+            {
+                "classification_id": 41,
+                "stable_message_identity": (
+                    "account-primary:message-id:<mail-41@example.com>"
+                ),
+                "provider_locator": {
+                    "account_id": "account-primary",
+                    "folder": "INBOX",
+                    "uidvalidity": 42,
+                    "uid": 41,
+                    "rfc_message_id": "<mail-41@example.com>",
+                    "thread_id": "thread-41",
+                },
+                "category": EmailCategory.SUBSCRIPTION,
+                "confidence": 0.98,
+                "margin": 0.4,
+                "probabilities": {"subscription": 0.98},
+                "model_id": RUNTIME_PLAN.model_id,
+                "config_version": RUNTIME_PLAN.config_version,
+                "status": EmailClassificationStatus.PROCESSED,
+                "classification_source": "model",
+                "action_plan": RUNTIME_PLAN,
+            }
+        ),
+        sender="sender@example.com",
+        subject="Newsletter",
+        model_text="__subject__newsletter",
+        received_at="2026-08-30T08:00:00+00:00",
+    )
+    return store
+
+
+def _executor(tmp_path: Path, browser: _ScriptedBrowser) -> UnsubscribeExecutor:
+    return UnsubscribeExecutor(
+        _authorized_store(tmp_path),
+        browser,
+        owner=UNSUBSCRIBE_OWNER,
+    )
+
+
+def _terminal_receipt(
+    effect: EmailUnsubscribeEffect | None = None,
+) -> UnsubscribeTerminalReceipt:
+    effect = effect or _effect()
     return UnsubscribeTerminalReceipt(
         receipt_id="provider-receipt:done-41",
         evidence="terminal_page",
         entry_reference=unsubscribe_entry_reference(TOKEN_URL),
+        effect_digest=effect.effect_digest,
     )
 
 
-def test_restart_reconciles_receipt_before_page_and_never_replays_operations() -> None:
+def test_restart_reconciles_receipt_before_page_and_never_replays_operations(
+    tmp_path: Path,
+) -> None:
     browser = _ScriptedBrowser([], receipt=_terminal_receipt())
 
-    result = UnsubscribeExecutor(browser).execute(_effect(), (_entry(),))
+    result = _executor(tmp_path, browser).execute(_effect(), (_entry(),))
 
     assert result.outcome is UnsubscribeOutcome.DONE
     assert result.receipt == _terminal_receipt()
@@ -352,6 +507,7 @@ def test_restart_reconciles_receipt_before_page_and_never_replays_operations() -
 def test_reconciled_business_terminal_states_do_not_execute(
     state: UnsubscribePageState,
     outcome: UnsubscribeOutcome,
+    tmp_path: Path,
 ) -> None:
     browser = _ScriptedBrowser(
         [
@@ -363,7 +519,7 @@ def test_reconciled_business_terminal_states_do_not_execute(
         ]
     )
 
-    result = UnsubscribeExecutor(browser).execute(_effect(), (_entry(),))
+    result = _executor(tmp_path, browser).execute(_effect(), (_entry(),))
 
     assert result.outcome is outcome
     assert result.disposition.task_status in {"done", "skipped"}
@@ -389,10 +545,11 @@ def test_technical_failures_use_fixed_redacted_errors(
     error: Exception,
     outcome: UnsubscribeOutcome,
     code: str,
+    tmp_path: Path,
 ) -> None:
     browser = _ScriptedBrowser([], error=error)
 
-    result = UnsubscribeExecutor(browser).execute(_effect(), (_entry(),))
+    result = _executor(tmp_path, browser).execute(_effect(), (_entry(),))
 
     assert result.outcome is outcome
     assert result.error_code == code
@@ -401,20 +558,24 @@ def test_technical_failures_use_fixed_redacted_errors(
     assert "token=" not in json.dumps(result.redacted, sort_keys=True)
 
 
-def test_no_reliable_browser_entry_is_skipped_without_calling_browser() -> None:
+def test_no_reliable_browser_entry_is_skipped_without_calling_browser(
+    tmp_path: Path,
+) -> None:
     mailto_only = extract_unsubscribe_entries(
         list_unsubscribe="<mailto:leave@example.com?subject=unsubscribe>"
     )
     browser = _ScriptedBrowser([])
 
-    result = UnsubscribeExecutor(browser).execute(_effect(), mailto_only)
+    result = _executor(tmp_path, browser).execute(_effect(), mailto_only)
 
     assert result.outcome is UnsubscribeOutcome.SKIPPED_NO_RELIABLE_ENTRY
     assert result.disposition == UnsubscribeDisposition("skipped", False, False)
     assert browser.calls == []
 
 
-def test_executor_refuses_unreviewed_or_out_of_order_browser_operation() -> None:
+def test_executor_refuses_unreviewed_or_out_of_order_browser_operation(
+    tmp_path: Path,
+) -> None:
     browser = _ScriptedBrowser(
         [
             UnsubscribeObservation(
@@ -425,14 +586,14 @@ def test_executor_refuses_unreviewed_or_out_of_order_browser_operation() -> None
         ]
     )
 
-    result = UnsubscribeExecutor(browser).execute(_effect(), (_entry(),))
+    result = _executor(tmp_path, browser).execute(_effect(), (_entry(),))
 
     assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
     assert browser.calls == ["receipt", "inspect"]
     assert result.error_code == "email_unsubscribe_operation_mismatch"
 
 
-def test_restart_resumes_at_the_current_reviewed_operation() -> None:
+def test_restart_resumes_at_the_current_reviewed_operation(tmp_path: Path) -> None:
     operations = _operations(
         UnsubscribeOperationKind.OPEN_ENTRY,
         UnsubscribeOperationKind.CLICK_CONFIRMATION,
@@ -447,12 +608,12 @@ def test_restart_resumes_at_the_current_reviewed_operation() -> None:
             UnsubscribeObservation(
                 state=UnsubscribePageState.DONE,
                 state_reference="state-done",
-                receipt=_terminal_receipt(),
+                receipt=_terminal_receipt(_effect(operations)),
             ),
         ]
     )
 
-    result = UnsubscribeExecutor(browser).execute(
+    result = _executor(tmp_path, browser).execute(
         _effect(operations),
         (_entry(),),
     )
@@ -461,11 +622,99 @@ def test_restart_resumes_at_the_current_reviewed_operation() -> None:
     assert browser.calls == ["receipt", "inspect", "step-2"]
 
 
-def test_terminal_readback_must_match_the_authorized_entry() -> None:
+def test_restart_reads_durable_terminal_receipt_without_browser_replay(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    first_browser = _ScriptedBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-ready",
+                next_operation_reference="step-1",
+            ),
+            UnsubscribeObservation(
+                state=UnsubscribePageState.DONE,
+                state_reference="state-done",
+                receipt=_terminal_receipt(),
+            ),
+        ]
+    )
+    first = UnsubscribeExecutor(
+        store,
+        first_browser,
+        owner=UNSUBSCRIBE_OWNER,
+    ).execute(
+        _effect(),
+        (_entry(),),
+    )
+    restarted_browser = _ScriptedBrowser([])
+
+    replay = UnsubscribeExecutor(
+        EmailStore(store.path),
+        restarted_browser,
+        owner={
+            "owner_id": "email-worker",
+            "generation": 32,
+            "lease_token": "unsubscribe-unit-restart",
+        },
+    ).execute(_effect(), (_entry(),))
+
+    assert first.outcome is replay.outcome is UnsubscribeOutcome.DONE
+    assert replay.receipt == first.receipt
+    assert replay.journal == first.journal
+    assert restarted_browser.calls == []
+
+
+def test_historical_effect_may_reconcile_but_cannot_issue_new_browser_write(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    corrected_plan = build_versioned_email_action_plan(
+        action_plan_version=2,
+        classification_id=41,
+        account_id="account-primary",
+        category=EmailCategory.WORK,
+        classification_source="user",
+        confidence=0.98,
+        model_id=RUNTIME_PLAN.model_id,
+        config_version="email-config:task11-corrected",
+        actions=(EmailAction.LABEL,),
+        action_parameters={EmailAction.LABEL: {"labels": ["work"]}},
+        created_at=datetime(2026, 8, 30, 9, 0, tzinfo=timezone.utc),
+    )
+    store.append_action_plan_version(
+        41,
+        corrected_plan,
+        confirmed_category=EmailCategory.WORK,
+    )
+    browser = _ScriptedBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-ready",
+                next_operation_reference="step-1",
+            )
+        ]
+    )
+
+    result = UnsubscribeExecutor(
+        store,
+        browser,
+        owner=UNSUBSCRIBE_OWNER,
+    ).execute(_effect(), (_entry(),))
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert result.error_code == "email_unsubscribe_authorization_stale"
+    assert browser.calls == ["receipt", "inspect"]
+
+
+def test_terminal_readback_must_match_the_authorized_entry(tmp_path: Path) -> None:
     mismatched_receipt = UnsubscribeTerminalReceipt(
         receipt_id="provider-receipt:other-entry",
         evidence="terminal_page",
         entry_reference="unsubscribe-entry:other",
+        effect_digest=_effect().effect_digest,
     )
     browser = _ScriptedBrowser(
         [
@@ -482,7 +731,7 @@ def test_terminal_readback_must_match_the_authorized_entry() -> None:
         ]
     )
 
-    result = UnsubscribeExecutor(browser).execute(_effect(), (_entry(),))
+    result = _executor(tmp_path, browser).execute(_effect(), (_entry(),))
 
     assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
     assert result.receipt is None
@@ -505,6 +754,7 @@ def test_redacted_receipt_rejects_credentials_and_urls(
             receipt_id=unsafe_reference,
             evidence="terminal_page",
             entry_reference=unsubscribe_entry_reference(TOKEN_URL),
+            effect_digest=_effect().effect_digest,
         )
 
     assert "private-value" not in str(error.value)
