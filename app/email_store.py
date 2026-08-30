@@ -24,7 +24,6 @@ from app.email_classifier_contracts import (
     EmailClassification,
     EmailClassificationStatus,
     EmailProviderLocator,
-    _action_plan_identity,
     build_email_action_plan,
 )
 
@@ -221,6 +220,12 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "status in ('done', 'failed')",
     ),
 }
+_REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
+    {
+        ("email_messages", "id"),
+        ("email_action_attempts", "id"),
+    }
+)
 _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_schema_migrations": ("version",),
     "email_classifications": ("id",),
@@ -499,6 +504,72 @@ def _extract_schema_checks(value: str) -> frozenset[tuple[str, ...]]:
     return frozenset(checks)
 
 
+def _schema_column_declarations(value: str) -> Mapping[str, tuple[str, ...]]:
+    tokens = _schema_sql_tokens(value)
+    try:
+        table_start = tokens.index("(")
+    except ValueError as exc:
+        raise EmailPersistenceCorruption("malformed email table declaration") from exc
+    declarations: dict[str, tuple[str, ...]] = {}
+    current: list[str] = []
+    depth = 1
+    for token in tokens[table_start + 1 :]:
+        if token == "(":
+            depth += 1
+            current.append(token)
+            continue
+        if token == ")":
+            depth -= 1
+            if depth == 0:
+                if current:
+                    first = current[0]
+                    if first not in {"check", "constraint", "foreign", "primary", "unique"}:
+                        declarations[first] = tuple(current)
+                break
+            if depth < 0:
+                raise EmailPersistenceCorruption("malformed email table declaration")
+            current.append(token)
+            continue
+        if token == "," and depth == 1:
+            if not current:
+                raise EmailPersistenceCorruption("malformed email table declaration")
+            first = current[0]
+            if first not in {"check", "constraint", "foreign", "primary", "unique"}:
+                declarations[first] = tuple(current)
+            current = []
+            continue
+        current.append(token)
+    else:
+        raise EmailPersistenceCorruption("malformed email table declaration")
+    return declarations
+
+
+def _expected_column_declaration(
+    *,
+    table: str,
+    column: str,
+    contract: _ColumnContract,
+) -> tuple[str, ...]:
+    declared_type, not_null, default = contract
+    tokens = [column, declared_type]
+    if _REQUIRED_PRIMARY_KEYS[table] == (column,):
+        tokens.extend(("primary", "key"))
+        if (table, column) in _REQUIRED_AUTOINCREMENT_COLUMNS:
+            tokens.append("autoincrement")
+    if not_null:
+        tokens.extend(("not", "null"))
+    if (column,) in _REQUIRED_UNIQUE_KEYS.get(table, ()):
+        tokens.append("unique")
+    if default is not None:
+        tokens.append("default")
+        tokens.extend(_schema_sql_tokens(default))
+    for check in _REQUIRED_TABLE_CHECKS.get(table, ()):
+        check_tokens = _schema_sql_tokens(check)
+        if column in check_tokens:
+            tokens.extend(("check", "(", *check_tokens, ")"))
+    return tuple(tokens)
+
+
 def _normalize_column_default(value: object) -> str | None:
     if value is None:
         return None
@@ -515,63 +586,6 @@ def _require_positive_int(value: int, *, field: str) -> None:
 def _direct_action_id(action_plan_id: str, action: EmailAction) -> str:
     digest = sha256(f"{action_plan_id}:{action.value}".encode("utf-8")).hexdigest()
     return f"email-action:{digest}"
-
-
-def _plan_authorization_signature(plan: EmailActionPlan) -> tuple[object, ...]:
-    """Compare authorization facts while ignoring scan-time identity fields."""
-
-    return (
-        plan.classification_id,
-        plan.account_id,
-        plan.category,
-        plan.classification_source,
-        plan.confidence,
-        plan.model_id,
-        plan.config_version,
-        plan.actions,
-        _json_dump(
-            {
-                action.value: dict(parameters)
-                for action, parameters in plan.action_parameters.items()
-            }
-        ),
-    )
-
-
-def _with_action_plan_version(
-    plan: EmailActionPlan,
-    *,
-    action_plan_version: int,
-) -> EmailActionPlan:
-    parameters = {
-        action: dict(values) for action, values in plan.action_parameters.items()
-    }
-    return EmailActionPlan(
-        action_plan_id=_action_plan_identity(
-            action_plan_version=action_plan_version,
-            classification_id=plan.classification_id,
-            account_id=plan.account_id,
-            category=plan.category,
-            classification_source=plan.classification_source,
-            confidence=plan.confidence,
-            model_id=plan.model_id,
-            config_version=plan.config_version,
-            actions=plan.actions,
-            action_parameters=parameters,
-            created_at=plan.created_at,
-        ),
-        action_plan_version=action_plan_version,
-        classification_id=plan.classification_id,
-        account_id=plan.account_id,
-        category=plan.category,
-        classification_source=plan.classification_source,
-        confidence=plan.confidence,
-        model_id=plan.model_id,
-        config_version=plan.config_version,
-        actions=plan.actions,
-        action_parameters=parameters,
-        created_at=plan.created_at,
-    )
 
 
 class EmailStore:
@@ -1088,6 +1102,12 @@ class EmailStore:
                     raise EmailPersistenceCorruption(
                         f"required primary key for {table} is missing or malformed"
                     )
+                table_sql = table_rows[table]["sql"]
+                if not isinstance(table_sql, str):
+                    raise EmailPersistenceCorruption(
+                        f"required declarations for {table} are missing or malformed"
+                    )
+                declarations = _schema_column_declarations(table_sql)
                 columns_by_name = {row["name"]: row for row in column_rows}
                 for column, expected in _REQUIRED_COLUMN_CONTRACTS[table].items():
                     column_row = columns_by_name[column]
@@ -1105,7 +1125,6 @@ class EmailStore:
                         raise EmailPersistenceCorruption(
                             f"{table} column {column} has malformed declaration"
                         )
-
                 indexes = {
                     row["name"]: row
                     for row in db.execute(f"pragma index_list({json.dumps(table)})")
@@ -1141,11 +1160,6 @@ class EmailStore:
 
                 required_checks = _REQUIRED_TABLE_CHECKS.get(table, ())
                 if required_checks:
-                    table_sql = table_rows[table]["sql"]
-                    if not isinstance(table_sql, str):
-                        raise EmailPersistenceCorruption(
-                            f"required checks for {table} are missing or malformed"
-                        )
                     actual_checks = _extract_schema_checks(table_sql)
                     for required_check in required_checks:
                         expected_check = _strip_wrapping_parentheses(
@@ -1155,6 +1169,19 @@ class EmailStore:
                             raise EmailPersistenceCorruption(
                                 f"required check for {table} is missing or malformed"
                             )
+
+                # PRAGMA table_info omits semantic clauses such as COLLATE.
+                # Compare the complete required declaration after the more
+                # specific key and CHECK diagnostics above.
+                for column, expected in _REQUIRED_COLUMN_CONTRACTS[table].items():
+                    if declarations.get(column) != _expected_column_declaration(
+                        table=table,
+                        column=column,
+                        contract=expected,
+                    ):
+                        raise EmailPersistenceCorruption(
+                            f"{table} column {column} has unapproved declaration clauses"
+                        )
 
             for index_name, (table, required_columns) in _REQUIRED_INDEXES.items():
                 index_row = indexes_by_table[table].get(index_name)
@@ -1695,73 +1722,6 @@ class EmailStore:
             )
         return by_identity
 
-    def _append_changed_model_plan(
-        self,
-        db: sqlite3.Connection,
-        *,
-        existing: sqlite3.Row,
-        classification: EmailClassification,
-        now: str,
-    ) -> None:
-        """Version a materially changed model authorization on a rescan."""
-
-        incoming = classification.action_plan
-        if (
-            incoming is None
-            or classification.status is not EmailClassificationStatus.PROCESSED
-            or classification.classification_source != "model"
-            or existing["status"] != EmailClassificationStatus.PROCESSED.value
-            or existing["classification_source"] != "model"
-            or existing["action_plan_json"] in {"", "null"}
-        ):
-            return
-        try:
-            current = EmailActionPlan.model_validate_json(existing["action_plan_json"])
-        except ValueError as exc:
-            raise EmailPersistenceCorruption(
-                f"invalid action_plan_json for classification {existing['id']}"
-            ) from exc
-        if _plan_authorization_signature(current) == _plan_authorization_signature(
-            incoming
-        ):
-            return
-        latest_version = db.execute(
-            "select max(action_plan_version) from email_action_plans where classification_id=?",
-            (classification.classification_id,),
-        ).fetchone()[0]
-        versioned = _with_action_plan_version(
-            incoming,
-            action_plan_version=int(latest_version or 0) + 1,
-        )
-        self._persist_action_plan(db, versioned, now=now)
-        db.execute(
-            """
-            update email_classifications
-            set category=?, predicted_category=?, confirmed_category=?,
-                confidence=?, margin=?, probabilities_json=?, model_id=?,
-                config_version=?, status=?, classification_source=?,
-                action_plan_json=?, current_action_plan_id=?,
-                legacy_processed_without_plan=0, updated_at=?
-            where id=?
-            """,
-            (
-                classification.category.value,
-                classification.category.value,
-                classification.category.value,
-                classification.confidence,
-                classification.margin,
-                _json_dump(classification.probabilities),
-                classification.model_id,
-                classification.config_version,
-                classification.status.value,
-                classification.classification_source,
-                versioned.model_dump_json(),
-                versioned.action_plan_id,
-                now,
-                classification.classification_id,
-            ),
-        )
-
     @staticmethod
     def _upsert_message(
         db: sqlite3.Connection,
@@ -2005,6 +1965,14 @@ class EmailStore:
             )
             return
         current_uidvalidity = int(current["uidvalidity"])
+        if (
+            expected_uidvalidity is not None
+            and current_uidvalidity != expected_uidvalidity
+        ):
+            raise EmailCursorConflict(
+                f"cursor generation conflict: expected {expected_uidvalidity}, "
+                f"found {current_uidvalidity}"
+            )
         if current_uidvalidity == uidvalidity:
             db.execute(
                 """
@@ -2027,11 +1995,6 @@ class EmailStore:
             raise EmailCursorConflict(
                 "cursor generation change requires expected_cursor_uidvalidity; "
                 f"current generation is {current_uidvalidity}"
-            )
-        if current_uidvalidity != expected_uidvalidity:
-            raise EmailCursorConflict(
-                f"cursor generation conflict: expected {expected_uidvalidity}, "
-                f"found {current_uidvalidity}"
             )
         updated = db.execute(
             """
@@ -2162,12 +2125,6 @@ class EmailStore:
                         ),
                     )
             else:
-                self._append_changed_model_plan(
-                    db,
-                    existing=existing,
-                    classification=classification,
-                    now=now,
-                )
                 db.execute(
                     """
                     update email_classifications

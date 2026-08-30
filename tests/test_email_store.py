@@ -37,6 +37,7 @@ def _classification(
     message_id: str = "msg-1",
     confidence: float = 0.93,
     model_id: str = "email/logistic/model-1",
+    config_version: str = "email-v1",
     category: EmailCategory = EmailCategory.WORK,
     actions: tuple[EmailAction, ...] = (EmailAction.LABEL,),
     action_parameters: dict[EmailAction, dict[str, object]] | None = None,
@@ -74,7 +75,7 @@ def _classification(
             classification_source="model",
             confidence=confidence,
             model_id=model_id,
-            config_version="email-v1",
+            config_version=config_version,
             actions=actions,
             action_parameters=action_parameters,
             created_at=created_at,
@@ -98,7 +99,7 @@ def _classification(
             "margin": 0.41,
             "probabilities": {"work": 0.93, "important": 0.52},
             "model_id": model_id,
-            "config_version": "email-v1",
+            "config_version": config_version,
             "status": status,
             "classification_source": "model",
             "action_plan": action_plan,
@@ -1255,6 +1256,46 @@ def test_current_schema_rejects_weakened_direct_action_checks(
 
 
 @pytest.mark.parametrize(
+    ("column", "action_type_declaration", "status_declaration"),
+    (
+        (
+            "action_type",
+            "text collate nocase not null check(action_type in "
+            "('label', 'mark_read', 'archive', 'move', 'trash'))",
+            "text not null check(status in ('pending', 'processing', 'done', 'failed'))",
+        ),
+        (
+            "status",
+            "text not null check(action_type in "
+            "('label', 'mark_read', 'archive', 'move', 'trash'))",
+            "text collate nocase not null "
+            "check(status in ('pending', 'processing', 'done', 'failed'))",
+        ),
+    ),
+)
+def test_current_schema_rejects_collation_on_required_direct_action_columns(
+    tmp_path: Path,
+    column: str,
+    action_type_declaration: str,
+    status_declaration: str,
+):
+    database = tmp_path / f"collated-email-actions-{column}.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    _replace_email_actions(
+        database,
+        action_type_declaration=action_type_declaration,
+        status_declaration=status_declaration,
+    )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match=rf"email_actions.*{column}",
+    ):
+        EmailStore(database)
+
+
+@pytest.mark.parametrize(
     ("attempt_number_declaration", "status_declaration"),
     (
         (
@@ -1284,6 +1325,27 @@ def test_current_schema_rejects_weakened_action_attempt_checks(
     with pytest.raises(
         EmailPersistenceCorruption,
         match="required check.*email_action_attempts",
+    ):
+        EmailStore(database)
+
+
+def test_current_schema_rejects_collation_on_required_action_attempt_status(
+    tmp_path: Path,
+):
+    database = tmp_path / "collated-email-action-attempt-status.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    _replace_email_action_attempts(
+        database,
+        attempt_number_declaration="integer not null check(attempt_number > 0)",
+        status_declaration=(
+            "text collate nocase not null check(status in ('done', 'failed'))"
+        ),
+    )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match=r"email_action_attempts.*status",
     ):
         EmailStore(database)
 
@@ -2243,6 +2305,117 @@ def test_exact_scan_replay_is_idempotent(tmp_path: Path):
     assert len(store.list_training_examples()) == 0
 
 
+def test_processed_model_rescan_preserves_business_snapshot_plan_and_actions(
+    tmp_path: Path,
+):
+    database = tmp_path / "processed-model-rescan.sqlite3"
+    store = EmailStore(database)
+    original = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="processed-model-rescan",
+        confidence=0.93,
+        model_id="email/logistic/model-original",
+        config_version="email-config-original",
+        category=EmailCategory.WORK,
+        actions=(EmailAction.LABEL,),
+        action_parameters={EmailAction.LABEL: {"labels": ["work"]}},
+        thread_id="thread-original",
+    )
+    _persist_scan(store, original)
+    classification_before = dict(
+        _fetchall(database, "select * from email_classifications")[0]
+    )
+    message_before = dict(_fetchall(database, "select * from email_messages")[0])
+    plans_before = [
+        dict(row)
+        for row in _fetchall(
+            database,
+            "select * from email_action_plans order by action_plan_version",
+        )
+    ]
+    actions_before = [
+        dict(row)
+        for row in _fetchall(database, "select * from email_actions order by action_id")
+    ]
+    training_before = store.list_training_examples()
+
+    changed = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="processed-model-rescan-changed",
+        confidence=0.51,
+        model_id="email/logistic/model-changed",
+        config_version="email-config-changed",
+        category=EmailCategory.PERSONAL,
+        actions=(EmailAction.MOVE,),
+        action_parameters={
+            EmailAction.MOVE: {"target_folder": "Archive/Personal"}
+        },
+        classification_id=original.classification_id,
+        stable_message_identity=original.stable_message_identity,
+        folder="Archive",
+        uidvalidity=84,
+        uid=9,
+        rfc_message_id=original.provider_locator.rfc_message_id,
+        thread_id="thread-current",
+    )
+    rescanned = _persist_scan(
+        store,
+        changed,
+        cursor_uidvalidity=84,
+        cursor_last_seen_uid=9,
+    )
+
+    classification_after = dict(
+        _fetchall(database, "select * from email_classifications")[0]
+    )
+    message_after = dict(_fetchall(database, "select * from email_messages")[0])
+    assert {
+        field: classification_after[field]
+        for field in ("folder", "uidvalidity", "uid", "thread_id")
+    } == {
+        "folder": "Archive",
+        "uidvalidity": 84,
+        "uid": 9,
+        "thread_id": "thread-current",
+    }
+    for field, value in classification_before.items():
+        if field not in {"folder", "uidvalidity", "uid", "thread_id", "updated_at"}:
+            assert classification_after[field] == value
+    assert {
+        field: message_after[field]
+        for field in ("folder", "uidvalidity", "uid", "thread_identity")
+    } == {
+        "folder": "Archive",
+        "uidvalidity": 84,
+        "uid": 9,
+        "thread_identity": "thread-current",
+    }
+    for field, value in message_before.items():
+        if field not in {"folder", "uidvalidity", "uid", "thread_identity", "updated_at"}:
+            assert message_after[field] == value
+    assert rescanned["category"] == classification_before["category"]
+    assert rescanned["model_id"] == classification_before["model_id"]
+    assert rescanned["confidence"] == classification_before["confidence"]
+    assert rescanned["config_version"] == classification_before["config_version"]
+    assert rescanned["current_action_plan_id"] == classification_before[
+        "current_action_plan_id"
+    ]
+    assert [
+        dict(row)
+        for row in _fetchall(
+            database,
+            "select * from email_action_plans order by action_plan_version",
+        )
+    ] == plans_before
+    assert [
+        dict(row)
+        for row in _fetchall(database, "select * from email_actions order by action_id")
+    ] == actions_before
+    assert store.list_training_examples() == training_before
+    assert len(_fetchall(database, "select * from email_messages")) == 1
+    assert len(_fetchall(database, "select * from email_classifications")) == 1
+
+
 def test_changed_plan_appends_next_version_and_preserves_history(tmp_path: Path):
     database = tmp_path / "history.sqlite3"
     store = EmailStore(database)
@@ -2594,6 +2767,74 @@ def test_cursor_generation_reset_requires_compare_and_set(tmp_path: Path):
     assert cursor is not None
     assert cursor["uidvalidity"] == 84
     assert cursor["last_seen_uid"] == 2
+
+
+def test_same_generation_update_rejects_stale_uidvalidity_expectation_atomically(
+    tmp_path: Path,
+):
+    database = tmp_path / "same-generation-stale-expectation.sqlite3"
+    store = EmailStore(database)
+    initial = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="same-generation-initial",
+        uid=9,
+    )
+    _persist_scan(store, initial, cursor_uidvalidity=42, cursor_last_seen_uid=9)
+    reset = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="same-generation-reset",
+        uidvalidity=84,
+        uid=2,
+    )
+    _persist_scan(
+        store,
+        reset,
+        cursor_uidvalidity=84,
+        cursor_last_seen_uid=2,
+        expected_cursor_uidvalidity=42,
+    )
+    counts_before = {
+        table: _fetchall(database, f"select count(*) as count from {table}")[0][
+            "count"
+        ]
+        for table in (
+            "email_messages",
+            "email_classifications",
+            "email_action_plans",
+            "email_actions",
+        )
+    }
+    stale = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="same-generation-stale",
+        uidvalidity=84,
+        uid=10,
+    )
+
+    with pytest.raises(email_store_module.EmailCursorConflict, match="expected 42"):
+        _persist_scan(
+            store,
+            stale,
+            cursor_uidvalidity=84,
+            cursor_last_seen_uid=10,
+            expected_cursor_uidvalidity=42,
+        )
+
+    cursor = store.get_scan_cursor("dingtalk-account", "INBOX")
+    assert cursor is not None
+    assert cursor["uidvalidity"] == 84
+    assert cursor["last_seen_uid"] == 2
+    assert {
+        table: _fetchall(database, f"select count(*) as count from {table}")[0][
+            "count"
+        ]
+        for table in counts_before
+    } == counts_before
+    assert not _fetchall(
+        database,
+        "select id from email_classifications where id=?",
+        (stale.classification_id,),
+    )
 
 
 def test_cursor_expectation_requires_cursor_progress(tmp_path: Path):

@@ -281,7 +281,7 @@ def test_high_confidence_eligible_category_creates_action_plan(tmp_path: Path):
     assert rows[0]["action_plan"]["actions"] == ["label"]
 
 
-def test_processed_model_rescan_changes_plan_identity_when_snapshot_facts_change(
+def test_processed_model_rescan_preserves_original_authorization_snapshot(
     tmp_path: Path,
 ):
     classifier = StaticClassifier(StaticPrediction("work", 0.91))
@@ -321,12 +321,12 @@ def test_processed_model_rescan_changes_plan_identity_when_snapshot_facts_change
     second_plan = second_rows[0]["action_plan"]
 
     assert first_plan["confidence"] == 0.91
-    assert second_plan["confidence"] == 0.99
+    assert second_plan["confidence"] == 0.91
     assert first_plan["model_id"] == "static-model-v1"
-    assert second_plan["model_id"] == "static-model-v2"
+    assert second_plan["model_id"] == "static-model-v1"
     assert first_plan["action_plan_version"] == 1
-    assert second_plan["action_plan_version"] == 2
-    assert first_plan["action_plan_id"] != second_plan["action_plan_id"]
+    assert second_plan["action_plan_version"] == 1
+    assert first_plan["action_plan_id"] == second_plan["action_plan_id"]
     with sqlite3.connect(tmp_path / "email.sqlite3") as db:
         plan_history = db.execute(
             """
@@ -338,8 +338,5 @@ def test_processed_model_rescan_changes_plan_identity_when_snapshot_facts_change
         current_action_plan_id = db.execute(
             "select current_action_plan_id from email_classifications"
         ).fetchone()[0]
-    assert plan_history == [
-        (first_plan["action_plan_id"], 1),
-        (second_plan["action_plan_id"], 2),
-    ]
-    assert current_action_plan_id == second_plan["action_plan_id"]
+    assert plan_history == [(first_plan["action_plan_id"], 1)]
+    assert current_action_plan_id == first_plan["action_plan_id"]
