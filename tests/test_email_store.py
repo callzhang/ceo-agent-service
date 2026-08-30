@@ -43,6 +43,7 @@ def _classification(
     uidvalidity: int = 42,
     uid: int | None = None,
     rfc_message_id: str | None = None,
+    thread_id: str | None = None,
 ) -> EmailClassification:
     generated_id = int.from_bytes(
         sha256(message_id.encode("utf-8")).digest()[:8], "big"
@@ -87,6 +88,7 @@ def _classification(
                 "uidvalidity": uidvalidity,
                 "uid": uid,
                 "rfc_message_id": rfc_message_id,
+                "thread_id": thread_id,
             },
             "category": category,
             "confidence": confidence,
@@ -777,6 +779,178 @@ def test_rescan_updates_locator_without_replacing_final_decision_or_plan(
     assert len(_fetchall(database, "select * from email_messages")) == 1
     assert len(_fetchall(database, "select * from email_action_plans")) == 1
     assert len(_fetchall(database, "select * from email_actions")) == 1
+
+
+def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
+    tmp_path: Path,
+):
+    database = tmp_path / "immutable-message-snapshot.sqlite3"
+    store = EmailStore(database)
+    store.upsert_config(
+        category=EmailCategory.IMPORTANT,
+        description="Requires attention",
+        threshold=0.97,
+        actions=(EmailAction.LABEL,),
+        action_parameters={EmailAction.LABEL: {"labels": ["important"]}},
+        enabled=True,
+        config_version="important-v1",
+    )
+    original = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="immutable-snapshot",
+        thread_id="thread-original",
+    )
+    store.persist_scan_result(
+        original,
+        sender="original-sender@example.com",
+        recipients=("original-to@example.com", "original-cc@example.com"),
+        subject="Original subject",
+        normalized_text="__subject__original normalized text",
+        preview="Original preview",
+        attachment_metadata=(
+            EmailAttachmentMetadata(
+                filename="original.pdf",
+                mime_type="application/pdf",
+                size_bytes=1024,
+                inline=False,
+            ),
+        ),
+        received_at="2026-08-29T15:59:00+00:00",
+        model_text="__subject__original normalized text",
+        cursor_uidvalidity=42,
+        cursor_last_seen_uid=original.provider_locator.uid,
+        cursor_last_success_at="2026-08-29T16:00:00+00:00",
+    )
+    confirmed = store.confirm_classification(
+        original.classification_id,
+        EmailCategory.IMPORTANT,
+    )
+    assert confirmed is not None
+
+    message_before = dict(_fetchall(database, "select * from email_messages")[0])
+    classification_before = dict(
+        _fetchall(database, "select * from email_classifications")[0]
+    )
+    plans_before = [
+        dict(row)
+        for row in _fetchall(
+            database,
+            "select * from email_action_plans order by action_plan_version",
+        )
+    ]
+    actions_before = [
+        dict(row)
+        for row in _fetchall(database, "select * from email_actions order by action_id")
+    ]
+    training_before = store.list_training_examples()
+    counts_before = {
+        table: _fetchall(database, f"select count(*) as count from {table}")[0][
+            "count"
+        ]
+        for table in (
+            "email_messages",
+            "email_classifications",
+            "email_action_plans",
+            "email_actions",
+        )
+    }
+
+    moved = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="immutable-snapshot-rescan",
+        confidence=0.21,
+        model_id="email/logistic/model-rescan",
+        category=EmailCategory.PERSONAL,
+        classification_id=original.classification_id,
+        stable_message_identity=original.stable_message_identity,
+        folder="Archive",
+        uidvalidity=84,
+        uid=9,
+        rfc_message_id=original.provider_locator.rfc_message_id,
+        thread_id="thread-current",
+    )
+    rescanned = store.persist_scan_result(
+        moved,
+        sender="different-sender@example.net",
+        recipients=("different-to@example.net",),
+        subject="Different subject",
+        normalized_text="__subject__different normalized text",
+        preview="Different preview",
+        attachment_metadata=(
+            EmailAttachmentMetadata(
+                filename="different.png",
+                mime_type="image/png",
+                size_bytes=9999,
+                inline=True,
+            ),
+        ),
+        received_at="2026-08-30T12:00:00+00:00",
+        model_text="__subject__different normalized text",
+        cursor_uidvalidity=84,
+        cursor_last_seen_uid=9,
+        cursor_last_success_at="2026-08-30T12:01:00+00:00",
+    )
+
+    message_after = dict(_fetchall(database, "select * from email_messages")[0])
+    classification_after = dict(
+        _fetchall(database, "select * from email_classifications")[0]
+    )
+    assert {
+        field: message_after[field]
+        for field in ("folder", "uidvalidity", "uid", "thread_identity")
+    } == {
+        "folder": "Archive",
+        "uidvalidity": 84,
+        "uid": 9,
+        "thread_identity": "thread-current",
+    }
+    for field in (
+        "id",
+        "account_id",
+        "stable_message_identity",
+        "rfc_message_id",
+        "sender",
+        "recipients_json",
+        "subject",
+        "normalized_text",
+        "preview",
+        "attachment_metadata_json",
+        "received_at",
+        "created_at",
+    ):
+        assert message_after[field] == message_before[field]
+
+    assert {
+        field: classification_after[field]
+        for field in ("folder", "uidvalidity", "uid", "thread_id")
+    } == {
+        "folder": "Archive",
+        "uidvalidity": 84,
+        "uid": 9,
+        "thread_id": "thread-current",
+    }
+    for field, value in classification_before.items():
+        if field not in {"folder", "uidvalidity", "uid", "thread_id", "updated_at"}:
+            assert classification_after[field] == value
+    assert rescanned["current_action_plan_id"] == confirmed["current_action_plan_id"]
+    assert [
+        dict(row)
+        for row in _fetchall(
+            database,
+            "select * from email_action_plans order by action_plan_version",
+        )
+    ] == plans_before
+    assert [
+        dict(row)
+        for row in _fetchall(database, "select * from email_actions order by action_id")
+    ] == actions_before
+    assert store.list_training_examples() == training_before
+    assert {
+        table: _fetchall(database, f"select count(*) as count from {table}")[0][
+            "count"
+        ]
+        for table in counts_before
+    } == counts_before
 
 
 def test_classification_id_collision_fails_closed_with_domain_error(tmp_path: Path):

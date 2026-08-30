@@ -902,19 +902,10 @@ class EmailStore:
                 received_at, created_at, updated_at
             ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(stable_message_identity) do update set
-                account_id=excluded.account_id,
                 folder=excluded.folder,
                 uidvalidity=excluded.uidvalidity,
                 uid=excluded.uid,
-                rfc_message_id=excluded.rfc_message_id,
                 thread_identity=excluded.thread_identity,
-                sender=excluded.sender,
-                recipients_json=excluded.recipients_json,
-                subject=excluded.subject,
-                normalized_text=excluded.normalized_text,
-                preview=excluded.preview,
-                attachment_metadata_json=excluded.attachment_metadata_json,
-                received_at=excluded.received_at,
                 updated_at=excluded.updated_at
             """,
             (
@@ -1224,22 +1215,14 @@ class EmailStore:
                 db.execute(
                     """
                     update email_classifications
-                    set account_id=?, folder=?, uidvalidity=?, uid=?,
-                        rfc_message_id=?, thread_id=?, sender=?, subject=?,
-                        preview=?, received_at=?, updated_at=?
+                    set folder=?, uidvalidity=?, uid=?, thread_id=?, updated_at=?
                     where id=?
                     """,
                     (
-                        locator.account_id,
                         locator.folder,
                         locator.uidvalidity,
                         locator.uid,
-                        locator.rfc_message_id,
                         locator.thread_id,
-                        sender,
-                        subject,
-                        preview,
-                        received_at,
                         now,
                         classification.classification_id,
                     ),
