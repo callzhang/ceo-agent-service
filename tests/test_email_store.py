@@ -954,6 +954,33 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_actions")) == 1
 
 
+def test_current_schema_initialization_uses_read_only_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    database = tmp_path / "current-schema-read-snapshot.sqlite3"
+    EmailStore(database)
+    statements: list[str] = []
+    original_connect = EmailStore._connect
+
+    def traced_connect(self: EmailStore) -> sqlite3.Connection:
+        db = original_connect(self)
+        db.set_trace_callback(statements.append)
+        return db
+
+    monkeypatch.setattr(EmailStore, "_connect", traced_connect)
+
+    EmailStore(database)
+
+    normalized = [" ".join(statement.lower().split()) for statement in statements]
+    assert "begin" in normalized
+    assert "begin immediate" not in normalized
+    assert not any(
+        statement.startswith(("create ", "alter ", "insert ", "update ", "delete "))
+        for statement in normalized
+    )
+
+
 def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
     tmp_path: Path,
 ):

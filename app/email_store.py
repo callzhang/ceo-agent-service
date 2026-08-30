@@ -184,18 +184,24 @@ class EmailStore:
             except sqlite3.OperationalError as exc:
                 if "locked" not in str(exc).lower():
                     raise
+            db.execute("begin")
+            latest_version = self._read_schema_version(db)
+            if latest_version == EMAIL_SCHEMA_VERSION:
+                self._validate_durable_state(db)
+                return
+            db.rollback()
             db.execute("begin immediate")
             self._create_migration_table(db)
-            latest_version = int(
-                db.execute(
-                    "select coalesce(max(version), 0) from email_schema_migrations"
-                ).fetchone()[0]
-            )
+            latest_version = self._read_schema_version(db)
+            assert latest_version is not None
             if latest_version > EMAIL_SCHEMA_VERSION:
                 raise EmailPersistenceCorruption(
                     f"database has newer schema version {latest_version}; "
                     f"this runtime supports {EMAIL_SCHEMA_VERSION}"
                 )
+            if latest_version == EMAIL_SCHEMA_VERSION:
+                self._validate_durable_state(db)
+                return
             self._create_base_tables(db)
             self._create_durable_tables(db)
             self._create_indexes_and_triggers(db)
@@ -213,6 +219,22 @@ class EmailStore:
                     (EMAIL_SCHEMA_VERSION, self._now()),
                 )
             self._validate_durable_state(db)
+
+    @staticmethod
+    def _read_schema_version(db: sqlite3.Connection) -> int | None:
+        migration_table = db.execute(
+            """
+            select 1 from sqlite_master
+            where type='table' and name='email_schema_migrations'
+            """
+        ).fetchone()
+        if migration_table is None:
+            return None
+        return int(
+            db.execute(
+                "select coalesce(max(version), 0) from email_schema_migrations"
+            ).fetchone()[0]
+        )
 
     @staticmethod
     def _create_migration_table(db: sqlite3.Connection) -> None:
