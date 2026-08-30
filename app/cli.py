@@ -2761,7 +2761,6 @@ def _wechat_service_components(settings: WorkerSettings) -> tuple:
 
     if not _cfg.wechat_reader_enabled():
         return ()
-    from app.wechat import service as _wx
 
     components = [
         ("wechat-producer", lambda: _run_wechat_loop(settings, "producer")),
