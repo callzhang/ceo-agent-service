@@ -4650,30 +4650,7 @@ class EmailStore:
                 )
                 if persisted["status"] == "dispatching":
                     return {**persisted, "acquired": same_owner}
-                if persisted["status"] == "done":
-                    return {**persisted, "acquired": False}
-                updated = db.execute(
-                    """
-                    update email_unsubscribe_claims
-                    set owner_id=?, owner_generation=?, lease_token=?,
-                        account_updated_at=?, status='dispatching',
-                        claimed_at=?, updated_at=?
-                    where action_identity=? and status='uncertain'
-                    """,
-                    (
-                        owner["owner_id"],
-                        owner["generation"],
-                        owner["lease_token"],
-                        live["account_updated_at"],
-                        claimed_at,
-                        claimed_at,
-                        action_identity,
-                    ),
-                ).rowcount
-                if updated != 1:
-                    raise EmailUnsubscribeClaimConflict(
-                        "unsubscribe claim changed concurrently"
-                    )
+                return {**persisted, "acquired": False}
             else:
                 db.execute(
                     """

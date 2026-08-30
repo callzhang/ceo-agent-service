@@ -39,6 +39,7 @@ _UNSUBSCRIBE_MARKERS = (
 _TERMINAL_STATES = frozenset(
     {"done", "already_unsubscribed", "login_required", "captcha", "payment"}
 )
+_UNRESOLVED_ERROR = "email_unsubscribe_outcome_unresolved"
 
 
 class UnsubscribeOutcome(str, Enum):
@@ -904,6 +905,8 @@ class UnsubscribeExecutor:
         durable = self._durable_result(effect)
         if durable is not None:
             return durable
+        claim = self.store.get_email_unsubscribe_claim(effect.action_identity)
+        reconciliation_only = claim is not None and claim["status"] == "uncertain"
         journal = [
             RedactedUnsubscribeStep(
                 operation=step["operation"],
@@ -922,6 +925,12 @@ class UnsubscribeExecutor:
             None,
         )
         if entry is None:
+            if reconciliation_only:
+                return _result(
+                    UnsubscribeOutcome.FAILED_BROWSER,
+                    journal,
+                    error_code=_UNRESOLVED_ERROR,
+                )
             receipt = UnsubscribeTerminalReceipt(
                 receipt_id=f"unsubscribe-terminal:{effect.effect_digest[:24]}",
                 evidence="entry-selection",
@@ -953,7 +962,11 @@ class UnsubscribeExecutor:
             return _result(
                 UnsubscribeOutcome.FAILED_BROWSER,
                 journal,
-                error_code="email_unsubscribe_browser_failed",
+                error_code=(
+                    _UNRESOLVED_ERROR
+                    if reconciliation_only
+                    else "email_unsubscribe_browser_failed"
+                ),
             )
         if receipt is not None:
             if (
@@ -990,7 +1003,11 @@ class UnsubscribeExecutor:
             return _result(
                 UnsubscribeOutcome.FAILED_BROWSER,
                 journal,
-                error_code="email_unsubscribe_browser_failed",
+                error_code=(
+                    _UNRESOLVED_ERROR
+                    if reconciliation_only
+                    else "email_unsubscribe_browser_failed"
+                ),
             )
         reconcile_step = RedactedUnsubscribeStep(
             operation="reconcile_state",
@@ -1008,6 +1025,13 @@ class UnsubscribeExecutor:
                 journal,
                 final_step=reconcile_step,
                 claim_owned=False,
+            )
+
+        if reconciliation_only:
+            return _result(
+                UnsubscribeOutcome.FAILED_BROWSER,
+                journal,
+                error_code=_UNRESOLVED_ERROR,
             )
 
         operation_references = [

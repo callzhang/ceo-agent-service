@@ -4762,6 +4762,38 @@ def test_unsubscribe_claim_recovery_requires_proven_owner_termination(
     )
 
 
+def test_uncertain_unsubscribe_claim_cannot_be_reacquired_for_blind_write(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "unsubscribe-uncertain-replay.sqlite3")
+    authorization = _unsubscribe_authorization(store)
+    first = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    assert first is not None and first["acquired"] is True
+    assert store.recover_terminated_email_unsubscribe_claims(
+        owner=_UNSUBSCRIBE_OWNER_A,
+        termination_verifier=lambda owner: owner == _UNSUBSCRIBE_OWNER_A,
+        recovered_at="2026-08-30T10:02:00+00:00",
+    ) == 1
+
+    replay = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_B,
+    )
+
+    assert replay is not None
+    assert replay["acquired"] is False
+    assert replay["status"] == "uncertain"
+    persisted = store.get_email_unsubscribe_claim(authorization["action_identity"])
+    assert persisted is not None
+    assert persisted["status"] == "uncertain"
+    assert persisted["owner_id"] == _UNSUBSCRIBE_OWNER_A["owner_id"]
+    assert persisted["owner_generation"] == _UNSUBSCRIBE_OWNER_A["generation"]
+    assert persisted["lease_token"] == _UNSUBSCRIBE_OWNER_A["lease_token"]
+
+
 def test_unsubscribe_receipt_is_exactly_bound_and_terminal_write_is_atomic(
     tmp_path: Path,
 ) -> None:

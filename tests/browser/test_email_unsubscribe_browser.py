@@ -39,6 +39,17 @@ pytestmark = pytest.mark.skipif(
 
 sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
 
+_BROWSER_OWNER = {
+    "owner_id": "email-worker",
+    "generation": 41,
+    "lease_token": "browser-fixture-owner",
+}
+_RESTART_OWNER = {
+    "owner_id": "email-worker",
+    "generation": 42,
+    "lease_token": "browser-fixture-restart",
+}
+
 
 def _page(
     state: str,
@@ -357,10 +368,24 @@ def _run(
     path: str,
     operations: tuple[UnsubscribeOperation, ...],
     confirmation_path: str = "",
+    recover_uncertain: bool = False,
 ):
     with _loopback_server() as origin:
         private_url = f"{origin}{path}?opaque=private-fixture-token"
         store, effect, entry = _setup(tmp_path, private_url, operations)
+        owner = _BROWSER_OWNER
+        if recover_uncertain:
+            claim = store.claim_email_unsubscribe_write(
+                **UnsubscribeExecutor._store_arguments(effect),
+                owner=_BROWSER_OWNER,
+            )
+            assert claim is not None and claim["acquired"] is True
+            assert store.recover_terminated_email_unsubscribe_claims(
+                owner=_BROWSER_OWNER,
+                termination_verifier=lambda candidate: candidate == _BROWSER_OWNER,
+                recovered_at="2026-08-30T12:00:00+00:00",
+            ) == 1
+            owner = _RESTART_OWNER
         context = chrome_browser.new_context()
         page = context.new_page()
         blocked: list[str] = []
@@ -392,17 +417,16 @@ def _run(
             result = UnsubscribeExecutor(
                 store,
                 browser,
-                owner={
-                    "owner_id": "email-worker",
-                    "generation": 41,
-                    "lease_token": "browser-fixture-owner",
-                },
+                owner=owner,
             ).execute(effect, (entry,))
         finally:
             context.close()
 
         assert blocked == []
-        assert _FixtureHandler.requests
+        if recover_uncertain:
+            assert _FixtureHandler.requests == []
+        else:
+            assert _FixtureHandler.requests
         assert all(path.startswith("/") for _, path in _FixtureHandler.requests)
         serialized = json.dumps(result.redacted, sort_keys=True)
         assert "private-fixture-token" not in serialized
@@ -514,3 +538,20 @@ def test_confirmation_email_fixture(tmp_path: Path, chrome_browser) -> None:
     assert result.receipt is not None
     assert result.receipt.evidence == "confirmation_mail"
     assert requests[-1] == ("GET", "/confirmation-receipt")
+
+
+def test_uncertain_claim_on_fresh_blank_page_never_navigates(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    result, requests = _run(
+        tmp_path,
+        chrome_browser,
+        path="/direct",
+        operations=_operations(UnsubscribeOperationKind.OPEN_ENTRY),
+        recover_uncertain=True,
+    )
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert result.error_code == "email_unsubscribe_outcome_unresolved"
+    assert requests == ()

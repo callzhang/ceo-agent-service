@@ -62,6 +62,11 @@ UNSUBSCRIBE_OWNER = {
     "generation": 31,
     "lease_token": "unsubscribe-unit-owner",
 }
+RESTART_OWNER = {
+    "owner_id": "email-worker",
+    "generation": 32,
+    "lease_token": "unsubscribe-unit-restart",
+}
 
 
 def _operations(*kinds: UnsubscribeOperationKind) -> tuple[UnsubscribeOperation, ...]:
@@ -400,6 +405,17 @@ class _ScriptedBrowser:
         return self.observations.pop(0)
 
 
+class _TerminateAfterExternalEffectBrowser(_ScriptedBrowser):
+    def execute_operation(
+        self,
+        effect: EmailUnsubscribeEffect,
+        private_url: str,
+        operation: UnsubscribeOperation,
+    ) -> UnsubscribeObservation:
+        self.calls.append(operation.operation_reference)
+        raise KeyboardInterrupt("simulated termination after provider effect")
+
+
 def _entry():
     return extract_unsubscribe_entries(list_unsubscribe=f"<{TOKEN_URL}>")[0]
 
@@ -653,17 +669,217 @@ def test_restart_reads_durable_terminal_receipt_without_browser_replay(
     replay = UnsubscribeExecutor(
         EmailStore(store.path),
         restarted_browser,
-        owner={
-            "owner_id": "email-worker",
-            "generation": 32,
-            "lease_token": "unsubscribe-unit-restart",
-        },
+        owner=RESTART_OWNER,
     ).execute(_effect(), (_entry(),))
 
     assert first.outcome is replay.outcome is UnsubscribeOutcome.DONE
     assert replay.receipt == first.receipt
     assert replay.journal == first.journal
     assert restarted_browser.calls == []
+
+
+def test_terminated_claim_after_external_effect_is_reconciliation_only(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    effect = _effect()
+    first_browser = _TerminateAfterExternalEffectBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-ready",
+                next_operation_reference="step-1",
+            )
+        ]
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="simulated termination"):
+        UnsubscribeExecutor(
+            store,
+            first_browser,
+            owner=UNSUBSCRIBE_OWNER,
+        ).execute(effect, (_entry(),))
+
+    assert first_browser.calls == ["receipt", "inspect", "step-1"]
+    assert store.get_email_unsubscribe_claim(effect.action_identity)["status"] == (
+        "dispatching"
+    )
+    assert [
+        step["operation"]
+        for step in store.list_email_unsubscribe_steps(effect.action_identity)
+    ] == ["reconcile_state"]
+    assert store.recover_terminated_email_unsubscribe_claims(
+        owner=UNSUBSCRIBE_OWNER,
+        termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
+        recovered_at="2026-08-30T11:00:00+00:00",
+    ) == 1
+    restarted_browser = _ScriptedBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-not-opened",
+                next_operation_reference="step-1",
+            )
+        ]
+    )
+
+    result = UnsubscribeExecutor(
+        EmailStore(store.path),
+        restarted_browser,
+        owner=RESTART_OWNER,
+    ).execute(effect, (_entry(),))
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert result.error_code == "email_unsubscribe_outcome_unresolved"
+    assert restarted_browser.calls == ["receipt", "inspect"]
+    assert [step.operation for step in result.journal] == ["reconcile_state"]
+    recovered_claim = store.get_email_unsubscribe_claim(effect.action_identity)
+    assert recovered_claim["status"] == "uncertain"
+    assert recovered_claim["owner_generation"] == UNSUBSCRIBE_OWNER["generation"]
+
+
+def test_uncertain_claim_without_journal_does_not_replay_from_blank_state(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    effect = _effect()
+    claim = store.claim_email_unsubscribe_write(
+        **UnsubscribeExecutor._store_arguments(effect),
+        owner=UNSUBSCRIBE_OWNER,
+    )
+    assert claim is not None and claim["acquired"] is True
+    assert store.list_email_unsubscribe_steps(effect.action_identity) == []
+    assert store.recover_terminated_email_unsubscribe_claims(
+        owner=UNSUBSCRIBE_OWNER,
+        termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
+        recovered_at="2026-08-30T11:01:00+00:00",
+    ) == 1
+    restarted_browser = _ScriptedBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-not-opened",
+                next_operation_reference="step-1",
+            )
+        ]
+    )
+
+    result = UnsubscribeExecutor(
+        EmailStore(store.path),
+        restarted_browser,
+        owner=RESTART_OWNER,
+    ).execute(effect, (_entry(),))
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert result.error_code == "email_unsubscribe_outcome_unresolved"
+    assert result.journal == ()
+    assert restarted_browser.calls == ["receipt", "inspect"]
+    assert store.get_email_unsubscribe_claim(effect.action_identity)["status"] == (
+        "uncertain"
+    )
+
+
+def test_uncertain_claim_missing_browser_state_stays_unresolved(tmp_path: Path) -> None:
+    store = _authorized_store(tmp_path)
+    effect = _effect()
+    claim = store.claim_email_unsubscribe_write(
+        **UnsubscribeExecutor._store_arguments(effect),
+        owner=UNSUBSCRIBE_OWNER,
+    )
+    assert claim is not None and claim["acquired"] is True
+    assert store.recover_terminated_email_unsubscribe_claims(
+        owner=UNSUBSCRIBE_OWNER,
+        termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
+        recovered_at="2026-08-30T11:01:30+00:00",
+    ) == 1
+    browser = _ScriptedBrowser(
+        [],
+        error=UnsubscribeBrowserError("recoverable browser state is missing"),
+    )
+
+    result = UnsubscribeExecutor(
+        EmailStore(store.path),
+        browser,
+        owner=RESTART_OWNER,
+    ).execute(effect, (_entry(),))
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert result.error_code == "email_unsubscribe_outcome_unresolved"
+    assert browser.calls == ["receipt", "inspect"]
+    assert store.get_email_unsubscribe_claim(effect.action_identity)["status"] == (
+        "uncertain"
+    )
+
+
+@pytest.mark.parametrize("terminal_source", ("receipt", "page"))
+def test_uncertain_claim_matching_terminal_evidence_completes_without_write(
+    terminal_source: str,
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    effect = _effect()
+    claim = store.claim_email_unsubscribe_write(
+        **UnsubscribeExecutor._store_arguments(effect),
+        owner=UNSUBSCRIBE_OWNER,
+    )
+    assert claim is not None and claim["acquired"] is True
+    assert store.recover_terminated_email_unsubscribe_claims(
+        owner=UNSUBSCRIBE_OWNER,
+        termination_verifier=lambda owner: owner == UNSUBSCRIBE_OWNER,
+        recovered_at="2026-08-30T11:02:00+00:00",
+    ) == 1
+    terminal_receipt = _terminal_receipt(effect)
+    browser = (
+        _ScriptedBrowser([], receipt=terminal_receipt)
+        if terminal_source == "receipt"
+        else _ScriptedBrowser(
+            [
+                UnsubscribeObservation(
+                    state=UnsubscribePageState.DONE,
+                    state_reference="state-done",
+                    receipt=terminal_receipt,
+                )
+            ]
+        )
+    )
+
+    result = UnsubscribeExecutor(
+        EmailStore(store.path),
+        browser,
+        owner=RESTART_OWNER,
+    ).execute(effect, (_entry(),))
+
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert result.receipt == terminal_receipt
+    assert browser.calls == (
+        ["receipt"] if terminal_source == "receipt" else ["receipt", "inspect"]
+    )
+    assert store.get_email_unsubscribe_claim(effect.action_identity)["status"] == (
+        "done"
+    )
+
+
+def test_initial_never_claimed_effect_executes_from_blank_start(tmp_path: Path) -> None:
+    effect = _effect()
+    browser = _ScriptedBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-not-opened",
+                next_operation_reference="step-1",
+            ),
+            UnsubscribeObservation(
+                state=UnsubscribePageState.DONE,
+                state_reference="state-done",
+                receipt=_terminal_receipt(effect),
+            ),
+        ]
+    )
+
+    result = _executor(tmp_path, browser).execute(effect, (_entry(),))
+
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert browser.calls == ["receipt", "inspect", "step-1"]
 
 
 def test_historical_effect_may_reconcile_but_cannot_issue_new_browser_write(
