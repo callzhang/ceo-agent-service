@@ -1,6 +1,10 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
 import sqlite3
 from pathlib import Path
+from threading import Barrier
+
+import pytest
 
 from app.store import AgentRole, AutoReplyStore
 from app.task_models import WorkItem
@@ -8,6 +12,23 @@ from app.task_models import WorkItem
 
 def _store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "task.sqlite3")
+
+
+def _email_task_values(trigger_message_id: str) -> dict[str, object]:
+    return {
+        "channel": "email",
+        "conversation_id": "email-thread:atomic",
+        "conversation_title": "Email action",
+        "single_chat": False,
+        "trigger_message_id": trigger_message_id,
+        "trigger_create_time": "2026-08-30T08:00:00+00:00",
+        "trigger_sender": "sender@example.com",
+        "trigger_text": "Immutable ActionPlan authorizes action.",
+        "trigger_message_json": json.dumps(
+            {"action_identity": trigger_message_id},
+            sort_keys=True,
+        ),
+    }
 
 
 def _claim_audit_run(
@@ -151,6 +172,88 @@ def test_ensure_reply_task_returns_one_immutable_queue_identity(tmp_path: Path):
         "action_identity": "email-action:def"
     }
     assert store.count_reply_tasks(channel="email") == 1
+
+
+def test_ensure_reply_tasks_rolls_back_group_on_identity_conflict(tmp_path: Path):
+    store = _store(tmp_path)
+    conflicting = _email_task_values("email-action:second")
+    store.ensure_reply_task(
+        **{
+            **conflicting,
+            "trigger_message_json": json.dumps({"action_identity": "different"}),
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="identity"):
+        store.ensure_reply_tasks(
+            (
+                _email_task_values("email-action:first"),
+                conflicting,
+            )
+        )
+
+    assert store.count_reply_tasks(channel="email") == 1
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        assert (
+            db.execute(
+                """
+                select count(*) from reply_tasks
+                where channel='email'
+                  and conversation_id='email-thread:atomic'
+                  and trigger_message_id='email-action:first'
+                """
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_ensure_reply_tasks_rolls_back_group_on_database_error(tmp_path: Path):
+    database = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            create trigger fail_second_email_task
+            before insert on reply_tasks
+            when new.trigger_message_id='email-action:second'
+            begin
+                select raise(abort, 'injected batch failure');
+            end
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="injected batch failure"):
+        store.ensure_reply_tasks(
+            (
+                _email_task_values("email-action:first"),
+                _email_task_values("email-action:second"),
+            )
+        )
+
+    assert store.count_reply_tasks(channel="email") == 0
+
+
+def test_concurrent_ensure_reply_task_groups_share_immutable_identities(
+    tmp_path: Path,
+):
+    database = tmp_path / "task.sqlite3"
+    AutoReplyStore(database)
+    ready = Barrier(2)
+    specs = (
+        _email_task_values("email-action:first"),
+        _email_task_values("email-action:second"),
+    )
+
+    def ensure_group() -> tuple[int, ...]:
+        store = AutoReplyStore(database)
+        ready.wait()
+        return tuple(task.id for task in store.ensure_reply_tasks(specs))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = executor.map(lambda _: ensure_group(), range(2))
+
+    assert first == second
+    assert AutoReplyStore(database).count_reply_tasks(channel="email") == 2
 
 
 def test_channel_identity_migration_accepts_quoted_index_names(tmp_path: Path):

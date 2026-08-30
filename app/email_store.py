@@ -29,9 +29,10 @@ from app.email_classifier_contracts import (
     build_email_action_plan,
     build_versioned_email_action_plan,
 )
+from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 6
+EMAIL_SCHEMA_VERSION = 7
 _CLASSIFICATION_STATUSES = frozenset(status.value for status in EmailClassificationStatus)
 _CLASSIFICATION_SOURCES = frozenset({"model", "user"})
 _CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
@@ -191,6 +192,21 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "resulting_action_plan_id": ("text", True, None),
         "applied_at": ("text", True, None),
     },
+    "email_reply_receipts": {
+        "action_identity": ("text", False, None),
+        "effect_digest": ("text", True, None),
+        "action_plan_id": ("text", True, None),
+        "classification_id": ("integer", True, None),
+        "account_id": ("text", True, None),
+        "stable_message_identity": ("text", True, None),
+        "outgoing_message_id": ("text", True, None),
+        "provider_operation": ("text", True, None),
+        "provider_target": ("text", True, None),
+        "provider_result_id": ("text", True, None),
+        "provider_receipt_json": ("text", True, None),
+        "display_excerpt": ("text", True, None),
+        "created_at": ("text", True, None),
+    },
 }
 _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
     table: frozenset(columns)
@@ -241,6 +257,14 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(resulting_action_plan_id) != ''",
         "trim(applied_at) != ''",
     ),
+    "email_reply_receipts": (
+        "trim(action_identity) != ''",
+        "trim(effect_digest) != ''",
+        "trim(outgoing_message_id) != ''",
+        "trim(provider_operation) != ''",
+        "trim(provider_result_id) != ''",
+        "json_valid(provider_receipt_json)",
+    ),
 }
 _REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
     {
@@ -259,6 +283,7 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_actions": ("action_id",),
     "email_action_attempts": ("id",),
     "email_feedback_requests": ("feedback_request_id",),
+    "email_reply_receipts": ("action_identity",),
 }
 _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_classifications": (("stable_message_identity",),),
@@ -270,6 +295,7 @@ _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
         ("resulting_action_plan_id",),
         ("expected_current_action_plan_id",),
     ),
+    "email_reply_receipts": (("outgoing_message_id",),),
 }
 _REQUIRED_FOREIGN_KEYS: Mapping[
     str,
@@ -297,6 +323,10 @@ _REQUIRED_FOREIGN_KEYS: Mapping[
             "action_plan_id",
             "RESTRICT",
         ),
+    ),
+    "email_reply_receipts": (
+        ("action_plan_id", "email_action_plans", "action_plan_id", "RESTRICT"),
+        ("classification_id", "email_classifications", "id", "RESTRICT"),
     ),
 }
 _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
@@ -411,6 +441,10 @@ class EmailActionPlanConflict(RuntimeError):
 
 class EmailActionAttemptConflict(RuntimeError):
     """A direct-action attempt conflicts with append-only history."""
+
+
+class EmailReplyReceiptConflict(RuntimeError):
+    """A stable automatic-reply identity conflicts with durable provider evidence."""
 
 
 @dataclass(frozen=True)
@@ -1226,6 +1260,35 @@ class EmailStore:
                     on delete restrict
             )
             """,
+            """
+            create table if not exists email_reply_receipts (
+                action_identity text primary key
+                    check(trim(action_identity) != ''),
+                effect_digest text not null
+                    check(trim(effect_digest) != ''),
+                action_plan_id text not null,
+                classification_id integer not null,
+                account_id text not null,
+                stable_message_identity text not null,
+                outgoing_message_id text not null unique
+                    check(trim(outgoing_message_id) != ''),
+                provider_operation text not null
+                    check(trim(provider_operation) != ''),
+                provider_target text not null,
+                provider_result_id text not null
+                    check(trim(provider_result_id) != ''),
+                provider_receipt_json text not null
+                    check(json_valid(provider_receipt_json)),
+                display_excerpt text not null,
+                created_at text not null,
+                foreign key(action_plan_id)
+                    references email_action_plans(action_plan_id)
+                    on delete restrict,
+                foreign key(classification_id)
+                    references email_classifications(id)
+                    on delete restrict
+            )
+            """,
         )
         for statement in statements:
             db.execute(statement)
@@ -1842,6 +1905,46 @@ class EmailStore:
             if not valid_version:
                 raise EmailPersistenceCorruption(
                     f"feedback request {request_id} has an inconsistent plan version"
+                )
+
+        for row in db.execute("select * from email_reply_receipts"):
+            receipt = self._email_reply_receipt_row(row)
+            provider_receipt = receipt["provider_receipt"]
+            if set(provider_receipt) != {
+                "sent_folder",
+                "sent_uidvalidity",
+                "sent_uid",
+                "smtp_acceptance_id",
+            }:
+                raise EmailPersistenceCorruption(
+                    "invalid durable email reply provider receipt"
+                )
+            try:
+                assert_no_credentials(provider_receipt)
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    "email reply provider receipt contains credentials"
+                ) from exc
+            plan = plans.get(receipt["action_plan_id"])
+            classification = classifications.get(receipt["classification_id"])
+            if (
+                plan is None
+                or classification is None
+                or plan.classification_id != receipt["classification_id"]
+                or plan.account_id != receipt["account_id"]
+                or classification["stable_message_identity"]
+                != receipt["stable_message_identity"]
+                or EmailAction.AUTO_REPLY not in plan.agent_actions
+                or not isinstance(provider_receipt["sent_folder"], str)
+                or not provider_receipt["sent_folder"]
+                or not isinstance(provider_receipt["sent_uidvalidity"], int)
+                or provider_receipt["sent_uidvalidity"] <= 0
+                or not isinstance(provider_receipt["sent_uid"], int)
+                or provider_receipt["sent_uid"] <= 0
+                or not isinstance(provider_receipt["smtp_acceptance_id"], str)
+            ):
+                raise EmailPersistenceCorruption(
+                    "email reply receipt does not match its immutable ActionPlan"
                 )
 
         for row in db.execute(
@@ -2657,6 +2760,197 @@ class EmailStore:
                 (account_id,),
             ).fetchone()
         return None if row is None else self._account_row(row)
+
+    def get_email_reply_delivery_authorization(
+        self,
+        classification_id: int,
+    ) -> dict[str, Any] | None:
+        """Read the current immutable auto-reply authorization and mail identity."""
+
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select
+                    classifications.id as classification_id,
+                    classifications.account_id as account_id,
+                    classifications.stable_message_identity
+                        as stable_message_identity,
+                    classifications.current_action_plan_id
+                        as current_action_plan_id,
+                    messages.thread_identity as thread_identity,
+                    plans.action_plan_version as action_plan_version,
+                    plans.actions_json as actions_json
+                from email_classifications as classifications
+                join email_messages as messages
+                  on messages.account_id=classifications.account_id
+                 and messages.stable_message_identity=
+                     classifications.stable_message_identity
+                join email_action_plans as plans
+                  on plans.action_plan_id=classifications.current_action_plan_id
+                where classifications.id=?
+                  and classifications.status='processed'
+                  and classifications.current_action_plan_id is not null
+                """,
+                (classification_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "classification_id": row["classification_id"],
+            "account_id": row["account_id"],
+            "stable_message_identity": row["stable_message_identity"],
+            "thread_identity": row["thread_identity"],
+            "current_action_plan_id": row["current_action_plan_id"],
+            "action_plan_version": row["action_plan_version"],
+            "actions": _json_load(
+                row["actions_json"],
+                field="actions_json",
+                expected_type=list,
+            ),
+        }
+
+    def get_email_reply_receipt(
+        self,
+        action_identity: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_reply_receipts where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+        return None if row is None else self._email_reply_receipt_row(row)
+
+    def persist_email_reply_receipt(
+        self,
+        *,
+        action_identity: str,
+        effect_digest: str,
+        action_plan_id: str,
+        classification_id: int,
+        account_id: str,
+        stable_message_identity: str,
+        outgoing_message_id: str,
+        provider_operation: str,
+        provider_target: str,
+        provider_result_id: str,
+        sent_folder: str,
+        sent_uidvalidity: int,
+        sent_uid: int,
+        smtp_acceptance_id: str,
+    ) -> dict[str, Any]:
+        """Persist minimal Sent evidence before a caller completes the effect."""
+
+        text_fields = {
+            "action_identity": action_identity,
+            "effect_digest": effect_digest,
+            "action_plan_id": action_plan_id,
+            "account_id": account_id,
+            "stable_message_identity": stable_message_identity,
+            "outgoing_message_id": outgoing_message_id,
+            "provider_operation": provider_operation,
+            "provider_target": provider_target,
+            "provider_result_id": provider_result_id,
+        }
+        if any(
+            not isinstance(value, str) or not value or value != value.strip()
+            for value in text_fields.values()
+        ):
+            raise ValueError("email reply receipt fields must be non-empty")
+        if not sent_folder or sent_folder != sent_folder.strip():
+            raise ValueError("sent_folder must be non-empty")
+        if classification_id <= 0 or sent_uidvalidity <= 0 or sent_uid <= 0:
+            raise ValueError("email reply receipt numeric fields must be positive")
+        if not isinstance(smtp_acceptance_id, str):
+            raise TypeError("smtp_acceptance_id must be text")
+        provider_receipt = {
+            "sent_folder": sent_folder,
+            "sent_uidvalidity": sent_uidvalidity,
+            "sent_uid": sent_uid,
+            "smtp_acceptance_id": smtp_acceptance_id,
+        }
+        assert_no_credentials(
+            {
+                "provider_operation": provider_operation,
+                "provider_target": provider_target,
+                "provider_result_id": provider_result_id,
+                "provider_receipt": provider_receipt,
+            }
+        )
+        created_at = self._now()
+        immutable = {
+            **text_fields,
+            "classification_id": classification_id,
+            "provider_receipt": provider_receipt,
+            "display_excerpt": "Automatic email reply verified in Sent.",
+        }
+        with self._connect() as db:
+            db.execute("begin immediate")
+            db.execute(
+                """
+                insert or ignore into email_reply_receipts (
+                    action_identity, effect_digest, action_plan_id, classification_id,
+                    account_id, stable_message_identity, outgoing_message_id,
+                    provider_operation, provider_target, provider_result_id,
+                    provider_receipt_json, display_excerpt, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    action_identity,
+                    effect_digest,
+                    action_plan_id,
+                    classification_id,
+                    account_id,
+                    stable_message_identity,
+                    outgoing_message_id,
+                    provider_operation,
+                    provider_target,
+                    provider_result_id,
+                    _json_dump(provider_receipt),
+                    immutable["display_excerpt"],
+                    created_at,
+                ),
+            )
+            row = db.execute(
+                "select * from email_reply_receipts where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            if row is None:
+                raise EmailReplyReceiptConflict(
+                    "email reply receipt was not persisted"
+                )
+            persisted = self._email_reply_receipt_row(row)
+            comparable = {
+                key: value
+                for key, value in persisted.items()
+                if key != "created_at"
+            }
+            if comparable != immutable:
+                raise EmailReplyReceiptConflict(
+                    "email reply identity is bound to different provider evidence"
+                )
+        return persisted
+
+    @staticmethod
+    def _email_reply_receipt_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "action_identity": row["action_identity"],
+            "effect_digest": row["effect_digest"],
+            "action_plan_id": row["action_plan_id"],
+            "classification_id": row["classification_id"],
+            "account_id": row["account_id"],
+            "stable_message_identity": row["stable_message_identity"],
+            "outgoing_message_id": row["outgoing_message_id"],
+            "provider_operation": row["provider_operation"],
+            "provider_target": row["provider_target"],
+            "provider_result_id": row["provider_result_id"],
+            "provider_receipt": _json_load(
+                row["provider_receipt_json"],
+                field="provider_receipt_json",
+                expected_type=dict,
+            ),
+            "display_excerpt": row["display_excerpt"],
+            "created_at": row["created_at"],
+        }
 
     def create_account(
         self,
