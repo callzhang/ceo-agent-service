@@ -1,11 +1,11 @@
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
 from app.email_classifier_contracts import (
-    EmailActionPlan,
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
@@ -71,26 +71,26 @@ def _assess_important(
 
 
 def _classification(message_id: str, category: EmailCategory) -> EmailClassification:
+    classification_id = int.from_bytes(
+        sha256(message_id.encode("utf-8")).digest()[:8], "big"
+    ) & ((1 << 63) - 1) or 1
     return EmailClassification(
-        message_id=message_id,
+        classification_id=classification_id,
         provider_locator=EmailProviderLocator(
-            provider="test", mailbox="INBOX", message_id=message_id
+            account_id="test-account",
+            folder="INBOX",
+            uidvalidity=1,
+            uid=classification_id,
         ),
         category=category,
         confidence=0.61,
         margin=0.11,
         probabilities={category.value: 0.61},
-        model_version="model-before-feedback",
+        model_id="email/logistic/model-before-feedback",
         config_version="email-v1",
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         classification_source="model",
-        action_plan=EmailActionPlan(
-            category=category,
-            threshold=0.95,
-            configured_actions=(),
-            eligible_for_actions=False,
-            config_version="email-v1",
-        ),
+        action_plan=None,
     )
 
 
@@ -118,8 +118,9 @@ def _store_with_confirmed_feedback(tmp_path: Path) -> EmailStore:
 
 def test_feedback_keeps_redacted_model_text_for_training(tmp_path: Path):
     store = EmailStore(tmp_path / "email.sqlite3")
+    classification = _classification("message-1", EmailCategory.WORK)
     row = store.upsert_classification(
-        _classification("message-1", EmailCategory.WORK),
+        classification,
         model_text="__from_domain__example.test __subject__项目 工作",
     )
 
@@ -127,7 +128,7 @@ def test_feedback_keeps_redacted_model_text_for_training(tmp_path: Path):
 
     assert store.list_training_examples() == [
         {
-            "message_id": "message-1",
+            "message_id": classification.provider_locator.stable_message_identity,
             "model_text": "__from_domain__example.test __subject__项目 工作",
             "label": "important",
         }
