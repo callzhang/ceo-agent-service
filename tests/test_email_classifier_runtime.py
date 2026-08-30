@@ -10,6 +10,7 @@ from app.email_classifier_scan import EmailScanConfig
 from app.email_classifier_training import CategoryEligibility
 from app.email_store import EmailStore
 from app.email_classifier_runtime import (
+    EmailClassifierRuntime,
     EmailClassifierUnavailable,
     load_active_classifier,
     scan_with_active_model,
@@ -113,15 +114,104 @@ def test_runtime_loads_model_and_runs_only_readonly_scan(tmp_path: Path):
         },
     )
 
+    runtime = EmailClassifierRuntime(registry)
     result = scan_with_active_model(
         FakeReadonlySource(),
         EmailStore(tmp_path / "email.sqlite3"),
         config,
-        registry=registry,
+        runtime=runtime,
         limit=1,
     )
 
     assert result.loaded.path == active
+    assert result.scan.persisted_count == 1
+
+
+def test_runtime_zero_mail_scan_still_polls_learning_with_cycle_clock(tmp_path: Path):
+    model = _model()
+    now = datetime(2026, 8, 29, 22, 0, tzinfo=timezone.utc)
+
+    class Registry:
+        def active_model_id_unverified(self):
+            return "active"
+
+        def active_manifest(self):
+            return SimpleNamespace(model_id="active")
+
+        def load_classifier(self, _model_id):
+            return model
+
+        def get_model(self, _model_id):
+            return SimpleNamespace(artifact_path=tmp_path / "active.pkl")
+
+    class Learning:
+        def __init__(self):
+            self.polls = []
+
+        def poll_retrain(self, *, now=None):
+            self.polls.append(now)
+
+    class EmptySource:
+        def fetch_recent(self, mailbox="INBOX", *, limit=50):
+            return []
+
+    learning = Learning()
+    runtime = EmailClassifierRuntime(Registry(), learning_service=learning)
+
+    result = scan_with_active_model(
+        EmptySource(),
+        EmailStore(tmp_path / "empty.sqlite3"),
+        EmailScanConfig.cold_start(),
+        runtime=runtime,
+        now=now,
+    )
+
+    assert result.scan.persisted_count == 0
+    assert learning.polls == [now]
+
+
+def test_runtime_reuses_failure_counter_across_three_scan_calls(tmp_path: Path):
+    model = _model()
+
+    class Broken:
+        def predict_message(self, message):
+            raise RuntimeError("broken")
+
+    class Registry:
+        def __init__(self):
+            self.fallbacks = 0
+
+        def active_model_id_unverified(self):
+            return "active"
+
+        def active_manifest(self):
+            return SimpleNamespace(model_id="active")
+
+        def load_classifier(self, model_id):
+            return Broken() if model_id == "active" else model
+
+        def get_model(self, model_id):
+            return SimpleNamespace(artifact_path=tmp_path / f"{model_id}.pkl")
+
+        def fallback_to_previous(self, **_values):
+            self.fallbacks += 1
+            return SimpleNamespace(model_id="previous")
+
+    registry = Registry()
+    runtime = EmailClassifierRuntime(registry)
+    store = EmailStore(tmp_path / "persistent.sqlite3")
+    config = EmailScanConfig.cold_start()
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="broken"):
+            scan_with_active_model(
+                FakeReadonlySource(), store, config, runtime=runtime, limit=1
+            )
+    result = scan_with_active_model(
+        FakeReadonlySource(), store, config, runtime=runtime, limit=1
+    )
+
+    assert registry.fallbacks == 1
     assert result.scan.persisted_count == 1
 
 
@@ -188,3 +278,24 @@ def test_training_subprocess_is_nonblocking_and_durably_polled(tmp_path: Path):
     terminal = controller.poll(run.run_id, now=now)
     assert terminal.status == "failed"
     assert terminal.reason == "training_subprocess_exited_without_result:0"
+
+
+def test_controller_restart_fails_orphaned_running_record_and_allows_learning_retry(
+    tmp_path: Path,
+):
+    now = datetime(2026, 8, 29, 21, 0, tzinfo=timezone.utc)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    first = TrainingSubprocessController(
+        registry,
+        launcher=lambda _command: SimpleNamespace(pid=4321, poll=lambda: None),
+    )
+    run = first.start(["python", "-m", "trainer"], now=now)
+    restarted = TrainingSubprocessController(
+        registry,
+        pid_is_alive=lambda pid: False,
+    )
+
+    failed = restarted.poll(run.run_id, now=now)
+
+    assert failed.status == "failed"
+    assert failed.reason == "training_subprocess_orphaned"

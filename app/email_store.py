@@ -28,7 +28,7 @@ from app.email_classifier_contracts import (
 )
 
 
-EMAIL_SCHEMA_VERSION = 4
+EMAIL_SCHEMA_VERSION = 5
 _CLASSIFICATION_STATUSES = frozenset(status.value for status in EmailClassificationStatus)
 _CLASSIFICATION_SOURCES = frozenset({"model", "user"})
 _CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
@@ -307,6 +307,23 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
         when new.classification_source not in ('model', 'user')
         begin
             select raise(abort, 'invalid email classification source');
+        end
+    """,
+    "trg_email_training_inclusion_invalidate": """
+        create trigger trg_email_training_inclusion_invalidate
+        after update of confirmed_category, model_text, confirmed_at,
+                        classification_source, status on email_classifications
+        when old.included_in_model_id is not null and (
+            old.confirmed_category is not new.confirmed_category or
+            old.model_text is not new.model_text or
+            old.confirmed_at is not new.confirmed_at or
+            old.classification_source is not new.classification_source or
+            old.status is not new.status
+        )
+        begin
+            update email_classifications
+            set included_in_model_id=null
+            where id=new.id;
         end
     """,
 }
@@ -613,6 +630,21 @@ def _direct_action_id(action_plan_id: str, action: EmailAction) -> str:
     return f"email-action:{digest}"
 
 
+def _training_sample_digest(sample: Mapping[str, object]) -> str:
+    stable_fields = (
+        sample.get("message_id"),
+        sample.get("label"),
+        sample.get("model_text"),
+        sample.get("confirmed_at"),
+        sample.get("classification_source"),
+        sample.get("status"),
+    )
+    payload = json.dumps(
+        stable_fields, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
 class EmailStore:
     """Persist messages, classifier results, immutable plans, and direct actions."""
 
@@ -667,6 +699,7 @@ class EmailStore:
                     self._migrate_prototype_schema(db)
                 self._ensure_legacy_processed_without_plan_column(db)
                 self._ensure_training_inclusion_column(db)
+                self._ensure_training_inclusion_trigger(db)
                 if is_prototype:
                     self._backfill_prototype_rows(db)
                 if latest_version in {0, 2}:
@@ -848,6 +881,28 @@ class EmailStore:
             table="email_classifications",
             column="included_in_model_id",
             declaration="text",
+        )
+
+    @staticmethod
+    def _ensure_training_inclusion_trigger(db: sqlite3.Connection) -> None:
+        db.execute(
+            """
+            create trigger if not exists trg_email_training_inclusion_invalidate
+            after update of confirmed_category, model_text, confirmed_at,
+                            classification_source, status on email_classifications
+            when old.included_in_model_id is not null and (
+                old.confirmed_category is not new.confirmed_category or
+                old.model_text is not new.model_text or
+                old.confirmed_at is not new.confirmed_at or
+                old.classification_source is not new.classification_source or
+                old.status is not new.status
+            )
+            begin
+                update email_classifications
+                set included_in_model_id=null
+                where id=new.id;
+            end
+            """
         )
 
     @staticmethod
@@ -2593,7 +2648,8 @@ class EmailStore:
             rows = db.execute(
                 """
                 select id, account_id, stable_message_identity, model_text,
-                       confirmed_category as label, included_in_model_id
+                       confirmed_category as label, included_in_model_id,
+                       confirmed_at, classification_source, status
                 from email_classifications
                 where classification_source='user'
                   and status='processed'
@@ -2603,8 +2659,9 @@ class EmailStore:
                 order by id asc
                 """
             ).fetchall()
-        return [
-            {
+        result = []
+        for row in rows:
+            sample = {
                 "message_id": row["stable_message_identity"],
                 "model_text": row["model_text"],
                 "label": row["label"],
@@ -2613,13 +2670,18 @@ class EmailStore:
                         "classification_id": row["id"],
                         "account_id": row["account_id"],
                         "included_in_model_id": row["included_in_model_id"],
+                        "confirmed_at": row["confirmed_at"],
+                        "classification_source": row["classification_source"],
+                        "status": row["status"],
                     }
                     if include_inclusion
                     else {}
                 ),
             }
-            for row in rows
-        ]
+            if include_inclusion:
+                sample["sample_digest"] = _training_sample_digest(sample)
+            result.append(sample)
+        return result
 
     def list_unincluded_training_examples(self) -> list[dict[str, Any]]:
         return [
@@ -2629,9 +2691,10 @@ class EmailStore:
         ]
 
     def mark_training_examples_included(
-        self, sample_identities: Sequence[str], *, model_id: str
+        self, samples: Sequence[Mapping[str, object]], *, model_id: str
     ) -> None:
-        identities = tuple(dict.fromkeys(sample_identities))
+        snapshots = {str(item.get("message_id", "")): item for item in samples}
+        identities = tuple(snapshots)
         if not identities or not model_id.strip():
             raise ValueError("sample identities and model_id are required")
         with self._connect() as db:
@@ -2639,7 +2702,9 @@ class EmailStore:
             placeholders = ",".join("?" for _ in identities)
             rows = db.execute(
                 f"""
-                select stable_message_identity, included_in_model_id
+                select id, account_id, stable_message_identity, model_text,
+                       confirmed_category as label, included_in_model_id,
+                       confirmed_at, classification_source, status
                 from email_classifications
                 where stable_message_identity in ({placeholders})
                   and classification_source='user'
@@ -2654,6 +2719,25 @@ class EmailStore:
                 raise EmailTrainingInclusionConflict(
                     "training sample set changed before inclusion"
                 )
+            for row in rows:
+                current = {
+                    "message_id": row["stable_message_identity"],
+                    "model_text": row["model_text"],
+                    "label": row["label"],
+                    "classification_id": row["id"],
+                    "account_id": row["account_id"],
+                    "included_in_model_id": row["included_in_model_id"],
+                    "confirmed_at": row["confirmed_at"],
+                    "classification_source": row["classification_source"],
+                    "status": row["status"],
+                }
+                expected_digest = snapshots[row["stable_message_identity"]].get(
+                    "sample_digest"
+                )
+                if expected_digest != _training_sample_digest(current):
+                    raise EmailTrainingInclusionConflict(
+                        "training sample changed before inclusion"
+                    )
             if any(
                 row["included_in_model_id"] not in (None, model_id)
                 for row in rows

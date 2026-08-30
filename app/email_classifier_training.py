@@ -213,6 +213,7 @@ def train_and_promote(
     minimum_examples: int = 5,
     minimum_per_category: int = 2,
     category_requirements: Mapping[EmailCategory, EligibilityRequirement] | None = None,
+    training_examples: Sequence[Mapping[str, object]] | None = None,
 ) -> TrainingResult:
     """Train a candidate, validate its immutable artifact, and promote atomically."""
     if not isinstance(registry, EmailModelRegistry):
@@ -228,7 +229,11 @@ def train_and_promote(
             minimum_per_category=minimum_per_category,
         )
     started = datetime.now(timezone.utc)
-    examples = store.list_training_examples(include_inclusion=True)
+    examples = list(
+        training_examples
+        if training_examples is not None
+        else store.list_training_examples(include_inclusion=True)
+    )
     readiness = assess_examples_readiness(
         examples,
         minimum_examples=minimum_examples,
@@ -236,13 +241,12 @@ def train_and_promote(
     )
     if not readiness.ready:
         raise TrainingNotReady("; ".join(readiness.reasons))
-    sample_ids = tuple(example["message_id"] for example in examples)
-    new_sample_ids = tuple(
-        example["message_id"]
+    new_sample_snapshots = tuple(
+        dict(example)
         for example in examples
         if example["included_in_model_id"] is None
     )
-    if not new_sample_ids:
+    if not new_sample_snapshots:
         raise TrainingNotReady("no unincluded authoritative feedback")
 
     validation_method, expected, predicted = _validation_predictions(examples, c=c)
@@ -293,7 +297,7 @@ def train_and_promote(
             training_started_at=started.isoformat(),
             training_finished_at=finished.astimezone(timezone.utc).isoformat(),
             sample_count=len(examples),
-            new_sample_count=len(new_sample_ids),
+            new_sample_count=len(new_sample_snapshots),
             category_counts=readiness.category_counts,
             account_counts=dict(Counter(str(item["account_id"]) for item in examples)),
             validation_method=validation_method,
@@ -333,7 +337,7 @@ def train_and_promote(
         registry.reject(model_id, reason=rejection)
         return _result(metadata, promoted=False, status="rejected", reason=rejection)
     registry.promote(model_id, reason="candidate_validation_passed")
-    store.mark_training_examples_included(sample_ids, model_id=model_id)
+    store.mark_training_examples_included(new_sample_snapshots, model_id=model_id)
     return _result(metadata, promoted=True, status="active", reason="candidate_validation_passed")
 
 

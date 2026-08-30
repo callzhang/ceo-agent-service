@@ -119,10 +119,12 @@ class TrainingSubprocessRun:
     status: str
     pid: int
     started_at: str
+    updated_at: str = ""
     finished_at: str | None = None
     exit_code: int | None = None
     model_id: str | None = None
     reason: str | None = None
+    sample_snapshots: tuple[dict[str, object], ...] = ()
 
 
 class TrainingSubprocessController:
@@ -134,10 +136,16 @@ class TrainingSubprocessController:
         *,
         store_path: str | Path | None = None,
         launcher=subprocess.Popen,
+        pid_is_alive=None,
+        stale_after_seconds: float = 300.0,
     ):
         self.registry = registry
         self.store_path = Path(store_path) if store_path is not None else None
         self.launcher = launcher
+        self.pid_is_alive = pid_is_alive or _pid_is_alive
+        if stale_after_seconds <= 0:
+            raise ValueError("stale_after_seconds must be positive")
+        self.stale_after_seconds = stale_after_seconds
         self._processes: dict[str, object] = {}
 
     def start(
@@ -166,11 +174,19 @@ class TrainingSubprocessController:
             ]
         if not command or not all(isinstance(item, str) and item for item in command):
             raise ValueError("training command must contain non-empty strings")
+        snapshots = tuple(
+            EmailStore(self.store_path).list_training_examples(include_inclusion=True)
+            if self.store_path is not None
+            else ()
+        )
+        timestamp = _format_timestamp(now)
         queued = TrainingSubprocessRun(
             run_id=run_id,
             status="queued",
             pid=0,
-            started_at=_format_timestamp(now),
+            started_at=timestamp,
+            updated_at=timestamp,
+            sample_snapshots=snapshots,
         )
         self._save_run(queued)
         process = self.launcher(command)
@@ -178,7 +194,9 @@ class TrainingSubprocessController:
             run_id=run_id,
             status="running",
             pid=int(process.pid),
-            started_at=_format_timestamp(now),
+            started_at=timestamp,
+            updated_at=timestamp,
+            sample_snapshots=snapshots,
         )
         self._processes[run.run_id] = process
         self._save_run(run)
@@ -191,6 +209,16 @@ class TrainingSubprocessController:
             return durable
         process = self._processes.get(run_id)
         if process is None:
+            updated_at = _parse_timestamp(durable.updated_at or durable.started_at)
+            stale = (_as_utc(now) - updated_at).total_seconds() >= self.stale_after_seconds
+            if stale:
+                return self._fail_orphan(
+                    durable, now=now, reason="training_subprocess_stale"
+                )
+            if durable.pid <= 0 or not self.pid_is_alive(durable.pid):
+                return self._fail_orphan(
+                    durable, now=now, reason="training_subprocess_orphaned"
+                )
             return durable
         exit_code = process.poll()
         if exit_code is None:
@@ -204,13 +232,29 @@ class TrainingSubprocessController:
             status="failed",
             pid=prior.pid,
             started_at=prior.started_at,
+            updated_at=_format_timestamp(now),
             finished_at=_format_timestamp(now),
             exit_code=int(exit_code),
             reason=f"training_subprocess_exited_without_result:{exit_code}",
+            sample_snapshots=prior.sample_snapshots,
         )
         self._save_run(completed)
         self._processes.pop(run_id, None)
         return completed
+
+    def _fail_orphan(
+        self, run: TrainingSubprocessRun, *, now: datetime, reason: str
+    ) -> TrainingSubprocessRun:
+        failed = replace(
+            run,
+            status="failed",
+            updated_at=_format_timestamp(now),
+            finished_at=_format_timestamp(now),
+            exit_code=None,
+            reason=reason,
+        )
+        self._save_run(failed)
+        return failed
 
     def _run_path(self, run_id: str) -> Path:
         if not run_id or Path(run_id).name != run_id:
@@ -371,6 +415,18 @@ def _as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _run_training_job(
     *, db_path: Path, registry_path: Path, run_id: str, trained_at: datetime
 ) -> int:
@@ -381,21 +437,28 @@ def _run_training_job(
         status="running",
         pid=os.getpid(),
         started_at=_format_timestamp(trained_at),
+        updated_at=_format_timestamp(datetime.now(timezone.utc)),
+        sample_snapshots=controller._load_run(run_id).sample_snapshots,
     )
     controller._save_run(started)
     try:
         result = train_and_promote(
-            EmailStore(db_path), registry, trained_at=trained_at
+            EmailStore(db_path),
+            registry,
+            trained_at=trained_at,
+            training_examples=started.sample_snapshots,
         )
         terminal = TrainingSubprocessRun(
             run_id=run_id,
             status="succeeded" if result.promoted else "rejected",
             pid=os.getpid(),
             started_at=started.started_at,
+            updated_at=_format_timestamp(datetime.now(timezone.utc)),
             finished_at=_format_timestamp(datetime.now(timezone.utc)),
             exit_code=0,
             model_id=result.model_id,
             reason=result.promotion_reason,
+            sample_snapshots=started.sample_snapshots,
         )
         controller._save_run(terminal)
         return 0
@@ -406,9 +469,11 @@ def _run_training_job(
                 status="failed",
                 pid=os.getpid(),
                 started_at=started.started_at,
+                updated_at=_format_timestamp(datetime.now(timezone.utc)),
                 finished_at=_format_timestamp(datetime.now(timezone.utc)),
                 exit_code=1,
                 reason=f"{type(exc).__name__}:{exc}",
+                sample_snapshots=started.sample_snapshots,
             )
         )
         return 1

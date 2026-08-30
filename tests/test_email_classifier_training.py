@@ -31,7 +31,7 @@ from app.email_classifier_retrain import (
     retrain_if_due,
     save_retrain_state,
 )
-from app.email_store import EmailStore
+from app.email_store import EmailStore, EmailTrainingInclusionConflict
 
 
 def _assess_important(
@@ -388,6 +388,47 @@ def test_registry_promotion_marks_only_authoritative_samples_after_success(tmp_p
         assert example["included_in_model_id"] == result.model_id
 
 
+def test_next_registry_model_marks_only_new_snapshot_without_reassigning_old_samples(
+    tmp_path: Path, monkeypatch
+):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    first = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 45, 30, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        "app.email_classifier_training._promotion_rejection",
+        lambda _registry, _metadata: None,
+    )
+    for index, category in enumerate((EmailCategory.WORK, EmailCategory.JUNK), 7):
+        row = store.upsert_classification(
+            _classification(f"message-{index}", category),
+            model_text=f"__subject__new-{index} {category.value}",
+        )
+        store.confirm_classification(row["id"], category)
+
+    second = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 46, 30, tzinfo=timezone.utc),
+    )
+
+    included = store.list_training_examples(include_inclusion=True)
+    by_text = {row["model_text"]: row["included_in_model_id"] for row in included}
+    assert all(
+        model_id == first.model_id
+        for text, model_id in by_text.items()
+        if "__subject__new-" not in text
+    )
+    assert all(
+        model_id == second.model_id
+        for text, model_id in by_text.items()
+        if "__subject__new-" in text
+    )
+
+
 def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
     tmp_path: Path, monkeypatch
 ):
@@ -422,6 +463,40 @@ def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
             trained_at=datetime(2026, 8, 29, 21, 45, 32, tzinfo=timezone.utc),
         )
     assert len(failed_store.list_unincluded_training_examples()) == 6
+
+
+def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_pending(
+    tmp_path: Path, monkeypatch
+):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    original_promote = registry.promote
+
+    def promote_after_correction(model_id, *, reason):
+        with store._connect() as db:
+            db.execute(
+                """
+                update email_classifications
+                set confirmed_category='important', category='important'
+                where id=(select min(id) from email_classifications)
+                """
+            )
+        return original_promote(model_id, reason=reason)
+
+    monkeypatch.setattr(registry, "promote", promote_after_correction)
+
+    with pytest.raises(
+        EmailTrainingInclusionConflict,
+        match="training sample changed before inclusion",
+    ):
+        train_and_promote(
+            store,
+            registry,
+            trained_at=datetime(2026, 8, 29, 21, 45, 33, tzinfo=timezone.utc),
+        )
+
+    latest = store.list_unincluded_training_examples()
+    assert any(example["label"] == "important" for example in latest)
 
 
 def test_training_not_ready_does_not_create_active_model(tmp_path: Path):

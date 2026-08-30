@@ -10,7 +10,13 @@ from app.email_classifier_contracts import (
     EmailProviderLocator,
 )
 from app.email_classifier_learning import EmailClassifierLearningService
-from app.email_classifier_retrain import RetrainPolicy, load_retrain_state
+from app.email_classifier_retrain import (
+    RetrainPolicy,
+    TrainingSubprocessController,
+    TrainingSubprocessRun,
+    load_retrain_state,
+    save_retrain_state,
+)
 from app.email_model_registry import EmailModelRegistry
 from app.email_store import EmailStore
 
@@ -97,6 +103,11 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
     polled = service.poll_retrain(now=now + timedelta(seconds=31))
     assert polled.training_run is not None
     assert polled.training_run.status in {"queued", "running"}
+    assert len(polled.training_run.sample_snapshots) == 6
+    assert all(
+        len(sample["sample_digest"]) == 64
+        for sample in polled.training_run.sample_snapshots
+    )
     for _ in range(100):
         polled = service.poll_retrain(now=now + timedelta(seconds=32))
         if polled.training_run is not None and polled.training_run.status not in {
@@ -129,3 +140,102 @@ def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path
     assert result.confirmed["status"] == "processed"
     assert result.error is None
     assert store.list_training_examples()[0]["label"] == "work"
+
+
+def test_five_feedback_start_on_later_runtime_tick_without_sixth_feedback(tmp_path: Path):
+    class Controller:
+        def __init__(self):
+            self.starts = []
+
+        def start(self, *, now):
+            self.starts.append(now)
+            return TrainingSubprocessRun(
+                run_id="run-1",
+                status="running",
+                pid=123,
+                started_at=now.isoformat(),
+                updated_at=now.isoformat(),
+            )
+
+        def poll(self, run_id, *, now):
+            raise AssertionError("new run should not be polled immediately")
+
+    service, _store, rows, _registry = _service_with_pending(tmp_path, count=5)
+    controller = Controller()
+    service.controller = controller
+    now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
+    for index, row in enumerate(rows):
+        result = service.confirm_and_maybe_retrain(
+            row["id"],
+            EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            now=now,
+        )
+        assert result is not None
+        assert result.retrain is not None
+        assert result.retrain.decision.due is False
+
+    assert controller.starts == []
+    tick = service.poll_retrain(now=now + timedelta(seconds=31))
+
+    assert tick.training_run is not None
+    assert tick.training_run.run_id == "run-1"
+    assert controller.starts == [now + timedelta(seconds=31)]
+
+
+def test_manual_training_uses_same_readiness_path_with_only_trigger_override(tmp_path: Path):
+    service, _store, rows, _registry = _service_with_pending(tmp_path, count=5)
+    now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
+    for index, row in enumerate(rows):
+        service.confirm_and_maybe_retrain(
+            row["id"],
+            EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            now=now,
+        )
+
+    result = service.request_manual_training(now=now)
+
+    assert result.decision.due is True
+    assert result.decision.reason == "manual"
+    assert result.training_run is not None
+
+
+def test_learning_poll_clears_orphan_and_next_tick_can_retry(tmp_path: Path):
+    service, store, rows, registry = _service_with_pending(tmp_path, count=5)
+    now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
+    for index, row in enumerate(rows):
+        service.confirm_and_maybe_retrain(
+            row["id"],
+            EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            now=now,
+        )
+    first = TrainingSubprocessController(
+        registry,
+        store_path=store.path,
+        launcher=lambda _command: type(
+            "Process", (), {"pid": 4321, "poll": lambda self: None}
+        )(),
+    )
+    run = first.start(now=now + timedelta(seconds=31))
+    state = load_retrain_state(tmp_path / "models" / "retrain-state.json")
+    save_retrain_state(
+        tmp_path / "models" / "retrain-state.json", state.with_active_run(run.run_id)
+    )
+    restarted = TrainingSubprocessController(
+        registry,
+        store_path=store.path,
+        launcher=lambda _command: type(
+            "Process", (), {"pid": 4322, "poll": lambda self: None}
+        )(),
+        pid_is_alive=lambda _pid: False,
+    )
+    service.controller = restarted
+
+    failed = service.poll_retrain(now=now + timedelta(seconds=32))
+    retried = service.poll_retrain(now=now + timedelta(seconds=33))
+
+    assert failed.training_run is not None
+    assert failed.training_run.status == "failed"
+    assert failed.state.active_run_id is None
+    assert retried.training_run is not None
+    assert retried.training_run.status == "running"
+    assert retried.training_run.run_id != run.run_id

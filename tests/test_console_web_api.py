@@ -1024,3 +1024,28 @@ def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Pat
         "error": None,
     }
     assert (tmp_path / "models" / "retrain-state.json").exists()
+
+
+def test_console_email_manual_training_returns_only_sanitized_durable_decision(
+    tmp_path: Path,
+):
+    result = SimpleNamespace(
+        decision=SimpleNamespace(due=True, reason="manual", pending_examples=5),
+        training_run=SimpleNamespace(run_id="run-safe", status="running"),
+    )
+    service = SimpleNamespace(request_manual_training=lambda: result)
+
+    with _client(tmp_path, email_learning_factory=lambda: service) as client:
+        response = client.post("/api/console/email/training", json={})
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "ok": True,
+        "learning": {
+            "retrain_due": True,
+            "retrain_reason": "manual",
+            "pending_examples": 5,
+            "training_run_id": "run-safe",
+            "training_status": "running",
+        },
+    }

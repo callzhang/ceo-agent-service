@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from pickle import UnpicklingError
 
@@ -74,46 +75,84 @@ class RegistryPredictionClassifier:
             return getattr(self.classifier, method)(value)
 
 
+class EmailClassifierRuntime:
+    """Own one loaded classifier and learning tick across mailbox scan cycles."""
+
+    def __init__(self, registry: EmailModelRegistry, *, learning_service=None) -> None:
+        self.registry = registry
+        self.learning_service = learning_service
+        self.loaded = _load_registry_classifier(registry)
+
+    def tick(self, *, now: datetime | None = None):
+        if self.learning_service is None:
+            return None
+        return self.learning_service.poll_retrain(now=now)
+
+    def scan(
+        self,
+        source: object,
+        store: EmailStore,
+        config: EmailScanConfig,
+        *,
+        mailbox: str = "INBOX",
+        limit: int = 50,
+        now: datetime | None = None,
+    ) -> ReadonlyScanWithModelResult:
+        self.tick(now=now)
+        result = scan_readonly_batch(
+            source,
+            self.loaded.classifier,
+            store,
+            config,
+            mailbox=mailbox,
+            limit=limit,
+        )
+        return ReadonlyScanWithModelResult(loaded=self.loaded, scan=result)
+
+
+def _load_registry_classifier(registry) -> LoadedEmailClassifier:
+    jieba_lcut("email classifier warmup")
+    failed_model_id = registry.active_model_id_unverified()
+    if failed_model_id is None:
+        raise EmailClassifierUnavailable("no active email classifier manifest")
+    try:
+        manifest = registry.active_manifest()
+        assert manifest is not None
+        classifier = registry.load_classifier(manifest.model_id)
+        return LoadedEmailClassifier(
+            classifier=RegistryPredictionClassifier(
+                registry, classifier, manifest.model_id
+            ),
+            path=registry.get_model(manifest.model_id).artifact_path,
+            used_previous=False,
+        )
+    except ModelRegistryError:
+        try:
+            restored = registry.fallback_to_previous(
+                reason="active_model_load_failed",
+                failed_model_id=failed_model_id,
+            )
+            classifier = registry.load_classifier(restored.model_id)
+        except ModelRegistryError as fallback_exc:
+            raise EmailClassifierUnavailable(
+                "no valid email classifier model after active load failure"
+            ) from fallback_exc
+        return LoadedEmailClassifier(
+            classifier=RegistryPredictionClassifier(
+                registry, classifier, restored.model_id
+            ),
+            path=registry.get_model(restored.model_id).artifact_path,
+            used_previous=True,
+        )
+
+
 def load_active_classifier(
     active_path: str | Path | EmailModelRegistry,
     previous_path: str | Path | None = None,
 ) -> LoadedEmailClassifier:
     """Load active first, then previous, without modifying either file."""
     if isinstance(active_path, EmailModelRegistry):
-        jieba_lcut("email classifier warmup")
-        registry = active_path
-        failed_model_id = registry.active_model_id_unverified()
-        if failed_model_id is None:
-            raise EmailClassifierUnavailable("no active email classifier manifest")
-        try:
-            manifest = registry.active_manifest()
-            assert manifest is not None
-            classifier = registry.load_classifier(manifest.model_id)
-            return LoadedEmailClassifier(
-                classifier=RegistryPredictionClassifier(
-                    registry, classifier, manifest.model_id
-                ),
-                path=registry.get_model(manifest.model_id).artifact_path,
-                used_previous=False,
-            )
-        except ModelRegistryError:
-            try:
-                restored = registry.fallback_to_previous(
-                    reason="active_model_load_failed",
-                    failed_model_id=failed_model_id,
-                )
-                classifier = registry.load_classifier(restored.model_id)
-            except ModelRegistryError as fallback_exc:
-                raise EmailClassifierUnavailable(
-                    "no valid email classifier model after active load failure"
-                ) from fallback_exc
-            return LoadedEmailClassifier(
-                classifier=RegistryPredictionClassifier(
-                    registry, classifier, restored.model_id
-                ),
-                path=registry.get_model(restored.model_id).artifact_path,
-                used_previous=True,
-            )
+        return _load_registry_classifier(active_path)
     if previous_path is None:
         raise ValueError("previous_path is required for path-based model loading")
     candidates = ((Path(active_path), False), (Path(previous_path), True))
@@ -138,18 +177,17 @@ def scan_with_active_model(
     store: EmailStore,
     config: EmailScanConfig,
     *,
-    registry: EmailModelRegistry,
+    runtime: EmailClassifierRuntime,
     mailbox: str = "INBOX",
     limit: int = 50,
+    now: datetime | None = None,
 ) -> ReadonlyScanWithModelResult:
     """Load a local model and run one provider-readonly classification batch."""
-    loaded = load_active_classifier(registry)
-    result = scan_readonly_batch(
+    return runtime.scan(
         source,
-        loaded.classifier,
         store,
         config,
         mailbox=mailbox,
         limit=limit,
+        now=now,
     )
-    return ReadonlyScanWithModelResult(loaded=loaded, scan=result)

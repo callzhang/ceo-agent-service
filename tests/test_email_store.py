@@ -897,11 +897,12 @@ def test_training_inclusion_marks_exact_confirmed_samples_atomically(tmp_path: P
             model_text=f"__subject__{category.value}-{index}",
         )
         rows.append(store.confirm_classification(row["id"], category))
-    sample_ids = [row["stable_message_identity"] for row in rows if row is not None]
+    snapshots = store.list_unincluded_training_examples()
 
-    assert len(store.list_unincluded_training_examples()) == 2
-    store.mark_training_examples_included(sample_ids, model_id="email-tfidf-lr-x-12345678")
-    store.mark_training_examples_included(sample_ids, model_id="email-tfidf-lr-x-12345678")
+    assert len(snapshots) == 2
+    assert all(len(row["sample_digest"]) == 64 for row in snapshots)
+    store.mark_training_examples_included(snapshots, model_id="email-tfidf-lr-x-12345678")
+    store.mark_training_examples_included(snapshots, model_id="email-tfidf-lr-x-12345678")
 
     assert store.list_unincluded_training_examples() == []
     assert {
@@ -927,13 +928,14 @@ def test_training_inclusion_conflict_rolls_back_partial_batch(tmp_path: Path):
         confirmed = store.confirm_classification(row["id"], category)
         assert confirmed is not None
         identities.append(confirmed["stable_message_identity"])
+    snapshots = store.list_unincluded_training_examples()
     store.mark_training_examples_included(
-        [identities[0]], model_id="email-tfidf-lr-old-12345678"
+        [snapshots[0]], model_id="email-tfidf-lr-old-12345678"
     )
 
     with pytest.raises(EmailTrainingInclusionConflict):
         store.mark_training_examples_included(
-            identities, model_id="email-tfidf-lr-new-87654321"
+            snapshots, model_id="email-tfidf-lr-new-87654321"
         )
 
     rows = {
@@ -942,6 +944,36 @@ def test_training_inclusion_conflict_rolls_back_partial_batch(tmp_path: Path):
     }
     assert rows[identities[0]]["included_in_model_id"] == "email-tfidf-lr-old-12345678"
     assert rows[identities[1]]["included_in_model_id"] is None
+
+
+def test_training_inclusion_digest_cas_rejects_concurrent_correction_and_clears_old_model(
+    tmp_path: Path,
+):
+    database = tmp_path / "training-cas.sqlite3"
+    store = EmailStore(database)
+    row = store.upsert_classification(
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            message_id="cas-sample",
+            category=EmailCategory.WORK,
+        ),
+        model_text="__subject__original",
+    )
+    store.confirm_classification(row["id"], EmailCategory.WORK)
+    snapshot = store.list_unincluded_training_examples()[0]
+    store.mark_training_examples_included([snapshot], model_id="old-model")
+
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_classifications set confirmed_category=?, category=? where id=?",
+            ("important", "important", row["id"]),
+        )
+
+    latest = store.list_unincluded_training_examples()[0]
+    assert latest["included_in_model_id"] is None
+    assert latest["sample_digest"] != snapshot["sample_digest"]
+    with pytest.raises(EmailTrainingInclusionConflict):
+        store.mark_training_examples_included([snapshot], model_id="new-model")
 
 
 def test_rescan_preserves_a_user_confirmed_category(tmp_path: Path):
@@ -2064,7 +2096,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 4]
+    ] == [2, 5]
 
     EmailStore(database)
 

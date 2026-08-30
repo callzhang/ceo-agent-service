@@ -462,6 +462,30 @@ def register_email_routes(
             }
         return response
 
+    @app.post("/api/console/email/training")
+    def email_manual_training():
+        if email_learning_factory is None:
+            return error_response(
+                "email_learning_unavailable",
+                "Email learning is unavailable",
+                503,
+            )
+        result = email_learning_factory().request_manual_training()
+        run = result.training_run
+        return JSONResponse(
+            {
+                "ok": True,
+                "learning": {
+                    "retrain_due": result.decision.due,
+                    "retrain_reason": result.decision.reason,
+                    "pending_examples": result.decision.pending_examples,
+                    "training_run_id": run.run_id if run else None,
+                    "training_status": run.status if run else None,
+                },
+            },
+            status_code=202 if run else 200,
+        )
+
     @app.get("/api/console/email/config")
     def email_config():
         email_store = require_store()

@@ -9805,12 +9805,17 @@ def create_audit_app(
         from app.email_model_registry import EmailModelRegistry
 
         email_model_root = db_path.parent / "email-models"
+        email_learning_service = None
+
         def email_learning_factory():
-            return EmailClassifierLearningService(
-                EmailStore(db_path),
-                registry=EmailModelRegistry(email_model_root),
-                retrain_state_path=email_model_root / "retrain-state.json",
-            )
+            nonlocal email_learning_service
+            if email_learning_service is None:
+                email_learning_service = EmailClassifierLearningService(
+                    EmailStore(db_path),
+                    registry=EmailModelRegistry(email_model_root),
+                    retrain_state_path=email_model_root / "retrain-state.json",
+                )
+            return email_learning_service
 
     register_console_routes(
         app,
