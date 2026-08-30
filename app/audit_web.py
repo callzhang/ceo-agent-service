@@ -9751,8 +9751,9 @@ def create_audit_app(
 
     @asynccontextmanager
     async def audit_lifespan(_app: FastAPI):
-        default_attempt_list_cache.get_or_render(_render_history_busy_page)
-        default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
+        if not spa_enabled:
+            default_attempt_list_cache.get_or_render(_render_history_busy_page)
+            default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
         worker_status_cache.refresh_in_background(render_worker_status_payload)
         connector_status_cache.refresh_in_background(_connector_status_snapshots)
         wechat_status_cache.refresh_in_background(
