@@ -32,6 +32,7 @@ from app.web_api.email import register_email_routes
 from app.feedback_processing import (
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
+    FeedbackProcessingReopenError,
     ResolutionEvidence,
     build_feedback_start_message,
     detail_references,
@@ -350,20 +351,51 @@ def register_console_routes(
         return envelope
 
     def _feedback_items_for_batch(store: Any, batch_id: str) -> list[dict[str, Any]]:
+        source_rows = {
+            row.key: row
+            for row in store.list_user_feedback_items(limit=10000, offset=0)
+        }
         rows = []
-        for row in store.list_user_feedback_items(limit=10000, offset=0):
-            processing = store.get_feedback_processing_item(row.key)
-            if processing is None or processing.batch_id != batch_id:
+        for feedback_key, row in source_rows.items():
+            round_item = next(
+                (
+                    candidate
+                    for candidate in store.list_feedback_processing_rounds(
+                        feedback_key
+                    )
+                    if candidate.batch_id == batch_id
+                ),
+                None,
+            )
+            if round_item is None:
                 continue
-            projected = json_safe(processing)
+            projected = json_safe(round_item)
             projected.update({
-                "id": row.key, "processing_status": processing.status,
+                "processing_status": round_item.status,
                 "summary": persisted_feedback_summary(row), "references": detail_references(row),
-                "processing_task_id": processing.workbench_task_id,
+                "processing_task_id": round_item.workbench_task_id,
             })
             rows.append(projected)
         rows.sort(key=lambda item: item["feedback_key"])
         return rows
+
+    def _feedback_processing_state(store: Any, feedback_key: str) -> dict[str, Any] | None:
+        processing = store.get_feedback_processing_item(feedback_key)
+        if processing is None:
+            return None
+        history = store.list_feedback_processing_rounds(feedback_key)
+        current = next(
+            (
+                round_item
+                for round_item in history
+                if round_item.id == processing.current_round_id
+            ),
+            None,
+        )
+        payload = json_safe(processing)
+        payload["current_processing"] = json_safe(current) if current else None
+        payload["processing_history"] = [json_safe(round_item) for round_item in history]
+        return payload
 
     @app.post("/api/console/feedback/batches")
     async def console_feedback_batch_claim(request: Request):
@@ -479,17 +511,123 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback item not found", "details": {}}, status_code=404)
         return command_result(item=item, message="反馈证据已保存")
 
+    @app.post("/api/console/feedback/items/{feedback_id}/reopen")
+    async def console_feedback_item_reopen(feedback_id: str, request: Request):
+        try:
+            payload = await json_object(request)
+        except HTTPException:
+            payload = {}
+        reason = payload.get("reason")
+        if (
+            set(payload) != {"reason"}
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "feedback_reopen_invalid",
+                    "message": "Feedback reopen requires exactly one non-blank reason",
+                    "details": {},
+                },
+                status_code=422,
+            )
+        store = store_factory()
+        try:
+            reopened = store.reopen_feedback_processing_item(
+                feedback_id,
+                reason=reason,
+            )
+        except FeedbackProcessingReopenError as exc:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": exc.error_code,
+                    "message": str(exc),
+                    "details": {},
+                },
+                status_code=409,
+            )
+        if reopened is None:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "not_found",
+                    "message": "Feedback item not found",
+                    "details": {},
+                },
+                status_code=404,
+            )
+        refreshed = _feedback_processing_state(store, reopened.feedback_key)
+        return command_result(item=refreshed, message="反馈已重新打开")
+
     @app.post("/api/console/feedback/batches/{batch_id}/resolve")
     async def console_feedback_batch_resolve(batch_id: str, request: Request):
         payload = await json_object(request)
+        allowed = {
+            "commit_sha",
+            "test_evidence",
+            "tests",
+            "restart_evidence",
+            "restart",
+            "health_evidence",
+            "health",
+            "associations",
+        }
+        if set(payload) - allowed:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "feedback_resolution_invalid",
+                    "message": "unsupported feedback resolution field",
+                    "details": {},
+                },
+                status_code=409,
+            )
+        status_payload = json_safe(status_payload_factory())
+        summary = status_payload.get("summary", {}) if isinstance(status_payload, dict) else {}
+        backlog_evidence = {
+            name: summary.get(name) if isinstance(summary, dict) else None
+            for name in ("processing", "failed", "retryable")
+        }
         try:
-            evidence = ResolutionEvidence.model_validate(payload)
+            evidence = ResolutionEvidence.model_validate(
+                {**payload, "backlog_evidence": backlog_evidence}
+            )
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "feedback_resolution_invalid", "message": str(exc), "details": {}}, status_code=409)
         try:
             from app.config import repo_root
-            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root(), capture_output=True, text=True, check=True, timeout=5).stdout.strip()
-            resolved = store_factory().resolve_feedback_processing_batch(batch_id, evidence, current_head=head)
+            commit_sha = evidence.commit_sha.strip()
+            if len(commit_sha) != 40 or any(
+                character not in "0123456789abcdefABCDEF" for character in commit_sha
+            ):
+                raise ValueError("resolution requires a 40-character commit SHA")
+            commit_check = subprocess.run(
+                ["git", "cat-file", "-e", f"{commit_sha}^{{commit}}"],
+                cwd=repo_root(),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if commit_check.returncode != 0:
+                raise ValueError("resolution commit does not exist")
+            ancestor_check = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", commit_sha, "main"],
+                cwd=repo_root(),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if ancestor_check.returncode != 0:
+                raise ValueError("resolution commit is not an ancestor of local main")
+            resolved = store_factory().resolve_feedback_processing_batch(
+                batch_id,
+                evidence,
+                commit_is_ancestor=True,
+            )
         except (ValueError, subprocess.SubprocessError, OSError) as exc:
             return JSONResponse({"ok": False, "code": "feedback_resolution_incomplete", "message": str(exc), "details": {}}, status_code=409)
         if not resolved:
@@ -503,6 +641,9 @@ def register_console_routes(
         if row is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {}}, status_code=404)
         processing = store.get_feedback_processing_item(row.key)
+        processing_state = (
+            _feedback_processing_state(store, row.key) if processing else None
+        )
         return item_envelope({
             "id": row.key, "feedback_key": row.key, "feedback_token": row.feedback_token,
             "rating": row.rating_label or row.rating, "comment": row.comment,
@@ -515,6 +656,12 @@ def register_console_routes(
             "batch_id": processing.batch_id if processing else "",
             "processing_task_id": processing.workbench_task_id if processing else "",
             "processing": json_safe(processing) if processing else None,
+            "current_processing": (
+                processing_state["current_processing"] if processing_state else None
+            ),
+            "processing_history": (
+                processing_state["processing_history"] if processing_state else []
+            ),
         })
 
     @app.post("/api/console/feedback/{feedback_id}/resolve")

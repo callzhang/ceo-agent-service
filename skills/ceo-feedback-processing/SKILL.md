@@ -34,12 +34,28 @@ literal placeholders):
 | read batch detail and item state | `GET /api/console/feedback/batches/{batch_id}` |
 | associate the Workbench task and turn | `PATCH /api/console/feedback/batches/{batch_id}` |
 | patch one item's evidence | `PATCH /api/console/feedback/items/{feedback_key}` |
+| reopen one resolved item | `POST /api/console/feedback/items/{feedback_key}/reopen` |
 | resolve a complete batch | `POST /api/console/feedback/batches/{batch_id}/resolve` |
 
 Claim only the requested feedback keys in one batch. After claiming, associate
 the supplied `workbench_task_id` and `workbench_turn_id`, and preserve supplied
 `attempt_id` and `agent_run_id` references on each item. Read the batch detail again before editing so the current item state,
 summary, and routes are authoritative.
+
+## Reopen and current-round rules
+
+Reopen with the exact body `{"reason":"<factual reason>"}`. A reopen returns to `pending`;
+it does not create or select the next round. Read back that pending
+state, then claim a new batch so the API creates a new processing round. Never
+copy or reuse old evidence or old Workbench associations: prior rounds and
+receipts are historical only, and batch resolution accepts only the current
+round receipt.
+
+Complete the code change, regression/focused/broad tests, commit, restart with a
+new PID, `/healthz`, and authoritative zero `processing`, `failed`, and
+`retryable` backlog checks for the new round. Persist all current-round evidence
+through the API and read back the item and batch before marking the item
+resolved. Direct SQLite state writeback remains forbidden.
 
 ## Repository workflow
 

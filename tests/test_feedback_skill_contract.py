@@ -21,6 +21,7 @@ def test_feedback_processing_skill_documents_local_console_api_operations():
         "GET /api/console/feedback/batches/{batch_id}",
         "PATCH /api/console/feedback/batches/{batch_id}",
         "PATCH /api/console/feedback/items/{feedback_key}",
+        "POST /api/console/feedback/items/{feedback_key}/reopen",
         "POST /api/console/feedback/batches/{batch_id}/resolve",
     ):
         assert operation in text
@@ -99,3 +100,25 @@ def test_feedback_processing_skill_states_local_import_and_forbidden_paths():
     assert text.endswith("\n")
     assert not text.endswith("\n\n")
     assert "no restart was applicable" not in text
+
+
+def test_feedback_processing_skill_requires_fresh_current_round_after_reopen():
+    text = " ".join(_skill_text().casefold().split())
+    for required in (
+        'post /api/console/feedback/items/{feedback_key}/reopen',
+        '{"reason":',
+        "returns to `pending`",
+        "claim a new batch",
+        "new processing round",
+        "never copy or reuse",
+        "old evidence",
+        "current round",
+        "retryable",
+        "persist",
+        "read back",
+        "api",
+    ):
+        assert required in text
+
+    assert "direct sqlite" in text
+    assert "before marking the item resolved" in text
