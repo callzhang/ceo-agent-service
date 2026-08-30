@@ -1950,6 +1950,7 @@ def _seed_resolved_feedback_round(
     batch_id: str = "batch-1",
     round_number: int = 1,
     comment: str = "original feedback",
+    receipt_version: int = 1,
 ) -> int:
     store.upsert_feedback_event(
         key=feedback_key,
@@ -1977,7 +1978,7 @@ def _seed_resolved_feedback_round(
                 started_at, resolved_at, created_at, updated_at
             ) values (
                 ?, ?, ?, 'resolved', 'task-old', 'turn-old', 12, 34, ?,
-                ?, ?, ?, ?, 2, 'old note', '2026-08-30 00:00:00',
+                ?, ?, ?, ?, ?, 'old note', '2026-08-30 00:00:00',
                 '2026-08-30 01:02:03', '2026-08-30 00:00:00',
                 '2026-08-30 01:02:03'
             )
@@ -2003,9 +2004,31 @@ def _seed_resolved_feedback_round(
                     }
                 ),
                 json.dumps({"processing": 0, "failed": 0, "retryable": 0}),
+                receipt_version,
             ),
         )
         round_id = int(cursor.lastrowid)
+        if receipt_version == 2:
+            db.execute(
+                """
+                insert into feedback_processing_transitions (
+                    feedback_key, round_id, batch_id, from_status, to_status,
+                    created_at
+                ) values (?, ?, ?, 'pending', 'processing',
+                          '2026-08-30 00:00:00')
+                """,
+                (feedback_key, round_id, batch_id),
+            )
+            db.execute(
+                """
+                insert into feedback_processing_transitions (
+                    feedback_key, round_id, batch_id, from_status, to_status,
+                    workbench_task_id, workbench_turn_id, created_at
+                ) values (?, ?, ?, 'processing', 'resolved',
+                          'task-old', 'turn-old', '2026-08-30 01:02:03')
+                """,
+                (feedback_key, round_id, batch_id),
+            )
         db.execute(
             """
             update feedback_processing_items
@@ -2603,7 +2626,11 @@ def test_reopen_rejects_incomplete_resolved_round_receipt_without_mutation(
     tmp_path: Path, corruption_sql: str
 ):
     store = AutoReplyStore(tmp_path / "reopen-complete-history.sqlite3")
-    round_id = _seed_resolved_feedback_round(store, "feedback-1")
+    round_id = _seed_resolved_feedback_round(
+        store,
+        "feedback-1",
+        receipt_version=2,
+    )
     with store._connect() as db:
         columns = {
             str(row["name"])
@@ -2972,6 +2999,7 @@ def test_receipt_version_migration_marks_only_valid_existing_backlog_v2(
         store,
         "feedback-valid",
         batch_id="batch-valid",
+        receipt_version=2,
     )
     legacy_id = _seed_resolved_feedback_round(
         store,
@@ -3923,3 +3951,257 @@ def test_delayed_newer_batch_claim_remains_valid_for_old_batch_idempotency(
     assert store.resolve_feedback_processing_batch(
         "batch-1", old_receipt, commit_is_ancestor=True
     )
+
+
+def _prepare_two_member_processing_batch(
+    store: AutoReplyStore,
+) -> ResolutionEvidence:
+    receipt = _complete_resolution_receipt()
+    for feedback_key in ("feedback-1", "feedback-2"):
+        store.upsert_feedback_event(
+            key=feedback_key,
+            feedback_token=f"token-{feedback_key}",
+        )
+    store.claim_feedback_processing_items(
+        "batch-1", ["feedback-1", "feedback-2"]
+    )
+    for index, feedback_key in enumerate(("feedback-1", "feedback-2"), start=1):
+        store.associate_feedback_processing_turn(
+            feedback_key,
+            workbench_task_id="task-processing",
+            workbench_turn_id="turn-processing",
+            attempt_id=300 + index,
+            agent_run_id=400 + index,
+        )
+        store.patch_feedback_processing_item_evidence(
+            feedback_key,
+            commit_sha=receipt.commit_sha,
+            test_evidence=receipt.test_evidence,
+            restart_evidence=receipt.restart_evidence,
+            health_evidence=receipt.health_evidence,
+            note="processing receipt",
+        )
+    return receipt
+
+
+@pytest.mark.parametrize("operation", ("first-resolve", "same-batch-retry"))
+@pytest.mark.parametrize(
+    "damage",
+    (
+        "missing-claim",
+        "duplicate-claim",
+        "wrong-claim",
+        "illegal-transition",
+        "nonempty-backlog",
+        "stale-latest",
+        "split-claim-time",
+        "empty-claim-time",
+        "missing-item",
+        "missing-source",
+    ),
+)
+def test_processing_batch_entrypoints_require_centralized_lineage(
+    tmp_path: Path,
+    operation: str,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"entry-{operation}-{damage}.sqlite3")
+    receipt = _prepare_two_member_processing_batch(store)
+    with store._connect() as db:
+        if damage == "missing-claim":
+            db.execute(
+                "delete from feedback_processing_transitions "
+                "where feedback_key='feedback-2' and batch_id='batch-1' "
+                "and from_status='pending' and to_status='processing'"
+            )
+        elif damage == "duplicate-claim":
+            db.execute(
+                """
+                insert into feedback_processing_transitions (
+                    feedback_key, round_id, batch_id, from_status, to_status,
+                    reason, workbench_task_id, workbench_turn_id, created_at
+                )
+                select feedback_key, round_id, batch_id, from_status, to_status,
+                       reason, workbench_task_id, workbench_turn_id, created_at
+                  from feedback_processing_transitions
+                 where feedback_key='feedback-2' and batch_id='batch-1'
+                   and from_status='pending' and to_status='processing'
+                """
+            )
+        elif damage == "wrong-claim":
+            db.execute(
+                "update feedback_processing_transitions set reason='wrong' "
+                "where feedback_key='feedback-2' and batch_id='batch-1' "
+                "and from_status='pending' and to_status='processing'"
+            )
+        elif damage == "illegal-transition":
+            round_id = db.execute(
+                "select id from feedback_processing_rounds "
+                "where feedback_key='feedback-2' and batch_id='batch-1'"
+            ).fetchone()[0]
+            db.execute(
+                """
+                insert into feedback_processing_transitions (
+                    feedback_key, round_id, batch_id, from_status, to_status
+                ) values ('feedback-2', ?, 'batch-1', 'processing', 'pending')
+                """,
+                (round_id,),
+            )
+        elif damage == "nonempty-backlog":
+            db.execute(
+                "update feedback_processing_rounds "
+                "set backlog_evidence_json=? "
+                "where feedback_key='feedback-2' and batch_id='batch-1'",
+                (json.dumps({"processing": 0}),),
+            )
+        elif damage == "stale-latest":
+            db.execute(
+                """
+                insert into feedback_processing_rounds (
+                    feedback_key, round_number, batch_id, status,
+                    receipt_version, started_at
+                ) values ('feedback-2', 2, 'batch-shadow', 'processing', 2,
+                          current_timestamp)
+                """
+            )
+        elif damage in {"split-claim-time", "empty-claim-time"}:
+            timestamp = "" if damage == "empty-claim-time" else "1999-01-01 00:00:00"
+            db.execute(
+                "update feedback_processing_rounds set started_at=? "
+                "where feedback_key='feedback-2' and batch_id='batch-1'",
+                (timestamp,),
+            )
+            db.execute(
+                "update feedback_processing_transitions set created_at=? "
+                "where feedback_key='feedback-2' and batch_id='batch-1' "
+                "and from_status='pending' and to_status='processing'",
+                (timestamp,),
+            )
+        elif damage == "missing-item":
+            db.execute(
+                "delete from feedback_processing_items "
+                "where feedback_key='feedback-2'"
+            )
+        else:
+            db.execute("delete from feedback_events where key='feedback-2'")
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        if operation == "first-resolve":
+            store.resolve_feedback_processing_batch(
+                "batch-1", receipt, commit_is_ancestor=True
+            )
+        else:
+            store.claim_feedback_processing_items(
+                "batch-1", ["feedback-1", "feedback-2"]
+            )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+def test_migrated_v1_processing_round_resolves_idempotently_and_reopens(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "migrated-v1-processing.sqlite3"
+    store = AutoReplyStore(db_path)
+    store.upsert_feedback_event(
+        key="feedback-1",
+        feedback_token="token-feedback-1",
+    )
+    receipt = _complete_resolution_receipt()
+    with store._connect() as db:
+        db.execute(
+            "insert into feedback_processing_batches "
+            "(batch_id, status, requested_count) "
+            "values ('batch-1', 'processing', 1)"
+        )
+        db.execute(
+            """
+            update feedback_processing_items
+               set current_round_id=0, batch_id='batch-1', status='processing',
+                   workbench_task_id='task-legacy',
+                   workbench_turn_id='turn-legacy', attempt_id=501,
+                   agent_run_id=502, commit_sha=?, test_evidence_json=?,
+                   restart_evidence_json=?, health_evidence_json=?,
+                   note='legacy processing'
+             where feedback_key='feedback-1'
+            """,
+            (
+                receipt.commit_sha,
+                json.dumps(receipt.test_evidence),
+                json.dumps(receipt.restart_evidence),
+                json.dumps(receipt.health_evidence),
+            ),
+        )
+        db.execute("drop table feedback_processing_rounds")
+        db.execute("drop table feedback_processing_transitions")
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    migrated = AutoReplyStore(db_path)
+    migrated_round = migrated.list_feedback_processing_rounds("feedback-1")[0]
+    assert migrated_round.receipt_version == 1
+    assert migrated.list_feedback_processing_transitions("feedback-1") == []
+
+    migrated.patch_feedback_processing_item_evidence(
+        "feedback-1",
+        commit_sha=receipt.commit_sha,
+        test_evidence=receipt.test_evidence,
+        restart_evidence=receipt.restart_evidence,
+        health_evidence=receipt.health_evidence,
+        note="legacy processing",
+    )
+    assert migrated.resolve_feedback_processing_batch(
+        "batch-1", receipt, commit_is_ancestor=True
+    )
+    resolved_round = migrated.list_feedback_processing_rounds("feedback-1")[0]
+    assert resolved_round.receipt_version == 1
+    assert resolved_round.backlog_evidence == receipt.backlog_evidence
+    assert [
+        (transition.from_status, transition.to_status)
+        for transition in migrated.list_feedback_processing_transitions("feedback-1")
+    ] == [("processing", "resolved")]
+    assert migrated.resolve_feedback_processing_batch(
+        "batch-1", receipt, commit_is_ancestor=True
+    )
+    assert migrated.reopen_feedback_processing_item(
+        "feedback-1", reason="legacy receipt needs another round"
+    ).status == "pending"
+    assert [
+        (transition.from_status, transition.to_status)
+        for transition in migrated.list_feedback_processing_transitions("feedback-1")
+    ] == [("resolved", "pending"), ("processing", "resolved")]
+
+
+def test_resolved_transition_multiset_rejects_alternate_reopen_reason(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "alternate-reopen-transition.sqlite3")
+    receipt = _prepare_resolved_v2_batch(store)
+    store.reopen_feedback_processing_item("feedback-1", reason="real reason")
+    with store._connect() as db:
+        round_row = db.execute(
+            "select * from feedback_processing_rounds where batch_id='batch-1'"
+        ).fetchone()
+        db.execute(
+            """
+            insert into feedback_processing_transitions (
+                feedback_key, round_id, batch_id, from_status, to_status,
+                reason, workbench_task_id, workbench_turn_id, created_at
+            ) values ('feedback-1', ?, 'batch-1', 'resolved', 'pending',
+                      'alternate reason', ?, ?, ?)
+            """,
+            (
+                int(round_row["id"]),
+                str(round_row["workbench_task_id"]),
+                str(round_row["workbench_turn_id"]),
+                str(round_row["reopened_at"]),
+            ),
+        )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before

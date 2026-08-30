@@ -13928,6 +13928,16 @@ class AutoReplyStore:
                 for key in keys
             ) and len(existing) == len(keys)
             if same_batch_processing:
+                try:
+                    self._validate_current_feedback_processing_batch_lineage(
+                        db,
+                        batch_id=cleaned_batch_id,
+                        expected_status="processing",
+                    )
+                except ValueError as exc:
+                    raise FeedbackProcessingClaimError(
+                        FEEDBACK_PROCESSING_CLAIM_ERROR
+                    ) from exc
                 rows = db.execute(
                     f"""
                     select * from feedback_processing_items
@@ -13936,23 +13946,7 @@ class AutoReplyStore:
                     """,
                     [*keys, cleaned_batch_id],
                 ).fetchall()
-                if len(rows) != len(keys) or any(
-                    db.execute(
-                        """
-                        select count(*)
-                          from feedback_processing_rounds
-                         where id=? and feedback_key=? and batch_id=?
-                           and status='processing'
-                        """,
-                        (
-                            int(row["current_round_id"] or 0),
-                            str(row["feedback_key"]),
-                            cleaned_batch_id,
-                        ),
-                    ).fetchone()[0]
-                    != 1
-                    for row in rows
-                ):
+                if len(rows) != len(keys):
                     raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
                 return [self._feedback_processing_item_from_row(row) for row in rows]
             if existing_batch is not None and str(existing_batch["status"] or "") != "pending":
@@ -14148,19 +14142,33 @@ class AutoReplyStore:
                 )
             try:
                 self._validate_resolved_feedback_processing_round(item, current_round)
+                self._validate_feedback_processing_transition_multiset(
+                    db,
+                    current_round,
+                )
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 raise FeedbackProcessingReopenError(
                     "feedback processing history is incomplete",
                     error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
                 ) from exc
+            reopen_timestamp_row = db.execute(
+                "select current_timestamp as reopen_timestamp"
+            ).fetchone()
+            reopen_timestamp = str(reopen_timestamp_row["reopen_timestamp"])
             cursor = db.execute(
                 """
                 update feedback_processing_rounds
-                   set reopened_at=current_timestamp, reopen_reason=?
+                   set reopened_at=?, reopen_reason=?
                  where id=? and feedback_key=? and batch_id=? and status='resolved'
                    and trim(reopened_at)='' and trim(reopen_reason)=''
                 """,
-                (reason, round_id, cleaned_key, str(item["batch_id"] or "")),
+                (
+                    reopen_timestamp,
+                    reason,
+                    round_id,
+                    cleaned_key,
+                    str(item["batch_id"] or ""),
+                ),
             )
             if cursor.rowcount != 1:
                 raise FeedbackProcessingReopenError(
@@ -14171,8 +14179,8 @@ class AutoReplyStore:
                 """
                 insert into feedback_processing_transitions (
                     feedback_key, round_id, batch_id, from_status, to_status,
-                    reason, workbench_task_id, workbench_turn_id
-                ) values (?, ?, ?, 'resolved', 'pending', ?, ?, ?)
+                    reason, workbench_task_id, workbench_turn_id, created_at
+                ) values (?, ?, ?, 'resolved', 'pending', ?, ?, ?, ?)
                 """,
                 (
                     cleaned_key,
@@ -14181,6 +14189,7 @@ class AutoReplyStore:
                     reason,
                     str(current_round["workbench_task_id"] or ""),
                     str(current_round["workbench_turn_id"] or ""),
+                    reopen_timestamp,
                 ),
             )
             cursor = db.execute(
@@ -14464,36 +14473,88 @@ class AutoReplyStore:
         return self._feedback_processing_item_from_row(row) if row else None
 
     @classmethod
-    def _validate_feedback_processing_completion_transition(
+    def _validate_feedback_processing_transition_multiset(
         cls,
         db: sqlite3.Connection,
-        resolved_round: sqlite3.Row,
+        current_round: sqlite3.Row,
     ) -> None:
-        if cls._feedback_processing_receipt_version(resolved_round) != 2:
-            return
-        completion_transitions = db.execute(
-            """
-            select * from feedback_processing_transitions
-             where feedback_key=? and round_id=? and batch_id=?
-               and from_status='processing' and to_status='resolved'
-            """,
-            (
-                str(resolved_round["feedback_key"]),
-                int(resolved_round["id"]),
-                str(resolved_round["batch_id"]),
-            ),
-        ).fetchall()
+        receipt_version = cls._feedback_processing_receipt_version(current_round)
+        status = str(current_round["status"] or "")
+        reopened_at = str(current_round["reopened_at"] or "").strip()
+        reopen_reason = str(current_round["reopen_reason"] or "").strip()
         if (
-            len(completion_transitions) != 1
-            or str(completion_transitions[0]["reason"] or "")
-            or str(completion_transitions[0]["workbench_task_id"] or "")
-            != str(resolved_round["workbench_task_id"] or "")
-            or str(completion_transitions[0]["workbench_turn_id"] or "")
-            != str(resolved_round["workbench_turn_id"] or "")
-            or str(completion_transitions[0]["created_at"] or "")
-            != str(resolved_round["resolved_at"] or "")
+            status not in {"processing", "resolved"}
+            or bool(reopened_at) != bool(reopen_reason)
+            or (status == "processing" and reopened_at)
         ):
-            raise ValueError("resolved batch completion transition is incomplete")
+            raise ValueError("feedback processing transition history is incomplete")
+        transitions = db.execute(
+            "select * from feedback_processing_transitions "
+            "where round_id=? order by id",
+            (int(current_round["id"]),),
+        ).fetchall()
+        by_pair: dict[tuple[str, str], list[sqlite3.Row]] = {}
+        for transition in transitions:
+            if (
+                str(transition["feedback_key"]) != str(current_round["feedback_key"])
+                or str(transition["batch_id"] or "")
+                != str(current_round["batch_id"] or "")
+            ):
+                raise ValueError("feedback processing transition history is incomplete")
+            pair = (
+                str(transition["from_status"] or ""),
+                str(transition["to_status"] or ""),
+            )
+            by_pair.setdefault(pair, []).append(transition)
+
+        claim = by_pair.pop(("pending", "processing"), [])
+        completion = by_pair.pop(("processing", "resolved"), [])
+        reopen = by_pair.pop(("resolved", "pending"), [])
+        if by_pair:
+            raise ValueError("feedback processing transition history is incomplete")
+        if receipt_version == 2:
+            expected_counts = (
+                1,
+                1 if status == "resolved" else 0,
+                1 if reopened_at else 0,
+            )
+        else:
+            expected_counts = (
+                0,
+                len(completion) if status == "resolved" and len(completion) <= 1 else 0,
+                1 if reopened_at else 0,
+            )
+        if (len(claim), len(completion), len(reopen)) != expected_counts:
+            raise ValueError("feedback processing transition history is incomplete")
+        if claim and (
+            not str(current_round["started_at"] or "").strip()
+            or str(claim[0]["reason"] or "")
+            or str(claim[0]["workbench_task_id"] or "")
+            or str(claim[0]["workbench_turn_id"] or "")
+            or str(claim[0]["created_at"] or "")
+            != str(current_round["started_at"] or "")
+        ):
+            raise ValueError("feedback processing claim transition is incomplete")
+        if completion and (
+            not str(current_round["resolved_at"] or "").strip()
+            or str(completion[0]["reason"] or "")
+            or str(completion[0]["workbench_task_id"] or "")
+            != str(current_round["workbench_task_id"] or "")
+            or str(completion[0]["workbench_turn_id"] or "")
+            != str(current_round["workbench_turn_id"] or "")
+            or str(completion[0]["created_at"] or "")
+            != str(current_round["resolved_at"] or "")
+        ):
+            raise ValueError("feedback processing completion transition is incomplete")
+        if reopen and (
+            str(reopen[0]["reason"] or "") != reopen_reason
+            or str(reopen[0]["workbench_task_id"] or "")
+            != str(current_round["workbench_task_id"] or "")
+            or str(reopen[0]["workbench_turn_id"] or "")
+            != str(current_round["workbench_turn_id"] or "")
+            or str(reopen[0]["created_at"] or "") != reopened_at
+        ):
+            raise ValueError("feedback processing reopen transition is incomplete")
 
     @classmethod
     def _validate_current_processing_round_projection(
@@ -14501,8 +14562,7 @@ class AutoReplyStore:
         item: sqlite3.Row,
         current_round: sqlite3.Row,
     ) -> None:
-        if cls._feedback_processing_receipt_version(current_round) != 2:
-            raise ValueError("resolved batch current processing lineage is incomplete")
+        receipt_version = cls._feedback_processing_receipt_version(current_round)
         if (
             str(item["status"] or "") != "processing"
             or str(current_round["status"] or "") != "processing"
@@ -14541,39 +14601,10 @@ class AutoReplyStore:
                     "resolved batch current processing evidence is incomplete"
                 )
         backlog_evidence = json.loads(current_round["backlog_evidence_json"] or "{}")
-        if not isinstance(backlog_evidence, dict) or backlog_evidence:
-            raise ValueError("resolved batch current processing backlog is incomplete")
-
-    @classmethod
-    def _validate_feedback_processing_claim_transition(
-        cls,
-        db: sqlite3.Connection,
-        current_round: sqlite3.Row,
-    ) -> None:
-        if cls._feedback_processing_receipt_version(current_round) != 2:
-            return
-        claim_transitions = db.execute(
-            """
-            select * from feedback_processing_transitions
-             where feedback_key=? and round_id=? and batch_id=?
-               and from_status='pending' and to_status='processing'
-            """,
-            (
-                str(current_round["feedback_key"]),
-                int(current_round["id"]),
-                str(current_round["batch_id"]),
-            ),
-        ).fetchall()
-        if (
-            len(claim_transitions) != 1
-            or not str(current_round["started_at"] or "").strip()
-            or str(claim_transitions[0]["reason"] or "")
-            or str(claim_transitions[0]["workbench_task_id"] or "")
-            or str(claim_transitions[0]["workbench_turn_id"] or "")
-            or str(claim_transitions[0]["created_at"] or "")
-            != str(current_round["started_at"] or "")
+        if not isinstance(backlog_evidence, dict) or (
+            receipt_version == 2 and backlog_evidence
         ):
-            raise ValueError("resolved batch claim transition is incomplete")
+            raise ValueError("resolved batch current processing backlog is incomplete")
 
     @classmethod
     def _validate_current_feedback_processing_batch_lineage(
@@ -14635,6 +14666,7 @@ class AutoReplyStore:
 
             version_two_rounds: list[sqlite3.Row] = []
             version_two_claim_timestamps: set[str] = set()
+            receipt_versions: set[int] = set()
             common_resolved_receipt: ResolutionEvidence | None = None
             for item in items:
                 round_id = cls._feedback_processing_round_pointer(
@@ -14658,11 +14690,15 @@ class AutoReplyStore:
                     ).fetchone()[0]
                 ):
                     raise ValueError(stable_error)
-                cls._validate_feedback_processing_claim_transition(
+                receipt_version = cls._feedback_processing_receipt_version(
+                    current_round
+                )
+                receipt_versions.add(receipt_version)
+                cls._validate_feedback_processing_transition_multiset(
                     db,
                     current_round,
                 )
-                if cls._feedback_processing_receipt_version(current_round) == 2:
+                if receipt_version == 2:
                     version_two_claim_timestamps.add(
                         str(current_round["started_at"] or "")
                     )
@@ -14697,11 +14733,7 @@ class AutoReplyStore:
                     current_round["resolved_at"] or ""
                 ):
                     raise ValueError(stable_error)
-                cls._validate_feedback_processing_completion_transition(
-                    db,
-                    current_round,
-                )
-                if cls._feedback_processing_receipt_version(current_round) == 2:
+                if receipt_version == 2:
                     version_two_rounds.append(current_round)
                     if (
                         str(item["updated_at"] or "")
@@ -14711,6 +14743,8 @@ class AutoReplyStore:
                     ):
                         raise ValueError(stable_error)
 
+            if len(receipt_versions) != 1:
+                raise ValueError(stable_error)
             if version_two_claim_timestamps and (
                 len(version_two_claim_timestamps) != 1
                 or not next(iter(version_two_claim_timestamps)).strip()
@@ -14741,6 +14775,8 @@ class AutoReplyStore:
                 ):
                     raise ValueError(stable_error)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            if str(exc) == FEEDBACK_PROCESSING_CURRENT_ROUND_ID_INVALID:
+                raise
             raise ValueError(stable_error) from exc
 
     @classmethod
@@ -14780,6 +14816,13 @@ class AutoReplyStore:
             for round_row in rounds
             if cls._feedback_processing_receipt_version(round_row) == 2
         ]
+        if len(
+            {
+                cls._feedback_processing_receipt_version(round_row)
+                for round_row in rounds
+            }
+        ) != 1:
+            raise ValueError("resolved batch receipt versions are inconsistent")
         if version_two_rounds:
             resolution_timestamps = {
                 str(round_row["resolved_at"] or "")
@@ -14819,11 +14862,7 @@ class AutoReplyStore:
             )
             feedback_key = str(resolved_round["feedback_key"])
             receipt_version = cls._feedback_processing_receipt_version(resolved_round)
-            cls._validate_feedback_processing_completion_transition(
-                db,
-                resolved_round,
-            )
-            cls._validate_feedback_processing_claim_transition(
+            cls._validate_feedback_processing_transition_multiset(
                 db,
                 resolved_round,
             )
@@ -14963,7 +15002,7 @@ class AutoReplyStore:
                 ):
                     raise ValueError("resolved batch source lineage is incomplete")
                 cls._validate_resolved_feedback_processing_round(item, current_round)
-                cls._validate_feedback_processing_completion_transition(
+                cls._validate_feedback_processing_transition_multiset(
                     db,
                     current_round,
                 )
@@ -15037,6 +15076,11 @@ class AutoReplyStore:
                 return False
             if str(batch["status"] or "") != "processing":
                 raise ValueError("resolution requires a processing batch")
+            self._validate_current_feedback_processing_batch_lineage(
+                db,
+                batch_id=cleaned_batch_id,
+                expected_status="processing",
+            )
             requested_count = batch["requested_count"]
             if type(requested_count) is not int or requested_count <= 0:
                 raise ValueError("resolution requires valid batch membership")
@@ -15186,7 +15230,7 @@ class AutoReplyStore:
                     """
                     update feedback_processing_rounds
                        set status='resolved', resolved_at=?,
-                           backlog_evidence_json=?, receipt_version=2, updated_at=?
+                           backlog_evidence_json=?, updated_at=?
                      where id=? and feedback_key=? and batch_id=?
                        and status='processing'
                     """,
