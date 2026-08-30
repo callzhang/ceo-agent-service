@@ -104,6 +104,8 @@ def _confirm_all(service, rows, *, now):
         service.confirm_and_maybe_retrain(
             row["id"],
             EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            feedback_request_id=f"confirm-all-{row['id']}",
+            expected_current_action_plan_id=None,
             now=now,
         )
 
@@ -136,7 +138,11 @@ def test_feedback_api_service_confirms_first_and_records_state_without_retrainin
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
 
     result = service.confirm_and_maybe_retrain(
-        rows[0]["id"], EmailCategory.IMPORTANT, now=now
+        rows[0]["id"],
+        EmailCategory.IMPORTANT,
+        feedback_request_id="learning-first-confirmation",
+        expected_current_action_plan_id=None,
+        now=now,
     )
 
     assert result is not None
@@ -154,7 +160,11 @@ def test_learning_service_corrects_processed_classification_through_pipeline(
     service, store, rows, _ = _service_with_pending(tmp_path)
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
     first = service.confirm_and_maybe_retrain(
-        rows[0]["id"], EmailCategory.WORK, now=now
+        rows[0]["id"],
+        EmailCategory.WORK,
+        feedback_request_id="learning-correction-first",
+        expected_current_action_plan_id=None,
+        now=now,
     )
     assert first is not None
     first_plan_id = first.confirmed["current_action_plan_id"]
@@ -169,7 +179,11 @@ def test_learning_service_corrects_processed_classification_through_pipeline(
     )
 
     corrected = service.confirm_and_maybe_retrain(
-        rows[0]["id"], EmailCategory.IMPORTANT, now=now + timedelta(seconds=1)
+        rows[0]["id"],
+        EmailCategory.IMPORTANT,
+        feedback_request_id="learning-correction-second",
+        expected_current_action_plan_id=first_plan_id,
+        now=now + timedelta(seconds=1),
     )
 
     assert corrected is not None
@@ -178,6 +192,37 @@ def test_learning_service_corrects_processed_classification_through_pipeline(
     assert corrected.confirmed["current_action_plan_id"] != first_plan_id
     assert corrected.confirmed["action_plan"]["action_plan_version"] == 2
     assert store.list_training_examples()[0]["label"] == "important"
+
+
+def test_learning_service_exact_replay_does_not_record_or_request_retraining(
+    tmp_path: Path,
+):
+    service, _store, rows, _ = _service_with_pending(tmp_path)
+    first_at = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
+    first = service.confirm_and_maybe_retrain(
+        rows[0]["id"],
+        EmailCategory.IMPORTANT,
+        feedback_request_id="learning-feedback-1",
+        expected_current_action_plan_id=None,
+        now=first_at,
+    )
+    state_path = tmp_path / "models" / "retrain-state.json"
+    state_after_first = state_path.read_text(encoding="utf-8")
+
+    replay = service.confirm_and_maybe_retrain(
+        rows[0]["id"],
+        EmailCategory.IMPORTANT,
+        feedback_request_id="learning-feedback-1",
+        expected_current_action_plan_id=None,
+        now=first_at + timedelta(hours=1),
+    )
+
+    assert first is not None and first.feedback_applied is True
+    assert replay is not None
+    assert replay.feedback_applied is False
+    assert replay.feedback_replayed is True
+    assert replay.retrain is None
+    assert state_path.read_text(encoding="utf-8") == state_after_first
 
 
 def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
@@ -189,6 +234,8 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
         result = service.confirm_and_maybe_retrain(
             row["id"],
             EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            feedback_request_id=f"learning-batch-{row['id']}",
+            expected_current_action_plan_id=None,
             now=now,
         )
         if result is not None and result.retrain is not None and result.retrain.training_result is not None:
@@ -227,7 +274,11 @@ def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
 
     result = service.confirm_and_maybe_retrain(
-        rows[0]["id"], EmailCategory.WORK, now=now
+        rows[0]["id"],
+        EmailCategory.WORK,
+        feedback_request_id="learning-not-ready",
+        expected_current_action_plan_id=None,
+        now=now,
     )
 
     assert result is not None
@@ -262,6 +313,8 @@ def test_five_feedback_start_on_later_runtime_tick_without_sixth_feedback(tmp_pa
         result = service.confirm_and_maybe_retrain(
             row["id"],
             EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            feedback_request_id=f"learning-runtime-tick-{row['id']}",
+            expected_current_action_plan_id=None,
             now=now,
         )
         assert result is not None
@@ -283,6 +336,8 @@ def test_manual_training_uses_same_readiness_path_with_only_trigger_override(tmp
         service.confirm_and_maybe_retrain(
             row["id"],
             EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            feedback_request_id=f"learning-manual-{row['id']}",
+            expected_current_action_plan_id=None,
             now=now,
         )
 
@@ -357,6 +412,8 @@ def test_learning_poll_clears_orphan_and_next_tick_can_retry(tmp_path: Path):
         service.confirm_and_maybe_retrain(
             row["id"],
             EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            feedback_request_id=f"learning-orphan-{row['id']}",
+            expected_current_action_plan_id=None,
             now=now,
         )
     first = TrainingSubprocessController(

@@ -17,7 +17,7 @@ from typing import Any
 
 from fastapi import HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app import config as app_config
 from app.email_classifier_contracts import (
@@ -26,6 +26,7 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
 )
 from app.email_connector_config import EmailAccountPayload, resolve_secret
+from app.email_pipeline import apply_human_confirmation
 from app.email_store import EmailAccountConflict, EmailClassificationConflict, EmailStore
 from app.email_store import EmailPersistenceCorruption
 
@@ -61,6 +62,30 @@ class EmailConfigPayload(BaseModel):
     action_parameters: dict[str, dict[str, object]] = Field(default_factory=dict)
     enabled: bool = True
     config_version: str = Field(min_length=1)
+
+
+class EmailFeedbackPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    category: str = Field(min_length=1)
+    feedback_request_id: str = Field(min_length=1, max_length=200)
+    expected_current_action_plan_id: str | None
+
+    @field_validator("feedback_request_id")
+    @classmethod
+    def validate_request_id(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("feedback_request_id must not contain outer whitespace")
+        return value
+
+    @field_validator("expected_current_action_plan_id")
+    @classmethod
+    def validate_expected_action_plan_id(cls, value: str | None) -> str | None:
+        if value is not None and (not value or value != value.strip()):
+            raise ValueError(
+                "expected_current_action_plan_id must be null or non-empty"
+            )
+        return value
 
 
 def register_email_routes(
@@ -398,21 +423,37 @@ def register_email_routes(
         if "application/json" not in request.headers.get("content-type", ""):
             raise HTTPException(status_code=415, detail="JSON Content-Type required")
         try:
-            payload = await request.json()
-            if not isinstance(payload, dict):
-                raise ValueError("JSON object required")
-            category = EmailCategory(payload.get("category"))
+            payload = EmailFeedbackPayload.model_validate(await request.json())
+            category = EmailCategory(payload.category)
+            feedback_request_id = payload.feedback_request_id
+            expected_current_action_plan_id = payload.expected_current_action_plan_id
         except (ValueError, TypeError, ValidationError) as exc:
-            raise HTTPException(status_code=400, detail="category is invalid") from exc
+            raise HTTPException(status_code=400, detail="email feedback is invalid") from exc
         learning_result = None
+        application = None
         try:
             if email_learning_factory is not None:
                 learning_result = email_learning_factory().confirm_and_maybe_retrain(
-                    classification_id, category
+                    classification_id,
+                    category,
+                    feedback_request_id=feedback_request_id,
+                    expected_current_action_plan_id=(
+                        expected_current_action_plan_id
+                    ),
                 )
                 row = None if learning_result is None else learning_result.confirmed
             else:
-                row = email_store.confirm_classification(classification_id, category)
+                application = apply_human_confirmation(
+                    email_store,
+                    classification_id,
+                    category,
+                    feedback_request_id=feedback_request_id,
+                    expected_current_action_plan_id=(
+                        expected_current_action_plan_id
+                    ),
+                    now=datetime.now(timezone.utc),
+                )
+                row = None if application is None else application.confirmed
         except EmailClassificationConflict as exc:
             return JSONResponse(
                 {
@@ -438,6 +479,29 @@ def register_email_routes(
             "item": row,
             "message": "邮件分类反馈已保存",
         }
+        if learning_result is not None:
+            response["feedback"] = {
+                "feedback_request_id": learning_result.feedback_request_id,
+                "expected_current_action_plan_id": (
+                    learning_result.expected_current_action_plan_id
+                ),
+                "resulting_action_plan_id": (
+                    learning_result.resulting_action_plan_id
+                ),
+                "applied": learning_result.feedback_applied,
+                "replayed": learning_result.feedback_replayed,
+            }
+        else:
+            assert application is not None
+            response["feedback"] = {
+                "feedback_request_id": application.feedback_request_id,
+                "expected_current_action_plan_id": (
+                    application.expected_current_action_plan_id
+                ),
+                "resulting_action_plan_id": application.resulting_action_plan_id,
+                "applied": application.applied,
+                "replayed": application.replayed,
+            }
         if learning_result is not None:
             retrain = learning_result.retrain
             response["learning"] = {

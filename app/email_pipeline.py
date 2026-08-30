@@ -14,7 +14,7 @@ from app.email_classifier_contracts import (
     build_email_action_plan,
 )
 from app.email_classifier_training import CategoryEligibility
-from app.email_store import EmailStore
+from app.email_store import EmailFeedbackApplication, EmailStore
 
 
 @dataclass(frozen=True)
@@ -136,10 +136,14 @@ def apply_human_confirmation(
     classification_id: int,
     category: EmailCategory,
     *,
+    feedback_request_id: str,
+    expected_current_action_plan_id: str | None,
     now: datetime,
-) -> dict[str, object] | None:
+) -> EmailFeedbackApplication | None:
     return store.apply_human_classification(
         classification_id,
         category,
+        feedback_request_id=feedback_request_id,
+        expected_current_action_plan_id=expected_current_action_plan_id,
         created_at=now,
     )

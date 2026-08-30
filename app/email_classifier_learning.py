@@ -27,6 +27,11 @@ class FeedbackLearningResult:
     confirmed: dict[str, object]
     retrain: AutoRetrainResult | None
     error: str | None
+    feedback_request_id: str
+    expected_current_action_plan_id: str | None
+    resulting_action_plan_id: str
+    feedback_applied: bool
+    feedback_replayed: bool
 
 
 class EmailClassifierLearningService:
@@ -54,17 +59,37 @@ class EmailClassifierLearningService:
         row_id: int,
         category: EmailCategory,
         *,
+        feedback_request_id: str,
+        expected_current_action_plan_id: str | None,
         now: datetime | None = None,
     ) -> FeedbackLearningResult | None:
         current = now or datetime.now(timezone.utc)
-        confirmed = apply_human_confirmation(
+        application = apply_human_confirmation(
             self.store,
             row_id,
             category,
+            feedback_request_id=feedback_request_id,
+            expected_current_action_plan_id=expected_current_action_plan_id,
             now=current,
         )
-        if confirmed is None:
+        if application is None:
             return None
+        result_fields = {
+            "confirmed": application.confirmed,
+            "feedback_request_id": application.feedback_request_id,
+            "expected_current_action_plan_id": (
+                application.expected_current_action_plan_id
+            ),
+            "resulting_action_plan_id": application.resulting_action_plan_id,
+            "feedback_applied": application.applied,
+            "feedback_replayed": application.replayed,
+        }
+        if application.replayed:
+            return FeedbackLearningResult(
+                **result_fields,
+                retrain=None,
+                error=None,
+            )
         try:
             with retrain_state_reservation(self.retrain_state_path):
                 state = load_retrain_state(self.retrain_state_path).record_feedback(
@@ -74,10 +99,16 @@ class EmailClassifierLearningService:
                 retrain = self._request_if_ready(
                     state, now=current, manual=False
                 )
-            return FeedbackLearningResult(confirmed, retrain, None)
+            return FeedbackLearningResult(
+                **result_fields,
+                retrain=retrain,
+                error=None,
+            )
         except Exception as exc:
             return FeedbackLearningResult(
-                confirmed, None, f"{type(exc).__name__}: {exc}"
+                **result_fields,
+                retrain=None,
+                error=f"{type(exc).__name__}: {exc}",
             )
 
     def request_manual_training(

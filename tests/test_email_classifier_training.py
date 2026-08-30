@@ -97,6 +97,19 @@ def _classification(message_id: str, category: EmailCategory) -> EmailClassifica
     )
 
 
+def _confirm(
+    store: EmailStore,
+    row_id: int,
+    category: EmailCategory,
+) -> dict[str, object] | None:
+    return store.confirm_classification(
+        row_id,
+        category,
+        feedback_request_id=f"training-feedback-{row_id}-{category.value}",
+        expected_current_action_plan_id=None,
+    )
+
+
 def _store_with_confirmed_feedback(tmp_path: Path) -> EmailStore:
     store = EmailStore(tmp_path / "email.sqlite3")
     examples = [
@@ -115,7 +128,7 @@ def _store_with_confirmed_feedback(tmp_path: Path) -> EmailStore:
             preview="redacted",
             model_text=model_text,
         )
-        assert store.confirm_classification(row["id"], category) is not None
+        assert _confirm(store, row["id"], category) is not None
     return store
 
 
@@ -127,7 +140,7 @@ def test_feedback_keeps_redacted_model_text_for_training(tmp_path: Path):
         model_text="__from_domain__example.test __subject__项目 工作",
     )
 
-    store.confirm_classification(row["id"], EmailCategory.IMPORTANT)
+    _confirm(store, row["id"], EmailCategory.IMPORTANT)
 
     assert store.list_training_examples() == [
         {
@@ -143,7 +156,7 @@ def test_training_readiness_requires_two_examples_per_category(tmp_path: Path):
     row = store.upsert_classification(
         _classification("message-1", EmailCategory.WORK), model_text="work"
     )
-    store.confirm_classification(row["id"], EmailCategory.WORK)
+    _confirm(store, row["id"], EmailCategory.WORK)
 
     readiness = assess_feedback_readiness(store)
 
@@ -408,7 +421,7 @@ def test_next_registry_model_marks_only_new_snapshot_without_reassigning_old_sam
             _classification(f"message-{index}", category),
             model_text=f"__subject__new-{index} {category.value}",
         )
-        store.confirm_classification(row["id"], category)
+        _confirm(store, row["id"], category)
 
     second = train_and_promote(
         store,
@@ -448,7 +461,7 @@ def test_later_retrain_rejects_correction_to_previously_included_training_sample
             _classification(f"later-{index}", category),
             model_text=f"__subject__later-{index} {category.value}",
         )
-        store.confirm_classification(row["id"], category)
+        _confirm(store, row["id"], category)
 
     original_stage = registry.stage_candidate
 
@@ -574,7 +587,7 @@ def test_inclusion_failure_after_promotion_restores_exact_prior_manifests(
             _classification(f"rollback-{index}", category),
             model_text=f"__subject__rollback-{index} {category.value}",
         )
-        store.confirm_classification(row["id"], category)
+        _confirm(store, row["id"], category)
     monkeypatch.setattr(
         "app.email_classifier_training._promotion_rejection",
         lambda _registry, _metadata: None,
@@ -602,7 +615,7 @@ def test_training_not_ready_does_not_create_active_model(tmp_path: Path):
     row = store.upsert_classification(
         _classification("message-1", EmailCategory.WORK), model_text="work"
     )
-    store.confirm_classification(row["id"], EmailCategory.WORK)
+    _confirm(store, row["id"], EmailCategory.WORK)
     active = tmp_path / "model.active.pkl"
 
     with pytest.raises(TrainingNotReady):
@@ -668,7 +681,7 @@ def test_retrain_failure_does_not_advance_state_or_create_model(tmp_path: Path):
     row = store.upsert_classification(
         _classification("message-1", EmailCategory.WORK), model_text="work"
     )
-    store.confirm_classification(row["id"], EmailCategory.WORK)
+    _confirm(store, row["id"], EmailCategory.WORK)
     now = datetime(2026, 8, 29, 15, 0, tzinfo=timezone.utc)
     state = RetrainState().record_feedback(now)
     active = tmp_path / "models" / "model.active.pkl"

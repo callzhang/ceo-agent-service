@@ -220,7 +220,12 @@ def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: P
     )
     assert first.pending_feedback_count == 2
     assert pending_total == 2
-    confirmed = store.confirm_classification(pending[0]["id"], EmailCategory.IMPORTANT)
+    confirmed = store.confirm_classification(
+        pending[0]["id"],
+        EmailCategory.IMPORTANT,
+        feedback_request_id="scan-reset-feedback",
+        expected_current_action_plan_id=None,
+    )
     assert confirmed is not None
 
     for index, message in enumerate(source.messages, start=1):

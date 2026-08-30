@@ -927,7 +927,11 @@ def test_console_email_tabs_and_feedback_are_local_classifier_operations(
         )
         feedback = client.post(
             f"/api/console/email/classifications/{row['id']}/feedback",
-            json={"category": "important"},
+            json={
+                "category": "important",
+                "feedback_request_id": "console-feedback-1",
+                "expected_current_action_plan_id": None,
+            },
         )
         processed_tab = client.get("/api/console/email/classifications")
 
@@ -937,7 +941,106 @@ def test_console_email_tabs_and_feedback_are_local_classifier_operations(
     assert pending_tab.json()["items"][0]["subject"] == "Please decide"
     assert feedback.status_code == 200
     assert feedback.json()["item"]["classification_source"] == "user"
+    assert feedback.json()["feedback"] == {
+        "feedback_request_id": "console-feedback-1",
+        "expected_current_action_plan_id": None,
+        "resulting_action_plan_id": feedback.json()["item"]["current_action_plan_id"],
+        "applied": True,
+        "replayed": False,
+    }
     assert processed_tab.json()["items"][0]["category"] == "important"
+
+
+def test_console_email_feedback_validates_intent_and_replays_idempotently(
+    tmp_path: Path,
+):
+    email_store = EmailStore(tmp_path / "worker.sqlite3")
+    row = email_store.upsert_classification(
+        EmailClassification.model_validate(
+            {
+                "classification_id": 11,
+                "stable_message_identity": (
+                    "dingtalk-account:message-id:<email-idempotent@example.test>"
+                ),
+                "provider_locator": {
+                    "account_id": "dingtalk-account",
+                    "folder": "INBOX",
+                    "uidvalidity": 1,
+                    "uid": 11,
+                    "rfc_message_id": "<email-idempotent@example.test>",
+                },
+                "category": EmailCategory.WORK,
+                "confidence": 0.61,
+                "margin": 0.04,
+                "probabilities": {"work": 0.61, "important": 0.57},
+                "model_id": "email/logistic/model-1",
+                "config_version": "email-v1",
+                "status": EmailClassificationStatus.PENDING_FEEDBACK,
+                "classification_source": "model",
+                "action_plan": None,
+            }
+        )
+    )
+
+    with _client(tmp_path) as client:
+        missing_request_id = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "expected_current_action_plan_id": None,
+            },
+        )
+        missing_pointer = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "feedback_request_id": "console-idempotent-1",
+            },
+        )
+        first = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "feedback_request_id": "console-idempotent-1",
+                "expected_current_action_plan_id": None,
+            },
+        )
+        replay = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "feedback_request_id": "console-idempotent-1",
+                "expected_current_action_plan_id": None,
+            },
+        )
+        unknown = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "important",
+                "feedback_request_id": "console-idempotent-2",
+                "expected_current_action_plan_id": None,
+            },
+        )
+        mismatched_replay = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={
+                "category": "personal",
+                "feedback_request_id": "console-idempotent-1",
+                "expected_current_action_plan_id": None,
+            },
+        )
+
+    assert missing_request_id.status_code == 400
+    assert missing_pointer.status_code == 400
+    assert first.status_code == 200
+    assert first.json()["feedback"]["applied"] is True
+    assert replay.status_code == 200
+    assert replay.json()["feedback"]["replayed"] is True
+    assert replay.json()["item"] == first.json()["item"]
+    assert unknown.status_code == 409
+    assert unknown.json()["code"] == "email_classification_conflict"
+    assert mismatched_replay.status_code == 409
+    assert mismatched_replay.json()["code"] == "email_classification_conflict"
 
 
 def test_console_email_config_is_separate_from_provider_actions(tmp_path: Path):
@@ -1048,7 +1151,11 @@ def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Pat
     ) as client:
         feedback = client.post(
             f"/api/console/email/classifications/{row['id']}/feedback",
-            json={"category": "important"},
+            json={
+                "category": "important",
+                "feedback_request_id": "console-learning-feedback-1",
+                "expected_current_action_plan_id": None,
+            },
         )
 
     assert feedback.status_code == 200

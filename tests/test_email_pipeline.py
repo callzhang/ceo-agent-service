@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
-from threading import Event, Thread
+from threading import Barrier, Event, Thread
 
 import pytest
 from pydantic import ValidationError
@@ -22,7 +23,7 @@ from app.email_pipeline import (
     apply_human_confirmation,
     decide_classification,
 )
-from app.email_store import EmailStore
+from app.email_store import EmailClassificationConflict, EmailStore
 
 
 NOW = datetime(2026, 8, 30, 16, 0, tzinfo=timezone.utc)
@@ -91,15 +92,16 @@ def _decision(
 
 
 def _persist_decision(store: EmailStore, decision, *, classification_id: int = 101):
+    rfc_message_id = f"<pipeline-{classification_id}@example.com>"
     classification = EmailClassification(
         classification_id=classification_id,
-        stable_message_identity="account-a:message-id:<pipeline@example.com>",
+        stable_message_identity=f"account-a:message-id:{rfc_message_id}",
         provider_locator=EmailProviderLocator(
             account_id="account-a",
             folder="INBOX",
             uidvalidity=42,
             uid=7,
-            rfc_message_id="<pipeline@example.com>",
+            rfc_message_id=rfc_message_id,
         ),
         category=decision.category,
         confidence=decision.confidence,
@@ -171,14 +173,17 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
         config_version="important-v3",
     )
 
-    confirmed = apply_human_confirmation(
+    application = apply_human_confirmation(
         store,
         pending["id"],
         EmailCategory.IMPORTANT,
+        feedback_request_id="feedback-pending-confirmation",
+        expected_current_action_plan_id=None,
         now=NOW,
     )
 
-    assert confirmed is not None
+    assert application is not None
+    confirmed = application.confirmed
     assert confirmed["status"] == "processed"
     assert confirmed["classification_source"] == "user"
     assert confirmed["action_plan"]["category"] == "important"
@@ -228,14 +233,17 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
         config_version="important-v4",
     )
 
-    corrected = apply_human_confirmation(
+    application = apply_human_confirmation(
         store,
         processed["id"],
         EmailCategory.IMPORTANT,
+        feedback_request_id="feedback-processed-correction",
+        expected_current_action_plan_id=processed["current_action_plan_id"],
         now=NOW,
     )
 
-    assert corrected is not None
+    assert application is not None
+    corrected = application.confirmed
     assert corrected["classification_source"] == "user"
     assert corrected["confirmed_category"] == "important"
     assert corrected["current_action_plan_id"] != processed["current_action_plan_id"]
@@ -288,14 +296,17 @@ def test_human_confirmation_uses_primary_key_lookup_not_classification_paging(
 
     monkeypatch.setattr(store, "list_classifications", reject_paging)
 
-    confirmed = apply_human_confirmation(
+    application = apply_human_confirmation(
         store,
         pending["id"],
         EmailCategory.WORK,
+        feedback_request_id="feedback-primary-key-lookup",
+        expected_current_action_plan_id=None,
         now=NOW,
     )
 
-    assert confirmed is not None
+    assert application is not None
+    confirmed = application.confirmed
     assert confirmed["status"] == "processed"
 
 
@@ -358,6 +369,10 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
                     correction_store,
                     processed["id"],
                     EmailCategory.IMPORTANT,
+                    feedback_request_id="feedback-config-lease",
+                    expected_current_action_plan_id=processed[
+                        "current_action_plan_id"
+                    ],
                     now=NOW,
                 )
             )
@@ -374,8 +389,9 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
     assert not thread.is_alive()
     assert failures == []
     assert len(results) == 1
-    corrected = results[0]
-    assert corrected is not None
+    application = results[0]
+    assert application is not None
+    corrected = application.confirmed
     assert corrected["config_version"] == "important-v2"
     assert corrected["action_plan"]["config_version"] == "important-v2"
     assert corrected["action_plan"]["actions"] == ["move"]
@@ -398,3 +414,201 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
         ).fetchone()
     assert committed_config_version == "important-v2"
     assert current_plan_and_action == ("important-v2", "important-v2")
+
+
+def test_exact_feedback_replay_returns_original_result_without_new_history(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    pending = _persist_decision(store, _decision(confidence=0.79))
+
+    first = apply_human_confirmation(
+        store,
+        pending["id"],
+        EmailCategory.IMPORTANT,
+        feedback_request_id="feedback-first-1",
+        expected_current_action_plan_id=None,
+        now=NOW,
+    )
+    replay = apply_human_confirmation(
+        store,
+        pending["id"],
+        EmailCategory.IMPORTANT,
+        feedback_request_id="feedback-first-1",
+        expected_current_action_plan_id=None,
+        now=NOW,
+    )
+
+    assert first is not None
+    assert replay is not None
+    assert first.applied is True
+    assert first.replayed is False
+    assert replay.applied is False
+    assert replay.replayed is True
+    assert replay.feedback_request_id == "feedback-first-1"
+    assert replay.confirmed == first.confirmed
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from email_feedback_requests").fetchone()[0] == 1
+        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 1
+        assert db.execute("select count(*) from email_actions").fetchone()[0] == 0
+
+
+def test_feedback_replay_after_later_correction_returns_original_result(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    pending = _persist_decision(store, _decision(confidence=0.79))
+    first = apply_human_confirmation(
+        store,
+        pending["id"],
+        EmailCategory.WORK,
+        feedback_request_id="feedback-original",
+        expected_current_action_plan_id=None,
+        now=NOW,
+    )
+    assert first is not None
+    corrected = apply_human_confirmation(
+        store,
+        pending["id"],
+        EmailCategory.IMPORTANT,
+        feedback_request_id="feedback-correction",
+        expected_current_action_plan_id=first.resulting_action_plan_id,
+        now=NOW,
+    )
+    assert corrected is not None
+
+    replay = apply_human_confirmation(
+        store,
+        pending["id"],
+        EmailCategory.WORK,
+        feedback_request_id="feedback-original",
+        expected_current_action_plan_id=None,
+        now=NOW,
+    )
+
+    assert replay is not None
+    assert replay.replayed is True
+    assert replay.confirmed == first.confirmed
+    assert replay.resulting_action_plan_id != corrected.resulting_action_plan_id
+
+
+@pytest.mark.parametrize(
+    ("classification_offset", "category", "expected_pointer"),
+    (
+        (0, EmailCategory.PERSONAL, None),
+        (0, EmailCategory.IMPORTANT, "unexpected-plan"),
+        (1, EmailCategory.IMPORTANT, None),
+    ),
+)
+def test_feedback_request_id_reuse_with_different_intent_conflicts(
+    tmp_path: Path,
+    classification_offset: int,
+    category: EmailCategory,
+    expected_pointer: str | None,
+):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    first_row = _persist_decision(store, _decision(confidence=0.79))
+    second_row = _persist_decision(
+        store,
+        _decision(confidence=0.79),
+        classification_id=102,
+    )
+    first = apply_human_confirmation(
+        store,
+        first_row["id"],
+        EmailCategory.IMPORTANT,
+        feedback_request_id="feedback-stable-id",
+        expected_current_action_plan_id=None,
+        now=NOW,
+    )
+    assert first is not None
+    target = second_row if classification_offset else first_row
+
+    with pytest.raises(EmailClassificationConflict):
+        apply_human_confirmation(
+            store,
+            target["id"],
+            category,
+            feedback_request_id="feedback-stable-id",
+            expected_current_action_plan_id=expected_pointer,
+            now=NOW,
+        )
+
+
+def test_unknown_request_against_processed_row_requires_current_pointer(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    pending = _persist_decision(store, _decision(confidence=0.79))
+    first = apply_human_confirmation(
+        store,
+        pending["id"],
+        EmailCategory.WORK,
+        feedback_request_id="feedback-first",
+        expected_current_action_plan_id=None,
+        now=NOW,
+    )
+    assert first is not None
+
+    with pytest.raises(EmailClassificationConflict):
+        apply_human_confirmation(
+            store,
+            pending["id"],
+            EmailCategory.WORK,
+            feedback_request_id="feedback-unknown",
+            expected_current_action_plan_id=None,
+            now=NOW,
+        )
+
+
+def test_concurrent_different_requests_from_same_plan_pointer_allow_one_correction(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "email.sqlite3")
+    pending = _persist_decision(store, _decision(confidence=0.79))
+    first = apply_human_confirmation(
+        store,
+        pending["id"],
+        EmailCategory.WORK,
+        feedback_request_id="feedback-first",
+        expected_current_action_plan_id=None,
+        now=NOW,
+    )
+    assert first is not None
+    pointer = first.resulting_action_plan_id
+    ready = Barrier(2)
+    results = []
+
+    def correct(request_id: str, category: EmailCategory):
+        ready.wait()
+        try:
+            return apply_human_confirmation(
+                EmailStore(store.path),
+                pending["id"],
+                category,
+                feedback_request_id=request_id,
+                expected_current_action_plan_id=pointer,
+                now=NOW,
+            )
+        except EmailClassificationConflict as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda args: correct(*args),
+                (
+                    ("feedback-correction-a", EmailCategory.IMPORTANT),
+                    ("feedback-correction-b", EmailCategory.PERSONAL),
+                ),
+            )
+        )
+
+    applied = [result for result in results if not isinstance(result, Exception)]
+    conflicts = [result for result in results if isinstance(result, Exception)]
+    assert len(applied) == 1
+    assert applied[0] is not None and applied[0].applied is True
+    assert len(conflicts) == 1
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("select count(*) from email_feedback_requests").fetchone()[0] == 2
+        assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 2

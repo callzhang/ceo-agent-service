@@ -7,6 +7,7 @@ provider and never creates Agent, Audit, reply-task, or run records.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
@@ -29,7 +30,7 @@ from app.email_classifier_contracts import (
 )
 
 
-EMAIL_SCHEMA_VERSION = 5
+EMAIL_SCHEMA_VERSION = 6
 _CLASSIFICATION_STATUSES = frozenset(status.value for status in EmailClassificationStatus)
 _CLASSIFICATION_SOURCES = frozenset({"model", "user"})
 _CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
@@ -178,6 +179,14 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "started_at": ("text", True, None),
         "finished_at": ("text", True, None),
     },
+    "email_feedback_requests": {
+        "feedback_request_id": ("text", False, None),
+        "classification_id": ("integer", True, None),
+        "category": ("text", True, None),
+        "expected_current_action_plan_id": ("text", False, None),
+        "resulting_action_plan_id": ("text", True, None),
+        "applied_at": ("text", True, None),
+    },
 }
 _REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
     table: frozenset(columns)
@@ -221,6 +230,13 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "attempt_number > 0",
         "status in ('done', 'failed')",
     ),
+    "email_feedback_requests": (
+        "trim(feedback_request_id) != ''",
+        "category in ('important', 'work', 'personal', 'notification', 'billing', 'shopping', 'subscription', 'junk')",
+        "expected_current_action_plan_id is null or trim(expected_current_action_plan_id) != ''",
+        "trim(resulting_action_plan_id) != ''",
+        "trim(applied_at) != ''",
+    ),
 }
 _REQUIRED_AUTOINCREMENT_COLUMNS = frozenset(
     {
@@ -238,6 +254,7 @@ _REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
     "email_action_plans": ("action_plan_id",),
     "email_actions": ("action_id",),
     "email_action_attempts": ("id",),
+    "email_feedback_requests": ("feedback_request_id",),
 }
 _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_classifications": (("stable_message_identity",),),
@@ -245,6 +262,10 @@ _REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
     "email_action_plans": (("classification_id", "action_plan_version"),),
     "email_actions": (("action_plan_id", "action_type"),),
     "email_action_attempts": (("action_id", "attempt_number"),),
+    "email_feedback_requests": (
+        ("resulting_action_plan_id",),
+        ("expected_current_action_plan_id",),
+    ),
 }
 _REQUIRED_FOREIGN_KEYS: Mapping[
     str,
@@ -258,6 +279,21 @@ _REQUIRED_FOREIGN_KEYS: Mapping[
         ("classification_id", "email_classifications", "id", "RESTRICT"),
     ),
     "email_action_attempts": (("action_id", "email_actions", "action_id", "RESTRICT"),),
+    "email_feedback_requests": (
+        ("classification_id", "email_classifications", "id", "RESTRICT"),
+        (
+            "expected_current_action_plan_id",
+            "email_action_plans",
+            "action_plan_id",
+            "RESTRICT",
+        ),
+        (
+            "resulting_action_plan_id",
+            "email_action_plans",
+            "action_plan_id",
+            "RESTRICT",
+        ),
+    ),
 }
 _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_classifications_status": (
@@ -332,6 +368,21 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
 
 class EmailClassificationConflict(RuntimeError):
     """The classification was already resolved by another confirmation."""
+
+
+@dataclass(frozen=True)
+class EmailFeedbackApplication:
+    """Durable result of one explicit human-feedback intent."""
+
+    feedback_request_id: str
+    expected_current_action_plan_id: str | None
+    resulting_action_plan_id: str
+    confirmed: dict[str, Any]
+    applied: bool
+
+    @property
+    def replayed(self) -> bool:
+        return not self.applied
 
 
 class EmailTrainingInclusionConflict(RuntimeError):
@@ -628,6 +679,24 @@ def _normalize_column_default(value: object) -> str | None:
 def _require_positive_int(value: int, *, field: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{field} must be a positive integer")
+
+
+def _validate_feedback_request_id(value: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError("feedback_request_id must be a non-empty stable identifier")
+    if len(value) > 200:
+        raise ValueError("feedback_request_id must be at most 200 characters")
+    return value
+
+
+def _validate_expected_action_plan_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(
+            "expected_current_action_plan_id must be null or a non-empty identifier"
+        )
+    return value
 
 
 def _direct_action_id(action_plan_id: str, action: EmailAction) -> str:
@@ -1052,6 +1121,38 @@ class EmailStore:
                     on delete restrict
             )
             """,
+            """
+            create table if not exists email_feedback_requests (
+                feedback_request_id text primary key
+                    check(trim(feedback_request_id) != ''),
+                classification_id integer not null,
+                category text not null check(category in (
+                    'important', 'work', 'personal', 'notification',
+                    'billing', 'shopping', 'subscription', 'junk'
+                )),
+                expected_current_action_plan_id text
+                    unique
+                    check(
+                        expected_current_action_plan_id is null
+                        or trim(expected_current_action_plan_id) != ''
+                    ),
+                resulting_action_plan_id text not null unique
+                    check(trim(resulting_action_plan_id) != ''),
+                applied_at text not null check(trim(applied_at) != ''),
+                check(
+                    expected_current_action_plan_id is null
+                    or expected_current_action_plan_id != resulting_action_plan_id
+                ),
+                foreign key(classification_id) references email_classifications(id)
+                    on delete restrict,
+                foreign key(expected_current_action_plan_id)
+                    references email_action_plans(action_plan_id)
+                    on delete restrict,
+                foreign key(resulting_action_plan_id)
+                    references email_action_plans(action_plan_id)
+                    on delete restrict
+            )
+            """,
         )
         for statement in statements:
             db.execute(statement)
@@ -1423,39 +1524,7 @@ class EmailStore:
         plans: dict[str, EmailActionPlan] = {}
         plans_by_classification: dict[int, list[EmailActionPlan]] = {}
         for row in db.execute("select * from email_action_plans"):
-            actions = _json_load(
-                row["actions_json"],
-                field="actions_json",
-                expected_type=list,
-            )
-            parameters = _json_load(
-                row["action_parameters_json"],
-                field="action_parameters_json",
-                expected_type=dict,
-            )
-            try:
-                plan = EmailActionPlan.model_validate_json(
-                    _json_dump(
-                        {
-                            "action_plan_id": row["action_plan_id"],
-                            "action_plan_version": row["action_plan_version"],
-                            "classification_id": row["classification_id"],
-                            "account_id": row["account_id"],
-                            "category": row["category"],
-                            "classification_source": row["classification_source"],
-                            "confidence": row["confidence"],
-                            "model_id": row["model_id"],
-                            "config_version": row["config_version"],
-                            "actions": actions,
-                            "action_parameters": parameters,
-                            "created_at": row["created_at"],
-                        }
-                    )
-                )
-            except ValueError as exc:
-                raise EmailPersistenceCorruption(
-                    f"invalid immutable ActionPlan {row['action_plan_id']}"
-                ) from exc
+            plan = self._stored_action_plan(row)
             plans[plan.action_plan_id] = plan
             plans_by_classification.setdefault(plan.classification_id, []).append(plan)
         for classification_id, stored_plans in plans_by_classification.items():
@@ -1659,6 +1728,49 @@ class EmailStore:
                     f"ActionPlan {plan.action_plan_id} has no matching classification"
                 )
 
+        for row in db.execute("select * from email_feedback_requests"):
+            try:
+                request_id = _validate_feedback_request_id(
+                    row["feedback_request_id"]
+                )
+                expected_plan_id = _validate_expected_action_plan_id(
+                    row["expected_current_action_plan_id"]
+                )
+                category = EmailCategory(row["category"])
+            except (TypeError, ValueError) as exc:
+                raise EmailPersistenceCorruption(
+                    "invalid durable email feedback request"
+                ) from exc
+            classification = classifications.get(row["classification_id"])
+            resulting_plan = plans.get(row["resulting_action_plan_id"])
+            expected_plan = (
+                plans.get(expected_plan_id) if expected_plan_id is not None else None
+            )
+            valid_result = (
+                classification is not None
+                and resulting_plan is not None
+                and resulting_plan.classification_id == row["classification_id"]
+                and resulting_plan.category is category
+                and resulting_plan.classification_source == "user"
+            )
+            if not valid_result:
+                raise EmailPersistenceCorruption(
+                    f"feedback request {request_id} has an inconsistent result"
+                )
+            if expected_plan_id is None:
+                valid_version = resulting_plan.action_plan_version == 1
+            else:
+                valid_version = (
+                    expected_plan is not None
+                    and expected_plan.classification_id == row["classification_id"]
+                    and resulting_plan.action_plan_version
+                    == expected_plan.action_plan_version + 1
+                )
+            if not valid_version:
+                raise EmailPersistenceCorruption(
+                    f"feedback request {request_id} has an inconsistent plan version"
+                )
+
         for row in db.execute(
             "select category, actions_json, action_parameters_json "
             "from email_category_configs"
@@ -1845,6 +1957,86 @@ class EmailStore:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    @staticmethod
+    def _stored_action_plan(row: sqlite3.Row) -> EmailActionPlan:
+        try:
+            return EmailActionPlan.model_validate_json(
+                _json_dump(
+                    {
+                        "action_plan_id": row["action_plan_id"],
+                        "action_plan_version": row["action_plan_version"],
+                        "classification_id": row["classification_id"],
+                        "account_id": row["account_id"],
+                        "category": row["category"],
+                        "classification_source": row["classification_source"],
+                        "confidence": row["confidence"],
+                        "model_id": row["model_id"],
+                        "config_version": row["config_version"],
+                        "actions": _json_load(
+                            row["actions_json"],
+                            field="actions_json",
+                            expected_type=list,
+                        ),
+                        "action_parameters": _json_load(
+                            row["action_parameters_json"],
+                            field="action_parameters_json",
+                            expected_type=dict,
+                        ),
+                        "created_at": row["created_at"],
+                    }
+                )
+            )
+        except ValueError as exc:
+            raise EmailPersistenceCorruption(
+                f"invalid immutable ActionPlan {row['action_plan_id']}"
+            ) from exc
+
+    def _feedback_application(
+        self,
+        db: sqlite3.Connection,
+        request: sqlite3.Row,
+        *,
+        applied: bool,
+    ) -> EmailFeedbackApplication:
+        classification = db.execute(
+            "select * from email_classifications where id=?",
+            (request["classification_id"],),
+        ).fetchone()
+        plan_row = db.execute(
+            "select * from email_action_plans where action_plan_id=?",
+            (request["resulting_action_plan_id"],),
+        ).fetchone()
+        if classification is None or plan_row is None:
+            raise EmailPersistenceCorruption(
+                f"feedback request {request['feedback_request_id']} has no result"
+            )
+        action_plan = self._stored_action_plan(plan_row)
+        confirmed = self._classification_row(classification)
+        confirmed.update(
+            {
+                "category": action_plan.category.value,
+                "confirmed_category": action_plan.category.value,
+                "confidence": action_plan.confidence,
+                "model_id": action_plan.model_id,
+                "config_version": action_plan.config_version,
+                "status": EmailClassificationStatus.PROCESSED.value,
+                "classification_source": "user",
+                "action_plan": action_plan.model_dump(mode="json"),
+                "current_action_plan_id": action_plan.action_plan_id,
+                "confirmed_at": request["applied_at"],
+                "updated_at": request["applied_at"],
+            }
+        )
+        return EmailFeedbackApplication(
+            feedback_request_id=request["feedback_request_id"],
+            expected_current_action_plan_id=request[
+                "expected_current_action_plan_id"
+            ],
+            resulting_action_plan_id=request["resulting_action_plan_id"],
+            confirmed=confirmed,
+            applied=applied,
+        )
 
     @staticmethod
     def _check_classification_identity(
@@ -2864,27 +3056,39 @@ class EmailStore:
         )
 
     def confirm_classification(
-        self, row_id: int, category: EmailCategory
+        self,
+        row_id: int,
+        category: EmailCategory,
+        *,
+        feedback_request_id: str,
+        expected_current_action_plan_id: str | None,
     ) -> dict[str, Any] | None:
-        return self._apply_human_classification(
+        application = self._apply_human_classification(
             row_id,
             category,
+            feedback_request_id=feedback_request_id,
+            expected_current_action_plan_id=expected_current_action_plan_id,
             allow_processed_correction=False,
             created_at=None,
         )
+        return None if application is None else application.confirmed
 
     def apply_human_classification(
         self,
         row_id: int,
         category: EmailCategory,
         *,
+        feedback_request_id: str,
+        expected_current_action_plan_id: str | None,
         created_at: datetime | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> EmailFeedbackApplication | None:
         """Confirm or correct a classification under one durable write lease."""
 
         return self._apply_human_classification(
             row_id,
             category,
+            feedback_request_id=feedback_request_id,
+            expected_current_action_plan_id=expected_current_action_plan_id,
             allow_processed_correction=True,
             created_at=created_at,
         )
@@ -2894,27 +3098,56 @@ class EmailStore:
         row_id: int,
         category: EmailCategory,
         *,
+        feedback_request_id: str,
+        expected_current_action_plan_id: str | None,
         allow_processed_correction: bool,
         created_at: datetime | None,
-    ) -> dict[str, Any] | None:
+    ) -> EmailFeedbackApplication | None:
+        feedback_request_id = _validate_feedback_request_id(feedback_request_id)
+        expected_current_action_plan_id = _validate_expected_action_plan_id(
+            expected_current_action_plan_id
+        )
+        category = EmailCategory(category)
         with self._connect() as db:
             db.execute("begin immediate")
+            request = db.execute(
+                "select * from email_feedback_requests where feedback_request_id=?",
+                (feedback_request_id,),
+            ).fetchone()
+            if request is not None:
+                same_intent = (
+                    request["classification_id"] == row_id
+                    and request["category"] == category.value
+                    and request["expected_current_action_plan_id"]
+                    == expected_current_action_plan_id
+                )
+                if not same_intent:
+                    raise EmailClassificationConflict(
+                        "feedback_request_id is already bound to another intent"
+                    )
+                return self._feedback_application(db, request, applied=False)
             row = db.execute(
                 "select * from email_classifications where id=?", (row_id,)
             ).fetchone()
             if row is None:
                 return None
             if row["status"] == EmailClassificationStatus.PENDING_FEEDBACK.value:
+                if expected_current_action_plan_id is not None:
+                    raise EmailClassificationConflict(
+                        "pending confirmation requires a null expected ActionPlan"
+                    )
                 action_plan_version = 1
-                expected_current_action_plan_id = None
             elif (
                 row["status"] == EmailClassificationStatus.PROCESSED.value
                 and allow_processed_correction
             ):
-                expected_current_action_plan_id = row["current_action_plan_id"]
                 if not expected_current_action_plan_id:
-                    raise EmailActionPlanConflict(
-                        "processed classification has no current ActionPlan"
+                    raise EmailClassificationConflict(
+                        "processed correction requires the current ActionPlan"
+                    )
+                if row["current_action_plan_id"] != expected_current_action_plan_id:
+                    raise EmailClassificationConflict(
+                        "email classification current ActionPlan changed"
                     )
                 current_plan = db.execute(
                     """
@@ -2952,8 +3185,8 @@ class EmailStore:
                 action_parameters=action_parameters,
                 created_at=plan_created_at,
             )
-            now = self._now()
-            self._persist_action_plan(db, action_plan, now=now)
+            applied_at = self._now()
+            self._persist_action_plan(db, action_plan, now=applied_at)
             updated_count = db.execute(
                 """
                 update email_classifications
@@ -2973,8 +3206,8 @@ class EmailStore:
                     config_version,
                     action_plan.model_dump_json(),
                     action_plan.action_plan_id,
-                    now,
-                    now,
+                    applied_at,
+                    applied_at,
                     row_id,
                     row["status"],
                     expected_current_action_plan_id,
@@ -2984,11 +3217,29 @@ class EmailStore:
                 raise EmailClassificationConflict(
                     "email classification was changed concurrently"
                 )
-            updated = db.execute(
-                "select * from email_classifications where id=?", (row_id,)
+            db.execute(
+                """
+                insert into email_feedback_requests (
+                    feedback_request_id, classification_id, category,
+                    expected_current_action_plan_id, resulting_action_plan_id,
+                    applied_at
+                ) values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    feedback_request_id,
+                    row_id,
+                    category.value,
+                    expected_current_action_plan_id,
+                    action_plan.action_plan_id,
+                    applied_at,
+                ),
+            )
+            request = db.execute(
+                "select * from email_feedback_requests where feedback_request_id=?",
+                (feedback_request_id,),
             ).fetchone()
-        assert updated is not None
-        return self._classification_row(updated)
+            assert request is not None
+            return self._feedback_application(db, request, applied=True)
 
     @staticmethod
     def _category_action_snapshot(
