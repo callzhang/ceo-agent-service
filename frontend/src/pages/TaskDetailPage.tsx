@@ -14,6 +14,16 @@ function sourceLabel(source: unknown) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) || path || value;
 }
 
+type EvidenceCandidateRow = {
+  id: string;
+  status: unknown;
+  source_type: unknown;
+  source_ref: unknown;
+  reason: unknown;
+  evidence_text: unknown;
+  decision: unknown;
+};
+
 type DetailRow = Record<string, unknown> & { id: string };
 
 function detailRows(values: Array<Record<string, unknown>>, prefix: string): DetailRow[] {
@@ -55,6 +65,15 @@ export function TaskDetailPage({ projectId }: { projectId: string }) {
   if (state === "error" || !task) return <ConsolePageLayout title={`Task ${projectId}`}><div className="console-card page-state page-state-error" role="alert">{message || "任务不存在"}</div></ConsolePageLayout>;
 
   const facts = task.facts.map((fact) => ({ ...fact, id: String(fact.id) }));
+  const evidenceCandidates: EvidenceCandidateRow[] = (task.evidence_candidates ?? []).map((candidate) => ({
+    id: String(candidate.id || candidate.source_ref || ""),
+    status: candidate.status,
+    source_type: candidate.source_type,
+    source_ref: candidate.source_ref,
+    reason: candidate.reason,
+    evidence_text: candidate.evidence_text,
+    decision: candidate.decision,
+  }));
   const todos = detailRows(task.todos, "todo");
   const updates = detailRows(task.updates, "update");
   const memory = detailRows(task.memory, "memory");
@@ -92,6 +111,17 @@ export function TaskDetailPage({ projectId }: { projectId: string }) {
           expandable
           renderExpanded={(todo) => <div className="task-record-details"><strong>说明</strong><p>{displayValue(todo.description)}</p><strong>Blocker</strong><p>{displayValue(todo.blocker)}</p><strong>跟进问题</strong><p>{displayValue(todo.follow_up_question)}</p><details><summary>技术详情</summary><pre className="technical-details">{JSON.stringify(todo, null, 2)}</pre></details></div>}
         /> : <p className="muted">No TODOs recorded.</p>}
+      </section>
+      <section className="console-card">
+        <h2>Evidence candidates</h2>
+        {evidenceCandidates.length ? <ResponsiveDataList<EvidenceCandidateRow>
+          ariaLabel="TODO 完成证据候选"
+          columns={[{ key: "status", label: "Status" }, { key: "source_type", label: "Source" }, { key: "reason", label: "Reason" }, { key: "evidence_text", label: "Evidence" }]}
+          rows={evidenceCandidates}
+          renderCell={(candidate, key) => key === "status" ? <StatusBadge value={displayValue(candidate.status)} /> : key === "source_type" ? <span title={displayValue(candidate.source_ref)}>{displayValue(candidate.source_type)}</span> : <SummaryText value={displayValue(candidate[key])} />}
+          expandable
+          renderExpanded={(candidate) => <div><strong>Source</strong><p>{displayValue(candidate.source_ref)}</p><strong>Decision</strong><pre className="technical-details">{JSON.stringify(candidate.decision || {}, null, 2)}</pre></div>}
+        /> : <p className="muted">No evidence candidates recorded.</p>}
       </section>
       <section className="console-card task-updates-section">
         <h2>Updates</h2>

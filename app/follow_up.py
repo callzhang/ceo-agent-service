@@ -226,6 +226,32 @@ def _completion_supported_by_current_evidence(
     return False, ""
 
 
+def _completion_candidate_preflight(
+    store: AutoReplyStore,
+    draft,
+) -> tuple[str, str]:
+    if draft.todo_id <= 0:
+        return "", ""
+    candidates = store.list_todo_evidence_candidates(
+        todo_id=draft.todo_id,
+        statuses=("accepted", "candidate", "enqueued"),
+        limit=10,
+    )
+    for candidate in candidates:
+        if str(candidate.status) == "accepted":
+            return (
+                "accepted",
+                f"todo completion evidence accepted: {candidate.source_ref}",
+            )
+    for candidate in candidates:
+        if str(candidate.status) in {"candidate", "enqueued"}:
+            return (
+                "pending",
+                f"todo completion evidence pending: {candidate.source_ref}",
+            )
+    return "", ""
+
+
 def _skip_completed_follow_up(
     store: AutoReplyStore,
     draft,
@@ -972,6 +998,28 @@ def process_due_follow_ups(
                 now=now,
                 reason=reason,
                 completed=reason != "todo status is cancelled",
+            )
+            continue
+        candidate_state, candidate_reason = _completion_candidate_preflight(
+            store,
+            draft,
+        )
+        if candidate_state == "accepted":
+            _skip_completed_follow_up(
+                store,
+                draft,
+                now=now,
+                reason=candidate_reason,
+                completed=True,
+            )
+            continue
+        if candidate_state == "pending":
+            _defer_policy_follow_up(
+                store,
+                draft,
+                now=now,
+                reason="todo_completion_evidence_pending",
+                detail={"candidate_reason": candidate_reason},
             )
             continue
         if (

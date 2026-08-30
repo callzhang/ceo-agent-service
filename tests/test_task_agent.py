@@ -202,6 +202,52 @@ def _follow_up_reply_work_item(
     )
 
 
+def _todo_completion_candidate_work_item(
+    *,
+    candidate_id: int,
+    project_id: int,
+    todo_id: int,
+    project_name: str,
+    evidence_text: str,
+) -> WorkItem:
+    return WorkItem.model_validate(
+        {
+            "source": {
+                "type": "todo_completion_evidence_candidate",
+                "ref": f"todo-evidence:{candidate_id}",
+                "title": f"TODO completion evidence #{candidate_id}",
+                "conversation_id": "",
+                "conversation_title": "",
+                "created_at": "2026-06-28 12:00:00",
+            },
+            "summary": json.dumps(
+                {
+                    "project": {"id": project_id, "title": project_name},
+                    "todo": {"id": todo_id, "title": "确认客户验收完成"},
+                    "evidence_candidate": {
+                        "id": candidate_id,
+                        "evidence_text": evidence_text,
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            "project_name": project_name,
+            "context": {
+                "sender": "CEO task completion checker",
+                "participants": ["Alex"],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "",
+            },
+            "task_signals": {
+                "possible_task_update": True,
+                "mentions_follow_up": True,
+                "progress_claim": True,
+                "signal_reason": "todo completion evidence candidate",
+            },
+        }
+    )
+
+
 def _enqueue_and_process_work_item(
     store: AutoReplyStore,
     *,
@@ -216,6 +262,185 @@ def _enqueue_and_process_work_item(
     work_input = store.claim_work_summary_inputs(limit=1)[0]
     process_work_item(store, TaskAgentRunner(codex), work_input)
     return input_id
+
+
+def test_process_todo_completion_candidate_marks_accepted_when_todo_closes(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户验收",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认客户验收完成",
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        status="open",
+        priority="P1",
+    )
+    follow_up_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请确认客户验收是否完成。",
+        scheduled_at="2026-06-28 09:00:00",
+        status="sent",
+    )
+    candidate = store.upsert_todo_evidence_candidate(
+        project_id=project_id,
+        todo_id=todo_id,
+        source_type="dws_message",
+        source_ref="dws_message:msg-1",
+        source_created_at="2026-06-28 10:00:00",
+        evidence_text="Alex 明确回复客户验收已经完成。",
+        reason="消息明确说明验收完成。",
+        confidence=0.95,
+    )
+    item = _todo_completion_candidate_work_item(
+        candidate_id=candidate.id,
+        project_id=project_id,
+        todo_id=todo_id,
+        project_name="客户验收",
+        evidence_text=candidate.evidence_text,
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    store.mark_todo_evidence_candidate_enqueued(candidate.id, input_id)
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+
+    process_work_item(
+        store,
+        TaskAgentRunner(
+            FakeCodex(
+                {
+                    "action": "update_project",
+                    "project": {
+                        "id": project_id,
+                        "title": "客户验收",
+                        "category": "projects",
+                        "status": "active",
+                        "priority": "P1",
+                        "risk_level": "medium",
+                        "memory_context": {
+                            "query": "客户验收",
+                            "summary": "客户验收背景",
+                            "memories": [],
+                        },
+                    },
+                    "todo_changes": [
+                        {
+                            "action": "close",
+                            "todo_id": todo_id,
+                            "completion_evidence": {
+                                "source": "dws_message:msg-1",
+                                "reason": "Alex 明确回复客户验收已经完成。",
+                                "description": "群消息明确说明客户验收已经完成。",
+                                "completed_at": "2026-06-28 10:00:00",
+                                "checked_at": "2026-06-28 12:00:00",
+                            },
+                        }
+                    ],
+                    "follow_up_drafts": [],
+                    "follow_up_changes": [],
+                    "update_summary": "确认客户验收已经完成。",
+                    "merge_reason": "todo completion evidence accepted",
+                    "memory_recall_used": True,
+                    "confidence": 0.95,
+                    "failure_risk": "验收状态误判会导致重复追问。",
+                    "failure_risk_score": 0.4,
+                }
+            )
+        ),
+        work_input,
+        dws=object(),
+        now="2026-06-28 12:00:00",
+    )
+
+    updated_candidate = store.get_todo_evidence_candidate(candidate.id)
+    assert updated_candidate is not None
+    assert updated_candidate.status == "accepted"
+    assert json.loads(updated_candidate.decision_json)["todo_changes"][0]["action"] == "close"
+    assert store.get_work_todo(todo_id).status == "done"
+    assert store.get_follow_up_draft(follow_up_id).status == "completed"
+
+
+def test_process_todo_completion_candidate_marks_rejected_when_agent_skips(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户验收",
+        category="projects",
+        status="active",
+        priority="P2",
+        risk_level="low",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认客户验收完成",
+        status="open",
+        priority="P2",
+    )
+    candidate = store.upsert_todo_evidence_candidate(
+        project_id=project_id,
+        todo_id=todo_id,
+        source_type="dws_minutes",
+        source_ref="dws_minutes:minutes-1",
+        source_created_at="2026-06-28 10:00:00",
+        evidence_text="会议里只是说继续推进验收。",
+        reason="只看到进展，没有完成证据。",
+        confidence=0.3,
+    )
+    item = _todo_completion_candidate_work_item(
+        candidate_id=candidate.id,
+        project_id=project_id,
+        todo_id=todo_id,
+        project_name="客户验收",
+        evidence_text=candidate.evidence_text,
+    )
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    store.mark_todo_evidence_candidate_enqueued(candidate.id, input_id)
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+
+    process_work_item(
+        store,
+        TaskAgentRunner(
+            FakeCodex(
+                {
+                    "action": "skip",
+                    "skip_reason": "证据只说明有进展，不能证明 TODO 已完成。",
+                    "project": None,
+                    "todo_changes": [],
+                    "follow_up_drafts": [],
+                    "follow_up_changes": [],
+                    "update_summary": "不关闭 TODO。",
+                    "merge_reason": "",
+                    "memory_recall_used": True,
+                    "confidence": 0.7,
+                    "failure_risk": "弱证据自动关闭会遗漏后续验收。",
+                    "failure_risk_score": 0.5,
+                }
+            )
+        ),
+        work_input,
+        now="2026-06-28 12:00:00",
+    )
+
+    updated_candidate = store.get_todo_evidence_candidate(candidate.id)
+    assert updated_candidate is not None
+    assert updated_candidate.status == "rejected"
+    assert store.get_work_todo(todo_id).status == "open"
 
 
 def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tmp_path):
@@ -460,7 +685,7 @@ def test_process_work_item_includes_recent_follow_up_candidates_in_prompt(tmp_pa
             },
         }
     )
-    input_id = store.enqueue_work_summary_input(
+    store.enqueue_work_summary_input(
         item.source.type.value,
         item.source.ref,
         item.model_dump_json(),
@@ -2584,6 +2809,41 @@ def test_todo_owner_create_rejects_name_only_identity(tmp_path):
     assert store.list_work_todos() == []
 
 
+def test_todo_create_rejects_open_item_without_stable_owner_id(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    decision = TaskAgentDecision.model_validate(
+        {
+            "action": "create_project",
+            "project": {
+                "title": "Owner validation",
+                "memory_context": _memory_context(),
+            },
+            "todo_changes": [
+                {
+                    "action": "create",
+                    "title": "Validate owner",
+                    "description": "This actionable TODO still needs a stable owner.",
+                    "status": "open",
+                    "priority": "P1",
+                }
+            ],
+            "memory_recall_used": True,
+        }
+    )
+
+    with pytest.raises(ValueError, match="todo_change.owner_user_id"):
+        apply_task_agent_decision(
+            store,
+            summary_input_id=1,
+            work_item=_work_item(),
+            decision=decision,
+            memory_recall_attempted=True,
+        )
+
+    assert store.list_work_projects() == []
+    assert store.list_work_todos() == []
+
+
 def test_todo_owner_update_persists_coherent_evidence(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(title="Owner validation")
@@ -3831,7 +4091,7 @@ def test_process_work_item_rolls_back_domain_changes_when_apply_is_interrupted(
 def test_process_work_item_delivers_task_todo_after_domain_commit(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     item = _work_item()
-    input_id = store.enqueue_work_summary_input(
+    store.enqueue_work_summary_input(
         item.source.type.value, item.source.ref, item.model_dump_json()
     )
     work_input = store.claim_work_summary_inputs(limit=1)[0]

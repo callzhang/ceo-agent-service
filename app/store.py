@@ -53,6 +53,8 @@ from app.meeting_alignment_models import (
 from app.task_models import (
     DingTalkTodoLinkStatus,
     FollowUpDraft,
+    TodoEvidenceCandidate,
+    TodoEvidenceCandidateStatus,
     WorkProject,
     WorkSummaryInput,
     WorkTodo,
@@ -77,7 +79,7 @@ CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-26.2"
+STORE_SCHEMA_VERSION = "2026-08-30.1"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -90,6 +92,7 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "agent_run_state_events",
     "agent_effect_intents",
     "follow_up_send_attempts",
+    "todo_evidence_candidates",
     "runtime_route_pauses",
     "workbench_tasks",
     "workbench_turns",
@@ -120,6 +123,10 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_workbench_attachments_task_created_id",
     "idx_workbench_attachments_task_request",
     "idx_workbench_events_event_type",
+    "idx_todo_evidence_candidates_todo",
+    "idx_todo_evidence_candidates_status",
+    "idx_todo_evidence_candidates_work_input",
+    "idx_todo_evidence_candidates_project",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
@@ -1915,6 +1922,38 @@ class AutoReplyStore:
                     on work_updates(project_id, id);
                 create index if not exists idx_work_updates_created
                     on work_updates(created_at, id);
+                create table if not exists todo_evidence_candidates (
+                    id integer primary key autoincrement,
+                    project_id integer not null,
+                    todo_id integer not null,
+                    source_type text not null,
+                    source_ref text not null,
+                    source_created_at text not null default '',
+                    evidence_text text not null default '',
+                    reason text not null default '',
+                    confidence real not null default 0,
+                    status text not null default 'candidate'
+                        check(status in (
+                            'candidate',
+                            'enqueued',
+                            'accepted',
+                            'rejected',
+                            'error'
+                        )),
+                    work_summary_input_id integer not null default 0,
+                    decision_json text not null default '{}',
+                    dedupe_key text not null unique,
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp
+                );
+                create index if not exists idx_todo_evidence_candidates_todo
+                    on todo_evidence_candidates(todo_id, status, id);
+                create index if not exists idx_todo_evidence_candidates_status
+                    on todo_evidence_candidates(status, id);
+                create index if not exists idx_todo_evidence_candidates_work_input
+                    on todo_evidence_candidates(work_summary_input_id);
+                create index if not exists idx_todo_evidence_candidates_project
+                    on todo_evidence_candidates(project_id, id desc);
                 create table if not exists work_summary_inputs (
                     id integer primary key autoincrement,
                     source_type text not null,
@@ -15814,6 +15853,42 @@ class AutoReplyStore:
                 union all
                 select
                     'task' as kind,
+                    'todo_completion_evidence_candidate' as object_type,
+                    candidates.id as source_id,
+                    projects.title as source_title,
+                    'Task Agent' as source_actor,
+                    '证据' as input_label,
+                    candidates.source_type || ':' || candidates.source_ref as input_text,
+                    '判断' as output_label,
+                    coalesce(nullif(candidates.decision_json, '{}'), candidates.reason) as output_text,
+                    'todo_completion_evidence_candidate' as action,
+                    case
+                        when candidates.status='accepted' then 'done'
+                        when candidates.status in ('candidate', 'enqueued') then 'pending'
+                        else candidates.status
+                    end as status,
+                    coalesce(nullif(todos.title, ''), projects.title) as target_title,
+                    '' as codex_session_id,
+                    candidates.project_id as project_id,
+                    candidates.todo_id as todo_id,
+                    0 as follow_up_id,
+                    'dingtalk' as channel,
+                    candidates.updated_at as created_at,
+                    iif(?1, projects.title || ' ' || projects.category || ' ' ||
+                    projects.owner_name || ' ' || projects.goal || ' ' ||
+                    projects.background || ' ' || projects.current_state || ' ' ||
+                    projects.next_step || ' ' || coalesce(todos.title, '') || ' ' ||
+                    coalesce(todos.description, '') || ' ' || candidates.source_type || ' ' ||
+                    candidates.source_ref || ' ' || candidates.evidence_text || ' ' ||
+                    candidates.reason || ' ' || candidates.status || ' ' ||
+                    candidates.decision_json
+                    , '') as search_text
+                from todo_evidence_candidates as candidates
+                join work_projects as projects on projects.id=candidates.project_id
+                left join work_todos as todos on todos.id=candidates.todo_id
+                union all
+                select
+                    'task' as kind,
                     'task' as object_type,
                     drafts.id as source_id,
                     projects.title as source_title,
@@ -16849,6 +16924,29 @@ class AutoReplyStore:
         with self._connect() as db:
             return [WorkTodo.model_validate(dict(row)) for row in db.execute(query, args)]
 
+    def list_work_todos_for_projects(
+        self,
+        project_ids: list[int],
+        *,
+        statuses: tuple[str, ...] | None = None,
+    ) -> dict[int, list[WorkTodo]]:
+        if not project_ids:
+            return {}
+        placeholders = ",".join("?" for _ in project_ids)
+        query = f"select * from work_todos where project_id in ({placeholders})"
+        args: list[str | int] = list(project_ids)
+        if statuses:
+            query = f"{query} and status in ({','.join('?' for _ in statuses)})"
+            args.extend(statuses)
+        query = f"{query} order by project_id, id"
+        with self._connect() as db:
+            rows = db.execute(query, args).fetchall()
+        result: dict[int, list[WorkTodo]] = {}
+        for row in rows:
+            todo = WorkTodo.model_validate(dict(row))
+            result.setdefault(todo.project_id, []).append(todo)
+        return result
+
     def list_work_project_ids_for_todo_owner(
         self,
         owner_user_id: str,
@@ -17265,6 +17363,220 @@ class AutoReplyStore:
                 (project_id, limit),
             ).fetchall()
             return [WorkUpdate.model_validate(dict(row)) for row in rows]
+
+    @staticmethod
+    def _todo_evidence_candidate_row(row: sqlite3.Row) -> TodoEvidenceCandidate:
+        return TodoEvidenceCandidate.model_validate(dict(row))
+
+    @staticmethod
+    def _todo_evidence_candidate_dedupe_key(
+        *,
+        todo_id: int,
+        source_type: str,
+        source_ref: str,
+    ) -> str:
+        payload = json.dumps(
+            {
+                "todo_id": int(todo_id),
+                "source_type": str(source_type or "").strip(),
+                "source_ref": str(source_ref or "").strip(),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def upsert_todo_evidence_candidate(
+        self,
+        *,
+        project_id: int,
+        todo_id: int,
+        source_type: str,
+        source_ref: str,
+        source_created_at: str = "",
+        evidence_text: str = "",
+        reason: str = "",
+        confidence: float = 0.0,
+        dedupe_key: str = "",
+        _db: sqlite3.Connection | None = None,
+    ) -> TodoEvidenceCandidate:
+        normalized_source_type = str(source_type or "").strip()
+        normalized_source_ref = str(source_ref or "").strip()
+        if not normalized_source_type or not normalized_source_ref:
+            raise ValueError("todo evidence candidate source is required")
+        dedupe = dedupe_key.strip() or self._todo_evidence_candidate_dedupe_key(
+            todo_id=todo_id,
+            source_type=normalized_source_type,
+            source_ref=normalized_source_ref,
+        )
+        with self._optional_connection(_db) as db:
+            db.execute(
+                """
+                insert into todo_evidence_candidates (
+                    project_id,
+                    todo_id,
+                    source_type,
+                    source_ref,
+                    source_created_at,
+                    evidence_text,
+                    reason,
+                    confidence,
+                    status,
+                    dedupe_key
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
+                on conflict(dedupe_key) do update set
+                    project_id=excluded.project_id,
+                    todo_id=excluded.todo_id,
+                    source_type=excluded.source_type,
+                    source_ref=excluded.source_ref,
+                    source_created_at=excluded.source_created_at,
+                    evidence_text=excluded.evidence_text,
+                    reason=excluded.reason,
+                    confidence=excluded.confidence,
+                    status=case
+                        when todo_evidence_candidates.status='error'
+                            then 'candidate'
+                        else todo_evidence_candidates.status
+                    end,
+                    updated_at=current_timestamp
+                """,
+                (
+                    project_id,
+                    todo_id,
+                    normalized_source_type,
+                    normalized_source_ref,
+                    source_created_at,
+                    evidence_text,
+                    reason,
+                    float(confidence),
+                    dedupe,
+                ),
+            )
+            row = db.execute(
+                """
+                select *
+                from todo_evidence_candidates
+                where dedupe_key=?
+                """,
+                (dedupe,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("todo evidence candidate upsert failed")
+            return self._todo_evidence_candidate_row(row)
+
+    def get_todo_evidence_candidate(
+        self,
+        candidate_id: int,
+        *,
+        _db: sqlite3.Connection | None = None,
+    ) -> TodoEvidenceCandidate | None:
+        if candidate_id <= 0:
+            return None
+        with self._optional_connection(_db) as db:
+            row = db.execute(
+                "select * from todo_evidence_candidates where id=?",
+                (candidate_id,),
+            ).fetchone()
+            return None if row is None else self._todo_evidence_candidate_row(row)
+
+    def get_todo_evidence_candidate_by_work_summary_input(
+        self,
+        work_summary_input_id: int,
+        *,
+        _db: sqlite3.Connection | None = None,
+    ) -> TodoEvidenceCandidate | None:
+        if work_summary_input_id <= 0:
+            return None
+        with self._optional_connection(_db) as db:
+            row = db.execute(
+                """
+                select *
+                from todo_evidence_candidates
+                where work_summary_input_id=?
+                order by id desc
+                limit 1
+                """,
+                (work_summary_input_id,),
+            ).fetchone()
+            return None if row is None else self._todo_evidence_candidate_row(row)
+
+    def list_todo_evidence_candidates(
+        self,
+        *,
+        project_id: int | None = None,
+        todo_id: int | None = None,
+        statuses: tuple[str, ...] | None = None,
+        limit: int = 100,
+    ) -> list[TodoEvidenceCandidate]:
+        if limit <= 0:
+            return []
+        query = "select * from todo_evidence_candidates"
+        clauses: list[str] = []
+        args: list[str | int] = []
+        if project_id is not None:
+            clauses.append("project_id=?")
+            args.append(project_id)
+        if todo_id is not None:
+            clauses.append("todo_id=?")
+            args.append(todo_id)
+        if statuses:
+            normalized = tuple(TodoEvidenceCandidateStatus(status).value for status in statuses)
+            clauses.append(f"status in ({','.join('?' for _ in normalized)})")
+            args.extend(normalized)
+        if clauses:
+            query = f"{query} where {' and '.join(clauses)}"
+        query = f"{query} order by id desc limit ?"
+        args.append(limit)
+        with self._connect() as db:
+            return [
+                self._todo_evidence_candidate_row(row)
+                for row in db.execute(query, args).fetchall()
+            ]
+
+    def mark_todo_evidence_candidate_enqueued(
+        self,
+        candidate_id: int,
+        work_summary_input_id: int,
+        *,
+        _db: sqlite3.Connection | None = None,
+    ) -> bool:
+        with self._optional_connection(_db) as db:
+            cursor = db.execute(
+                """
+                update todo_evidence_candidates
+                set status='enqueued',
+                    work_summary_input_id=?,
+                    updated_at=current_timestamp
+                where id=?
+                  and status in ('candidate', 'enqueued', 'error')
+                """,
+                (work_summary_input_id, candidate_id),
+            )
+            return cursor.rowcount == 1
+
+    def mark_todo_evidence_candidate(
+        self,
+        candidate_id: int,
+        *,
+        status: str,
+        decision_json: str = "{}",
+        _db: sqlite3.Connection | None = None,
+    ) -> bool:
+        normalized_status = TodoEvidenceCandidateStatus(status).value
+        with self._optional_connection(_db) as db:
+            cursor = db.execute(
+                """
+                update todo_evidence_candidates
+                set status=?,
+                    decision_json=?,
+                    updated_at=current_timestamp
+                where id=?
+                """,
+                (normalized_status, decision_json or "{}", candidate_id),
+            )
+            return cursor.rowcount == 1
 
     def record_task_agent_run(
         self,
@@ -18721,6 +19033,29 @@ class AutoReplyStore:
                 for row in db.execute(query, args)
             ]
 
+    def list_follow_up_drafts_for_todos(
+        self,
+        todo_ids: list[int],
+        *,
+        statuses: tuple[str, ...] | None = None,
+    ) -> dict[int, list[FollowUpDraft]]:
+        if not todo_ids:
+            return {}
+        placeholders = ",".join("?" for _ in todo_ids)
+        query = f"select * from follow_up_drafts where todo_id in ({placeholders})"
+        args: list[str | int] = list(todo_ids)
+        if statuses:
+            query = f"{query} and status in ({','.join('?' for _ in statuses)})"
+            args.extend(statuses)
+        query = f"{query} order by scheduled_at, id"
+        with self._connect() as db:
+            rows = db.execute(query, args).fetchall()
+        result: dict[int, list[FollowUpDraft]] = {}
+        for row in rows:
+            draft = FollowUpDraft.model_validate(dict(row))
+            result.setdefault(draft.todo_id, []).append(draft)
+        return result
+
     def list_recent_follow_up_candidates(
         self,
         *,
@@ -19623,6 +19958,21 @@ class AutoReplyStore:
                     '' as conversation_id,
                     '' as message_id
                 from work_updates
+                union all
+                select
+                    'todo-evidence:' || id as id,
+                    'todo_evidence_candidates' as source_table,
+                    id as source_id,
+                    updated_at as occurred_at,
+                    'TODO completion evidence' as category,
+                    source_type || ':' || source_ref as action,
+                    status as status,
+                    'project #' || project_id || ' todo #' || todo_id as context,
+                    evidence_text as summary,
+                    decision_json as detail,
+                    '' as conversation_id,
+                    '' as message_id
+                from todo_evidence_candidates
                 union all
                 select
                     'follow-up:' || id as id,

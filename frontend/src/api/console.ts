@@ -85,7 +85,7 @@ function query(params: Record<string, string | number | undefined>) {
 export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; }
 export interface TaskFilters { categories: string[]; task_states: string[]; }
 export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
-export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
+export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; }
 export interface HistoryChart { labels: string[]; series: Array<{ name: string; data: number[] }>; total: number; range: string; }
 export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; detail_label: string; detail: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
@@ -125,6 +125,46 @@ function asRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
 }
 
+function resolveOwnerDisplay(project: Record<string, unknown>, todos: Array<Record<string, unknown>> = []): string {
+  const directOwner = displayValue(project.owner || project.owner_name || project.owner_user_id);
+  if (directOwner !== "未提供") return directOwner;
+  const todoOwners: string[] = [];
+  for (const todo of todos) {
+    const owner = displayValue(todo.owner || todo.owner_name || todo.owner_user_id);
+    if (owner === "未提供" || todoOwners.includes(owner)) continue;
+    todoOwners.push(owner);
+  }
+  if (todoOwners.length === 1) return todoOwners[0];
+  if (todoOwners.length > 1) {
+    const visible = todoOwners.slice(0, 3).join("、");
+    return todoOwners.length > 3 ? `多人：${visible} 等 ${todoOwners.length} 人` : `多人：${visible}`;
+  }
+  return "未提供";
+}
+
+function isCompletedEvidence(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return ["source", "reason", "completed_at"].some((key) => typeof value[key] === "string" && value[key].trim() !== "");
+}
+
+function todoDone(todo: Record<string, unknown>): boolean {
+  if (todo.done === true) return true;
+  if (todo.status === "done") return true;
+  if (todo.status === "cancelled") return false;
+  if (isCompletedEvidence(todo.completion_evidence)) return true;
+  const followUps = Array.isArray(todo.follow_ups) ? todo.follow_ups.map(asRecord) : [];
+  if (followUps.some((followUp) => followUp.status === "completed")) return true;
+  const dingtalkTodos = Array.isArray(todo.dingtalk_todos) ? todo.dingtalk_todos.map(asRecord) : [];
+  return dingtalkTodos.some((link) => link.status === "done" || link.last_dingtalk_done === true);
+}
+
+function progressFromTodos(todos: Array<Record<string, unknown>>) {
+  const total = todos.length;
+  const done = todos.filter(todoDone).length;
+  const ratio = total ? Math.round((done * 100) / total) : 0;
+  return { done, total, ratio };
+}
+
 function mapTaskSummary(value: unknown): TaskSummary {
   const row = asRecord(value);
   const done = Number(row.progress_count || 0);
@@ -133,7 +173,7 @@ function mapTaskSummary(value: unknown): TaskSummary {
     id: String(row.id ?? ""), title: displayValue(row.title),
     status: displayValue(row.status), category: displayValue(row.category),
     priority: displayValue(row.priority), risk: displayValue(row.risk_level),
-    owner: displayValue(row.owner_name || row.owner_user_id),
+    owner: resolveOwnerDisplay(row),
     progress: `${done}/${total}（${Number(row.progress_ratio || 0)}%）`,
     todo_count: Number(row.todo_count || 0),
     state_summary: displayValue(row.current_state),
@@ -145,20 +185,27 @@ function mapTaskDetail(value: unknown): TaskDetail {
   const payload = asRecord(value);
   const project = asRecord(payload.project);
   const facts = Array.isArray(project.facts) ? project.facts : [];
+  const todos = Array.isArray(payload.todos) ? payload.todos.map(asRecord) : [];
+  const progress = progressFromTodos(todos);
   return {
     ...mapTaskSummary({
       id: project.id, title: project.title, status: project.status,
       category: project.category, priority: project.priority,
-      risk_level: project.risk_level, owner_name: project.owner_name,
-      todo_count: Array.isArray(payload.todos) ? payload.todos.length : 0,
+      risk_level: project.risk_level,
+      owner: resolveOwnerDisplay(project, todos),
+      progress_count: progress.done,
+      progress_total: progress.total,
+      progress_ratio: progress.ratio,
+      todo_count: progress.total,
       current_state: project.current_state, next_step: project.next_step,
     }),
     description: displayValue(project.goal || project.description),
     background: displayValue(project.background), blocker: displayValue(project.blocker),
     follow_up_mode: displayValue(project.follow_up_mode), tags: Array.isArray(project.tags) ? project.tags.map(displayValue) : [],
     facts: facts.map((fact, index) => { const item = asRecord(fact); return { id: String(item.id ?? index), description: item.description, source: item.source, created: displayValue(item.created || item.created_at), updated: displayValue(item.updated || item.updated_at) }; }),
-    todos: Array.isArray(payload.todos) ? payload.todos.map(asRecord) : [],
+    todos,
     updates: Array.isArray(payload.updates) ? payload.updates.map(asRecord) : [],
+    evidence_candidates: Array.isArray(payload.evidence_candidates) ? payload.evidence_candidates.map(asRecord) : [],
     memory: project.memory_context && isRecord(project.memory_context) ? [project.memory_context] : [],
     unlinked_follow_ups: Array.isArray(payload.unlinked_follow_ups) ? payload.unlinked_follow_ups.map(asRecord) : [],
   };

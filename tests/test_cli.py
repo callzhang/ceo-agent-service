@@ -449,6 +449,21 @@ def test_parser_supports_backfill_routine_process_todos():
     assert args.apply is True
 
 
+def test_parser_supports_backfill_todo_owner_ids():
+    args = build_parser().parse_args(
+        [
+            "backfill-todo-owner-ids",
+            "--limit",
+            "50",
+            "--apply",
+        ]
+    )
+
+    assert args.command == "backfill-todo-owner-ids"
+    assert args.limit == 50
+    assert args.apply is True
+
+
 def test_parser_supports_process_okr_reviews():
     args = build_parser().parse_args(["process-okr-reviews", "--max-batches", "1"])
 

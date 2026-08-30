@@ -94,7 +94,11 @@ from app.task_noise_backfill import (
     RoutineProcessBackfillResult,
     backfill_routine_process_todos,
 )
-from app.todo_completion import enqueue_follow_up_completion_checks
+from app.task_owner_backfill import (
+    TodoOwnerBackfillResult,
+    backfill_todo_owner_ids_from_follow_ups,
+)
+from app.todo_completion import enqueue_todo_completion_evidence_checks
 from app.todo_sync import (
     dispatch_task_todo_sync_outbox,
     pull_dingtalk_todo_statuses,
@@ -285,6 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
         "retry-work-summary-input",
         "backfill-task-memory-context",
         "backfill-routine-process-todos",
+        "backfill-todo-owner-ids",
         "process-okr-reviews",
         "weekly-okr-report",
         "refresh-okr-archive",
@@ -476,6 +481,18 @@ def build_parser() -> argparse.ArgumentParser:
                 "--reason",
                 required=True,
                 help="Audit reason explaining why these TODOs are routine process noise.",
+            )
+            subparser.add_argument(
+                "--apply",
+                action="store_true",
+                help="Apply changes. Omit for dry-run.",
+            )
+        if command == "backfill-todo-owner-ids":
+            subparser.add_argument(
+                "--limit",
+                type=_positive_int,
+                default=None,
+                help="maximum ownerless TODOs to inspect. Omit for all.",
             )
             subparser.add_argument(
                 "--apply",
@@ -1286,6 +1303,39 @@ def backfill_routine_process_todos_command(
     return result
 
 
+def _print_todo_owner_backfill_result(result: TodoOwnerBackfillResult) -> None:
+    print(
+        "backfill-todo-owner-ids "
+        f"dry_run={result.dry_run} planned={result.planned} changed={result.changed}"
+    )
+    for item in result.items:
+        status = "skip" if item.skipped_reason else "plan"
+        print(
+            f"- {status} todo_id={item.todo_id} project_id={item.project_id} "
+            f"owner_user_id={item.owner_user_id} owner={item.owner_name} "
+            f"follow_ups={item.follow_up_ids} "
+            f"reason={item.skipped_reason or item.reason} title={item.title}"
+        )
+
+
+def backfill_todo_owner_ids_command(
+    settings: WorkerSettings,
+    *,
+    limit: int | None = None,
+    apply: bool = False,
+    now: str = "",
+) -> TodoOwnerBackfillResult:
+    store = AutoReplyStore(settings.db_path)
+    result = backfill_todo_owner_ids_from_follow_ups(
+        store,
+        dry_run=not apply,
+        limit=limit,
+        now=now,
+    )
+    _print_todo_owner_backfill_result(result)
+    return result
+
+
 def process_okr_reviews_command(settings: WorkerSettings) -> int:
     from app.agent_runtime_production import (
         build_production_routed_codex_execution,
@@ -1613,9 +1663,10 @@ def check_follow_up_completions_command(
         ding_robot_name=settings.ding_robot_name,
         ding_receiver_user_id=settings.ding_receiver_user_id,
     )
-    checked = enqueue_follow_up_completion_checks(
+    checked = enqueue_todo_completion_evidence_checks(
         AutoReplyStore(settings.db_path),
         dws,
+        workspace=settings.workspace,
         now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         limit=limit,
     )
@@ -1645,8 +1696,9 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
     )
     follow_up_completions_checked = check_follow_up_completions_command(
         settings,
-        limit=1,
+        limit=50,
     )
+    completion_items_processed = process_work_items_command(settings)
     follow_ups = process_follow_ups_command(settings, refresh_evidence=False)
     result = {
         "sources": sources,
@@ -1656,6 +1708,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         "dingtalk_todos_closed": dingtalk_todos_closed,
         "dingtalk_todos_recovered": dingtalk_todos_recovered,
         "follow_up_completions_checked": follow_up_completions_checked,
+        "completion_items_processed": completion_items_processed,
         "follow_ups": follow_ups,
     }
     print(
@@ -1666,6 +1719,7 @@ def daily_task_maintenance_command(settings: WorkerSettings) -> dict[str, int]:
         f"dingtalk_todos_closed={dingtalk_todos_closed} "
         f"dingtalk_todos_recovered={dingtalk_todos_recovered} "
         f"follow_up_completions_checked={follow_up_completions_checked} "
+        f"completion_items_processed={completion_items_processed} "
         f"follow_ups={follow_ups}",
         flush=True,
     )
@@ -3456,6 +3510,12 @@ def main() -> None:
             settings,
             todo_ids=args.todo_id,
             reason=args.reason,
+            apply=args.apply,
+        )
+    elif args.command == "backfill-todo-owner-ids":
+        backfill_todo_owner_ids_command(
+            settings,
+            limit=args.limit,
             apply=args.apply,
         )
     elif args.command == "process-okr-reviews":

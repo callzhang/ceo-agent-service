@@ -715,6 +715,12 @@ def process_work_item(
                 )
             else:
                 store.mark_work_summary_input_done(work_input.id, _db=db)
+            _mark_todo_evidence_candidate_from_decision(
+                store,
+                work_input_id=work_input.id,
+                decision=decision,
+                _db=db,
+            )
             store.finish_task_agent_run(
                 active_run_id,
                 status="completed",
@@ -733,6 +739,11 @@ def process_work_item(
                 now=now or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )
     except Exception as exc:
+        _mark_todo_evidence_candidate_error(
+            store,
+            work_input_id=work_input.id,
+            error=str(exc),
+        )
         if active_run_id is not None:
             store.finish_task_agent_run(
                 active_run_id,
@@ -741,6 +752,49 @@ def process_work_item(
             )
         store.mark_work_summary_input_failed(work_input.id, str(exc))
         raise
+
+
+def _mark_todo_evidence_candidate_from_decision(
+    store: AutoReplyStore,
+    *,
+    work_input_id: int,
+    decision: TaskAgentDecision,
+    _db: sqlite3.Connection | None = None,
+) -> None:
+    candidate = store.get_todo_evidence_candidate_by_work_summary_input(
+        work_input_id,
+        _db=_db,
+    )
+    if candidate is None:
+        return
+    accepted = any(
+        change.action == "close"
+        and change.todo_id == candidate.todo_id
+        and bool(change.completion_evidence)
+        for change in decision.todo_changes
+    )
+    store.mark_todo_evidence_candidate(
+        candidate.id,
+        status="accepted" if accepted else "rejected",
+        decision_json=_json_dumps(decision.model_dump(mode="json")),
+        _db=_db,
+    )
+
+
+def _mark_todo_evidence_candidate_error(
+    store: AutoReplyStore,
+    *,
+    work_input_id: int,
+    error: str,
+) -> None:
+    candidate = store.get_todo_evidence_candidate_by_work_summary_input(work_input_id)
+    if candidate is None:
+        return
+    store.mark_todo_evidence_candidate(
+        candidate.id,
+        status="error",
+        decision_json=_json_dumps({"error": error}),
+    )
 
 
 def apply_task_agent_decision(
@@ -1114,6 +1168,30 @@ def _validate_owner_changes(store: AutoReplyStore, decision: TaskAgentDecision) 
             if change.todo_id is not None and change.action != "create"
             else None
         )
+        fields = change.model_fields_set - {"action", "todo_id"}
+        final_status = (
+            change.status
+            if change.action == "create" or "status" in fields
+            else current_todo.status if current_todo is not None else change.status
+        )
+        final_owner_user_id = (
+            change.owner_user_id
+            if change.action == "create" or "owner_user_id" in fields
+            else current_todo.owner_user_id if current_todo is not None else ""
+        )
+        if (
+            (
+                change.action == "create"
+                or "status" in fields
+                or "owner_user_id" in fields
+            )
+            and final_status in {TodoStatus.OPEN, TodoStatus.WAITING_OWNER}
+            and not final_owner_user_id.strip()
+        ):
+            raise OwnerResolutionRequired(
+                "todo_change.owner_user_id requires a stable owner ID "
+                "for open or waiting_owner TODO"
+            )
         if change.action == "create" or {
             "owner_user_id",
             "owner_name",

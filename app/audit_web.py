@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 import stat
 import subprocess
+from types import SimpleNamespace
 from typing import TypedDict
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 from zoneinfo import ZoneInfo
@@ -182,9 +183,16 @@ from app.setup_wizard import (
 )
 from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
 from app.task_models import ProjectPriority, ProjectStatus, RiskLevel, TodoStatus
+from app.task_progress import (
+    task_progress_summary,
+    task_state as resolved_task_state,
+    todo_is_done,
+    todo_is_open,
+)
 from app.task_retrieval import (
     load_project_task_detail,
     render_project_task_details,
+    resolve_task_owner_display,
     retrieve_project_task_details,
 )
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
@@ -6047,13 +6055,45 @@ def render_tasks_page(
     page_size: int = DEFAULT_TASK_PAGE_SIZE,
 ) -> str:
     projects = store.list_work_projects(limit=500)
-    items = [
-        (project, store.list_work_todos(project_id=project.id))
-        for project in projects
+    project_ids = [project.id for project in projects]
+    todos_by_project = store.list_work_todos_for_projects(project_ids)
+    all_todo_ids = [
+        todo.id
+        for todos in todos_by_project.values()
+        for todo in todos
     ]
-    categories = _task_categories(items)
-    task_states = _task_states(items)
-    rows = [_task_row_payload(project, todos) for project, todos in items]
+    all_completed_follow_ups_by_todo = {
+        todo_id: tuple(follow_ups)
+        for todo_id, follow_ups in store.list_follow_up_drafts_for_todos(
+            all_todo_ids,
+            statuses=("completed",),
+        ).items()
+    }
+    all_dingtalk_links_by_todo = {
+        todo_id: tuple(links)
+        for todo_id, links in store.list_work_todo_dingtalk_links_for_todos(
+            all_todo_ids
+        ).items()
+    }
+    items = []
+    for project in projects:
+        todos = todos_by_project.get(project.id, [])
+        todo_ids = [todo.id for todo in todos]
+        detail = SimpleNamespace(
+            follow_ups_by_todo={
+                todo_id: all_completed_follow_ups_by_todo.get(todo_id, ())
+                for todo_id in todo_ids
+            },
+            dingtalk_links_by_todo={
+                todo_id: all_dingtalk_links_by_todo.get(todo_id, ())
+                for todo_id in todo_ids
+            },
+        )
+        items.append((project, todos, detail))
+    item_pairs = [(project, todos) for project, todos, _detail in items]
+    categories = _task_categories(item_pairs)
+    task_states = _task_states(item_pairs)
+    rows = [_task_row_payload(project, todos, detail) for project, todos, detail in items]
     sent_todo_rows = [
         _sent_todo_row_payload(record)
         for record in store.list_sent_todo_records(limit=5000)
@@ -6216,19 +6256,35 @@ def _sent_todo_select(element_id: str, label: str, values: list[str]) -> str:
     )
 
 
-def _task_row_payload(project, todos) -> dict:
-    open_count, open_ratio = _task_open_summary(todos)
-    progress_count, progress_ratio = _task_progress_summary(todos)
-    state = _task_table_state(project, todos)
+def _task_row_payload(project, todos, detail=None) -> dict:
+    follow_ups_by_todo = getattr(detail, "follow_ups_by_todo", {}) if detail is not None else {}
+    dingtalk_links_by_todo = getattr(detail, "dingtalk_links_by_todo", {}) if detail is not None else {}
+    progress = task_progress_summary(
+        todos,
+        follow_ups_by_todo=follow_ups_by_todo,
+        dingtalk_links_by_todo=dingtalk_links_by_todo,
+    )
+    state = _task_table_state(
+        project,
+        todos,
+        follow_ups_by_todo=follow_ups_by_todo,
+        dingtalk_links_by_todo=dingtalk_links_by_todo,
+    )
     todo_payloads = []
     for todo in todos:
         due = _format_local_time(todo.deadline_at) or todo.deadline_at
+        follow_ups = tuple(follow_ups_by_todo.get(todo.id, ()))
+        dingtalk_links = tuple(dingtalk_links_by_todo.get(todo.id, ()))
         todo_payloads.append(
             {
                 "title": todo.title,
-                "owner": todo.owner_name,
+                "owner": todo.owner_name or todo.owner_user_id,
                 "status": str(todo.status),
-                "done": _task_todo_done(todo),
+                "done": _task_todo_done(
+                    todo,
+                    follow_ups=follow_ups,
+                    dingtalk_links=dingtalk_links,
+                ),
                 "due": due,
             }
         )
@@ -6243,17 +6299,17 @@ def _task_row_payload(project, todos) -> dict:
         "priorityRank": _task_priority_sort_rank().get(str(project.priority), 99),
         "riskLevel": str(project.risk_level),
         "riskRank": _task_risk_sort_rank().get(str(project.risk_level), 99),
-        "owner": project.owner_name,
+        "owner": resolve_task_owner_display(project, todos),
         "currentState": _excerpt(project.current_state, 120),
         "nextStep": _excerpt(project.next_step, 140),
-        "openCount": open_count,
-        "openRatio": open_ratio,
-        "openSummary": f"{open_count} ({open_ratio}%)",
-        "progressCount": progress_count,
-        "progressTotal": len(todos),
-        "progressRatio": progress_ratio,
-        "progressSummary": f"{progress_count}/{len(todos)} ({progress_ratio}%)",
-        "todoCount": len(todos),
+        "openCount": progress["open_count"],
+        "openRatio": progress["open_ratio"],
+        "openSummary": f"{progress['open_count']} ({progress['open_ratio']}%)",
+        "progressCount": progress["done_count"],
+        "progressTotal": progress["total"],
+        "progressRatio": progress["done_ratio"],
+        "progressSummary": f"{progress['done_count']}/{progress['total']} ({progress['done_ratio']}%)",
+        "todoCount": progress["total"],
         "todos": todo_payloads,
         "search": "\n".join(_task_project_search_values(project, todos)).casefold(),
     }
@@ -6334,39 +6390,37 @@ def _task_state_sort_rank() -> dict[str, int]:
 
 
 def _task_open_summary(todos) -> tuple[int, int]:
-    total = len(todos)
-    open_count = sum(1 for todo in todos if _task_todo_incomplete(todo))
-    if total <= 0:
-        return open_count, 0
-    return open_count, round(open_count * 100 / total)
+    progress = task_progress_summary(todos)
+    return progress["open_count"], progress["open_ratio"]
 
 
 def _task_progress_summary(todos) -> tuple[int, int]:
-    total = len(todos)
-    done_count = sum(1 for todo in todos if _task_todo_done(todo))
-    if total <= 0:
-        return done_count, 0
-    return done_count, round(done_count * 100 / total)
+    progress = task_progress_summary(todos)
+    return progress["done_count"], progress["done_ratio"]
 
 
 def _task_todo_incomplete(todo) -> bool:
-    return str(todo.status) not in {TodoStatus.DONE.value, TodoStatus.CANCELLED.value}
+    return todo_is_open(todo)
 
 
-def _task_todo_done(todo) -> bool:
-    return str(todo.status) == TodoStatus.DONE.value
+def _task_todo_done(todo, *, follow_ups=(), dingtalk_links=()) -> bool:
+    return todo_is_done(todo, follow_ups=follow_ups, dingtalk_links=dingtalk_links)
 
 
-def _task_table_state(project, todos) -> str:
-    if str(project.status) == ProjectStatus.DONE.value:
-        return "completed"
-    if todos and not any(_task_todo_incomplete(todo) for todo in todos):
-        return "completed"
-    if any(_task_todo_overdue(todo) for todo in todos if _task_todo_incomplete(todo)):
-        return "over due"
-    if any(_task_todo_incomplete(todo) for todo in todos):
-        return "in progress"
-    return "not started"
+def _task_table_state(
+    project,
+    todos,
+    *,
+    follow_ups_by_todo=None,
+    dingtalk_links_by_todo=None,
+) -> str:
+    return resolved_task_state(
+        project,
+        todos,
+        follow_ups_by_todo=follow_ups_by_todo,
+        dingtalk_links_by_todo=dingtalk_links_by_todo,
+        overdue_checker=_task_todo_overdue,
+    )
 
 
 def _task_todo_overdue(todo) -> bool:
@@ -6822,7 +6876,7 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         "<a class=\"compact-button\" href=\"/tasks\">Back</a>"
         "</div>"
         "<div class=\"attempt-detail-grid\">"
-        f"{_task_detail_cell('Owner', project.owner_name or project.owner_user_id or '-')}"
+        f"{_task_detail_cell('Owner', resolve_task_owner_display(project, todos) or '-')}"
         f"{_task_detail_cell('Next follow-up', _format_local_time(project.next_follow_up_at) or '-')}"
         f"{_task_detail_cell('Updated', _format_local_time(project.updated_at))}"
         f"{_task_detail_cell('Derek attention', 'yes' if project.needs_derek_attention else 'no')}"
