@@ -3530,19 +3530,43 @@ class EmailStore:
                        c.thread_id, c.stable_message_identity
                 from email_actions as a
                 join email_classifications as c on c.id=a.classification_id
-                where a.status in ('pending', 'failed')
-                  and c.status='processed'
+                where c.status='processed'
                   and c.current_action_plan_id=a.action_plan_id
                 """
             ).fetchall()
             if not rows:
                 return None
+            rows_by_classification: dict[int, list[sqlite3.Row]] = {}
+            for candidate in rows:
+                rows_by_classification.setdefault(
+                    int(candidate["classification_id"]),
+                    [],
+                ).append(candidate)
+            eligible: list[sqlite3.Row] = []
+            for siblings in rows_by_classification.values():
+                if any(sibling["status"] == "processing" for sibling in siblings):
+                    continue
+                unfinished = [
+                    sibling for sibling in siblings if sibling["status"] != "done"
+                ]
+                if not unfinished:
+                    continue
+                eligible.append(
+                    min(
+                        unfinished,
+                        key=lambda sibling: (
+                            _DIRECT_ACTION_PRIORITY[sibling["action_type"]],
+                            sibling["action_id"],
+                        ),
+                    )
+                )
+            if not eligible:
+                return None
             row = min(
-                rows,
+                eligible,
                 key=lambda candidate: (
                     candidate["updated_at"],
                     candidate["classification_id"],
-                    _DIRECT_ACTION_PRIORITY[candidate["action_type"]],
                     candidate["action_id"],
                 ),
             )

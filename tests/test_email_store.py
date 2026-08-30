@@ -3677,6 +3677,211 @@ def test_concurrent_direct_action_claim_has_one_winner(tmp_path: Path):
     assert current["attempt_count"] == 0
 
 
+def test_processing_action_blocks_concurrent_sibling_claims(tmp_path: Path):
+    database = tmp_path / "processing-blocks-siblings.sqlite3"
+    seed = EmailStore(database)
+    _persist_scan(
+        seed,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(
+                EmailAction.LABEL,
+                EmailAction.MARK_READ,
+                EmailAction.ARCHIVE,
+            ),
+            action_parameters={
+                EmailAction.LABEL: {"labels": ["work"]},
+            },
+        ),
+    )
+    first = seed.claim_next_direct_action(
+        claimed_at="2026-08-30T12:00:00+00:00"
+    )
+    assert first is not None
+    assert first.action_type is EmailAction.LABEL
+    stores = (EmailStore(database), EmailStore(database))
+    barrier = Barrier(2)
+
+    def claim(store: EmailStore):
+        barrier.wait()
+        return store.claim_next_direct_action(
+            claimed_at="2026-08-30T12:01:00+00:00"
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(claim, stores))
+
+    assert results == [None, None]
+    statuses = _fetchall(
+        database,
+        "select action_type, status from email_actions order by action_type",
+    )
+    assert {row["action_type"]: row["status"] for row in statuses} == {
+        "archive": "pending",
+        "label": "processing",
+        "mark_read": "pending",
+    }
+
+
+def test_processing_action_blocks_only_its_own_classification(tmp_path: Path):
+    database = tmp_path / "processing-allows-other-classification.sqlite3"
+    store = EmailStore(database)
+    first_classification = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="first",
+        actions=(EmailAction.LABEL, EmailAction.MARK_READ),
+        action_parameters={
+            EmailAction.LABEL: {"labels": ["work"]},
+        },
+    )
+    second_classification = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="second",
+        actions=(EmailAction.LABEL,),
+        action_parameters={
+            EmailAction.LABEL: {"labels": ["work"]},
+        },
+    )
+    _persist_scan(store, first_classification)
+    first = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:00:00+00:00"
+    )
+    assert first is not None
+    assert first.classification_id == first_classification.classification_id
+    _persist_scan(store, second_classification)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_actions set updated_at='2026-08-30T11:00:00+00:00'
+            where classification_id=? and action_type='mark_read'
+            """,
+            (first_classification.classification_id,),
+        )
+        db.execute(
+            """
+            update email_actions set updated_at='2026-08-30T13:00:00+00:00'
+            where classification_id=?
+            """,
+            (second_classification.classification_id,),
+        )
+
+    claimed = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:01:00+00:00"
+    )
+
+    assert claimed is not None
+    assert claimed.classification_id == second_classification.classification_id
+    assert claimed.action_type is EmailAction.LABEL
+
+
+@pytest.mark.parametrize(
+    ("destination", "destination_parameters"),
+    (
+        (EmailAction.ARCHIVE, {}),
+        (EmailAction.MOVE, {"target_folder": "Archive/Work"}),
+        (EmailAction.TRASH, {}),
+    ),
+)
+def test_failed_higher_priority_actions_retry_before_destination(
+    tmp_path: Path,
+    destination: EmailAction,
+    destination_parameters: dict[str, object],
+):
+    database = tmp_path / "failed-action-dependency.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            actions=(
+                EmailAction.LABEL,
+                EmailAction.MARK_READ,
+                destination,
+            ),
+            action_parameters={
+                EmailAction.LABEL: {"labels": ["work"]},
+                destination: destination_parameters,
+            },
+        ),
+    )
+
+    claimed_types: list[EmailAction] = []
+
+    label_one = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:00:00+00:00"
+    )
+    assert label_one is not None
+    claimed_types.append(label_one.action_type)
+    store.complete_direct_action_attempt(
+        label_one,
+        status="failed",
+        provider_operation="STORE LABELS",
+        provider_target=label_one.locator.stable_message_identity,
+        provider_result_id="",
+        error="provider_readback_mismatch",
+        finished_at="2026-08-30T12:00:01+00:00",
+    )
+
+    label_two = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:01:00+00:00"
+    )
+    assert label_two is not None
+    claimed_types.append(label_two.action_type)
+    store.complete_direct_action_attempt(
+        label_two,
+        status="done",
+        provider_operation="readback_noop",
+        provider_target=label_two.locator.stable_message_identity,
+        provider_result_id="revision-label",
+        error="",
+        finished_at="2026-08-30T12:01:01+00:00",
+    )
+
+    read_one = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:02:00+00:00"
+    )
+    assert read_one is not None
+    claimed_types.append(read_one.action_type)
+    store.complete_direct_action_attempt(
+        read_one,
+        status="failed",
+        provider_operation="STORE \\Seen",
+        provider_target=read_one.locator.stable_message_identity,
+        provider_result_id="",
+        error="provider_readback_mismatch",
+        finished_at="2026-08-30T12:02:01+00:00",
+    )
+
+    read_two = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:03:00+00:00"
+    )
+    assert read_two is not None
+    claimed_types.append(read_two.action_type)
+    store.complete_direct_action_attempt(
+        read_two,
+        status="done",
+        provider_operation="readback_noop",
+        provider_target=read_two.locator.stable_message_identity,
+        provider_result_id="revision-read",
+        error="",
+        finished_at="2026-08-30T12:03:01+00:00",
+    )
+
+    destination_claim = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:04:00+00:00"
+    )
+    assert destination_claim is not None
+    claimed_types.append(destination_claim.action_type)
+
+    assert claimed_types == [
+        EmailAction.LABEL,
+        EmailAction.LABEL,
+        EmailAction.MARK_READ,
+        EmailAction.MARK_READ,
+        destination,
+    ]
+
+
 def test_destination_action_is_claimed_after_locator_preserving_actions(
     tmp_path: Path,
 ):
