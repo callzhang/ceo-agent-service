@@ -15,12 +15,14 @@ from app.agent_context import (
     PriorReceipt,
     email_attachment_metadata_materials,
 )
+from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
     EmailActionPlan,
     EmailAttachmentMetadata,
 )
 from app.email_store import EmailStore
+from app.email_reply_delivery import EmailReplyEffect, email_action_identity
 from app.leak_check import (
     assert_no_credentials,
     contains_local_runtime_leak,
@@ -293,30 +295,61 @@ def email_conversation_id(account_id: str, thread_identity: str) -> str:
     )
 
 
-def email_action_identity(
-    *,
-    account_id: str,
-    stable_message_identity: str,
-    action_type: EmailAction,
-    action_plan_version: int,
-) -> str:
-    """Identify one authorized email action across scans, restarts, and retraining."""
+def accepted_email_reply_effect(
+    task: ReplyTask,
+    accepted_action: ProposedAction,
+) -> EmailReplyEffect:
+    """Freeze one exact reply proposal after Audit accepts it for execution."""
 
-    account_id = account_id.strip()
-    stable_message_identity = stable_message_identity.strip()
-    action_type = EmailAction(action_type)
-    if not account_id or not stable_message_identity:
-        raise ValueError("email action identity fields must be non-empty")
-    if action_plan_version <= 0:
-        raise ValueError("action_plan_version must be positive")
-    return _digest_identity(
-        "email-action",
-        {
-            "account_id": account_id,
-            "stable_message_identity": stable_message_identity,
-            "action_type": action_type.value,
-            "action_plan_version": action_plan_version,
-        },
+    try:
+        metadata = json.loads(task.trigger_message_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError("email task metadata is not valid JSON") from exc
+    if (
+        not isinstance(metadata, dict)
+        or metadata.get("schema") != _PAYLOAD_SCHEMA
+        or metadata.get("action_type") != EmailAction.AUTO_REPLY.value
+        or task.channel != "email"
+        or task.trigger_message_id != metadata.get("action_identity")
+        or accepted_action.capability != "email"
+        or accepted_action.operation != "reply"
+    ):
+        raise ValueError("accepted action is not an automatic email reply")
+
+    expected_target = {
+        "action_identity": metadata.get("action_identity"),
+        "account_id": metadata.get("account_id"),
+        "stable_message_identity": metadata.get("stable_message_identity"),
+        "thread_identity": metadata.get("thread_identity"),
+    }
+    if any(
+        accepted_action.target.get(name) != expected
+        for name, expected in expected_target.items()
+    ):
+        raise ValueError("accepted reply target does not match its email task")
+
+    def required_text(source: Mapping[str, object], name: str) -> str:
+        value = source.get(name)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("accepted email reply fields must be non-empty text")
+        return value
+
+    return EmailReplyEffect(
+        action_identity=required_text(metadata, "action_identity"),
+        action_plan_id=required_text(metadata, "action_plan_id"),
+        action_plan_version=int(metadata["action_plan_version"]),
+        classification_id=int(metadata["classification_id"]),
+        account_id=required_text(accepted_action.target, "account_id"),
+        stable_message_identity=required_text(
+            accepted_action.target,
+            "stable_message_identity",
+        ),
+        sender=required_text(accepted_action.target, "sender"),
+        recipient=required_text(accepted_action.target, "recipient"),
+        thread_identity=required_text(accepted_action.target, "thread_identity"),
+        in_reply_to=required_text(accepted_action.payload, "in_reply_to"),
+        subject=required_text(accepted_action.payload, "subject"),
+        body=required_text(accepted_action.payload, "body"),
     )
 
 
