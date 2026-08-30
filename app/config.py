@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 import stat
 import tempfile
 from datetime import timedelta
@@ -9,6 +10,9 @@ from pathlib import Path
 DEFAULT_CEO_CODEX_MODEL = "gpt-5.5"
 DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT = "medium"
 _ENCODED_ENV_VALUE_PREFIX = "__CEO_ENV_B64_V1__:"
+_EMAIL_SECRET_ENV_KEY = re.compile(
+    r"^CEO_EMAIL_[A-Z0-9_]+_(?:IMAP|SMTP)_SECRET$"
+)
 
 
 def repo_root() -> Path:
@@ -46,7 +50,7 @@ def read_env_file(path: Path | None = None) -> dict[str, str]:
         key = key.strip()
         if not key:
             continue
-        values[key] = _decode_env_value(value.strip())
+        values[key] = _decode_env_value(key, value.strip())
     return values
 
 
@@ -66,11 +70,11 @@ def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
             continue
         key = stripped.split("=", 1)[0].strip()
         if key in remaining:
-            lines.append(f"{key}={_encode_env_value(remaining.pop(key))}")
+            lines.append(f"{key}={_encode_env_value(key, remaining.pop(key))}")
         else:
             lines.append(raw_line)
     for key, value in remaining.items():
-        lines.append(f"{key}={_encode_env_value(value)}")
+        lines.append(f"{key}={_encode_env_value(key, value)}")
     env_path.parent.mkdir(parents=True, exist_ok=True)
     mode = stat.S_IMODE(env_path.stat().st_mode) if env_path.exists() else 0o600
     fd, temporary_name = tempfile.mkstemp(
@@ -105,8 +109,10 @@ def effective_env_values(path: Path | None = None) -> dict[str, str]:
     return values
 
 
-def _decode_env_value(value: str) -> str:
-    if value.startswith(_ENCODED_ENV_VALUE_PREFIX):
+def _decode_env_value(key: str, value: str) -> str:
+    if _EMAIL_SECRET_ENV_KEY.fullmatch(key) and value.startswith(
+        _ENCODED_ENV_VALUE_PREFIX
+    ):
         encoded = value.removeprefix(_ENCODED_ENV_VALUE_PREFIX)
         try:
             return base64.b64decode(encoded, validate=True).decode("utf-8")
@@ -117,7 +123,11 @@ def _decode_env_value(value: str) -> str:
     return os.path.expandvars(value)
 
 
-def _encode_env_value(value: str) -> str:
+def _encode_env_value(key: str, value: str) -> str:
+    if _EMAIL_SECRET_ENV_KEY.fullmatch(key) is None:
+        if not value or any(character.isspace() for character in value):
+            return '"' + value.replace('"', '\\"') + '"'
+        return value
     safe_punctuation = frozenset("._:/@+-")
     if (
         value

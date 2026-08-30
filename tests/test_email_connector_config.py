@@ -57,6 +57,30 @@ def test_env_reader_preserves_legacy_expansion_semantics(
     assert app_config.read_env_file(env_file)["LEGACY"] == "expanded"
 
 
+@pytest.mark.parametrize(
+    "legacy_value",
+    (
+        "__CEO_ENV_B64_V1__:ZGVjb2RlZC1ieS1vbGQtYnVn",
+        "__CEO_ENV_B64_V1__:not-valid-base64!",
+    ),
+)
+def test_non_email_marker_values_keep_legacy_behavior(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    legacy_value: str,
+):
+    env_file = tmp_path / ".env"
+    key = "CEO_NON_EMAIL_LEGACY_VALUE"
+    monkeypatch.delenv(key, raising=False)
+    env_file.write_text(f"{key}={legacy_value}\n", encoding="utf-8")
+
+    assert app_config.read_env_file(env_file)[key] == legacy_value
+
+    app_config.write_env_values({key: legacy_value}, env_file)
+    monkeypatch.delenv(key)
+    assert app_config.read_env_file(env_file)[key] == legacy_value
+
+
 def test_env_writer_rejects_nul_without_touching_file_or_process_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
