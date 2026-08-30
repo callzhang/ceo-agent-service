@@ -1419,6 +1419,36 @@ def test_schema_metadata_paths_reject_non_text_identifiers(
         EmailStore(database)
 
 
+def test_foreign_key_on_delete_metadata_rejects_non_text_value(tmp_path: Path):
+    database = tmp_path / "invalid-foreign-key-on-delete.sqlite3"
+    EmailStore(database)
+
+    class CorruptOnDeleteRow:
+        def __init__(self, row: sqlite3.Row):
+            self._row = row
+
+        def __getitem__(self, key: object):
+            if key == "on_delete":
+                return 7
+            return self._row[key]
+
+    class CorruptOnDeleteStore(EmailStore):
+        def _connect(self) -> sqlite3.Connection:
+            db = super()._connect()
+
+            def row_factory(cursor: sqlite3.Cursor, values: tuple[object, ...]):
+                row = sqlite3.Row(cursor, values)
+                if "on_delete" in row.keys():
+                    return CorruptOnDeleteRow(row)
+                return row
+
+            db.row_factory = row_factory
+            return db
+
+    with pytest.raises(EmailPersistenceCorruption, match="schema text.*on_delete"):
+        CorruptOnDeleteStore(database)
+
+
 def test_current_schema_rejects_uppercase_action_status_literals(tmp_path: Path):
     database = tmp_path / "uppercase-action-status-literals.sqlite3"
     EmailStore(database)

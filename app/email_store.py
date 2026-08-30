@@ -455,10 +455,18 @@ def _schema_sql_tokens(value: str) -> tuple[str, ...]:
     return tuple(tokens)
 
 
-def _schema_identifier(value: object, *, field: str) -> str:
+def _schema_metadata_text(value: object, *, field: str, kind: str) -> str:
     if not isinstance(value, str) or not value or "\x00" in value:
-        raise EmailPersistenceCorruption(f"invalid schema identifier metadata: {field}")
-    return value.casefold()
+        raise EmailPersistenceCorruption(f"invalid schema {kind} metadata: {field}")
+    return value
+
+
+def _schema_identifier(value: object, *, field: str) -> str:
+    return _schema_metadata_text(value, field=field, kind="identifier").casefold()
+
+
+def _schema_metadata_enum(value: object, *, field: str) -> str:
+    return _schema_metadata_text(value, field=field, kind="text").upper()
 
 
 def _strip_wrapping_parentheses(tokens: tuple[str, ...]) -> tuple[str, ...]:
@@ -1184,7 +1192,10 @@ class EmailStore:
                             row["to"],
                             field="pragma foreign_key_list target column",
                         ),
-                        row["on_delete"].upper(),
+                        _schema_metadata_enum(
+                            row["on_delete"],
+                            field="pragma foreign_key_list on_delete",
+                        ),
                     )
                     for row in db.execute(
                         f"pragma foreign_key_list({json.dumps(table)})"

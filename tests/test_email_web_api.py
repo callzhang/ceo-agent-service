@@ -288,6 +288,41 @@ def test_audit_app_isolates_non_text_email_schema_identifier(tmp_path: Path):
     _assert_audit_app_email_unavailable(database, tmp_path)
 
 
+def test_audit_app_isolates_non_text_foreign_key_on_delete_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    database = tmp_path / "audit-app-invalid-email-fk-on-delete.sqlite3"
+    AutoReplyStore(database)
+    EmailStore(database)
+    original_connect = EmailStore._connect
+
+    class CorruptOnDeleteRow:
+        def __init__(self, row: sqlite3.Row):
+            self._row = row
+
+        def __getitem__(self, key: object):
+            if key == "on_delete":
+                return 7
+            return self._row[key]
+
+    def corrupting_connect(self: EmailStore) -> sqlite3.Connection:
+        db = original_connect(self)
+
+        def row_factory(cursor: sqlite3.Cursor, values: tuple[object, ...]):
+            row = sqlite3.Row(cursor, values)
+            if "on_delete" in row.keys():
+                return CorruptOnDeleteRow(row)
+            return row
+
+        db.row_factory = row_factory
+        return db
+
+    monkeypatch.setattr(EmailStore, "_connect", corrupting_connect)
+
+    _assert_audit_app_email_unavailable(database, tmp_path)
+
+
 def test_audit_app_isolates_weakened_current_email_schema_declarations(
     tmp_path: Path,
 ):
