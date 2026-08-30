@@ -268,6 +268,26 @@ def test_audit_app_starts_when_current_email_schema_is_missing_a_column(
     _assert_audit_app_email_unavailable(database, tmp_path)
 
 
+def test_audit_app_isolates_non_text_email_schema_identifier(tmp_path: Path):
+    database = tmp_path / "audit-app-invalid-email-schema-name.sqlite3"
+    AutoReplyStore(database)
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        schema_version = db.execute("pragma schema_version").fetchone()[0]
+        db.execute("pragma writable_schema = on")
+        db.execute(
+            "update sqlite_master set name=? "
+            "where type='table' and name='email_messages'",
+            (sqlite3.Binary(b"email_messages"),),
+        )
+        db.execute(f"pragma schema_version = {schema_version + 1}")
+        db.commit()
+        db.execute("pragma writable_schema = off")
+
+    _assert_audit_app_email_unavailable(database, tmp_path)
+
+
 def test_audit_app_isolates_weakened_current_email_schema_declarations(
     tmp_path: Path,
 ):

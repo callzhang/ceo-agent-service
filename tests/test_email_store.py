@@ -191,7 +191,7 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
         return db.execute(sql, parameters).fetchall()
 
 
-def _rewrite_required_identifier_case(database: Path) -> None:
+def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) -> None:
     required_identifiers = set(email_store_module._REQUIRED_TABLE_COLUMNS)
     for columns in email_store_module._REQUIRED_TABLE_COLUMNS.values():
         required_identifiers.update(columns)
@@ -205,10 +205,20 @@ def _rewrite_required_identifier_case(database: Path) -> None:
         )
         for index, identifier in enumerate(sorted(required_identifiers))
     }
+    quote_styles = (("\"", "\""), ("`", "`"), ("[", "]"))
+    sql_replacements = {
+        identifier: (
+            f"{quote_styles[index % len(quote_styles)][0]}{replacement}"
+            f"{quote_styles[index % len(quote_styles)][1]}"
+            if quote
+            else replacement
+        )
+        for index, (identifier, replacement) in enumerate(replacements.items())
+    }
 
     def rewrite_sql(value: str) -> str:
         return " ".join(
-            replacements.get(token, token)
+            sql_replacements.get(token, token)
             for token in email_store_module._schema_sql_tokens(value)
         )
 
@@ -228,6 +238,24 @@ def _rewrite_required_identifier_case(database: Path) -> None:
                     rowid,
                 ),
             )
+        db.execute(f"pragma schema_version = {schema_version + 1}")
+        db.commit()
+        db.execute("pragma writable_schema = off")
+
+
+def _corrupt_schema_object_name(
+    database: Path,
+    *,
+    object_type: str,
+    object_name: str,
+) -> None:
+    with sqlite3.connect(database) as db:
+        schema_version = db.execute("pragma schema_version").fetchone()[0]
+        db.execute("pragma writable_schema = on")
+        db.execute(
+            "update sqlite_master set name=? where type=? and name=?",
+            (sqlite3.Binary(object_name.encode()), object_type, object_name),
+        )
         db.execute(f"pragma schema_version = {schema_version + 1}")
         db.commit()
         db.execute("pragma writable_schema = off")
@@ -1228,6 +1256,104 @@ def test_current_schema_accepts_case_insensitive_required_bare_identifiers(
         )
         for statement in normalized
     )
+
+
+def test_current_schema_accepts_quoted_required_identifiers(tmp_path: Path):
+    database = tmp_path / "quoted-required-identifiers.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    _rewrite_required_identifier_case(database, quote=True)
+
+    EmailStore(database)
+
+
+def test_schema_tokenizer_canonicalizes_quoted_identifiers_not_string_literals():
+    assert email_store_module._schema_sql_tokens(
+        '"STA""TUS" `STA``TUS` [STATUS] \'DONE\''
+    ) == ('sta"tus', "sta`tus", "status", "'DONE'")
+
+
+@pytest.mark.parametrize(
+    ("object_type", "object_name"),
+    (
+        ("table", "email_messages"),
+        ("trigger", "trg_email_classification_status_insert"),
+    ),
+)
+def test_current_schema_rejects_non_text_sqlite_master_identifiers(
+    tmp_path: Path,
+    object_type: str,
+    object_name: str,
+):
+    database = tmp_path / f"blob-{object_type}-name.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    _corrupt_schema_object_name(
+        database,
+        object_type=object_type,
+        object_name=object_name,
+    )
+
+    with pytest.raises(EmailPersistenceCorruption, match="schema identifier"):
+        EmailStore(database)
+
+
+@pytest.mark.parametrize(
+    "metadata_field",
+    (
+        "sqlite_master table name",
+        "pragma table_info column name",
+        "pragma index_list index name",
+        "pragma index_info column name",
+        "pragma foreign_key_list source column",
+        "pragma foreign_key_list target table",
+        "pragma foreign_key_list target column",
+        "sqlite_master trigger name",
+        "sqlite_master trigger table name",
+    ),
+)
+def test_schema_metadata_paths_reject_non_text_identifiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_field: str,
+):
+    database = tmp_path / f"invalid-{metadata_field.replace(' ', '-')}.sqlite3"
+    EmailStore(database)
+    original = email_store_module._schema_identifier
+
+    def inject_invalid_identifier(value: object, *, field: str) -> str:
+        if field == metadata_field:
+            value = sqlite3.Binary(b"invalid")
+        return original(value, field=field)
+
+    monkeypatch.setattr(
+        email_store_module,
+        "_schema_identifier",
+        inject_invalid_identifier,
+    )
+
+    with pytest.raises(EmailPersistenceCorruption, match="schema identifier"):
+        EmailStore(database)
+
+
+def test_current_schema_rejects_uppercase_action_status_literals(tmp_path: Path):
+    database = tmp_path / "uppercase-action-status-literals.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    _replace_email_actions(
+        database,
+        action_type_declaration=(
+            "text not null check(action_type in "
+            "('label', 'mark_read', 'archive', 'move', 'trash'))"
+        ),
+        status_declaration=(
+            "text not null check(status in "
+            "('PENDING', 'PROCESSING', 'DONE', 'FAILED'))"
+        ),
+    )
+
+    with pytest.raises(EmailPersistenceCorruption, match="required check.*email_actions"):
+        EmailStore(database)
 
 
 @pytest.mark.parametrize("populated", (False, True))
