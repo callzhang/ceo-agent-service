@@ -17,6 +17,7 @@ from app.email_classifier_contracts import (
 )
 from app.email_store import EmailStore
 from app.email_classifier_learning import EmailClassifierLearningService
+from app.email_model_registry import EmailModelRegistry
 from app.store import AutoReplyStore
 from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
@@ -1000,8 +1001,7 @@ def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Pat
     )
     learning_service = EmailClassifierLearningService(
         email_store,
-        active_path=tmp_path / "models" / "model.active.pkl",
-        previous_path=tmp_path / "models" / "model.previous.pkl",
+        registry=EmailModelRegistry(tmp_path / "models"),
         retrain_state_path=tmp_path / "models" / "retrain-state.json",
     )
 
@@ -1018,6 +1018,8 @@ def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Pat
     assert feedback.json()["learning"] == {
         "retrain_due": False,
         "retrain_reason": None,
+        "training_run_id": None,
+        "training_status": None,
         "promoted": False,
         "error": None,
     }

@@ -443,7 +443,21 @@ def register_email_routes(
             response["learning"] = {
                 "retrain_due": bool(retrain and retrain.decision.due),
                 "retrain_reason": retrain.decision.reason if retrain else None,
-                "promoted": bool(retrain and retrain.training_result),
+                "training_run_id": (
+                    retrain.training_run.run_id
+                    if retrain and retrain.training_run
+                    else None
+                ),
+                "training_status": (
+                    retrain.training_run.status
+                    if retrain and retrain.training_run
+                    else None
+                ),
+                "promoted": bool(
+                    retrain
+                    and retrain.training_run
+                    and retrain.training_run.status == "succeeded"
+                ),
                 "error": learning_result.error,
             }
         return response

@@ -27,6 +27,7 @@ from app.email_store import (
     EmailClassificationConflict,
     EmailClassificationIdentityCollision,
     EmailPersistenceCorruption,
+    EmailTrainingInclusionConflict,
     EmailStore,
 )
 
@@ -881,6 +882,66 @@ def test_training_examples_exclude_pending_or_unconfirmed_user_rows_without_reop
             "label": "important",
         }
     ]
+
+
+def test_training_inclusion_marks_exact_confirmed_samples_atomically(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-inclusion.sqlite3")
+    rows = []
+    for index, category in enumerate((EmailCategory.WORK, EmailCategory.JUNK), 1):
+        row = store.upsert_classification(
+            _classification(
+                status=EmailClassificationStatus.PENDING_FEEDBACK,
+                message_id=f"training-{index}",
+                category=category,
+            ),
+            model_text=f"__subject__{category.value}-{index}",
+        )
+        rows.append(store.confirm_classification(row["id"], category))
+    sample_ids = [row["stable_message_identity"] for row in rows if row is not None]
+
+    assert len(store.list_unincluded_training_examples()) == 2
+    store.mark_training_examples_included(sample_ids, model_id="email-tfidf-lr-x-12345678")
+    store.mark_training_examples_included(sample_ids, model_id="email-tfidf-lr-x-12345678")
+
+    assert store.list_unincluded_training_examples() == []
+    assert {
+        row["included_in_model_id"]
+        for row in store.list_training_examples(include_inclusion=True)
+    } == {
+        "email-tfidf-lr-x-12345678"
+    }
+
+
+def test_training_inclusion_conflict_rolls_back_partial_batch(tmp_path: Path):
+    store = EmailStore(tmp_path / "training-inclusion-conflict.sqlite3")
+    identities = []
+    for index, category in enumerate((EmailCategory.WORK, EmailCategory.JUNK), 1):
+        row = store.upsert_classification(
+            _classification(
+                status=EmailClassificationStatus.PENDING_FEEDBACK,
+                message_id=f"conflict-{index}",
+                category=category,
+            ),
+            model_text=f"__subject__{category.value}-{index}",
+        )
+        confirmed = store.confirm_classification(row["id"], category)
+        assert confirmed is not None
+        identities.append(confirmed["stable_message_identity"])
+    store.mark_training_examples_included(
+        [identities[0]], model_id="email-tfidf-lr-old-12345678"
+    )
+
+    with pytest.raises(EmailTrainingInclusionConflict):
+        store.mark_training_examples_included(
+            identities, model_id="email-tfidf-lr-new-87654321"
+        )
+
+    rows = {
+        row["message_id"]: row
+        for row in store.list_training_examples(include_inclusion=True)
+    }
+    assert rows[identities[0]]["included_in_model_id"] == "email-tfidf-lr-old-12345678"
+    assert rows[identities[1]]["included_in_model_id"] is None
 
 
 def test_rescan_preserves_a_user_confirmed_category(tmp_path: Path):
@@ -2003,7 +2064,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 3]
+    ] == [2, 4]
 
     EmailStore(database)
 

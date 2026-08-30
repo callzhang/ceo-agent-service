@@ -276,11 +276,6 @@ class EmailModelRegistry:
         expected_id = build_model_id(trained_at=trained_at, artifact_sha256=digest)
         if metadata.model_id != expected_id:
             raise ModelRegistryError("candidate model_id does not match final artifact digest")
-        allowed = {category.value for category in EmailCategory}
-        labels = set(metadata.category_counts)
-        metric_labels = set(metadata.per_category_metrics)
-        if not labels or not labels <= allowed or not metric_labels <= allowed:
-            raise ModelRegistryError("candidate violates current category protocol")
         artifact_path = self._artifact_path(metadata.model_id)
         metadata_path = self._metadata_path(metadata.model_id)
         with self._locked():
@@ -291,6 +286,7 @@ class EmailModelRegistry:
             self._append_lifecycle(metadata.model_id, "candidate", metadata.promotion_reason)
         try:
             loaded = self.load_classifier(metadata.model_id)
+            _validate_category_protocol(metadata, set(loaded.class_labels()))
             observed = tuple(loaded.predict(text).label for text in parity_texts)
             if observed != tuple(expected_labels):
                 raise ModelRegistryError("candidate reload prediction parity failed")
@@ -400,9 +396,7 @@ class EmailModelRegistry:
             raise ModelRegistryError("model artifact cannot be loaded") from exc
         classifier.model_version = model_id
         observed = set(classifier.class_labels())
-        allowed = {category.value for category in EmailCategory}
-        if not observed or not observed <= allowed:
-            raise ModelRegistryError("loaded model violates current category protocol")
+        _validate_category_protocol(record.metadata, observed)
         return classifier
 
     def list_runtime_failures(self) -> list[ModelRuntimeFailure]:
@@ -410,38 +404,6 @@ class EmailModelRegistry:
         for path in sorted(self.runtime_failures.glob("*.json")):
             result.append(ModelRuntimeFailure.from_mapping(_read_json(path)))
         return result
-
-    def mark_samples_included(self, sample_ids: Sequence[str], *, model_id: str) -> None:
-        self.get_model(model_id)
-        destination = self.root / "included-samples.json"
-        with self._locked():
-            values: dict[str, str] = {}
-            if destination.exists():
-                payload = _read_json(destination)
-                if not isinstance(payload, Mapping) or not all(
-                    isinstance(key, str) and isinstance(value, str)
-                    for key, value in payload.items()
-                ):
-                    raise ModelRegistryError("invalid included sample registry")
-                values.update(payload)
-            for sample_id in sample_ids:
-                values[_text(sample_id, "sample_id")] = model_id
-            _write_json_atomic(destination, values)
-
-    def included_model_id(self, sample_id: str) -> str | None:
-        path = self.root / "included-samples.json"
-        if not path.exists():
-            return None
-        payload = _read_json(path)
-        value = payload.get(sample_id)
-        if value is not None and not isinstance(value, str):
-            raise ModelRegistryError("invalid included sample model_id")
-        return value
-
-    def unincluded_sample_ids(self, sample_ids: Sequence[str]) -> tuple[str, ...]:
-        return tuple(
-            sample_id for sample_id in sample_ids if self.included_model_id(sample_id) is None
-        )
 
     def _manifest_for(self, metadata: EmailModelMetadata) -> ModelManifest:
         return ModelManifest(
@@ -722,3 +684,55 @@ def _status(value: object) -> ModelStatus:
     if result not in MODEL_STATUSES:
         raise ValueError("invalid email model status")
     return result  # type: ignore[return-value]
+
+
+def _validate_category_protocol(
+    metadata: EmailModelMetadata, artifact_labels: set[str]
+) -> None:
+    allowed = {category.value for category in EmailCategory}
+    category_labels = set(metadata.category_counts)
+    metric_labels = set(metadata.per_category_metrics)
+    if (
+        not artifact_labels
+        or artifact_labels != category_labels
+        or artifact_labels != metric_labels
+        or not artifact_labels <= allowed
+    ):
+        raise ModelRegistryError("candidate category protocol mismatch")
+    for label, metric in metadata.per_category_metrics.items():
+        required = {
+            "precision",
+            "recall",
+            "f1",
+            "validation_sample_count",
+            "configured_threshold",
+            "minimum_validation_samples",
+            "auto_action_eligible",
+            "eligibility_reason",
+        }
+        if set(metric) != required:
+            raise ModelRegistryError(f"candidate metrics protocol mismatch: {label}")
+        for field in ("precision", "recall", "f1", "configured_threshold"):
+            value = metric[field]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not 0 <= float(value) <= 1
+            ):
+                raise ModelRegistryError(f"candidate metric {field} is invalid: {label}")
+        for field in ("validation_sample_count", "minimum_validation_samples"):
+            value = metric[field]
+            minimum = 0 if field == "validation_sample_count" else 1
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise ModelRegistryError(f"candidate metric {field} is invalid: {label}")
+        if not isinstance(metric["auto_action_eligible"], bool):
+            raise ModelRegistryError(
+                f"candidate metric auto_action_eligible is invalid: {label}"
+            )
+        if not isinstance(metric["eligibility_reason"], str) or not metric[
+            "eligibility_reason"
+        ].strip():
+            raise ModelRegistryError(
+                f"candidate metric eligibility_reason is invalid: {label}"
+            )

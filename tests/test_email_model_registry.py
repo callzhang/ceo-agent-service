@@ -51,6 +51,7 @@ def _metadata(*, digest: str, model_id: str) -> EmailModelMetadata:
                 "f1": 0.75,
                 "validation_sample_count": 2,
                 "configured_threshold": 0.85,
+                "minimum_validation_samples": 30,
                 "auto_action_eligible": False,
                 "eligibility_reason": "sample_gate_not_met",
             },
@@ -60,6 +61,7 @@ def _metadata(*, digest: str, model_id: str) -> EmailModelMetadata:
                 "f1": 0.74,
                 "validation_sample_count": 2,
                 "configured_threshold": 0.85,
+                "minimum_validation_samples": 30,
                 "auto_action_eligible": False,
                 "eligibility_reason": "sample_gate_not_met",
             },
@@ -251,11 +253,50 @@ def test_candidate_protocol_rejects_unknown_labels_and_slow_latency(tmp_path: Pa
             "prediction_latency_p95_ms": 100.0,
         }
     )
-    registry.stage_candidate(
+    slow_registry = EmailModelRegistry(tmp_path / "slow-registry")
+    slow_registry.stage_candidate(
         source,
         slow,
         parity_texts=("work project",),
         expected_labels=("work",),
     )
-    registry.reject(model_id, reason="latency_p95_exceeded")
-    assert registry.get_model(model_id).status == "rejected"
+    slow_registry.reject(model_id, reason="latency_p95_exceeded")
+    assert slow_registry.get_model(model_id).status == "rejected"
+
+
+def test_candidate_protocol_requires_exact_artifact_metadata_and_metric_shape(
+    tmp_path: Path,
+):
+    source = tmp_path / "candidate-exact.pkl"
+    _classifier().save(source)
+    digest = sha256(source.read_bytes()).hexdigest()
+    model_id = build_model_id(trained_at=TRAINED_AT, artifact_sha256=digest)
+    base = _metadata(digest=digest, model_id=model_id)
+
+    mismatched = EmailModelMetadata.from_mapping(
+        {**base.to_dict(), "category_counts": {"work": 4}}
+    )
+    registry = EmailModelRegistry(tmp_path / "mismatch-registry")
+    with pytest.raises(ModelRegistryError, match="category protocol mismatch"):
+        registry.stage_candidate(
+            source,
+            mismatched,
+            parity_texts=("work project",),
+            expected_labels=("work",),
+        )
+    assert registry.get_model(model_id).status == "failed"
+
+    metrics = {key: dict(value) for key, value in base.per_category_metrics.items()}
+    metrics["work"].pop("minimum_validation_samples")
+    malformed = EmailModelMetadata.from_mapping(
+        {**base.to_dict(), "per_category_metrics": metrics}
+    )
+    malformed_registry = EmailModelRegistry(tmp_path / "metric-registry")
+    with pytest.raises(ModelRegistryError, match="metrics protocol mismatch"):
+        malformed_registry.stage_candidate(
+            source,
+            malformed,
+            parity_texts=("work project",),
+            expected_labels=("work",),
+        )
+    assert malformed_registry.get_model(model_id).status == "failed"

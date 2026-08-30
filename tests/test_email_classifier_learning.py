@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
+import time
 
 from app.email_classifier_contracts import (
     EmailCategory,
@@ -10,6 +11,7 @@ from app.email_classifier_contracts import (
 )
 from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_classifier_retrain import RetrainPolicy, load_retrain_state
+from app.email_model_registry import EmailModelRegistry
 from app.email_store import EmailStore
 
 
@@ -51,22 +53,22 @@ def _service_with_pending(
             model_text=f"__subject__token-{index} {category.value}",
         )
         rows.append(row)
+    registry = EmailModelRegistry(tmp_path / "models")
     service = EmailClassifierLearningService(
         store,
-        active_path=tmp_path / "models" / "model.active.pkl",
-        previous_path=tmp_path / "models" / "model.previous.pkl",
+        registry=registry,
         retrain_state_path=tmp_path / "models" / "retrain-state.json",
         policy=RetrainPolicy(minimum_new_examples=minimum_new_examples),
     )
-    return service, store, rows
+    return service, store, rows, registry
 
 
 def test_feedback_api_service_confirms_first_and_records_state_without_retraining(tmp_path: Path):
-    service, store, rows = _service_with_pending(tmp_path)
+    service, store, rows, _ = _service_with_pending(tmp_path)
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
 
     result = service.confirm_and_maybe_retrain(
-        rows[0]["id"], EmailCategory.IMPORTANT, now=now, model_version="model-test"
+        rows[0]["id"], EmailCategory.IMPORTANT, now=now
     )
 
     assert result is not None
@@ -79,7 +81,7 @@ def test_feedback_api_service_confirms_first_and_records_state_without_retrainin
 
 
 def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
-    service, _, rows = _service_with_pending(tmp_path, count=6)
+    service, store, rows, registry = _service_with_pending(tmp_path, count=6)
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
 
     promoted_result = None
@@ -88,24 +90,33 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
             row["id"],
             EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
             now=now,
-            model_version="model-batch-test",
         )
         if result is not None and result.retrain is not None and result.retrain.training_result is not None:
             promoted_result = result
 
-    polled = service.poll_retrain(
-        now=now + timedelta(seconds=31), model_version="model-batch-test"
-    )
-    if polled.training_result is not None:
-        promoted_result = polled
+    polled = service.poll_retrain(now=now + timedelta(seconds=31))
+    assert polled.training_run is not None
+    assert polled.training_run.status in {"queued", "running"}
+    for _ in range(100):
+        polled = service.poll_retrain(now=now + timedelta(seconds=32))
+        if polled.training_run is not None and polled.training_run.status not in {
+            "queued",
+            "running",
+        }:
+            break
+        time.sleep(0.01)
+    promoted_result = polled
 
     assert promoted_result is not None
-    assert (tmp_path / "models" / "model.active.pkl").exists()
+    assert promoted_result.training_run is not None
+    assert promoted_result.training_run.status == "succeeded"
+    assert registry.active_manifest() is not None
+    assert store.list_unincluded_training_examples() == []
     assert load_retrain_state(tmp_path / "models" / "retrain-state.json").last_trained_feedback_count == 6
 
 
 def test_feedback_service_keeps_confirmation_when_training_is_not_ready(tmp_path: Path):
-    service, store, rows = _service_with_pending(
+    service, store, rows, _ = _service_with_pending(
         tmp_path, minimum_new_examples=1
     )
     now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)

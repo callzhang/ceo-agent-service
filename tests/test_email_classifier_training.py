@@ -384,8 +384,44 @@ def test_registry_promotion_marks_only_authoritative_samples_after_success(tmp_p
     assert result.model_id.startswith("email-tfidf-lr-20260829T214530Z-")
     assert result.prediction_latency_p95_ms < 100
     assert registry.active_manifest().model_id == result.model_id  # type: ignore[union-attr]
-    for example in store.list_training_examples():
-        assert registry.included_model_id(example["message_id"]) == result.model_id
+    for example in store.list_training_examples(include_inclusion=True):
+        assert example["included_in_model_id"] == result.model_id
+
+
+def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
+    tmp_path: Path, monkeypatch
+):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    monkeypatch.setattr(
+        "app.email_classifier_training._promotion_rejection",
+        lambda registry, metadata: "macro_f1_regressed",
+    )
+
+    rejected = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 45, 31, tzinfo=timezone.utc),
+    )
+
+    assert rejected.promoted is False
+    assert registry.get_model(rejected.model_id).status == "rejected"
+    assert len(store.list_unincluded_training_examples()) == 6
+
+    failed_store = _store_with_confirmed_feedback(tmp_path / "failed")
+    failed_registry = EmailModelRegistry(tmp_path / "failed-registry")
+    monkeypatch.setattr(
+        failed_registry,
+        "stage_candidate",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("stage failed")),
+    )
+    with pytest.raises(RuntimeError, match="stage failed"):
+        train_and_promote(
+            failed_store,
+            failed_registry,
+            trained_at=datetime(2026, 8, 29, 21, 45, 32, tzinfo=timezone.utc),
+        )
+    assert len(failed_store.list_unincluded_training_examples()) == 6
 
 
 def test_training_not_ready_does_not_create_active_model(tmp_path: Path):

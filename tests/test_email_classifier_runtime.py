@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,7 @@ from app.email_classifier_runtime import (
     EmailClassifierUnavailable,
     load_active_classifier,
     scan_with_active_model,
+    RegistryPredictionClassifier,
 )
 from app.email_classifier_retrain import TrainingSubprocessController
 from app.email_model_registry import EmailModelRegistry
@@ -73,8 +75,27 @@ class FakeReadonlySource:
 
 
 def test_runtime_loads_model_and_runs_only_readonly_scan(tmp_path: Path):
-    active = tmp_path / "model.active.pkl"
-    _model().save(active)
+    active = tmp_path / "registry-model.pkl"
+    model = _model()
+    model.save(active)
+
+    class FakeRegistry(EmailModelRegistry):
+        def __init__(self):
+            pass
+
+        def active_model_id_unverified(self):
+            return "runtime-test"
+
+        def active_manifest(self):
+            return SimpleNamespace(model_id="runtime-test")
+
+        def load_classifier(self, model_id):
+            return model
+
+        def get_model(self, model_id):
+            return SimpleNamespace(artifact_path=active)
+
+    registry = FakeRegistry()
     config = EmailScanConfig(
         config_version="runtime-scan-v1",
         thresholds={category: 0.0 for category in EmailCategory},
@@ -96,13 +117,51 @@ def test_runtime_loads_model_and_runs_only_readonly_scan(tmp_path: Path):
         FakeReadonlySource(),
         EmailStore(tmp_path / "email.sqlite3"),
         config,
-        active_path=active,
-        previous_path=tmp_path / "model.previous.pkl",
+        registry=registry,
         limit=1,
     )
 
     assert result.loaded.path == active
     assert result.scan.persisted_count == 1
+
+
+def test_consecutive_prediction_failures_fallback_only_at_threshold():
+    class Broken:
+        def predict(self, text):
+            raise RuntimeError("broken")
+
+    class Previous:
+        def predict(self, text):
+            return "previous:" + text
+
+    class Registry:
+        def __init__(self):
+            self.fallbacks = []
+
+        def fallback_to_previous(self, **values):
+            self.fallbacks.append(values)
+            return SimpleNamespace(model_id="previous-model")
+
+        def load_classifier(self, model_id):
+            return Previous()
+
+    registry = Registry()
+    classifier = RegistryPredictionClassifier(
+        registry, Broken(), "active-model", failure_threshold=3
+    )
+
+    with pytest.raises(RuntimeError):
+        classifier.predict("one")
+    with pytest.raises(RuntimeError):
+        classifier.predict("two")
+    assert registry.fallbacks == []
+    assert classifier.predict("three") == "previous:three"
+    assert registry.fallbacks == [
+        {
+            "reason": "active_prediction_failed_repeatedly",
+            "failed_model_id": "active-model",
+        }
+    ]
 
 
 def test_training_subprocess_is_nonblocking_and_durably_polled(tmp_path: Path):
@@ -126,4 +185,6 @@ def test_training_subprocess_is_nonblocking_and_durably_polled(tmp_path: Path):
     assert run.status == "running"
     assert controller.poll(run.run_id, now=now).status == "running"
     process.exit_code = 0
-    assert controller.poll(run.run_id, now=now).status == "succeeded"
+    terminal = controller.poll(run.run_id, now=now)
+    assert terminal.status == "failed"
+    assert terminal.reason == "training_subprocess_exited_without_result:0"

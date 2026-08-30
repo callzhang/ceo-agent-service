@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import argparse
 import os
 import subprocess
+import sys
 import tempfile
 import uuid
 from dataclasses import dataclass, replace
@@ -37,6 +39,7 @@ class RetrainState:
     last_trained_feedback_count: int = 0
     last_trained_at: str | None = None
     last_feedback_at: str | None = None
+    active_run_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.last_trained_feedback_count < 0:
@@ -58,13 +61,18 @@ class RetrainState:
             self,
             last_trained_feedback_count=feedback_count,
             last_trained_at=_format_timestamp(now),
+            active_run_id=None,
         )
+
+    def with_active_run(self, run_id: str | None) -> "RetrainState":
+        return replace(self, active_run_id=run_id)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "last_trained_feedback_count": self.last_trained_feedback_count,
             "last_trained_at": self.last_trained_at,
             "last_feedback_at": self.last_feedback_at,
+            "active_run_id": self.active_run_id,
         }
 
     @classmethod
@@ -78,7 +86,16 @@ class RetrainState:
             if timestamp is not None and not isinstance(timestamp, str):
                 raise ValueError(f"{name} must be a timestamp string or null")
             timestamps[name] = timestamp
-        return cls(last_trained_feedback_count=count, **timestamps)
+        active_run_id = value.get("active_run_id")
+        if active_run_id is not None and (
+            not isinstance(active_run_id, str) or not active_run_id
+        ):
+            raise ValueError("active_run_id must be a non-empty string or null")
+        return cls(
+            last_trained_feedback_count=count,
+            active_run_id=active_run_id,
+            **timestamps,
+        )
 
 
 @dataclass(frozen=True)
@@ -93,6 +110,7 @@ class AutoRetrainResult:
     decision: RetrainDecision
     state: RetrainState
     training_result: TrainingResult | None
+    training_run: "TrainingSubprocessRun | None" = None
 
 
 @dataclass(frozen=True)
@@ -103,22 +121,61 @@ class TrainingSubprocessRun:
     started_at: str
     finished_at: str | None = None
     exit_code: int | None = None
+    model_id: str | None = None
+    reason: str | None = None
 
 
 class TrainingSubprocessController:
     """Launch one short-lived trainer without blocking the email scan loop."""
 
-    def __init__(self, registry: EmailModelRegistry, *, launcher=subprocess.Popen):
+    def __init__(
+        self,
+        registry: EmailModelRegistry,
+        *,
+        store_path: str | Path | None = None,
+        launcher=subprocess.Popen,
+    ):
         self.registry = registry
+        self.store_path = Path(store_path) if store_path is not None else None
         self.launcher = launcher
         self._processes: dict[str, object] = {}
 
-    def start(self, command: list[str], *, now: datetime) -> TrainingSubprocessRun:
+    def start(
+        self,
+        command: list[str] | None = None,
+        *,
+        now: datetime,
+    ) -> TrainingSubprocessRun:
+        run_id = uuid.uuid4().hex
+        if command is None:
+            if self.store_path is None:
+                raise ValueError("store_path is required for registry training")
+            command = [
+                sys.executable,
+                "-m",
+                "app.email_classifier_retrain",
+                "--run-training",
+                "--db",
+                str(self.store_path),
+                "--registry",
+                str(self.registry.root),
+                "--run-id",
+                run_id,
+                "--trained-at",
+                _format_timestamp(now),
+            ]
         if not command or not all(isinstance(item, str) and item for item in command):
             raise ValueError("training command must contain non-empty strings")
+        queued = TrainingSubprocessRun(
+            run_id=run_id,
+            status="queued",
+            pid=0,
+            started_at=_format_timestamp(now),
+        )
+        self._save_run(queued)
         process = self.launcher(command)
         run = TrainingSubprocessRun(
-            run_id=uuid.uuid4().hex,
+            run_id=run_id,
             status="running",
             pid=int(process.pid),
             started_at=_format_timestamp(now),
@@ -128,20 +185,28 @@ class TrainingSubprocessController:
         return run
 
     def poll(self, run_id: str, *, now: datetime) -> TrainingSubprocessRun:
+        durable = self._load_run(run_id)
+        if durable.status in {"succeeded", "rejected", "failed"}:
+            self._processes.pop(run_id, None)
+            return durable
         process = self._processes.get(run_id)
         if process is None:
-            return self._load_run(run_id)
+            return durable
         exit_code = process.poll()
         if exit_code is None:
             return self._load_run(run_id)
         prior = self._load_run(run_id)
+        if prior.status in {"succeeded", "rejected", "failed"}:
+            self._processes.pop(run_id, None)
+            return prior
         completed = TrainingSubprocessRun(
             run_id=prior.run_id,
-            status="succeeded" if exit_code == 0 else "failed",
+            status="failed",
             pid=prior.pid,
             started_at=prior.started_at,
             finished_at=_format_timestamp(now),
             exit_code=int(exit_code),
+            reason=f"training_subprocess_exited_without_result:{exit_code}",
         )
         self._save_run(completed)
         self._processes.pop(run_id, None)
@@ -304,3 +369,68 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("timestamp must be timezone-aware")
     return value.astimezone(timezone.utc)
+
+
+def _run_training_job(
+    *, db_path: Path, registry_path: Path, run_id: str, trained_at: datetime
+) -> int:
+    registry = EmailModelRegistry(registry_path)
+    controller = TrainingSubprocessController(registry, store_path=db_path)
+    started = TrainingSubprocessRun(
+        run_id=run_id,
+        status="running",
+        pid=os.getpid(),
+        started_at=_format_timestamp(trained_at),
+    )
+    controller._save_run(started)
+    try:
+        result = train_and_promote(
+            EmailStore(db_path), registry, trained_at=trained_at
+        )
+        terminal = TrainingSubprocessRun(
+            run_id=run_id,
+            status="succeeded" if result.promoted else "rejected",
+            pid=os.getpid(),
+            started_at=started.started_at,
+            finished_at=_format_timestamp(datetime.now(timezone.utc)),
+            exit_code=0,
+            model_id=result.model_id,
+            reason=result.promotion_reason,
+        )
+        controller._save_run(terminal)
+        return 0
+    except Exception as exc:
+        controller._save_run(
+            TrainingSubprocessRun(
+                run_id=run_id,
+                status="failed",
+                pid=os.getpid(),
+                started_at=started.started_at,
+                finished_at=_format_timestamp(datetime.now(timezone.utc)),
+                exit_code=1,
+                reason=f"{type(exc).__name__}:{exc}",
+            )
+        )
+        return 1
+
+
+def _main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-training", action="store_true")
+    parser.add_argument("--db")
+    parser.add_argument("--registry")
+    parser.add_argument("--run-id")
+    parser.add_argument("--trained-at")
+    args = parser.parse_args()
+    if not args.run_training:
+        parser.error("--run-training is required")
+    return _run_training_job(
+        db_path=Path(args.db),
+        registry_path=Path(args.registry),
+        run_id=str(args.run_id),
+        trained_at=_parse_timestamp(str(args.trained_at)),
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 import time
+import warnings
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -227,7 +228,7 @@ def train_and_promote(
             minimum_per_category=minimum_per_category,
         )
     started = datetime.now(timezone.utc)
-    examples = store.list_training_examples()
+    examples = store.list_training_examples(include_inclusion=True)
     readiness = assess_examples_readiness(
         examples,
         minimum_examples=minimum_examples,
@@ -236,7 +237,11 @@ def train_and_promote(
     if not readiness.ready:
         raise TrainingNotReady("; ".join(readiness.reasons))
     sample_ids = tuple(example["message_id"] for example in examples)
-    new_sample_ids = registry.unincluded_sample_ids(sample_ids)
+    new_sample_ids = tuple(
+        example["message_id"]
+        for example in examples
+        if example["included_in_model_id"] is None
+    )
     if not new_sample_ids:
         raise TrainingNotReady("no unincluded authoritative feedback")
 
@@ -290,7 +295,7 @@ def train_and_promote(
             sample_count=len(examples),
             new_sample_count=len(new_sample_ids),
             category_counts=readiness.category_counts,
-            account_counts=dict(Counter(_account_id(item["message_id"]) for item in examples)),
+            account_counts=dict(Counter(str(item["account_id"]) for item in examples)),
             validation_method=validation_method,
             accuracy=accuracy,
             macro_f1=macro_f1,
@@ -328,7 +333,7 @@ def train_and_promote(
         registry.reject(model_id, reason=rejection)
         return _result(metadata, promoted=False, status="rejected", reason=rejection)
     registry.promote(model_id, reason="candidate_validation_passed")
-    registry.mark_samples_included(sample_ids, model_id=model_id)
+    store.mark_training_examples_included(sample_ids, model_id=model_id)
     return _result(metadata, promoted=True, status="active", reason="candidate_validation_passed")
 
 
@@ -343,6 +348,11 @@ def _train_and_promote_paths(
     minimum_per_category: int,
 ) -> TrainingResult:
     """Preserve the existing prototype API while callers migrate to the registry."""
+    warnings.warn(
+        "path-based email model promotion is deprecated; use EmailModelRegistry",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     readiness = assess_feedback_readiness(
         store,
         minimum_examples=minimum_examples,

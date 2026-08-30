@@ -28,7 +28,7 @@ from app.email_classifier_contracts import (
 )
 
 
-EMAIL_SCHEMA_VERSION = 3
+EMAIL_SCHEMA_VERSION = 4
 _CLASSIFICATION_STATUSES = frozenset(status.value for status in EmailClassificationStatus)
 _CLASSIFICATION_SOURCES = frozenset({"model", "user"})
 _CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
@@ -69,6 +69,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "classification_source": ("text", True, None),
         "action_plan_json": ("text", True, "'null'"),
         "current_action_plan_id": ("text", False, None),
+        "included_in_model_id": ("text", False, None),
         "legacy_processed_without_plan": ("integer", True, "0"),
         "confirmed_at": ("text", True, "''"),
         "created_at": ("text", True, "current_timestamp"),
@@ -313,6 +314,10 @@ _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
 
 class EmailClassificationConflict(RuntimeError):
     """The classification was already resolved by another confirmation."""
+
+
+class EmailTrainingInclusionConflict(RuntimeError):
+    """Authoritative training samples cannot be marked as one atomic batch."""
 
 
 class EmailClassificationIdentityCollision(RuntimeError):
@@ -661,6 +666,7 @@ class EmailStore:
                 if latest_version < 2:
                     self._migrate_prototype_schema(db)
                 self._ensure_legacy_processed_without_plan_column(db)
+                self._ensure_training_inclusion_column(db)
                 if is_prototype:
                     self._backfill_prototype_rows(db)
                 if latest_version in {0, 2}:
@@ -742,6 +748,7 @@ class EmailStore:
                 classification_source text not null,
                 action_plan_json text not null default 'null',
                 current_action_plan_id text,
+                included_in_model_id text,
                 legacy_processed_without_plan integer not null default 0
                     check(legacy_processed_without_plan in (0, 1)),
                 confirmed_at text not null default '',
@@ -832,6 +839,15 @@ class EmailStore:
                 "integer not null default 0 "
                 "check(legacy_processed_without_plan in (0, 1))"
             ),
+        )
+
+    @classmethod
+    def _ensure_training_inclusion_column(cls, db: sqlite3.Connection) -> None:
+        cls._ensure_column(
+            db,
+            table="email_classifications",
+            column="included_in_model_id",
+            declaration="text",
         )
 
     @staticmethod
@@ -2568,14 +2584,16 @@ class EmailStore:
             ).fetchall()
         return [self._classification_row(row) for row in rows], total
 
-    def list_training_examples(self) -> list[dict[str, str]]:
+    def list_training_examples(
+        self, *, include_inclusion: bool = False
+    ) -> list[dict[str, Any]]:
         """Return only user-confirmed, redacted texts for local retraining."""
 
         with self._connect() as db:
             rows = db.execute(
                 """
-                select stable_message_identity, model_text,
-                       confirmed_category as label
+                select id, account_id, stable_message_identity, model_text,
+                       confirmed_category as label, included_in_model_id
                 from email_classifications
                 where classification_source='user'
                   and status='processed'
@@ -2590,9 +2608,68 @@ class EmailStore:
                 "message_id": row["stable_message_identity"],
                 "model_text": row["model_text"],
                 "label": row["label"],
+                **(
+                    {
+                        "classification_id": row["id"],
+                        "account_id": row["account_id"],
+                        "included_in_model_id": row["included_in_model_id"],
+                    }
+                    if include_inclusion
+                    else {}
+                ),
             }
             for row in rows
         ]
+
+    def list_unincluded_training_examples(self) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in self.list_training_examples(include_inclusion=True)
+            if row["included_in_model_id"] is None
+        ]
+
+    def mark_training_examples_included(
+        self, sample_identities: Sequence[str], *, model_id: str
+    ) -> None:
+        identities = tuple(dict.fromkeys(sample_identities))
+        if not identities or not model_id.strip():
+            raise ValueError("sample identities and model_id are required")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            placeholders = ",".join("?" for _ in identities)
+            rows = db.execute(
+                f"""
+                select stable_message_identity, included_in_model_id
+                from email_classifications
+                where stable_message_identity in ({placeholders})
+                  and classification_source='user'
+                  and status='processed'
+                  and confirmed_category is not null
+                  and confirmed_category != ''
+                  and trim(model_text) != ''
+                """,
+                identities,
+            ).fetchall()
+            if {row["stable_message_identity"] for row in rows} != set(identities):
+                raise EmailTrainingInclusionConflict(
+                    "training sample set changed before inclusion"
+                )
+            if any(
+                row["included_in_model_id"] not in (None, model_id)
+                for row in rows
+            ):
+                raise EmailTrainingInclusionConflict(
+                    "training sample is already included in another model"
+                )
+            db.execute(
+                f"""
+                update email_classifications
+                set included_in_model_id=?
+                where stable_message_identity in ({placeholders})
+                  and included_in_model_id is null
+                """,
+                (model_id, *identities),
+            )
 
     def confirm_classification(
         self, row_id: int, category: EmailCategory

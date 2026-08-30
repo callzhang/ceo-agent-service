@@ -19,7 +19,7 @@ class EmailClassifierUnavailable(RuntimeError):
 
 @dataclass(frozen=True)
 class LoadedEmailClassifier:
-    classifier: CpuTfidfLogisticClassifier
+    classifier: object
     path: Path
     used_previous: bool
 
@@ -28,6 +28,50 @@ class LoadedEmailClassifier:
 class ReadonlyScanWithModelResult:
     loaded: LoadedEmailClassifier
     scan: EmailScanResult
+
+
+class RegistryPredictionClassifier:
+    """Count consecutive runtime failures and atomically fall back at threshold."""
+
+    def __init__(
+        self,
+        registry: EmailModelRegistry,
+        classifier: CpuTfidfLogisticClassifier,
+        model_id: str,
+        *,
+        failure_threshold: int = 3,
+    ) -> None:
+        if failure_threshold <= 0:
+            raise ValueError("failure_threshold must be positive")
+        self.registry = registry
+        self.classifier = classifier
+        self.model_id = model_id
+        self.failure_threshold = failure_threshold
+        self.consecutive_failures = 0
+
+    def predict(self, text: str):
+        return self._predict("predict", text)
+
+    def predict_message(self, message: object):
+        return self._predict("predict_message", message)
+
+    def _predict(self, method: str, value: object):
+        try:
+            result = getattr(self.classifier, method)(value)
+            self.consecutive_failures = 0
+            return result
+        except Exception:
+            self.consecutive_failures += 1
+            if self.consecutive_failures < self.failure_threshold:
+                raise
+            restored = self.registry.fallback_to_previous(
+                reason="active_prediction_failed_repeatedly",
+                failed_model_id=self.model_id,
+            )
+            self.classifier = self.registry.load_classifier(restored.model_id)
+            self.model_id = restored.model_id
+            self.consecutive_failures = 0
+            return getattr(self.classifier, method)(value)
 
 
 def load_active_classifier(
@@ -46,7 +90,9 @@ def load_active_classifier(
             assert manifest is not None
             classifier = registry.load_classifier(manifest.model_id)
             return LoadedEmailClassifier(
-                classifier=classifier,
+                classifier=RegistryPredictionClassifier(
+                    registry, classifier, manifest.model_id
+                ),
                 path=registry.get_model(manifest.model_id).artifact_path,
                 used_previous=False,
             )
@@ -62,7 +108,9 @@ def load_active_classifier(
                     "no valid email classifier model after active load failure"
                 ) from fallback_exc
             return LoadedEmailClassifier(
-                classifier=classifier,
+                classifier=RegistryPredictionClassifier(
+                    registry, classifier, restored.model_id
+                ),
                 path=registry.get_model(restored.model_id).artifact_path,
                 used_previous=True,
             )
@@ -90,13 +138,12 @@ def scan_with_active_model(
     store: EmailStore,
     config: EmailScanConfig,
     *,
-    active_path: str | Path,
-    previous_path: str | Path,
+    registry: EmailModelRegistry,
     mailbox: str = "INBOX",
     limit: int = 50,
 ) -> ReadonlyScanWithModelResult:
     """Load a local model and run one provider-readonly classification batch."""
-    loaded = load_active_classifier(active_path, previous_path)
+    loaded = load_active_classifier(registry)
     result = scan_readonly_batch(
         source,
         loaded.classifier,

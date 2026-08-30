@@ -1,4 +1,4 @@
-"""Application service for confirming feedback and triggering local retraining."""
+"""Feedback-first orchestration for durable subprocess model training."""
 
 from __future__ import annotations
 
@@ -9,12 +9,14 @@ from pathlib import Path
 from app.email_classifier_contracts import EmailCategory
 from app.email_classifier_retrain import (
     AutoRetrainResult,
+    RetrainDecision,
     RetrainPolicy,
     RetrainState,
+    TrainingSubprocessController,
     load_retrain_state,
-    retrain_if_due,
     save_retrain_state,
 )
+from app.email_model_registry import EmailModelRegistry
 from app.email_store import EmailStore
 
 
@@ -26,27 +28,24 @@ class FeedbackLearningResult:
 
 
 class EmailClassifierLearningService:
-    """Persist user feedback first, then best-effort local model learning.
-
-    A training failure is reported separately from the confirmed feedback. This
-    keeps the user decision durable while leaving the old active model intact.
-    This service never connects to an email provider.
-    """
+    """Persist feedback, then launch and poll the immutable registry lifecycle."""
 
     def __init__(
         self,
         store: EmailStore,
         *,
-        active_path: str | Path,
-        previous_path: str | Path,
+        registry: EmailModelRegistry,
         retrain_state_path: str | Path,
         policy: RetrainPolicy = RetrainPolicy(),
+        controller: TrainingSubprocessController | None = None,
     ) -> None:
         self.store = store
-        self.active_path = Path(active_path)
-        self.previous_path = Path(previous_path)
+        self.registry = registry
         self.retrain_state_path = Path(retrain_state_path)
         self.policy = policy
+        self.controller = controller or TrainingSubprocessController(
+            registry, store_path=store.path
+        )
 
     def confirm_and_maybe_retrain(
         self,
@@ -54,58 +53,75 @@ class EmailClassifierLearningService:
         category: EmailCategory,
         *,
         now: datetime | None = None,
-        model_version: str | None = None,
     ) -> FeedbackLearningResult | None:
         confirmed = self.store.confirm_classification(row_id, category)
         if confirmed is None:
             return None
-
         current = now or datetime.now(timezone.utc)
         try:
             state = load_retrain_state(self.retrain_state_path).record_feedback(current)
-            retrain = retrain_if_due(
-                self.store,
-                state,
-                self.active_path,
-                self.previous_path,
-                now=current,
-                model_version=model_version or _model_version(current),
-                policy=self.policy,
-            )
-            save_retrain_state(self.retrain_state_path, retrain.state)
+            save_retrain_state(self.retrain_state_path, state)
+            retrain = self._request_if_ready(state, now=current, manual=False)
             return FeedbackLearningResult(confirmed, retrain, None)
-        except Exception as exc:  # feedback must survive a local training failure
-            error = f"{type(exc).__name__}: {exc}"
-            try:
-                save_retrain_state(
-                    self.retrain_state_path,
-                    state if "state" in locals() else RetrainState(),
-                )
-            except Exception as state_exc:
-                error += f"; state persistence failed: {type(state_exc).__name__}: {state_exc}"
-            return FeedbackLearningResult(confirmed, None, error)
+        except Exception as exc:
+            return FeedbackLearningResult(
+                confirmed, None, f"{type(exc).__name__}: {exc}"
+            )
 
-    def poll_retrain(
-        self,
-        *,
-        now: datetime | None = None,
-        model_version: str | None = None,
+    def request_manual_training(
+        self, *, now: datetime | None = None
     ) -> AutoRetrainResult:
-        """Poll the durable debounce state without blocking feedback persistence."""
         current = now or datetime.now(timezone.utc)
         state = load_retrain_state(self.retrain_state_path)
-        result = retrain_if_due(
-            self.store,
-            state,
-            self.active_path,
-            self.previous_path,
-            now=current,
-            model_version=model_version or _model_version(current),
-            policy=self.policy,
+        return self._request_if_ready(state, now=current, manual=True)
+
+    def poll_retrain(self, *, now: datetime | None = None) -> AutoRetrainResult:
+        current = now or datetime.now(timezone.utc)
+        state = load_retrain_state(self.retrain_state_path)
+        if state.active_run_id is None:
+            return self._request_if_ready(state, now=current, manual=False)
+        run = self.controller.poll(state.active_run_id, now=current)
+        decision = RetrainDecision(True, "training_run", len(self.store.list_unincluded_training_examples()))
+        if run.status == "running" or run.status == "queued":
+            return AutoRetrainResult(decision, state, None, run)
+        if run.status == "succeeded":
+            updated = state.mark_trained(
+                len(self.store.list_training_examples()), current
+            )
+        else:
+            updated = state.with_active_run(None)
+        save_retrain_state(self.retrain_state_path, updated)
+        return AutoRetrainResult(decision, updated, None, run)
+
+    def _request_if_ready(
+        self, state: RetrainState, *, now: datetime, manual: bool
+    ) -> AutoRetrainResult:
+        if state.active_run_id is not None:
+            return self.poll_retrain(now=now)
+        pending = len(self.store.list_unincluded_training_examples())
+        enough = pending >= self.policy.minimum_new_examples
+        idle = (
+            state.last_feedback_at is not None
+            and (
+                now.astimezone(timezone.utc)
+                - datetime.fromisoformat(state.last_feedback_at).astimezone(timezone.utc)
+            ).total_seconds()
+            >= self.policy.idle_seconds
         )
-        save_retrain_state(self.retrain_state_path, result.state)
-        return result
-
-
-def _model_version(now: datetime) -> str:
-    return f"email-model-{now.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}"
+        overdue = (
+            state.last_trained_at is not None
+            and (
+                now.astimezone(timezone.utc)
+                - datetime.fromisoformat(state.last_trained_at).astimezone(timezone.utc)
+            ).total_seconds()
+            >= self.policy.max_interval_seconds
+        )
+        due = enough and (manual or idle or overdue)
+        reason = "manual" if manual and enough else "idle_debounce" if idle and enough else "max_interval" if overdue and enough else None
+        decision = RetrainDecision(due, reason, pending)
+        if not due:
+            return AutoRetrainResult(decision, state, None, None)
+        run = self.controller.start(now=now)
+        updated = state.with_active_run(run.run_id)
+        save_retrain_state(self.retrain_state_path, updated)
+        return AutoRetrainResult(decision, updated, None, run)

@@ -9624,6 +9624,7 @@ def create_audit_app(
     workbench_scheduler_interval_seconds: float = 1.0,
     workbench_scheduler_join_timeout_seconds: float = 1.0,
     spa_enabled: bool = False,
+    email_learning_factory=None,
 ) -> FastAPI:
     # The audit process is read-heavy. Reuse one initialized Store so requests do
     # not repeatedly contend with the worker for schema initialization writes.
@@ -9799,6 +9800,18 @@ def create_audit_app(
 
     from app.web_api import register_console_routes
 
+    if email_learning_factory is None:
+        from app.email_classifier_learning import EmailClassifierLearningService
+        from app.email_model_registry import EmailModelRegistry
+
+        email_model_root = db_path.parent / "email-models"
+        def email_learning_factory():
+            return EmailClassifierLearningService(
+                EmailStore(db_path),
+                registry=EmailModelRegistry(email_model_root),
+                retrain_state_path=email_model_root / "retrain-state.json",
+            )
+
     register_console_routes(
         app,
         store_factory=lambda: AutoReplyStore(db_path),
@@ -9807,6 +9820,7 @@ def create_audit_app(
         task_row_builder=_task_row_payload,
         history_chart_factory=lambda: _history_chart_payload(_audit_store(db_path)),
         email_store_factory=lambda: EmailStore(db_path),
+        email_learning_factory=email_learning_factory,
     )
 
     register_repository_upgrade_routes(
