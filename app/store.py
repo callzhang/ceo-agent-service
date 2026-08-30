@@ -4583,6 +4583,83 @@ class AutoReplyStore:
             )
             return cursor.rowcount == 1
 
+    def ensure_reply_task(
+        self,
+        *,
+        conversation_id: str,
+        conversation_title: str,
+        single_chat: bool,
+        trigger_message_id: str,
+        trigger_create_time: str,
+        trigger_sender: str,
+        trigger_text: str,
+        trigger_message_json: str = "{}",
+        available_at: str = "",
+        force_new_decision: bool = False,
+        oa_url: str = "",
+        manual_rerun_attempt_id: int = 0,
+        error: str = "",
+        channel: str = "dingtalk",
+        execution_generation: str = "initial",
+    ) -> ReplyTask:
+        """Create one queue identity or return its original immutable task."""
+
+        if (
+            not isinstance(execution_generation, str)
+            or not execution_generation.strip()
+        ):
+            raise ValueError("execution_generation must be non-empty")
+        with self._immediate_write_transaction() as db:
+            db.execute(
+                """
+                insert or ignore into reply_tasks (
+                    channel,
+                    conversation_id,
+                    conversation_title,
+                    single_chat,
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    available_at,
+                    force_new_decision,
+                    oa_url,
+                    manual_rerun_attempt_id,
+                    execution_generation,
+                    error
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    channel,
+                    conversation_id,
+                    conversation_title,
+                    int(single_chat),
+                    trigger_message_id,
+                    trigger_create_time,
+                    trigger_sender,
+                    trigger_text,
+                    trigger_message_json,
+                    available_at,
+                    int(force_new_decision),
+                    oa_url,
+                    manual_rerun_attempt_id,
+                    execution_generation,
+                    error,
+                ),
+            )
+            row = db.execute(
+                """
+                select * from reply_tasks
+                where channel=? and conversation_id=? and trigger_message_id=?
+                """,
+                (channel, conversation_id, trigger_message_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("reply task was not persisted")
+            return self._reply_task_from_row(row)
+
     def enqueue_manual_rerun_reply_task(
         self,
         *,

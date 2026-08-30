@@ -117,6 +117,24 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Friday", { selector: "mark" })).toBeInTheDocument();
   });
 
+  it("highlights template substitutions inside audit wrapper previews", async () => {
+    getSettings.mockResolvedValueOnce({
+      item: {
+        section: "audit-rules",
+        fields: { template: "Escalate to {{principal}} only when needed." },
+        preview: {
+          consumer: "Consumer wrapper\n\nEscalate to Alex only when needed.\n\nConsumer footer",
+        },
+      },
+      meta: { snapshot_at: "2026-08-29T00:00:00Z" },
+    });
+    renderSettings("/settings?tab=audit-rules&rule=consumer&view=preview");
+
+    expect(await screen.findByText("Alex", { selector: "mark" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Consumer rendered preview" })).toHaveTextContent("Consumer wrapper");
+    expect(screen.getByRole("tabpanel", { name: "Consumer rendered preview" })).toHaveTextContent("Consumer footer");
+  });
+
   it("keeps audit rule selection independent from the template or preview view", async () => {
     getSettings.mockResolvedValueOnce({
       item: {
@@ -170,9 +188,113 @@ describe("SettingsPage", () => {
     renderSettings("/settings?tab=connectors&connector=wechat");
 
     expect(await screen.findByRole("heading", { name: "微信自动回复对象" })).toBeInTheDocument();
-    expect(await screen.findAllByText("Melody")).toHaveLength(2);
+    expect(await screen.findAllByText("Melody")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "保存回复范围" })).toBeDisabled();
     expect(screen.queryByRole("link", { name: "打开回复范围" })).not.toBeInTheDocument();
     expect(screen.queryByText("unknown")).not.toBeInTheDocument();
+  });
+
+  it("brings the active Settings section into view on narrow navigation", async () => {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+
+    try {
+      renderSettings("/settings?tab=connectors&connector=wechat");
+
+      expect(await screen.findByRole("heading", { name: "微信自动回复对象" })).toBeInTheDocument();
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "nearest", inline: "center" });
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", original);
+      else delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it("shows idle guidance before any WeChat target search", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+
+    renderSettings("/settings?tab=connectors&connector=wechat");
+
+    expect(await screen.findByText("输入名称或 ID 后搜索；留空可浏览全部对象。")).toBeInTheDocument();
+    expect(screen.queryByText("搜索结果中的对象已在当前回复范围。")).not.toBeInTheDocument();
+  });
+
+  it("submits a WeChat target search with Enter and reports visible results", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechatTargets.mockResolvedValueOnce({ items: [
+      { account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true },
+      { account_id: "wx-account", target_type: "direct", target_id: "alex", conversation_id: "alex", display_name: "Alex", trigger_mode: "every_inbound_text", enabled: false },
+    ], account_id: "wx-account", meta: { page: 1, page_size: 50, total: 2, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+
+    renderSettings("/settings?tab=connectors&connector=wechat");
+    const searchbox = await screen.findByRole("searchbox", { name: "搜索好友或群聊" });
+    await user.type(searchbox, "{Enter}");
+
+    expect(listWechatTargets).toHaveBeenCalledWith({ query: "", kind: "all", limit: 50 });
+    expect(saveSettings).not.toHaveBeenCalled();
+    expect(await screen.findByText("共匹配 2 个，当前显示 1 个可添加对象。")).toBeInTheDocument();
+    expect(screen.getByText("Alex")).toBeInTheDocument();
+  });
+
+  it("does not repeat selected WeChat targets in search results", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechatTargets.mockResolvedValueOnce({ items: [
+      { account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true },
+      { account_id: "wx-account", target_type: "direct", target_id: "alex", conversation_id: "alex", display_name: "Alex", trigger_mode: "every_inbound_text", enabled: false },
+    ], account_id: "wx-account", meta: { page: 1, page_size: 50, total: 2, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+
+    renderSettings("/settings?tab=connectors&connector=wechat");
+    expect(await screen.findByRole("heading", { name: "微信自动回复对象" })).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "搜索" }));
+
+    expect(await screen.findByText("Alex")).toBeInTheDocument();
+    expect(screen.getAllByText("Melody")).toHaveLength(1);
+  });
+
+  it("recovers from an inline WeChat reply scope load failure", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat
+      .mockRejectedValueOnce(new Error("回复范围暂时不可用"))
+      .mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+
+    renderSettings("/settings?tab=connectors&connector=wechat");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("回复范围暂时不可用");
+    expect(screen.getByRole("status", { name: "回复范围同步状态" })).toHaveTextContent("加载失败");
+    await user.click(screen.getByRole("button", { name: "重试加载回复范围" }));
+
+    expect(await screen.findByText("Melody")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "回复范围同步状态" })).toHaveTextContent("已同步");
+    expect(listWechat).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps selected WeChat targets while searching and reports a successful save", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {}, wechat: { state: "ready" } }, meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechat.mockResolvedValueOnce({ items: [{ account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    listWechatTargets.mockResolvedValueOnce({ items: [
+      { account_id: "wx-account", target_type: "direct", target_id: "melody115", conversation_id: "melody115", display_name: "Melody", trigger_mode: "every_inbound_text", enabled: true },
+      { account_id: "wx-account", target_type: "direct", target_id: "alex", conversation_id: "alex", display_name: "Alex", trigger_mode: "every_inbound_text", enabled: false },
+    ], account_id: "wx-account", meta: { page: 1, page_size: 50, total: 2, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    saveWechatReplyScope.mockResolvedValueOnce({ ok: true, message: "已保存", meta: { updated_at: "2026-08-29T00:00:00Z" } });
+
+    renderSettings("/settings?tab=connectors&connector=wechat");
+    await user.click(await screen.findByRole("button", { name: "搜索" }));
+    await user.click(await screen.findByRole("checkbox", { name: /Alex/ }));
+    await user.click(screen.getByRole("button", { name: "保存回复范围" }));
+
+    expect(saveWechatReplyScope).toHaveBeenCalledWith("wx-account", expect.arrayContaining([
+      expect.objectContaining({ target_id: "melody115" }),
+      expect.objectContaining({ target_id: "alex" }),
+    ]));
+    expect(await screen.findByText("回复范围已保存")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "回复范围同步状态" })).toHaveTextContent("已保存");
   });
 });

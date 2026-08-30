@@ -14,6 +14,7 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     EmailProviderLocator,
     build_email_action_plan,
+    build_versioned_email_action_plan,
 )
 
 
@@ -366,6 +367,28 @@ def test_action_plan_identity_includes_created_at():
     second = _plan(created_at=datetime(2026, 8, 29, 16, 1, tzinfo=timezone.utc))
 
     assert first.action_plan_id != second.action_plan_id
+
+
+def test_public_action_plan_builder_supports_explicit_next_version():
+    plan = build_versioned_email_action_plan(
+        action_plan_version=2,
+        classification_id=11,
+        account_id="account-1",
+        category=EmailCategory.IMPORTANT,
+        classification_source="user",
+        confidence=0.93,
+        model_id="email/logistic/model-1",
+        config_version="email-v2",
+        actions=(EmailAction.ARCHIVE,),
+        action_parameters={},
+        created_at=CREATED_AT,
+    )
+
+    assert plan.action_plan_version == 2
+    assert plan.category is EmailCategory.IMPORTANT
+    assert plan.classification_source == "user"
+    assert plan.model_id == "email/logistic/model-1"
+    assert plan.config_version == "email-v2"
 
 
 @pytest.mark.parametrize(

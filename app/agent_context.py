@@ -1,9 +1,11 @@
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app.agent_contracts import AuditFeedback, ConsumerProposal
+from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.agent_result import AgentError
 from app.agent_skill_usage import LoadedSkillReceipt
 
@@ -25,6 +27,34 @@ class MaterialReference:
     reference: str
     source_message_id: str
     read_commands: tuple[str, ...]
+
+
+def email_attachment_metadata_materials(
+    attachments: Sequence[EmailAttachmentMetadata],
+    *,
+    source_message_id: str,
+) -> tuple[MaterialReference, ...]:
+    """Represent provider attachment metadata without a readable material locator."""
+
+    source_message_id = source_message_id.strip()
+    if not source_message_id:
+        raise ValueError("source_message_id must be non-empty")
+    if any(not isinstance(item, EmailAttachmentMetadata) for item in attachments):
+        raise TypeError("attachments must contain EmailAttachmentMetadata")
+    return tuple(
+        MaterialReference(
+            kind="email_attachment_metadata",
+            reference=json.dumps(
+                attachment.model_dump(mode="json"),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            source_message_id=source_message_id,
+            read_commands=(),
+        )
+        for attachment in attachments
+    )
 
 
 @dataclass(frozen=True)

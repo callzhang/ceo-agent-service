@@ -2139,6 +2139,7 @@ def build_worker_status_payload(
     store: AutoReplyStore,
     *,
     launchd_label: str = "com.ceo-agent-service.main",
+    include_system_health: bool = True,
 ) -> dict[str, object]:
     service = _launchd_service_status(launchd_label)
     # The worker performs short SQLite writes in parallel.  Render every
@@ -2147,15 +2148,12 @@ def build_worker_status_payload(
     with store.read_snapshot():
         queues = _queue_status_snapshots(store)
         attention_rows = _queue_attention_rows(store)
-    system_health = _system_health_snapshot(store, service)
-    return {
+    payload: dict[str, object] = {
         "service": service,
-        "system_health": system_health,
         "components": _service_component_snapshots(),
         # Connector probes have their own cache so a slow CLI/live probe never
         # delays the queue/status snapshot used by /workers and /attention.
         "connectors": {},
-        "wechat": _wechat_status_snapshot(store),
         "queues": queues,
         "attention_rows": attention_rows,
         "database": {"path": str(store.path)},
@@ -2168,6 +2166,9 @@ def build_worker_status_payload(
             "attention": len(attention_rows),
         },
     }
+    if include_system_health:
+        payload["system_health"] = _system_health_snapshot(store, service)
+    return payload
 
 
 def _system_health_snapshot(
@@ -9623,6 +9624,7 @@ def create_audit_app(
     workbench_scheduler_interval_seconds: float = 1.0,
     workbench_scheduler_join_timeout_seconds: float = 1.0,
     spa_enabled: bool = False,
+    email_learning_factory=None,
 ) -> FastAPI:
     # The audit process is read-heavy. Reuse one initialized Store so requests do
     # not repeatedly contend with the worker for schema initialization writes.
@@ -9656,6 +9658,12 @@ def create_audit_app(
     connector_status_cache = _RecentPayloadCache(
         DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
     )
+    wechat_status_cache = _RecentPayloadCache(
+        DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
+    )
+    system_health_cache = _RecentPayloadCache(
+        DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
+    )
 
     def render_default_attempt_list() -> str:
         return render_attempt_list(
@@ -9672,7 +9680,14 @@ def create_audit_app(
         )
 
     def render_worker_status_payload() -> dict[str, object]:
-        return build_worker_status_payload(audit_store)
+        return build_worker_status_payload(
+            audit_store,
+            include_system_health=False,
+        )
+
+    def render_system_health_payload() -> dict[str, object]:
+        service = _launchd_service_status("com.ceo-agent-service.main")
+        return _system_health_snapshot(audit_store, service)
 
     def worker_status_refreshing_payload() -> dict[str, object]:
         return {
@@ -9709,16 +9724,42 @@ def create_audit_app(
             _connector_status_snapshots,
             lambda: {},
         )
-        if not connector_statuses:
-            return payload
-        return {**payload, "connectors": connector_statuses}
+        wechat_status = wechat_status_cache.get_or_refresh(
+            lambda: _wechat_status_snapshot(audit_store),
+            lambda: {
+                "reader": {"status": "refreshing"},
+                "sender": {"status": "refreshing"},
+                "preflight": {"status": "refreshing"},
+                "account": {"ready": False, "account_id": ""},
+            },
+        )
+        system_health = system_health_cache.get_or_refresh(
+            render_system_health_payload,
+            lambda: {
+                "state": "refreshing",
+                "detail": "System health refresh in progress.",
+                "checked_at": "",
+                "violations": 0,
+            },
+        )
+        return {
+            **payload,
+            "connectors": connector_statuses,
+            "wechat": wechat_status,
+            "system_health": system_health,
+        }
 
     @asynccontextmanager
     async def audit_lifespan(_app: FastAPI):
-        default_attempt_list_cache.get_or_render(_render_history_busy_page)
-        default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
+        if not spa_enabled:
+            default_attempt_list_cache.get_or_render(_render_history_busy_page)
+            default_attempt_list_cache.refresh_in_background(render_default_attempt_list)
         worker_status_cache.refresh_in_background(render_worker_status_payload)
         connector_status_cache.refresh_in_background(_connector_status_snapshots)
+        wechat_status_cache.refresh_in_background(
+            lambda: _wechat_status_snapshot(audit_store)
+        )
+        system_health_cache.refresh_in_background(render_system_health_payload)
         try:
             # Recovery is best-effort at startup.  The worker may hold the
             # SQLite write lock while the web child is being restarted; a
@@ -9760,6 +9801,23 @@ def create_audit_app(
 
     from app.web_api import register_console_routes
 
+    if email_learning_factory is None:
+        from app.email_classifier_learning import EmailClassifierLearningService
+        from app.email_model_registry import EmailModelRegistry
+
+        email_model_root = db_path.parent / "email-models"
+        email_learning_service = None
+
+        def email_learning_factory():
+            nonlocal email_learning_service
+            if email_learning_service is None:
+                email_learning_service = EmailClassifierLearningService(
+                    EmailStore(db_path),
+                    registry=EmailModelRegistry(email_model_root),
+                    retrain_state_path=email_model_root / "retrain-state.json",
+                )
+            return email_learning_service
+
     register_console_routes(
         app,
         store_factory=lambda: AutoReplyStore(db_path),
@@ -9768,6 +9826,7 @@ def create_audit_app(
         task_row_builder=_task_row_payload,
         history_chart_factory=lambda: _history_chart_payload(_audit_store(db_path)),
         email_store_factory=lambda: EmailStore(db_path),
+        email_learning_factory=email_learning_factory,
     )
 
     register_repository_upgrade_routes(
@@ -10496,6 +10555,13 @@ def create_audit_app(
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return JSONResponse(result)
+
+    @app.api_route("/{spa_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    def spa_not_found_fallback(spa_path: str) -> Response:
+        normalized = spa_path.strip("/")
+        if not spa_enabled or normalized == "api" or normalized.startswith("api/"):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+        return _spa_index_response(asset_dir)
 
     return app
 

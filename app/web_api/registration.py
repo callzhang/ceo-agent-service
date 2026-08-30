@@ -28,6 +28,7 @@ from app.web_api.tasks import (
     task_list_response,
 )
 from app.web_api.settings import info_payload
+from app.web_api.email import register_email_routes
 from app.feedback_processing import (
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
@@ -47,6 +48,8 @@ def register_console_routes(
     attention_rows_factory: Callable[[], Any],
     task_row_builder: Callable[[Any, list[Any]], Any] | None = None,
     history_chart_factory: Callable[[], Any] | None = None,
+    email_store_factory: Callable[[], Any] | None = None,
+    email_learning_factory: Callable[[], Any] | None = None,
 ) -> None:
     def list_meta(*, page: int, page_size: int, total: int, snapshot: str):
         return ApiListMeta(
@@ -63,9 +66,22 @@ def register_console_routes(
     def item_envelope(item: Any):
         return {"item": json_safe(item), "meta": {"snapshot_at": snapshot_at()}}
 
+    def stored_json(value: str, fallback: Any):
+        try:
+            return json.loads(value or "")
+        except (TypeError, json.JSONDecodeError):
+            return fallback
+
     def command_result(*, item: Any = None, message: str = "已完成", ok: bool = True):
         return {"ok": ok, "item": json_safe(item), "message": message,
                 "meta": {"updated_at": snapshot_at()}}
+
+    if email_store_factory is not None:
+        register_email_routes(
+            app,
+            email_store_factory,
+            email_learning_factory=email_learning_factory,
+        )
 
     async def json_object(request: Request) -> dict[str, Any]:
         if "application/json" not in request.headers.get("content-type", ""):
@@ -85,6 +101,7 @@ def register_console_routes(
         q: str = "",
         category: str = "",
         task_state: str = "",
+        sort: str = "",
     ):
         return task_list_response(
             store_factory(),
@@ -93,6 +110,7 @@ def register_console_routes(
             query=q,
             category=category,
             task_state=task_state,
+            sort=sort,
             row_builder=task_row_builder,
         )
 
@@ -254,13 +272,36 @@ def register_console_routes(
 
     @app.get("/api/console/meeting-attempts/{run_id}")
     def console_meeting_detail(run_id: int):
-        run = store_factory().get_agent_run(run_id)
+        store = store_factory()
+        run = store.get_meeting_alignment_run(run_id)
         if run is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting attempt not found", "details": {}}, status_code=404)
-        return item_envelope({"id": run.id, "status": run.status, "role": run.role.value,
-                              "operation_id": run.operation_id, "result": json_safe(run.final_result_json),
-                              "runtime": {"created_at": run.created_at, "started_at": run.started_at,
-                                          "completed_at": run.completed_at}})
+        job = store.get_meeting_alignment_job(run.job_id)
+        if job is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting job not found", "details": {}}, status_code=404)
+        return item_envelope({
+            "id": run.id,
+            "title": job.title,
+            "type": "meeting",
+            "status": job.status,
+            "input": {
+                "meeting_id": job.meeting_id,
+                "ended_at": job.ended_at,
+                "participants": stored_json(job.participants_json, []),
+            },
+            "decision": stored_json(run.decision_json, {}),
+            "output": job.final_message,
+            "runtime": {
+                "run_status": run.status,
+                "job_status": job.status,
+                "audit_summary": run.audit_summary,
+                "audit_tool_events": stored_json(run.audit_tool_events_json, []),
+                "error": run.error or job.error,
+                "created_at": run.created_at,
+                "finished_at": run.finished_at,
+                "updated_at": run.updated_at,
+            },
+        })
 
     @app.get("/api/console/oa-approvals/{process_instance_id:path}")
     def console_oa_detail(process_instance_id: str):

@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -22,6 +23,7 @@ from app.email_classifier_training import (
     assess_feedback_readiness,
     train_and_promote,
 )
+from app.email_model_registry import EmailModelRegistry
 from app.email_classifier_retrain import (
     RetrainPolicy,
     RetrainState,
@@ -30,7 +32,7 @@ from app.email_classifier_retrain import (
     retrain_if_due,
     save_retrain_state,
 )
-from app.email_store import EmailStore
+from app.email_store import EmailStore, EmailTrainingInclusionConflict
 
 
 def _assess_important(
@@ -95,6 +97,19 @@ def _classification(message_id: str, category: EmailCategory) -> EmailClassifica
     )
 
 
+def _confirm(
+    store: EmailStore,
+    row_id: int,
+    category: EmailCategory,
+) -> dict[str, object] | None:
+    return store.confirm_classification(
+        row_id,
+        category,
+        feedback_request_id=f"training-feedback-{row_id}-{category.value}",
+        expected_current_action_plan_id=None,
+    )
+
+
 def _store_with_confirmed_feedback(tmp_path: Path) -> EmailStore:
     store = EmailStore(tmp_path / "email.sqlite3")
     examples = [
@@ -113,7 +128,7 @@ def _store_with_confirmed_feedback(tmp_path: Path) -> EmailStore:
             preview="redacted",
             model_text=model_text,
         )
-        assert store.confirm_classification(row["id"], category) is not None
+        assert _confirm(store, row["id"], category) is not None
     return store
 
 
@@ -125,7 +140,7 @@ def test_feedback_keeps_redacted_model_text_for_training(tmp_path: Path):
         model_text="__from_domain__example.test __subject__项目 工作",
     )
 
-    store.confirm_classification(row["id"], EmailCategory.IMPORTANT)
+    _confirm(store, row["id"], EmailCategory.IMPORTANT)
 
     assert store.list_training_examples() == [
         {
@@ -141,7 +156,7 @@ def test_training_readiness_requires_two_examples_per_category(tmp_path: Path):
     row = store.upsert_classification(
         _classification("message-1", EmailCategory.WORK), model_text="work"
     )
-    store.confirm_classification(row["id"], EmailCategory.WORK)
+    _confirm(store, row["id"], EmailCategory.WORK)
 
     readiness = assess_feedback_readiness(store)
 
@@ -369,12 +384,238 @@ def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Pa
     assert previous.exists()
 
 
+def test_registry_promotion_marks_only_authoritative_samples_after_success(tmp_path: Path):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+
+    result = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 45, 30, tzinfo=timezone.utc),
+    )
+
+    assert result.promoted is True
+    assert result.model_id.startswith("email-tfidf-lr-20260829T214530Z-")
+    assert result.prediction_latency_p95_ms < 100
+    assert registry.active_manifest().model_id == result.model_id  # type: ignore[union-attr]
+    for example in store.list_training_examples(include_inclusion=True):
+        assert example["included_in_model_id"] == result.model_id
+
+
+def test_next_registry_model_marks_only_new_snapshot_without_reassigning_old_samples(
+    tmp_path: Path, monkeypatch
+):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    first = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 45, 30, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        "app.email_classifier_training._promotion_rejection",
+        lambda _registry, _metadata: None,
+    )
+    for index, category in enumerate((EmailCategory.WORK, EmailCategory.JUNK), 7):
+        row = store.upsert_classification(
+            _classification(f"message-{index}", category),
+            model_text=f"__subject__new-{index} {category.value}",
+        )
+        _confirm(store, row["id"], category)
+
+    second = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 46, 30, tzinfo=timezone.utc),
+    )
+
+    included = store.list_training_examples(include_inclusion=True)
+    by_text = {row["model_text"]: row["included_in_model_id"] for row in included}
+    assert all(
+        model_id == first.model_id
+        for text, model_id in by_text.items()
+        if "__subject__new-" not in text
+    )
+    assert all(
+        model_id == second.model_id
+        for text, model_id in by_text.items()
+        if "__subject__new-" in text
+    )
+
+
+def test_later_retrain_rejects_correction_to_previously_included_training_sample(
+    tmp_path: Path, monkeypatch
+):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    first = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 45, 30, tzinfo=timezone.utc),
+    )
+    prior_active = registry.active_manifest()
+    historical = store.list_training_examples(include_inclusion=True)[0]
+    assert historical["included_in_model_id"] == first.model_id
+    for index, category in enumerate((EmailCategory.WORK, EmailCategory.JUNK), 30):
+        row = store.upsert_classification(
+            _classification(f"later-{index}", category),
+            model_text=f"__subject__later-{index} {category.value}",
+        )
+        _confirm(store, row["id"], category)
+
+    original_stage = registry.stage_candidate
+
+    def stage_before_historical_correction(*args, **kwargs):
+        result = original_stage(*args, **kwargs)
+        with store._connect() as db:
+            db.execute(
+                """
+                update email_classifications
+                set model_text=model_text || ' corrected'
+                where id=?
+                """,
+                (historical["classification_id"],),
+            )
+        return result
+
+    monkeypatch.setattr(registry, "stage_candidate", stage_before_historical_correction)
+    monkeypatch.setattr(
+        "app.email_classifier_training._promotion_rejection",
+        lambda _registry, _metadata: None,
+    )
+
+    with pytest.raises(EmailTrainingInclusionConflict):
+        train_and_promote(
+            store,
+            registry,
+            trained_at=datetime(2026, 8, 29, 21, 46, 30, tzinfo=timezone.utc),
+        )
+
+    assert registry.active_manifest() == prior_active
+    corrected = {
+        row["message_id"]: row for row in store.list_unincluded_training_examples()
+    }[historical["message_id"]]
+    assert corrected["included_in_model_id"] is None
+    assert corrected["sample_digest"] != historical["sample_digest"]
+
+
+def test_rejected_or_failed_candidate_never_marks_sqlite_samples(
+    tmp_path: Path, monkeypatch
+):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    monkeypatch.setattr(
+        "app.email_classifier_training._promotion_rejection",
+        lambda registry, metadata: "macro_f1_regressed",
+    )
+
+    rejected = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 45, 31, tzinfo=timezone.utc),
+    )
+
+    assert rejected.promoted is False
+    assert registry.get_model(rejected.model_id).status == "rejected"
+    assert len(store.list_unincluded_training_examples()) == 6
+
+    failed_store = _store_with_confirmed_feedback(tmp_path / "failed")
+    failed_registry = EmailModelRegistry(tmp_path / "failed-registry")
+    monkeypatch.setattr(
+        failed_registry,
+        "stage_candidate",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("stage failed")),
+    )
+    with pytest.raises(RuntimeError, match="stage failed"):
+        train_and_promote(
+            failed_store,
+            failed_registry,
+            trained_at=datetime(2026, 8, 29, 21, 45, 32, tzinfo=timezone.utc),
+        )
+    assert len(failed_store.list_unincluded_training_examples()) == 6
+
+
+def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_pending(
+    tmp_path: Path, monkeypatch
+):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    original_stage = registry.stage_candidate
+
+    def stage_before_correction(*args, **kwargs):
+        result = original_stage(*args, **kwargs)
+        with store._connect() as db:
+            db.execute(
+                """
+                update email_classifications
+                set confirmed_category='important', category='important'
+                where id=(select min(id) from email_classifications)
+                """
+            )
+        return result
+
+    monkeypatch.setattr(registry, "stage_candidate", stage_before_correction)
+
+    with pytest.raises(
+        EmailTrainingInclusionConflict,
+        match="training sample changed before inclusion",
+    ):
+        train_and_promote(
+            store,
+            registry,
+            trained_at=datetime(2026, 8, 29, 21, 45, 33, tzinfo=timezone.utc),
+        )
+
+    latest = store.list_unincluded_training_examples()
+    assert any(example["label"] == "important" for example in latest)
+
+
+def test_inclusion_failure_after_promotion_restores_exact_prior_manifests(
+    tmp_path: Path, monkeypatch
+):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    first = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 45, 30, tzinfo=timezone.utc),
+    )
+    prior_active = registry.active_manifest()
+    prior_previous = registry.previous_manifest()
+    for index, category in enumerate((EmailCategory.WORK, EmailCategory.JUNK), 20):
+        row = store.upsert_classification(
+            _classification(f"rollback-{index}", category),
+            model_text=f"__subject__rollback-{index} {category.value}",
+        )
+        _confirm(store, row["id"], category)
+    monkeypatch.setattr(
+        "app.email_classifier_training._promotion_rejection",
+        lambda _registry, _metadata: None,
+    )
+    monkeypatch.setattr(
+        store,
+        "_update_training_inclusion",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(sqlite3.DatabaseError("forced")),
+    )
+
+    with pytest.raises(sqlite3.DatabaseError, match="forced"):
+        train_and_promote(
+            store,
+            registry,
+            trained_at=datetime(2026, 8, 29, 21, 46, 30, tzinfo=timezone.utc),
+        )
+
+    assert registry.active_manifest() == prior_active
+    assert registry.previous_manifest() == prior_previous
+    assert registry.active_manifest().model_id == first.model_id  # type: ignore[union-attr]
+
+
 def test_training_not_ready_does_not_create_active_model(tmp_path: Path):
     store = EmailStore(tmp_path / "email.sqlite3")
     row = store.upsert_classification(
         _classification("message-1", EmailCategory.WORK), model_text="work"
     )
-    store.confirm_classification(row["id"], EmailCategory.WORK)
+    _confirm(store, row["id"], EmailCategory.WORK)
     active = tmp_path / "model.active.pkl"
 
     with pytest.raises(TrainingNotReady):
@@ -389,18 +630,17 @@ def test_retrain_policy_coalesces_feedback_until_batch_or_idle_window():
     policy = RetrainPolicy(minimum_new_examples=5, idle_seconds=30)
 
     not_due = evaluate_retrain(state, feedback_count=1, now=now, policy=policy)
-    due = evaluate_retrain(
-        state, feedback_count=5, now=now, policy=policy
+    due = evaluate_retrain(state, feedback_count=5, now=now, policy=policy)
+    idle_not_due = evaluate_retrain(
+        state, feedback_count=1, now=now + timedelta(seconds=31), policy=policy
     )
     idle_due = evaluate_retrain(
-        state,
-        feedback_count=1,
-        now=now + timedelta(seconds=31),
-        policy=policy,
+        state, feedback_count=5, now=now + timedelta(seconds=31), policy=policy
     )
 
     assert not_due.due is False
-    assert due.reason == "minimum_new_examples"
+    assert due.due is False
+    assert idle_not_due.due is False
     assert idle_due.reason == "idle_debounce"
 
 
@@ -425,12 +665,12 @@ def test_retrain_if_due_advances_state_only_after_promotion(tmp_path: Path):
         RetrainState().record_feedback(now),
         active,
         previous,
-        now=now,
+        now=now + timedelta(seconds=31),
         model_version="email-model-triggered",
         policy=RetrainPolicy(minimum_new_examples=5),
     )
 
-    assert result.decision.reason == "minimum_new_examples"
+    assert result.decision.reason == "idle_debounce"
     assert result.training_result is not None
     assert result.state.last_trained_feedback_count == 6
     assert active.exists()
@@ -441,7 +681,7 @@ def test_retrain_failure_does_not_advance_state_or_create_model(tmp_path: Path):
     row = store.upsert_classification(
         _classification("message-1", EmailCategory.WORK), model_text="work"
     )
-    store.confirm_classification(row["id"], EmailCategory.WORK)
+    _confirm(store, row["id"], EmailCategory.WORK)
     now = datetime(2026, 8, 29, 15, 0, tzinfo=timezone.utc)
     state = RetrainState().record_feedback(now)
     active = tmp_path / "models" / "model.active.pkl"
@@ -452,7 +692,7 @@ def test_retrain_failure_does_not_advance_state_or_create_model(tmp_path: Path):
             state,
             active,
             tmp_path / "models" / "model.previous.pkl",
-            now=now,
+            now=now + timedelta(seconds=31),
             model_version="should-not-promote",
             policy=RetrainPolicy(minimum_new_examples=1),
         )

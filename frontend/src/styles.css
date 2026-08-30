@@ -256,6 +256,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .wechat-scope-heading p { margin-bottom: 0; }
 .wechat-scope-state { flex: 0 0 auto; padding: 5px 8px; border: 1px solid #b9d9ca; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: .72rem; font-weight: 750; white-space: nowrap; }
 .wechat-scope-state.is-dirty { border-color: #e4c889; color: var(--warning); background: #fff8e8; }
+.wechat-scope-state.is-error { border-color: #f2b8b5; color: var(--danger); background: #fff1f0; }
+.wechat-load-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; text-align: left; }
 .wechat-selected-block, .wechat-target-picker { display: grid; gap: 10px; }
 .wechat-section-label { display: flex; align-items: baseline; gap: 8px; color: var(--ink); font-size: .82rem; font-weight: 750; }
 .wechat-section-label span { color: var(--ink-soft); font-size: .75rem; font-weight: 500; }
@@ -274,7 +276,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .notification-status-panel { margin-bottom: 16px; }
 .notification-status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .notification-status-item { display: grid; gap: 7px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-muted); }
-.notification-status-item span { color: var(--ink-soft); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.05em; text-transform: uppercase; }
+.notification-status-label { color: var(--ink-soft); font-size: 0.72rem; font-weight: 750; letter-spacing: 0.05em; text-transform: uppercase; }
 .notification-status-item strong { overflow-wrap: anywhere; }
 .notification-status-item small { color: var(--ink-soft); line-height: 1.5; }
 .token-editor-field { display: grid; gap: 7px; margin-top: 16px; }
@@ -343,8 +345,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .task-facts-section .responsive-data-list td { overflow-wrap: anywhere; }
   .task-facts-section .details-toggle { min-width: 78px; white-space: nowrap; }
 }
-.history-page, .tasks-page, .feedback-page { max-width: 1180px; margin: 0 auto; }
-.history-chart-card { padding: 16px 18px; margin-bottom: 12px; }
+.history-page, .tasks-page, .feedback-page { width: 100%; max-width: 1180px; min-width: 0; margin: 0 auto; }
+.history-chart-card { min-width: 0; padding: 16px 18px; margin-bottom: 12px; }
 .history-chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .history-chart-title { margin: 0; font-size: 1rem; }
 .history-chart-subtitle { color: var(--ink-soft); font-size: .76rem; }
@@ -356,7 +358,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .history-chart-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 6px; }
 .history-chart-legend-item { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: .72rem; }
 .history-chart-legend-item i { width: 9px; height: 9px; border-radius: 3px; }
-.history-chart-scroll { width: 100%; overflow-x: auto; border-bottom: 1px solid var(--line); background: repeating-linear-gradient(to bottom, transparent 0 43px, var(--line) 44px, transparent 45px); }
+.history-chart-scroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; border-bottom: 1px solid var(--line); background: repeating-linear-gradient(to bottom, transparent 0 43px, var(--line) 44px, transparent 45px); }
 .history-chart-svg { display: block; min-width: 620px; }
 .history-chart-gridline { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 4; }
 .history-chart-axis-label { fill: var(--ink-soft); font-size: 10px; }
@@ -397,6 +399,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
 .section-head h2 { margin: 0; font-size: 1rem; }
 .section-head p { margin: 4px 0 0; }
+.sent-todos-controls { display: flex; align-items: flex-end; gap: 12px; }
+.sent-todos-controls .filter-field { min-width: 110px; }
 .sent-todos-table-wrap { max-height: 520px; overflow: auto; }
 .sent-todos-table { width: 1456px; min-width: 1456px; }
 .sent-todos-table th:first-child, .sent-todos-table td:first-child { width: 138px; }
@@ -522,7 +526,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .user-feedback-table td:nth-child(3)::before { content: "用户反馈"; }
   .user-feedback-table td:nth-child(4)::before { content: "时间"; }
   .user-feedback-table td:nth-child(5)::before { content: "操作"; }
-  .sent-todos-table-wrap { overflow-x: auto; }
+  .sent-todos-head, .sent-todos-controls { align-items: stretch; flex-direction: column; }
+  .sent-todos-controls .filter-field { width: 100%; }
+  .sent-todos-table-wrap { max-height: none; overflow: visible; }
+  .sent-todos-table, .sent-todos-table thead, .sent-todos-table tbody,
+  .sent-todos-table tr, .sent-todos-table th, .sent-todos-table td { display: block; }
+  .sent-todos-table { width: 100%; min-width: 0; }
+  .sent-todos-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .sent-todos-table tr { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+  .sent-todos-table tr + tr { margin-top: 10px; }
+  .sent-todos-table td { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; width: 100% !important; padding: 5px 0; border: 0; }
+  .sent-todos-table td::before { content: attr(data-label); color: var(--ink-soft); font-size: .72rem; font-weight: 700; }
   .feedback-workspace-card .card-head { align-items: stretch; flex-direction: column; }
   .feedback-workspace-card .card-head button { width: 100%; }
   .feedback-pending-badge { align-self: flex-start; }

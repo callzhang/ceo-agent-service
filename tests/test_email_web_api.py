@@ -137,7 +137,11 @@ def test_email_routes_initialize_and_reuse_one_store(
         )
         feedback = client.post(
             "/api/console/email/classifications/999/feedback",
-            json={"category": "work"},
+            json={
+                "category": "work",
+                "feedback_request_id": "missing-classification-feedback",
+                "expected_current_action_plan_id": None,
+            },
         )
 
     assert classifications.status_code == 200

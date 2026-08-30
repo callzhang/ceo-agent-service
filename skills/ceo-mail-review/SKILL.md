@@ -1,6 +1,6 @@
 ---
 name: ceo-mail-review
-description: Use for reviewing an incoming mail card, resolving the complete message or thread, inspecting attachments and links, checking whether a reply already exists, and drafting or sending an authorized reply. Use ceo-document-review for a standalone material review outside the mail workflow. Load dingtalk-mail before any DingTalk mail operation.
+description: Use for audited email auto_reply or unsubscribe tasks authorized by an immutable ActionPlan. Review message and thread text, attachment metadata, and prior state receipts without reading attachment or linked content.
 metadata:
   managed_by: ceo-agent-service
   version: 1
@@ -8,61 +8,65 @@ metadata:
 
 # CEO Mail Review
 
-Load `ceo-mail-review` for mail review, thread resolution, linked-material
-inspection, reply judgment, and authorized reply proposals.
+Load `ceo-mail-review` for `channel=email` tasks whose persisted immutable
+ActionPlan currently authorizes exactly one `auto_reply` or `unsubscribe`
+action. Classification confirmation by itself is not mail-action authorization.
 
 ## Compose Operation Skills
 
-Use the platform's mail and material Skills instead of copying their commands
-into this business workflow.
+Use the platform's mail Skill only for message/thread text and sent or
+unsubscribe state readback. Do not use document, drive, OCR, image, or linked
+material Skills in this workflow.
 
-| Source | Operation Skills |
+| Source | Operation Skill |
 | --- | --- |
 | DingTalk mail | `dingtalk-mail` |
 | Lark mail | `lark-mail` |
-| DingTalk linked material | `dingtalk-doc`, `dingtalk-aitable`, or `dingtalk-drive` |
-| Lark linked material | `lark-doc`, `lark-base`, or `lark-drive` |
-
-Load `ceo-document-review` when the requested outcome includes a substantive
-review of linked material. Load the matching chat Skill only when the result
-must also be delivered in the source conversation.
+| Standard IMAP/SMTP email | the email operation capability supplied by the runtime |
 
 ## Resolve Complete Evidence
 
-1. Treat a truncated card or quoted preview only as a locator. Resolve the
-   principal's mailbox and the complete original message or thread with the
-   loaded mail Skill.
-2. Confirm sender, recipients, subject, current thread state, and the exact
-   request. Do not ask the sender to paste content that the loaded mail Skill
-   can read.
-3. Inspect every linked material needed for the requested judgment with its
-   matching operation Skill. A link title or mail summary is not its content.
-4. Check the current thread, sent state, and safe prior receipts before
-   proposing a reply. Do not propose or execute a duplicate reply.
+1. Use only message and thread text supplied by the email context, plus sender,
+   recipients, subject, time, standard mail headers, and safe action metadata.
+2. Treat attachments as attachment metadata only: filename, MIME type, byte
+   size, count, and inline flag. The runtime contract is `image_paths=()`.
+3. Do not open or inspect attachment content. Do not download, parse, OCR,
+   summarize, or infer it. Do not invent attachment facts.
+4. Do not open or inspect linked content in this Task 9 workflow. A URL present
+   in message text is text evidence only; browser execution is a separately
+   scoped unsubscribe capability.
+5. Before proposing `auto_reply`, read the current sent state and safe prior
+   receipts. Before proposing `unsubscribe`, read the current unsubscribe state
+   and safe prior receipts. Do not propose a duplicate completed action.
 
-The agent performs the business judgment. The service supplies references and
-exact commands without interpreting mail or linked content. Use supplied exact
-commands as given and load operation Skills for any additional reads or writes.
-Do not infer or invent unread content.
+The Agent performs the business judgment from those bounded facts. The service
+supplies the immutable ActionPlan and metadata without interpreting message or
+attachment content. Do not infer or invent unread content.
 
 ## Authorization And Outcome
 
-Propose a mail reply only when the current request explicitly authorizes
-replying. Review-only, summarize-only, or approval-only requests do not
-authorize a mail reply. Authorization from an older message does not silently
-carry into a materially different current request.
+For `channel=email`, the current immutable ActionPlan is the authorization.
+Only its exact `auto_reply` or `unsubscribe` action may be proposed. Do not
+derive a generic follow-up, attachment analysis, or another mail action from
+the category, message wording, an older plan, or prior conversation.
 
-- A justified mail reply is one action in a canonical `proposal`; the mail
-  operation Skill owns execution and exact readback.
+- Consumer A proposes the exact action; it never sends or unsubscribes directly.
+- Audit Agent B reviews the proposal under the existing feedback/revision
+  lifecycle. Only Audit may execute an accepted action and verify readback.
+- A justified `auto_reply` is one action in a canonical `proposal`; the mail
+  operation capability owns sending and exact sent state readback.
+- A justified `unsubscribe` proposal is limited to the authorized subscription
+  source and must require exact unsubscribe state readback.
 - If the complete current thread shows an equivalent reply already sent, use
   canonical `no_action` for the mail effect and report the verified state only
   when the current conversation needs it.
 - If review is complete but reply authorization is absent, provide only the
   requested review or draft through an authorized channel; do not execute or
   propose a mail send.
-- If evidence access fails, report the dependency failure rather than drafting
-  from the preview.
+- If text or state readback fails, report the dependency failure rather than
+  drafting or claiming success from attachment metadata, a URL title, or a
+  command response alone.
 
-When a participant can resolve a genuine evidence gap, ask one concrete
-question naming the specifically missing mail or linked material. Do not ask
-for a generic resend or for content the loaded operation Skills can retrieve.
+When the message says only that details are in an attachment, an `auto_reply`
+may acknowledge receipt without evaluating the attachment. Never claim that an
+attachment was read, correct, complete, approved, or understood.
