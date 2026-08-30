@@ -4008,6 +4008,75 @@ def test_process_work_item_repairs_update_project_without_id(
     assert "不得改成 create_project" in codex.prompts[1]
 
 
+def test_process_work_item_repairs_update_project_without_project(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item("客户交付")
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    invalid_update = {
+        "action": "update_project",
+        "update_summary": "并入已有客户交付项目。",
+        "memory_recall_used": True,
+        "confidence": 0.8,
+    }
+    repaired_skip = {
+        "action": "skip",
+        "skip_reason": "无法取得已有项目上下文，跳过而不是创建重复项目。",
+        "update_summary": "未修改项目。",
+        "memory_recall_used": True,
+        "confidence": 0.9,
+    }
+
+    class RepairingCodex(FakeCodexWithAuditEvents):
+        def __init__(self):
+            super().__init__(invalid_update, [{"tool": "memory_recall"}])
+            self.payloads = [invalid_update, repaired_skip]
+            self.calls = 0
+
+        def decide(self, **kwargs):
+            self.prompts.append(kwargs["prompt"])
+            payload = self.payloads[self.calls]
+            self.calls += 1
+            self.last_audit_tool_events = [{"tool": "memory_recall"}]
+            return TaskAgentDecision.model_validate(payload)
+
+    codex = RepairingCodex()
+    process_work_item(store, TaskAgentRunner(codex), work_input)
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        runs = db.execute(
+            "select status, error from task_agent_runs "
+            "where summary_input_id=? order by id",
+            (input_id,),
+        ).fetchall()
+        project_count = db.execute("select count(*) from work_projects").fetchone()[0]
+
+    assert input_row == (
+        "skipped",
+        "无法取得已有项目上下文，跳过而不是创建重复项目。",
+    )
+    assert runs == [
+        ("failed", "update_project requires project"),
+        ("completed", ""),
+    ]
+    assert project_count == 0
+    assert codex.calls == 2
+    assert "update_project requires project" in codex.prompts[1]
+    assert "不得改成 create_project" in codex.prompts[1]
+
+
 def test_process_work_item_rejects_missing_id_repair_that_creates_duplicate(
     tmp_path,
     monkeypatch,
@@ -4028,6 +4097,75 @@ def test_process_work_item_rejects_missing_id_repair_that_creates_duplicate(
             "category": "projects",
             "memory_context": _memory_context(),
         },
+        "update_summary": "并入已有客户交付项目。",
+        "memory_recall_used": True,
+        "confidence": 0.8,
+    }
+    invalid_create_repair = {
+        "action": "create_project",
+        "project": {
+            "title": "客户交付",
+            "category": "projects",
+            "memory_context": _memory_context(),
+        },
+        "update_summary": "创建同名客户交付项目。",
+        "memory_recall_used": True,
+        "confidence": 0.8,
+    }
+
+    class DuplicateCreatingCodex(FakeCodexWithAuditEvents):
+        def __init__(self):
+            super().__init__(invalid_update, [{"tool": "memory_recall"}])
+            self.payloads = [invalid_update, invalid_create_repair]
+            self.calls = 0
+
+        def decide(self, **_kwargs):
+            payload = self.payloads[self.calls]
+            self.calls += 1
+            self.last_audit_tool_events = [{"tool": "memory_recall"}]
+            return TaskAgentDecision.model_validate(payload)
+
+    with pytest.raises(ValueError, match="cannot convert unresolved update_project"):
+        process_work_item(
+            store,
+            TaskAgentRunner(DuplicateCreatingCodex()),
+            work_input,
+        )
+
+    with sqlite3.connect(tmp_path / "task.sqlite3") as db:
+        input_row = db.execute(
+            "select status, error from work_summary_inputs where id=?",
+            (input_id,),
+        ).fetchone()
+        project_count = db.execute("select count(*) from work_projects").fetchone()[0]
+        runs = db.execute(
+            "select status from task_agent_runs where summary_input_id=? order by id",
+            (input_id,),
+        ).fetchall()
+
+    assert input_row == (
+        "failed",
+        "validation repair cannot convert unresolved update_project to create_project",
+    )
+    assert project_count == 0
+    assert runs == [("failed",), ("failed",)]
+
+
+def test_process_work_item_rejects_missing_project_repair_that_creates_duplicate(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    item = _work_item("客户交付")
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value,
+        item.source.ref,
+        item.model_dump_json(),
+    )
+    work_input = store.claim_work_summary_inputs(limit=1)[0]
+    invalid_update = {
+        "action": "update_project",
         "update_summary": "并入已有客户交付项目。",
         "memory_recall_used": True,
         "confidence": 0.8,

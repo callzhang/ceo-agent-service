@@ -1037,6 +1037,10 @@ def _validate_task_agent_decision(
     ):
         raise ValueError("non-skip task decision requires memory_recall_used")
     if decision.project is None:
+        if decision.action == "update_project":
+            raise RepairableTaskDecisionValidationError(
+                "update_project requires project"
+            )
         raise ValueError(f"{decision.action} requires project")
     memory_context = decision.project.memory_context
     if not memory_context.query.strip() or (
@@ -1053,10 +1057,8 @@ def _validate_task_agent_validation_repair(
     rejected: TaskAgentDecision,
     replacement: TaskAgentDecision,
 ) -> None:
-    rejected_unresolved_update = (
-        rejected.action == "update_project"
-        and rejected.project is not None
-        and rejected.project.id is None
+    rejected_unresolved_update = rejected.action == "update_project" and (
+        rejected.project is None or rejected.project.id is None
     )
     if rejected_unresolved_update and replacement.action == "create_project":
         raise ValueError(
