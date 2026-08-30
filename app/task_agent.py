@@ -66,6 +66,10 @@ TASK_RESULT_CODEC = RoutedResultCodec.text(
 )
 
 
+class RepairableTaskDecisionValidationError(ValueError):
+    """A typed Agent decision can be corrected in one bounded follow-up turn."""
+
+
 class TaskCodex(Protocol):
     last_session_id: str
     last_transcript_start_line: int
@@ -463,6 +467,12 @@ reuse the previous decision's memory_recall_used flag unless the new session
 receipt contains the tool call. Return a complete replacement decision after
 the tool call; do not send messages or perform writes.
 
+If the rejected decision used update_project but did not establish a stable
+integer project ID, the replacement may use update_project only with an ID
+from the current candidate context or a successful current task-management
+read. If no such ID can be established, return skip; 不得改成 create_project
+to bypass the missing-ID error or create a possible duplicate project.
+
 Previous rejected decision JSON:
 {decision.model_dump_json(indent=2)}
 """
@@ -595,11 +605,15 @@ def process_work_item(
                 now=now,
             )
         except ValueError as exc:
-            if str(exc) not in {
+            repairable_validation_error = isinstance(
+                exc, RepairableTaskDecisionValidationError
+            ) or str(exc) in {
                 "non-discard task decision requires memory_recall tool event",
                 "non-skip task decision requires memory_recall tool event",
-            }:
+            }
+            if not repairable_validation_error:
                 raise
+            rejected_decision = decision
             store.finish_task_agent_run(
                 active_run_id,
                 status="failed",
@@ -621,6 +635,10 @@ def process_work_item(
                 session_scope_id=session_scope_id,
             )
             decision = _normalize_follow_up_change_times(decision)
+            _validate_task_agent_validation_repair(
+                rejected_decision,
+                decision,
+            )
             codex_session_id = getattr(runner.codex, "last_session_id", None) or ""
             audit_tool_events = getattr(runner.codex, "last_audit_tool_events", None)
             memory_recall_attempted = _audit_events_include_memory_recall(
@@ -972,7 +990,25 @@ def _validate_task_agent_decision(
     ):
         raise ValueError("non-skip task decision requires project.memory_context")
     if decision.action == "update_project" and decision.project.id is None:
-        raise ValueError("update_project requires project.id")
+        raise RepairableTaskDecisionValidationError(
+            "update_project requires project.id"
+        )
+
+
+def _validate_task_agent_validation_repair(
+    rejected: TaskAgentDecision,
+    replacement: TaskAgentDecision,
+) -> None:
+    rejected_unresolved_update = (
+        rejected.action == "update_project"
+        and rejected.project is not None
+        and rejected.project.id is None
+    )
+    if rejected_unresolved_update and replacement.action == "create_project":
+        raise ValueError(
+            "validation repair cannot convert unresolved update_project "
+            "to create_project"
+        )
 
 
 def _require_evidence_fields(
