@@ -899,6 +899,103 @@ def test_startup_rejects_message_account_identity_mismatch(tmp_path: Path):
         EmailStore(database)
 
 
+@pytest.mark.parametrize(
+    "tamper_sql",
+    [
+        "update email_messages set folder='Archive'",
+        "update email_messages set uidvalidity=84",
+        "update email_messages set uid=9",
+        "update email_messages set rfc_message_id='<tampered@example.com>'",
+        "update email_messages set thread_identity='thread-tampered'",
+    ],
+)
+def test_startup_rejects_message_locator_and_thread_mismatch(
+    tmp_path: Path,
+    tamper_sql: str,
+):
+    database = tmp_path / "message-locator-mismatch.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            thread_id="thread-original",
+        ),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(tamper_sql)
+
+    with pytest.raises(EmailPersistenceCorruption, match="message locator mismatch"):
+        EmailStore(database)
+
+
+def test_startup_rejects_orphan_message_without_classification(tmp_path: Path):
+    database = tmp_path / "orphan-message.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("delete from email_classifications")
+
+    with pytest.raises(EmailPersistenceCorruption, match="orphan email message"):
+        EmailStore(database)
+
+
+def test_startup_accepts_canonical_and_empty_locator_metadata_equivalence(
+    tmp_path: Path,
+):
+    database = tmp_path / "canonical-locator.sqlite3"
+    store = EmailStore(database)
+    canonical = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="canonical-rfc",
+        stable_message_identity=(
+            "dingtalk-account:message-id:<Canonical@example.com>"
+        ),
+        rfc_message_id="<Canonical@EXAMPLE.COM>",
+        thread_id="  thread-canonical  ",
+    )
+    fallback = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="canonical-empty",
+        stable_message_identity="dingtalk-account:imap:Archive:42:9",
+        folder="Archive",
+        uid=9,
+        rfc_message_id=None,
+        thread_id="   ",
+    )
+    store.upsert_classification(canonical)
+    store.upsert_classification(fallback)
+
+    rows = _fetchall(
+        database,
+        """
+        select c.stable_message_identity, c.rfc_message_id as classification_rfc,
+               c.thread_id as classification_thread,
+               m.rfc_message_id as message_rfc,
+               m.thread_identity as message_thread
+        from email_classifications c
+        join email_messages m using (stable_message_identity)
+        order by c.stable_message_identity
+        """,
+    )
+    by_identity = {row["stable_message_identity"]: row for row in rows}
+    canonical_row = by_identity[canonical.stable_message_identity]
+    assert canonical_row["classification_rfc"] == "<Canonical@example.com>"
+    assert canonical_row["message_rfc"] == "<Canonical@example.com>"
+    assert canonical_row["classification_thread"] == "thread-canonical"
+    assert canonical_row["message_thread"] == "thread-canonical"
+    fallback_row = by_identity[fallback.stable_message_identity]
+    assert fallback_row["classification_rfc"] is None
+    assert fallback_row["message_rfc"] == ""
+    assert fallback_row["classification_thread"] is None
+    assert fallback_row["message_thread"] == ""
+
+    EmailStore(database)
+
+
 def test_startup_rejects_current_action_plan_pointer_rollback(tmp_path: Path):
     database = tmp_path / "pointer-rollback.sqlite3"
     store = EmailStore(database)

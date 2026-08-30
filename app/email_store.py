@@ -662,6 +662,11 @@ class EmailStore:
         classifications = {
             row["id"]: row for row in db.execute("select * from email_classifications")
         }
+        classifications_by_identity: dict[str, list[sqlite3.Row]] = {}
+        for row in classifications.values():
+            classifications_by_identity.setdefault(
+                row["stable_message_identity"], []
+            ).append(row)
         for row in classifications.values():
             try:
                 EmailCategory(row["category"])
@@ -694,6 +699,24 @@ class EmailStore:
             ):
                 raise EmailPersistenceCorruption(
                     f"message identity mismatch for classification {row['id']}"
+                )
+            message_locator = (
+                message["folder"],
+                message["uidvalidity"],
+                message["uid"],
+                message["rfc_message_id"] or "",
+                message["thread_identity"] or "",
+            )
+            classification_locator = (
+                row["folder"],
+                row["uidvalidity"],
+                row["uid"],
+                row["rfc_message_id"] or "",
+                row["thread_id"] or "",
+            )
+            if message_locator != classification_locator:
+                raise EmailPersistenceCorruption(
+                    f"message locator mismatch for classification {row['id']}"
                 )
             classification_plans = plans_by_classification.get(row["id"], [])
             has_plan_snapshot = row["action_plan_json"] not in {"", "null"}
@@ -765,6 +788,17 @@ class EmailStore:
             if row["action_plan_json"] != current_plan.model_dump_json():
                 raise EmailPersistenceCorruption(
                     f"current ActionPlan snapshot mismatch for classification {row['id']}"
+                )
+
+        for stable_identity in messages:
+            related = classifications_by_identity.get(stable_identity, [])
+            if not related:
+                raise EmailPersistenceCorruption(
+                    f"orphan email message {stable_identity} has no classification"
+                )
+            if len(related) != 1:
+                raise EmailPersistenceCorruption(
+                    f"email message {stable_identity} has multiple classifications"
                 )
 
         for plan in plans.values():
