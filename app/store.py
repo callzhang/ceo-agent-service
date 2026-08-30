@@ -14498,17 +14498,25 @@ class AutoReplyStore:
                 ensure_ascii=False,
                 sort_keys=True,
             )
+            resolution_timestamp_row = db.execute(
+                "select current_timestamp as resolution_timestamp"
+            ).fetchone()
+            resolution_timestamp = str(
+                resolution_timestamp_row["resolution_timestamp"]
+            )
             for item, current_round in verified:
                 round_cursor = db.execute(
                     """
                     update feedback_processing_rounds
-                       set status='resolved', resolved_at=current_timestamp,
-                           backlog_evidence_json=?, updated_at=current_timestamp
+                       set status='resolved', resolved_at=?,
+                           backlog_evidence_json=?, updated_at=?
                      where id=? and feedback_key=? and batch_id=?
                        and status='processing'
                     """,
                     (
+                        resolution_timestamp,
                         backlog_json,
+                        resolution_timestamp,
                         int(current_round["id"]),
                         str(item["feedback_key"]),
                         cleaned_batch_id,
@@ -14517,12 +14525,13 @@ class AutoReplyStore:
                 item_cursor = db.execute(
                     """
                     update feedback_processing_items
-                       set status='resolved', resolved_at=current_timestamp,
-                           updated_at=current_timestamp
+                       set status='resolved', resolved_at=?, updated_at=?
                      where feedback_key=? and batch_id=? and current_round_id=?
                        and status='processing'
                     """,
                     (
+                        resolution_timestamp,
+                        resolution_timestamp,
                         str(item["feedback_key"]),
                         cleaned_batch_id,
                         int(current_round["id"]),
@@ -14549,21 +14558,20 @@ class AutoReplyStore:
             source_cursor = db.execute(
                 f"""
                 update feedback_events
-                   set resolved_at=current_timestamp, updated_at=current_timestamp
+                   set resolved_at=?, updated_at=?
                  where key in ({placeholders}) and trim(resolved_at)=''
                 """,
-                item_keys,
+                [resolution_timestamp, resolution_timestamp, *item_keys],
             )
             if source_cursor.rowcount != requested_count:
                 raise ValueError("resolution source feedback changed during update")
             cursor = db.execute(
                 """
                 update feedback_processing_batches
-                   set status='resolved', resolved_at=current_timestamp,
-                       updated_at=current_timestamp
+                   set status='resolved', resolved_at=?, updated_at=?
                  where batch_id=? and status='processing'
                 """,
-                (cleaned_batch_id,),
+                (resolution_timestamp, resolution_timestamp, cleaned_batch_id),
             )
             if cursor.rowcount != 1:
                 raise ValueError("resolution batch changed during update")

@@ -1,6 +1,7 @@
 import json
 import inspect
 import sqlite3
+import time
 from pathlib import Path
 from threading import Event, Thread
 
@@ -2648,6 +2649,96 @@ def test_resolve_persists_backlog_receipt_for_later_reopen(tmp_path: Path):
     assert resolved_round.backlog_evidence == receipt.backlog_evidence
     assert store.reopen_feedback_processing_item(
         "feedback-1", reason="validated historical receipt"
+    ).status == "pending"
+
+
+def test_resolve_shares_one_timestamp_across_delayed_multi_item_batch(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "resolve-shared-timestamp.sqlite3")
+    receipt = _complete_resolution_receipt()
+    for key in ("feedback-1", "feedback-2"):
+        store.upsert_feedback_event(key=key, feedback_token=f"token-{key}")
+    store.claim_feedback_processing_items(
+        "batch-1", ["feedback-1", "feedback-2"]
+    )
+    for index, key in enumerate(("feedback-1", "feedback-2"), start=1):
+        store.associate_feedback_processing_turn(
+            key,
+            workbench_task_id="task-current",
+            workbench_turn_id="turn-current",
+            attempt_id=70 + index,
+            agent_run_id=80 + index,
+        )
+        store.patch_feedback_processing_item_evidence(
+            key,
+            commit_sha=receipt.commit_sha,
+            test_evidence=receipt.test_evidence,
+            restart_evidence=receipt.restart_evidence,
+            health_evidence=receipt.health_evidence,
+        )
+
+    original_open_connection = store._open_connection
+
+    def delayed_open_connection() -> sqlite3.Connection:
+        connection = original_open_connection()
+        connection.create_function(
+            "feedback_resolution_delay",
+            0,
+            lambda: time.sleep(1.1),
+        )
+        return connection
+
+    store._open_connection = delayed_open_connection  # type: ignore[method-assign]
+    with store._connect() as db:
+        db.execute(
+            """
+            create trigger delay_feedback_round_resolution
+            after update of status on feedback_processing_rounds
+            when old.status='processing' and new.status='resolved'
+            begin
+                select feedback_resolution_delay();
+            end
+            """
+        )
+
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", receipt, commit_is_ancestor=True
+    )
+    with store._connect() as db:
+        timestamps = {
+            str(row["timestamp"])
+            for row in db.execute(
+                """
+                select resolved_at as timestamp
+                  from feedback_processing_rounds where batch_id='batch-1'
+                union all
+                select updated_at
+                  from feedback_processing_rounds where batch_id='batch-1'
+                union all
+                select resolved_at
+                  from feedback_processing_items where batch_id='batch-1'
+                union all
+                select updated_at
+                  from feedback_processing_items where batch_id='batch-1'
+                union all
+                select resolved_at
+                  from feedback_events where key in ('feedback-1', 'feedback-2')
+                union all
+                select updated_at
+                  from feedback_events where key in ('feedback-1', 'feedback-2')
+                union all
+                select resolved_at
+                  from feedback_processing_batches where batch_id='batch-1'
+                union all
+                select updated_at
+                  from feedback_processing_batches where batch_id='batch-1'
+                """
+            )
+        }
+    assert len(timestamps) == 1
+    assert store.reopen_feedback_processing_item(
+        "feedback-1", reason="delayed resolution remained atomic"
     ).status == "pending"
 
 
