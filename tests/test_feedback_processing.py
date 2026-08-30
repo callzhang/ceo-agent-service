@@ -178,7 +178,18 @@ def test_feedback_round_models_are_strict():
         status="processing",
     )
     assert round_item.test_evidence == {}
+    assert round_item.receipt_version == 1
     assert round_item.reopened_at == ""
+    for receipt_version in (0, 3, "2"):
+        with pytest.raises(ValidationError):
+            round_model(
+                id=1,
+                feedback_key="feedback-1",
+                round_number=1,
+                batch_id="batch-1",
+                status="processing",
+                receipt_version=receipt_version,
+            )
     with pytest.raises(ValidationError):
         round_model(
             id=1,
@@ -286,6 +297,20 @@ def test_feedback_round_schema_requires_positive_round_number(
                 """
             ).fetchone()
         ) == (2, "integer")
+
+
+def test_feedback_round_schema_rejects_unknown_receipt_version(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "receipt-version-schema.sqlite3")
+    with store._connect() as db:
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                """
+                insert into feedback_processing_rounds (
+                    feedback_key, round_number, batch_id, status, receipt_version
+                ) values ('feedback-invalid-receipt', 1, 'batch-invalid-receipt',
+                          'processing', 3)
+                """
+            )
 
 
 @pytest.mark.parametrize(
@@ -1678,9 +1703,11 @@ def test_claim_associate_patch_and_resolve_feedback_batch(tmp_path: Path):
     )
     store.associate_feedback_processing_turn("feedback-2", workbench_task_id="task-1", workbench_turn_id="turn-1", attempt_id=13, agent_run_id=35)
     store.patch_feedback_processing_item_evidence("feedback-2", test_evidence={"passed": {"exit_code": 0}}, restart_evidence={"process": "new", "launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, health_evidence={"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"}, commit_sha="a" * 40)
-    assert store.resolve_feedback_processing_batch("batch-1", {"commit_sha": "a" * 40, "test_evidence": {"passed": {"exit_code": 0}}, "restart_evidence": {"process": "new", "launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, "health_evidence": {"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"}, "backlog_evidence": {"processing": 0, "failed": 0, "retryable": 0}}, current_head="a" * 40) is True
+    assert store.resolve_feedback_processing_batch("batch-1", {"commit_sha": "a" * 40, "test_evidence": {"passed": {"exit_code": 0}}, "restart_evidence": {"process": "new", "launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, "health_evidence": {"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"}, "backlog_evidence": {"processing": 0, "failed": 0, "retryable": 0}}, commit_is_ancestor=True) is True
     assert store.get_feedback_processing_batch("batch-1").status == "resolved"
-    assert store.resolve_feedback_processing_batch("batch-1") is True
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", commit_is_ancestor=True
+    ) is True
 
 
 def test_claim_rejects_unknown_or_resolved_keys_atomically(tmp_path: Path):
@@ -1869,7 +1896,7 @@ def test_missing_summary_is_empty_and_start_message_has_no_feedback_body():
     assert "原始反馈" not in message
 
 
-def test_resolution_evidence_requires_current_head_and_success_receipts():
+def test_resolution_evidence_requires_prevalidated_ancestry_and_success_receipts():
     head = "a" * 40
     complete = ResolutionEvidence(
         commit_sha=head,
@@ -1878,9 +1905,8 @@ def test_resolution_evidence_requires_current_head_and_success_receipts():
         health_evidence={"url": "http://127.0.0.1:8765/healthz", "status_code": 200, "ok": True},
         backlog_evidence={"processing": 0, "failed": 0, "retryable": 0},
     )
-    validate_resolution_evidence(complete, current_head=head)
+    validate_resolution_evidence(complete, commit_is_ancestor=True)
     for bad in (
-        complete.model_copy(update={"commit_sha": "b" * 40}),
         complete.model_copy(update={"test_evidence": {"pytest": {"exit_code": 1}}}),
         complete.model_copy(update={"restart_evidence": {"launchd_label": "x", "before_pid": 1}}),
         complete.model_copy(update={"health_evidence": {"status_code": 503, "ok": True, "url": "http://127.0.0.1:8765/healthz"}}),
@@ -1891,7 +1917,7 @@ def test_resolution_evidence_requires_current_head_and_success_receipts():
         complete.model_copy(update={"health_evidence": {"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/health"}}),
     ):
         with pytest.raises(ValueError):
-            validate_resolution_evidence(bad, current_head=head)
+            validate_resolution_evidence(bad, commit_is_ancestor=True)
 
 
 def test_resolve_evidence_marks_every_item_in_batch_atomically(tmp_path: Path):
@@ -1910,7 +1936,9 @@ def test_resolve_evidence_marks_every_item_in_batch_atomically(tmp_path: Path):
         health_evidence={"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"},
         backlog_evidence={"processing": 0, "failed": 0, "retryable": 0},
     )
-    assert store.resolve_feedback_processing_batch("batch-1", evidence, current_head=head)
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", evidence, commit_is_ancestor=True
+    )
     assert {store.get_feedback_processing_item(key).status for key in ("feedback-1", "feedback-2")} == {"resolved"}
     assert store.get_feedback_processing_batch("batch-1").status == "resolved"
 
@@ -1945,11 +1973,11 @@ def _seed_resolved_feedback_round(
                 workbench_task_id, workbench_turn_id, attempt_id,
                 agent_run_id, commit_sha, test_evidence_json,
                 restart_evidence_json, health_evidence_json,
-                backlog_evidence_json, note,
+                backlog_evidence_json, receipt_version, note,
                 started_at, resolved_at, created_at, updated_at
             ) values (
                 ?, ?, ?, 'resolved', 'task-old', 'turn-old', 12, 34, ?,
-                ?, ?, ?, ?, 'old note', '2026-08-30 00:00:00',
+                ?, ?, ?, ?, 2, 'old note', '2026-08-30 00:00:00',
                 '2026-08-30 01:02:03', '2026-08-30 00:00:00',
                 '2026-08-30 01:02:03'
             )
@@ -2351,10 +2379,6 @@ def test_resolution_evidence_requires_zero_backlog_and_prevalidated_commit():
     complete = _complete_resolution_receipt()
     validate_resolution_evidence(complete, commit_is_ancestor=True)
 
-    for legacy_head in (None, "", "c" * 40):
-        with pytest.raises(ValueError):
-            validate_resolution_evidence(complete, current_head=legacy_head)
-
     with pytest.raises(ValidationError):
         ResolutionEvidence(
             commit_sha="b" * 40,
@@ -2494,7 +2518,9 @@ def test_unresolved_batch_cannot_bypass_current_round_receipt(tmp_path: Path):
             "update feedback_processing_items set status='resolved' where feedback_key='feedback-1'"
         )
 
-    assert store.resolve_feedback_processing_batch("batch-1") is False
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", commit_is_ancestor=True
+    ) is False
     assert store.get_feedback_processing_batch("batch-1").status == "processing"
     assert store.list_feedback_processing_rounds("feedback-1")[0].id == item.current_round_id
     assert store.list_feedback_processing_rounds("feedback-1")[0].status == "processing"
@@ -2733,6 +2759,11 @@ def test_resolve_shares_one_timestamp_across_delayed_multi_item_batch(
                 union all
                 select updated_at
                   from feedback_processing_batches where batch_id='batch-1'
+                union all
+                select created_at
+                  from feedback_processing_transitions
+                 where batch_id='batch-1' and from_status='processing'
+                   and to_status='resolved'
                 """
             )
         }
@@ -2856,3 +2887,348 @@ def test_task2_writes_reject_malformed_round_pointer_with_domain_error(
                     "batch-1", receipt, commit_is_ancestor=True
                 )
     assert _feedback_processing_snapshot(store) == before
+
+
+def _ensure_receipt_version_column(store: AutoReplyStore) -> None:
+    with store._connect() as db:
+        columns = {
+            str(row["name"])
+            for row in db.execute("pragma table_info(feedback_processing_rounds)")
+        }
+        if "receipt_version" not in columns:
+            db.execute(
+                "alter table feedback_processing_rounds add column "
+                "receipt_version integer not null default 1"
+            )
+
+
+def test_resolution_requires_explicit_strict_commit_ancestry_signatures():
+    validation_signature = inspect.signature(validate_resolution_evidence)
+    assert list(validation_signature.parameters) == [
+        "evidence",
+        "commit_is_ancestor",
+    ]
+    assert (
+        validation_signature.parameters["commit_is_ancestor"].default
+        is inspect.Parameter.empty
+    )
+    store_signature = inspect.signature(
+        AutoReplyStore.resolve_feedback_processing_batch
+    )
+    assert list(store_signature.parameters) == [
+        "self",
+        "batch_id",
+        "evidence",
+        "commit_is_ancestor",
+    ]
+    assert (
+        store_signature.parameters["commit_is_ancestor"].default
+        is inspect.Parameter.empty
+    )
+    receipt = _complete_resolution_receipt()
+    validate_resolution_evidence(receipt, commit_is_ancestor=True)
+    for invalid in (False, None, 1, "true"):
+        with pytest.raises((TypeError, ValueError)):
+            validate_resolution_evidence(
+                receipt,
+                commit_is_ancestor=invalid,  # type: ignore[arg-type]
+            )
+
+
+def test_legacy_v1_complete_receipt_reopens_without_synthetic_backlog(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "legacy-v1-reopen.sqlite3")
+    round_id = _seed_resolved_feedback_round(store, "feedback-1")
+    _ensure_receipt_version_column(store)
+    with store._connect() as db:
+        db.execute(
+            """
+            update feedback_processing_rounds
+               set receipt_version=1, backlog_evidence_json='{}'
+             where id=?
+            """,
+            (round_id,),
+        )
+
+    reopened = store.reopen_feedback_processing_item(
+        "feedback-1", reason="legacy receipt predates backlog evidence"
+    )
+
+    assert reopened is not None and reopened.status == "pending"
+    with store._connect() as db:
+        round_row = db.execute(
+            "select receipt_version, backlog_evidence_json "
+            "from feedback_processing_rounds where id=?",
+            (round_id,),
+        ).fetchone()
+    assert tuple(round_row) == (1, "{}")
+
+
+def test_receipt_version_migration_marks_only_valid_existing_backlog_v2(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "receipt-version-migration.sqlite3"
+    store = AutoReplyStore(db_path)
+    valid_id = _seed_resolved_feedback_round(
+        store,
+        "feedback-valid",
+        batch_id="batch-valid",
+    )
+    legacy_id = _seed_resolved_feedback_round(
+        store,
+        "feedback-legacy",
+        batch_id="batch-legacy",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update feedback_processing_rounds set backlog_evidence_json='{}' where id=?",
+            (legacy_id,),
+        )
+        db.execute(
+            "alter table feedback_processing_rounds drop column receipt_version"
+        )
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    migrated = AutoReplyStore(db_path)
+    with migrated._connect() as db:
+        versions = {
+            int(row["id"]): int(row["receipt_version"])
+            for row in db.execute(
+                "select id, receipt_version from feedback_processing_rounds"
+            )
+        }
+    assert versions == {valid_id: 2, legacy_id: 1}
+
+
+def test_new_claim_and_resolution_persist_receipt_version_two(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "receipt-version-two.sqlite3")
+    _ensure_receipt_version_column(store)
+    item, receipt = _prepare_processing_round(store)
+    assert store.list_feedback_processing_rounds("feedback-1")[0].receipt_version == 2
+
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", receipt, commit_is_ancestor=True
+    )
+    resolved_round = store.list_feedback_processing_rounds("feedback-1")[0]
+    assert resolved_round.id == item.current_round_id
+    assert resolved_round.receipt_version == 2
+    assert resolved_round.backlog_evidence == receipt.backlog_evidence
+
+
+def _make_stale_resolved_round_pointer(store: AutoReplyStore) -> tuple[int, int]:
+    old_round_id = _seed_resolved_feedback_round(
+        store,
+        "feedback-1",
+        batch_id="batch-old",
+        round_number=1,
+    )
+    new_round_id = _seed_resolved_feedback_round(
+        store,
+        "feedback-1",
+        batch_id="batch-new",
+        round_number=2,
+    )
+    with store._connect() as db:
+        db.execute(
+            """
+            update feedback_processing_items
+               set current_round_id=?, batch_id='batch-old'
+             where feedback_key='feedback-1'
+            """,
+            (old_round_id,),
+        )
+    return old_round_id, new_round_id
+
+
+def test_reopen_rejects_stale_non_latest_round_pointer_without_mutation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "reopen-stale-latest.sqlite3")
+    old_round_id, new_round_id = _make_stale_resolved_round_pointer(store)
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(feedback_processing_module.FeedbackProcessingReopenError) as error:
+        store.reopen_feedback_processing_item("feedback-1", reason="stale pointer")
+
+    assert error.value.error_code == "feedback_reopen_history_incomplete"
+    assert _feedback_processing_snapshot(store) == before
+    assert [
+        round_item.id for round_item in store.list_feedback_processing_rounds("feedback-1")
+    ] == [new_round_id, old_round_id]
+
+
+def test_round_reconciliation_clears_stale_non_latest_matching_pointer(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "reconcile-stale-latest.sqlite3"
+    store = AutoReplyStore(db_path)
+    old_round_id, new_round_id = _make_stale_resolved_round_pointer(store)
+    rounds_before = store.list_feedback_processing_rounds("feedback-1")
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    reconciled = AutoReplyStore(db_path)
+
+    assert reconciled.get_feedback_processing_item("feedback-1").current_round_id == 0
+    assert [
+        round_item.id
+        for round_item in reconciled.list_feedback_processing_rounds("feedback-1")
+    ] == [new_round_id, old_round_id]
+    assert reconciled.list_feedback_processing_rounds("feedback-1") == rounds_before
+
+
+def test_resolved_batch_shortcut_rejects_corrupt_batch_only_state(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "resolved-batch-corrupt.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into feedback_processing_batches (
+                batch_id, status, requested_count, resolved_at
+            ) values ('batch-1', 'resolved', 1, current_timestamp)
+            """
+        )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1",
+            _complete_resolution_receipt(),
+            commit_is_ancestor=True,
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+def test_old_resolved_batch_remains_idempotent_after_feedback_reopen(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "resolved-batch-reopened.sqlite3")
+    _, receipt = _prepare_processing_round(store)
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", receipt, commit_is_ancestor=True
+    )
+    store.reopen_feedback_processing_item("feedback-1", reason="premature")
+    store.claim_feedback_processing_items("batch-2", ["feedback-1"])
+
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", receipt, commit_is_ancestor=True
+    )
+    assert store.get_feedback_processing_batch("batch-1").status == "resolved"
+    assert store.get_feedback_processing_item("feedback-1").batch_id == "batch-2"
+
+
+def test_resolved_batch_idempotency_exact_matches_supplied_receipt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "resolved-batch-receipt-match.sqlite3")
+    _, receipt = _prepare_processing_round(store)
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", receipt, commit_is_ancestor=True
+    )
+    different = receipt.model_copy(
+        update={"test_evidence": {"different": {"exit_code": 0}}}
+    )
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", different, commit_is_ancestor=True
+        )
+
+
+def _association_payload(
+    feedback_key: str,
+    *,
+    attempt_id: int,
+    agent_run_id: int,
+) -> dict[str, object]:
+    return {
+        feedback_key: {
+            "workbench_task_id": "task-current",
+            "workbench_turn_id": "turn-current",
+            "attempt_id": attempt_id,
+            "agent_run_id": agent_run_id,
+        }
+    }
+
+
+@pytest.mark.parametrize("mutation", ("missing", "extra"))
+def test_supplied_association_keys_must_exactly_close_batch(
+    tmp_path: Path,
+    mutation: str,
+):
+    store = AutoReplyStore(tmp_path / "association-closure.sqlite3")
+    receipt = _complete_resolution_receipt()
+    for key in ("feedback-1", "feedback-2"):
+        store.upsert_feedback_event(key=key, feedback_token=f"token-{key}")
+    store.claim_feedback_processing_items(
+        "batch-1", ["feedback-1", "feedback-2"]
+    )
+    associations: dict[str, object] = {}
+    for index, key in enumerate(("feedback-1", "feedback-2"), start=1):
+        attempt_id = 70 + index
+        agent_run_id = 80 + index
+        store.associate_feedback_processing_turn(
+            key,
+            workbench_task_id="task-current",
+            workbench_turn_id="turn-current",
+            attempt_id=attempt_id,
+            agent_run_id=agent_run_id,
+        )
+        store.patch_feedback_processing_item_evidence(
+            key,
+            commit_sha=receipt.commit_sha,
+            test_evidence=receipt.test_evidence,
+            restart_evidence=receipt.restart_evidence,
+            health_evidence=receipt.health_evidence,
+        )
+        associations.update(
+            _association_payload(
+                key,
+                attempt_id=attempt_id,
+                agent_run_id=agent_run_id,
+            )
+        )
+    if mutation == "missing":
+        associations.pop("feedback-2")
+    else:
+        associations["extra-feedback"] = {
+            "workbench_task_id": "task-current",
+            "workbench_turn_id": "turn-current",
+            "attempt_id": 99,
+            "agent_run_id": 100,
+        }
+    supplied = ResolutionEvidence.model_validate(
+        {**receipt.model_dump(), "associations": associations}
+    )
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", supplied, commit_is_ancestor=True
+        )
+
+
+@pytest.mark.parametrize(
+    "association",
+    (
+        {
+            "workbench_task_id": "task",
+            "workbench_turn_id": "turn",
+            "attempt_id": 1,
+            "agent_run_id": 2,
+            "extra": True,
+        },
+        {
+            "workbench_task_id": "task",
+            "workbench_turn_id": "turn",
+            "attempt_id": True,
+            "agent_run_id": 2,
+        },
+        {
+            "workbench_task_id": "task",
+            "workbench_turn_id": "turn",
+            "attempt_id": 1,
+        },
+    ),
+)
+def test_supplied_association_objects_are_strict(association: dict[str, object]):
+    receipt = _complete_resolution_receipt()
+    with pytest.raises(ValidationError):
+        ResolutionEvidence.model_validate(
+            {
+                **receipt.model_dump(),
+                "associations": {"feedback-1": association},
+            }
+        )

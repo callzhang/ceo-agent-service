@@ -46,6 +46,7 @@ from app.feedback_processing import (
     ResolutionEvidence,
     detail_references,
     persisted_feedback_summary,
+    validate_legacy_resolution_evidence,
     validate_resolution_evidence,
 )
 from app.config import feedback_spike_vercel_base_url
@@ -139,7 +140,7 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "feedback_processing_items": ("current_round_id",),
-    "feedback_processing_rounds": ("backlog_evidence_json",),
+    "feedback_processing_rounds": ("backlog_evidence_json", "receipt_version"),
     "reply_attempts": (
         "human_decision_options_json",
         "feedback_scope",
@@ -1053,6 +1054,11 @@ class AutoReplyStore:
                                           item.feedback_key
                                       and current_round.batch_id=item.batch_id
                                       and current_round.status=item.status
+                                      and current_round.round_number=(
+                                          select max(latest_round.round_number)
+                                            from feedback_processing_rounds latest_round
+                                           where latest_round.feedback_key=item.feedback_key
+                                      )
                                )
                                or (
                                    select count(*)
@@ -1081,6 +1087,17 @@ class AutoReplyStore:
                                       and matching_round.batch_id=item.batch_id
                                       and matching_round.status=item.status
                                ) = 1
+                               and (
+                                   select max(matching_round.round_number)
+                                     from feedback_processing_rounds matching_round
+                                    where matching_round.feedback_key=item.feedback_key
+                                      and matching_round.batch_id=item.batch_id
+                                      and matching_round.status=item.status
+                               ) = (
+                                   select max(latest_round.round_number)
+                                     from feedback_processing_rounds latest_round
+                                    where latest_round.feedback_key=item.feedback_key
+                               )
                            )
                        )
                    )
@@ -1099,14 +1116,14 @@ class AutoReplyStore:
                 workbench_task_id, workbench_turn_id, attempt_id,
                 agent_run_id, commit_sha, test_evidence_json,
                 restart_evidence_json, health_evidence_json, note,
-                started_at, resolved_at, created_at, updated_at
+                started_at, resolved_at, receipt_version, created_at, updated_at
             )
             select item.feedback_key, 1, item.batch_id, item.status,
                    item.workbench_task_id, item.workbench_turn_id,
                    item.attempt_id, item.agent_run_id, item.commit_sha,
                    item.test_evidence_json, item.restart_evidence_json,
                    item.health_evidence_json, item.note,
-                   item.created_at, item.resolved_at,
+                   item.created_at, item.resolved_at, 1,
                    item.created_at, item.updated_at
               from feedback_processing_items item
              where item.status in ('processing', 'resolved')
@@ -1143,6 +1160,21 @@ class AutoReplyStore:
                           and matching_round.status=
                               feedback_processing_items.status
                    ) = 1
+                   and (
+                       select max(matching_round.round_number)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   ) = (
+                       select max(latest_round.round_number)
+                         from feedback_processing_rounds latest_round
+                        where latest_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                   )
                    then (
                        select min(matching_round.id)
                          from feedback_processing_rounds matching_round
@@ -1180,6 +1212,12 @@ class AutoReplyStore:
                               feedback_processing_items.batch_id
                           and current_round.status=
                               feedback_processing_items.status
+                          and current_round.round_number=(
+                              select max(latest_round.round_number)
+                                from feedback_processing_rounds latest_round
+                               where latest_round.feedback_key=
+                                     feedback_processing_items.feedback_key
+                          )
                    )
                    or (
                        select count(*)
@@ -1204,6 +1242,21 @@ class AutoReplyStore:
                           and matching_round.status=
                               feedback_processing_items.status
                    ) = 1
+                   and (
+                       select max(matching_round.round_number)
+                         from feedback_processing_rounds matching_round
+                        where matching_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and matching_round.batch_id=
+                              feedback_processing_items.batch_id
+                          and matching_round.status=
+                              feedback_processing_items.status
+                   ) = (
+                       select max(latest_round.round_number)
+                         from feedback_processing_rounds latest_round
+                        where latest_round.feedback_key=
+                              feedback_processing_items.feedback_key
+                   )
                )
             """
         )
@@ -1600,6 +1653,8 @@ class AutoReplyStore:
                     restart_evidence_json text not null default '{}',
                     health_evidence_json text not null default '{}',
                     backlog_evidence_json text not null default '{}',
+                    receipt_version integer not null default 1
+                        check (receipt_version in (1, 2)),
                     note text not null default '',
                     started_at text not null default '',
                     resolved_at text not null default '',
@@ -2919,6 +2974,26 @@ class AutoReplyStore:
                 except sqlite3.OperationalError as exc:
                     if "duplicate column name" not in str(exc):
                         raise
+            if "receipt_version" not in feedback_processing_round_columns:
+                try:
+                    db.execute(
+                        "alter table feedback_processing_rounds add column "
+                        "receipt_version integer not null default 1"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc):
+                        raise
+                for row in db.execute(
+                    "select id, backlog_evidence_json from feedback_processing_rounds"
+                ).fetchall():
+                    if self._feedback_backlog_receipt_is_complete(
+                        row["backlog_evidence_json"]
+                    ):
+                        db.execute(
+                            "update feedback_processing_rounds set receipt_version=2 "
+                            "where id=?",
+                            (int(row["id"]),),
+                        )
 
             self._backfill_feedback_processing_rounds(db)
 
@@ -13521,6 +13596,24 @@ class AutoReplyStore:
         return raw
 
     @staticmethod
+    def _feedback_backlog_receipt_is_complete(raw: object) -> bool:
+        try:
+            parsed = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            return False
+        required = ("processing", "failed", "retryable")
+        return isinstance(parsed, dict) and all(
+            type(parsed.get(name)) is int and parsed[name] == 0 for name in required
+        )
+
+    @staticmethod
+    def _feedback_processing_receipt_version(row: sqlite3.Row) -> int:
+        raw = row["receipt_version"]
+        if type(raw) is not int or raw not in (1, 2):
+            raise ValueError("feedback processing receipt version is invalid")
+        return raw
+
+    @staticmethod
     def _feedback_processing_item_from_row(row: sqlite3.Row) -> FeedbackProcessingItem:
         values = dict(row)
         values["current_round_id"] = AutoReplyStore._feedback_processing_round_pointer(
@@ -13550,6 +13643,9 @@ class AutoReplyStore:
         row: sqlite3.Row,
     ) -> FeedbackProcessingRound:
         values = dict(row)
+        values["receipt_version"] = AutoReplyStore._feedback_processing_receipt_version(
+            row
+        )
         for field in (
             "test_evidence",
             "restart_evidence",
@@ -13574,6 +13670,9 @@ class AutoReplyStore:
         item: sqlite3.Row,
         current_round: sqlite3.Row,
     ) -> None:
+        evidence = AutoReplyStore._resolved_feedback_processing_round_evidence(
+            current_round
+        )
         association_fields = (
             "workbench_task_id",
             "workbench_turn_id",
@@ -13593,6 +13692,28 @@ class AutoReplyStore:
             or str(item["commit_sha"] or "") != str(current_round["commit_sha"] or "")
         ):
             raise ValueError("resolved feedback processing round is incomplete")
+        for name, persisted in (
+            ("test_evidence", evidence.test_evidence),
+            ("restart_evidence", evidence.restart_evidence),
+            ("health_evidence", evidence.health_evidence),
+        ):
+            if json.loads(item[f"{name}_json"] or "{}") != persisted:
+                raise ValueError("resolved feedback projection does not match round")
+
+    @staticmethod
+    def _resolved_feedback_processing_round_evidence(
+        current_round: sqlite3.Row,
+    ) -> ResolutionEvidence:
+        if (
+            not str(current_round["resolved_at"] or "").strip()
+            or not str(current_round["workbench_task_id"] or "").strip()
+            or not str(current_round["workbench_turn_id"] or "").strip()
+            or type(current_round["attempt_id"]) is not int
+            or current_round["attempt_id"] <= 0
+            or type(current_round["agent_run_id"]) is not int
+            or current_round["agent_run_id"] <= 0
+        ):
+            raise ValueError("resolved feedback processing round is incomplete")
         evidence_by_name: dict[str, dict[str, object]] = {}
         for name in (
             "test_evidence",
@@ -13603,21 +13724,28 @@ class AutoReplyStore:
             parsed = json.loads(current_round[f"{name}_json"] or "{}")
             if not isinstance(parsed, dict):
                 raise ValueError("resolved feedback processing evidence is invalid")
-            if name != "backlog_evidence":
-                projection = json.loads(item[f"{name}_json"] or "{}")
-                if projection != parsed:
-                    raise ValueError("resolved feedback projection does not match round")
             evidence_by_name[name] = parsed
-        validate_resolution_evidence(
-            ResolutionEvidence(
-                commit_sha=str(current_round["commit_sha"] or ""),
-                test_evidence=evidence_by_name["test_evidence"],
-                restart_evidence=evidence_by_name["restart_evidence"],
-                health_evidence=evidence_by_name["health_evidence"],
-                backlog_evidence=evidence_by_name["backlog_evidence"],
-            ),
-            commit_is_ancestor=True,
+        evidence = ResolutionEvidence(
+            commit_sha=str(current_round["commit_sha"] or ""),
+            test_evidence=evidence_by_name["test_evidence"],
+            restart_evidence=evidence_by_name["restart_evidence"],
+            health_evidence=evidence_by_name["health_evidence"],
+            backlog_evidence=evidence_by_name["backlog_evidence"],
         )
+        receipt_version = AutoReplyStore._feedback_processing_receipt_version(
+            current_round
+        )
+        if receipt_version == 1:
+            validate_legacy_resolution_evidence(
+                evidence,
+                commit_is_ancestor=True,
+            )
+        else:
+            validate_resolution_evidence(
+                evidence,
+                commit_is_ancestor=True,
+            )
+        return evidence
 
     @staticmethod
     def _feedback_processing_batch_from_row(
@@ -13880,8 +14008,9 @@ class AutoReplyStore:
                 cursor = db.execute(
                     """
                     insert into feedback_processing_rounds (
-                        feedback_key, round_number, batch_id, status, started_at
-                    ) values (?, ?, ?, 'processing', current_timestamp)
+                        feedback_key, round_number, batch_id, status,
+                        receipt_version, started_at
+                    ) values (?, ?, ?, 'processing', 2, current_timestamp)
                     """,
                     (key, next_round_number, cleaned_batch_id),
                 )
@@ -13978,8 +14107,18 @@ class AutoReplyStore:
                 """
                 select * from feedback_processing_rounds
                  where id=? and feedback_key=? and batch_id=? and status='resolved'
+                   and round_number=(
+                       select max(latest_round.round_number)
+                         from feedback_processing_rounds latest_round
+                        where latest_round.feedback_key=?
+                   )
                 """,
-                (round_id, cleaned_key, str(item["batch_id"] or "")),
+                (
+                    round_id,
+                    cleaned_key,
+                    str(item["batch_id"] or ""),
+                    cleaned_key,
+                ),
             ).fetchone()
             source = db.execute(
                 "select resolved_at from feedback_events where key=?",
@@ -14319,13 +14458,159 @@ class AutoReplyStore:
             ).fetchone()
         return self._feedback_processing_item_from_row(row) if row else None
 
+    @classmethod
+    def _validate_resolved_feedback_processing_batch(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        batch_id: str,
+        requested_count: int,
+        evidence: ResolutionEvidence | None,
+    ) -> None:
+        if type(requested_count) is not int or requested_count <= 0:
+            raise ValueError("resolution requires valid batch membership")
+        rounds = db.execute(
+            "select * from feedback_processing_rounds "
+            "where batch_id=? order by feedback_key, id",
+            (batch_id,),
+        ).fetchall()
+        round_keys = [str(round_row["feedback_key"]) for round_row in rounds]
+        if (
+            len(rounds) != requested_count
+            or len(set(round_keys)) != requested_count
+            or any(str(round_row["status"] or "") != "resolved" for round_row in rounds)
+        ):
+            raise ValueError("resolved batch history is incomplete")
+        if evidence is not None and evidence.associations and set(
+            evidence.associations
+        ) != set(round_keys):
+            raise ValueError("resolution receipt associations do not match batch")
+
+        association_fields = (
+            "workbench_task_id",
+            "workbench_turn_id",
+            "attempt_id",
+            "agent_run_id",
+        )
+        for resolved_round in rounds:
+            persisted_evidence = cls._resolved_feedback_processing_round_evidence(
+                resolved_round
+            )
+            feedback_key = str(resolved_round["feedback_key"])
+            if evidence is not None:
+                if (
+                    persisted_evidence.commit_sha != evidence.commit_sha
+                    or persisted_evidence.test_evidence != evidence.test_evidence
+                    or persisted_evidence.restart_evidence != evidence.restart_evidence
+                    or persisted_evidence.health_evidence != evidence.health_evidence
+                    or persisted_evidence.backlog_evidence
+                    != evidence.backlog_evidence
+                ):
+                    raise ValueError("resolution receipt does not match batch history")
+                if evidence.associations:
+                    association = evidence.associations[feedback_key]
+                    if any(
+                        getattr(association, field) != resolved_round[field]
+                        for field in association_fields
+                    ):
+                        raise ValueError(
+                            "resolution receipt association does not match batch history"
+                        )
+
+            reopened_at = str(resolved_round["reopened_at"] or "").strip()
+            reopen_reason = str(resolved_round["reopen_reason"] or "").strip()
+            if bool(reopened_at) != bool(reopen_reason):
+                raise ValueError("resolved batch reopen history is incomplete")
+            item = db.execute(
+                "select * from feedback_processing_items where feedback_key=?",
+                (feedback_key,),
+            ).fetchone()
+            source = db.execute(
+                "select resolved_at from feedback_events where key=?",
+                (feedback_key,),
+            ).fetchone()
+            if item is None or source is None:
+                raise ValueError("resolved batch source history is incomplete")
+            if not reopened_at:
+                if (
+                    str(item["status"] or "") != "resolved"
+                    or cls._feedback_processing_round_pointer(
+                        item, require_positive=True
+                    )
+                    != int(resolved_round["id"])
+                    or str(item["batch_id"] or "") != batch_id
+                    or not str(source["resolved_at"] or "").strip()
+                ):
+                    raise ValueError("resolved batch current projection is incomplete")
+                cls._validate_resolved_feedback_processing_round(item, resolved_round)
+                continue
+
+            transition_count = db.execute(
+                """
+                select count(*)
+                  from feedback_processing_transitions
+                 where feedback_key=? and round_id=? and batch_id=?
+                   and from_status='resolved' and to_status='pending'
+                   and reason=?
+                """,
+                (
+                    feedback_key,
+                    int(resolved_round["id"]),
+                    batch_id,
+                    reopen_reason,
+                ),
+            ).fetchone()[0]
+            if transition_count != 1:
+                raise ValueError("resolved batch reopen transition is incomplete")
+            current_round_id = cls._feedback_processing_round_pointer(
+                item,
+                require_positive=False,
+            )
+            if current_round_id == 0:
+                if (
+                    str(item["status"] or "") != "pending"
+                    or str(source["resolved_at"] or "").strip()
+                ):
+                    raise ValueError("resolved batch reopened projection is incomplete")
+                continue
+            current_round = db.execute(
+                """
+                select * from feedback_processing_rounds
+                 where id=? and feedback_key=? and batch_id=? and status=?
+                   and round_number>?
+                   and round_number=(
+                       select max(latest_round.round_number)
+                         from feedback_processing_rounds latest_round
+                        where latest_round.feedback_key=?
+                   )
+                """,
+                (
+                    current_round_id,
+                    feedback_key,
+                    str(item["batch_id"] or ""),
+                    str(item["status"] or ""),
+                    int(resolved_round["round_number"]),
+                    feedback_key,
+                ),
+            ).fetchone()
+            if current_round is None:
+                raise ValueError("resolved batch current lineage is incomplete")
+            if str(item["status"] or "") == "resolved":
+                if not str(source["resolved_at"] or "").strip():
+                    raise ValueError("resolved batch source lineage is incomplete")
+                cls._validate_resolved_feedback_processing_round(item, current_round)
+            elif (
+                str(item["status"] or "") != "processing"
+                or str(source["resolved_at"] or "").strip()
+            ):
+                raise ValueError("resolved batch current lineage is incomplete")
+
     def resolve_feedback_processing_batch(
         self,
         batch_id: str,
         evidence: ResolutionEvidence | dict[str, object] | None = None,
         *,
-        commit_is_ancestor: bool | None = None,
-        current_head: str | None = None,
+        commit_is_ancestor: bool,
     ) -> bool:
         """Resolve all items together after validating completion evidence.
 
@@ -14337,6 +14622,8 @@ class AutoReplyStore:
         cleaned_batch_id = batch_id.strip()
         if not cleaned_batch_id:
             return False
+        if not isinstance(commit_is_ancestor, bool) or not commit_is_ancestor:
+            raise ValueError("resolution commit is not an ancestor of local main")
         normalized_evidence = (
             evidence
             if isinstance(evidence, ResolutionEvidence)
@@ -14348,7 +14635,6 @@ class AutoReplyStore:
             validate_resolution_evidence(
                 normalized_evidence,
                 commit_is_ancestor=commit_is_ancestor,
-                current_head=current_head,
             )
         with self._immediate_write_transaction() as db:
             batch = db.execute(
@@ -14358,6 +14644,12 @@ class AutoReplyStore:
             if batch is None:
                 return False
             if str(batch["status"] or "") == "resolved":
+                self._validate_resolved_feedback_processing_batch(
+                    db,
+                    batch_id=cleaned_batch_id,
+                    requested_count=batch["requested_count"],
+                    evidence=normalized_evidence,
+                )
                 return True
             if normalized_evidence is None:
                 return False
@@ -14390,6 +14682,10 @@ class AutoReplyStore:
                 or set(item_keys) != set(round_keys)
             ):
                 raise ValueError("resolution requires complete batch round membership")
+            if normalized_evidence.associations and set(
+                normalized_evidence.associations
+            ) != set(item_keys):
+                raise ValueError("resolution receipt associations do not match batch")
             round_by_id = {int(round_row["id"]): round_row for round_row in round_rows}
             verified: list[tuple[sqlite3.Row, sqlite3.Row]] = []
             for item in rows:
@@ -14427,8 +14723,8 @@ class AutoReplyStore:
                 feedback_key = str(item["feedback_key"])
                 if normalized_evidence.associations:
                     association = normalized_evidence.associations.get(feedback_key)
-                    if not isinstance(association, dict) or any(
-                        association.get(field) != current_round[field]
+                    if association is None or any(
+                        getattr(association, field) != current_round[field]
                         for field in association_fields
                     ):
                         raise ValueError(
@@ -14476,7 +14772,6 @@ class AutoReplyStore:
                         backlog_evidence=normalized_evidence.backlog_evidence,
                     ),
                     commit_is_ancestor=commit_is_ancestor,
-                    current_head=current_head,
                 )
                 verified.append((item, current_round))
             placeholders = ",".join("?" for _ in item_keys)
@@ -14509,7 +14804,7 @@ class AutoReplyStore:
                     """
                     update feedback_processing_rounds
                        set status='resolved', resolved_at=?,
-                           backlog_evidence_json=?, updated_at=?
+                           backlog_evidence_json=?, receipt_version=2, updated_at=?
                      where id=? and feedback_key=? and batch_id=?
                        and status='processing'
                     """,
@@ -14544,8 +14839,8 @@ class AutoReplyStore:
                     insert into feedback_processing_transitions (
                         feedback_key, round_id, batch_id,
                         from_status, to_status,
-                        workbench_task_id, workbench_turn_id
-                    ) values (?, ?, ?, 'processing', 'resolved', ?, ?)
+                        workbench_task_id, workbench_turn_id, created_at
+                    ) values (?, ?, ?, 'processing', 'resolved', ?, ?, ?)
                     """,
                     (
                         str(item["feedback_key"]),
@@ -14553,6 +14848,7 @@ class AutoReplyStore:
                         cleaned_batch_id,
                         str(current_round["workbench_task_id"] or ""),
                         str(current_round["workbench_turn_id"] or ""),
+                        resolution_timestamp,
                     ),
                 )
             source_cursor = db.execute(
