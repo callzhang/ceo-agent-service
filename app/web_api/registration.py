@@ -28,6 +28,7 @@ from app.web_api.tasks import (
     task_list_response,
 )
 from app.web_api.settings import info_payload
+from app.web_api.email import register_email_routes
 from app.feedback_processing import (
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
@@ -47,6 +48,8 @@ def register_console_routes(
     attention_rows_factory: Callable[[], Any],
     task_row_builder: Callable[[Any, list[Any]], Any] | None = None,
     history_chart_factory: Callable[[], Any] | None = None,
+    email_store_factory: Callable[[], Any] | None = None,
+    email_learning_factory: Callable[[], Any] | None = None,
 ) -> None:
     def list_meta(*, page: int, page_size: int, total: int, snapshot: str):
         return ApiListMeta(
@@ -72,6 +75,13 @@ def register_console_routes(
     def command_result(*, item: Any = None, message: str = "已完成", ok: bool = True):
         return {"ok": ok, "item": json_safe(item), "message": message,
                 "meta": {"updated_at": snapshot_at()}}
+
+    if email_store_factory is not None:
+        register_email_routes(
+            app,
+            email_store_factory,
+            email_learning_factory=email_learning_factory,
+        )
 
     async def json_object(request: Request) -> dict[str, Any]:
         if "application/json" not in request.headers.get("content-type", ""):

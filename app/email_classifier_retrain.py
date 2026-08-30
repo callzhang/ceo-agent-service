@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import argparse
+from contextlib import contextmanager
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -17,6 +19,9 @@ from typing import Mapping
 from app.email_classifier_training import TrainingResult, train_and_promote
 from app.email_model_registry import EmailModelRegistry
 from app.email_store import EmailStore
+
+
+_RETRAIN_STATE_THREAD_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -189,7 +194,19 @@ class TrainingSubprocessController:
             sample_snapshots=snapshots,
         )
         self._save_run(queued)
-        process = self.launcher(command)
+        try:
+            process = self.launcher(command)
+        except Exception as exc:
+            self._save_run(
+                replace(
+                    queued,
+                    status="failed",
+                    updated_at=timestamp,
+                    finished_at=timestamp,
+                    reason=f"training_subprocess_launch_failed:{type(exc).__name__}",
+                )
+            )
+            raise
         run = TrainingSubprocessRun(
             run_id=run_id,
             status="running",
@@ -334,6 +351,37 @@ def save_retrain_state(path: str | Path, state: RetrainState) -> None:
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+@contextmanager
+def retrain_state_reservation(path: str | Path):
+    state_path = Path(path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = state_path.with_name(f".{state_path.name}.lock")
+    with _RETRAIN_STATE_THREAD_LOCK:
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                if os.fstat(descriptor).st_size == 0:
+                    os.write(descriptor, b"0")
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if os.name == "nt":
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 
 def evaluate_retrain(

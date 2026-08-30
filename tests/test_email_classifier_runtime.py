@@ -171,6 +171,99 @@ def test_runtime_zero_mail_scan_still_polls_learning_with_cycle_clock(tmp_path: 
     assert learning.polls == [now]
 
 
+def test_runtime_adopts_promoted_active_model_on_next_tick(tmp_path: Path):
+    models = {
+        "email-tfidf-lr-20260829T220000Z-11111111": _model(),
+        "email-tfidf-lr-20260829T220100Z-22222222": _model(),
+    }
+
+    class Registry:
+        def __init__(self):
+            self.active_id = "email-tfidf-lr-20260829T220000Z-11111111"
+            self.loads = []
+
+        def active_model_id_unverified(self):
+            return self.active_id
+
+        def active_manifest(self):
+            return SimpleNamespace(model_id=self.active_id)
+
+        def load_classifier(self, model_id):
+            self.loads.append(model_id)
+            return models[model_id]
+
+        def get_model(self, model_id):
+            return SimpleNamespace(artifact_path=tmp_path / f"{model_id}.pkl")
+
+    class Learning:
+        def __init__(self, registry):
+            self.registry = registry
+
+        def poll_retrain(self, *, now=None):
+            self.registry.active_id = "email-tfidf-lr-20260829T220100Z-22222222"
+            return SimpleNamespace(
+                training_run=SimpleNamespace(status="succeeded")
+            )
+
+    registry = Registry()
+    runtime = EmailClassifierRuntime(registry, learning_service=Learning(registry))
+
+    runtime.tick(now=datetime(2026, 8, 29, 22, 1, tzinfo=timezone.utc))
+
+    assert runtime.loaded.classifier.model_id == (
+        "email-tfidf-lr-20260829T220100Z-22222222"
+    )
+    assert runtime.loaded.path.name == (
+        "email-tfidf-lr-20260829T220100Z-22222222.pkl"
+    )
+    assert registry.loads == [
+        "email-tfidf-lr-20260829T220000Z-11111111",
+        "email-tfidf-lr-20260829T220100Z-22222222",
+    ]
+
+
+@pytest.mark.parametrize("terminal_status", ["rejected", "failed"])
+def test_runtime_keeps_loaded_model_when_training_does_not_promote(
+    tmp_path: Path, terminal_status: str
+):
+    model_id = "email-tfidf-lr-20260829T220000Z-11111111"
+    model = _model()
+
+    class Registry:
+        def __init__(self):
+            self.loads = []
+
+        def active_model_id_unverified(self):
+            return model_id
+
+        def active_manifest(self):
+            return SimpleNamespace(model_id=model_id)
+
+        def load_classifier(self, requested_model_id):
+            self.loads.append(requested_model_id)
+            return model
+
+        def get_model(self, requested_model_id):
+            return SimpleNamespace(
+                artifact_path=tmp_path / f"{requested_model_id}.pkl"
+            )
+
+    class Learning:
+        def poll_retrain(self, *, now=None):
+            return SimpleNamespace(
+                training_run=SimpleNamespace(status=terminal_status)
+            )
+
+    registry = Registry()
+    runtime = EmailClassifierRuntime(registry, learning_service=Learning())
+    original = runtime.loaded
+
+    runtime.tick(now=datetime(2026, 8, 29, 22, 1, tzinfo=timezone.utc))
+
+    assert runtime.loaded is original
+    assert registry.loads == [model_id]
+
+
 def test_runtime_reuses_failure_counter_across_three_scan_calls(tmp_path: Path):
     model = _model()
 
@@ -181,12 +274,13 @@ def test_runtime_reuses_failure_counter_across_three_scan_calls(tmp_path: Path):
     class Registry:
         def __init__(self):
             self.fallbacks = 0
+            self.active_id = "active"
 
         def active_model_id_unverified(self):
-            return "active"
+            return self.active_id
 
         def active_manifest(self):
-            return SimpleNamespace(model_id="active")
+            return SimpleNamespace(model_id=self.active_id)
 
         def load_classifier(self, model_id):
             return Broken() if model_id == "active" else model
@@ -196,6 +290,7 @@ def test_runtime_reuses_failure_counter_across_three_scan_calls(tmp_path: Path):
 
         def fallback_to_previous(self, **_values):
             self.fallbacks += 1
+            self.active_id = "previous"
             return SimpleNamespace(model_id="previous")
 
     registry = Registry()
@@ -214,6 +309,8 @@ def test_runtime_reuses_failure_counter_across_three_scan_calls(tmp_path: Path):
 
     assert registry.fallbacks == 1
     assert result.scan.persisted_count == 1
+    assert result.loaded.model_id == "previous"
+    assert result.loaded.path == tmp_path / "previous.pkl"
 
 
 def test_task8_runtime_factory_returns_one_runtime_instance():
@@ -289,6 +386,25 @@ def test_training_subprocess_is_nonblocking_and_durably_polled(tmp_path: Path):
     terminal = controller.poll(run.run_id, now=now)
     assert terminal.status == "failed"
     assert terminal.reason == "training_subprocess_exited_without_result:0"
+
+
+def test_training_subprocess_launcher_failure_is_durable_and_retryable(tmp_path: Path):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    controller = TrainingSubprocessController(
+        registry,
+        launcher=lambda _command: (_ for _ in ()).throw(OSError("no launcher")),
+    )
+    now = datetime(2026, 8, 29, 21, 0, tzinfo=timezone.utc)
+
+    with pytest.raises(OSError, match="no launcher"):
+        controller.start(["python", "-m", "trainer"], now=now)
+
+    run_paths = list(registry.runs.glob("*.json"))
+    assert len(run_paths) == 1
+    run = controller._load_run(run_paths[0].stem)
+    assert run.status == "failed"
+    assert run.finished_at == now.isoformat()
+    assert run.reason == "training_subprocess_launch_failed:OSError"
 
 
 def test_controller_restart_fails_orphaned_running_record_and_allows_learning_retry(

@@ -25,6 +25,7 @@ class LoadedEmailClassifier:
     classifier: object
     path: Path
     used_previous: bool
+    model_id: str
 
 
 @dataclass(frozen=True)
@@ -83,12 +84,28 @@ class EmailClassifierRuntime:
     def __init__(self, registry: EmailModelRegistry, *, learning_service=None) -> None:
         self.registry = registry
         self.learning_service = learning_service
+        self._lock = threading.RLock()
         self.loaded = _load_registry_classifier(registry)
 
     def tick(self, *, now: datetime | None = None):
-        if self.learning_service is None:
-            return None
-        return self.learning_service.poll_retrain(now=now)
+        result = (
+            None
+            if self.learning_service is None
+            else self.learning_service.poll_retrain(now=now)
+        )
+        self._adopt_active_model()
+        return result
+
+    def _adopt_active_model(self) -> None:
+        with self._lock:
+            manifest = self.registry.active_manifest()
+            if manifest is None:
+                raise EmailClassifierUnavailable(
+                    "no active email classifier manifest"
+                )
+            if self.loaded.model_id == manifest.model_id:
+                return
+            self.loaded = _load_registry_classifier(self.registry)
 
     def scan(
         self,
@@ -101,15 +118,21 @@ class EmailClassifierRuntime:
         now: datetime | None = None,
     ) -> ReadonlyScanWithModelResult:
         self.tick(now=now)
+        with self._lock:
+            loaded = self.loaded
         result = scan_readonly_batch(
             source,
-            self.loaded.classifier,
+            loaded.classifier,
             store,
             config,
             mailbox=mailbox,
             limit=limit,
         )
-        return ReadonlyScanWithModelResult(loaded=self.loaded, scan=result)
+        if loaded.classifier.model_id != loaded.model_id:
+            self._adopt_active_model()
+            with self._lock:
+                loaded = self.loaded
+        return ReadonlyScanWithModelResult(loaded=loaded, scan=result)
 
 
 class EmailClassifierRuntimeFactory:
@@ -142,6 +165,7 @@ def _load_registry_classifier(registry) -> LoadedEmailClassifier:
             ),
             path=registry.get_model(manifest.model_id).artifact_path,
             used_previous=False,
+            model_id=manifest.model_id,
         )
     except ModelRegistryError:
         try:
@@ -160,6 +184,7 @@ def _load_registry_classifier(registry) -> LoadedEmailClassifier:
             ),
             path=registry.get_model(restored.model_id).artifact_path,
             used_previous=True,
+            model_id=restored.model_id,
         )
 
 
@@ -184,6 +209,7 @@ def load_active_classifier(
             classifier=classifier,
             path=path,
             used_previous=used_previous,
+            model_id=classifier.model_version,
         )
     detail = "; ".join(errors) if errors else "no model paths configured"
     raise EmailClassifierUnavailable(f"no valid email classifier model: {detail}")

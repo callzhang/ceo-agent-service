@@ -14,6 +14,7 @@ from app.email_classifier_retrain import (
     RetrainState,
     TrainingSubprocessController,
     load_retrain_state,
+    retrain_state_reservation,
     save_retrain_state,
 )
 from app.email_model_registry import EmailModelRegistry
@@ -59,9 +60,14 @@ class EmailClassifierLearningService:
             return None
         current = now or datetime.now(timezone.utc)
         try:
-            state = load_retrain_state(self.retrain_state_path).record_feedback(current)
-            save_retrain_state(self.retrain_state_path, state)
-            retrain = self._request_if_ready(state, now=current, manual=False)
+            with retrain_state_reservation(self.retrain_state_path):
+                state = load_retrain_state(self.retrain_state_path).record_feedback(
+                    current
+                )
+                save_retrain_state(self.retrain_state_path, state)
+                retrain = self._request_if_ready(
+                    state, now=current, manual=False
+                )
             return FeedbackLearningResult(confirmed, retrain, None)
         except Exception as exc:
             return FeedbackLearningResult(
@@ -72,21 +78,28 @@ class EmailClassifierLearningService:
         self, *, now: datetime | None = None
     ) -> AutoRetrainResult:
         current = now or datetime.now(timezone.utc)
-        state = load_retrain_state(self.retrain_state_path)
-        return self._request_if_ready(state, now=current, manual=True)
+        with retrain_state_reservation(self.retrain_state_path):
+            state = load_retrain_state(self.retrain_state_path)
+            return self._request_if_ready(state, now=current, manual=True)
 
     def poll_retrain(self, *, now: datetime | None = None) -> AutoRetrainResult:
         current = now or datetime.now(timezone.utc)
-        state = load_retrain_state(self.retrain_state_path)
+        with retrain_state_reservation(self.retrain_state_path):
+            state = load_retrain_state(self.retrain_state_path)
+            return self._poll_retrain(state, now=current)
+
+    def _poll_retrain(
+        self, state: RetrainState, *, now: datetime
+    ) -> AutoRetrainResult:
         if state.active_run_id is None:
-            return self._request_if_ready(state, now=current, manual=False)
-        run = self.controller.poll(state.active_run_id, now=current)
+            return self._request_if_ready(state, now=now, manual=False)
+        run = self.controller.poll(state.active_run_id, now=now)
         decision = RetrainDecision(True, "training_run", len(self.store.list_unincluded_training_examples()))
         if run.status == "running" or run.status == "queued":
             return AutoRetrainResult(decision, state, None, run)
         if run.status == "succeeded":
             updated = state.mark_trained(
-                len(self.store.list_training_examples()), current
+                len(self.store.list_training_examples()), now
             )
         else:
             updated = state.with_active_run(None)
@@ -97,7 +110,7 @@ class EmailClassifierLearningService:
         self, state: RetrainState, *, now: datetime, manual: bool
     ) -> AutoRetrainResult:
         if state.active_run_id is not None:
-            return self.poll_retrain(now=now)
+            return self._poll_retrain(state, now=now)
         pending = len(self.store.list_unincluded_training_examples())
         enough = pending >= self.policy.minimum_new_examples
         idle = (

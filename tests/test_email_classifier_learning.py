@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
+from threading import Barrier, Lock, Thread
 import time
 
 from app.email_classifier_contracts import (
@@ -67,6 +68,66 @@ def _service_with_pending(
         policy=RetrainPolicy(minimum_new_examples=minimum_new_examples),
     )
     return service, store, rows, registry
+
+
+class _ConcurrentController:
+    def __init__(self):
+        self._lock = Lock()
+        self.starts = []
+
+    def start(self, *, now):
+        with self._lock:
+            run_id = f"run-{len(self.starts) + 1}"
+            self.starts.append(run_id)
+        time.sleep(0.05)
+        return TrainingSubprocessRun(
+            run_id=run_id,
+            status="running",
+            pid=123,
+            started_at=now.isoformat(),
+            updated_at=now.isoformat(),
+        )
+
+    def poll(self, run_id, *, now):
+        return TrainingSubprocessRun(
+            run_id=run_id,
+            status="running",
+            pid=123,
+            started_at=now.isoformat(),
+            updated_at=now.isoformat(),
+        )
+
+
+def _confirm_all(service, rows, *, now):
+    for index, row in enumerate(rows):
+        service.confirm_and_maybe_retrain(
+            row["id"],
+            EmailCategory.WORK if index % 2 == 0 else EmailCategory.JUNK,
+            now=now,
+        )
+
+
+def _parallel_calls(*calls):
+    barrier = Barrier(len(calls) + 1)
+    results = []
+    failures = []
+
+    def invoke(call):
+        barrier.wait()
+        try:
+            results.append(call())
+        except BaseException as exc:
+            failures.append(exc)
+
+    threads = [Thread(target=invoke, args=(call,)) for call in calls]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert all(not thread.is_alive() for thread in threads)
+    assert failures == []
+    return results
 
 
 def test_feedback_api_service_confirms_first_and_records_state_without_retraining(tmp_path: Path):
@@ -197,6 +258,63 @@ def test_manual_training_uses_same_readiness_path_with_only_trigger_override(tmp
     assert result.decision.due is True
     assert result.decision.reason == "manual"
     assert result.training_run is not None
+
+
+def test_concurrent_manual_requests_launch_only_one_training_child(tmp_path: Path):
+    service, store, rows, registry = _service_with_pending(tmp_path, count=5)
+    now = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
+    _confirm_all(service, rows, now=now)
+    controller = _ConcurrentController()
+    first = EmailClassifierLearningService(
+        store,
+        registry=registry,
+        retrain_state_path=service.retrain_state_path,
+        controller=controller,
+    )
+    second = EmailClassifierLearningService(
+        EmailStore(store.path),
+        registry=registry,
+        retrain_state_path=service.retrain_state_path,
+        controller=controller,
+    )
+
+    results = _parallel_calls(
+        lambda: first.request_manual_training(now=now),
+        lambda: second.request_manual_training(now=now),
+    )
+
+    assert controller.starts == ["run-1"]
+    assert {result.training_run.run_id for result in results} == {"run-1"}
+    assert load_retrain_state(service.retrain_state_path).active_run_id == "run-1"
+
+
+def test_concurrent_manual_and_poll_launch_only_one_training_child(tmp_path: Path):
+    service, store, rows, registry = _service_with_pending(tmp_path, count=5)
+    feedback_at = datetime(2026, 8, 29, 16, 0, tzinfo=timezone.utc)
+    _confirm_all(service, rows, now=feedback_at)
+    controller = _ConcurrentController()
+    manual = EmailClassifierLearningService(
+        store,
+        registry=registry,
+        retrain_state_path=service.retrain_state_path,
+        controller=controller,
+    )
+    polling = EmailClassifierLearningService(
+        EmailStore(store.path),
+        registry=registry,
+        retrain_state_path=service.retrain_state_path,
+        controller=controller,
+    )
+    due_at = feedback_at + timedelta(seconds=31)
+
+    results = _parallel_calls(
+        lambda: manual.request_manual_training(now=due_at),
+        lambda: polling.poll_retrain(now=due_at),
+    )
+
+    assert controller.starts == ["run-1"]
+    assert {result.training_run.run_id for result in results} == {"run-1"}
+    assert load_retrain_state(service.retrain_state_path).active_run_id == "run-1"
 
 
 def test_learning_poll_clears_orphan_and_next_tick_can_retry(tmp_path: Path):
