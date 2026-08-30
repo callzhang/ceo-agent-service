@@ -23,6 +23,10 @@ from app.email_classifier_contracts import (
 )
 from app.email_store import EmailStore
 from app.email_reply_delivery import EmailReplyEffect, email_action_identity
+from app.email_unsubscribe import (
+    EmailUnsubscribeEffect,
+    UnsubscribeOperation,
+)
 from app.leak_check import (
     assert_no_credentials,
     contains_local_runtime_leak,
@@ -351,6 +355,89 @@ def accepted_email_reply_effect(
         subject=required_text(accepted_action.payload, "subject"),
         body=required_text(accepted_action.payload, "body"),
     )
+
+
+def accepted_email_unsubscribe_effect(
+    task: ReplyTask,
+    accepted_action: ProposedAction,
+) -> EmailUnsubscribeEffect:
+    """Freeze one exact unsubscribe proposal after Audit accepts it."""
+
+    try:
+        _assert_safe_email_metadata(accepted_action.model_dump(mode="json"))
+    except EmailAgentTaskMetadataError as exc:
+        raise ValueError("accepted unsubscribe proposal is not redacted") from exc
+    try:
+        metadata = json.loads(task.trigger_message_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError("email task metadata is not valid JSON") from exc
+    if (
+        not isinstance(metadata, dict)
+        or metadata.get("schema") != _PAYLOAD_SCHEMA
+        or metadata.get("action_type") != EmailAction.UNSUBSCRIBE.value
+        or task.channel != "email"
+        or task.trigger_message_id != metadata.get("action_identity")
+        or accepted_action.capability != "email_browser"
+        or accepted_action.operation != "unsubscribe"
+    ):
+        raise ValueError("accepted action is not an automatic email unsubscribe")
+
+    expected_target = {
+        "action_identity": metadata.get("action_identity"),
+        "account_id": metadata.get("account_id"),
+        "stable_message_identity": metadata.get("stable_message_identity"),
+        "thread_identity": metadata.get("thread_identity"),
+    }
+    if any(
+        accepted_action.target.get(name) != expected
+        for name, expected in expected_target.items()
+    ):
+        raise ValueError("accepted unsubscribe target does not match its email task")
+
+    def required_text(source: Mapping[str, object], name: str) -> str:
+        value = source.get(name)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("accepted unsubscribe fields must be non-empty text")
+        return value
+
+    if set(accepted_action.payload) != {"operations"}:
+        raise ValueError("accepted unsubscribe payload must contain exact operations")
+    operations_value = accepted_action.payload.get("operations")
+    if (
+        not isinstance(operations_value, Sequence)
+        or isinstance(operations_value, str | bytes | bytearray)
+        or not operations_value
+        or any(not isinstance(item, Mapping) for item in operations_value)
+    ):
+        raise ValueError("accepted unsubscribe operations must be a non-empty list")
+    try:
+        operations = tuple(
+            UnsubscribeOperation.from_mapping(item)
+            for item in operations_value
+            if isinstance(item, Mapping)
+        )
+        return EmailUnsubscribeEffect(
+            action_identity=required_text(metadata, "action_identity"),
+            action_plan_id=required_text(metadata, "action_plan_id"),
+            action_plan_version=int(metadata["action_plan_version"]),
+            classification_id=int(metadata["classification_id"]),
+            account_id=required_text(accepted_action.target, "account_id"),
+            stable_message_identity=required_text(
+                accepted_action.target,
+                "stable_message_identity",
+            ),
+            thread_identity=required_text(
+                accepted_action.target,
+                "thread_identity",
+            ),
+            entry_reference=required_text(
+                accepted_action.target,
+                "entry_reference",
+            ),
+            operations=operations,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("accepted unsubscribe proposal is invalid") from exc
 
 
 class EmailAgentTaskAdapter:

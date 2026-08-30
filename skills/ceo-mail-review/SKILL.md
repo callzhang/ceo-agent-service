@@ -73,6 +73,33 @@ When the message says only that details are in an attachment, an authorized
 `auto_reply` may acknowledge receipt without evaluating the attachment. Never
 claim that an attachment was read, correct, complete, approved, or understood.
 
+### Audited Unsubscribe
+
+An immutable ActionPlan containing `unsubscribe` does not require per-message
+confirmation. Consumer A must select only a reliable entry associated with the
+current subscription and propose the exact ordered browser operations using the
+runtime's opaque entry and control references. Audit Agent B must review those
+exact operations before any external write; neither agent may replace them with
+an unreviewed navigation, form submission, or confirmation click.
+
+On every initial run and retry, reconcile the current page, provider state, safe
+prior receipt, and confirmation mail before another write. A verified completed
+or already-unsubscribed state ends the flow without repeating an operation. Do
+not treat a click alone as success: require a terminal page, provider response,
+or confirmation-mail receipt.
+
+Never place a full unsubscribe URL or query token in the proposal, step journal,
+History, status, or error. The private URL may appear only in the restricted
+runtime input consumed by the audited browser capability. Persist only opaque
+references, redacted step types and states, fixed error codes, and a terminal
+receipt.
+
+Login, CAPTCHA, and payment requirements are skipped business outcomes, as is
+the absence of a reliable browser entry. They do not require a user prompt and
+do not enter Attention. Browser runtime and provider authentication failures are
+technical failures: use the existing failed, retry, and exhausted-failure
+Attention lifecycle without inventing a new top-level task status.
+
 ## Authorization And Outcome
 
 Every reply requires explicit reply authorization.
