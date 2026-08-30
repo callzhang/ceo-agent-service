@@ -388,7 +388,7 @@ class MacWechatAccessibility:
                 from app import config
                 min_interaction_interval = config.wechat_send_min_interval_seconds()
             except Exception:
-                min_interaction_interval = 30.0
+                min_interaction_interval = 1.0
         self.min_interaction_interval = max(0.0, min_interaction_interval)
         self._last_interaction_started_at: float | None = None
 

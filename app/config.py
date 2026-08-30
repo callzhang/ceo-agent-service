@@ -565,9 +565,9 @@ def wechat_send_min_interval_seconds() -> float:
     checks unchanged.
     """
     try:
-        return max(0.0, float(os.getenv("CEO_WECHAT_SEND_MIN_INTERVAL_SECONDS", "30")))
+        return max(0.0, float(os.getenv("CEO_WECHAT_SEND_MIN_INTERVAL_SECONDS", "1")))
     except ValueError:
-        return 30.0
+        return 1.0
 
 
 def wechat_send_mode() -> str:
