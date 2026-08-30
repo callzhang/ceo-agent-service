@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+import sqlite3
 
 from app.email_classifier_contracts import (
     EmailAction,
@@ -323,5 +324,22 @@ def test_processed_model_rescan_changes_plan_identity_when_snapshot_facts_change
     assert second_plan["confidence"] == 0.99
     assert first_plan["model_id"] == "static-model-v1"
     assert second_plan["model_id"] == "static-model-v2"
-    assert first_plan["action_plan_version"] == second_plan["action_plan_version"] == 1
+    assert first_plan["action_plan_version"] == 1
+    assert second_plan["action_plan_version"] == 2
     assert first_plan["action_plan_id"] != second_plan["action_plan_id"]
+    with sqlite3.connect(tmp_path / "email.sqlite3") as db:
+        plan_history = db.execute(
+            """
+            select action_plan_id, action_plan_version
+            from email_action_plans
+            order by action_plan_version
+            """
+        ).fetchall()
+        current_action_plan_id = db.execute(
+            "select current_action_plan_id from email_classifications"
+        ).fetchone()[0]
+    assert plan_history == [
+        (first_plan["action_plan_id"], 1),
+        (second_plan["action_plan_id"], 2),
+    ]
+    assert current_action_plan_id == second_plan["action_plan_id"]
