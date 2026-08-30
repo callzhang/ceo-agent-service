@@ -575,6 +575,11 @@ Install launchd only after dry-run behavior and configuration are reviewed.
    workspace, DB, corpus path, principal/persona variables, and live-send
    defaults match the deployment.
 
+   For the local production installation, `CEO_SERVICE_ROOT` must resolve to
+   `/Users/derek/Documents/Projects/ceo-agent-service` (the clean `main`
+   checkout). Do not point the installed job at a `.worktrees/*` checkout;
+   worktrees are for development or temporary recovery only.
+
 2. If launchd should start in dry-run, edit the plist or environment before
    installation. The current template sets `CEO_NOT_SEND_MESSAGE=0`, so do not
    install it blindly on a fresh machine.
