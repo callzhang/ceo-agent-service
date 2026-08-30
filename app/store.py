@@ -14537,6 +14537,136 @@ class AutoReplyStore:
                 )
 
     @classmethod
+    def _validate_current_feedback_processing_batch_lineage(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        batch_id: str,
+        expected_status: str,
+    ) -> None:
+        stable_error = "resolved batch newer lineage is incomplete"
+        try:
+            if expected_status not in {"processing", "resolved"}:
+                raise ValueError(stable_error)
+            batch = db.execute(
+                "select status, requested_count, resolved_at, updated_at "
+                "from feedback_processing_batches where batch_id=?",
+                (batch_id,),
+            ).fetchone()
+            if (
+                batch is None
+                or str(batch["status"] or "") != expected_status
+                or type(batch["requested_count"]) is not int
+                or batch["requested_count"] <= 0
+            ):
+                raise ValueError(stable_error)
+            requested_count = batch["requested_count"]
+            items = db.execute(
+                "select * from feedback_processing_items "
+                "where batch_id=? order by feedback_key",
+                (batch_id,),
+            ).fetchall()
+            rounds = db.execute(
+                "select * from feedback_processing_rounds "
+                "where batch_id=? order by feedback_key, id",
+                (batch_id,),
+            ).fetchall()
+            item_keys = [str(item["feedback_key"]) for item in items]
+            round_keys = [str(round_row["feedback_key"]) for round_row in rounds]
+            if (
+                len(items) != requested_count
+                or len(rounds) != requested_count
+                or len(set(item_keys)) != requested_count
+                or len(set(round_keys)) != requested_count
+                or set(item_keys) != set(round_keys)
+            ):
+                raise ValueError(stable_error)
+            placeholders = ",".join("?" for _ in item_keys)
+            sources = db.execute(
+                f"select key, resolved_at, updated_at from feedback_events "
+                f"where key in ({placeholders})",
+                item_keys,
+            ).fetchall()
+            source_by_key = {str(source["key"]): source for source in sources}
+            if len(source_by_key) != requested_count:
+                raise ValueError(stable_error)
+            round_by_id = {int(round_row["id"]): round_row for round_row in rounds}
+            if len(round_by_id) != requested_count:
+                raise ValueError(stable_error)
+
+            version_two_rounds: list[sqlite3.Row] = []
+            for item in items:
+                round_id = cls._feedback_processing_round_pointer(
+                    item,
+                    require_positive=True,
+                )
+                current_round = round_by_id.get(round_id)
+                feedback_key = str(item["feedback_key"])
+                source = source_by_key[feedback_key]
+                if (
+                    str(item["status"] or "") != expected_status
+                    or current_round is None
+                    or str(current_round["feedback_key"]) != feedback_key
+                    or str(current_round["batch_id"] or "") != batch_id
+                    or str(current_round["status"] or "") != expected_status
+                ):
+                    raise ValueError(stable_error)
+                if expected_status == "processing":
+                    if str(source["resolved_at"] or "").strip():
+                        raise ValueError(stable_error)
+                    cls._validate_current_processing_round_projection(
+                        item,
+                        current_round,
+                    )
+                    continue
+
+                cls._validate_resolved_feedback_processing_round(item, current_round)
+                if str(source["resolved_at"] or "") != str(
+                    current_round["resolved_at"] or ""
+                ):
+                    raise ValueError(stable_error)
+                cls._validate_feedback_processing_completion_transition(
+                    db,
+                    current_round,
+                )
+                if cls._feedback_processing_receipt_version(current_round) == 2:
+                    version_two_rounds.append(current_round)
+                    if (
+                        str(item["updated_at"] or "")
+                        != str(current_round["resolved_at"] or "")
+                        or str(source["updated_at"] or "")
+                        != str(current_round["resolved_at"] or "")
+                    ):
+                        raise ValueError(stable_error)
+
+            if expected_status == "processing":
+                if str(batch["resolved_at"] or "").strip():
+                    raise ValueError(stable_error)
+                return
+            if (
+                not str(batch["resolved_at"] or "").strip()
+                or not str(batch["updated_at"] or "").strip()
+            ):
+                raise ValueError(stable_error)
+            if version_two_rounds:
+                timestamps = {
+                    str(round_row["resolved_at"] or "")
+                    for round_row in version_two_rounds
+                }
+                if (
+                    len(timestamps) != 1
+                    or str(batch["resolved_at"] or "") not in timestamps
+                    or str(batch["updated_at"] or "") not in timestamps
+                    or any(
+                        str(round_row["updated_at"] or "") not in timestamps
+                        for round_row in version_two_rounds
+                    )
+                ):
+                    raise ValueError(stable_error)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(stable_error) from exc
+
+    @classmethod
     def _validate_resolved_feedback_processing_batch(
         cls,
         db: sqlite3.Connection,
@@ -14596,6 +14726,7 @@ class AutoReplyStore:
             "attempt_id",
             "agent_run_id",
         )
+        validated_newer_batches: set[tuple[str, str]] = set()
         for resolved_round in rounds:
             persisted_evidence = cls._resolved_feedback_processing_round_evidence(
                 resolved_round
@@ -14725,6 +14856,17 @@ class AutoReplyStore:
             ).fetchone()
             if current_round is None:
                 raise ValueError("resolved batch current lineage is incomplete")
+            newer_batch_key = (
+                str(item["batch_id"] or ""),
+                str(item["status"] or ""),
+            )
+            if newer_batch_key not in validated_newer_batches:
+                cls._validate_current_feedback_processing_batch_lineage(
+                    db,
+                    batch_id=newer_batch_key[0],
+                    expected_status=newer_batch_key[1],
+                )
+                validated_newer_batches.add(newer_batch_key)
             if str(item["status"] or "") == "resolved":
                 if str(source["resolved_at"] or "") != str(
                     current_round["resolved_at"] or ""

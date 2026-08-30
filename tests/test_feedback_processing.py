@@ -3422,3 +3422,153 @@ def test_old_resolved_batch_idempotency_validates_newer_processing_lineage(
         )
 
     assert _feedback_processing_snapshot(store) == before
+
+
+def _prepare_old_batch_with_newer_batch(
+    store: AutoReplyStore,
+    *,
+    newer_status: str,
+    include_second_member: bool = False,
+) -> tuple[ResolutionEvidence, ResolutionEvidence]:
+    old_receipt = _prepare_resolved_v2_batch(store)
+    store.reopen_feedback_processing_item("feedback-1", reason="needs another round")
+    feedback_keys = ["feedback-1"]
+    if include_second_member:
+        store.upsert_feedback_event(
+            key="feedback-2",
+            feedback_token="token-feedback-2",
+        )
+        feedback_keys.append("feedback-2")
+    store.claim_feedback_processing_items("batch-2", feedback_keys)
+    newer_receipt = _complete_resolution_receipt("c" * 40)
+    for index, feedback_key in enumerate(feedback_keys, start=1):
+        store.associate_feedback_processing_turn(
+            feedback_key,
+            workbench_task_id="task-newer",
+            workbench_turn_id="turn-newer",
+            attempt_id=100 + index,
+            agent_run_id=200 + index,
+        )
+        store.patch_feedback_processing_item_evidence(
+            feedback_key,
+            commit_sha=newer_receipt.commit_sha,
+            test_evidence=newer_receipt.test_evidence,
+            restart_evidence=newer_receipt.restart_evidence,
+            health_evidence=newer_receipt.health_evidence,
+            note="newer receipt",
+        )
+    if newer_status == "resolved":
+        assert store.resolve_feedback_processing_batch(
+            "batch-2", newer_receipt, commit_is_ancestor=True
+        )
+    else:
+        assert newer_status == "processing"
+    return old_receipt, newer_receipt
+
+
+@pytest.mark.parametrize("newer_status", ("processing", "resolved"))
+def test_old_resolved_batch_idempotency_accepts_complete_newer_batch(
+    tmp_path: Path,
+    newer_status: str,
+):
+    store = AutoReplyStore(tmp_path / f"newer-valid-{newer_status}.sqlite3")
+    old_receipt, _ = _prepare_old_batch_with_newer_batch(
+        store,
+        newer_status=newer_status,
+        include_second_member=True,
+    )
+
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", old_receipt, commit_is_ancestor=True
+    )
+
+
+@pytest.mark.parametrize("newer_status", ("processing", "resolved"))
+@pytest.mark.parametrize(
+    "damage",
+    ("missing-batch", "wrong-status", "requested-count"),
+)
+def test_old_resolved_batch_idempotency_requires_newer_batch_definition(
+    tmp_path: Path,
+    newer_status: str,
+    damage: str,
+):
+    store = AutoReplyStore(
+        tmp_path / f"newer-definition-{newer_status}-{damage}.sqlite3"
+    )
+    old_receipt, _ = _prepare_old_batch_with_newer_batch(
+        store,
+        newer_status=newer_status,
+    )
+    with store._connect() as db:
+        if damage == "missing-batch":
+            db.execute(
+                "delete from feedback_processing_batches where batch_id='batch-2'"
+            )
+        elif damage == "wrong-status":
+            db.execute(
+                "update feedback_processing_batches set status='pending' "
+                "where batch_id='batch-2'"
+            )
+        else:
+            db.execute(
+                "update feedback_processing_batches set requested_count=2 "
+                "where batch_id='batch-2'"
+            )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
+        store.resolve_feedback_processing_batch(
+            "batch-1", old_receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize("damage", ("orphan-round", "missing-item", "extra-item"))
+def test_old_resolved_batch_idempotency_requires_complete_newer_membership(
+    tmp_path: Path,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"newer-membership-{damage}.sqlite3")
+    old_receipt, _ = _prepare_old_batch_with_newer_batch(
+        store,
+        newer_status="processing",
+        include_second_member=True,
+    )
+    with store._connect() as db:
+        if damage == "orphan-round":
+            db.execute(
+                """
+                insert into feedback_processing_rounds (
+                    feedback_key, round_number, batch_id, status,
+                    receipt_version, started_at
+                ) values ('feedback-orphan', 1, 'batch-2', 'processing', 2,
+                          current_timestamp)
+                """
+            )
+        elif damage == "missing-item":
+            db.execute(
+                "delete from feedback_processing_items "
+                "where feedback_key='feedback-2'"
+            )
+        else:
+            store.upsert_feedback_event(
+                key="feedback-extra",
+                feedback_token="token-feedback-extra",
+            )
+            db.execute(
+                """
+                update feedback_processing_items
+                   set batch_id='batch-2', status='processing'
+                 where feedback_key='feedback-extra'
+                """
+            )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
+        store.resolve_feedback_processing_batch(
+            "batch-1", old_receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
