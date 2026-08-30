@@ -8,6 +8,7 @@ from threading import Barrier
 
 import pytest
 
+import app.email_store as email_store_module
 from app.email_classifier_contracts import (
     EmailAction,
     EmailActionPlan,
@@ -149,8 +150,14 @@ def _persist_scan(
     *,
     cursor_uidvalidity: int | None = None,
     cursor_last_seen_uid: int | None = None,
+    expected_cursor_uidvalidity: int | None = None,
 ) -> dict[str, object]:
     locator = classification.provider_locator
+    cursor_expectation = (
+        {"expected_cursor_uidvalidity": expected_cursor_uidvalidity}
+        if expected_cursor_uidvalidity is not None
+        else {}
+    )
     return store.persist_scan_result(
         classification,
         sender="sender@example.com",
@@ -171,6 +178,7 @@ def _persist_scan(
         cursor_uidvalidity=cursor_uidvalidity or locator.uidvalidity,
         cursor_last_seen_uid=cursor_last_seen_uid or locator.uid,
         cursor_last_success_at="2026-08-29T16:00:00+00:00",
+        **cursor_expectation,
     )
 
 
@@ -178,6 +186,131 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         return db.execute(sql, parameters).fetchall()
+
+
+def _create_prototype_database(
+    database: Path,
+    classification: EmailClassification,
+    *,
+    action_plan_json: str,
+) -> None:
+    locator = classification.provider_locator
+    now = "2026-08-29T16:00:00+00:00"
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            create table email_classifications (
+                id integer primary key,
+                account_id text not null,
+                folder text not null,
+                uidvalidity integer not null,
+                uid integer not null,
+                rfc_message_id text,
+                thread_id text,
+                stable_message_identity text not null unique,
+                sender text not null default '',
+                subject text not null default '',
+                preview text not null default '',
+                model_text text not null default '',
+                received_at text not null default '',
+                category text not null,
+                confidence real not null,
+                margin real not null,
+                probabilities_json text not null,
+                model_id text not null,
+                config_version text not null,
+                status text not null,
+                classification_source text not null,
+                action_plan_json text not null default 'null',
+                confirmed_at text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp
+            );
+            create table email_category_configs (
+                category text primary key,
+                description text not null default '',
+                threshold real not null,
+                actions_json text not null,
+                action_parameters_json text not null default '{}',
+                enabled integer not null default 1,
+                config_version text not null,
+                updated_at text not null default current_timestamp
+            );
+            """
+        )
+        db.execute(
+            """
+            insert into email_classifications (
+                id, account_id, folder, uidvalidity, uid, rfc_message_id,
+                thread_id, stable_message_identity, sender, subject, preview,
+                model_text, received_at, category, confidence, margin,
+                probabilities_json, model_id, config_version, status,
+                classification_source, action_plan_json, confirmed_at,
+                created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                classification.classification_id,
+                locator.account_id,
+                locator.folder,
+                locator.uidvalidity,
+                locator.uid,
+                locator.rfc_message_id,
+                locator.thread_id,
+                classification.stable_message_identity,
+                "prototype-sender",
+                "Prototype subject",
+                "Prototype preview",
+                "__subject__prototype",
+                now,
+                classification.category.value,
+                classification.confidence,
+                classification.margin,
+                json.dumps(classification.probabilities),
+                classification.model_id,
+                classification.config_version,
+                classification.status.value,
+                classification.classification_source,
+                action_plan_json,
+                now if classification.status is EmailClassificationStatus.PROCESSED else "",
+                now,
+                now,
+            ),
+        )
+
+
+def _create_action_with_attempts(
+    database: Path,
+    statuses: tuple[str, ...],
+) -> tuple[EmailStore, str]:
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    action_id = _fetchall(database, "select action_id from email_actions")[0][
+        "action_id"
+    ]
+    for attempt_number, status in enumerate(statuses, start=1):
+        store.append_action_attempt(
+            action_id=action_id,
+            attempt_number=attempt_number,
+            status=status,
+            provider_operation=f"operation-{attempt_number}",
+            provider_target=f"target-{attempt_number}",
+            provider_result_id=(f"receipt-{attempt_number}" if status == "done" else ""),
+            error=(f"error-{attempt_number}" if status == "failed" else ""),
+            started_at=f"2026-08-29T16:0{attempt_number}:00+00:00",
+            finished_at=f"2026-08-29T16:0{attempt_number}:01+00:00",
+        )
+    return store, action_id
+
+
+def test_email_cursor_conflict_is_a_clear_domain_error():
+    conflict_type = getattr(email_store_module, "EmailCursorConflict", None)
+
+    assert conflict_type is not None
+    assert issubclass(conflict_type, RuntimeError)
 
 
 def test_email_store_lists_pending_and_processed_separately(tmp_path: Path):
@@ -578,6 +711,11 @@ def test_migration_preserves_prototype_feedback_config_and_unrelated_state(
     state = _fetchall(database, "select state_json from email_retraining_state")
     assert state[0]["state_json"] == '{"last_feedback_count": 1}'
     assert len(_fetchall(database, "select * from email_messages")) == 1
+    legacy = _fetchall(
+        database,
+        "select legacy_processed_without_plan from email_classifications",
+    )[0]
+    assert legacy["legacy_processed_without_plan"] == 1
 
 
 def test_email_store_migration_is_idempotent(tmp_path: Path):
@@ -596,6 +734,289 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_classifications")) == 1
     assert len(_fetchall(database, "select * from email_action_plans")) == 1
     assert len(_fetchall(database, "select * from email_actions")) == 1
+
+
+def test_future_email_schema_version_fails_closed_before_schema_changes(
+    tmp_path: Path,
+):
+    database = tmp_path / "future.sqlite3"
+    future_version = email_store_module.EMAIL_SCHEMA_VERSION + 1
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            create table email_schema_migrations (
+                version integer primary key,
+                applied_at text not null
+            )
+            """
+        )
+        db.execute(
+            "insert into email_schema_migrations values (?, ?)",
+            (future_version, "2026-08-29T16:00:00+00:00"),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="newer schema version"):
+        EmailStore(database)
+
+    assert not _fetchall(
+        database,
+        "select name from sqlite_master where type='table' and name='email_classifications'",
+    )
+
+
+def test_prototype_plan_migration_backfills_plan_and_direct_actions(tmp_path: Path):
+    database = tmp_path / "prototype-plan.sqlite3"
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    assert classification.action_plan is not None
+    _create_prototype_database(
+        database,
+        classification,
+        action_plan_json=classification.action_plan.model_dump_json(),
+    )
+
+    EmailStore(database)
+
+    persisted = _fetchall(
+        database,
+        "select action_plan_json, current_action_plan_id from email_classifications",
+    )[0]
+    assert persisted["action_plan_json"] == classification.action_plan.model_dump_json()
+    assert persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
+    assert len(_fetchall(database, "select * from email_action_plans")) == 1
+    actions = _fetchall(
+        database,
+        "select action_type, status, attempt_count from email_actions",
+    )
+    assert [(row["action_type"], row["status"], row["attempt_count"]) for row in actions] == [
+        ("label", "pending", 0)
+    ]
+
+
+def test_migration_failure_rolls_back_and_can_recover(tmp_path: Path):
+    database = tmp_path / "migration-recovery.sqlite3"
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    assert classification.action_plan is not None
+    _create_prototype_database(
+        database,
+        classification,
+        action_plan_json="{not-json",
+    )
+
+    with pytest.raises(EmailPersistenceCorruption, match="action_plan_json"):
+        EmailStore(database)
+
+    columns = {
+        row["name"]
+        for row in _fetchall(database, "pragma table_info(email_classifications)")
+    }
+    assert "current_action_plan_id" not in columns
+    assert not _fetchall(
+        database,
+        "select name from sqlite_master where type='table' and name='email_messages'",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_classifications set action_plan_json=?",
+            (classification.action_plan.model_dump_json(),),
+        )
+
+    EmailStore(database)
+
+    assert len(_fetchall(database, "select * from email_schema_migrations")) == 1
+    assert len(_fetchall(database, "select * from email_messages")) == 1
+    assert len(_fetchall(database, "select * from email_action_plans")) == 1
+    assert len(_fetchall(database, "select * from email_actions")) == 1
+
+
+def test_concurrent_first_initialization_is_transactionally_idempotent(
+    tmp_path: Path,
+):
+    database = tmp_path / "concurrent-init.sqlite3"
+    ready = Barrier(2)
+
+    def initialize(_: int) -> EmailStore:
+        ready.wait()
+        return EmailStore(database)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        stores = list(executor.map(initialize, range(2)))
+
+    assert len(stores) == 2
+    assert len(_fetchall(database, "select * from email_schema_migrations")) == 1
+    assert EmailStore(database).list_training_examples() == []
+
+
+@pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
+def test_normal_startup_does_not_repair_missing_durable_rows(
+    tmp_path: Path,
+    missing_table: str,
+):
+    database = tmp_path / f"missing-{missing_table}.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(f"delete from {missing_table}")
+
+    with pytest.raises(EmailPersistenceCorruption):
+        EmailStore(database)
+
+    assert len(_fetchall(database, f"select * from {missing_table}")) == 0
+
+
+def test_versioned_task3_upgrade_does_not_run_prototype_backfill(tmp_path: Path):
+    database = tmp_path / "versioned-upgrade-corruption.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("delete from email_actions")
+        db.execute("update email_schema_migrations set version=2")
+
+    with pytest.raises(EmailPersistenceCorruption, match="direct action row set"):
+        EmailStore(database)
+
+    assert len(_fetchall(database, "select * from email_actions")) == 0
+    version = _fetchall(database, "select version from email_schema_migrations")[0]
+    assert version["version"] == 2
+
+
+def test_startup_rejects_message_account_identity_mismatch(tmp_path: Path):
+    database = tmp_path / "message-mismatch.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("update email_messages set account_id='wrong-account'")
+
+    with pytest.raises(EmailPersistenceCorruption, match="message identity"):
+        EmailStore(database)
+
+
+def test_startup_rejects_current_action_plan_pointer_rollback(tmp_path: Path):
+    database = tmp_path / "pointer-rollback.sqlite3"
+    store = EmailStore(database)
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    second_plan = _versioned_plan(
+        classification.action_plan,
+        version=2,
+        category=EmailCategory.IMPORTANT,
+        actions=(EmailAction.ARCHIVE,),
+        action_parameters={},
+    )
+    store.append_action_plan_version(
+        classification.classification_id,
+        second_plan,
+        confirmed_category=EmailCategory.IMPORTANT,
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_classifications
+            set current_action_plan_id=?, action_plan_json=?
+            """,
+            (
+                classification.action_plan.action_plan_id,
+                classification.action_plan.model_dump_json(),
+            ),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="highest ActionPlan"):
+        EmailStore(database)
+
+
+@pytest.mark.parametrize(
+    ("classification_update", "message_update"),
+    [
+        ("account_id='other-account'", "account_id='other-account'"),
+        ("category='personal', confirmed_category='personal'", None),
+        ("classification_source='user'", None),
+        ("confidence=0.22", None),
+        ("model_id='email/logistic/other-model'", None),
+        ("config_version='other-config'", None),
+    ],
+)
+def test_startup_rejects_current_plan_classification_field_mismatch(
+    tmp_path: Path,
+    classification_update: str,
+    message_update: str | None,
+):
+    database = tmp_path / "plan-classification-mismatch.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(f"update email_classifications set {classification_update}")
+        if message_update is not None:
+            db.execute(f"update email_messages set {message_update}")
+
+    with pytest.raises(EmailPersistenceCorruption, match="classification fields"):
+        EmailStore(database)
+
+
+def test_startup_rejects_pending_feedback_with_action_plan(tmp_path: Path):
+    database = tmp_path / "pending-with-plan.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_classifications set status='pending_feedback', confirmed_category=null"
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="pending feedback.*ActionPlan"):
+        EmailStore(database)
+
+
+def test_startup_rejects_normal_processed_classification_without_plan(
+    tmp_path: Path,
+):
+    database = tmp_path / "processed-without-plan.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute("delete from email_actions")
+        db.execute("delete from email_action_plans")
+        db.execute(
+            """
+            update email_classifications
+            set action_plan_json='null', current_action_plan_id=null
+            """
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="processed.*ActionPlan"):
+        EmailStore(database)
+
+
+def test_startup_rejects_noncanonical_current_action_plan_snapshot(tmp_path: Path):
+    database = tmp_path / "plan-json-mismatch.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PROCESSED),
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_classifications set action_plan_json=' ' || action_plan_json"
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="snapshot mismatch"):
+        EmailStore(database)
 
 
 def test_pending_feedback_persists_message_and_cursor_without_plan_or_actions(
@@ -977,8 +1398,29 @@ def test_classification_id_collision_fails_closed_with_domain_error(tmp_path: Pa
     ]
 
 
-def test_cursor_uidvalidity_reset_replaces_old_numeric_progress(tmp_path: Path):
+def test_cursor_creation_and_same_generation_advancement_are_monotonic(
+    tmp_path: Path,
+):
     database = tmp_path / "cursor.sqlite3"
+    store = EmailStore(database)
+    first = _classification(status=EmailClassificationStatus.PENDING_FEEDBACK, uid=9)
+    _persist_scan(store, first, cursor_uidvalidity=42, cursor_last_seen_uid=9)
+
+    earlier = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="earlier-same-generation",
+        uid=5,
+    )
+    _persist_scan(store, earlier, cursor_uidvalidity=42, cursor_last_seen_uid=5)
+
+    cursor = store.get_scan_cursor("dingtalk-account", "INBOX")
+    assert cursor is not None
+    assert cursor["uidvalidity"] == 42
+    assert cursor["last_seen_uid"] == 9
+
+
+def test_cursor_generation_reset_requires_compare_and_set(tmp_path: Path):
+    database = tmp_path / "cursor-reset.sqlite3"
     store = EmailStore(database)
     first = _classification(status=EmailClassificationStatus.PENDING_FEEDBACK, uid=9)
     _persist_scan(store, first, cursor_uidvalidity=42, cursor_last_seen_uid=9)
@@ -986,15 +1428,102 @@ def test_cursor_uidvalidity_reset_replaces_old_numeric_progress(tmp_path: Path):
     reset = _classification(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         message_id="after-reset",
-        uidvalidity=99,
+        uidvalidity=84,
         uid=2,
     )
-    _persist_scan(store, reset, cursor_uidvalidity=99, cursor_last_seen_uid=2)
+    with pytest.raises(email_store_module.EmailCursorConflict, match="expected"):
+        _persist_scan(store, reset, cursor_uidvalidity=84, cursor_last_seen_uid=2)
+
+    _persist_scan(
+        store,
+        reset,
+        cursor_uidvalidity=84,
+        cursor_last_seen_uid=2,
+        expected_cursor_uidvalidity=42,
+    )
 
     cursor = store.get_scan_cursor("dingtalk-account", "INBOX")
     assert cursor is not None
-    assert cursor["uidvalidity"] == 99
+    assert cursor["uidvalidity"] == 84
     assert cursor["last_seen_uid"] == 2
+
+
+def test_cursor_expectation_requires_cursor_progress(tmp_path: Path):
+    store = EmailStore(tmp_path / "cursor-expectation.sqlite3")
+
+    with pytest.raises(ValueError, match="expected cursor generation requires"):
+        store.persist_scan_result(
+            _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
+            expected_cursor_uidvalidity=42,
+        )
+
+
+def test_stale_cursor_generation_commit_rolls_back_all_scan_state(tmp_path: Path):
+    database = tmp_path / "stale-cursor.sqlite3"
+    store_a = EmailStore(database)
+    store_b = EmailStore(database)
+    initial = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="cursor-initial",
+        uid=9,
+    )
+    _persist_scan(store_a, initial, cursor_uidvalidity=42, cursor_last_seen_uid=9)
+
+    reset = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="cursor-reset",
+        uidvalidity=84,
+        uid=2,
+    )
+    _persist_scan(
+        store_a,
+        reset,
+        cursor_uidvalidity=84,
+        cursor_last_seen_uid=2,
+        expected_cursor_uidvalidity=42,
+    )
+    counts_before = {
+        table: _fetchall(database, f"select count(*) as count from {table}")[0][
+            "count"
+        ]
+        for table in (
+            "email_messages",
+            "email_classifications",
+            "email_action_plans",
+            "email_actions",
+        )
+    }
+    stale = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="stale-generation",
+        uidvalidity=42,
+        uid=10,
+    )
+
+    with pytest.raises(email_store_module.EmailCursorConflict, match="expected 42"):
+        _persist_scan(
+            store_b,
+            stale,
+            cursor_uidvalidity=42,
+            cursor_last_seen_uid=10,
+            expected_cursor_uidvalidity=42,
+        )
+
+    cursor = store_b.get_scan_cursor("dingtalk-account", "INBOX")
+    assert cursor is not None
+    assert cursor["uidvalidity"] == 84
+    assert cursor["last_seen_uid"] == 2
+    assert {
+        table: _fetchall(database, f"select count(*) as count from {table}")[0][
+            "count"
+        ]
+        for table in counts_before
+    } == counts_before
+    assert not _fetchall(
+        database,
+        "select id from email_classifications where id=?",
+        (stale.classification_id,),
+    )
 
 
 def test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected(
@@ -1073,6 +1602,98 @@ def test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected(
                 "update email_actions set status='skipped' where action_id=?",
                 (action_id,),
             )
+
+
+def test_startup_rejects_pending_action_with_historical_terminal_attempt(
+    tmp_path: Path,
+):
+    database = tmp_path / "pending-with-attempt.sqlite3"
+    _, action_id = _create_action_with_attempts(database, ("done",))
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_actions
+            set status='pending', attempt_count=0, started_at='', finished_at='',
+                provider_operation='', provider_target='', provider_result_id='',
+                error=''
+            where action_id=?
+            """,
+            (action_id,),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="pending action.*attempt"):
+        EmailStore(database)
+
+
+def test_startup_rejects_action_attempt_count_mismatch(tmp_path: Path):
+    database = tmp_path / "attempt-count.sqlite3"
+    _, action_id = _create_action_with_attempts(database, ("done",))
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_actions set attempt_count=2 where action_id=?",
+            (action_id,),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="attempt count mismatch"):
+        EmailStore(database)
+
+
+def test_startup_rejects_gap_in_action_attempt_numbers(tmp_path: Path):
+    database = tmp_path / "attempt-gap.sqlite3"
+    _create_action_with_attempts(database, ("failed", "done"))
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_action_attempts set attempt_number=3 where attempt_number=2"
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="non-contiguous attempt"):
+        EmailStore(database)
+
+
+def test_startup_rejects_latest_attempt_receipt_or_status_mismatch(tmp_path: Path):
+    database = tmp_path / "attempt-latest-mismatch.sqlite3"
+    _, action_id = _create_action_with_attempts(database, ("failed", "done"))
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_actions set provider_result_id='wrong-receipt' where action_id=?",
+            (action_id,),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="latest attempt mismatch"):
+        EmailStore(database)
+
+
+def test_startup_rejects_terminal_action_without_attempt(tmp_path: Path):
+    database = tmp_path / "terminal-without-attempt.sqlite3"
+    _, action_id = _create_action_with_attempts(database, ())
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_actions set status='done' where action_id=?",
+            (action_id,),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="terminal action.*no.*attempt"):
+        EmailStore(database)
+
+
+def test_processing_action_may_follow_terminal_attempts_but_has_no_terminal_receipt(
+    tmp_path: Path,
+):
+    database = tmp_path / "processing-retry.sqlite3"
+    _, action_id = _create_action_with_attempts(database, ("failed",))
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_actions
+            set status='processing', started_at='2026-08-29T16:02:00+00:00',
+                finished_at='', provider_operation='operation-2',
+                provider_target='target-2', provider_result_id='', error=''
+            where action_id=?
+            """,
+            (action_id,),
+        )
+
+    EmailStore(database)
 
 
 def test_atomic_scan_persistence_rolls_back_message_plan_actions_and_cursor(

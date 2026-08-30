@@ -28,7 +28,7 @@ from app.email_classifier_contracts import (
 )
 
 
-EMAIL_SCHEMA_VERSION = 2
+EMAIL_SCHEMA_VERSION = 3
 _CLASSIFICATION_STATUSES = frozenset(status.value for status in EmailClassificationStatus)
 _CLASSIFICATION_SOURCES = frozenset({"model", "user"})
 _CURRENT_ACTION_STATUSES = frozenset({"pending", "processing", "done", "failed"})
@@ -45,6 +45,10 @@ class EmailClassificationConflict(RuntimeError):
 
 class EmailClassificationIdentityCollision(RuntimeError):
     """A classification ID is already bound to another stable identity."""
+
+
+class EmailCursorConflict(RuntimeError):
+    """The persisted scan cursor no longer matches the scanner's observation."""
 
 
 class EmailActionPlanConflict(RuntimeError):
@@ -174,22 +178,50 @@ class EmailStore:
 
     def _initialize(self) -> None:
         with self._connect() as db:
-            db.execute("pragma journal_mode = wal")
+            try:
+                db.execute("pragma journal_mode = wal")
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
             db.execute("begin immediate")
+            self._create_migration_table(db)
+            latest_version = int(
+                db.execute(
+                    "select coalesce(max(version), 0) from email_schema_migrations"
+                ).fetchone()[0]
+            )
+            if latest_version > EMAIL_SCHEMA_VERSION:
+                raise EmailPersistenceCorruption(
+                    f"database has newer schema version {latest_version}; "
+                    f"this runtime supports {EMAIL_SCHEMA_VERSION}"
+                )
             self._create_base_tables(db)
-            self._migrate_prototype_schema(db)
             self._create_durable_tables(db)
             self._create_indexes_and_triggers(db)
-            self._backfill_prototype_rows(db)
+            if latest_version < EMAIL_SCHEMA_VERSION:
+                is_prototype = latest_version == 0
+                self._migrate_prototype_schema(
+                    db,
+                    mark_legacy_processed_without_plan=is_prototype,
+                )
+                if is_prototype:
+                    self._backfill_prototype_rows(db)
+                db.execute(
+                    "insert into email_schema_migrations(version, applied_at) values (?, ?)",
+                    (EMAIL_SCHEMA_VERSION, self._now()),
+                )
             self._validate_durable_state(db)
-            db.execute(
-                """
-                insert into email_schema_migrations(version, applied_at)
-                values (?, ?)
-                on conflict(version) do nothing
-                """,
-                (EMAIL_SCHEMA_VERSION, self._now()),
+
+    @staticmethod
+    def _create_migration_table(db: sqlite3.Connection) -> None:
+        db.execute(
+            """
+            create table if not exists email_schema_migrations (
+                version integer primary key,
+                applied_at text not null
             )
+            """
+        )
 
     @staticmethod
     def _create_base_tables(db: sqlite3.Connection) -> None:
@@ -221,6 +253,8 @@ class EmailStore:
                 classification_source text not null,
                 action_plan_json text not null default 'null',
                 current_action_plan_id text,
+                legacy_processed_without_plan integer not null default 0
+                    check(legacy_processed_without_plan in (0, 1)),
                 confirmed_at text not null default '',
                 created_at text not null default current_timestamp,
                 updated_at text not null default current_timestamp
@@ -259,7 +293,12 @@ class EmailStore:
             db.execute(f"alter table {table} add column {column} {declaration}")
 
     @classmethod
-    def _migrate_prototype_schema(cls, db: sqlite3.Connection) -> None:
+    def _migrate_prototype_schema(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        mark_legacy_processed_without_plan: bool,
+    ) -> None:
         for column in ("predicted_category", "confirmed_category"):
             cls._ensure_column(
                 db,
@@ -272,6 +311,12 @@ class EmailStore:
             table="email_classifications",
             column="current_action_plan_id",
             declaration="text",
+        )
+        cls._ensure_column(
+            db,
+            table="email_classifications",
+            column="legacy_processed_without_plan",
+            declaration="integer not null default 0",
         )
         db.execute(
             """
@@ -287,16 +332,20 @@ class EmailStore:
             where confirmed_category is null or confirmed_category=''
             """
         )
+        if mark_legacy_processed_without_plan:
+            db.execute(
+                """
+                update email_classifications
+                set legacy_processed_without_plan=1
+                where status='processed'
+                  and (action_plan_json='null' or action_plan_json='')
+                  and current_action_plan_id is null
+                """
+            )
 
     @staticmethod
     def _create_durable_tables(db: sqlite3.Connection) -> None:
         statements = (
-            """
-            create table if not exists email_schema_migrations (
-                version integer primary key,
-                applied_at text not null
-            )
-            """,
             """
             create table if not exists email_accounts (
                 account_id text primary key,
@@ -515,10 +564,11 @@ class EmailStore:
             db.execute(
                 """
                 update email_classifications
-                set current_action_plan_id=?
-                where id=? and current_action_plan_id is null
+                set action_plan_json=?, current_action_plan_id=?,
+                    legacy_processed_without_plan=0
+                where id=?
                 """,
-                (plan.action_plan_id, row["id"]),
+                (plan.model_dump_json(), plan.action_plan_id, row["id"]),
             )
 
     @staticmethod
@@ -526,56 +576,6 @@ class EmailStore:
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     def _validate_durable_state(self, db: sqlite3.Connection) -> None:
-        current_plan_references: list[tuple[int, str]] = []
-        for row in db.execute(
-            """
-            select id, category, predicted_category, confirmed_category, status,
-                   classification_source, probabilities_json, action_plan_json,
-                   current_action_plan_id
-            from email_classifications
-            """
-        ):
-            try:
-                EmailCategory(row["category"])
-                EmailCategory(row["predicted_category"])
-                if row["confirmed_category"]:
-                    EmailCategory(row["confirmed_category"])
-            except ValueError as exc:
-                raise EmailPersistenceCorruption(
-                    f"invalid classification category for {row['id']}"
-                ) from exc
-            if row["status"] not in _CLASSIFICATION_STATUSES:
-                raise EmailPersistenceCorruption(
-                    f"invalid classification status for {row['id']}"
-                )
-            if row["classification_source"] not in _CLASSIFICATION_SOURCES:
-                raise EmailPersistenceCorruption(
-                    f"invalid classification source for {row['id']}"
-                )
-            _json_load(
-                row["probabilities_json"],
-                field="probabilities_json",
-                expected_type=dict,
-            )
-            if row["action_plan_json"] not in {"", "null"}:
-                try:
-                    plan = EmailActionPlan.model_validate_json(row["action_plan_json"])
-                except ValueError as exc:
-                    raise EmailPersistenceCorruption(
-                        f"invalid action_plan_json for classification {row['id']}"
-                    ) from exc
-                if (
-                    row["current_action_plan_id"]
-                    and row["current_action_plan_id"] != plan.action_plan_id
-                ):
-                    raise EmailPersistenceCorruption(
-                        f"current ActionPlan mismatch for classification {row['id']}"
-                    )
-            if row["current_action_plan_id"]:
-                current_plan_references.append(
-                    (row["id"], row["current_action_plan_id"])
-                )
-
         for row in db.execute("select account_id, scan_folders_json from email_accounts"):
             folders = _json_load(
                 row["scan_folders_json"],
@@ -591,8 +591,30 @@ class EmailStore:
                     "one or more folder names"
                 )
 
+        messages: dict[str, sqlite3.Row] = {}
+        for row in db.execute("select * from email_messages"):
+            recipients = _json_load(
+                row["recipients_json"],
+                field="recipients_json",
+                expected_type=list,
+            )
+            if any(not isinstance(value, str) for value in recipients):
+                raise EmailPersistenceCorruption("recipients_json must contain strings")
+            attachments = _json_load(
+                row["attachment_metadata_json"],
+                field="attachment_metadata_json",
+                expected_type=list,
+            )
+            try:
+                tuple(EmailAttachmentMetadata.model_validate(item) for item in attachments)
+            except ValueError as exc:
+                raise EmailPersistenceCorruption(
+                    f"invalid attachment_metadata_json for message {row['id']}"
+                ) from exc
+            messages[row["stable_message_identity"]] = row
+
         plans: dict[str, EmailActionPlan] = {}
-        versions: dict[int, list[int]] = {}
+        plans_by_classification: dict[int, list[EmailActionPlan]] = {}
         for row in db.execute("select * from email_action_plans"):
             actions = _json_load(
                 row["actions_json"],
@@ -628,24 +650,134 @@ class EmailStore:
                     f"invalid immutable ActionPlan {row['action_plan_id']}"
                 ) from exc
             plans[plan.action_plan_id] = plan
-            versions.setdefault(plan.classification_id, []).append(
-                plan.action_plan_version
-            )
-        for classification_id, stored_versions in versions.items():
-            ordered = sorted(stored_versions)
+            plans_by_classification.setdefault(plan.classification_id, []).append(plan)
+        for classification_id, stored_plans in plans_by_classification.items():
+            ordered = sorted(plan.action_plan_version for plan in stored_plans)
             if ordered != list(range(1, ordered[-1] + 1)):
                 raise EmailPersistenceCorruption(
                     f"non-contiguous ActionPlan versions for classification "
                     f"{classification_id}"
                 )
-        for classification_id, action_plan_id in current_plan_references:
-            plan = plans.get(action_plan_id)
-            if plan is None or plan.classification_id != classification_id:
+
+        classifications = {
+            row["id"]: row for row in db.execute("select * from email_classifications")
+        }
+        for row in classifications.values():
+            try:
+                EmailCategory(row["category"])
+                EmailCategory(row["predicted_category"])
+                if row["confirmed_category"]:
+                    EmailCategory(row["confirmed_category"])
+            except ValueError as exc:
                 raise EmailPersistenceCorruption(
-                    f"missing current ActionPlan for classification {classification_id}"
+                    f"invalid classification category for {row['id']}"
+                ) from exc
+            if row["status"] not in _CLASSIFICATION_STATUSES:
+                raise EmailPersistenceCorruption(
+                    f"invalid classification status for {row['id']}"
+                )
+            if row["classification_source"] not in _CLASSIFICATION_SOURCES:
+                raise EmailPersistenceCorruption(
+                    f"invalid classification source for {row['id']}"
+                )
+            _json_load(
+                row["probabilities_json"],
+                field="probabilities_json",
+                expected_type=dict,
+            )
+            message = messages.get(row["stable_message_identity"])
+            if (
+                message is None
+                or message["account_id"] != row["account_id"]
+                or message["stable_message_identity"]
+                != row["stable_message_identity"]
+            ):
+                raise EmailPersistenceCorruption(
+                    f"message identity mismatch for classification {row['id']}"
+                )
+            classification_plans = plans_by_classification.get(row["id"], [])
+            has_plan_snapshot = row["action_plan_json"] not in {"", "null"}
+            if row["status"] == EmailClassificationStatus.PENDING_FEEDBACK.value:
+                if (
+                    has_plan_snapshot
+                    or row["current_action_plan_id"] is not None
+                    or classification_plans
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"pending feedback classification {row['id']} carries an ActionPlan"
+                    )
+                if row["confirmed_category"] is not None:
+                    raise EmailPersistenceCorruption(
+                        f"pending feedback classification {row['id']} is confirmed"
+                    )
+                continue
+            if row["current_action_plan_id"] is None:
+                if (
+                    has_plan_snapshot
+                    or classification_plans
+                    or row["legacy_processed_without_plan"] != 1
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"processed classification {row['id']} has no current ActionPlan"
+                    )
+                continue
+            if row["legacy_processed_without_plan"] != 0 or not has_plan_snapshot:
+                raise EmailPersistenceCorruption(
+                    f"processed classification {row['id']} has inconsistent ActionPlan state"
+                )
+            current_plan = plans.get(row["current_action_plan_id"])
+            if current_plan is None or current_plan.classification_id != row["id"]:
+                raise EmailPersistenceCorruption(
+                    f"missing current ActionPlan for classification {row['id']}"
+                )
+            highest_version = max(
+                plan.action_plan_version for plan in classification_plans
+            )
+            if current_plan.action_plan_version != highest_version:
+                raise EmailPersistenceCorruption(
+                    f"current ActionPlan is not highest ActionPlan version for "
+                    f"classification {row['id']}"
+                )
+            expected_fields = (
+                row["account_id"],
+                row["category"],
+                row["classification_source"],
+                row["confidence"],
+                row["model_id"],
+                row["config_version"],
+            )
+            plan_fields = (
+                current_plan.account_id,
+                current_plan.category.value,
+                current_plan.classification_source,
+                current_plan.confidence,
+                current_plan.model_id,
+                current_plan.config_version,
+            )
+            if plan_fields != expected_fields:
+                raise EmailPersistenceCorruption(
+                    f"current ActionPlan classification fields mismatch for {row['id']}"
+                )
+            if row["confirmed_category"] != row["category"]:
+                raise EmailPersistenceCorruption(
+                    f"processed classification {row['id']} has inconsistent final category"
+                )
+            if row["action_plan_json"] != current_plan.model_dump_json():
+                raise EmailPersistenceCorruption(
+                    f"current ActionPlan snapshot mismatch for classification {row['id']}"
                 )
 
-        for row in db.execute("select category, actions_json, action_parameters_json from email_category_configs"):
+        for plan in plans.values():
+            classification = classifications.get(plan.classification_id)
+            if classification is None or classification["account_id"] != plan.account_id:
+                raise EmailPersistenceCorruption(
+                    f"ActionPlan {plan.action_plan_id} has no matching classification"
+                )
+
+        for row in db.execute(
+            "select category, actions_json, action_parameters_json "
+            "from email_category_configs"
+        ):
             try:
                 EmailCategory(row["category"])
             except ValueError as exc:
@@ -664,29 +796,10 @@ class EmailStore:
             except ValueError as exc:
                 raise EmailPersistenceCorruption("invalid configured email action") from exc
 
-        for row in db.execute(
-            "select id, recipients_json, attachment_metadata_json from email_messages"
-        ):
-            recipients = _json_load(
-                row["recipients_json"],
-                field="recipients_json",
-                expected_type=list,
-            )
-            if any(not isinstance(value, str) for value in recipients):
-                raise EmailPersistenceCorruption("recipients_json must contain strings")
-            attachments = _json_load(
-                row["attachment_metadata_json"],
-                field="attachment_metadata_json",
-                expected_type=list,
-            )
-            try:
-                tuple(EmailAttachmentMetadata.model_validate(item) for item in attachments)
-            except ValueError as exc:
-                raise EmailPersistenceCorruption(
-                    f"invalid attachment_metadata_json for message {row['id']}"
-                ) from exc
-
-        for row in db.execute("select * from email_actions"):
+        action_rows = list(db.execute("select * from email_actions"))
+        actions_by_plan: dict[str, list[sqlite3.Row]] = {}
+        actions_by_id: dict[str, sqlite3.Row] = {}
+        for row in action_rows:
             if row["action_type"] not in _DIRECT_ACTION_VALUES:
                 raise EmailPersistenceCorruption(
                     f"non-direct email action row {row['action_id']}"
@@ -720,10 +833,82 @@ class EmailStore:
                     f"immutable direct action {row['action_id']} does not match its "
                     "ActionPlan"
                 )
-        for row in db.execute("select id, status from email_action_attempts"):
+            actions_by_plan.setdefault(row["action_plan_id"], []).append(row)
+            actions_by_id[row["action_id"]] = row
+        for plan in plans.values():
+            expected_actions = {action.value for action in plan.direct_actions}
+            actual_actions = {
+                row["action_type"]
+                for row in actions_by_plan.get(plan.action_plan_id, [])
+            }
+            if actual_actions != expected_actions:
+                raise EmailPersistenceCorruption(
+                    f"direct action row set mismatch for ActionPlan {plan.action_plan_id}"
+                )
+
+        attempts_by_action: dict[str, list[sqlite3.Row]] = {}
+        for row in db.execute(
+            "select * from email_action_attempts order by action_id, attempt_number"
+        ):
             if row["status"] not in _TERMINAL_ATTEMPT_STATUSES:
                 raise EmailPersistenceCorruption(
                     f"invalid action attempt status for {row['id']}"
+                )
+            if row["action_id"] not in actions_by_id:
+                raise EmailPersistenceCorruption(
+                    f"attempt {row['id']} has no current direct action"
+                )
+            attempts_by_action.setdefault(row["action_id"], []).append(row)
+        execution_fields = (
+            "provider_operation",
+            "provider_target",
+            "provider_result_id",
+            "error",
+            "started_at",
+            "finished_at",
+        )
+        for action_id, row in actions_by_id.items():
+            attempts = attempts_by_action.get(action_id, [])
+            numbers = [attempt["attempt_number"] for attempt in attempts]
+            if numbers != list(range(1, len(attempts) + 1)):
+                raise EmailPersistenceCorruption(
+                    f"non-contiguous attempt ledger for action {action_id}"
+                )
+            if row["status"] == "pending":
+                if (
+                    attempts
+                    or row["attempt_count"] != 0
+                    or any(row[field] for field in execution_fields)
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"pending action {action_id} has attempt state"
+                    )
+                continue
+            if row["attempt_count"] != len(attempts):
+                raise EmailPersistenceCorruption(
+                    f"attempt count mismatch for action {action_id}"
+                )
+            if row["status"] == "processing":
+                if (
+                    not row["started_at"]
+                    or row["finished_at"]
+                    or row["provider_result_id"]
+                    or row["error"]
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"processing action {action_id} has impossible terminal state"
+                    )
+                continue
+            if not attempts:
+                raise EmailPersistenceCorruption(
+                    f"terminal action {action_id} has no terminal attempt"
+                )
+            latest = attempts[-1]
+            if row["status"] != latest["status"] or any(
+                row[field] != latest[field] for field in execution_fields
+            ):
+                raise EmailPersistenceCorruption(
+                    f"latest attempt mismatch for action {action_id}"
                 )
 
     @staticmethod
@@ -850,7 +1035,8 @@ class EmailStore:
             set category=?, predicted_category=?, confirmed_category=?,
                 confidence=?, margin=?, probabilities_json=?, model_id=?,
                 config_version=?, status=?, classification_source=?,
-                action_plan_json=?, current_action_plan_id=?, updated_at=?
+                action_plan_json=?, current_action_plan_id=?,
+                legacy_processed_without_plan=0, updated_at=?
             where id=?
             """,
             (
@@ -1070,39 +1256,98 @@ class EmailStore:
         last_seen_uid: int,
         last_success_at: str,
         last_error: str,
+        expected_uidvalidity: int | None,
     ) -> None:
         _require_positive_int(uidvalidity, field="cursor_uidvalidity")
+        if expected_uidvalidity is not None:
+            _require_positive_int(
+                expected_uidvalidity,
+                field="expected_cursor_uidvalidity",
+            )
         if (
             isinstance(last_seen_uid, bool)
             or not isinstance(last_seen_uid, int)
             or last_seen_uid < 0
         ):
             raise ValueError("cursor_last_seen_uid must be a non-negative integer")
-        db.execute(
+        current = db.execute(
             """
-            insert into email_scan_cursors (
-                account_id, folder, uidvalidity, last_seen_uid,
-                last_success_at, last_error
-            ) values (?, ?, ?, ?, ?, ?)
-            on conflict(account_id, folder) do update set
-                uidvalidity=excluded.uidvalidity,
-                last_seen_uid=case
-                    when email_scan_cursors.uidvalidity=excluded.uidvalidity
-                    then max(email_scan_cursors.last_seen_uid, excluded.last_seen_uid)
-                    else excluded.last_seen_uid
-                end,
-                last_success_at=excluded.last_success_at,
-                last_error=excluded.last_error
+            select uidvalidity, last_seen_uid from email_scan_cursors
+            where account_id=? and folder=?
+            """,
+            (account_id, folder),
+        ).fetchone()
+        if current is None:
+            if expected_uidvalidity is not None:
+                raise EmailCursorConflict(
+                    f"cursor generation expected {expected_uidvalidity}, but no cursor exists"
+                )
+            db.execute(
+                """
+                insert into email_scan_cursors (
+                    account_id, folder, uidvalidity, last_seen_uid,
+                    last_success_at, last_error
+                ) values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    account_id,
+                    folder,
+                    uidvalidity,
+                    last_seen_uid,
+                    last_success_at,
+                    last_error,
+                ),
+            )
+            return
+        current_uidvalidity = int(current["uidvalidity"])
+        if current_uidvalidity == uidvalidity:
+            db.execute(
+                """
+                update email_scan_cursors
+                set last_seen_uid=max(last_seen_uid, ?),
+                    last_success_at=?, last_error=?
+                where account_id=? and folder=? and uidvalidity=?
+                """,
+                (
+                    last_seen_uid,
+                    last_success_at,
+                    last_error,
+                    account_id,
+                    folder,
+                    uidvalidity,
+                ),
+            )
+            return
+        if expected_uidvalidity is None:
+            raise EmailCursorConflict(
+                "cursor generation change requires expected_cursor_uidvalidity; "
+                f"current generation is {current_uidvalidity}"
+            )
+        if current_uidvalidity != expected_uidvalidity:
+            raise EmailCursorConflict(
+                f"cursor generation conflict: expected {expected_uidvalidity}, "
+                f"found {current_uidvalidity}"
+            )
+        updated = db.execute(
+            """
+            update email_scan_cursors
+            set uidvalidity=?, last_seen_uid=?, last_success_at=?, last_error=?
+            where account_id=? and folder=? and uidvalidity=?
             """,
             (
-                account_id,
-                folder,
                 uidvalidity,
                 last_seen_uid,
                 last_success_at,
                 last_error,
+                account_id,
+                folder,
+                expected_uidvalidity,
             ),
-        )
+        ).rowcount
+        if updated != 1:
+            raise EmailCursorConflict(
+                f"cursor generation changed while replacing {expected_uidvalidity}"
+            )
 
     def persist_scan_result(
         self,
@@ -1120,6 +1365,7 @@ class EmailStore:
         cursor_last_seen_uid: int | None = None,
         cursor_last_success_at: str = "",
         cursor_last_error: str = "",
+        expected_cursor_uidvalidity: int | None = None,
     ) -> dict[str, Any]:
         """Atomically persist scan state and advance its folder cursor last."""
 
@@ -1127,6 +1373,10 @@ class EmailStore:
         locator = classification.provider_locator
         if (cursor_uidvalidity is None) != (cursor_last_seen_uid is None):
             raise ValueError("cursor UIDVALIDITY and last UID must be supplied together")
+        if expected_cursor_uidvalidity is not None and cursor_uidvalidity is None:
+            raise ValueError(
+                "expected cursor generation requires cursor UIDVALIDITY and last UID"
+            )
         if cursor_uidvalidity is not None and cursor_uidvalidity != locator.uidvalidity:
             raise ValueError("cursor UIDVALIDITY must match the message locator")
         if cursor_last_seen_uid is not None and cursor_last_seen_uid < locator.uid:
@@ -1196,7 +1446,8 @@ class EmailStore:
                     db.execute(
                         """
                         update email_classifications
-                        set action_plan_json=?, current_action_plan_id=?
+                        set action_plan_json=?, current_action_plan_id=?,
+                            legacy_processed_without_plan=0
                         where id=?
                         """,
                         (
@@ -1236,6 +1487,7 @@ class EmailStore:
                     last_seen_uid=cursor_last_seen_uid,
                     last_success_at=cursor_last_success_at,
                     last_error=cursor_last_error,
+                    expected_uidvalidity=expected_cursor_uidvalidity,
                 )
             row = db.execute(
                 "select * from email_classifications where id=?",
@@ -1386,6 +1638,7 @@ class EmailStore:
                 set category=?, confirmed_category=?, status=?,
                     classification_source='user', config_version=?,
                     action_plan_json=?, current_action_plan_id=?,
+                    legacy_processed_without_plan=0,
                     confirmed_at=?, updated_at=?
                 where id=? and status=?
                 """,
@@ -1454,7 +1707,8 @@ class EmailStore:
                     set category=?, confirmed_category=?, status='processed',
                         classification_source=?, confidence=?, model_id=?,
                         config_version=?, action_plan_json=?,
-                        current_action_plan_id=?, confirmed_at=?, updated_at=?
+                        current_action_plan_id=?, legacy_processed_without_plan=0,
+                        confirmed_at=?, updated_at=?
                     where id=?
                     """,
                     (
