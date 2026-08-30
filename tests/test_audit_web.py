@@ -3727,6 +3727,32 @@ def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path)
     assert '"todos_desc": ["todoCount", "desc"]' in todos_html
 
 
+def test_tasks_page_uses_todo_owner_as_fallback_when_project_owner_is_missing(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="Owner fallback project",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="Confirm owner fallback",
+        owner_user_id="owner-1",
+        owner_name="Mina",
+        status="open",
+        priority="P1",
+    )
+
+    html = render_tasks_page(store)
+    rows = task_script_json(html, "tasks-data")
+    row = next(row for row in rows if row["id"] == project_id)
+
+    assert row["owner"] == "Mina"
+    assert "Mina" in html
+
+
 def test_tasks_page_computes_table_statuses(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     completed_id = store.create_work_project(

@@ -6,6 +6,7 @@ from app.task_retrieval import (
     render_project_task_details,
     retrieve_project_candidates,
     retrieve_project_task_details,
+    resolve_task_owner_display,
 )
 
 
@@ -139,6 +140,45 @@ def test_retrieve_project_candidates_returns_empty_for_empty_query_or_no_project
     )
 
 
+def test_resolve_task_owner_display_summarizes_multiple_todo_owners(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="多 owner 项目")
+    store.create_work_todo(
+        project_id=project_id,
+        title="任务 A",
+        owner_name="周俊杰",
+        owner_user_id="owner-1",
+        status="open",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="任务 B",
+        owner_name="张晓民",
+        owner_user_id="owner-2",
+        status="open",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="任务 C",
+        owner_name="Mina",
+        owner_user_id="owner-3",
+        status="open",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="任务 D",
+        owner_name="ET",
+        owner_user_id="owner-4",
+        status="open",
+    )
+
+    project = store.get_work_project(project_id)
+    todos = store.list_work_todos(project_id=project_id)
+
+    assert project is not None
+    assert resolve_task_owner_display(project, todos) == "多人：周俊杰、张晓民、Mina 等 4 人"
+
+
 def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(
@@ -203,3 +243,38 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
     assert payload[0]["todos"][0]["deadline_at"] == "2026-07-25 18:00:00"
     assert payload[0]["todos"][0]["follow_ups"][0]["id"] == follow_up_id
     assert payload[0]["recent_updates"][0]["summary"] == "新增 Colin 候选人评估 TODO"
+
+
+def test_render_project_task_details_uses_todo_owner_as_project_display_fallback(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+        source_conversations_json=json.dumps(
+            [{"id": "cid-delivery", "title": "客户交付群"}],
+            ensure_ascii=False,
+        ),
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认客户验收 ETA",
+        owner_user_id="owner-1",
+        owner_name="Mina",
+        status="open",
+        priority="P1",
+    )
+
+    details = retrieve_project_task_details(
+        store,
+        query="客户验收 ETA",
+        conversation_id="cid-delivery",
+    )
+    payload = json.loads(render_project_task_details(details))
+
+    assert payload[0]["project"]["id"] == project_id
+    assert payload[0]["project"]["owner"] == "Mina"
+    assert payload[0]["todos"][0]["id"] == todo_id
+    assert payload[0]["todos"][0]["owner"] == "Mina"

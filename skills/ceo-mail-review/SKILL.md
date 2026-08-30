@@ -73,6 +73,68 @@ When the message says only that details are in an attachment, an authorized
 `auto_reply` may acknowledge receipt without evaluating the attachment. Never
 claim that an attachment was read, correct, complete, approved, or understood.
 
+### Audited Unsubscribe
+
+An immutable ActionPlan containing `unsubscribe` does not require per-message
+confirmation. Consumer A must select only a reliable entry associated with the
+current subscription. Its initial proposal contains exactly `OPEN_ENTRY`, or one
+authenticated `POST_ONE_CLICK`; controls on an ordinary page are not guessed or
+precomputed. At each continuation, propose the exact ordered browser operations
+consisting of the durable prefix plus one new operation. Audit Agent B must
+review those exact operations before any external write; neither agent may
+replace them with an unreviewed navigation, form
+submission, or confirmation click.
+
+When readback after an accepted operation finds another required control, stop
+before using it. The runtime persists the executed audited prefix, redacted
+observation, opaque control references, fixed control kinds and intents, and the
+unchanged exact-origin policy references, then returns a typed continuation.
+Consumer A may use only that continuation to propose one next operation. The
+next accepted effect must be a strict append-only extension of the persisted
+prefix with the same action, plan, classification, account, message, thread,
+entry, and network policy. Audit reviews that extension automatically under the
+normal feedback/revision lifecycle; no user confirmation is added. Execute only
+the newly accepted operation and never replay the prefix. Repeat this
+`awaiting_audit` cycle until exact terminal evidence is read back.
+
+Treat RFC one-click as authenticated one-click only when typed provider evidence
+confirms that valid DKIM covers both `List-Unsubscribe` and
+`List-Unsubscribe-Post`. Without that evidence, downgrade the HTTPS entry to an
+ordinary audited browser flow. A verified one-click operation is an isolated
+HTTPS POST with the exact RFC body and no mailbox browser cookies or credentials;
+it is never a GET.
+
+Browser execution is restricted to the exact pre-authorized origins and opaque
+controls supplied for this effect. Every redirect, form action, frame,
+subresource, fetch, confirmation navigation, and resolved URL must remain in
+that allowlist. Popup and download flows are rejected. The read-only discovery
+interface may describe the already-loaded unsubscribe page and return opaque
+control references; it does not authorize arbitrary browsing or attachment
+access.
+
+On every initial run and retry, reconcile the current page, provider state, safe
+prior receipt, and confirmation mail before another write. A verified completed
+or already-unsubscribed state ends the flow without repeating an operation. Do
+not treat a click alone as success: require a terminal page, provider response,
+or confirmation-mail receipt.
+
+After a terminated in-flight claim, an uncertain effect is reconciliation-only.
+A blank or missing browser page and an earlier journal step do not prove that a
+write was not dispatched. Without exact effect-bound terminal evidence, report
+the fixed unresolved technical failure and do not replay an operation.
+
+Never place a full unsubscribe URL or query token in the proposal, step journal,
+History, status, or error. The private URL may appear only in the restricted
+runtime input consumed by the audited browser capability. Persist only opaque
+references, redacted step types and states, fixed error codes, and a terminal
+receipt.
+
+Login, CAPTCHA, and payment requirements are skipped business outcomes, as is
+the absence of a reliable browser entry. They do not require a user prompt and
+do not enter Attention. Browser runtime and provider authentication failures are
+technical failures: use the existing failed, retry, and exhausted-failure
+Attention lifecycle without inventing a new top-level task status.
+
 ## Authorization And Outcome
 
 Every reply requires explicit reply authorization.

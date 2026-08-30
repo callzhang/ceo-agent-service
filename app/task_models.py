@@ -79,6 +79,8 @@ class WorkItemSourceType(StrEnum):
     LOCAL_FILE = "local_file"
     MEMORY_RECALL = "memory_recall"
     FOLLOW_UP_COMPLETION_CHECK = "follow_up_completion_check"
+    TODO_COMPLETION_CHECK = "todo_completion_check"
+    TODO_COMPLETION_EVIDENCE_CANDIDATE = "todo_completion_evidence_candidate"
 
 
 class WorkItemSourceKind(StrEnum):
@@ -163,6 +165,14 @@ class WorkSummaryStatus(StrEnum):
     DONE = "done"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class TodoEvidenceCandidateStatus(StrEnum):
+    CANDIDATE = "candidate"
+    ENQUEUED = "enqueued"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    ERROR = "error"
 
 
 class WorkItemSource(BaseModel):
@@ -389,6 +399,24 @@ class WorkUpdate(BaseModel):
     merge_reason: str = ""
     confidence: float = 0.0
     created_at: str
+
+
+class TodoEvidenceCandidate(BaseModel):
+    id: int
+    project_id: int
+    todo_id: int
+    source_type: str
+    source_ref: str
+    source_created_at: str = ""
+    evidence_text: str = ""
+    reason: str = ""
+    confidence: float = 0.0
+    status: TodoEvidenceCandidateStatus
+    work_summary_input_id: int = 0
+    decision_json: str = "{}"
+    dedupe_key: str = ""
+    created_at: str
+    updated_at: str
 
 
 class WorkSummaryInput(BaseModel):

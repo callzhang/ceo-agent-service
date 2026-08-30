@@ -1192,6 +1192,114 @@ def test_due_follow_up_skips_when_todo_is_done(tmp_path):
     assert "todo status is done" in completed.send_result_json
 
 
+def test_due_follow_up_skips_when_completion_candidate_is_accepted(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    todo_id = _create_bound_todo(store, project_id)
+    candidate = store.upsert_todo_evidence_candidate(
+        project_id=project_id,
+        todo_id=todo_id,
+        source_type="dws_message",
+        source_ref="dws_message:msg-done",
+        source_created_at="2026-06-08 01:00:00",
+        evidence_text="Alex 说客户交付 ETA 已经完成。",
+        reason="消息证明完成。",
+        confidence=0.95,
+    )
+    store.mark_todo_evidence_candidate(
+        candidate.id,
+        status="accepted",
+        decision_json=json.dumps({"todo_changes": [{"action": "close", "todo_id": todo_id}]}),
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请确认 ETA 是否完成。",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    completed = store.list_follow_up_drafts(statuses=("completed",))[0]
+    assert "todo completion evidence accepted" in completed.send_result_json
+
+
+def test_due_follow_up_defers_when_completion_candidate_is_pending(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P0",
+        risk_level="high",
+    )
+    todo_id = _create_bound_todo(store, project_id)
+    candidate = store.upsert_todo_evidence_candidate(
+        project_id=project_id,
+        todo_id=todo_id,
+        source_type="dws_message",
+        source_ref="dws_message:msg-candidate",
+        source_created_at="2026-06-08 01:00:00",
+        evidence_text="Alex 可能已经同步了 ETA。",
+        reason="消息需要 agent 判断。",
+        confidence=0.5,
+    )
+    input_id = store.enqueue_work_summary_input(
+        "todo_completion_evidence_candidate",
+        f"todo-evidence:{candidate.id}",
+        "{}",
+    )
+    store.mark_todo_evidence_candidate_enqueued(candidate.id, input_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请确认 ETA 是否完成。",
+        risk_check_json=json.dumps({"owner_in_group": True, "sensitive": False}),
+        scheduled_at="2026-06-07 09:00:00",
+    )
+    dws = FakeDws()
+
+    sent = process_due_follow_ups(
+        store,
+        dws,
+        now="2026-06-08 02:00:00",
+        auto_send=True,
+    )
+
+    assert sent == 0
+    assert dws.sent == []
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    assert draft.status == "draft"
+    assert draft.suppressed_reason == "todo_completion_evidence_pending"
+    assert json.loads(draft.evidence_check_json)["candidate_reason"].endswith(
+        "dws_message:msg-candidate"
+    )
+
+
 def test_due_follow_up_skips_when_todo_is_cancelled(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = store.create_work_project(

@@ -82,6 +82,48 @@ Load `dingtalk-todo` for DingTalk TODO operations, `task-management` for local t
   direct identity selected in the decision; never convert a group target to a
   direct target in service code.
 
+## TODO Completion Discovery
+
+When the Work Item source is `todo_completion_check`, the service is asking for
+a bounded current-state check, not reporting a completion fact. First restate
+the TODO's concrete completion condition from its title, description, owner,
+deadline, follow-up question, and project context. Then use the supplied
+`search_policy` to search only the allowed sources within the allowed budget.
+
+Search in this order when the corresponding tool or link is available:
+
+1. Structured task status such as DingTalk TODO or Lark Task.
+2. The original follow-up conversation and nearby replies after the follow-up
+   was sent.
+3. DWS messages and DWS/AI minutes in the supplied time window.
+4. Lark messages, Lark docs, email, and local files under `CEO_WORKSPACE` only
+   when the TODO context indicates those sources may contain the result.
+5. `memory_recall` for stable background only; memory is never current
+   completion evidence by itself.
+
+Respect these limits unless the Work Item explicitly supplies stricter values:
+at most 8 read/search tool calls, at most 3 raw source reads, and at most 3
+evidence sources in the final decision. Prefer the window from follow-up sent
+time or `search_policy.time_window.prefer_since` to now. For local files, use
+only `CEO_WORKSPACE`, prefer files changed after
+`search_policy.time_window.changed_files_since`, and cite a narrow locator such
+as relative path plus line, paragraph, mtime, or hash. Do not read or copy large
+files when a snippet search is enough.
+
+Stop searching as soon as one strong, current completion evidence source is
+found. Strong evidence must identify who or what system confirmed completion,
+where it was recorded, when it happened, and why it directly satisfies the TODO
+completion condition. Phrases like "I'll look", "in progress", "arranged",
+"should be OK", or generic "done" language are not enough unless the surrounding
+source ties them to the exact deliverable.
+
+If closing a TODO, output a `todo_changes` item with `action="close"` and
+complete `completion_evidence.source`, `reason`, `description`, `completed_at`,
+and `checked_at`. Include a compact `search_trace` inside the evidence showing
+which sources were checked and why the selected evidence is sufficient. If no
+strong evidence is found, keep the TODO open and summarize the check in
+`update_summary`; do not create duplicate TODOs or follow-ups.
+
 ## Memory And Evidence
 
 Memory is optional context, not completion evidence. When Memory is available,
@@ -98,10 +140,11 @@ specialized workflow instead of copying that workflow here.
 ## Service Boundary
 
 The service owns persistence, scheduled wake-up, due-time and local-work-hours
-guards, bound-TODO existence, live DingTalk Todo completion refresh, local
-completion-evidence checks, exact-message idempotency, and sent-result or retry
+guards, bound-TODO existence, live DingTalk Todo completion refresh,
+completion-check enqueueing, exact-message idempotency, and sent-result or retry
 state. The service does not decide importance, ownership, audience, sensitivity,
-schedule meaning, completion meaning, or semantic similarity to older work.
+schedule meaning, completion meaning, current-state search strategy, or
+semantic similarity to older work.
 Preserve exact-message idempotency. A corrected or materially changed message
 is a new revision and is not blocked merely because an older message was stored
 or sent.

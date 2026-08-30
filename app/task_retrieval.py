@@ -33,12 +33,37 @@ def tokenize(text: str) -> list[str]:
     return [match.group(0).casefold() for match in TOKEN_RE.finditer(text or "")]
 
 
+def resolve_task_owner_display(project: WorkProject, todos: tuple[WorkTodo, ...] | list[WorkTodo]) -> str:
+    for value in (project.owner_name, project.owner_user_id):
+        owner = str(value or "").strip()
+        if owner:
+            return owner
+
+    todo_owners: list[str] = []
+    seen: set[str] = set()
+    for todo in todos:
+        owner = str(todo.owner_name or todo.owner_user_id or "").strip()
+        if not owner or owner in seen:
+            continue
+        seen.add(owner)
+        todo_owners.append(owner)
+    if len(todo_owners) == 1:
+        return todo_owners[0]
+    if len(todo_owners) > 1:
+        visible = "、".join(todo_owners[:3])
+        if len(todo_owners) > 3:
+            return f"多人：{visible} 等 {len(todo_owners)} 人"
+        return f"多人：{visible}"
+    return ""
+
+
 def project_document(project: WorkProject) -> str:
     fields = [
         project.title,
         _enum_value(project.category),
         project.tags_json,
         project.owner_name,
+        project.owner_user_id,
         project.goal,
         project.background,
         project.facts_json,
@@ -120,7 +145,9 @@ def render_candidate_prompt(candidates: list[ProjectCandidate]) -> str:
                 "title": project.title,
                 "category": _enum_value(project.category),
                 "tags": _parse_json_list(project.tags_json),
+                "owner": project.owner_name or project.owner_user_id,
                 "owner_name": project.owner_name,
+                "owner_user_id": project.owner_user_id,
                 "goal": project.goal,
                 "background": project.background,
                 "facts": _parse_json_list(project.facts_json),
@@ -291,6 +318,7 @@ def render_project_task_details(details: list[ProjectTaskDetail]) -> str:
                     "status": _enum_value(project.status),
                     "priority": _enum_value(project.priority),
                     "risk_level": _enum_value(project.risk_level),
+                    "owner": resolve_task_owner_display(project, detail.todos),
                     "owner_user_id": project.owner_user_id,
                     "owner_name": project.owner_name,
                     "goal": project.goal,
@@ -312,6 +340,7 @@ def render_project_task_details(details: list[ProjectTaskDetail]) -> str:
                         "description": todo.description,
                         "status": _enum_value(todo.status),
                         "priority": _enum_value(todo.priority),
+                        "owner": todo.owner_name or todo.owner_user_id,
                         "owner_user_id": todo.owner_user_id,
                         "owner_name": todo.owner_name,
                         "deadline_at": todo.deadline_at,

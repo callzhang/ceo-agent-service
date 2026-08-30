@@ -2,12 +2,18 @@
 
 import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.task_models import ProjectStatus, TodoStatus
-from app.task_retrieval import load_project_task_detail
+from app.task_progress import (
+    task_progress_summary,
+    task_state as resolved_task_state,
+    todo_is_done,
+    todo_is_open,
+)
+from app.task_retrieval import load_project_task_detail, resolve_task_owner_display
 from app.web_api.common import (
     ApiItemEnvelope,
     ApiListEnvelope,
@@ -30,6 +36,7 @@ class ConsoleTaskSummary(BaseModel):
     risk_level: str
     owner_user_id: str
     owner_name: str
+    owner: str = ""
     current_state: str
     next_step: str
     open_count: int
@@ -60,6 +67,7 @@ class ConsoleTodo(BaseModel):
     owner_user_id: str = ""
     owner_name: str = ""
     status: str
+    done: bool = False
     priority: str
     deadline_at: str = ""
     next_follow_up_at: str = ""
@@ -86,6 +94,26 @@ class ConsoleUpdate(BaseModel):
     merge_reason: str = ""
     confidence: float = 0.0
     created_at: str = ""
+
+
+class ConsoleEvidenceCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    project_id: int
+    todo_id: int
+    source_type: str
+    source_ref: str
+    source_created_at: str = ""
+    evidence_text: str = ""
+    reason: str = ""
+    confidence: float = 0.0
+    status: str
+    work_summary_input_id: int = 0
+    decision: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+    detail_url: str = ""
 
 
 class ConsoleProject(BaseModel):
@@ -123,6 +151,7 @@ class ConsoleTaskDetail(BaseModel):
     project: ConsoleProject
     todos: list[ConsoleTodo] = Field(default_factory=list)
     updates: list[ConsoleUpdate] = Field(default_factory=list)
+    evidence_candidates: list[ConsoleEvidenceCandidate] = Field(default_factory=list)
     unlinked_follow_ups: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -195,19 +224,31 @@ def _memory_context_payload(value: str) -> dict[str, Any]:
     return payload
 
 
-def _todo_done(todo: Any) -> bool:
-    return _enum_text(todo.status) == TodoStatus.DONE.value
+def _todo_done(
+    todo: Any,
+    *,
+    follow_ups: list[Any] | tuple[Any, ...] = (),
+    dingtalk_links: list[Any] | tuple[Any, ...] = (),
+) -> bool:
+    return todo_is_done(todo, follow_ups=follow_ups, dingtalk_links=dingtalk_links)
 
 
-def _todo_open(todo: Any) -> bool:
-    return _enum_text(todo.status) not in {
-        TodoStatus.DONE.value,
-        TodoStatus.CANCELLED.value,
-    }
+def _todo_open(
+    todo: Any,
+    *,
+    follow_ups: list[Any] | tuple[Any, ...] = (),
+    dingtalk_links: list[Any] | tuple[Any, ...] = (),
+) -> bool:
+    return todo_is_open(todo, follow_ups=follow_ups, dingtalk_links=dingtalk_links)
 
 
-def _todo_overdue(todo: Any) -> bool:
-    if not _todo_open(todo) or not todo.deadline_at:
+def _todo_overdue(
+    todo: Any,
+    *,
+    follow_ups: list[Any] | tuple[Any, ...] = (),
+    dingtalk_links: list[Any] | tuple[Any, ...] = (),
+) -> bool:
+    if not _todo_open(todo, follow_ups=follow_ups, dingtalk_links=dingtalk_links) or not todo.deadline_at:
         return False
     try:
         deadline = datetime.fromisoformat(todo.deadline_at.replace("Z", "+00:00"))
@@ -218,25 +259,44 @@ def _todo_overdue(todo: Any) -> bool:
     return deadline < datetime.now(timezone.utc)
 
 
-def _task_state(project: Any, todos: list[Any]) -> str:
-    if _enum_text(project.status) == ProjectStatus.DONE.value:
-        return "completed"
-    if todos and not any(_todo_open(todo) for todo in todos):
-        return "completed"
-    if any(_todo_overdue(todo) for todo in todos):
-        return "over due"
-    if any(_todo_open(todo) for todo in todos):
-        return "in progress"
-    return "not started"
+def _task_state(
+    project: Any,
+    todos: list[Any],
+    *,
+    follow_ups_by_todo: dict[int, tuple[Any, ...]] | None = None,
+    dingtalk_links_by_todo: dict[int, tuple[Any, ...]] | None = None,
+) -> str:
+    return resolved_task_state(
+        project,
+        todos,
+        follow_ups_by_todo=follow_ups_by_todo,
+        dingtalk_links_by_todo=dingtalk_links_by_todo,
+        overdue_checker=lambda todo: _todo_overdue(
+            todo,
+            follow_ups=(follow_ups_by_todo or {}).get(todo.id, ()),
+            dingtalk_links=(dingtalk_links_by_todo or {}).get(todo.id, ()),
+        ),
+    )
 
 
-def task_summary(project: Any, todos: list[Any]) -> dict[str, Any]:
-    done_count = sum(_todo_done(todo) for todo in todos)
-    todo_count = len(todos)
-    progress_ratio = round(done_count * 100 / todo_count) if todo_count else 0
-    open_count = sum(_todo_open(todo) for todo in todos)
-    open_ratio = round(open_count * 100 / todo_count) if todo_count else 0
-    state = _task_state(project, todos)
+def task_summary(
+    project: Any,
+    todos: list[Any],
+    *,
+    follow_ups_by_todo: dict[int, tuple[Any, ...]] | None = None,
+    dingtalk_links_by_todo: dict[int, tuple[Any, ...]] | None = None,
+) -> dict[str, Any]:
+    progress = task_progress_summary(
+        todos,
+        follow_ups_by_todo=follow_ups_by_todo,
+        dingtalk_links_by_todo=dingtalk_links_by_todo,
+    )
+    state = _task_state(
+        project,
+        todos,
+        follow_ups_by_todo=follow_ups_by_todo,
+        dingtalk_links_by_todo=dingtalk_links_by_todo,
+    )
     return {
         "id": project.id,
         "title": normalize_display_value(project.title),
@@ -247,14 +307,15 @@ def task_summary(project: Any, todos: list[Any]) -> dict[str, Any]:
         "risk_level": _enum_text(project.risk_level),
         "owner_user_id": normalize_display_value(project.owner_user_id),
         "owner_name": normalize_display_value(project.owner_name),
+        "owner": resolve_task_owner_display(project, todos),
         "current_state": normalize_display_value(project.current_state),
         "next_step": normalize_display_value(project.next_step),
-        "open_count": open_count,
-        "open_ratio": open_ratio,
-        "progress_count": done_count,
-        "progress_total": todo_count,
-        "progress_ratio": progress_ratio,
-        "todo_count": todo_count,
+        "open_count": progress["open_count"],
+        "open_ratio": progress["open_ratio"],
+        "progress_count": progress["done_count"],
+        "progress_total": progress["total"],
+        "progress_ratio": progress["done_ratio"],
+        "todo_count": progress["total"],
         "detail_url": f"/tasks/{project.id}",
     }
 
@@ -271,6 +332,8 @@ def _fact_payload(value: Any) -> dict[str, str]:
 
 
 def _todo_payload(todo: Any, detail: Any) -> dict[str, Any]:
+    follow_ups = tuple(detail.follow_ups_by_todo.get(todo.id, ()))
+    dingtalk_links = tuple(detail.dingtalk_links_by_todo.get(todo.id, ()))
     payload = {
         "id": todo.id,
         "project_id": todo.project_id,
@@ -279,6 +342,7 @@ def _todo_payload(todo: Any, detail: Any) -> dict[str, Any]:
         "owner_user_id": normalize_display_value(todo.owner_user_id),
         "owner_name": normalize_display_value(todo.owner_name),
         "status": _enum_text(todo.status),
+        "done": _todo_done(todo, follow_ups=follow_ups, dingtalk_links=dingtalk_links),
         "priority": _enum_text(todo.priority),
         "deadline_at": normalize_display_value(todo.deadline_at),
         "next_follow_up_at": normalize_display_value(todo.next_follow_up_at),
@@ -294,11 +358,31 @@ def _todo_payload(todo: Any, detail: Any) -> dict[str, Any]:
                 **json_safe(follow_up),
                 "detail_url": f"/tasks/{todo.project_id}#follow-up-{follow_up.id}",
             }
-            for follow_up in detail.follow_ups_by_todo.get(todo.id, ())
+            for follow_up in follow_ups
         ],
-        "dingtalk_todos": [json_safe(link) for link in detail.dingtalk_links_by_todo.get(todo.id, ())],
+        "dingtalk_todos": [json_safe(link) for link in dingtalk_links],
     }
     return payload
+
+
+def _evidence_candidate_payload(candidate: Any) -> dict[str, Any]:
+    return {
+        "id": candidate.id,
+        "project_id": candidate.project_id,
+        "todo_id": candidate.todo_id,
+        "source_type": normalize_display_value(candidate.source_type),
+        "source_ref": normalize_display_value(candidate.source_ref),
+        "source_created_at": normalize_display_value(candidate.source_created_at),
+        "evidence_text": normalize_display_value(candidate.evidence_text),
+        "reason": normalize_display_value(candidate.reason),
+        "confidence": float(candidate.confidence),
+        "status": _enum_text(candidate.status),
+        "work_summary_input_id": candidate.work_summary_input_id,
+        "decision": json_safe(_object_json(candidate.decision_json)),
+        "created_at": normalize_display_value(candidate.created_at),
+        "updated_at": normalize_display_value(candidate.updated_at),
+        "detail_url": f"/tasks/{candidate.project_id}#evidence-{candidate.id}",
+    }
 
 
 def task_detail(store: Any, project_id: int) -> dict[str, Any] | None:
@@ -351,6 +435,13 @@ def task_detail(store: Any, project_id: int) -> dict[str, Any] | None:
             }
             for update in detail.updates
         ],
+        "evidence_candidates": [
+            _evidence_candidate_payload(candidate)
+            for candidate in store.list_todo_evidence_candidates(
+                project_id=project.id,
+                limit=50,
+            )
+        ],
         "unlinked_follow_ups": [
             json_safe(follow_up)
             for follow_up in all_follow_ups
@@ -374,11 +465,50 @@ def task_list_response(
     categories: set[str] = set()
     task_states: set[str] = set()
     needle = query.strip().casefold()
-    for project in store.list_work_projects(limit=None):
-        todos = store.list_work_todos(project_id=project.id)
-        row = task_summary(project, todos)
+    projects = store.list_work_projects(limit=None)
+    project_ids = [project.id for project in projects]
+    todos_by_project = store.list_work_todos_for_projects(project_ids)
+    all_todo_ids = [
+        todo.id
+        for todos in todos_by_project.values()
+        for todo in todos
+    ]
+    all_completed_follow_ups_by_todo = {
+        todo_id: tuple(follow_ups)
+        for todo_id, follow_ups in store.list_follow_up_drafts_for_todos(
+            all_todo_ids,
+            statuses=("completed",),
+        ).items()
+    }
+    all_dingtalk_links_by_todo = {
+        todo_id: tuple(links)
+        for todo_id, links in store.list_work_todo_dingtalk_links_for_todos(
+            all_todo_ids
+        ).items()
+    }
+    for project in projects:
+        todos = todos_by_project.get(project.id, [])
+        todo_ids = [todo.id for todo in todos]
+        follow_ups_by_todo = {
+            todo_id: all_completed_follow_ups_by_todo.get(todo_id, ())
+            for todo_id in todo_ids
+        }
+        dingtalk_links_by_todo = {
+            todo_id: all_dingtalk_links_by_todo.get(todo_id, ())
+            for todo_id in todo_ids
+        }
+        row_detail = SimpleNamespace(
+            follow_ups_by_todo=follow_ups_by_todo,
+            dingtalk_links_by_todo=dingtalk_links_by_todo,
+        )
+        row = task_summary(
+            project,
+            todos,
+            follow_ups_by_todo=follow_ups_by_todo,
+            dingtalk_links_by_todo=dingtalk_links_by_todo,
+        )
         if row_builder is not None:
-            built = json_safe(row_builder(project, todos))
+            built = json_safe(row_builder(project, todos, row_detail))
             if isinstance(built, dict):
                 row.update(
                     {
@@ -387,7 +517,8 @@ def task_list_response(
                         "category": normalize_display_value(built.get("category", row["category"])),
                         "priority": normalize_display_value(built.get("priority", row["priority"])),
                         "risk_level": normalize_display_value(built.get("riskLevel", row["risk_level"])),
-                        "owner_name": normalize_display_value(built.get("owner", row["owner_name"])),
+                        "owner": normalize_display_value(built.get("owner") or row["owner"]),
+                        "owner_name": row["owner_name"],
                         "current_state": normalize_display_value(built.get("currentState", row["current_state"])),
                         "next_step": normalize_display_value(built.get("nextStep", row["next_step"])),
                         "open_count": int(built.get("openCount", row["open_count"])),

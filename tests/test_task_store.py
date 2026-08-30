@@ -349,6 +349,71 @@ def test_enqueue_and_claim_work_summary_input(tmp_path: Path):
     assert row == ("done",)
 
 
+def test_todo_evidence_candidate_dedupes_and_marks_decision(tmp_path: Path):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户验收",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="确认客户验收完成",
+        status="open",
+        priority="P1",
+    )
+
+    first = store.upsert_todo_evidence_candidate(
+        project_id=project_id,
+        todo_id=todo_id,
+        source_type="dws_message",
+        source_ref="msg-1",
+        source_created_at="2026-06-28 10:00:00",
+        evidence_text="客户已经回复验收完成。",
+        reason="消息提到验收完成。",
+        confidence=0.8,
+    )
+    duplicate = store.upsert_todo_evidence_candidate(
+        project_id=project_id,
+        todo_id=todo_id,
+        source_type="dws_message",
+        source_ref="msg-1",
+        source_created_at="2026-06-28 10:00:00",
+        evidence_text="客户已经回复验收完成。",
+        reason="同一消息重复扫描。",
+        confidence=0.9,
+    )
+
+    assert duplicate.id == first.id
+    assert store.list_todo_evidence_candidates(todo_id=todo_id)[0].status == "candidate"
+
+    input_id = store.enqueue_work_summary_input(
+        "todo_completion_evidence_candidate",
+        f"todo-evidence:{first.id}",
+        "{}",
+    )
+    store.mark_todo_evidence_candidate_enqueued(first.id, input_id)
+    store.mark_todo_evidence_candidate(
+        first.id,
+        status="accepted",
+        decision_json=json.dumps({"todo_changes": [{"todo_id": todo_id, "action": "close"}]}),
+    )
+
+    candidate = store.get_todo_evidence_candidate(first.id)
+    assert candidate is not None
+    assert candidate.status == "accepted"
+    assert candidate.work_summary_input_id == input_id
+    assert json.loads(candidate.decision_json)["todo_changes"][0]["todo_id"] == todo_id
+
+    logs = store.list_operation_logs(query="客户已经回复验收完成")
+    assert len(logs) == 1
+    assert logs[0].category == "TODO completion evidence"
+    assert logs[0].status == "accepted"
+    assert logs[0].context == f"project #{project_id} todo #{todo_id}"
+
+
 def test_claim_work_summary_input_uses_lock_retrying_transaction(
     monkeypatch, tmp_path: Path
 ):
@@ -1332,6 +1397,121 @@ def test_list_work_todo_dingtalk_links_for_todo_returns_all_matches(
     )
 
     assert [link.id for link in links] == link_ids
+
+
+def test_list_follow_up_drafts_for_todos_groups_by_todo(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    project_id = store.create_work_project(
+        title="客户交付",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    first_todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="第一项",
+        status="open",
+        priority="P1",
+    )
+    second_todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="第二项",
+        status="open",
+        priority="P1",
+    )
+    other_todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="第三项",
+        status="open",
+        priority="P1",
+    )
+    first_draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=first_todo_id,
+        owner_name="Alex",
+        target_kind="direct",
+        question_text="第一项进展？",
+        scheduled_at="2026-08-29 09:00:00",
+        status="sent",
+    )
+    second_draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=second_todo_id,
+        owner_name="Mina",
+        target_kind="direct",
+        question_text="第二项进展？",
+        scheduled_at="2026-08-29 10:00:00",
+        status="completed",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=other_todo_id,
+        owner_name="ET",
+        target_kind="direct",
+        question_text="第三项进展？",
+        scheduled_at="2026-08-29 11:00:00",
+        status="completed",
+    )
+
+    grouped = store.list_follow_up_drafts_for_todos([first_todo_id, second_todo_id])
+
+    assert [draft.id for draft in grouped[first_todo_id]] == [first_draft_id]
+    assert [draft.id for draft in grouped[second_todo_id]] == [second_draft_id]
+    assert other_todo_id not in grouped
+
+
+def test_list_work_todos_for_projects_groups_by_project(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    first_project_id = store.create_work_project(
+        title="第一项目",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    second_project_id = store.create_work_project(
+        title="第二项目",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    other_project_id = store.create_work_project(
+        title="第三项目",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    first_todo_id = store.create_work_todo(
+        project_id=first_project_id,
+        title="第一项",
+        status="open",
+        priority="P1",
+    )
+    second_todo_id = store.create_work_todo(
+        project_id=second_project_id,
+        title="第二项",
+        status="done",
+        priority="P1",
+    )
+    store.create_work_todo(
+        project_id=other_project_id,
+        title="第三项",
+        status="open",
+        priority="P1",
+    )
+
+    grouped = store.list_work_todos_for_projects([first_project_id, second_project_id])
+
+    assert [todo.id for todo in grouped[first_project_id]] == [first_todo_id]
+    assert [todo.id for todo in grouped[second_project_id]] == [second_todo_id]
+    assert other_project_id not in grouped
 
 
 def test_list_work_project_ids_for_todo_owner_filters_active_projects(

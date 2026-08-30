@@ -279,19 +279,119 @@ def test_console_tasks_endpoint_returns_paginated_json_envelope_and_serializable
         status="done",
         priority="P2",
     )
+    owner_fallback_id = _project(store, "Owner fallback project")
+    store.create_work_todo(
+        project_id=owner_fallback_id,
+        title="Confirm owner fallback",
+        owner_name="Mina",
+        status="open",
+        priority="P1",
+    )
 
     with _client(tmp_path) as client:
-        response = client.get("/api/console/tasks?page=1&page_size=1")
+        response = client.get("/api/console/tasks?page=1&page_size=10")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["meta"]["page"] == 1
-    assert payload["meta"]["page_size"] == 1
-    assert payload["meta"]["total"] == 2
-    assert payload["meta"]["next_cursor"] == "2"
-    assert payload["meta"]["has_more"] is True
-    assert payload["items"][0]["id"] in {first_id, second_id}
+    assert payload["meta"]["page_size"] == 10
+    assert payload["meta"]["total"] == 3
+    assert payload["meta"]["next_cursor"] == ""
+    assert payload["meta"]["has_more"] is False
+    assert {item["id"] for item in payload["items"]} == {first_id, second_id, owner_fallback_id}
+    assert any(item["owner"] == "Mina" for item in payload["items"])
     assert "[object Object]" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_console_tasks_endpoint_keeps_owner_name_distinct_from_display_owner(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = _project(store, "Multi owner project")
+    store.create_work_todo(
+        project_id=project_id,
+        title="TODO A",
+        owner_name="周俊杰",
+        owner_user_id="owner-1",
+        status="open",
+        priority="P1",
+    )
+    store.create_work_todo(
+        project_id=project_id,
+        title="TODO B",
+        owner_name="张晓民",
+        owner_user_id="owner-2",
+        status="open",
+        priority="P1",
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/tasks?page=1&page_size=10")
+
+    item = response.json()["items"][0]
+    assert response.status_code == 200
+    assert item["owner"] == "多人：周俊杰、张晓民"
+    assert item["owner_name"] == ""
+    assert item["owner_user_id"] == ""
+
+
+def test_console_tasks_endpoint_counts_completed_followups_and_dingtalk_links_as_progress(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = _project(store, "Progress project")
+    store.create_work_todo(
+        project_id=project_id,
+        title="Still open",
+        status="open",
+        priority="P1",
+    )
+    follow_up_done_todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Confirmed by follow-up",
+        status="open",
+        priority="P1",
+    )
+    dingtalk_done_todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Checked in DingTalk Todo",
+        status="open",
+        priority="P1",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=follow_up_done_todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="这项完成了吗？",
+        scheduled_at="2026-08-29 09:00:00",
+        status="completed",
+    )
+    store.create_work_todo_dingtalk_link(
+        work_todo_id=dingtalk_done_todo_id,
+        dingtalk_task_id="dt-task-1",
+        executor_user_id="owner-2",
+        executor_name="Mina",
+        title_snapshot="Checked in DingTalk Todo",
+        deadline_at_snapshot="2026-08-29 18:00:00",
+        priority_snapshot="P1",
+        status="done",
+        last_dingtalk_done=True,
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/tasks?page=1&page_size=10")
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["id"] == project_id
+    assert item["progress_count"] == 2
+    assert item["progress_total"] == 3
+    assert item["progress_ratio"] == 67
+    assert item["open_count"] == 1
+    assert item["open_ratio"] == 33
 
 
 def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
@@ -306,6 +406,23 @@ def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
         status="open",
         priority="P1",
     )
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Confirm release evidence",
+        description="Evidence candidate should be visible in detail.",
+        status="open",
+        priority="P1",
+    )
+    store.upsert_todo_evidence_candidate(
+        project_id=project_id,
+        todo_id=todo_id,
+        source_type="dws_message",
+        source_ref="dws_message:msg-1",
+        source_created_at="2026-06-28 10:00:00",
+        evidence_text="发布证据已经同步到群里。",
+        reason="消息可能证明发布完成。",
+        confidence=0.82,
+    )
 
     with _client(tmp_path) as client:
         response = client.get(f"/api/console/tasks/{project_id}")
@@ -317,6 +434,9 @@ def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
     assert item["project"]["memory_context"]["summary"] == "Memory for Detailed project"
     assert item["todos"][0]["title"] == "Prepare release"
     assert isinstance(item["updates"], list)
+    assert item["evidence_candidates"][0]["todo_id"] == todo_id
+    assert item["evidence_candidates"][0]["source_ref"] == "dws_message:msg-1"
+    assert item["evidence_candidates"][0]["status"] == "candidate"
     assert "[object Object]" not in json.dumps(item, ensure_ascii=False)
 
 

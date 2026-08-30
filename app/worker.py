@@ -654,6 +654,11 @@ class DingTalkAutoReplyWorker:
                 self._is_dws_transient_error(exc)
                 or self._is_dws_token_verified_read_error(kind, exc)
                 or self._is_dws_message_read_retryable_error(kind, exc)
+                or (
+                    self._is_dws_message_read_kind(kind)
+                    and isinstance(exc, DwsError)
+                    and exc.retryable_external_dependency
+                )
             ):
                 self._record_dws_transient_error(kind, str(exc))
                 should_record_error = False
