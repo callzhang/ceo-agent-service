@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 FEEDBACK_PROCESSING_CLAIM_ERROR = "feedback processing claim rejected"
 FEEDBACK_PROCESSING_ALREADY_PROCESSING_ERROR = "feedback_already_processing"
 FEEDBACK_PROCESSING_BATCH_ERROR = "feedback processing batch definition conflict"
+FEEDBACK_PROCESSING_CURRENT_ROUND_ID_INVALID = (
+    "feedback_processing_current_round_id_invalid"
+)
 FEEDBACK_REOPEN_INVALID = "feedback_reopen_invalid"
 FEEDBACK_REOPEN_PROCESSING = "feedback_reopen_processing"
 FEEDBACK_REOPEN_HISTORY_INCOMPLETE = "feedback_reopen_history_incomplete"
@@ -100,6 +103,7 @@ class FeedbackProcessingRound(_StrictProcessingModel):
     test_evidence: dict[str, object] = Field(default_factory=dict)
     restart_evidence: dict[str, object] = Field(default_factory=dict)
     health_evidence: dict[str, object] = Field(default_factory=dict)
+    backlog_evidence: dict[str, object] = Field(default_factory=dict)
     note: str = ""
     started_at: str = ""
     resolved_at: str = ""

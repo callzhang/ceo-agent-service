@@ -1943,11 +1943,12 @@ def _seed_resolved_feedback_round(
                 feedback_key, round_number, batch_id, status,
                 workbench_task_id, workbench_turn_id, attempt_id,
                 agent_run_id, commit_sha, test_evidence_json,
-                restart_evidence_json, health_evidence_json, note,
+                restart_evidence_json, health_evidence_json,
+                backlog_evidence_json, note,
                 started_at, resolved_at, created_at, updated_at
             ) values (
                 ?, ?, ?, 'resolved', 'task-old', 'turn-old', 12, 34, ?,
-                ?, ?, ?, 'old note', '2026-08-30 00:00:00',
+                ?, ?, ?, ?, 'old note', '2026-08-30 00:00:00',
                 '2026-08-30 01:02:03', '2026-08-30 00:00:00',
                 '2026-08-30 01:02:03'
             )
@@ -1972,6 +1973,7 @@ def _seed_resolved_feedback_round(
                         "ok": True,
                     }
                 ),
+                json.dumps({"processing": 0, "failed": 0, "retryable": 0}),
             ),
         )
         round_id = int(cursor.lastrowid)
@@ -2506,3 +2508,260 @@ def test_round_and_transition_models_are_strict_read_contracts():
             to_status="pending",
             unexpected=True,
         )
+
+
+def _feedback_processing_snapshot(store: AutoReplyStore) -> dict[str, list[tuple[object, ...]]]:
+    with store._connect() as db:
+        return {
+            table: [
+                tuple(row)
+                for row in db.execute(
+                    f"select * from {table} order by rowid"
+                ).fetchall()
+            ]
+            for table in (
+                "feedback_events",
+                "feedback_processing_items",
+                "feedback_processing_rounds",
+                "feedback_processing_transitions",
+                "feedback_processing_batches",
+            )
+        }
+
+
+def _prepare_processing_round(
+    store: AutoReplyStore,
+    feedback_key: str = "feedback-1",
+    batch_id: str = "batch-1",
+) -> tuple[FeedbackProcessingItem, ResolutionEvidence]:
+    store.upsert_feedback_event(
+        key=feedback_key,
+        feedback_token=f"token-{feedback_key}",
+    )
+    item = store.claim_feedback_processing_items(batch_id, [feedback_key])[0]
+    receipt = _complete_resolution_receipt()
+    store.associate_feedback_processing_turn(
+        feedback_key,
+        workbench_task_id="task-current",
+        workbench_turn_id="turn-current",
+        attempt_id=71,
+        agent_run_id=72,
+    )
+    store.patch_feedback_processing_item_evidence(
+        feedback_key,
+        commit_sha=receipt.commit_sha,
+        test_evidence=receipt.test_evidence,
+        restart_evidence=receipt.restart_evidence,
+        health_evidence=receipt.health_evidence,
+    )
+    return item, receipt
+
+
+@pytest.mark.parametrize(
+    "corruption_sql",
+    (
+        "update feedback_processing_rounds set resolved_at='' where id=?",
+        "update feedback_processing_rounds set workbench_task_id='' where id=?",
+        "update feedback_processing_rounds set workbench_turn_id='' where id=?",
+        "update feedback_processing_rounds set attempt_id=0 where id=?",
+        "update feedback_processing_rounds set agent_run_id=0 where id=?",
+        "update feedback_processing_rounds set commit_sha='' where id=?",
+        "update feedback_processing_rounds set test_evidence_json='{}' where id=?",
+        "update feedback_processing_rounds set restart_evidence_json='{}' where id=?",
+        "update feedback_processing_rounds set health_evidence_json='{}' where id=?",
+        "update feedback_processing_rounds set backlog_evidence_json='{}' where id=?",
+    ),
+)
+def test_reopen_rejects_incomplete_resolved_round_receipt_without_mutation(
+    tmp_path: Path, corruption_sql: str
+):
+    store = AutoReplyStore(tmp_path / "reopen-complete-history.sqlite3")
+    round_id = _seed_resolved_feedback_round(store, "feedback-1")
+    with store._connect() as db:
+        columns = {
+            str(row["name"])
+            for row in db.execute("pragma table_info(feedback_processing_rounds)")
+        }
+        if "backlog_evidence_json" not in columns:
+            db.execute(
+                "alter table feedback_processing_rounds add column "
+                "backlog_evidence_json text not null default '{}'"
+            )
+        db.execute(
+            "update feedback_processing_rounds set backlog_evidence_json=? where id=?",
+            (
+                json.dumps({"processing": 0, "failed": 0, "retryable": 0}),
+                round_id,
+            ),
+        )
+        db.execute(corruption_sql, (round_id,))
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(feedback_processing_module.FeedbackProcessingReopenError) as error:
+        store.reopen_feedback_processing_item("feedback-1", reason="receipt incomplete")
+
+    assert error.value.error_code == "feedback_reopen_history_incomplete"
+    assert _feedback_processing_snapshot(store) == before
+
+
+def test_claim_rejects_existing_batch_requested_count_mismatch_without_mutation(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "claim-batch-count.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-1")
+    with store._connect() as db:
+        db.execute(
+            "update feedback_processing_batches set requested_count=2 where batch_id='batch-1'"
+        )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises((FeedbackProcessingBatchError, FeedbackProcessingClaimError)):
+        store.claim_feedback_processing_items("batch-1", ["feedback-1"])
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+def test_resolve_rejects_missing_source_feedback_before_any_mutation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "resolve-source-missing.sqlite3")
+    _, receipt = _prepare_processing_round(store)
+    with store._connect() as db:
+        db.execute("delete from feedback_events where key='feedback-1'")
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+def test_resolve_persists_backlog_receipt_for_later_reopen(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "resolve-backlog-history.sqlite3")
+    _, receipt = _prepare_processing_round(store)
+
+    assert store.resolve_feedback_processing_batch(
+        "batch-1", receipt, commit_is_ancestor=True
+    )
+    resolved_round = store.list_feedback_processing_rounds("feedback-1")[0]
+    assert resolved_round.backlog_evidence == receipt.backlog_evidence
+    assert store.reopen_feedback_processing_item(
+        "feedback-1", reason="validated historical receipt"
+    ).status == "pending"
+
+
+def test_resolve_rejects_orphan_round_in_batch_before_any_mutation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "resolve-orphan-round.sqlite3")
+    _, receipt = _prepare_processing_round(store)
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status, started_at
+            ) values ('orphan-feedback', 1, 'batch-1', 'processing', current_timestamp)
+            """
+        )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+def test_resolve_rejects_missing_item_for_batch_round_before_any_mutation(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "resolve-item-missing.sqlite3")
+    _, receipt = _prepare_processing_round(store)
+    with store._connect() as db:
+        db.execute(
+            "delete from feedback_processing_items where feedback_key='feedback-1'"
+        )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize("malformed_pointer", ("not-an-int", 1.5, -1, 0))
+def test_reopen_malformed_round_pointer_is_typed_and_atomic(
+    tmp_path: Path, malformed_pointer: object
+):
+    store = AutoReplyStore(tmp_path / "reopen-malformed-pointer.sqlite3")
+    _seed_resolved_feedback_round(store, "feedback-1")
+    with store._connect() as db:
+        db.execute(
+            "update feedback_processing_items set current_round_id=? where feedback_key='feedback-1'",
+            (malformed_pointer,),
+        )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(feedback_processing_module.FeedbackProcessingReopenError) as error:
+        store.reopen_feedback_processing_item("feedback-1", reason="bad pointer")
+
+    assert error.value.error_code == "feedback_reopen_history_incomplete"
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize("malformed_pointer", ("not-an-int", 1.5, -1))
+def test_feedback_item_reader_rejects_malformed_round_pointer(
+    tmp_path: Path, malformed_pointer: object
+):
+    store = AutoReplyStore(tmp_path / "read-malformed-pointer.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    with store._connect() as db:
+        db.execute(
+            "update feedback_processing_items set current_round_id=? where feedback_key='feedback-1'",
+            (malformed_pointer,),
+        )
+
+    with pytest.raises(ValueError, match="feedback_processing_current_round_id_invalid"):
+        store.get_feedback_processing_item("feedback-1")
+
+
+@pytest.mark.parametrize("operation", ("claim", "patch", "resolve"))
+def test_task2_writes_reject_malformed_round_pointer_with_domain_error(
+    tmp_path: Path, operation: str
+):
+    store = AutoReplyStore(tmp_path / f"{operation}-malformed-pointer.sqlite3")
+    if operation == "claim":
+        store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+        with store._connect() as db:
+            db.execute(
+                "update feedback_processing_items set current_round_id='not-an-int' "
+                "where feedback_key='feedback-1'"
+            )
+        before = _feedback_processing_snapshot(store)
+        with pytest.raises(FeedbackProcessingClaimError):
+            store.claim_feedback_processing_items("batch-1", ["feedback-1"])
+    else:
+        _, receipt = _prepare_processing_round(store)
+        with store._connect() as db:
+            db.execute(
+                "update feedback_processing_items set current_round_id=1.5 "
+                "where feedback_key='feedback-1'"
+            )
+        before = _feedback_processing_snapshot(store)
+        if operation == "patch":
+            with pytest.raises(
+                ValueError, match="feedback_processing_current_round_id_invalid"
+            ):
+                store.patch_feedback_processing_item_evidence(
+                    "feedback-1", note="must not write"
+                )
+        else:
+            with pytest.raises(
+                ValueError, match="feedback_processing_current_round_id_invalid"
+            ):
+                store.resolve_feedback_processing_batch(
+                    "batch-1", receipt, commit_is_ancestor=True
+                )
+    assert _feedback_processing_snapshot(store) == before

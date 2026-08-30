@@ -31,6 +31,7 @@ from app.feedback_policy import FeedbackPressureStats
 from app.feedback_processing import (
     FEEDBACK_PROCESSING_BATCH_ERROR,
     FEEDBACK_PROCESSING_CLAIM_ERROR,
+    FEEDBACK_PROCESSING_CURRENT_ROUND_ID_INVALID,
     FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
     FEEDBACK_REOPEN_INVALID,
     FEEDBACK_REOPEN_PROCESSING,
@@ -138,6 +139,7 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "feedback_processing_items": ("current_round_id",),
+    "feedback_processing_rounds": ("backlog_evidence_json",),
     "reply_attempts": (
         "human_decision_options_json",
         "feedback_scope",
@@ -1597,6 +1599,7 @@ class AutoReplyStore:
                     test_evidence_json text not null default '{}',
                     restart_evidence_json text not null default '{}',
                     health_evidence_json text not null default '{}',
+                    backlog_evidence_json text not null default '{}',
                     note text not null default '',
                     started_at text not null default '',
                     resolved_at text not null default '',
@@ -2896,6 +2899,22 @@ class AutoReplyStore:
                     db.execute(
                         "alter table feedback_processing_items add column "
                         "current_round_id integer not null default 0"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc):
+                        raise
+
+            feedback_processing_round_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(feedback_processing_rounds)"
+                ).fetchall()
+            }
+            if "backlog_evidence_json" not in feedback_processing_round_columns:
+                try:
+                    db.execute(
+                        "alter table feedback_processing_rounds add column "
+                        "backlog_evidence_json text not null default '{}'"
                     )
                 except sqlite3.OperationalError as exc:
                     if "duplicate column name" not in str(exc):
@@ -13487,9 +13506,28 @@ class AutoReplyStore:
             )
 
     @staticmethod
+    def _feedback_processing_round_pointer(
+        row: sqlite3.Row,
+        *,
+        require_positive: bool,
+    ) -> int:
+        raw = row["current_round_id"]
+        if (
+            type(raw) is not int
+            or raw < 0
+            or (require_positive and raw <= 0)
+        ):
+            raise ValueError(FEEDBACK_PROCESSING_CURRENT_ROUND_ID_INVALID)
+        return raw
+
+    @staticmethod
     def _feedback_processing_item_from_row(row: sqlite3.Row) -> FeedbackProcessingItem:
         values = dict(row)
-        for field in ("current_round_id", "attempt_id", "agent_run_id"):
+        values["current_round_id"] = AutoReplyStore._feedback_processing_round_pointer(
+            row,
+            require_positive=False,
+        )
+        for field in ("attempt_id", "agent_run_id"):
             raw = values.get(field, 0)
             if raw in (None, ""):
                 values[field] = 0
@@ -13512,7 +13550,12 @@ class AutoReplyStore:
         row: sqlite3.Row,
     ) -> FeedbackProcessingRound:
         values = dict(row)
-        for field in ("test_evidence", "restart_evidence", "health_evidence"):
+        for field in (
+            "test_evidence",
+            "restart_evidence",
+            "health_evidence",
+            "backlog_evidence",
+        ):
             raw = values.pop(f"{field}_json", "{}")
             parsed = json.loads(raw or "{}")
             if not isinstance(parsed, dict):
@@ -13525,6 +13568,56 @@ class AutoReplyStore:
         row: sqlite3.Row,
     ) -> FeedbackProcessingTransition:
         return FeedbackProcessingTransition.model_validate(dict(row))
+
+    @staticmethod
+    def _validate_resolved_feedback_processing_round(
+        item: sqlite3.Row,
+        current_round: sqlite3.Row,
+    ) -> None:
+        association_fields = (
+            "workbench_task_id",
+            "workbench_turn_id",
+            "attempt_id",
+            "agent_run_id",
+        )
+        if (
+            not str(current_round["resolved_at"] or "").strip()
+            or str(item["resolved_at"] or "") != str(current_round["resolved_at"] or "")
+            or any(item[field] != current_round[field] for field in association_fields)
+            or not str(current_round["workbench_task_id"] or "").strip()
+            or not str(current_round["workbench_turn_id"] or "").strip()
+            or type(current_round["attempt_id"]) is not int
+            or int(current_round["attempt_id"]) <= 0
+            or type(current_round["agent_run_id"]) is not int
+            or int(current_round["agent_run_id"]) <= 0
+            or str(item["commit_sha"] or "") != str(current_round["commit_sha"] or "")
+        ):
+            raise ValueError("resolved feedback processing round is incomplete")
+        evidence_by_name: dict[str, dict[str, object]] = {}
+        for name in (
+            "test_evidence",
+            "restart_evidence",
+            "health_evidence",
+            "backlog_evidence",
+        ):
+            parsed = json.loads(current_round[f"{name}_json"] or "{}")
+            if not isinstance(parsed, dict):
+                raise ValueError("resolved feedback processing evidence is invalid")
+            if name != "backlog_evidence":
+                projection = json.loads(item[f"{name}_json"] or "{}")
+                if projection != parsed:
+                    raise ValueError("resolved feedback projection does not match round")
+            evidence_by_name[name] = parsed
+        validate_resolution_evidence(
+            ResolutionEvidence(
+                commit_sha=str(current_round["commit_sha"] or ""),
+                test_evidence=evidence_by_name["test_evidence"],
+                restart_evidence=evidence_by_name["restart_evidence"],
+                health_evidence=evidence_by_name["health_evidence"],
+                backlog_evidence=evidence_by_name["backlog_evidence"],
+            ),
+            commit_is_ancestor=True,
+        )
 
     @staticmethod
     def _feedback_processing_batch_from_row(
@@ -13647,10 +13740,18 @@ class AutoReplyStore:
             return []
         with self._immediate_write_transaction() as db:
             existing_batch = db.execute(
-                "select status from feedback_processing_batches where batch_id=?",
+                """
+                select status, requested_count
+                  from feedback_processing_batches where batch_id=?
+                """,
                 (cleaned_batch_id,),
             ).fetchone()
             if existing_batch is not None:
+                if (
+                    type(existing_batch["requested_count"]) is not int
+                    or existing_batch["requested_count"] != len(keys)
+                ):
+                    raise FeedbackProcessingBatchError(FEEDBACK_PROCESSING_BATCH_ERROR)
                 existing_keys = {
                     str(row["feedback_key"])
                     for row in db.execute(
@@ -13675,6 +13776,18 @@ class AutoReplyStore:
                 keys,
             ).fetchall()
             by_key = {str(row["feedback_key"]): row for row in existing}
+            try:
+                pointers_by_key = {
+                    key: self._feedback_processing_round_pointer(
+                        row,
+                        require_positive=False,
+                    )
+                    for key, row in by_key.items()
+                }
+            except ValueError as exc:
+                raise FeedbackProcessingClaimError(
+                    FEEDBACK_PROCESSING_CLAIM_ERROR
+                ) from exc
             # A retry from the same Workbench turn is idempotent: return the
             # original claims without creating another batch or duplicate row.
             same_batch_processing = all(
@@ -13682,7 +13795,7 @@ class AutoReplyStore:
                 and not str(by_key[key]["event_resolved_at"] or "").strip()
                 and str(by_key[key]["item_status"] or "") == "processing"
                 and str(by_key[key]["item_batch_id"] or "").strip() == cleaned_batch_id
-                and int(by_key[key]["current_round_id"] or 0) > 0
+                and pointers_by_key[key] > 0
                 for key in keys
             ) and len(existing) == len(keys)
             if same_batch_processing:
@@ -13728,7 +13841,7 @@ class AutoReplyStore:
             if invalid or len(existing) != len(keys):
                 raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
             for key in keys:
-                if int(by_key[key]["current_round_id"] or 0) != 0:
+                if pointers_by_key[key] != 0:
                     raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
                 history = db.execute(
                     """
@@ -13801,10 +13914,10 @@ class AutoReplyStore:
             db.execute(
                 """
                 update feedback_processing_batches
-                set status='processing', requested_count=?, updated_at=current_timestamp
+                set status='processing', updated_at=current_timestamp
                 where batch_id=?
                 """,
-                (len(keys), cleaned_batch_id),
+                (cleaned_batch_id,),
             )
             rows = db.execute(
                 f"""
@@ -13851,7 +13964,16 @@ class AutoReplyStore:
                     "feedback reopen state is invalid",
                     error_code=FEEDBACK_REOPEN_INVALID,
                 )
-            round_id = int(item["current_round_id"] or 0)
+            try:
+                round_id = self._feedback_processing_round_pointer(
+                    item,
+                    require_positive=True,
+                )
+            except ValueError as exc:
+                raise FeedbackProcessingReopenError(
+                    "feedback processing history is incomplete",
+                    error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+                ) from exc
             current_round = db.execute(
                 """
                 select * from feedback_processing_rounds
@@ -13863,11 +13985,16 @@ class AutoReplyStore:
                 "select resolved_at from feedback_events where key=?",
                 (cleaned_key,),
             ).fetchone()
+            batch = db.execute(
+                "select status from feedback_processing_batches where batch_id=?",
+                (str(item["batch_id"] or ""),),
+            ).fetchone()
             if (
-                round_id <= 0
-                or current_round is None
+                current_round is None
                 or source is None
                 or not str(source["resolved_at"] or "").strip()
+                or batch is None
+                or str(batch["status"] or "") != "resolved"
                 or str(current_round["reopened_at"] or "").strip()
                 or str(current_round["reopen_reason"] or "").strip()
             ):
@@ -13875,6 +14002,13 @@ class AutoReplyStore:
                     "feedback processing history is incomplete",
                     error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
                 )
+            try:
+                self._validate_resolved_feedback_processing_round(item, current_round)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise FeedbackProcessingReopenError(
+                    "feedback processing history is incomplete",
+                    error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
+                ) from exc
             cursor = db.execute(
                 """
                 update feedback_processing_rounds
@@ -13996,7 +14130,10 @@ class AutoReplyStore:
             ).fetchone()
             if current is None:
                 return None
-            round_id = int(current["current_round_id"] or 0)
+            round_id = self._feedback_processing_round_pointer(
+                current,
+                require_positive=True,
+            )
             batch_id = str(current["batch_id"] or "")
             current_round = db.execute(
                 """
@@ -14121,7 +14258,10 @@ class AutoReplyStore:
             ).fetchone()
             if current is None:
                 return None
-            round_id = int(current["current_round_id"] or 0)
+            round_id = self._feedback_processing_round_pointer(
+                current,
+                require_positive=True,
+            )
             batch_id = str(current["batch_id"] or "")
             current_round = db.execute(
                 """
@@ -14219,186 +14359,215 @@ class AutoReplyStore:
                 return False
             if str(batch["status"] or "") == "resolved":
                 return True
-            row = db.execute(
-                """
-                select count(*) as total,
-                       sum(case when status='resolved' then 1 else 0 end) as resolved
-                from feedback_processing_items where batch_id=?
-                """,
-                (cleaned_batch_id,),
-            ).fetchone()
-            total = int(row["total"] or 0) if row else 0
-            requested_count = int(batch["requested_count"] or 0)
             if normalized_evidence is None:
                 return False
-            if normalized_evidence is not None:
-                if str(batch["status"] or "") != "processing":
-                    raise ValueError("resolution requires a processing batch")
-                if requested_count <= 0 or total != requested_count:
-                    raise ValueError("resolution requires complete batch item associations")
-                rows = db.execute(
-                    "select * from feedback_processing_items where batch_id=? order by feedback_key",
-                    (cleaned_batch_id,),
-                ).fetchall()
-                verified: list[tuple[sqlite3.Row, sqlite3.Row]] = []
-                for item in rows:
-                    round_id = int(item["current_round_id"] or 0)
-                    current_round = db.execute(
-                        """
-                        select * from feedback_processing_rounds
-                         where id=? and feedback_key=? and batch_id=?
-                           and status='processing'
-                        """,
-                        (
-                            round_id,
-                            str(item["feedback_key"]),
-                            cleaned_batch_id,
-                        ),
-                    ).fetchone()
-                    if (
-                        str(item["status"] or "") != "processing"
-                        or round_id <= 0
-                        or current_round is None
-                    ):
-                        raise ValueError("resolution requires every item to be processing")
-                    association_fields = (
-                        "workbench_task_id",
-                        "workbench_turn_id",
-                        "attempt_id",
-                        "agent_run_id",
-                    )
-                    if any(
-                        item[field] != current_round[field]
+            if str(batch["status"] or "") != "processing":
+                raise ValueError("resolution requires a processing batch")
+            requested_count = batch["requested_count"]
+            if type(requested_count) is not int or requested_count <= 0:
+                raise ValueError("resolution requires valid batch membership")
+            rows = db.execute(
+                """
+                select * from feedback_processing_items
+                 where batch_id=? order by feedback_key
+                """,
+                (cleaned_batch_id,),
+            ).fetchall()
+            round_rows = db.execute(
+                """
+                select * from feedback_processing_rounds
+                 where batch_id=? order by feedback_key, id
+                """,
+                (cleaned_batch_id,),
+            ).fetchall()
+            item_keys = [str(item["feedback_key"]) for item in rows]
+            round_keys = [str(round_row["feedback_key"]) for round_row in round_rows]
+            if (
+                len(rows) != requested_count
+                or len(round_rows) != requested_count
+                or len(set(item_keys)) != requested_count
+                or len(set(round_keys)) != requested_count
+                or set(item_keys) != set(round_keys)
+            ):
+                raise ValueError("resolution requires complete batch round membership")
+            round_by_id = {int(round_row["id"]): round_row for round_row in round_rows}
+            verified: list[tuple[sqlite3.Row, sqlite3.Row]] = []
+            for item in rows:
+                round_id = self._feedback_processing_round_pointer(
+                    item,
+                    require_positive=True,
+                )
+                current_round = round_by_id.get(round_id)
+                if (
+                    str(item["status"] or "") != "processing"
+                    or current_round is None
+                    or str(current_round["feedback_key"]) != str(item["feedback_key"])
+                    or str(current_round["batch_id"] or "") != cleaned_batch_id
+                    or str(current_round["status"] or "") != "processing"
+                ):
+                    raise ValueError("resolution requires every item to be processing")
+                association_fields = (
+                    "workbench_task_id",
+                    "workbench_turn_id",
+                    "attempt_id",
+                    "agent_run_id",
+                )
+                if any(
+                    item[field] != current_round[field]
+                    for field in association_fields
+                ):
+                    raise ValueError("resolution item association does not match current round")
+                if (
+                    not str(current_round["workbench_task_id"] or "").strip()
+                    or not str(current_round["workbench_turn_id"] or "").strip()
+                    or int(current_round["attempt_id"] or 0) <= 0
+                    or int(current_round["agent_run_id"] or 0) <= 0
+                ):
+                    raise ValueError("resolution requires complete item associations")
+                feedback_key = str(item["feedback_key"])
+                if normalized_evidence.associations:
+                    association = normalized_evidence.associations.get(feedback_key)
+                    if not isinstance(association, dict) or any(
+                        association.get(field) != current_round[field]
                         for field in association_fields
                     ):
-                        raise ValueError("resolution item association does not match current round")
+                        raise ValueError(
+                            "resolution receipt association does not match current round"
+                        )
+                item_commit = str(current_round["commit_sha"] or "").strip()
+                if (
+                    str(item["commit_sha"] or "").strip().lower()
+                    != item_commit.lower()
+                    or item_commit.lower()
+                    != normalized_evidence.commit_sha.strip().lower()
+                ):
+                    raise ValueError("resolution item commit does not match receipt")
+                test_json = json.loads(current_round["test_evidence_json"] or "{}")
+                restart_json = json.loads(
+                    current_round["restart_evidence_json"] or "{}"
+                )
+                health_json = json.loads(current_round["health_evidence_json"] or "{}")
+                for field, parsed, receipt_value in (
+                    ("test_evidence_json", test_json, normalized_evidence.test_evidence),
+                    (
+                        "restart_evidence_json",
+                        restart_json,
+                        normalized_evidence.restart_evidence,
+                    ),
+                    (
+                        "health_evidence_json",
+                        health_json,
+                        normalized_evidence.health_evidence,
+                    ),
+                ):
                     if (
-                        not str(current_round["workbench_task_id"] or "").strip()
-                        or not str(current_round["workbench_turn_id"] or "").strip()
-                        or int(current_round["attempt_id"] or 0) <= 0
-                        or int(current_round["agent_run_id"] or 0) <= 0
+                        json.loads(item[field] or "{}") != parsed
+                        or parsed != receipt_value
                     ):
-                        raise ValueError("resolution requires complete item associations")
-                    feedback_key = str(item["feedback_key"])
-                    if normalized_evidence.associations:
-                        association = normalized_evidence.associations.get(feedback_key)
-                        if not isinstance(association, dict) or any(
-                            association.get(field) != current_round[field]
-                            for field in association_fields
-                        ):
-                            raise ValueError(
-                                "resolution receipt association does not match current round"
-                            )
-                    item_commit = str(current_round["commit_sha"] or "").strip()
-                    if (
-                        str(item["commit_sha"] or "").strip().lower()
-                        != item_commit.lower()
-                        or item_commit.lower()
-                        != normalized_evidence.commit_sha.strip().lower()
-                    ):
-                        raise ValueError("resolution item commit does not match receipt")
-                    test_json = json.loads(current_round["test_evidence_json"] or "{}")
-                    restart_json = json.loads(
-                        current_round["restart_evidence_json"] or "{}"
-                    )
-                    health_json = json.loads(current_round["health_evidence_json"] or "{}")
-                    for field, parsed, receipt_value in (
-                        ("test_evidence_json", test_json, normalized_evidence.test_evidence),
-                        (
-                            "restart_evidence_json",
-                            restart_json,
-                            normalized_evidence.restart_evidence,
-                        ),
-                        (
-                            "health_evidence_json",
-                            health_json,
-                            normalized_evidence.health_evidence,
-                        ),
-                    ):
-                        if (
-                            json.loads(item[field] or "{}") != parsed
-                            or parsed != receipt_value
-                        ):
-                            raise ValueError(
-                                "resolution item evidence does not match current round receipt"
-                            )
-                    validate_resolution_evidence(
-                        ResolutionEvidence(
-                            commit_sha=item_commit,
-                            test_evidence=test_json,
-                            restart_evidence=restart_json,
-                            health_evidence=health_json,
-                            backlog_evidence=normalized_evidence.backlog_evidence,
-                        ),
-                        commit_is_ancestor=commit_is_ancestor,
-                        current_head=current_head,
-                    )
-                    verified.append((item, current_round))
-                for item, current_round in verified:
-                    round_cursor = db.execute(
-                        """
-                        update feedback_processing_rounds
-                           set status='resolved', resolved_at=current_timestamp,
-                               updated_at=current_timestamp
-                         where id=? and feedback_key=? and batch_id=?
-                           and status='processing'
-                        """,
-                        (
-                            int(current_round["id"]),
-                            str(item["feedback_key"]),
-                            cleaned_batch_id,
-                        ),
-                    )
-                    item_cursor = db.execute(
-                        """
-                        update feedback_processing_items
-                           set status='resolved', resolved_at=current_timestamp,
-                               updated_at=current_timestamp
-                         where feedback_key=? and batch_id=? and current_round_id=?
-                           and status='processing'
-                        """,
-                        (
-                            str(item["feedback_key"]),
-                            cleaned_batch_id,
-                            int(current_round["id"]),
-                        ),
-                    )
-                    if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
-                        raise ValueError("resolution current round changed during update")
-                    db.execute(
-                        """
-                        insert into feedback_processing_transitions (
-                            feedback_key, round_id, batch_id,
-                            from_status, to_status,
-                            workbench_task_id, workbench_turn_id
-                        ) values (?, ?, ?, 'processing', 'resolved', ?, ?)
-                        """,
-                        (
-                            str(item["feedback_key"]),
-                            int(current_round["id"]),
-                            cleaned_batch_id,
-                            str(current_round["workbench_task_id"] or ""),
-                            str(current_round["workbench_turn_id"] or ""),
-                        ),
-                    )
+                        raise ValueError(
+                            "resolution item evidence does not match current round receipt"
+                        )
+                validate_resolution_evidence(
+                    ResolutionEvidence(
+                        commit_sha=item_commit,
+                        test_evidence=test_json,
+                        restart_evidence=restart_json,
+                        health_evidence=health_json,
+                        backlog_evidence=normalized_evidence.backlog_evidence,
+                    ),
+                    commit_is_ancestor=commit_is_ancestor,
+                    current_head=current_head,
+                )
+                verified.append((item, current_round))
+            placeholders = ",".join("?" for _ in item_keys)
+            source_rows = db.execute(
+                f"""
+                select key, resolved_at from feedback_events
+                 where key in ({placeholders})
+                """,
+                item_keys,
+            ).fetchall()
+            if (
+                len(source_rows) != requested_count
+                or {str(source["key"]) for source in source_rows} != set(item_keys)
+                or any(str(source["resolved_at"] or "").strip() for source in source_rows)
+            ):
+                raise ValueError("resolution requires complete source feedback membership")
+            backlog_json = json.dumps(
+                normalized_evidence.backlog_evidence,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            for item, current_round in verified:
+                round_cursor = db.execute(
+                    """
+                    update feedback_processing_rounds
+                       set status='resolved', resolved_at=current_timestamp,
+                           backlog_evidence_json=?, updated_at=current_timestamp
+                     where id=? and feedback_key=? and batch_id=?
+                       and status='processing'
+                    """,
+                    (
+                        backlog_json,
+                        int(current_round["id"]),
+                        str(item["feedback_key"]),
+                        cleaned_batch_id,
+                    ),
+                )
+                item_cursor = db.execute(
+                    """
+                    update feedback_processing_items
+                       set status='resolved', resolved_at=current_timestamp,
+                           updated_at=current_timestamp
+                     where feedback_key=? and batch_id=? and current_round_id=?
+                       and status='processing'
+                    """,
+                    (
+                        str(item["feedback_key"]),
+                        cleaned_batch_id,
+                        int(current_round["id"]),
+                    ),
+                )
+                if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
+                    raise ValueError("resolution current round changed during update")
                 db.execute(
                     """
-                    update feedback_events
-                    set resolved_at=coalesce(nullif(resolved_at, ''), current_timestamp),
-                        updated_at=current_timestamp
-                    where key in (select feedback_key from feedback_processing_items where batch_id=?)
+                    insert into feedback_processing_transitions (
+                        feedback_key, round_id, batch_id,
+                        from_status, to_status,
+                        workbench_task_id, workbench_turn_id
+                    ) values (?, ?, ?, 'processing', 'resolved', ?, ?)
                     """,
-                    (cleaned_batch_id,),
+                    (
+                        str(item["feedback_key"]),
+                        int(current_round["id"]),
+                        cleaned_batch_id,
+                        str(current_round["workbench_task_id"] or ""),
+                        str(current_round["workbench_turn_id"] or ""),
+                    ),
                 )
-                cursor = db.execute(
-                    """
-                    update feedback_processing_batches
-                    set status='resolved', resolved_at=current_timestamp, updated_at=current_timestamp
-                    where batch_id=? and status<>'resolved'
-                    """,
-                    (cleaned_batch_id,),
-                )
-                return cursor.rowcount == 1
+            source_cursor = db.execute(
+                f"""
+                update feedback_events
+                   set resolved_at=current_timestamp, updated_at=current_timestamp
+                 where key in ({placeholders}) and trim(resolved_at)=''
+                """,
+                item_keys,
+            )
+            if source_cursor.rowcount != requested_count:
+                raise ValueError("resolution source feedback changed during update")
+            cursor = db.execute(
+                """
+                update feedback_processing_batches
+                   set status='resolved', resolved_at=current_timestamp,
+                       updated_at=current_timestamp
+                 where batch_id=? and status='processing'
+                """,
+                (cleaned_batch_id,),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("resolution batch changed during update")
+            return True
         return False
 
     def list_feedback_events_for_token(self, feedback_token: str) -> list[FeedbackEvent]:
