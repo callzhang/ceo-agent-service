@@ -2351,6 +2351,62 @@ class EmailStore:
         assert row is not None
         return self._account_row(row)
 
+    def delete_account_if_unchanged(
+        self,
+        account_id: str,
+        *,
+        expected_updated_at: str,
+    ) -> bool:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            cursor = db.execute(
+                "delete from email_accounts where account_id=? and updated_at=?",
+                (account_id, expected_updated_at),
+            )
+        return cursor.rowcount == 1
+
+    def restore_account_if_unchanged(
+        self,
+        snapshot: Mapping[str, object],
+        *,
+        expected_updated_at: str,
+    ) -> bool:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            cursor = db.execute(
+                """
+                update email_accounts set
+                    display_name=?, email_address=?, imap_host=?, imap_port=?,
+                    imap_tls=?, imap_username=?, imap_secret_reference=?,
+                    smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
+                    smtp_secret_reference=?, enabled=?, scan_folders_json=?,
+                    scan_interval_seconds=?, created_at=?, updated_at=?
+                where account_id=? and updated_at=?
+                """,
+                (
+                    snapshot["display_name"],
+                    snapshot["email_address"],
+                    snapshot["imap_host"],
+                    snapshot["imap_port"],
+                    int(bool(snapshot["imap_tls"])),
+                    snapshot["imap_username"],
+                    snapshot["imap_secret_reference"],
+                    snapshot["smtp_host"],
+                    snapshot["smtp_port"],
+                    int(bool(snapshot["smtp_tls"])),
+                    snapshot["smtp_username"],
+                    snapshot["smtp_secret_reference"],
+                    int(bool(snapshot["enabled"])),
+                    _json_dump(list(snapshot["scan_folders"])),
+                    snapshot["scan_interval_seconds"],
+                    snapshot["created_at"],
+                    snapshot["updated_at"],
+                    snapshot["account_id"],
+                    expected_updated_at,
+                ),
+            )
+        return cursor.rowcount == 1
+
     @staticmethod
     def _assert_email_address_available(
         db: sqlite3.Connection,

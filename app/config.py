@@ -1,10 +1,14 @@
+import base64
 import os
+import stat
+import tempfile
 from datetime import timedelta
 from pathlib import Path
 
 
 DEFAULT_CEO_CODEX_MODEL = "gpt-5.5"
 DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT = "medium"
+_ENCODED_ENV_VALUE_PREFIX = "__CEO_ENV_B64_V1__:"
 
 
 def repo_root() -> Path:
@@ -47,6 +51,8 @@ def read_env_file(path: Path | None = None) -> dict[str, str]:
 
 
 def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
+    if any("\x00" in key or "\x00" in value for key, value in updates.items()):
+        raise ValueError("environment updates must not contain NUL")
     env_path = path or env_file_path()
     existing_lines = (
         env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
@@ -66,7 +72,24 @@ def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
     for key, value in remaining.items():
         lines.append(f"{key}={_encode_env_value(value)}")
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    mode = stat.S_IMODE(env_path.stat().st_mode) if env_path.exists() else 0o600
+    fd, temporary_name = tempfile.mkstemp(
+        dir=env_path.parent,
+        prefix=f".{env_path.name}.",
+    )
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as temporary:
+            temporary.write("\n".join(lines).rstrip() + "\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_name, env_path)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
     for key, value in updates.items():
         os.environ[key] = value
     return env_path
@@ -81,15 +104,31 @@ def effective_env_values(path: Path | None = None) -> dict[str, str]:
 
 
 def _decode_env_value(value: str) -> str:
+    if value.startswith(_ENCODED_ENV_VALUE_PREFIX):
+        encoded = value.removeprefix(_ENCODED_ENV_VALUE_PREFIX)
+        try:
+            return base64.b64decode(encoded, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError("invalid encoded environment value") from exc
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         value = value[1:-1]
     return os.path.expandvars(value)
 
 
 def _encode_env_value(value: str) -> str:
-    if not value or any(character.isspace() for character in value):
-        return '"' + value.replace('"', '\\"') + '"'
-    return value
+    safe_punctuation = frozenset("._:/@+-")
+    if (
+        value
+        and not value.startswith(_ENCODED_ENV_VALUE_PREFIX)
+        and all(
+            character.isascii()
+            and (character.isalnum() or character in safe_punctuation)
+            for character in value
+        )
+    ):
+        return value
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return _ENCODED_ENV_VALUE_PREFIX + encoded
 
 
 load_env_file()

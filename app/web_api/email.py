@@ -120,6 +120,19 @@ def register_email_routes(
             status_code=status_code,
         )
 
+    def secret_write_error(*, compensated: bool) -> JSONResponse:
+        if not compensated:
+            return error_response(
+                "email_account_consistency_failed",
+                "Email account save could not be completed safely",
+                500,
+            )
+        return error_response(
+            "email_account_secret_write_failed",
+            "Email account secrets could not be saved; retry is safe",
+            503,
+        )
+
     async def account_payload(request: Request) -> EmailAccountPayload | JSONResponse:
         if "application/json" not in request.headers.get("content-type", ""):
             return error_response(
@@ -243,7 +256,17 @@ def register_email_routes(
                 "Email account conflicts with existing configuration",
                 409,
             )
-        save_secret_values(payload)
+        try:
+            save_secret_values(payload)
+        except (OSError, ValueError):
+            try:
+                compensated = store.delete_account_if_unchanged(
+                    payload.account_id,
+                    expected_updated_at=row["updated_at"],
+                )
+            except sqlite3.DatabaseError:
+                compensated = False
+            return secret_write_error(compensated=compensated)
         return JSONResponse(
             {
                 "ok": True,
@@ -266,6 +289,7 @@ def register_email_routes(
                 "Email account ID cannot be changed",
                 400,
             )
+        previous = store.get_account(account_id)
         try:
             row = store.update_account(
                 account_id,
@@ -280,7 +304,19 @@ def register_email_routes(
             )
         if row is None:
             return error_response("not_found", "Email account not found", 404)
-        save_secret_values(payload)
+        try:
+            save_secret_values(payload)
+        except (OSError, ValueError):
+            compensated = False
+            if previous is not None:
+                try:
+                    compensated = store.restore_account_if_unchanged(
+                        previous,
+                        expected_updated_at=row["updated_at"],
+                    )
+                except sqlite3.DatabaseError:
+                    compensated = False
+            return secret_write_error(compensated=compensated)
         return {
             "ok": True,
             "item": account_response(row),

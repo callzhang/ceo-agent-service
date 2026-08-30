@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 import pytest
 
+from app import config as app_config
 from app.email_classifier_contracts import EmailAction, EmailCategory
 from app.email_connector_config import EmailAccountPayload, resolve_secret
 from app.email_store import EmailStore
@@ -15,6 +17,84 @@ from app.web_api.email import register_email_routes
 IMAP_SECRET = "known-imap-secret-value"
 SMTP_SECRET = "known-smtp-secret-value"
 UPDATED_SMTP_SECRET = "updated-smtp-secret-value"
+
+
+@pytest.mark.parametrize(
+    "secret",
+    (
+        "space value",
+        "single' double\" slash\\ dollar$ hash# equals= unicode密钥",
+        "line1\nline2\r\ntab\tcontrol\x01",
+        "__CEO_ENV_B64_V1__:collision",
+    ),
+)
+def test_env_secret_codec_exact_roundtrips_after_process_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    secret: str,
+):
+    env_file = tmp_path / ".env"
+    key = "CEO_EMAIL_CODEC_IMAP_SECRET"
+    monkeypatch.delenv(key, raising=False)
+    env_file.write_text("LEGACY=$CEO_CODEC_LEGACY\n", encoding="utf-8")
+    env_file.chmod(0o640)
+
+    app_config.write_env_values({key: secret}, env_file)
+    monkeypatch.delenv(key)
+
+    assert app_config.read_env_file(env_file)[key] == secret
+    assert env_file.stat().st_mode & 0o777 == 0o640
+
+
+def test_env_reader_preserves_legacy_expansion_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    env_file = tmp_path / ".env"
+    env_file.write_text("LEGACY=$CEO_CODEC_LEGACY\n", encoding="utf-8")
+    monkeypatch.setenv("CEO_CODEC_LEGACY", "expanded")
+
+    assert app_config.read_env_file(env_file)["LEGACY"] == "expanded"
+
+
+def test_env_writer_rejects_nul_without_touching_file_or_process_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    env_file = tmp_path / ".env"
+    env_file.write_text("KEEP=unchanged\n", encoding="utf-8")
+    key = "CEO_EMAIL_NUL_IMAP_SECRET"
+    monkeypatch.delenv(key, raising=False)
+
+    with pytest.raises(ValueError) as captured:
+        app_config.write_env_values({key: "hidden\x00sentinel"}, env_file)
+
+    assert env_file.read_text(encoding="utf-8") == "KEEP=unchanged\n"
+    assert key not in os.environ
+    assert list(tmp_path.glob(".env.*")) == []
+    assert "hidden" not in str(captured.value)
+
+
+def test_env_writer_replace_failure_preserves_existing_file_and_process_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    env_file = tmp_path / ".env"
+    env_file.write_text("KEEP=unchanged\n", encoding="utf-8")
+    key = "CEO_EMAIL_ATOMIC_IMAP_SECRET"
+    monkeypatch.delenv(key, raising=False)
+
+    def fail_replace(_source, _destination):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(app_config.os, "replace", fail_replace)
+    with pytest.raises(OSError):
+        app_config.write_env_values({key: "new-secret"}, env_file)
+
+    assert env_file.read_text(encoding="utf-8") == "KEEP=unchanged\n"
+    assert key not in os.environ
+
+    assert list(tmp_path.glob(".env.*")) == []
 
 
 def _account_payload(account_id: str = "work_mail") -> dict[str, object]:
@@ -154,8 +234,9 @@ def test_account_api_redacts_and_preserves_or_updates_env_secrets(
         assert 'smtp_secret"' not in serialized
         assert "imap_secret_reference" not in serialized
         assert "smtp_secret_reference" not in serialized
-    assert f"CEO_EMAIL_WORK_MAIL_IMAP_SECRET={IMAP_SECRET}" in env_file.read_text()
-    assert f"CEO_EMAIL_WORK_MAIL_SMTP_SECRET={SMTP_SECRET}" in env_file.read_text()
+    stored_secrets = app_config.read_env_file(env_file)
+    assert stored_secrets["CEO_EMAIL_WORK_MAIL_IMAP_SECRET"] == IMAP_SECRET
+    assert stored_secrets["CEO_EMAIL_WORK_MAIL_SMTP_SECRET"] == SMTP_SECRET
     assert IMAP_SECRET not in json.dumps(store.list_accounts())
     assert SMTP_SECRET not in json.dumps(store.list_accounts())
     assert IMAP_SECRET.encode() not in store.path.read_bytes()
@@ -166,10 +247,9 @@ def test_account_api_redacts_and_preserves_or_updates_env_secrets(
     saved = client.put("/api/console/email/accounts/work_mail", json=update)
 
     assert saved.status_code == 200
-    env_text = env_file.read_text()
-    assert f"CEO_EMAIL_WORK_MAIL_IMAP_SECRET={IMAP_SECRET}" in env_text
-    assert f"CEO_EMAIL_WORK_MAIL_SMTP_SECRET={UPDATED_SMTP_SECRET}" in env_text
-    assert SMTP_SECRET not in env_text
+    stored_secrets = app_config.read_env_file(env_file)
+    assert stored_secrets["CEO_EMAIL_WORK_MAIL_IMAP_SECRET"] == IMAP_SECRET
+    assert stored_secrets["CEO_EMAIL_WORK_MAIL_SMTP_SECRET"] == UPDATED_SMTP_SECRET
     assert IMAP_SECRET not in saved.text
     assert SMTP_SECRET not in saved.text
     assert UPDATED_SMTP_SECRET not in saved.text
@@ -280,6 +360,99 @@ def test_account_api_hides_nested_secret_input_on_validation_error(tmp_path: Pat
 
     assert response.status_code == 400
     assert sentinel not in response.text
+
+
+def test_create_secret_write_failure_removes_account_and_retry_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client, store, env_file = _client(tmp_path)
+    env_file.write_text("KEEP=unchanged\n", encoding="utf-8")
+    payload = _account_payload()
+    payload["imap_secret"] = IMAP_SECRET
+    original_writer = app_config.write_env_values
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("private path and secret must not escape")
+
+    monkeypatch.setattr(app_config, "write_env_values", fail_write)
+    failed = client.post("/api/console/email/accounts", json=payload)
+
+    assert failed.status_code == 503
+    assert failed.json() == {
+        "ok": False,
+        "code": "email_account_secret_write_failed",
+        "message": "Email account secrets could not be saved; retry is safe",
+        "details": {},
+    }
+    assert IMAP_SECRET not in failed.text
+    assert "private path" not in failed.text
+    assert store.get_account("work_mail") is None
+    assert env_file.read_text(encoding="utf-8") == "KEEP=unchanged\n"
+
+    monkeypatch.setattr(app_config, "write_env_values", original_writer)
+    assert client.post("/api/console/email/accounts", json=payload).status_code == 201
+
+
+def test_compensation_failure_is_not_reported_as_safe_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client, store, _ = _client(tmp_path)
+    payload = _account_payload()
+    payload["imap_secret"] = IMAP_SECRET
+    monkeypatch.setattr(
+        app_config,
+        "write_env_values",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("hidden")),
+    )
+    monkeypatch.setattr(store, "delete_account_if_unchanged", lambda *_args, **_kwargs: False)
+
+    failed = client.post("/api/console/email/accounts", json=payload)
+
+    assert failed.status_code == 500
+    assert failed.json()["code"] == "email_account_consistency_failed"
+    assert "retry is safe" not in failed.text
+    assert IMAP_SECRET not in failed.text
+
+
+def test_update_secret_write_failure_restores_exact_account_and_retry_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client, store, env_file = _client(tmp_path)
+    original = _account_payload()
+    assert client.post("/api/console/email/accounts", json=original).status_code == 201
+    before = store.get_account("work_mail")
+    env_file.write_text("KEEP=unchanged\n", encoding="utf-8")
+    update = _account_payload()
+    update.update(
+        {
+            "display_name": "Changed",
+            "imap_secret_reference": "CEO_EMAIL_CHANGED_IMAP_SECRET",
+            "smtp_secret_reference": "CEO_EMAIL_CHANGED_SMTP_SECRET",
+            "imap_secret": IMAP_SECRET,
+        }
+    )
+    original_writer = app_config.write_env_values
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError("private path and secret must not escape")
+
+    monkeypatch.setattr(app_config, "write_env_values", fail_write)
+    failed = client.put("/api/console/email/accounts/work_mail", json=update)
+
+    assert failed.status_code == 503
+    assert failed.json()["code"] == "email_account_secret_write_failed"
+    assert IMAP_SECRET not in failed.text
+    assert "private path" not in failed.text
+    assert store.get_account("work_mail") == before
+    assert env_file.read_text(encoding="utf-8") == "KEEP=unchanged\n"
+
+    monkeypatch.setattr(app_config, "write_env_values", original_writer)
+    retried = client.put("/api/console/email/accounts/work_mail", json=update)
+    assert retried.status_code == 200
+    assert store.get_account("work_mail")["display_name"] == "Changed"
 
 
 @pytest.mark.parametrize(
