@@ -81,6 +81,8 @@ STORE_SCHEMA_VERSION = "2026-08-26.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
+    "feedback_processing_rounds",
+    "feedback_processing_transitions",
     "task_todo_sync_outbox",
     "agent_runtime_attempts",
     "conversation_runtime_sessions",
@@ -101,6 +103,9 @@ STORE_SCHEMA_REQUIRED_TABLES = (
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_items_status",
     "idx_feedback_processing_items_batch",
+    "idx_feedback_processing_rounds_feedback",
+    "idx_feedback_processing_rounds_batch",
+    "idx_feedback_processing_transitions_feedback",
     "idx_reply_attempts_agent_run_recovery",
     "idx_runtime_attempt_active_route",
     "idx_runtime_attempt_active_lease",
@@ -126,6 +131,7 @@ STORE_SCHEMA_REMOVED_TABLES = (
     "universal_action_executions",
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
+    "feedback_processing_items": ("current_round_id",),
     "reply_attempts": (
         "human_decision_options_json",
         "feedback_scope",
@@ -1156,6 +1162,7 @@ class AutoReplyStore:
                 );
                 create table if not exists feedback_processing_items (
                     feedback_key text primary key,
+                    current_round_id integer not null default 0,
                     batch_id text not null default '',
                     status text not null default 'pending'
                         check (status in ('pending', 'processing', 'resolved')),
@@ -1176,6 +1183,51 @@ class AutoReplyStore:
                     on feedback_processing_items(status);
                 create index if not exists idx_feedback_processing_items_batch
                     on feedback_processing_items(batch_id);
+                create table if not exists feedback_processing_rounds (
+                    id integer primary key autoincrement,
+                    feedback_key text not null,
+                    round_number integer not null,
+                    batch_id text not null default '',
+                    status text not null
+                        check (status in ('processing', 'resolved')),
+                    workbench_task_id text not null default '',
+                    workbench_turn_id text not null default '',
+                    attempt_id integer not null default 0,
+                    agent_run_id integer not null default 0,
+                    commit_sha text not null default '',
+                    test_evidence_json text not null default '{}',
+                    restart_evidence_json text not null default '{}',
+                    health_evidence_json text not null default '{}',
+                    note text not null default '',
+                    started_at text not null default '',
+                    resolved_at text not null default '',
+                    reopened_at text not null default '',
+                    reopen_reason text not null default '',
+                    created_at text not null default current_timestamp,
+                    updated_at text not null default current_timestamp,
+                    unique (feedback_key, round_number),
+                    unique (feedback_key, batch_id)
+                );
+                create index if not exists idx_feedback_processing_rounds_feedback
+                    on feedback_processing_rounds(feedback_key, round_number desc);
+                create index if not exists idx_feedback_processing_rounds_batch
+                    on feedback_processing_rounds(batch_id);
+                create table if not exists feedback_processing_transitions (
+                    id integer primary key autoincrement,
+                    feedback_key text not null,
+                    round_id integer not null default 0,
+                    batch_id text not null default '',
+                    from_status text not null default ''
+                        check (from_status in ('', 'pending', 'processing', 'resolved')),
+                    to_status text not null
+                        check (to_status in ('pending', 'processing', 'resolved')),
+                    reason text not null default '',
+                    workbench_task_id text not null default '',
+                    workbench_turn_id text not null default '',
+                    created_at text not null default current_timestamp
+                );
+                create index if not exists idx_feedback_processing_transitions_feedback
+                    on feedback_processing_transitions(feedback_key, id desc);
                 insert or ignore into feedback_processing_items (
                     feedback_key, status, resolved_at
                 )
@@ -1193,6 +1245,10 @@ class AutoReplyStore:
                      select 1 from feedback_events fe
                       where fe.key=feedback_processing_items.feedback_key
                         and trim(fe.resolved_at) <> ''
+                        and (
+                            feedback_processing_items.status <> 'resolved'
+                            or feedback_processing_items.resolved_at <> fe.resolved_at
+                        )
                  );
                 create table if not exists service_bugfix_candidates (
                     id integer primary key autoincrement,
@@ -2431,6 +2487,73 @@ class AutoReplyStore:
                     db.execute(
                         f"alter table feedback_events add column {column} {definition}"
                     )
+
+            feedback_processing_item_columns = {
+                row["name"]
+                for row in db.execute(
+                    "pragma table_info(feedback_processing_items)"
+                ).fetchall()
+            }
+            if "current_round_id" not in feedback_processing_item_columns:
+                try:
+                    db.execute(
+                        "alter table feedback_processing_items add column "
+                        "current_round_id integer not null default 0"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc):
+                        raise
+
+            db.execute(
+                """
+                insert or ignore into feedback_processing_rounds (
+                    feedback_key, round_number, batch_id, status,
+                    workbench_task_id, workbench_turn_id, attempt_id,
+                    agent_run_id, commit_sha, test_evidence_json,
+                    restart_evidence_json, health_evidence_json, note,
+                    started_at, resolved_at, created_at, updated_at
+                )
+                select feedback_key, 1, batch_id, status,
+                       workbench_task_id, workbench_turn_id, attempt_id,
+                       agent_run_id, commit_sha, test_evidence_json,
+                       restart_evidence_json, health_evidence_json, note,
+                       created_at, resolved_at, created_at, updated_at
+                  from feedback_processing_items
+                 where status in ('processing', 'resolved')
+                   and (
+                       trim(batch_id) <> ''
+                       or trim(workbench_task_id) <> ''
+                       or trim(workbench_turn_id) <> ''
+                       or cast(attempt_id as integer) > 0
+                       or cast(agent_run_id as integer) > 0
+                       or trim(commit_sha) <> ''
+                       or trim(test_evidence_json) not in ('', '{}')
+                       or trim(restart_evidence_json) not in ('', '{}')
+                       or trim(health_evidence_json) not in ('', '{}')
+                       or trim(note) <> ''
+                   )
+                """
+            )
+            db.execute(
+                """
+                update feedback_processing_items
+                   set current_round_id=(
+                       select round.id
+                         from feedback_processing_rounds round
+                        where round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and round.round_number=1
+                   )
+                 where current_round_id=0
+                   and exists (
+                       select 1
+                         from feedback_processing_rounds round
+                        where round.feedback_key=
+                              feedback_processing_items.feedback_key
+                          and round.round_number=1
+                   )
+                """
+            )
 
             db.execute(
                 """

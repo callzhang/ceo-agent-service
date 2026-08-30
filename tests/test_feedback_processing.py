@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+import app.feedback_processing as feedback_processing_module
 from app.feedback_processing import (
     FeedbackImportItem,
     FEEDBACK_PROCESSING_ALREADY_PROCESSING_ERROR,
@@ -109,6 +110,305 @@ def test_feedback_processing_schema_is_additive_and_reopen_is_idempotent(
     tables_after, indexes_after = schema_snapshot()
     assert tables_after == tables_before
     assert indexes_after == indexes_before
+
+
+def test_feedback_round_schema_is_additive_and_idempotent(tmp_path: Path):
+    db_path = tmp_path / "rounds.sqlite3"
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    store = AutoReplyStore(db_path)
+
+    with store._connect() as db:
+        tables = {
+            row[0]
+            for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            )
+        }
+        indexes = {
+            row[0]
+            for row in db.execute(
+                "select name from sqlite_master where type='index'"
+            )
+        }
+        columns = {
+            row[1]
+            for row in db.execute("pragma table_info(feedback_processing_items)")
+        }
+        assert {
+            "feedback_processing_rounds",
+            "feedback_processing_transitions",
+        } <= tables
+        assert "current_round_id" in columns
+        assert {
+            "idx_feedback_processing_rounds_feedback",
+            "idx_feedback_processing_rounds_batch",
+            "idx_feedback_processing_transitions_feedback",
+        } <= indexes
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "select count(*) from feedback_processing_rounds"
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "select count(*) from feedback_processing_transitions"
+        ).fetchone()[0] == 0
+
+
+def test_feedback_round_models_are_strict():
+    round_model = getattr(
+        feedback_processing_module, "FeedbackProcessingRound"
+    )
+    transition_model = getattr(
+        feedback_processing_module, "FeedbackProcessingTransition"
+    )
+
+    round_item = round_model(
+        id=1,
+        feedback_key="feedback-1",
+        round_number=1,
+        batch_id="batch-1",
+        status="processing",
+    )
+    assert round_item.test_evidence == {}
+    assert round_item.reopened_at == ""
+    with pytest.raises(ValidationError):
+        round_model(
+            id=1,
+            feedback_key="feedback-1",
+            round_number="1",
+            batch_id="batch-1",
+            status="processing",
+        )
+    with pytest.raises(ValidationError):
+        round_model(
+            id=1,
+            feedback_key="feedback-1",
+            round_number=1,
+            batch_id="batch-1",
+            status="pending",
+        )
+    with pytest.raises(ValidationError):
+        round_model(
+            id=1,
+            feedback_key="feedback-1",
+            round_number=1,
+            batch_id="batch-1",
+            status="processing",
+            unexpected=True,
+        )
+
+    transition = transition_model(
+        id=1,
+        feedback_key="feedback-1",
+        from_status="",
+        to_status="pending",
+    )
+    assert transition.round_id == 0
+    assert transition.batch_id == ""
+    with pytest.raises(ValidationError):
+        transition_model(
+            id=1,
+            feedback_key="feedback-1",
+            from_status="failed",
+            to_status="pending",
+        )
+    assert FeedbackProcessingItem(feedback_key="feedback-1").current_round_id == 0
+
+
+def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "legacy-rounds.sqlite3"
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    store = AutoReplyStore(db_path)
+    for key, comment in (
+        ("feedback-pending", "pending original"),
+        ("feedback-processing", "processing original"),
+        ("feedback-resolved", "resolved original"),
+    ):
+        store.upsert_feedback_event(
+            key=key,
+            feedback_token=f"token-{key}",
+            comment=comment,
+            original_text=f"source-{key}",
+        )
+
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into feedback_processing_batches (
+                batch_id, status, requested_count, created_at, updated_at, resolved_at
+            ) values
+                ('batch-processing', 'processing', 1, '2026-08-01 01:00:00',
+                 '2026-08-01 02:00:00', ''),
+                ('batch-resolved', 'resolved', 1, '2026-08-02 01:00:00',
+                 '2026-08-02 03:00:00', '2026-08-02 03:00:00')
+            """
+        )
+        db.execute(
+            """
+            update feedback_processing_items
+               set batch_id='batch-processing', status='processing',
+                   workbench_task_id='task-processing',
+                   workbench_turn_id='turn-processing',
+                   attempt_id=11, agent_run_id=21, commit_sha=?,
+                   test_evidence_json='{"pytest":{"exit_code":0}}',
+                   restart_evidence_json='{"before_pid":101,"after_pid":102}',
+                   health_evidence_json='{"ok":true,"status_code":200}',
+                   note='processing note', resolved_at='',
+                   created_at='2026-08-01 01:05:00',
+                   updated_at='2026-08-01 02:05:00'
+             where feedback_key='feedback-processing'
+            """,
+            ("a" * 40,),
+        )
+        db.execute(
+            """
+            update feedback_processing_items
+               set batch_id='batch-resolved', status='resolved',
+                   workbench_task_id='task-resolved',
+                   workbench_turn_id='turn-resolved',
+                   attempt_id=12, agent_run_id=22, commit_sha=?,
+                   test_evidence_json='{"pytest":{"exit_code":0}}',
+                   restart_evidence_json='{"before_pid":201,"after_pid":202}',
+                   health_evidence_json='{"ok":true,"status_code":200}',
+                   note='resolved note',
+                   resolved_at='2026-08-02 03:00:00',
+                   created_at='2026-08-02 01:05:00',
+                   updated_at='2026-08-02 03:05:00'
+             where feedback_key='feedback-resolved'
+            """,
+            ("b" * 40,),
+        )
+        db.execute(
+            """
+            update feedback_events
+               set resolved_at='2026-08-02 03:00:00'
+             where key='feedback-resolved'
+            """
+        )
+        source_before = [
+            tuple(row)
+            for row in db.execute(
+                """
+                select key, comment, original_text, resolved_at
+                  from feedback_events order by key
+                """
+            )
+        ]
+        db.execute("drop table if exists feedback_processing_transitions")
+        db.execute("drop table if exists feedback_processing_rounds")
+        item_columns = {
+            row[1]
+            for row in db.execute("pragma table_info(feedback_processing_items)")
+        }
+        if "current_round_id" in item_columns:
+            db.execute(
+                "alter table feedback_processing_items drop column current_round_id"
+            )
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    migrated = AutoReplyStore(db_path)
+    with migrated._connect() as db:
+        tables = {
+            row[0]
+            for row in db.execute(
+                "select name from sqlite_master where type='table'"
+            )
+        }
+        assert "feedback_processing_rounds" in tables
+        rounds = [
+            dict(row)
+            for row in db.execute(
+                "select * from feedback_processing_rounds order by feedback_key"
+            )
+        ]
+        pointers = {
+            row["feedback_key"]: row["current_round_id"]
+            for row in db.execute(
+                """
+                select feedback_key, current_round_id
+                  from feedback_processing_items order by feedback_key
+                """
+            )
+        }
+        source_after = [
+            tuple(row)
+            for row in db.execute(
+                """
+                select key, comment, original_text, resolved_at
+                  from feedback_events order by key
+                """
+            )
+        ]
+        assert len(rounds) == 2
+        assert {row["feedback_key"] for row in rounds} == {
+            "feedback-processing",
+            "feedback-resolved",
+        }
+        by_key = {row["feedback_key"]: row for row in rounds}
+        processing = by_key["feedback-processing"]
+        assert processing["round_number"] == 1
+        assert processing["batch_id"] == "batch-processing"
+        assert processing["status"] == "processing"
+        assert processing["workbench_task_id"] == "task-processing"
+        assert processing["workbench_turn_id"] == "turn-processing"
+        assert processing["attempt_id"] == 11
+        assert processing["agent_run_id"] == 21
+        assert processing["commit_sha"] == "a" * 40
+        assert processing["test_evidence_json"] == '{"pytest":{"exit_code":0}}'
+        assert processing["restart_evidence_json"] == (
+            '{"before_pid":101,"after_pid":102}'
+        )
+        assert processing["health_evidence_json"] == (
+            '{"ok":true,"status_code":200}'
+        )
+        assert processing["note"] == "processing note"
+        assert processing["started_at"] == "2026-08-01 01:05:00"
+        assert processing["resolved_at"] == ""
+        assert processing["created_at"] == "2026-08-01 01:05:00"
+        assert processing["updated_at"] == "2026-08-01 02:05:00"
+
+        resolved = by_key["feedback-resolved"]
+        assert resolved["round_number"] == 1
+        assert resolved["batch_id"] == "batch-resolved"
+        assert resolved["status"] == "resolved"
+        assert resolved["resolved_at"] == "2026-08-02 03:00:00"
+        assert resolved["created_at"] == "2026-08-02 01:05:00"
+        assert resolved["updated_at"] == "2026-08-02 03:05:00"
+        assert pointers["feedback-pending"] == 0
+        assert pointers["feedback-processing"] == processing["id"]
+        assert pointers["feedback-resolved"] == resolved["id"]
+        assert db.execute(
+            "select count(*) from feedback_processing_transitions"
+        ).fetchone()[0] == 0
+        assert source_after == source_before
+
+        db.execute(
+            "update service_state set value='legacy' where key=?",
+            (store_module.STORE_SCHEMA_VERSION_KEY,),
+        )
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    reinitialized = AutoReplyStore(db_path)
+    with reinitialized._connect() as db:
+        assert db.execute(
+            "select count(*) from feedback_processing_rounds"
+        ).fetchone()[0] == 2
+        assert db.execute(
+            "select count(*) from feedback_processing_transitions"
+        ).fetchone()[0] == 0
+        assert [
+            tuple(row)
+            for row in db.execute(
+                """
+                select key, comment, original_text, resolved_at
+                  from feedback_events order by key
+                """
+            )
+        ] == source_before
 
 
 def test_claim_associate_patch_and_resolve_feedback_batch(tmp_path: Path):

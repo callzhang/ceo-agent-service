@@ -56,6 +56,7 @@ class FeedbackProcessingItem(_StrictProcessingModel):
     """Persisted state and evidence for one feedback event."""
 
     feedback_key: str
+    current_round_id: int = 0
     batch_id: str = ""
     status: Literal["pending", "processing", "resolved"] = "pending"
     workbench_task_id: str = ""
@@ -70,6 +71,46 @@ class FeedbackProcessingItem(_StrictProcessingModel):
     resolved_at: str = ""
     created_at: str = ""
     updated_at: str = ""
+
+
+class FeedbackProcessingRound(_StrictProcessingModel):
+    """One immutable processing attempt for a stable feedback key."""
+
+    id: int
+    feedback_key: str
+    round_number: int
+    batch_id: str
+    status: Literal["processing", "resolved"]
+    workbench_task_id: str = ""
+    workbench_turn_id: str = ""
+    attempt_id: int = 0
+    agent_run_id: int = 0
+    commit_sha: str = ""
+    test_evidence: dict[str, object] = Field(default_factory=dict)
+    restart_evidence: dict[str, object] = Field(default_factory=dict)
+    health_evidence: dict[str, object] = Field(default_factory=dict)
+    note: str = ""
+    started_at: str = ""
+    resolved_at: str = ""
+    reopened_at: str = ""
+    reopen_reason: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class FeedbackProcessingTransition(_StrictProcessingModel):
+    """One append-only feedback processing status transition."""
+
+    id: int
+    feedback_key: str
+    round_id: int = 0
+    batch_id: str = ""
+    from_status: Literal["", "pending", "processing", "resolved"]
+    to_status: Literal["pending", "processing", "resolved"]
+    reason: str = ""
+    workbench_task_id: str = ""
+    workbench_turn_id: str = ""
+    created_at: str = ""
 
 
 class FeedbackImportItem(_StrictProcessingModel):
