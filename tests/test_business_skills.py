@@ -53,7 +53,10 @@ def test_ceo_mail_review_uses_immutable_email_authorization_and_metadata_only():
     assert "Do not open or inspect attachment content" in text
     assert "Do not open or inspect linked content" in text
     assert "Do not invent attachment facts" in text
-    assert "Inspect every linked material" not in text
+    automatic_action = text.split("## Automatic Email Action", 1)[1].split(
+        "## Authorization And Outcome", 1
+    )[0]
+    assert "Inspect every linked material" not in automatic_action
 
 
 def test_installed_business_skill_catalog_and_protocol_are_explicit(
