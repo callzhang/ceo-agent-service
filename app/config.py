@@ -77,19 +77,21 @@ def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
         dir=env_path.parent,
         prefix=f".{env_path.name}.",
     )
+    replaced = False
     try:
-        os.fchmod(fd, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as temporary:
+            os.fchmod(temporary.fileno(), mode)
             temporary.write("\n".join(lines).rstrip() + "\n")
             temporary.flush()
             os.fsync(temporary.fileno())
         os.replace(temporary_name, env_path)
-    except Exception:
-        try:
-            os.unlink(temporary_name)
-        except FileNotFoundError:
-            pass
-        raise
+        replaced = True
+    finally:
+        if not replaced:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
     for key, value in updates.items():
         os.environ[key] = value
     return env_path
