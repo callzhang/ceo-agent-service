@@ -1,5 +1,14 @@
 # Changelog
 
+- 2026-08-30: recover two deterministic background-agent validation failures.
+  Candidate-interview `no_action` now explicitly overrides the 1:1 meeting
+  delivery-target contract, so analysis produces `target=null` and never enters
+  message delivery. Task-agent decisions that select `update_project` without
+  a stable integer project ID now receive one bounded structured correction
+  turn instead of immediately terminalizing the work item; if the ID still
+  cannot be established, the corrected decision can skip without creating a
+  duplicate project.
+
 - 2026-08-30: allow a resolved user-feedback item to be reopened through the
   existing local, unauthenticated Feedback API with an exact operator-supplied
   reason. Reopen returns only the current projection to pending; the next claim

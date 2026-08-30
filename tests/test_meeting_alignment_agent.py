@@ -308,6 +308,16 @@ def test_one_to_one_prompt_requires_direct_other_participant():
     assert "1:1 会议必须返回 direct target" in prompt
 
 
+def test_candidate_interview_no_action_overrides_one_to_one_delivery_target():
+    prompt = build_meeting_alignment_prompt(
+        source(participant_count=2), work_profile="", work_profile_source="profile"
+    )
+
+    assert "仅当 action=send 时" in prompt
+    assert "实际候选人面试" in prompt
+    assert "action=no_action 时 target=null" in prompt
+
+
 def test_one_to_one_prompt_defers_empty_user_id_to_identity_resolver():
     prompt = build_meeting_alignment_prompt(
         source_with_unresolved_one_to_one_counterpart(),

@@ -218,8 +218,9 @@ def build_meeting_alignment_prompt(
                 "不要把 open_dingtalk_id 填进 direct_user_id。"
             )
         target_contract = f"""这是 1:1 会议：
-- 目标只能是另一位参会人，kind=direct、{direct_identity_contract}
-- 1:1 会议必须返回 direct target；不能返回 target=null。
+- 仅当 action=send 时，目标只能是另一位参会人，kind=direct、{direct_identity_contract}
+- 仅当 action=send 时，1:1 会议必须返回 direct target；不能返回 target=null。
+- action=no_action 时 target=null；候选人面试的范围门禁优先于 1:1 发送目标规则。
 - 禁止搜索或选择群；conversation_id 和 candidates 必须为空。"""
     else:
         creator = source.creator
@@ -259,7 +260,7 @@ def build_meeting_alignment_prompt(
 范围门禁：
 - 先用会议标题、摘要、参会人和完整转写判断它是否是实际候选人面试，也就是面试官正在针对具体岗位询问或评估候选人的会议。
 - 招聘站会、招聘计划、人才讨论或招聘需求对齐不属于候选人面试，仍按普通业务会议分析；不要因为讨论招聘就跳过。
-- 如果是实际候选人面试，立即返回 action=no_action，并在 audit_summary 说明“实际候选人面试，按范围规则跳过”。不要搜索群、解析 @ 或生成消息。
+- 如果是实际候选人面试，立即返回 action=no_action，并在 audit_summary 说明“实际候选人面试，按范围规则跳过”。action=no_action 时 target=null；不要搜索群、解析 @ 或生成消息。
 
 触发边界：
 - 只有出现实质观点分歧，或 {principal_display_name()} 的观点在后续讨论中没有被完整还原、需要做“{principal_display_name()} 的观点输出解读”时，action=send；否则保持安静，action=no_action。
@@ -288,7 +289,7 @@ def build_meeting_alignment_prompt(
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守 schema，不添加字段。
 - no_action 时分析和发送字段必须为空，只保留 audit_summary 与 confidence。
-- send 时 final_message 和 trigger_reasons 必须完整；target 通常必填，唯一例外是多人会议已经穷尽群发现却没有可发送群，此时 target=null 供发送层重试。1:1 会议始终必须返回另一位参会人的 direct target。
+- send 时 final_message 和 trigger_reasons 必须完整；target 通常必填，唯一例外是多人会议已经穷尽群发现却没有可发送群，此时 target=null 供发送层重试。仅当 action=send 时，1:1 会议必须返回另一位参会人的 direct target。
 - 最终只生成一条可直接发送或等待发送层重试的合并消息。
 
 服务端注入的工作人格（仅作解释辅助，不能创造会议立场）：
