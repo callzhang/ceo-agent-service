@@ -15,15 +15,11 @@ CHILD_RESTART_DELAY_SECONDS = 1.0
 
 
 def build_child_command(command: str, args: argparse.Namespace) -> list[str]:
-    return [
+    child_command = [
         sys.executable,
         "-m",
         "app.cli",
         command,
-        "--host",
-        args.host,
-        "--port",
-        str(args.port),
         "--db",
         str(args.db),
         "--workspace",
@@ -31,6 +27,9 @@ def build_child_command(command: str, args: argparse.Namespace) -> list[str]:
         "--corpus-dir",
         str(args.corpus_dir),
     ]
+    if command == "audit-web":
+        child_command[4:4] = ["--host", args.host, "--port", str(args.port)]
+    return child_command
 
 
 def stop_children(
@@ -57,6 +56,7 @@ def stop_children(
 def run_supervisor(
     worker_command: Sequence[str],
     audit_web_command: Sequence[str],
+    email_worker_command: Sequence[str],
     *,
     popen: Callable[[Sequence[str]], subprocess.Popen] = subprocess.Popen,
     sleep: Callable[[float], None] = time.sleep,
@@ -76,6 +76,7 @@ def run_supervisor(
     commands = {
         "worker": worker_command,
         "audit-web": audit_web_command,
+        "email-worker": email_worker_command,
     }
     children: dict[str, subprocess.Popen] = {}
 
@@ -120,6 +121,7 @@ def main() -> int:
     return run_supervisor(
         build_child_command("service", args),
         build_child_command("audit-web", args),
+        build_child_command("email-worker", args),
     )
 
 

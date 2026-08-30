@@ -276,6 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
         "run-once",
         "run",
         "service",
+        "email-worker",
         "produce-once",
         "produce",
         "consume-once",
@@ -3417,6 +3418,10 @@ def main() -> None:
             consumer_poll_interval_seconds=args.consumer_poll_interval_seconds,
             runtime_refresher=runtime_refresher,
         )
+    elif args.command == "email-worker":
+        from app.email_worker import run_email_worker
+
+        run_email_worker(settings)
     elif args.command == "produce-once":
         produce_once(settings)
     elif args.command == "produce":

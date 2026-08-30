@@ -2,6 +2,7 @@ import json
 import sqlite3
 import sys
 from datetime import datetime
+from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -3693,6 +3694,55 @@ def test_parser_supports_audit_web_command():
     assert args.port == 8765
     assert args.reload is True
     assert args.reload_interval_seconds == 2
+
+
+def test_parser_supports_email_worker_paths(tmp_path):
+    args = build_parser().parse_args(
+        [
+            "email-worker",
+            "--db",
+            str(tmp_path / "worker.sqlite3"),
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "--corpus-dir",
+            str(tmp_path / "corpus"),
+        ]
+    )
+
+    assert args.command == "email-worker"
+    settings = settings_from_args(args)
+    assert settings.db_path == tmp_path / "worker.sqlite3"
+    assert settings.workspace == tmp_path / "workspace"
+    assert settings.corpus_dir == tmp_path / "corpus"
+    assert not hasattr(args, "host")
+    assert not hasattr(args, "port")
+
+
+def test_main_dispatches_email_worker_with_shared_settings(monkeypatch, tmp_path):
+    module = import_module("app.email_worker")
+    calls = []
+    monkeypatch.setattr(module, "run_email_worker", lambda settings: calls.append(settings))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ceo-agent",
+            "email-worker",
+            "--db",
+            str(tmp_path / "worker.sqlite3"),
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "--corpus-dir",
+            str(tmp_path / "corpus"),
+        ],
+    )
+
+    cli.main()
+
+    assert len(calls) == 1
+    assert calls[0].db_path == tmp_path / "worker.sqlite3"
+    assert calls[0].workspace == tmp_path / "workspace"
+    assert calls[0].corpus_dir == tmp_path / "corpus"
 
 
 def test_cli_does_not_import_audit_web_until_command_needs_it():
