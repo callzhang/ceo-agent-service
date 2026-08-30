@@ -246,7 +246,8 @@ MVP 采用八个互斥训练类别：
 | `subscription` | 用户不希望继续接收的批量订阅 | 尝试退订、归档 |
 | `junk` | 广告、营销、钓鱼、失效通知或无价值邮件 | 移入 Trash |
 
-`unknown` 不是训练类别。它表示分类器的 top-1 结果没有达到该类别的自动处理阈值，属于拒绝自动决策的状态：
+`unknown` 不是训练类别。它表示分类器的 top-1 结果没有达到该类别的自动处理阈值，或该类别当前
+`auto_action_eligible=false`，属于拒绝自动决策的状态：
 
 ```text
 top-1 类别未达到类别阈值，或类别 `auto_action_eligible=false`
