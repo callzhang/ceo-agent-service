@@ -1167,6 +1167,7 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
             "email_action_attempts",
             "email_feedback_requests",
             "email_reply_receipts",
+            "email_reply_dispatch_claims",
     } <= table_names
     assert "reply_tasks" not in table_names
     assert "agent_runs" not in table_names
@@ -1205,7 +1206,7 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
     assert [
         row["version"]
         for row in _fetchall(database, "select version from email_schema_migrations")
-    ] == [7]
+    ] == [8]
 
 
 def test_reopen_rejects_feedback_request_linked_to_another_classification(
@@ -2247,7 +2248,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 7]
+    ] == [2, 8]
 
     EmailStore(database)
 

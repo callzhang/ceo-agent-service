@@ -10,13 +10,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import re
 from typing import Literal, Mapping, Protocol
 
 from app.email_classifier_contracts import EmailAction
-from app.email_store import EmailReplyReceiptConflict, EmailStore
+from app.email_store import (
+    EmailReplyDispatchConflict,
+    EmailReplyReceiptConflict,
+    EmailStore,
+)
 
 
 _UNRESOLVED_ERROR = "email_reply_outcome_unresolved"
+_OPAQUE_PROVIDER_ID = re.compile(r"[A-Za-z0-9._:@<>\[\]{}/+=,!#$%&'*?^-]+")
+_MAX_PROVIDER_IDENTIFIER_BYTES = 256
 
 
 def email_action_identity(
@@ -300,9 +307,10 @@ class EmailReplyDelivery:
 
     def deliver(self, effect: EmailReplyEffect) -> EmailReplyDeliveryResult:
         authorization = self.store.get_email_reply_delivery_authorization(
-            effect.classification_id
+            effect.classification_id,
+            effect.action_plan_id,
         )
-        if not self._is_authorized(effect, authorization):
+        if not self._is_immutable_authorization(effect, authorization):
             return _failed(
                 code="email_reply_authorization_stale",
                 target=effect.action_identity,
@@ -354,6 +362,59 @@ class EmailReplyDelivery:
         if existing is not None:
             return self._complete_from_sent(effect, query, existing, smtp_result_id="")
 
+        if authorization["current_action_plan_id"] != effect.action_plan_id:
+            return _failed(
+                code="email_reply_authorization_stale",
+                target=effect.action_identity,
+                retryable=False,
+            )
+
+        try:
+            claim = self.store.claim_email_reply_dispatch(
+                action_identity=effect.action_identity,
+                effect_digest=effect.effect_digest,
+                action_plan_id=effect.action_plan_id,
+                classification_id=effect.classification_id,
+                account_id=effect.account_id,
+                stable_message_identity=effect.stable_message_identity,
+                outgoing_message_id=message_id,
+            )
+        except (EmailReplyDispatchConflict, ValueError):
+            return _failed(
+                code="email_reply_dispatch_claim_rejected",
+                target=effect.action_identity,
+                retryable=False,
+            )
+        if claim is None:
+            return _failed(
+                code="email_reply_authorization_stale",
+                target=effect.action_identity,
+                retryable=False,
+            )
+        if not claim["acquired"]:
+            receipt = self.store.get_email_reply_receipt(effect.action_identity)
+            if receipt is not None:
+                if (
+                    receipt["outgoing_message_id"] != message_id
+                    or receipt["effect_digest"] != effect.effect_digest
+                ):
+                    return _failed(
+                        code="email_reply_receipt_conflict",
+                        target=effect.action_identity,
+                        retryable=False,
+                    )
+                return EmailReplyDeliveryResult(
+                    status="done",
+                    operation="persisted_receipt",
+                    target=effect.action_identity,
+                    provider_result_id=str(receipt["provider_result_id"]),
+                )
+            return _failed(
+                code=_UNRESOLVED_ERROR,
+                target=effect.action_identity,
+                retryable=True,
+            )
+
         outgoing = OutgoingEmailReply(
             message_id=message_id,
             sender=effect.sender,
@@ -366,27 +427,42 @@ class EmailReplyDelivery:
         try:
             acceptance = self.provider.send_smtp(account, outgoing)
         except TimeoutError:
+            self.store.mark_email_reply_dispatch_uncertain(effect.action_identity)
             return _failed(
                 code=_UNRESOLVED_ERROR,
                 target=effect.action_identity,
                 retryable=True,
             )
         except Exception:
+            self.store.mark_email_reply_dispatch_uncertain(effect.action_identity)
             return _failed(
                 code="email_reply_provider_send_failed",
                 target=effect.action_identity,
                 retryable=True,
             )
+        if not self._safe_provider_identifier(
+            acceptance.provider_result_id,
+            effect=effect,
+            allow_empty=True,
+        ):
+            self.store.mark_email_reply_dispatch_uncertain(effect.action_identity)
+            return _failed(
+                code="email_reply_receipt_rejected",
+                target=effect.action_identity,
+                retryable=False,
+            )
 
         try:
             sent = self.provider.search_sent(account, query)
         except Exception:
+            self.store.mark_email_reply_dispatch_uncertain(effect.action_identity)
             return _failed(
                 code="email_reply_provider_readback_failed",
                 target=effect.action_identity,
                 retryable=True,
             )
         if sent is None:
+            self.store.mark_email_reply_dispatch_uncertain(effect.action_identity)
             return _failed(
                 code="email_reply_provider_readback_mismatch",
                 target=effect.action_identity,
@@ -400,7 +476,7 @@ class EmailReplyDelivery:
         )
 
     @staticmethod
-    def _is_authorized(
+    def _is_immutable_authorization(
         effect: EmailReplyEffect,
         authorization: Mapping[str, object] | None,
     ) -> bool:
@@ -418,10 +494,47 @@ class EmailReplyDelivery:
             and authorization["stable_message_identity"]
             == effect.stable_message_identity
             and authorization["thread_identity"] == effect.thread_identity
-            and authorization["current_action_plan_id"] == effect.action_plan_id
+            and authorization["action_plan_id"] == effect.action_plan_id
             and authorization["action_plan_version"]
             == effect.action_plan_version
             and EmailAction.AUTO_REPLY.value in authorization["actions"]
+        )
+
+    @staticmethod
+    def _safe_provider_identifier(
+        value: str,
+        *,
+        effect: EmailReplyEffect,
+        allow_empty: bool = False,
+    ) -> bool:
+        if not isinstance(value, str):
+            return False
+        if not value:
+            return allow_empty
+        if (
+            value != value.strip()
+            or len(value.encode("utf-8")) > _MAX_PROVIDER_IDENTIFIER_BYTES
+            or _OPAQUE_PROVIDER_ID.fullmatch(value) is None
+        ):
+            return False
+        return not any(
+            accepted_text and accepted_text in value
+            for accepted_text in (effect.subject, effect.body)
+        )
+
+    @staticmethod
+    def _safe_provider_location(value: str, *, effect: EmailReplyEffect) -> bool:
+        if (
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            or len(value.encode("utf-8")) > _MAX_PROVIDER_IDENTIFIER_BYTES
+            or any(ord(character) < 32 or ord(character) > 126 for character in value)
+        ):
+            return False
+        return not any(
+            accepted_text and accepted_text in value
+            for accepted_text in (effect.subject, effect.body)
         )
 
     def _complete_from_sent(
@@ -432,6 +545,28 @@ class EmailReplyDelivery:
         *,
         smtp_result_id: str,
     ) -> EmailReplyDeliveryResult:
+        if (
+            not self._safe_provider_identifier(
+                sent.message_id,
+                effect=effect,
+            )
+            or not self._safe_provider_identifier(
+                sent.provider_result_id,
+                effect=effect,
+            )
+            or not self._safe_provider_location(sent.sent_folder, effect=effect)
+            or not self._safe_provider_identifier(
+                smtp_result_id,
+                effect=effect,
+                allow_empty=True,
+            )
+        ):
+            self.store.mark_email_reply_dispatch_uncertain(effect.action_identity)
+            return _failed(
+                code="email_reply_receipt_rejected",
+                target=effect.action_identity,
+                retryable=False,
+            )
         try:
             operation = sent.match_operation(query)
         except ValueError:
@@ -458,11 +593,13 @@ class EmailReplyDelivery:
                 smtp_acceptance_id=smtp_result_id,
             )
         except (EmailReplyReceiptConflict, ValueError):
+            self.store.mark_email_reply_dispatch_uncertain(effect.action_identity)
             return _failed(
                 code="email_reply_receipt_rejected",
                 target=effect.action_identity,
                 retryable=False,
             )
+        self.store.mark_email_reply_dispatch_done(effect.action_identity)
         return EmailReplyDeliveryResult(
             status="done",
             operation=operation,
