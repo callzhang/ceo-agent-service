@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import workbenchStyles from "../styles.css?raw";
 import { GlobalNav } from "./GlobalNav";
@@ -40,6 +40,21 @@ describe("GlobalNav", () => {
     expect(screen.getByRole("link", { name: "Tasks" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Tasks" })).toHaveClass("active");
     expect(screen.getByRole("link", { name: "Agent" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("brings the active destination into view on narrow navigation", () => {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView });
+
+    try {
+      render(<GlobalNav activePath="/settings" />);
+
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "nearest", inline: "center" });
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", original);
+      else delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
   });
 
   it("centers a consistently sized tab group using the workbench accent", () => {

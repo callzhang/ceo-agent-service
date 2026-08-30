@@ -256,6 +256,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .wechat-scope-heading p { margin-bottom: 0; }
 .wechat-scope-state { flex: 0 0 auto; padding: 5px 8px; border: 1px solid #b9d9ca; border-radius: 999px; color: var(--accent); background: var(--accent-soft); font-size: .72rem; font-weight: 750; white-space: nowrap; }
 .wechat-scope-state.is-dirty { border-color: #e4c889; color: var(--warning); background: #fff8e8; }
+.wechat-scope-state.is-error { border-color: #f2b8b5; color: var(--danger); background: #fff1f0; }
+.wechat-load-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; text-align: left; }
 .wechat-selected-block, .wechat-target-picker { display: grid; gap: 10px; }
 .wechat-section-label { display: flex; align-items: baseline; gap: 8px; color: var(--ink); font-size: .82rem; font-weight: 750; }
 .wechat-section-label span { color: var(--ink-soft); font-size: .75rem; font-weight: 500; }
