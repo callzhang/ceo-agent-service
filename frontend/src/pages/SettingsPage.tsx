@@ -70,22 +70,24 @@ function escapeRegExp(value: string) {
 function highlightRenderedPreview(template: string, preview: string): ReactNode {
   const parts = template.split(/(\{\{[^{}]+\}\})/g);
   if (!parts.some((part) => /^\{\{[^{}]+\}\}$/.test(part))) return preview;
-  const groups: string[] = [];
+  if (!parts.some((part) => part && !/^\{\{[^{}]+\}\}$/.test(part))) return preview;
   const pattern = parts.map((part) => {
     if (/^\{\{[^{}]+\}\}$/.test(part)) {
-      groups.push(part);
       return "([\\s\\S]*?)";
     }
     return escapeRegExp(part);
   }).join("");
-  const match = new RegExp(`^${pattern}$`).exec(preview);
+  const match = new RegExp(pattern).exec(preview);
   if (!match) return preview;
   let groupIndex = 1;
-  return parts.map((part, index) => {
+  const highlighted = parts.map((part, index) => {
     if (!/^\{\{[^{}]+\}\}$/.test(part)) return <span key={index}>{part}</span>;
     const value = match[groupIndex++] || "";
     return <mark key={index} title={`运行时变量 ${part}`}>{value}</mark>;
   });
+  const prefix = preview.slice(0, match.index);
+  const suffix = preview.slice(match.index + match[0].length);
+  return <>{prefix && <span>{prefix}</span>}{highlighted}{suffix && <span>{suffix}</span>}</>;
 }
 
 function InfoPanel({ payload }: { payload: RecordValue }) {

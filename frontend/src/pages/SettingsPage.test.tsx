@@ -117,6 +117,24 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Friday", { selector: "mark" })).toBeInTheDocument();
   });
 
+  it("highlights template substitutions inside audit wrapper previews", async () => {
+    getSettings.mockResolvedValueOnce({
+      item: {
+        section: "audit-rules",
+        fields: { template: "Escalate to {{principal}} only when needed." },
+        preview: {
+          consumer: "Consumer wrapper\n\nEscalate to Alex only when needed.\n\nConsumer footer",
+        },
+      },
+      meta: { snapshot_at: "2026-08-29T00:00:00Z" },
+    });
+    renderSettings("/settings?tab=audit-rules&rule=consumer&view=preview");
+
+    expect(await screen.findByText("Alex", { selector: "mark" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "Consumer rendered preview" })).toHaveTextContent("Consumer wrapper");
+    expect(screen.getByRole("tabpanel", { name: "Consumer rendered preview" })).toHaveTextContent("Consumer footer");
+  });
+
   it("keeps audit rule selection independent from the template or preview view", async () => {
     getSettings.mockResolvedValueOnce({
       item: {
