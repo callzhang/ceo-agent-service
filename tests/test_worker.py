@@ -2176,6 +2176,44 @@ def test_call_dws_suppresses_message_read_system_errors(tmp_path: Path, monkeypa
     assert state["count"] == 3
 
 
+def test_call_dws_suppresses_exhausted_retryable_message_read(tmp_path: Path, monkeypatch):
+    notifications = []
+    exhausted_retryable_read = DwsError(
+        "dws command failed with exit code 1; command=dws chat message list-mentions",
+        retryable_external_dependency=True,
+    )
+    dws = FakeDws([], {})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    monkeypatch.setattr(
+        "app.worker.send_macos_notification",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    def fail_read():
+        raise exhausted_retryable_read
+
+    assert (
+        worker._call_dws(
+            "read_mentioned_messages",
+            fail_read,
+            notify_title="CEO read mentioned messages failed",
+            default=[],
+        )
+        == []
+    )
+
+    assert notifications == []
+    assert worker.store.count_errors() == 0
+    state = json.loads(
+        worker.store.get_service_state(
+            "dws_transient_error_count:read_mentioned_messages"
+        )
+        or "{}"
+    )
+    assert state["count"] == 1
+
+
 def test_call_dws_records_only_persistent_sqlite_lock(tmp_path: Path, monkeypatch):
     dws = FakeDws([], {})
     codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
