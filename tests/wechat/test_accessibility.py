@@ -1,4 +1,5 @@
 import sys
+import time
 import threading
 from types import SimpleNamespace
 
@@ -673,6 +674,44 @@ def test_preflight_requires_a_usable_accessibility_window(monkeypatch):
     monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
 
     assert runner.preflight() == "wechat_window_unavailable"
+
+
+def test_preflight_activates_wechat_before_reporting_window_unavailable(monkeypatch):
+    app = object()
+    ax_reads = iter([[], [object()]])
+    activated = []
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrusted=lambda: True,
+            AXUIElementCreateApplication=lambda _pid: app,
+            AXUIElementCopyAttributeValue=lambda _app, _attribute, _unused: (
+                0,
+                next(ax_reads),
+            ),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "Quartz",
+        SimpleNamespace(
+            CGSessionCopyCurrentDictionary=lambda: {},
+            CGWindowListCopyWindowInfo=lambda _options, _window_id: [
+                {"kCGWindowOwnerPID": 500}
+            ],
+            kCGWindowListOptionAll=1,
+            kCGNullWindowID=0,
+        ),
+    )
+    runner = MacWechatAccessibility()
+    monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
+    monkeypatch.setattr(runner, "_wechat_app_ref", lambda _pid: "wechat-app")
+    monkeypatch.setattr(runner, "_reactivate", lambda app_ref: activated.append(app_ref))
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    assert runner.preflight() == "ready"
+    assert activated == ["wechat-app"]
 
 
 def test_preflight_reports_ready_when_wechat_has_accessibility_window(monkeypatch):

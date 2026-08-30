@@ -445,11 +445,25 @@ class MacWechatAccessibility:
     @staticmethod
     def _reactivate(app_ref):
         try:
-            from AppKit import NSApplicationActivateIgnoringOtherApps
+            from AppKit import (
+                NSApplicationActivateAllWindows,
+                NSApplicationActivateIgnoringOtherApps,
+            )
             if app_ref is not None:
-                app_ref.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+                app_ref.activateWithOptions_(
+                    NSApplicationActivateAllWindows
+                    | NSApplicationActivateIgnoringOtherApps
+                )
         except Exception:
             pass
+
+    @staticmethod
+    def _wechat_app_ref(pid):
+        try:
+            from AppKit import NSRunningApplication
+            return NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        except Exception:
+            return None
 
     def _ax(self):
         import time
@@ -480,17 +494,21 @@ class MacWechatAccessibility:
         pid = self._wechat_pid()
         if not pid:
             return "wechat_not_running"
-        for w in Quartz.CGWindowListCopyWindowInfo(
-            Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID
-        ):
-            if w.get("kCGWindowOwnerPID") == pid:
-                app = AXUIElementCreateApplication(pid)
+        app = AXUIElementCreateApplication(pid)
+        for attempt in range(2):
+            for w in Quartz.CGWindowListCopyWindowInfo(
+                Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID
+            ):
+                if w.get("kCGWindowOwnerPID") != pid:
+                    continue
                 error, windows = AXUIElementCopyAttributeValue(app, "AXWindows", None)
                 if error == 0 and windows:
                     return "ready"
-                # A composited window without an AX tree cannot receive a
-                # verified target selection. Fail before consuming a retry.
-                return "wechat_window_unavailable"
+                break
+            if attempt == 0:
+                self._reactivate(self._wechat_app_ref(pid))
+                import time
+                time.sleep(1.0)
         return "wechat_window_unavailable"
 
     def request_accessibility(self) -> str:
