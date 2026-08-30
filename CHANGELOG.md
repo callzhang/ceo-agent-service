@@ -1,5 +1,15 @@
 # Changelog
 
+- 2026-08-30: allow a resolved user-feedback item to be reopened through the
+  existing local, unauthenticated Feedback API with an exact operator-supplied
+  reason. Reopen returns only the current projection to pending; the next claim
+  creates a new immutable batch and processing round, while prior associations
+  and receipts remain readable and cannot satisfy the new round. Resolution
+  now accepts only current-round evidence proving the implementation, tests,
+  commit ancestry, service restart and new PID, health, authoritative zero
+  processing/failed/retryable backlog, and persisted API readback. The change
+  adds no new Agent workflow or remote-authentication surface.
+
 - 2026-08-29: ordinary Consumer and Audit turns now receive the configured
   work profile, and profile changes rotate stale Consumer sessions. Audit asks
   Consumer for a replacement when a safe receipt-only candidate does not

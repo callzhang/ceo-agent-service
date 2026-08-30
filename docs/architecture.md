@@ -71,6 +71,30 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 下切换查看多个底层 `agent_runs`。因此“当前结果可以被修正”与“执行历史不可抹除”
 可以同时成立：列表显示最新结论，详情保留每一次 run 的真实轨迹。
 
+### 用户反馈处理投影与重新打开
+
+用户反馈处理使用稳定的 `pending -> processing -> resolved` 当前投影；
+这组状态与普通 Agent 任务的 `pending -> running -> done` 不是同一状态机。
+`pending` 表示未领取，`processing` 表示已被一个批次原子领取，`resolved`
+表示当前处理轮次已用完整回执结案。页面上的“未完成”是
+`{pending, processing}` 的合集，不增加第四个存储状态。
+
+重新打开是唯一合法的 `resolved -> pending` 转换。调用者通过现有本地
+Feedback API 提交一个不为空的确切 `reason`；服务不生成、重写或补默认理由。
+重新打开只清除当前处理投影，不创建新轮次，也不直接进入
+`processing`。下一次原子 claim 才创建新批次和新的不可变处理轮次。
+历史批次、轮次、Workbench 关联和回执仍可读且不得被覆盖；证据写入和
+结案只能作用于当前 `processing` 轮次，旧轮次的证据不能满足新一轮。
+
+Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 Agent
+共用；它不对公网暴露，也不增加 feedback 专用鉴权。完成一个当前轮次时，
+后端必须从当前轮次回执中同时确认：代码已实现，测试成功，提交存在且是
+本地 `main` 的祖先，`com.ceo-agent-service.main` 已重启且 PID 实际变更，
+本地健康接口返回 HTTP 200 和 `ok=true`，权威实时的 `processing` / `failed` /
+`retryable` 数量都是零，并且状态和证据已经通过 API 持久化后回读一致。
+
+该能力不在 Agent 页面增加第二套流程，也不使用模型合成重新打开理由或新回执。
+
 ### Email Agent task 映射
 
 Email 分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。如果当前计划没有
