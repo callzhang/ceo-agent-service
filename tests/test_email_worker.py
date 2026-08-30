@@ -70,22 +70,41 @@ def test_startup_loads_enabled_accounts_and_active_model_before_ready_and_thread
     ]
 
 
-@pytest.mark.parametrize("failure", ["empty_accounts", "model_failure"])
-def test_startup_failure_does_not_report_ready_or_start_threads(failure):
+def test_startup_without_enabled_accounts_idles_without_threads():
     module = _module()
     output = StringIO()
     started = []
     events = []
     dependencies = _dependencies(
         events,
-        accounts=() if failure == "empty_accounts" else (
-            {"account_id": "account-1", "enabled": True},
-        ),
+        accounts=(),
     )
-    if failure == "model_failure":
-        dependencies.load_active_model = lambda: (_ for _ in ()).throw(
-            RuntimeError("active model missing")
-        )
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=lambda **kwargs: started.append(kwargs),
+        wait=lambda: events.append("wait"),
+        output=output,
+    )
+
+    assert events == ["accounts", "wait"]
+    assert output.getvalue().strip() == "email-worker idle accounts=0"
+    assert started == []
+
+
+def test_startup_failure_does_not_report_ready_or_start_threads():
+    module = _module()
+    output = StringIO()
+    started = []
+    events = []
+    dependencies = _dependencies(
+        events,
+        accounts=({"account_id": "account-1", "enabled": True},),
+    )
+    dependencies.load_active_model = lambda: (_ for _ in ()).throw(
+        RuntimeError("active model missing")
+    )
 
     with pytest.raises(module.EmailWorkerStartupError):
         module.run_email_worker(

@@ -784,7 +784,9 @@ def run_email_worker(
         bootstrap = dependencies or dependency_builder(settings)
         accounts = tuple(bootstrap.load_enabled_accounts())
         if not accounts:
-            raise EmailWorkerStartupError("no enabled email accounts")
+            print("email-worker idle accounts=0", file=output, flush=True)
+            (wait or Event().wait)()
+            return
         active_model = bootstrap.load_active_model()
         if active_model is None:
             raise EmailWorkerStartupError("no active email classifier")
