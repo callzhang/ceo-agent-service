@@ -1,291 +1,463 @@
-# Email Unsubscribe Branch Integration Design
+# Consumer-Direct Email Unsubscribe Integration Design
 
 **Date:** 2026-08-30
-**Status:** Approved design, pending written review
-**Target repository:** `/Users/derek/Documents/Projects/ceo-agent-service`
+
+**Status:** Approved design, pending written spec review
+
+**Repository:** `/Users/derek/Documents/Projects/ceo-agent-service`
+
+**Feature branch:** `codex/email-ceo-agent-integration`
+
 **Target branch:** `main`
-**Runtime code tip:** `eb49420e46876a95b65b7346fc41dfefe1220ac1`
 
 ## 1. Purpose
 
-Integrate the complete audited automatic email-unsubscribe implementation into
-`main` without weakening the existing mail-review boundaries, omitting later
-hardening fixes, rewriting the implementation history, or including unrelated
-uncommitted work from the shared feature checkout.
+Complete automatic email unsubscribe with one simple runtime owner:
 
-The integration covers automatic `channel=email` actions only. It does not
-authorize arbitrary link browsing, attachment inspection, or replies outside
-the immutable Email `ActionPlan`.
+```text
+Email classifier nominates a subscription candidate
+    -> Consumer Agent reads the complete email and thread
+    -> Consumer decides whether the authorized unsubscribe should run
+    -> Consumer invokes one narrow headless-browser unsubscribe operation
+    -> service stores the terminal page text and outcome
+```
 
-## 2. Current Git State
+An unsubscribe task does not enter the Audit Agent feedback/revision loop. This
+is an explicitly approved exception for `channel=email` + `unsubscribe` only.
+It does not change the audit lifecycle for replies, messages, approvals, or any
+other external action.
 
-`421c3fb47c026aaef09fbde2cbd06a2739922dfb` (`fix: preserve mail review skill
-boundaries`) is already an ancestor of both `main` and the runtime code tip. Its
-`tests/test_mail_review_skill.py` contract remains unchanged through the feature
-tip.
+The design replaces the earlier step-by-step audited unsubscribe proposal in
+this document. Existing audited implementation history remains preserved in
+Git and existing durable rows remain readable, but the production path defined
+here is Consumer-direct.
 
-The remaining feature range is one linear chain:
+## 2. Current Truth
 
-1. `02ae0f72` — `fix: fence automatic email reply delivery`
-2. `d768026d` — `feat: automate audited email unsubscribe flows`
-3. `dc2a0359` — `fix: complete audited unsubscribe recovery`
-4. `36bc37a1` — `fix: prevent uncertain unsubscribe replay`
-5. `76ab5720` — `fix: harden audited unsubscribe execution`
-6. `1b24d2b7` — `fix: audit incremental unsubscribe steps`
-7. `eb49420e` — `fix: bind audited unsubscribe controls`
+The branch contains a mature unsubscribe execution core, browser tests, mail
+review boundaries, and an independently supervised Email worker. The current
+unsubscribe core still expects Audit-accepted operations and the Email worker
+does not yet connect a Consumer task to a complete production unsubscribe run.
 
-`76ab5720` is not a standalone integration unit: it depends on the earlier
-implementation and recovery commits. It is also not the final state because two
-later audit/control-binding fixes follow it.
+The production runtime currently has no active email classifier registry, no
+production classifier metrics, no saved email classifications, and no category
+configuration rows. Therefore production F1, precision, and recall are `N/A`.
 
-## 3. Decision
+The only available classifier quality evidence is an experiment on 73
+provisionally labelled emails:
 
-Merge the complete runtime range through `eb49420e`, together with the approved
-docs-only design and implementation-plan commits that follow it, using a normal
-`--no-ff` merge from a clean `main` worktree. No later runtime-code commit is in
-scope unless a failing gate reveals a defect and the user approves the resulting
-design change.
+- about 65.75% aggregate accuracy;
+- about 65.77% Macro F1;
+- no durable, trustworthy aggregate precision or recall report;
+- no trustworthy `subscription` precision, recall, or F1 because the category
+  support is too small;
+- threshold experiments reached at most about 84% automatic precision on
+  limited provisional slices, below the automatic-action bar.
 
-Do not:
+These numbers cannot authorize model-only unsubscribe.
 
-- cherry-pick `421c3fb4` again;
-- cherry-pick only `76ab5720`;
-- omit `1b24d2b7` or `eb49420e`;
-- squash the seven-commit feature chain;
-- rebase or otherwise rewrite the feature history;
-- merge from the dirty shared feature checkout;
-- stage or commit unrelated API, Task, frontend, TODO-evidence, Email-page, or
-  worker WIP.
+## 3. Decisions and Alternatives
 
-The normal merge preserves the reviewed dependency order and makes the source
-commits traceable. A merge commit provides a single integration boundary without
-discarding the underlying audit history.
+### Selected: classifier recall plus Consumer confirmation
 
-## 4. Alternatives Rejected
+The classifier only narrows the candidate set. Consumer reads the complete
+email and thread, makes the final semantic decision, and invokes the bounded
+unsubscribe capability. No Audit Agent is created for that task.
 
-### Cherry-pick the chain
+This preserves automation while avoiding both weak classifier-only decisions
+and the cost of sending every incoming email to Consumer.
 
-Cherry-picking all seven commits would reproduce nearly the same tree while
-changing commit identities and increasing the chance of omission or ordering
-errors. There is no compensating benefit because the feature is already a
-linear descendant of the mail-review boundary commit.
+### Rejected: classifier-only execution
 
-### Squash the chain
+Current production metrics do not exist and provisional quality is too low.
+A high top-1 score is not calibrated proof that Derek no longer wants a
+subscription.
 
-Squashing would hide which review round added recovery, uncertain-effect
-protection, incremental audit, and control binding. That history is valuable for
-an external-write workflow and should remain inspectable.
+### Rejected: send every email to Consumer
 
-### Stop at `76ab5720`
+This would remove the classifier dependency but would run an Agent on every
+message, increasing cost and latency while asking Consumer to repeatedly reject
+ordinary mail.
 
-Stopping at the reported Task 11 hardening commit would omit later fixes that
-limit each continuation to one appended operation and bind accepted operations
-to exact discovered controls. The accepted product scope is the complete
-runtime, not an earlier compatible subset.
+## 4. Scope
 
-## 5. Isolation and Worktrees
+In scope:
 
-The shared checkout on `codex/email-ceo-agent-integration` contains unrelated
-uncommitted work. It is evidence and source state, not an integration workspace.
+- cold-start and post-validation unsubscribe trigger gates;
+- one Consumer-owned decision and execution turn;
+- one narrow task-bound unsubscribe operation;
+- RFC one-click and ordinary HTTPS unsubscribe pages;
+- a dedicated persistent headless browser profile for ordinary pages;
+- bounded terminal page/response text as the user-facing result;
+- deterministic outcomes for login, CAPTCHA, payment, missing entry, and
+  browser failures;
+- task idempotency, restart behavior, tests, service restart, and readback;
+- the explicitly scoped architecture-document exception to the normal
+  Consumer/Audit lifecycle.
 
-Use two clean worktrees:
+Out of scope:
 
-1. A temporary verification worktree detached at exact runtime code tip
-   `eb49420e`.
-   Run pre-merge tests there so results cannot accidentally include shared WIP.
-2. The existing clean runtime worktree
-   `/Users/derek/Documents/Projects/ceo-agent-service/.worktrees/runtime-main`
-   on `main`. Fetch, verify it matches `origin/main`, perform merge preflight,
-   create the merge commit, run post-merge tests, push, and deploy from there.
+- use of Derek's main Chrome profile or its complete cookie store;
+- password, password-manager, MFA, QR-code, or CAPTCHA automation;
+- arbitrary web browsing from email content;
+- automatic `mailto:` unsubscribe messages;
+- attachment content processing;
+- automatic replies or any non-unsubscribe external effect;
+- deletion of historical audit/effect rows or destructive schema cleanup;
+- real unsubscribe-site access during tests or deployment verification.
 
-Before any merge, record:
+## 5. Classification and Trigger Gate
 
-- runtime code tip SHA;
-- local and remote `main` SHA;
-- merge base;
-- clean status of both integration worktrees;
-- the exact commit range and changed-file list;
-- whether the runtime code tip is still a descendant of `76ab5720` and
-  `421c3fb4`.
+### 5.1 Category meaning
 
-## 6. Functional Boundaries to Preserve
+`subscription` means an unwanted bulk subscription that Derek does not want to
+continue receiving. It does not mean every newsletter or every email containing
+the word `unsubscribe`.
 
-### Interactive DingTalk and Lark mail review
+The classifier never constructs or selects a private unsubscribe URL. It only
+returns category, confidence, alternatives, and model version.
 
-- Resolve the full original message or thread through the corresponding mail
-  Skill.
-- Read linked documents only through the matching document/table/drive Skill.
-- Require explicit current-request authorization before replying.
-- Do not confuse linked material with an email attachment.
+### 5.2 Cold start
 
-### Automatic `channel=email` actions
+Until all model-readiness gates pass, only an explicit user-confirmed
+`subscription` classification may create an unsubscribe `ActionPlan`.
+Model-predicted subscription items remain in Email pending feedback and cause no
+external action.
 
-- The immutable `ActionPlan` is the only action authorization.
-- Attachments remain metadata-only; `image_paths=()` stays authoritative.
-- General links in message text are not browsing authorization.
-- Only an authorized `unsubscribe` action may use the audited unsubscribe
-  capability.
-- Consumer proposes; Audit reviews and is the only role allowed to execute an
-  accepted external effect.
+### 5.3 Automatic-candidate readiness
 
-### Audited unsubscribe
-
-- Ordinary browser flows begin with exactly `OPEN_ENTRY`; page controls are not
-  guessed or precomputed.
-- Authenticated RFC one-click is allowed only with typed provider evidence that
-  valid DKIM covers both required headers. It is an isolated POST with the exact
-  RFC body, never a GET and never a mailbox-cookie request.
-- Each continuation is an append-only extension of the durable accepted prefix
-  with exactly one new operation.
-- The action, plan, classification, account, message, thread, entry, origin
-  policy, and already accepted operation prefix remain bound across
-  continuations.
-- Only the newly accepted operation executes; accepted prefix operations never
-  replay.
-- Initial runs and retries reconcile terminal page/provider/mail evidence before
-  another write.
-- A terminated or uncertain in-flight effect is reconciliation-only until exact
-  effect-bound terminal evidence exists.
-- Full unsubscribe URLs and query tokens never enter proposals, journals,
-  History, status, or errors. Durable records contain opaque references,
-  redacted step kinds/states, fixed error codes, and terminal receipts.
-- Login, CAPTCHA, payment, and absence of a reliable entry are skipped business
-  outcomes. Browser runtime and provider authentication failures use the
-  existing failure/retry/Attention lifecycle.
-
-No new top-level task status, user-confirmation step, audit policy, or general
-browser capability is introduced by the integration.
-
-## 7. Verification Strategy
-
-Historical receipts for `421c3fb4` and `76ab5720` are useful context but cannot
-prove the final runtime code tip because `1b24d2b7` and `eb49420e` materially
-change
-runtime behavior. All required tests must run fresh against exact `eb49420e`,
-then the integration-critical subset must run again against the merge commit.
-
-### Pre-merge verification at exact runtime code tip
-
-Run:
-
-- `tests/test_mail_review_skill.py`
-- `tests/test_email_reply_delivery.py`
-- `tests/test_email_store.py`
-- `tests/test_email_task_adapter.py`
-- `tests/test_email_unsubscribe.py`
-- `tests/browser/test_email_unsubscribe_browser.py`
-- all `tests/test_email*.py`
-
-Browser tests must use only the loopback test server. They must not access a
-real mailbox, unsubscribe site, or external account.
-
-Also run:
-
-- scoped Ruff for every Python file changed by the feature range;
-- `git diff --check` for the feature range;
-- `git show --check` for each feature commit or the verified range.
-
-### Merge preflight
-
-Before changing `main`:
-
-- fetch `origin`;
-- verify `runtime-main` is clean and not behind or diverged from `origin/main`;
-- inspect the three-way merge result and changed-file overlap;
-- stop if any conflict requires a product or policy choice rather than making an
-  implicit resolution.
-
-### Post-merge verification
-
-At minimum rerun:
-
-- `tests/test_mail_review_skill.py`;
-- `tests/test_email_reply_delivery.py`;
-- `tests/test_email_store.py`;
-- `tests/test_email_task_adapter.py`;
-- `tests/test_email_unsubscribe.py`;
-- `tests/browser/test_email_unsubscribe_browser.py`;
-- all `tests/test_email*.py`;
-- scoped Ruff;
-- `git diff --check` and `git show --check`.
-
-The merge is rejected if a test fails because of the integration. Pre-existing
-warnings must be identified as pre-existing rather than silently ignored.
-
-## 8. Merge, Push, and Deployment
-
-After all pre-merge gates pass:
-
-1. Merge the integration branch into `main` with `--no-ff` and a traceable merge
-   message. Verify its runtime code ancestry ends at `eb49420e`; commits after
-   that SHA must be approved design/plan documentation only unless a separately
-   approved defect fix was required.
-2. Run the post-merge gates.
-3. Push `main` without force.
-4. Verify `origin/main` resolves to the merge commit.
-5. Wait for actively claimed reply tasks, work-summary inputs, and meeting jobs
-   to reach a resumable terminal state before restarting.
-6. Restart `com.ceo-agent-service.main`.
-7. Verify a new supervisor PID, web listener PID, launchd state, and HTTP 200
-   from the local health endpoint.
-8. Read back queue state and persisted external-effect state. Confirm that no
-   new failed, stuck, duplicate, or uncertain Email operation was introduced.
-
-The integration does not access a real mailbox or unsubscribe website as a
-deployment test. Runtime activation is established through process/readback,
-configuration, loopback tests, and durable queue/effect inspection.
-
-## 9. Existing Production Backlog
-
-The repository currently has known historical failures unrelated to this Email
-feature, including `work_summary_inputs#13908` and
-`meeting_alignment_jobs#1529`. This integration must neither replay nor clear
-them.
-
-Report two states separately:
-
-- **Email integration state:** code merged, tests passed, pushed, new runtime
-  loaded, health/readback successful, and no new Email failure or uncertain
-  effect introduced.
-- **Global service state:** remains degraded or incomplete while any unresolved
-  failed or processing backlog remains.
-
-Do not describe the whole service or the overarching finish-branch goal as
-complete until the repository's global backlog requirement is genuinely met.
-
-## 10. Failure Handling
-
-- If pre-merge tests fail, fix on a dedicated feature branch/worktree with a
-  regression test; do not patch the merge worktree or weaken a test.
-- If merge preflight conflicts, classify every conflict by business meaning and
-  present any policy choice for approval before resolving it.
-- If post-merge tests fail, do not push or deploy the merge.
-- If push fails or remote advances, fetch and reconcile with a normal merge;
-  never force-push.
-- If restart occurs but health/readback fails, keep the integration incomplete
-  and diagnose the runtime rather than relying on the new PID alone.
-- If a new Email external effect is uncertain, reconcile durable receipts and
-  provider state read-only; never resend merely to clear a queue.
-
-## 11. Completion Criteria
-
-The Email unsubscribe branch integration is accepted only when all of the
+Model predictions may nominate automatic candidates only when all of the
 following are true:
 
-- `main` contains the complete seven-commit feature range through `eb49420e`;
-- `421c3fb4` remains the effective mail-review boundary foundation;
-- the exact merge commit is pushed to `origin/main`;
-- pre-merge and post-merge test matrices pass;
-- loopback browser tests prove the multi-step audited flow without external
-  access;
-- scoped Ruff and Git whitespace/object checks pass;
-- the running launchd service uses the merged `runtime-main` checkout and has a
-  new verified PID;
-- the health endpoint returns HTTP 200;
-- no new Email failed, stuck, duplicate, or uncertain effect exists;
-- shared uncommitted WIP remains unstaged and uncommitted;
-- the temporary verification worktree is removed after its results are captured;
-- known unrelated production failures are reported truthfully and not altered.
+- an active model and immutable metadata exist;
+- the time-ordered validation report includes precision, recall, and F1 for
+  `subscription`;
+- validated `subscription` precision is at least 0.95;
+- `subscription` validation support is at least 20;
+- the configured category threshold exactly matches the threshold evaluated by
+  the promoted model;
+- the category metadata says `auto_action_eligible=true`;
+- the individual prediction reaches the configured `subscription` threshold.
 
-The wider finish-branch goal is complete only when its separate feedback
-resolution and global backlog gates are also satisfied.
+Precision is the action gate because a false positive is more costly than a
+false negative. Recall and F1 must still be recorded and shown for diagnosis,
+but they are not independent authorization gates in v1.
+
+Changing the threshold after training makes eligibility stale and returns the
+category to pending feedback until a new model is validated and promoted.
+
+### 5.4 Reliable entry gate
+
+An unsubscribe task additionally requires one reliable entry:
+
+1. authenticated RFC `List-Unsubscribe-Post: List-Unsubscribe=One-Click` with
+   the required signed headers;
+2. an HTTPS entry in `List-Unsubscribe`;
+3. an HTTPS link whose visible label or immediate context explicitly means
+   unsubscribe/退订.
+
+`mailto:` alone is not executable in v1. No component may guess an unsubscribe
+URL. Private URLs and query tokens remain runtime-private and durable records
+use opaque references.
+
+## 6. Consumer Contract
+
+The existing immutable `ActionPlan` remains the only action authorization.
+Consumer cannot add `unsubscribe`, switch to another email, or broaden the plan
+to another action.
+
+Consumer must:
+
+1. read the complete current email and relevant thread through the Email
+   context source;
+2. read the installed mail-review Skill;
+3. confirm that the message is an unwanted bulk subscription rather than work,
+   security, billing, order, account, or personal mail;
+4. consider prior replies and thread interaction before deciding;
+5. return `no_action` when the evidence does not support unsubscribe;
+6. when it does support unsubscribe, invoke the single task-bound operation and
+   report the operation's structured outcome and result text without rewriting
+   or summarizing it.
+
+The operation surface accepts task identity and current execution generation,
+not a raw URL. The service resolves the ActionPlan, account/message/thread
+identity, private entry, and browser policy internally. The implementation
+exposes this as one local CLI operation available only to an actively claimed
+`channel=email` unsubscribe task. Its public arguments are the task ID and
+current execution generation; the worker DB path comes from the service's
+existing runtime configuration. It is not a general browser tool.
+
+Consumer owns both the decision and execution turn. The service-provided
+operation performs low-level browser navigation, bounded control selection,
+idempotency, and persistence. No Audit run, audit feedback, or revision loop is
+created.
+
+## 7. Headless Browser Runtime
+
+Every production unsubscribe browser is launched with `headless=true`. The
+operation must not open the system browser, control the in-app browser, bring
+Chrome to the foreground, create a visible window, or change the user's current
+tabs.
+
+### 7.1 RFC one-click
+
+Authenticated RFC one-click runs in an isolated temporary context:
+
+- POST only;
+- exact body `List-Unsubscribe=One-Click`;
+- no cookies, even if the dedicated profile has cookies for the domain;
+- no GET substitution;
+- terminal HTTP response required;
+- bounded response body recorded as result text when present.
+
+An empty successful response is represented by deterministic protocol text such
+as `List-Unsubscribe POST returned HTTP 204`; this is application-generated
+protocol evidence, not an LLM summary.
+
+### 7.2 Ordinary HTTPS pages
+
+Ordinary pages use a dedicated persistent profile under the service runtime
+directory, for example:
+
+```text
+<runtime-dir>/email-browser-profile/
+```
+
+The directory is owner-only. A profile lock serializes access so two consumers
+cannot launch the same persistent profile concurrently. Each task launches
+headless Chromium with that directory, performs the bounded flow, closes the
+page/context/browser, and releases the lock.
+
+The dedicated profile may retain its own cookies and local storage. It must not
+point at Chrome's default User Data directory, copy the complete main profile,
+attach to the user's active Chrome session, or import the user's full cookie
+store.
+
+Navigation remains limited to the reliable entry origin and explicitly allowed
+redirect origins. Popups, downloads, new windows, service workers, private
+network targets, metadata endpoints, embedded credentials, and unapproved
+origins are blocked.
+
+### 7.3 Existing session versus login form
+
+If the dedicated profile already has a valid site session, Consumer may use
+that session and continue the unsubscribe flow.
+
+If the site asks for a password, MFA, QR code, account selection that cannot be
+resolved from the existing session, CAPTCHA, or a new authorization grant, the
+operation stops. It does not inspect password managers, request secrets, reuse
+the main Chrome session, or show an interactive browser.
+
+## 8. Result Text Contract
+
+The result shown to the user is the browser's terminal visible body text or the
+RFC response body. It is not an LLM-written success summary.
+
+Before persistence, the application:
+
+- normalizes line endings and removes control characters;
+- applies the existing sensitive-value redaction rules;
+- removes full private unsubscribe URLs, query tokens, cookie values,
+  credentials, and local filesystem paths;
+- preserves the source language and meaningful line breaks;
+- truncates UTF-8 output to at most 16 KiB;
+- stores a digest of the normalized full observation for retry comparison.
+
+The public result contains at least:
+
+```json
+{
+  "outcome": "unsubscribed",
+  "result_text": "You have been successfully unsubscribed.",
+  "completed": true
+}
+```
+
+No screenshot, HTML snapshot, DOM dump, cookie, or raw private URL is required.
+
+## 9. Outcomes and Task Projection
+
+The operation uses these business outcomes:
+
+| Outcome | Task projection | Automatic retry | User presentation |
+| --- | --- | --- | --- |
+| `unsubscribed` | `done` | no | 已退订 + result text |
+| `already_unsubscribed` | `done` | no | 已经退订 + result text |
+| `consumer_no_action` | `done` | no | Consumer 判断不应退订 |
+| `no_reliable_entry` | `done` with skipped result | no | 未退订：没有可信入口 |
+| `login_required` | `done` with skipped result | no | 未退订：需要登录 |
+| `captcha` | `done` with skipped result | no | 未退订：需要验证码 |
+| `payment_required` | `done` with skipped result | no | 未退订：需要付费操作 |
+| `browser_error` | retry, then `failed` | bounded | Attention after terminal failure |
+| `provider_auth_error` | retry, then `failed` | bounded | Attention after terminal failure |
+| `outcome_unresolved` | retry, then `failed` | bounded | Attention after terminal failure |
+
+The service does not introduce `discard` or `discarded`. Skipped outcomes are
+successful completion of a bounded attempt with no external effect, so the
+queue task is `done` and the typed result retains the skipped reason.
+
+Login, CAPTCHA, payment, and missing entry appear in Email processed results.
+They do not create Attention and do not notify or interrupt the user.
+
+## 10. Idempotency and Recovery
+
+Before any write, the operation checks an existing terminal receipt for the
+same ActionPlan/action/account/message/thread/entry identity. A terminal success
+returns the existing result and does not reopen the page.
+
+For ordinary pages, a retry first loads the current page and checks for a
+terminal already-unsubscribed or success state before clicking. It never blindly
+replays a click after an interrupted operation.
+
+Persist only the minimal external-effect facts required by the repository
+contract:
+
+- operation `unsubscribe`;
+- opaque target reference;
+- stable receipt/result identifier when available;
+- task identity and execution generation;
+- outcome, bounded result text, and observation digest;
+- started and completed timestamps.
+
+The new runtime does not require Audit proposals, per-step Audit acceptance, or
+Audit continuations. Existing historical claim/effect/continuation records are
+preserved and remain readable; removing old tables or rewriting history is out
+of scope.
+
+## 11. Architecture and Documentation Exception
+
+`docs/architecture.md` and `docs/runtime-mechanism.md` currently state that all
+tasks use Consumer -> Audit -> feedback/revision. Implementation must add one
+explicit exception:
+
+```text
+channel=email + ActionPlan action=unsubscribe
+    -> Consumer decision and task-bound execution
+    -> no Audit Agent
+```
+
+The lifecycle/policy documentation and its contract tests must be changed in a
+separate, clearly named commit from the browser/runtime implementation, as
+required by the repository's explicit audit-policy rule. No shared helper may
+silently weaken Audit requirements for other task or action types.
+
+## 12. Implementation Boundaries
+
+The implementation plan may reuse and simplify existing components, but the
+resulting responsibilities must be clear:
+
+- classifier/store: candidate, metrics, readiness, and immutable ActionPlan;
+- Email worker: scan, claim, Consumer orchestration, result projection;
+- Consumer adapter: full context plus the one task-bound operation capability;
+- unsubscribe operation: entry resolution, headless launch, navigation,
+  terminal observation, idempotency, and receipt;
+- Email UI/API: pending-feedback metrics and processed outcome/result text;
+- supervisor: one independent Email worker under the existing launchd job.
+
+The implementation must remove or bypass Audit-only routing for unsubscribe,
+but preserve Audit routing for `auto_reply` and every non-email task.
+
+Unrelated root-worktree changes must remain unstaged and uncommitted. Feature
+work should proceed through scoped commits and a clean integration worktree.
+
+## 13. Verification
+
+### 13.1 Classifier and trigger tests
+
+- no active model means no model-triggered unsubscribe;
+- user-confirmed subscription can create an ActionPlan during cold start;
+- precision below 0.95, support below 20, stale threshold, or missing metrics
+  fails closed;
+- precision/recall/F1 and support are stored for `subscription`;
+- a model candidate never bypasses Consumer;
+- a non-subscription or missing reliable entry never executes.
+
+### 13.2 Consumer lifecycle tests
+
+- unsubscribe creates a Consumer run and no Audit run;
+- Consumer `no_action` finishes without browser execution;
+- Consumer cannot change action/message/plan identity;
+- `auto_reply` still uses the normal Audit lifecycle;
+- all unrelated task types still use Consumer/Audit feedback/revision.
+
+### 13.3 Browser unit and loopback E2E tests
+
+- Chromium is launched with `headless=true`;
+- no system/main/in-app browser is opened;
+- ordinary flows persist a dedicated-profile cookie across separate headless
+  launches;
+- profile locking prevents concurrent persistent-profile launches;
+- RFC one-click sends the exact POST body with no cookie even when the
+  dedicated profile contains a matching cookie;
+- direct success, already-unsubscribed, one-step, and multi-step confirmation
+  pages return terminal visible text;
+- login, password, MFA, CAPTCHA, payment, popup, download, private-network, and
+  unapproved-origin cases stop with their exact outcome;
+- result text is bounded and redacted;
+- restart/retry returns an existing receipt or reconciles before another click;
+- tests use loopback fixtures only and never a real mailbox or website.
+
+### 13.4 End-to-end test
+
+A committed E2E test must cover:
+
+```text
+user-confirmed or eligible model classification
+    -> immutable unsubscribe ActionPlan
+    -> Email reply task
+    -> Consumer full-context decision
+    -> task-bound headless operation
+    -> terminal result text
+    -> done reply task/current attempt
+    -> zero Audit runs
+```
+
+### 13.5 Release checks
+
+Run the focused Email suites, full `tests/test_email*.py`, loopback browser
+suite, scoped Ruff, `git diff --check`, and `git show --check`. After each
+runtime commit, restart `com.ceo-agent-service.main`, verify a new supervisor
+and worker process, HTTP health, Email worker health/readback, and no unresolved
+new Email `failed` or `processing/running` backlog.
+
+Deployment verification must not access a real mailbox or unsubscribe site.
+Real-provider execution requires a separately selected real input and explicit
+authorization.
+
+## 14. Integration Strategy
+
+The branch is a linear descendant of the existing mail boundary and audited
+unsubscribe history. Preserve that history and add scoped commits for the
+simplified lifecycle, runtime operation, tests, and documentation. Do not
+squash or rewrite the existing chain merely because the final architecture no
+longer uses its Audit continuations.
+
+After all gates pass, integrate with a normal `--no-ff` merge from a clean
+`main` worktree, push without force, restart launchd, and verify the exact remote
+and running revision. Shared uncommitted WIP must not enter the merge.
+
+Known unrelated production backlog must be reported separately and must not be
+replayed, resolved, or cleared as part of Email unsubscribe integration.
+
+## 15. Completion Criteria
+
+The feature is complete only when:
+
+- the classifier cold-start and automatic-candidate gates are enforced;
+- current production metrics are reported truthfully as absent until an active
+  model is trained and promoted;
+- Consumer makes the final unsubscribe decision and no unsubscribe Audit run is
+  created;
+- the operation runs only in background headless Chromium;
+- ordinary pages use only the dedicated persistent profile;
+- RFC one-click remains cookie-free;
+- valid dedicated-profile sessions may continue, while password/MFA/CAPTCHA
+  paths stop without disturbing the user;
+- terminal result text is stored and shown without LLM synthesis;
+- skipped outcomes are visible in Email processed results and do not create
+  Attention;
+- retry/idempotency prevents blind duplicate execution;
+- focused, full Email, browser, and E2E tests pass;
+- architecture documents contain the narrow lifecycle exception;
+- `main` is merged, pushed, restarted, and read back with no new Email backlog;
+- unrelated worktree WIP and production backlog remain untouched.
