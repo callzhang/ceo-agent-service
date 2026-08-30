@@ -17,7 +17,7 @@ import json
 import re
 import socket
 from typing import Callable, Literal, Mapping, Protocol
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import unquote, urlencode, urljoin, urlsplit
 
 from app.email_store import (
     EmailStore,
@@ -203,7 +203,15 @@ class BrowserNetworkPolicy:
 
     @property
     def reference(self) -> str:
-        canonical = json.dumps(sorted(self.allowed_origins), separators=(",", ":"))
+        canonical = json.dumps(
+            {
+                "allow_loopback_for_tests": self.allow_loopback_for_tests,
+                "allowed_origins": sorted(self.allowed_origins),
+                "policy_version": 1,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         return "network-policy:" + sha256(canonical.encode()).hexdigest()
 
     @property
@@ -212,29 +220,6 @@ class BrowserNetworkPolicy:
             "network-origin:" + sha256(origin.encode()).hexdigest()
             for origin in sorted(self.allowed_origins)
         )
-
-
-def unsubscribe_control_reference(
-    *,
-    tag: str,
-    label: str,
-    method: str = "",
-    ordinal: int = 0,
-) -> str:
-    """Return a stable opaque control reference from bounded DOM semantics."""
-
-    if ordinal < 0:
-        raise ValueError("control ordinal must be non-negative")
-    normalized = {
-        "tag": " ".join(tag.casefold().split()),
-        "label": " ".join(label.casefold().split())[:512],
-        "method": " ".join(method.casefold().split()),
-        "ordinal": ordinal,
-    }
-    if not normalized["tag"] or not normalized["label"]:
-        raise ValueError("control semantics must be non-empty")
-    canonical = json.dumps(normalized, sort_keys=True, separators=(",", ":"))
-    return "unsubscribe-control:" + sha256(canonical.encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -730,6 +715,29 @@ class UnsubscribePageDiscovery:
     controls: tuple[UnsubscribeDiscoveredControl, ...]
 
 
+@dataclass(frozen=True, repr=False)
+class _AuditedControlBinding:
+    """Runtime-private request semantics behind one persisted opaque digest."""
+
+    control: UnsubscribeDiscoveredControl
+    target_url: str = field(repr=False)
+    method: Literal["GET", "POST"]
+    enctype: str
+    successful_controls: tuple[tuple[str, str, str], ...] = field(repr=False)
+
+
+def _audited_control_reference(semantics: Mapping[str, object]) -> str:
+    canonical = json.dumps(
+        semantics,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    if len(canonical.encode("utf-8")) > 65_536:
+        raise UnsubscribeBrowserError("browser control semantics rejected")
+    return "unsubscribe-control:" + sha256(canonical.encode()).hexdigest()
+
+
 def confirmation_target_reference(
     confirmation_message_identity: str,
 ) -> str:
@@ -772,6 +780,7 @@ class PlaywrightUnsubscribeBrowser:
         self._blocked_request = False
         self._blocked_popup = False
         self._blocked_download = False
+        self._document_url = ""
         self._context = self.page.context
         if getattr(self._context, "service_workers", []):
             raise ValueError("browser network policy requires a clean context")
@@ -858,61 +867,239 @@ class PlaywrightUnsubscribeBrowser:
             raise UnsubscribeBrowserError("unsubscribe page has no visible state")
         return text[:16_384]
 
-    def _ordinary_controls(self) -> tuple[tuple[UnsubscribeDiscoveredControl, object], ...]:
-        elements = self.page.locator("form, a[href], button, input[type=submit]")
-        count = min(elements.count(), 64)
-        controls: list[tuple[UnsubscribeDiscoveredControl, object]] = []
-        for index in range(count):
-            element = elements.nth(index)
-            if not element.is_visible():
-                continue
-            tag = str(element.evaluate("node => node.tagName")).casefold()
-            if tag in {"button", "input"} and element.evaluate(
-                "node => Boolean(node.closest('form'))"
-            ):
-                continue
-            label = (
-                element.inner_text(timeout=self.timeout_ms)
-                if tag != "input"
-                else element.get_attribute("value") or ""
-            ).strip()
-            if not label:
-                label = element.get_attribute("aria-label") or ""
-            if not label:
-                continue
-            normalized_label = " ".join(label.casefold().split())
-            if any(marker in normalized_label for marker in ("unsubscribe", "退订")):
-                intent: Literal["continue", "unsubscribe", "confirm"] = "unsubscribe"
-            elif any(marker in normalized_label for marker in ("confirm", "确认")):
-                intent = "confirm"
-            elif any(marker in normalized_label for marker in ("continue", "next", "继续")):
-                intent = "continue"
-            else:
-                continue
-            method = (element.get_attribute("method") or "").casefold()
-            kind: Literal["form", "link", "button"] = (
-                "form" if tag == "form" else "link" if tag == "a" else "button"
-            )
-            reference = element.get_attribute("data-operation-reference") or (
-                unsubscribe_control_reference(
-                    tag=kind,
-                    label=label,
-                    method=method,
-                    ordinal=len(controls),
-                )
-            )
-            _assert_strict_opaque_reference(reference, field_name="control_reference")
-            controls.append(
-                (
-                    UnsubscribeDiscoveredControl(
-                        reference=reference,
-                        kind=kind,
-                        intent=intent,
-                    ),
-                    element,
-                )
-            )
-        return tuple(controls)
+    @staticmethod
+    def _control_intent(
+        label: str,
+    ) -> Literal["continue", "unsubscribe", "confirm"] | None:
+        normalized = " ".join(label.casefold().split())
+        if any(marker in normalized for marker in ("unsubscribe", "退订")):
+            return "unsubscribe"
+        if any(marker in normalized for marker in ("confirm", "确认")):
+            return "confirm"
+        if any(marker in normalized for marker in ("continue", "next", "继续")):
+            return "continue"
+        return None
+
+    def _page_identity(self) -> str:
+        value = self._document_url or str(getattr(self.page, "url"))
+        return self._validate_navigation_target(value)
+
+    def _link_binding(self, element: object) -> _AuditedControlBinding | None:
+        if not element.is_visible():
+            return None
+        label = (element.inner_text(timeout=self.timeout_ms) or "").strip()
+        if not label:
+            label = (element.get_attribute("aria-label") or "").strip()
+        intent = self._control_intent(label)
+        if intent is None:
+            return None
+        href = element.get_attribute("href") or ""
+        target = (element.get_attribute("target") or "").casefold()
+        if (
+            not href
+            or target not in {"", "_self"}
+            or element.get_attribute("download") is not None
+        ):
+            return None
+        page_identity = self._page_identity()
+        target_url = self._validate_navigation_target(urljoin(page_identity, href))
+        semantics: dict[str, object] = {
+            "enctype": "",
+            "form_association": "",
+            "intent": intent,
+            "kind": "link",
+            "method": "GET",
+            "page_identity": page_identity,
+            "policy_reference": self.network_policy.reference,
+            "resolved_target": target_url,
+            "successful_controls": [],
+            "submitter": {
+                "name": "",
+                "tag": "a",
+                "target": target,
+                "type": "link",
+                "value": "",
+            },
+            "version": 1,
+        }
+        control = UnsubscribeDiscoveredControl(
+            reference=_audited_control_reference(semantics),
+            kind="link",
+            intent=intent,
+        )
+        return _AuditedControlBinding(
+            control=control,
+            target_url=target_url,
+            method="GET",
+            enctype="",
+            successful_controls=(),
+        )
+
+    def _form_binding(self, submitter: object) -> _AuditedControlBinding | None:
+        if not submitter.is_visible():
+            return None
+        snapshot = submitter.evaluate(
+            """
+            node => {
+              const tag = node.tagName.toLowerCase();
+              const type = (node.getAttribute('type') ||
+                (tag === 'button' ? 'submit' : '')).toLowerCase();
+              const form = node.form;
+              if (!form || type !== 'submit') return null;
+              const submitterLabel = tag === 'input'
+                ? (node.value || node.getAttribute('aria-label') || '')
+                : (node.innerText || node.getAttribute('aria-label') || '');
+              const method = (node.getAttribute('formmethod') ||
+                form.getAttribute('method') || 'get').toLowerCase();
+              const enctype = (node.getAttribute('formenctype') ||
+                form.getAttribute('enctype') ||
+                'application/x-www-form-urlencoded').toLowerCase();
+              const target = (node.getAttribute('formtarget') ||
+                form.getAttribute('target') || '').toLowerCase();
+              const action = node.getAttribute('formaction') ??
+                form.getAttribute('action') ?? '';
+              const acceptCharset = (form.getAttribute('accept-charset') || '')
+                .trim().toLowerCase();
+              const elements = Array.from(form.elements);
+              if (elements.length > 128) return {error: 'bounds'};
+              const fields = [];
+              const supportedInputTypes = new Set([
+                'hidden', 'text', 'search', 'tel', 'url', 'email', 'date',
+                'month', 'week', 'time', 'datetime-local', 'number', 'range',
+                'color', 'checkbox', 'radio'
+              ]);
+              for (const field of elements) {
+                const fieldTag = field.tagName.toLowerCase();
+                const fieldType = (field.getAttribute('type') ||
+                  (fieldTag === 'button' ? 'submit' :
+                    fieldTag === 'input' ? 'text' : fieldTag)).toLowerCase();
+                if (field.hasAttribute('dirname')) return {error: 'unsupported'};
+                if (field.matches(':disabled') || !field.name) continue;
+                if (field === node) {
+                  fields.push({name: field.name, type: fieldType, value: field.value || ''});
+                  continue;
+                }
+                if (fieldTag === 'button' || ['submit', 'button', 'reset', 'image'].includes(fieldType)) {
+                  continue;
+                }
+                if (fieldTag === 'input') {
+                  if (!supportedInputTypes.has(fieldType)) return {error: 'unsupported'};
+                  if (['checkbox', 'radio'].includes(fieldType) && !field.checked) continue;
+                  fields.push({name: field.name, type: fieldType, value: field.value || ''});
+                  continue;
+                }
+                if (fieldTag === 'textarea') {
+                  fields.push({name: field.name, type: 'textarea', value: field.value || ''});
+                  continue;
+                }
+                if (fieldTag === 'select') {
+                  for (const option of Array.from(field.selectedOptions)) {
+                    if (!option.disabled) {
+                      fields.push({name: field.name, type: 'select', value: option.value});
+                    }
+                  }
+                  continue;
+                }
+                return {error: 'unsupported'};
+              }
+              if (fields.length > 128 || fields.some(item =>
+                item.name.length > 512 || item.type.length > 64 || item.value.length > 4096
+              )) return {error: 'bounds'};
+              return {
+                acceptCharset,
+                action,
+                enctype,
+                fields,
+                formAssociation: {
+                  formAttribute: node.getAttribute('form') || '',
+                  formId: form.id || '',
+                  formName: form.getAttribute('name') || '',
+                  formIndex: Array.from(document.forms).indexOf(form)
+                },
+                method,
+                submitter: {
+                  name: node.name || '',
+                  tag,
+                  target,
+                  type,
+                  value: node.value || ''
+                },
+                submitterLabel,
+                target
+              };
+            }
+            """
+        )
+        if not snapshot or snapshot.get("error"):
+            return None
+        intent = self._control_intent(str(snapshot["submitterLabel"]))
+        if intent is None:
+            return None
+        method = str(snapshot["method"]).upper()
+        enctype = str(snapshot["enctype"])
+        target = str(snapshot["target"])
+        if (
+            method not in {"GET", "POST"}
+            or enctype != "application/x-www-form-urlencoded"
+            or target not in {"", "_self"}
+            or str(snapshot["acceptCharset"]) not in {"", "utf-8", "utf8"}
+        ):
+            return None
+        page_identity = self._page_identity()
+        target_url = self._validate_navigation_target(
+            urljoin(page_identity, str(snapshot["action"]) or page_identity)
+        )
+        fields = tuple(
+            (str(item["name"]), str(item["type"]), str(item["value"]))
+            for item in snapshot["fields"]
+        )
+        semantics = {
+            "enctype": enctype,
+            "form_association": snapshot["formAssociation"],
+            "intent": intent,
+            "kind": "form",
+            "method": method,
+            "page_identity": page_identity,
+            "policy_reference": self.network_policy.reference,
+            "resolved_target": target_url,
+            "successful_controls": [
+                {"name": name, "type": field_type, "value": value}
+                for name, field_type, value in fields
+            ],
+            "submitter": snapshot["submitter"],
+            "version": 1,
+        }
+        control = UnsubscribeDiscoveredControl(
+            reference=_audited_control_reference(semantics),
+            kind="form",
+            intent=intent,
+        )
+        return _AuditedControlBinding(
+            control=control,
+            target_url=target_url,
+            method=method,
+            enctype=enctype,
+            successful_controls=fields,
+        )
+
+    def _ordinary_controls(self) -> tuple[_AuditedControlBinding, ...]:
+        bindings: list[_AuditedControlBinding] = []
+        links = self.page.locator("a[href]")
+        for index in range(min(links.count(), 64)):
+            binding = self._link_binding(links.nth(index))
+            if binding is not None:
+                bindings.append(binding)
+        submitters = self.page.locator(
+            "button:not([type]), button[type=submit], input[type=submit]"
+        )
+        for index in range(min(submitters.count(), 64)):
+            binding = self._form_binding(submitters.nth(index))
+            if binding is not None:
+                bindings.append(binding)
+        unique: dict[str, _AuditedControlBinding] = {}
+        for binding in bindings:
+            unique.setdefault(binding.control.reference, binding)
+        return tuple(unique.values())
 
     @staticmethod
     def _state_from_text(text: str) -> UnsubscribePageState | None:
@@ -949,7 +1136,7 @@ class PlaywrightUnsubscribeBrowser:
         """Read only the already-loaded unsubscribe page and expose opaque controls."""
 
         self._raise_if_blocked()
-        current_url = getattr(self.page, "url")
+        current_url = self._document_url or getattr(self.page, "url")
         if current_url == "about:blank":
             return UnsubscribePageDiscovery(
                 state=UnsubscribePageState.ACTION_REQUIRED,
@@ -959,7 +1146,7 @@ class PlaywrightUnsubscribeBrowser:
         self._validate_navigation_target(current_url)
         text = self._visible_text()
         state = self._state_from_text(text)
-        controls = tuple(item[0] for item in self._ordinary_controls())
+        controls = tuple(item.control for item in self._ordinary_controls())
         if state is None:
             state = UnsubscribePageState.ACTION_REQUIRED
             if (
@@ -1064,6 +1251,65 @@ class PlaywrightUnsubscribeBrowser:
         except Exception:
             raise UnsubscribeBrowserError("browser state readback failed") from None
 
+    def _execute_audited_control(
+        self,
+        binding: _AuditedControlBinding,
+    ) -> None:
+        self._validate_navigation_target(binding.target_url)
+        if binding.control.kind == "link":
+            self.page.goto(
+                binding.target_url,
+                wait_until="domcontentloaded",
+                timeout=self.timeout_ms,
+            )
+            self._raise_if_blocked()
+            self._document_url = self._validate_navigation_target(
+                str(getattr(self.page, "url"))
+            )
+            return
+        if binding.control.kind != "form":
+            raise UnsubscribeBrowserError("accepted browser control is unavailable")
+        pairs = [(name, value) for name, _field_type, value in binding.successful_controls]
+        encoded = urlencode(pairs)
+        if binding.method == "GET":
+            parsed = urlsplit(binding.target_url)
+            query = "&".join(item for item in (parsed.query, encoded) if item)
+            target = parsed._replace(query=query).geturl()
+            self.page.goto(
+                self._validate_navigation_target(target),
+                wait_until="domcontentloaded",
+                timeout=self.timeout_ms,
+            )
+            self._raise_if_blocked()
+            self._document_url = self._validate_navigation_target(
+                str(getattr(self.page, "url"))
+            )
+            return
+        if binding.method != "POST" or binding.enctype != (
+            "application/x-www-form-urlencoded"
+        ):
+            raise UnsubscribeBrowserError("browser control semantics rejected")
+        response = self._context.request.post(
+            binding.target_url,
+            data=encoded,
+            headers={"Content-Type": binding.enctype},
+            max_redirects=0,
+            timeout=self.timeout_ms,
+        )
+        response_url = self._validate_navigation_target(response.url)
+        if response.status < 200 or response.status >= 300:
+            raise UnsubscribeBrowserError("form provider response rejected")
+        body = response.body()
+        if len(body) > 1_048_576:
+            raise UnsubscribeBrowserError("form provider response rejected")
+        self._document_url = response_url
+        self.page.set_content(
+            response.text(),
+            wait_until="domcontentloaded",
+            timeout=self.timeout_ms,
+        )
+        self._raise_if_blocked()
+
     def execute_operation(
         self,
         effect: EmailUnsubscribeEffect,
@@ -1112,45 +1358,40 @@ class PlaywrightUnsubscribeBrowser:
                     timeout=self.timeout_ms,
                 )
                 self._raise_if_blocked()
-                self._validate_navigation_target(getattr(self.page, "url"))
+                self._document_url = self._validate_navigation_target(
+                    getattr(self.page, "url")
+                )
             elif operation.kind is UnsubscribeOperationKind.FOLLOW_REDIRECT:
                 self._raise_if_blocked()
-                self._validate_navigation_target(getattr(self.page, "url"))
+                self._document_url = self._validate_navigation_target(
+                    getattr(self.page, "url")
+                )
             elif operation.kind is UnsubscribeOperationKind.SUBMIT_FORM:
                 control = next(
-                    (element for discovered, element in self._ordinary_controls() if discovered.reference == operation.target_reference),
+                    (
+                        binding
+                        for binding in self._ordinary_controls()
+                        if binding.control.reference == operation.target_reference
+                        and binding.control.kind == "form"
+                    ),
                     None,
                 )
                 if control is None:
                     raise UnsubscribeBrowserError("accepted browser control is unavailable")
-                if control.get_attribute("target") == "_blank" or control.get_attribute("download") is not None:
-                    raise UnsubscribeBrowserError("browser popup or download rejected")
-                if str(control.evaluate("element => element.tagName")).casefold() == "form":
-                    control.locator("button[type=submit]").click(
-                        timeout=self.timeout_ms
-                    )
-                else:
-                    control.click(timeout=self.timeout_ms)
-                self.page.wait_for_load_state(
-                    "domcontentloaded",
-                    timeout=self.timeout_ms,
-                )
-                self._raise_if_blocked()
+                self._execute_audited_control(control)
             elif operation.kind is UnsubscribeOperationKind.CLICK_CONFIRMATION:
                 control = next(
-                    (element for discovered, element in self._ordinary_controls() if discovered.reference == operation.target_reference),
+                    (
+                        binding
+                        for binding in self._ordinary_controls()
+                        if binding.control.reference == operation.target_reference
+                        and binding.control.kind == "link"
+                    ),
                     None,
                 )
                 if control is None:
                     raise UnsubscribeBrowserError("accepted browser control is unavailable")
-                if control.get_attribute("target") == "_blank" or control.get_attribute("download") is not None:
-                    raise UnsubscribeBrowserError("browser popup or download rejected")
-                control.click(timeout=self.timeout_ms)
-                self.page.wait_for_load_state(
-                    "domcontentloaded",
-                    timeout=self.timeout_ms,
-                )
-                self._raise_if_blocked()
+                self._execute_audited_control(control)
             elif operation.kind is UnsubscribeOperationKind.CONFIRM_EMAIL:
                 if self.confirmation_target_resolver is None:
                     raise UnsubscribeProviderAuthError(
@@ -1176,6 +1417,9 @@ class PlaywrightUnsubscribeBrowser:
                     timeout=self.timeout_ms,
                 )
                 self._raise_if_blocked()
+                self._document_url = self._validate_navigation_target(
+                    getattr(self.page, "url")
+                )
             else:
                 raise UnsubscribeBrowserError("browser operation kind rejected")
             observation = self.inspect_current_state(effect, private_url)

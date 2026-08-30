@@ -41,7 +41,6 @@ from app.email_unsubscribe import (
     UnsubscribeOutcome,
     confirmation_target_reference,
     unsubscribe_entry_reference,
-    unsubscribe_control_reference,
 )
 from app.store import AutoReplyStore
 
@@ -206,6 +205,73 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     ),
                 )
             )
+        elif path == "/mutable-link":
+            self._send(
+                _page(
+                    "action_required",
+                    "Confirm unsubscribe",
+                    content=(
+                        '<a href="/unsubscribe" '
+                        'data-operation-reference="customerSegmentPlatinum42">'
+                        "Confirm</a>"
+                    ),
+                )
+            )
+        elif path == "/mutable-form":
+            self._send(
+                _page(
+                    "action_required",
+                    "Confirm unsubscribe",
+                    content=(
+                        '<form method="post" action="/safe-form-terminal">'
+                        '<input type="hidden" name="segment" value="basic">'
+                        '<input name="scope" value="newsletter">'
+                        '<button type="submit" name="decision" value="unsubscribe">'
+                        "Unsubscribe</button></form>"
+                    ),
+                )
+            )
+        elif path == "/implicit-button-omitted":
+            self._send(
+                _page(
+                    "action_required",
+                    "Confirm unsubscribe",
+                    content=(
+                        '<form method="post" action="/implicit-terminal">'
+                        '<input type="hidden" name="flow" value="omitted">'
+                        '<button name="decision" value="unsubscribe">Unsubscribe</button>'
+                        "</form>"
+                    ),
+                )
+            )
+        elif path == "/implicit-button-explicit":
+            self._send(
+                _page(
+                    "action_required",
+                    "Confirm unsubscribe",
+                    content=(
+                        '<form method="post" action="/implicit-terminal">'
+                        '<input type="hidden" name="flow" value="button">'
+                        '<button type="submit" name="decision" value="unsubscribe">'
+                        "Unsubscribe</button></form>"
+                    ),
+                )
+            )
+        elif path == "/implicit-input":
+            self._send(
+                _page(
+                    "action_required",
+                    "Confirm unsubscribe",
+                    content=(
+                        '<form method="post" action="/implicit-terminal">'
+                        '<input type="hidden" name="flow" value="input">'
+                        '<input type="submit" name="decision" value="Unsubscribe">'
+                        "</form>"
+                    ),
+                )
+            )
+        elif path == "/delete-profile":
+            self._send(_page("done", "Profile deleted"))
         elif path == "/final-click":
             self._send(
                 _page(
@@ -218,7 +284,7 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     ),
                 )
             )
-        elif path == "/terminal-click":
+        elif path in {"/terminal-click", "/unsubscribe"}:
             self._send(
                 _page(
                     "done",
@@ -301,6 +367,10 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     receipt="receipt-two-step",
                 )
             )
+        elif path in {"/safe-form-terminal", "/implicit-terminal"}:
+            self._send(_page("done", "You are unsubscribed"))
+        elif path == "/delete-profile":
+            self._send(_page("done", "Profile deleted"))
         elif path == "/one-click":
             self._send(_page("done", "You are unsubscribed"))
         else:
@@ -610,6 +680,24 @@ def _run(
             for index, operation in enumerate(operations[1:], start=2):
                 if not isinstance(result, UnsubscribeContinuationResult):
                     break
+                expected_kind = {
+                    UnsubscribeOperationKind.SUBMIT_FORM: "form",
+                    UnsubscribeOperationKind.CLICK_CONFIRMATION: "link",
+                    UnsubscribeOperationKind.CONFIRM_EMAIL: "confirmation_email",
+                }.get(operation.kind)
+                discovered = next(
+                    (
+                        control
+                        for control in result.continuation.controls
+                        if control.kind == expected_kind
+                    ),
+                    None,
+                )
+                if discovered is not None:
+                    operation = replace(
+                        operation,
+                        target_reference=discovered.reference,
+                    )
                 effect = replace(
                     effect,
                     operations=effect.operations + (operation,),
@@ -649,6 +737,176 @@ def test_direct_success_fixture(tmp_path: Path, chrome_browser) -> None:
     assert requests[0][0] == "GET"
 
 
+def _open_then_execute_discovered_control(
+    tmp_path: Path,
+    chrome_browser,
+    *,
+    path: str,
+    operation_kind: UnsubscribeOperationKind,
+    mutate_dom: str = "",
+):
+    with _loopback_server() as origin:
+        private_url = f"{origin}{path}?opaque=private-fixture-token"
+        initial_operation = _operations(UnsubscribeOperationKind.OPEN_ENTRY)[0]
+        store, effect, entry = _setup(tmp_path, private_url, (initial_operation,))
+        policy = BrowserNetworkPolicy(
+            allowed_origins=frozenset({origin}),
+            allow_loopback_for_tests=True,
+        )
+        context = chrome_browser.new_context()
+        page = context.new_page()
+        browser = PlaywrightUnsubscribeBrowser(
+            page,
+            timeout_ms=3_000,
+            network_policy=policy,
+        )
+        try:
+            first = UnsubscribeExecutor(
+                store,
+                browser,
+                owner=_BROWSER_OWNER,
+            ).execute(effect, (entry,))
+            assert isinstance(first, UnsubscribeContinuationResult)
+            assert len(first.continuation.controls) == 1
+            durable = store.get_email_unsubscribe_continuation(effect.action_identity)
+            if mutate_dom:
+                page.evaluate(mutate_dom)
+            extension = replace(
+                effect,
+                operations=effect.operations
+                + (
+                    UnsubscribeOperation(
+                        operation_reference="step-2",
+                        kind=operation_kind,
+                        target_reference=first.continuation.controls[0].reference,
+                    ),
+                ),
+                previous_effect_digest=effect.effect_digest,
+            )
+            result = UnsubscribeExecutor(
+                store,
+                browser,
+                owner=_RESTART_OWNER,
+            ).execute(extension, (entry,))
+        finally:
+            context.close()
+        return (
+            first,
+            result,
+            tuple(_FixtureHandler.requests),
+            tuple(_FixtureHandler.request_details),
+            durable,
+        )
+
+
+def test_page_control_reference_is_local_digest_and_never_persists_dom_attribute(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    first, _result, _requests, _details, durable = (
+        _open_then_execute_discovered_control(
+            tmp_path,
+            chrome_browser,
+            path="/mutable-link",
+            operation_kind=UnsubscribeOperationKind.CLICK_CONFIRMATION,
+        )
+    )
+
+    serialized = json.dumps(first.redacted, sort_keys=True) + repr(first) + repr(durable)
+    assert "customerSegmentPlatinum42" not in serialized
+    assert "Confirm unsubscribe" not in serialized
+    assert first.continuation.controls[0].reference.startswith(
+        "unsubscribe-control:"
+    )
+
+
+def test_mutated_audited_link_target_has_zero_unauthorized_requests(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    _first, result, requests, _details, _durable = (
+        _open_then_execute_discovered_control(
+            tmp_path,
+            chrome_browser,
+            path="/mutable-link",
+            operation_kind=UnsubscribeOperationKind.CLICK_CONFIRMATION,
+            mutate_dom=(
+                "document.querySelector('a').setAttribute('href', '/delete-profile')"
+            ),
+        )
+    )
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert requests == (("GET", "/mutable-link?opaque=private-fixture-token"),)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "document.querySelector('form').setAttribute('action', '/delete-profile')",
+        "document.querySelector('input[type=hidden]').value = 'customerSegmentPlatinum42'",
+    ),
+)
+def test_mutated_audited_form_semantics_have_zero_unauthorized_requests(
+    tmp_path: Path,
+    chrome_browser,
+    mutation: str,
+) -> None:
+    _first, result, requests, _details, _durable = (
+        _open_then_execute_discovered_control(
+            tmp_path,
+            chrome_browser,
+            path="/mutable-form",
+            operation_kind=UnsubscribeOperationKind.SUBMIT_FORM,
+            mutate_dom=mutation,
+        )
+    )
+
+    assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert requests == (("GET", "/mutable-form?opaque=private-fixture-token"),)
+
+
+@pytest.mark.parametrize(
+    ("path", "expected_body"),
+    (
+        (
+            "/mutable-form",
+            "segment=basic&scope=newsletter&decision=unsubscribe",
+        ),
+        (
+            "/implicit-button-omitted",
+            "flow=omitted&decision=unsubscribe",
+        ),
+        (
+            "/implicit-button-explicit",
+            "flow=button&decision=unsubscribe",
+        ),
+        (
+            "/implicit-input",
+            "flow=input&decision=Unsubscribe",
+        ),
+    ),
+)
+def test_ordinary_form_executes_exact_audited_submitter(
+    tmp_path: Path,
+    chrome_browser,
+    path: str,
+    expected_body: str,
+) -> None:
+    _first, result, requests, details, _durable = (
+        _open_then_execute_discovered_control(
+            tmp_path,
+            chrome_browser,
+            path=path,
+            operation_kind=UnsubscribeOperationKind.SUBMIT_FORM,
+        )
+    )
+
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert [method for method, _path in requests] == ["GET", "POST"]
+    assert details[-1]["body"] == expected_body
+
+
 def test_redirect_success_fixture(tmp_path: Path, chrome_browser) -> None:
     result, requests = _run(
         tmp_path,
@@ -672,14 +930,7 @@ def test_two_step_form_fixture(tmp_path: Path, chrome_browser) -> None:
             UnsubscribeOperationKind.OPEN_ENTRY,
             UnsubscribeOperationKind.SUBMIT_FORM,
             UnsubscribeOperationKind.SUBMIT_FORM,
-            targets=(
-                unsubscribe_control_reference(
-                    tag="form", label="Continue", method="post"
-                ),
-                unsubscribe_control_reference(
-                    tag="form", label="Unsubscribe", method="post"
-                ),
-            ),
+            targets=("fixture-control-1", "fixture-control-2"),
         ),
     )
     assert result.outcome is UnsubscribeOutcome.DONE
@@ -862,19 +1113,10 @@ def test_read_only_discovery_returns_only_ordinary_opaque_controls(
 ) -> None:
     with _loopback_server() as origin:
         private_url = f"{origin}/two-step?opaque=private-fixture-token"
-        target = unsubscribe_control_reference(
-            tag="form",
-            label="Continue",
-            method="post",
-        )
         _, effect, _ = _setup(
             tmp_path,
             private_url,
-            _operations(
-                UnsubscribeOperationKind.OPEN_ENTRY,
-                UnsubscribeOperationKind.SUBMIT_FORM,
-                targets=(target,),
-            ),
+            _operations(UnsubscribeOperationKind.OPEN_ENTRY),
         )
         context = chrome_browser.new_context()
         browser = PlaywrightUnsubscribeBrowser(
@@ -895,7 +1137,8 @@ def test_read_only_discovery_returns_only_ordinary_opaque_controls(
         finally:
             context.close()
 
-    assert [control.reference for control in discovery.controls] == [target]
+    assert len(discovery.controls) == 1
+    assert discovery.controls[0].reference.startswith("unsubscribe-control:")
     serialized = repr(discovery)
     assert "private-fixture-token" not in serialized
     assert origin not in serialized
@@ -923,9 +1166,7 @@ def test_final_confirmation_click_fixture(tmp_path: Path, chrome_browser) -> Non
         operations=_operations(
             UnsubscribeOperationKind.OPEN_ENTRY,
             UnsubscribeOperationKind.CLICK_CONFIRMATION,
-            targets=(
-                unsubscribe_control_reference(tag="link", label="Confirm"),
-            ),
+            targets=("fixture-control-1",),
         ),
     )
     assert result.outcome is UnsubscribeOutcome.DONE
@@ -1074,41 +1315,17 @@ def test_unapproved_redirect_and_subresources_are_blocked_before_request(
 
 
 @pytest.mark.parametrize(
-    ("path", "kind", "target"),
-    (
-        (
-            "/malicious-form",
-            UnsubscribeOperationKind.SUBMIT_FORM,
-            unsubscribe_control_reference(
-                tag="form", label="Unsubscribe", method="post"
-            ),
-        ),
-        (
-            "/malicious-popup",
-            UnsubscribeOperationKind.CLICK_CONFIRMATION,
-            unsubscribe_control_reference(tag="link", label="Confirm"),
-        ),
-        (
-            "/malicious-download",
-            UnsubscribeOperationKind.CLICK_CONFIRMATION,
-            unsubscribe_control_reference(tag="link", label="Confirm"),
-        ),
-    ),
+    "path",
+    ("/malicious-form", "/malicious-popup", "/malicious-download"),
 )
 def test_unapproved_form_popup_and_download_have_zero_external_effect(
     tmp_path: Path,
     chrome_browser,
     path: str,
-    kind: UnsubscribeOperationKind,
-    target: str,
 ) -> None:
     with _loopback_server_pair() as (allowed_origin, _blocked_origin):
         private_url = f"{allowed_origin}{path}"
-        operations = _operations(
-            UnsubscribeOperationKind.OPEN_ENTRY,
-            kind,
-            targets=(target,),
-        )
+        operations = _operations(UnsubscribeOperationKind.OPEN_ENTRY)
         store, effect, entry = _setup(tmp_path, private_url, operations)
         context = chrome_browser.new_context(accept_downloads=False)
         browser = PlaywrightUnsubscribeBrowser(

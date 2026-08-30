@@ -215,6 +215,21 @@ def test_network_policy_is_exact_origin_and_rejects_private_dns_resolution() -> 
         private.validate_url("https://mail.example.com/unsubscribe")
 
 
+def test_network_policy_reference_binds_test_only_loopback_mode() -> None:
+    origins = frozenset({"https://mail.example.com"})
+    production = BrowserNetworkPolicy(
+        allowed_origins=origins,
+        resolver=lambda _host, _port: ("93.184.216.34",),
+    )
+    test_only = BrowserNetworkPolicy(
+        allowed_origins=origins,
+        allow_loopback_for_tests=True,
+        resolver=lambda _host, _port: ("93.184.216.34",),
+    )
+
+    assert production.reference != test_only.reference
+
+
 def test_extracts_and_prioritizes_rfc_entries_without_rendering_private_urls() -> None:
     entries = extract_unsubscribe_entries(
         list_unsubscribe=(
