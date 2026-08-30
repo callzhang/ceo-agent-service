@@ -14335,6 +14335,25 @@ class AutoReplyStore:
             ).fetchall()
         return [self._feedback_processing_round_from_row(row) for row in rows]
 
+    def list_feedback_processing_rounds_for_batch(
+        self, batch_id: str
+    ) -> list[FeedbackProcessingRound]:
+        """Read the exact round rows owned by one batch through its index."""
+
+        cleaned_batch_id = batch_id.strip()
+        if not cleaned_batch_id:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select * from feedback_processing_rounds
+                 where batch_id=?
+                 order by feedback_key asc, id asc
+                """,
+                (cleaned_batch_id,),
+            ).fetchall()
+        return [self._feedback_processing_round_from_row(row) for row in rows]
+
     def list_feedback_processing_transitions(
         self, feedback_key: str
     ) -> list[FeedbackProcessingTransition]:
@@ -15714,6 +15733,88 @@ class AutoReplyStore:
                 (limit, max(0, offset)),
             ).fetchall()
             return [UserFeedbackItem.model_validate(dict(row)) for row in rows]
+
+    def list_user_feedback_items_by_keys(
+        self, feedback_keys: Sequence[str]
+    ) -> list[UserFeedbackItem]:
+        """Bulk-load source projections for exact feedback identities."""
+
+        keys = list(
+            dict.fromkeys(key.strip() for key in feedback_keys if key.strip())
+        )
+        if not keys:
+            return []
+        placeholders = ",".join("?" for _ in keys)
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                with requested_feedback as (
+                    select * from feedback_events
+                     where key in ({placeholders})
+                ), latest_attempt_by_token as (
+                    select
+                        sr.feedback_token as feedback_token,
+                        max(ra.id) as attempt_id
+                    from sent_replies sr
+                    join requested_feedback requested
+                        on requested.feedback_token = sr.feedback_token
+                    join reply_attempts ra
+                        on ra.conversation_id = sr.conversation_id
+                       and ra.trigger_message_id = sr.trigger_message_id
+                    where trim(sr.feedback_token) <> ''
+                    group by sr.feedback_token
+                ), manual_attempt_by_key as (
+                    select
+                        fe.key as feedback_key,
+                        max(ra.id) as attempt_id
+                    from requested_feedback fe
+                    join reply_attempts ra
+                        on ra.id = cast(substr(fe.key, 8) as integer)
+                    where fe.key like 'manual:%'
+                    group by fe.key
+                )
+                select
+                    fe.key,
+                    fe.feedback_token,
+                    fe.rating,
+                    fe.rating_label,
+                    fe.comment,
+                    fe.source,
+                    fe.received_at,
+                    coalesce(ra.id, 0) as attempt_id,
+                    coalesce(ra.agent_run_id, 0) as agent_run_id,
+                    coalesce(ra.codex_session_id, '') as codex_session_id,
+                    coalesce(ar.role, '') as attempt_role,
+                    coalesce(ra.conversation_title, '') as conversation_title,
+                    coalesce(ra.trigger_sender, '') as trigger_sender,
+                    coalesce(ra.trigger_text, '') as trigger_text,
+                    coalesce(ra.final_reply_text, '') as final_reply_text,
+                    coalesce(ra.draft_reply_text, '') as draft_reply_text,
+                    coalesce(ra.codex_reason, '') as codex_reason,
+                    coalesce(ra.audit_summary, '') as audit_summary,
+                    case when latest.attempt_id is not null
+                         then coalesce(ra.reviewer_feedback, '') else '' end as reviewer_feedback,
+                    case when latest.attempt_id is not null
+                         then coalesce(ra.corrected_reply_text, '') else '' end as corrected_reply_text,
+                    coalesce(pi.status, case when trim(fe.resolved_at) <> '' then 'resolved' else 'pending' end) as processing_status,
+                    fe.resolved_at,
+                    fe.updated_at
+                from requested_feedback fe
+                left join latest_attempt_by_token latest
+                    on latest.feedback_token = fe.feedback_token
+                left join manual_attempt_by_key manual
+                    on manual.feedback_key = fe.key
+                left join reply_attempts ra
+                    on ra.id = coalesce(latest.attempt_id, manual.attempt_id)
+                left join agent_runs ar
+                    on ar.id = ra.agent_run_id
+                left join feedback_processing_items pi
+                    on pi.feedback_key = fe.key
+                order by fe.key asc
+                """,
+                keys,
+            ).fetchall()
+        return [UserFeedbackItem.model_validate(dict(row)) for row in rows]
 
     def count_user_feedback_items(self) -> int:
         with self._connect() as db:

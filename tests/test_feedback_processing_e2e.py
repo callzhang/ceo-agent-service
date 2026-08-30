@@ -73,7 +73,7 @@ def _registered_route_client(
     app = FastAPI()
     register_console_routes(
         app,
-        store_factory=lambda: AutoReplyStore(db_path),
+        store_factory=lambda: store,
         status_payload_factory=status_payload_factory,
         feedback_backlog_factory=feedback_backlog_factory,
         attention_rows_factory=lambda: [],
@@ -214,6 +214,103 @@ def _main_receipt() -> dict[str, object]:
         before_pid=300,
         after_pid=301,
     )
+
+
+def _seed_feedback_noise(
+    store: AutoReplyStore,
+    *,
+    count: int,
+    received_at: str = "2030-01-01 00:00:00",
+) -> None:
+    with store._connect() as db:
+        db.executemany(
+            """
+            insert into feedback_events (
+                key, feedback_token, received_at
+            ) values (?, ?, ?)
+            """,
+            [
+                (f"noise-{index:05d}", f"noise-token-{index:05d}", received_at)
+                for index in range(count)
+            ],
+        )
+
+
+def test_batch_detail_reads_exact_item_beyond_general_feedback_limit(tmp_path: Path):
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: {
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0,
+        },
+    )
+    store.upsert_feedback_event(
+        key="feedback-outside-limit",
+        feedback_token="target-token",
+        received_at="2000-01-01 00:00:00",
+    )
+    store.claim_feedback_processing_items(
+        "batch-outside-limit",
+        ["feedback-outside-limit"],
+    )
+    _seed_feedback_noise(store, count=10_001)
+
+    with client:
+        response = client.get(
+            "/api/console/feedback/batches/batch-outside-limit"
+        )
+
+    assert response.status_code == 200
+    batch = response.json()["item"]
+    assert batch["requested_count"] == 1
+    assert len(batch["items"]) == batch["requested_count"]
+    assert batch["items"][0]["feedback_key"] == "feedback-outside-limit"
+
+
+def test_batch_detail_database_query_count_is_bounded_by_batch_not_total_feedback(
+    tmp_path: Path,
+    monkeypatch,
+):
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: {
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0,
+        },
+    )
+    store.upsert_feedback_event(
+        key="feedback-query-bound",
+        feedback_token="target-token",
+    )
+    store.claim_feedback_processing_items(
+        "batch-query-bound",
+        ["feedback-query-bound"],
+    )
+    _seed_feedback_noise(store, count=250)
+
+    queries: list[str] = []
+    original_open_connection = AutoReplyStore._open_connection
+
+    def traced_open_connection(self):
+        connection = original_open_connection(self)
+        connection.set_trace_callback(
+            lambda statement: queries.append(statement)
+            if statement.lstrip().casefold().startswith(("select", "with"))
+            else None
+        )
+        return connection
+
+    monkeypatch.setattr(AutoReplyStore, "_open_connection", traced_open_connection)
+    with client:
+        response = client.get(
+            "/api/console/feedback/batches/batch-query-bound"
+        )
+
+    assert response.status_code == 200
+    assert len(response.json()["item"]["items"]) == 1
+    assert len(queries) <= 4
 
 
 def test_resolve_ignores_cached_refreshing_zero_and_uses_fresh_backlog(

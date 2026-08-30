@@ -366,32 +366,24 @@ def register_console_routes(
         return envelope
 
     def _feedback_items_for_batch(store: Any, batch_id: str) -> list[dict[str, Any]]:
+        batch_rounds = store.list_feedback_processing_rounds_for_batch(batch_id)
         source_rows = {
             row.key: row
-            for row in store.list_user_feedback_items(limit=10000, offset=0)
+            for row in store.list_user_feedback_items_by_keys(
+                [round_item.feedback_key for round_item in batch_rounds]
+            )
         }
         rows = []
-        for feedback_key, row in source_rows.items():
-            round_item = next(
-                (
-                    candidate
-                    for candidate in store.list_feedback_processing_rounds(
-                        feedback_key
-                    )
-                    if candidate.batch_id == batch_id
-                ),
-                None,
-            )
-            if round_item is None:
-                continue
+        for round_item in batch_rounds:
+            row = source_rows.get(round_item.feedback_key)
             projected = json_safe(round_item)
             projected.update({
                 "processing_status": round_item.status,
-                "summary": persisted_feedback_summary(row), "references": detail_references(row),
+                "summary": persisted_feedback_summary(row) if row else "",
+                "references": detail_references(row) if row else [],
                 "processing_task_id": round_item.workbench_task_id,
             })
             rows.append(projected)
-        rows.sort(key=lambda item: item["feedback_key"])
         return rows
 
     def _feedback_processing_state(store: Any, feedback_key: str) -> dict[str, Any] | None:
