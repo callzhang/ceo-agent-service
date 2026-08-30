@@ -455,6 +455,126 @@ def test_feedback_round_positive_invariant_upgrades_semantic_decoy_without_rebui
 
 
 @pytest.mark.parametrize(
+    ("canonical_literal", "decoy_literal"),
+    (
+        ("'integer'", "'INTEGER'"),
+        (
+            "'feedback_processing_round_number_must_be_positive'",
+            "'FEEDBACK_PROCESSING_ROUND_NUMBER_MUST_BE_POSITIVE'",
+        ),
+    ),
+)
+def test_cached_round_manifest_replaces_literal_case_decoys(
+    tmp_path: Path,
+    canonical_literal: str,
+    decoy_literal: str,
+):
+    db_path = tmp_path / "cached-literal-case-decoy.sqlite3"
+    path_key = db_path.resolve()
+    store_module._INITIALIZED_STORE_PATHS.discard(path_key)
+    store = AutoReplyStore(db_path)
+    assert path_key in store_module._INITIALIZED_STORE_PATHS
+
+    with store._connect() as db:
+        db.execute(
+            "drop trigger trg_feedback_processing_round_integer_v2_insert"
+        )
+        db.execute(
+            "drop trigger trg_feedback_processing_round_integer_v2_update"
+        )
+        db.execute(
+            store_module.FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL.replace(
+                canonical_literal,
+                decoy_literal,
+            )
+        )
+        db.execute(
+            store_module.FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL.replace(
+                canonical_literal,
+                decoy_literal,
+            )
+        )
+
+    repaired = AutoReplyStore(db_path)
+    stable_error = "feedback_processing_round_number_must_be_positive"
+    with repaired._connect() as db:
+        db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status
+            ) values ('feedback-literal-case', 1,
+                      'batch-literal-case', 'processing')
+            """
+        )
+        db.execute(
+            """
+            update feedback_processing_rounds set round_number=2
+             where feedback_key='feedback-literal-case'
+            """
+        )
+        assert tuple(
+            db.execute(
+                """
+                select round_number, typeof(round_number)
+                  from feedback_processing_rounds
+                 where feedback_key='feedback-literal-case'
+                """
+            ).fetchone()
+        ) == (2, "integer")
+
+        for round_number in (0, -1, 1.5, "1.5", "abc"):
+            with pytest.raises(sqlite3.IntegrityError) as insert_error:
+                db.execute(
+                    """
+                    insert into feedback_processing_rounds (
+                        feedback_key, round_number, batch_id, status
+                    ) values (?, ?, ?, 'processing')
+                    """,
+                    (
+                        f"feedback-literal-invalid-{round_number}",
+                        round_number,
+                        f"batch-literal-invalid-{round_number}",
+                    ),
+                )
+            assert str(insert_error.value) == stable_error
+            with pytest.raises(sqlite3.IntegrityError) as update_error:
+                db.execute(
+                    """
+                    update feedback_processing_rounds set round_number=?
+                     where feedback_key='feedback-literal-case'
+                    """,
+                    (round_number,),
+                )
+            assert str(update_error.value) == stable_error
+
+        trigger_sql = {
+            row["name"]: row["sql"]
+            for row in db.execute(
+                """
+                select name, sql from sqlite_master
+                 where type='trigger'
+                   and name in (
+                       'trg_feedback_processing_round_integer_v2_insert',
+                       'trg_feedback_processing_round_integer_v2_update'
+                   )
+                """
+            )
+        }
+        assert decoy_literal not in trigger_sql[
+            "trg_feedback_processing_round_integer_v2_insert"
+        ]
+        assert decoy_literal not in trigger_sql[
+            "trg_feedback_processing_round_integer_v2_update"
+        ]
+        assert canonical_literal in trigger_sql[
+            "trg_feedback_processing_round_integer_v2_insert"
+        ]
+        assert canonical_literal in trigger_sql[
+            "trg_feedback_processing_round_integer_v2_update"
+        ]
+
+
+@pytest.mark.parametrize(
     ("round_number", "storage_type"),
     [(1.5, "real"), ("abc", "text"), (0, "integer"), (-1, "integer")],
 )

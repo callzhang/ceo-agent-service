@@ -184,7 +184,7 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_immutable",
 )
 FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL = """
-create trigger trg_feedback_processing_round_integer_v2_insert
+CREATE TRIGGER trg_feedback_processing_round_integer_v2_insert
 before insert on feedback_processing_rounds
 when typeof(new.round_number) <> 'integer' or new.round_number <= 0
 begin
@@ -195,7 +195,7 @@ begin
 end
 """.strip()
 FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL = """
-create trigger trg_feedback_processing_round_integer_v2_update
+CREATE TRIGGER trg_feedback_processing_round_integer_v2_update
 before update of round_number on feedback_processing_rounds
 when typeof(new.round_number) <> 'integer' or new.round_number <= 0
 begin
@@ -231,12 +231,7 @@ _INITIALIZE_LOCK = threading.Lock()
 
 
 def _normalize_schema_sql(value: str) -> str:
-    normalized = " ".join(value.casefold().strip().rstrip(";").split())
-    return normalized.replace(
-        "create trigger if not exists ",
-        "create trigger ",
-        1,
-    )
+    return value.strip().removesuffix(";").rstrip()
 
 
 STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
