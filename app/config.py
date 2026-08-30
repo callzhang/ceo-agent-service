@@ -72,6 +72,14 @@ def write_env_values(updates: dict[str, str], path: Path | None = None) -> Path:
     return env_path
 
 
+def effective_env_values(path: Path | None = None) -> dict[str, str]:
+    """Return file defaults overlaid by the authoritative process environment."""
+
+    values = read_env_file(path)
+    values.update(os.environ)
+    return values
+
+
 def _decode_env_value(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         value = value[1:-1]

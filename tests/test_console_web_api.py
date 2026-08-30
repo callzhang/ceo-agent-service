@@ -798,6 +798,51 @@ def test_console_email_config_is_separate_from_provider_actions(tmp_path: Path):
     assert listed.json()["items"][0]["category"] == "subscription"
 
 
+def test_console_email_accounts_are_registered_and_keep_classifier_config_global(
+    tmp_path: Path,
+):
+    account = {
+        "account_id": "console_mail",
+        "display_name": "Console Mail",
+        "email_address": "console-mail@example.test",
+        "imap_host": "imap.example.test",
+        "imap_port": 993,
+        "imap_tls": True,
+        "imap_username": "console-mail@example.test",
+        "imap_secret_reference": "CEO_EMAIL_CONSOLE_MAIL_IMAP_SECRET",
+        "smtp_host": "smtp.example.test",
+        "smtp_port": 465,
+        "smtp_tls": True,
+        "smtp_username": "console-mail@example.test",
+        "smtp_secret_reference": "CEO_EMAIL_CONSOLE_MAIL_SMTP_SECRET",
+        "enabled": True,
+        "scan_folders": ["INBOX"],
+        "scan_interval_seconds": 60,
+    }
+
+    with _client(tmp_path) as client:
+        config = client.put(
+            "/api/console/email/config/work",
+            json={
+                "description": "Work",
+                "threshold": 0.91,
+                "actions": ["archive"],
+                "enabled": True,
+                "config_version": "email-config-v1",
+            },
+        )
+        created = client.post("/api/console/email/accounts", json=account)
+        listed = client.get("/api/console/email/accounts")
+
+    assert config.status_code == 200
+    assert created.status_code == 201
+    assert created.json()["restart_required"] is True
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["account_id"] == "console_mail"
+    assert "threshold" not in listed.json()["items"][0]
+    assert "model_id" not in listed.json()["items"][0]
+
+
 def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Path):
     email_store = EmailStore(tmp_path / "worker.sqlite3")
     classification = EmailClassification.model_validate(

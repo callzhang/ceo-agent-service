@@ -59,6 +59,10 @@ def _assert_email_endpoints_unavailable(client: TestClient) -> None:
         client.post("/api/console/email/classifications/999/feedback"),
         client.get("/api/console/email/config"),
         client.put("/api/console/email/config/invalid"),
+        client.get("/api/console/email/accounts"),
+        client.post("/api/console/email/accounts"),
+        client.put("/api/console/email/accounts/missing"),
+        client.post("/api/console/email/accounts/missing/test"),
     )
     expected = {
         "ok": False,

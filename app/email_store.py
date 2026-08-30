@@ -331,6 +331,14 @@ class EmailActionAttemptConflict(RuntimeError):
     """A direct-action attempt conflicts with append-only history."""
 
 
+class EmailAccountConflict(RuntimeError):
+    """An account ID or unshared email address conflicts with stored config."""
+
+    def __init__(self, code: str):
+        super().__init__("email account configuration conflicts with stored state")
+        self.code = code
+
+
 class EmailPersistenceCorruption(RuntimeError):
     """Durable email state violates its JSON or enum contract."""
 
@@ -2242,6 +2250,193 @@ class EmailStore:
                 (account_id, folder),
             ).fetchone()
         return None if row is None else dict(row)
+
+    def list_accounts(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from email_accounts order by account_id"
+            ).fetchall()
+        return [self._account_row(row) for row in rows]
+
+    def get_account(self, account_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_accounts where account_id=?",
+                (account_id,),
+            ).fetchone()
+        return None if row is None else self._account_row(row)
+
+    def create_account(
+        self,
+        values: Mapping[str, object],
+        *,
+        allow_shared_email: bool = False,
+    ) -> dict[str, Any]:
+        now = self._now()
+        with self._connect() as db:
+            db.execute("begin immediate")
+            if db.execute(
+                "select 1 from email_accounts where account_id=?",
+                (values["account_id"],),
+            ).fetchone() is not None:
+                raise EmailAccountConflict("account_id_conflict")
+            self._assert_email_address_available(
+                db,
+                str(values["email_address"]),
+                allow_shared_email=allow_shared_email,
+            )
+            self._insert_account(db, values, created_at=now, updated_at=now)
+            row = db.execute(
+                "select * from email_accounts where account_id=?",
+                (values["account_id"],),
+            ).fetchone()
+        assert row is not None
+        return self._account_row(row)
+
+    def update_account(
+        self,
+        account_id: str,
+        values: Mapping[str, object],
+        *,
+        allow_shared_email: bool = False,
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            db.execute("begin immediate")
+            existing = db.execute(
+                "select 1 from email_accounts where account_id=?",
+                (account_id,),
+            ).fetchone()
+            if existing is None:
+                return None
+            self._assert_email_address_available(
+                db,
+                str(values["email_address"]),
+                allow_shared_email=allow_shared_email,
+                excluding_account_id=account_id,
+            )
+            db.execute(
+                """
+                update email_accounts set
+                    display_name=?, email_address=?, imap_host=?, imap_port=?,
+                    imap_tls=?, imap_username=?, imap_secret_reference=?,
+                    smtp_host=?, smtp_port=?, smtp_tls=?, smtp_username=?,
+                    smtp_secret_reference=?, enabled=?, scan_folders_json=?,
+                    scan_interval_seconds=?, updated_at=?
+                where account_id=?
+                """,
+                (
+                    values["display_name"],
+                    values["email_address"],
+                    values["imap_host"],
+                    values["imap_port"],
+                    int(bool(values["imap_tls"])),
+                    values["imap_username"],
+                    values["imap_secret_reference"],
+                    values["smtp_host"],
+                    values["smtp_port"],
+                    int(bool(values["smtp_tls"])),
+                    values["smtp_username"],
+                    values["smtp_secret_reference"],
+                    int(bool(values["enabled"])),
+                    _json_dump(list(values["scan_folders"])),
+                    values["scan_interval_seconds"],
+                    self._now(),
+                    account_id,
+                ),
+            )
+            row = db.execute(
+                "select * from email_accounts where account_id=?",
+                (account_id,),
+            ).fetchone()
+        assert row is not None
+        return self._account_row(row)
+
+    @staticmethod
+    def _assert_email_address_available(
+        db: sqlite3.Connection,
+        email_address: str,
+        *,
+        allow_shared_email: bool,
+        excluding_account_id: str = "",
+    ) -> None:
+        if allow_shared_email:
+            return
+        row = db.execute(
+            """
+            select 1 from email_accounts
+            where lower(email_address)=lower(?) and account_id != ?
+            """,
+            (email_address, excluding_account_id),
+        ).fetchone()
+        if row is not None:
+            raise EmailAccountConflict("email_address_conflict")
+
+    @staticmethod
+    def _insert_account(
+        db: sqlite3.Connection,
+        values: Mapping[str, object],
+        *,
+        created_at: str,
+        updated_at: str,
+    ) -> None:
+        db.execute(
+            """
+            insert into email_accounts (
+                account_id, display_name, email_address, imap_host, imap_port,
+                imap_tls, imap_username, imap_secret_reference, smtp_host,
+                smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
+                enabled, scan_folders_json, scan_interval_seconds, created_at,
+                updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                values["account_id"],
+                values["display_name"],
+                values["email_address"],
+                values["imap_host"],
+                values["imap_port"],
+                int(bool(values["imap_tls"])),
+                values["imap_username"],
+                values["imap_secret_reference"],
+                values["smtp_host"],
+                values["smtp_port"],
+                int(bool(values["smtp_tls"])),
+                values["smtp_username"],
+                values["smtp_secret_reference"],
+                int(bool(values["enabled"])),
+                _json_dump(list(values["scan_folders"])),
+                values["scan_interval_seconds"],
+                created_at,
+                updated_at,
+            ),
+        )
+
+    @staticmethod
+    def _account_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "account_id": row["account_id"],
+            "display_name": row["display_name"],
+            "email_address": row["email_address"],
+            "imap_host": row["imap_host"],
+            "imap_port": row["imap_port"],
+            "imap_tls": bool(row["imap_tls"]),
+            "imap_username": row["imap_username"],
+            "imap_secret_reference": row["imap_secret_reference"],
+            "smtp_host": row["smtp_host"],
+            "smtp_port": row["smtp_port"],
+            "smtp_tls": bool(row["smtp_tls"]),
+            "smtp_username": row["smtp_username"],
+            "smtp_secret_reference": row["smtp_secret_reference"],
+            "enabled": bool(row["enabled"]),
+            "scan_folders": _json_load(
+                row["scan_folders_json"],
+                field="scan_folders_json",
+                expected_type=list,
+            ),
+            "scan_interval_seconds": row["scan_interval_seconds"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
 
     def list_classifications(
         self, *, status: EmailClassificationStatus, limit: int, offset: int

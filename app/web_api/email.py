@@ -8,19 +8,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import imaplib
+import json
+from pathlib import Path
 import sqlite3
+import smtplib
 from typing import Any
 
 from fastapi import HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app import config as app_config
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
     EmailClassificationStatus,
 )
-from app.email_store import EmailClassificationConflict, EmailStore
+from app.email_connector_config import EmailAccountPayload, resolve_secret
+from app.email_store import EmailAccountConflict, EmailClassificationConflict, EmailStore
 from app.email_store import EmailPersistenceCorruption
 
 
@@ -62,6 +68,9 @@ def register_email_routes(
     email_store_factory: Any,
     *,
     email_learning_factory: Any | None = None,
+    email_env_path: Path | None = None,
+    imap_client_factory: Any | None = None,
+    smtp_client_factory: Any | None = None,
 ) -> None:
     try:
         email_store = email_store_factory()
@@ -80,6 +89,118 @@ def register_email_routes(
             raise _EmailStoreUnavailable
         return availability.store
 
+    def secret_environment() -> dict[str, str]:
+        return app_config.effective_env_values(email_env_path)
+
+    def account_response(account: dict[str, Any]) -> dict[str, Any]:
+        env = secret_environment()
+        return {
+            **account,
+            "imap_secret_configured": bool(
+                resolve_secret(account["imap_secret_reference"], env)
+            ),
+            "smtp_secret_configured": bool(
+                resolve_secret(account["smtp_secret_reference"], env)
+            ),
+        }
+
+    def error_response(code: str, message: str, status_code: int) -> JSONResponse:
+        return JSONResponse(
+            {
+                "ok": False,
+                "code": code,
+                "message": message,
+                "details": {},
+            },
+            status_code=status_code,
+        )
+
+    async def account_payload(request: Request) -> EmailAccountPayload | JSONResponse:
+        if "application/json" not in request.headers.get("content-type", ""):
+            return error_response(
+                "json_content_type_required",
+                "JSON Content-Type required",
+                415,
+            )
+        try:
+            raw = await request.body()
+            decoded = json.loads(raw)
+            if not isinstance(decoded, dict):
+                raise ValueError("JSON object required")
+            return EmailAccountPayload.model_validate_json(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, ValueError, TypeError):
+            return error_response(
+                "invalid_email_account",
+                "Email account configuration is invalid",
+                400,
+            )
+
+    def save_secret_values(payload: EmailAccountPayload) -> None:
+        updates: dict[str, str] = {}
+        for reference, secret in (
+            (payload.imap_secret_reference, payload.imap_secret),
+            (payload.smtp_secret_reference, payload.smtp_secret),
+        ):
+            if secret is None:
+                continue
+            value = secret.get_secret_value()
+            if value.strip():
+                updates[reference] = value
+        if updates:
+            app_config.write_env_values(updates, path=email_env_path)
+
+    def make_imap_client(account: dict[str, Any]):
+        if imap_client_factory is not None:
+            return imap_client_factory(account["imap_host"], account["imap_port"])
+        factory = imaplib.IMAP4_SSL if account["imap_tls"] else imaplib.IMAP4
+        return factory(account["imap_host"], account["imap_port"], timeout=10)
+
+    def make_smtp_client(account: dict[str, Any]):
+        if smtp_client_factory is not None:
+            return smtp_client_factory(account["smtp_host"], account["smtp_port"])
+        factory = smtplib.SMTP_SSL if account["smtp_tls"] else smtplib.SMTP
+        return factory(account["smtp_host"], account["smtp_port"], timeout=10)
+
+    def test_imap(account: dict[str, Any], secret: str | None) -> dict[str, Any]:
+        if not secret:
+            return {"ok": False, "code": "secret_not_configured"}
+        client = None
+        try:
+            client = make_imap_client(account)
+            login_status, _ = client.login(account["imap_username"], secret)
+            if str(login_status).upper() != "OK":
+                raise RuntimeError("IMAP login failed")
+            for folder in account["scan_folders"]:
+                select_status, _ = client.select(folder, readonly=True)
+                if str(select_status).upper() != "OK":
+                    raise RuntimeError("IMAP readonly select failed")
+            return {"ok": True, "code": "connected"}
+        except Exception:
+            return {"ok": False, "code": "connection_failed"}
+        finally:
+            if client is not None:
+                try:
+                    client.logout()
+                except Exception:
+                    pass
+
+    def test_smtp(account: dict[str, Any], secret: str | None) -> dict[str, Any]:
+        if not secret:
+            return {"ok": False, "code": "secret_not_configured"}
+        client = None
+        try:
+            client = make_smtp_client(account)
+            client.login(account["smtp_username"], secret)
+            return {"ok": True, "code": "connected"}
+        except Exception:
+            return {"ok": False, "code": "connection_failed"}
+        finally:
+            if client is not None:
+                try:
+                    client.quit()
+                except Exception:
+                    pass
+
     @app.exception_handler(_EmailStoreUnavailable)
     async def email_store_unavailable(
         _request: Request,
@@ -94,6 +215,96 @@ def register_email_routes(
             },
             status_code=503,
         )
+
+    @app.get("/api/console/email/accounts")
+    def email_accounts():
+        store = require_store()
+        return {"items": [account_response(row) for row in store.list_accounts()], "meta": meta()}
+
+    @app.post("/api/console/email/accounts")
+    async def email_account_create(request: Request):
+        store = require_store()
+        payload = await account_payload(request)
+        if isinstance(payload, JSONResponse):
+            return payload
+        try:
+            row = store.create_account(
+                payload.stored_values(),
+                allow_shared_email=payload.allow_shared_email,
+            )
+        except EmailAccountConflict as exc:
+            return error_response(
+                exc.code,
+                "Email account conflicts with existing configuration",
+                409,
+            )
+        save_secret_values(payload)
+        return JSONResponse(
+            {
+                "ok": True,
+                "item": account_response(row),
+                "restart_required": True,
+                "message": "Email account configuration saved",
+            },
+            status_code=201,
+        )
+
+    @app.put("/api/console/email/accounts/{account_id}")
+    async def email_account_update(account_id: str, request: Request):
+        store = require_store()
+        payload = await account_payload(request)
+        if isinstance(payload, JSONResponse):
+            return payload
+        if payload.account_id != account_id:
+            return error_response(
+                "email_account_id_immutable",
+                "Email account ID cannot be changed",
+                400,
+            )
+        try:
+            row = store.update_account(
+                account_id,
+                payload.stored_values(),
+                allow_shared_email=payload.allow_shared_email,
+            )
+        except EmailAccountConflict as exc:
+            return error_response(
+                exc.code,
+                "Email account conflicts with existing configuration",
+                409,
+            )
+        if row is None:
+            return error_response("not_found", "Email account not found", 404)
+        save_secret_values(payload)
+        return {
+            "ok": True,
+            "item": account_response(row),
+            "restart_required": True,
+            "message": "Email account configuration saved",
+        }
+
+    @app.post("/api/console/email/accounts/{account_id}/test")
+    def email_account_test(account_id: str):
+        store = require_store()
+        account = store.get_account(account_id)
+        if account is None:
+            return error_response("not_found", "Email account not found", 404)
+        env = secret_environment()
+        diagnostics = {
+            "imap": test_imap(
+                account,
+                resolve_secret(account["imap_secret_reference"], env),
+            ),
+            "smtp": test_smtp(
+                account,
+                resolve_secret(account["smtp_secret_reference"], env),
+            ),
+        }
+        return {
+            "ok": all(item["ok"] for item in diagnostics.values()),
+            "account_id": account_id,
+            "diagnostics": diagnostics,
+        }
 
     def meta(*, page: int | None = None, page_size: int | None = None, total: int | None = None) -> dict[str, Any]:
         result: dict[str, Any] = {
