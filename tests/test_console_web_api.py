@@ -338,6 +338,43 @@ def test_console_history_includes_chart_snapshot(tmp_path: Path):
     assert len(payload["chart"]["labels"]) == 24
 
 
+def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-console-1",
+        title="项目评审会",
+        source_json='{"summary":"讨论上线范围"}',
+        participants_json='[{"name":"Derek"},{"name":"Mina"}]',
+        ended_at="2026-08-29T10:00:00Z",
+        eligible_at="2026-08-29T10:05:00Z",
+        status="pending",
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="sent",
+        final_message="会后对齐：请确认上线范围。",
+    )
+    run_id = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="internal-session-must-not-leak",
+        decision_json='{"action":"send"}',
+        audit_summary="上线范围需要确认。",
+        status="sent",
+        error="",
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/console/meeting-attempts/{run_id}")
+
+    assert response.status_code == 200
+    item = response.json()["item"]
+    assert item["id"] == run_id
+    assert item["title"] == "项目评审会"
+    assert item["decision"] == {"action": "send"}
+    assert item["output"] == "会后对齐：请确认上线范围。"
+    assert "codex_session_id" not in json.dumps(item)
+
+
 def test_console_feedback_pending_badge_is_global_when_filtered_to_resolved(
     tmp_path: Path,
 ):
