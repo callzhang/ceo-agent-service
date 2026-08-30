@@ -119,6 +119,40 @@ def test_complete_agent_run_returns_after_transaction_connection_closes(
     assert store.get_agent_run(claim.run.id).status == "completed"
 
 
+def test_ensure_reply_task_returns_one_immutable_queue_identity(tmp_path: Path):
+    store = _store(tmp_path)
+    first = store.ensure_reply_task(
+        channel="email",
+        conversation_id="email-thread:abc",
+        conversation_title="Original subject",
+        single_chat=False,
+        trigger_message_id="email-action:def",
+        trigger_create_time="2026-08-30T08:00:00+00:00",
+        trigger_sender="sender@example.com",
+        trigger_text="original safe trigger",
+        trigger_message_json=json.dumps({"action_identity": "email-action:def"}),
+    )
+    replay = store.ensure_reply_task(
+        channel="email",
+        conversation_id="email-thread:abc",
+        conversation_title="Changed subject must not rewrite history",
+        single_chat=False,
+        trigger_message_id="email-action:def",
+        trigger_create_time="2026-08-30T08:01:00+00:00",
+        trigger_sender="different@example.com",
+        trigger_text="changed trigger must not replace the task",
+        trigger_message_json=json.dumps({"action_identity": "different"}),
+    )
+
+    assert replay.id == first.id
+    assert replay.conversation_title == "Original subject"
+    assert replay.trigger_text == "original safe trigger"
+    assert json.loads(replay.trigger_message_json) == {
+        "action_identity": "email-action:def"
+    }
+    assert store.count_reply_tasks(channel="email") == 1
+
+
 def test_channel_identity_migration_accepts_quoted_index_names(tmp_path: Path):
     db_path = tmp_path / "task.sqlite3"
     with sqlite3.connect(db_path) as db:

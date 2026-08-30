@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from app.agent_context import (
@@ -9,7 +11,9 @@ from app.agent_context import (
     PriorReceipt,
     _AUDIT_AGENT_RULES,
     _CONSUMER_AGENT_RULES,
+    email_attachment_metadata_materials,
 )
+from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.agent_contracts import ConsumerProposal
 from app.agent_skill_usage import LoadedSkillReceipt
 from app.consumer_agent import (
@@ -289,6 +293,46 @@ def test_context_renders_reference_and_command_without_resolved_body():
     assert "Trusted" not in rendered
     assert "Safe prior execution receipts" in rendered
     assert "评论已提交" in rendered
+
+
+def test_email_attachment_materials_expose_metadata_without_read_capability():
+    materials = email_attachment_metadata_materials(
+        (
+            EmailAttachmentMetadata(
+                filename="invoice.pdf",
+                mime_type="application/pdf",
+                size_bytes=987,
+                inline=False,
+            ),
+            EmailAttachmentMetadata(
+                filename="logo.png",
+                mime_type="image/png",
+                size_bytes=123,
+                inline=True,
+            ),
+        ),
+        source_message_id="account:message-id:<message@example.com>",
+    )
+
+    assert len(materials) == 2
+    assert all(material.kind == "email_attachment_metadata" for material in materials)
+    assert all(material.read_commands == () for material in materials)
+    decoded = [json.loads(material.reference) for material in materials]
+    assert decoded == [
+        {
+            "filename": "invoice.pdf",
+            "inline": False,
+            "mime_type": "application/pdf",
+            "size_bytes": 987,
+        },
+        {
+            "filename": "logo.png",
+            "inline": True,
+            "mime_type": "image/png",
+            "size_bytes": 123,
+        },
+    ]
+    assert all("path" not in item and "content" not in item for item in decoded)
 
 
 def test_context_renders_one_canonical_instant_for_naive_dingtalk_times():
