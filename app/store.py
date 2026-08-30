@@ -173,8 +173,8 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
 }
 STORE_SCHEMA_REQUIRED_TRIGGERS = (
-    "trg_feedback_processing_round_number_positive_insert",
-    "trg_feedback_processing_round_number_positive_update",
+    "trg_feedback_processing_round_integer_v2_insert",
+    "trg_feedback_processing_round_integer_v2_update",
     "trg_runtime_attempt_session_evidence_trim_insert",
     "trg_runtime_attempt_session_evidence_trim_update",
     "trg_runtime_attempt_generalized_lease_insert",
@@ -183,18 +183,31 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_update",
     "trg_runtime_attempt_lineage_immutable",
 )
-STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITION_FRAGMENTS = {
-    "trg_feedback_processing_round_number_positive_insert": (
-        "typeof(new.round_number)",
-        "new.round_number <= 0",
-        "feedback_processing_round_number_must_be_positive",
-    ),
-    "trg_feedback_processing_round_number_positive_update": (
-        "typeof(new.round_number)",
-        "new.round_number <= 0",
-        "feedback_processing_round_number_must_be_positive",
-    ),
-}
+FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL = """
+create trigger if not exists trg_feedback_processing_round_integer_v2_insert
+before insert on feedback_processing_rounds
+when typeof(new.round_number) <> 'integer' or new.round_number <= 0
+begin
+    select raise(
+        abort,
+        'feedback_processing_round_number_must_be_positive'
+    );
+end
+""".strip()
+FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL = """
+create trigger if not exists trg_feedback_processing_round_integer_v2_update
+before update of round_number on feedback_processing_rounds
+when typeof(new.round_number) <> 'integer' or new.round_number <= 0
+begin
+    select raise(
+        abort,
+        'feedback_processing_round_number_must_be_positive'
+    );
+end
+""".strip()
+FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR = (
+    "schema_migration_invalid_feedback_processing_round_number"
+)
 MAX_AGENT_RUN_EVENT_BYTES = 256 * 1024
 MAX_RUNTIME_RESULT_ENVELOPE_BYTES = 64 * 1024
 MAX_RECONCILIATION_EVENTS = 256
@@ -212,6 +225,29 @@ MEETING_ALIGNMENT_DUPLICATE_RUNNING_MIGRATION_ERROR = (
 )
 _INITIALIZED_STORE_PATHS: set[Path] = set()
 _INITIALIZE_LOCK = threading.Lock()
+
+
+def _normalize_schema_sql(value: str) -> str:
+    normalized = " ".join(value.casefold().strip().rstrip(";").split())
+    return normalized.replace(
+        "create trigger if not exists ",
+        "create trigger ",
+        1,
+    )
+
+
+STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
+    "trg_feedback_processing_round_integer_v2_insert": _normalize_schema_sql(
+        FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL
+    ),
+    "trg_feedback_processing_round_integer_v2_update": _normalize_schema_sql(
+        FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL
+    ),
+}
+
+
+class FeedbackProcessingRoundMigrationIntegrityError(RuntimeError):
+    error_code = FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR
 
 
 def _replace_text_in_json(value: object, old: str, new: str) -> object:
@@ -1183,6 +1219,33 @@ class AutoReplyStore:
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
+    @staticmethod
+    def _feedback_processing_round_storage_is_valid(
+        db: sqlite3.Connection,
+    ) -> bool:
+        return (
+            db.execute(
+                """
+                select 1
+                  from feedback_processing_rounds
+                 where typeof(round_number) <> 'integer'
+                    or round_number <= 0
+                 limit 1
+                """
+            ).fetchone()
+            is None
+        )
+
+    @classmethod
+    def _validate_feedback_processing_round_storage(
+        cls,
+        db: sqlite3.Connection,
+    ) -> None:
+        if not cls._feedback_processing_round_storage_is_valid(db):
+            raise FeedbackProcessingRoundMigrationIntegrityError(
+                FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR
+            )
+
     def _schema_is_current(self) -> bool:
         try:
             with self._connect() as db:
@@ -1209,18 +1272,20 @@ class AutoReplyStore:
                 ).fetchall()
                 present_triggers = {str(item["name"]) for item in trigger_rows}
                 present_trigger_definitions = {
-                    str(item["name"]): str(item["sql"] or "").casefold()
+                    str(item["name"]): _normalize_schema_sql(
+                        str(item["sql"] or "")
+                    )
                     for item in trigger_rows
                 }
                 required_trigger_definitions_present = all(
-                    all(
-                        fragment.casefold()
-                        in present_trigger_definitions.get(trigger_name, "")
-                        for fragment in required_fragments
+                    present_trigger_definitions.get(trigger_name) == required_sql
+                    for trigger_name, required_sql in (
+                        STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS.items()
                     )
-                    for trigger_name, required_fragments in (
-                        STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITION_FRAGMENTS.items()
-                    )
+                )
+                feedback_processing_round_storage_valid = (
+                    "feedback_processing_rounds" in present_tables
+                    and self._feedback_processing_round_storage_is_valid(db)
                 )
                 required_columns_present = all(
                     set(required_columns).issubset(
@@ -1244,6 +1309,7 @@ class AutoReplyStore:
             and set(STORE_SCHEMA_REQUIRED_INDEXES).issubset(present_indexes)
             and set(STORE_SCHEMA_REQUIRED_TRIGGERS).issubset(present_triggers)
             and required_trigger_definitions_present
+            and feedback_processing_round_storage_valid
             and required_columns_present
             and not set(STORE_SCHEMA_REMOVED_TABLES).intersection(present_tables)
         )
@@ -1441,10 +1507,8 @@ class AutoReplyStore:
                     on feedback_processing_rounds(feedback_key, round_number desc);
                 create index if not exists idx_feedback_processing_rounds_batch
                     on feedback_processing_rounds(batch_id);
-                drop trigger if exists
-                    trg_feedback_processing_round_number_positive_insert;
-                create trigger
-                    trg_feedback_processing_round_number_positive_insert
+                create trigger if not exists
+                    trg_feedback_processing_round_integer_v2_insert
                 before insert on feedback_processing_rounds
                 when typeof(new.round_number) <> 'integer'
                      or new.round_number <= 0
@@ -1454,10 +1518,8 @@ class AutoReplyStore:
                         'feedback_processing_round_number_must_be_positive'
                     );
                 end;
-                drop trigger if exists
-                    trg_feedback_processing_round_number_positive_update;
-                create trigger
-                    trg_feedback_processing_round_number_positive_update
+                create trigger if not exists
+                    trg_feedback_processing_round_integer_v2_update
                 before update of round_number on feedback_processing_rounds
                 when typeof(new.round_number) <> 'integer'
                      or new.round_number <= 0
@@ -2417,6 +2479,7 @@ class AutoReplyStore:
                 );
                 """
             )
+            self._validate_feedback_processing_round_storage(db)
             workbench_turn_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(workbench_turns)").fetchall()

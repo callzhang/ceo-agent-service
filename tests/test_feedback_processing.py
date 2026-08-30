@@ -339,6 +339,7 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
                 trg_feedback_processing_round_number_positive_insert
             before insert on feedback_processing_rounds
             when new.round_number <= 0
+                 or typeof(new.round_number) = 'blob'
             begin
                 select raise(
                     abort,
@@ -353,6 +354,7 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
                 trg_feedback_processing_round_number_positive_update
             before update of round_number on feedback_processing_rounds
             when new.round_number <= 0
+                 or typeof(new.round_number) = 'blob'
             begin
                 select raise(
                     abort,
@@ -370,6 +372,7 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
             """
         )
 
+    assert store._schema_is_current() is False
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     upgraded = AutoReplyStore(db_path)
     stable_error = "feedback_processing_round_number_must_be_positive"
@@ -397,8 +400,8 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
             )
         }
         assert {
-            "trg_feedback_processing_round_number_positive_insert",
-            "trg_feedback_processing_round_number_positive_update",
+            "trg_feedback_processing_round_integer_v2_insert",
+            "trg_feedback_processing_round_integer_v2_update",
         } <= triggers
 
         for round_number in (0, -1, 1.5, "1.5", "abc"):
@@ -439,6 +442,145 @@ def test_feedback_round_positive_invariant_upgrades_old_table_without_rebuild(
                 """
             ).fetchone()
         ) == (2, "integer")
+
+
+@pytest.mark.parametrize(
+    ("round_number", "storage_type"),
+    [(1.5, "real"), ("abc", "text"), (0, "integer"), (-1, "integer")],
+)
+def test_feedback_round_upgrade_rejects_existing_invalid_storage_without_mutation(
+    tmp_path: Path,
+    round_number: object,
+    storage_type: str,
+):
+    db_path = tmp_path / f"invalid-legacy-round-{round_number}.sqlite3"
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        db.execute("drop table feedback_processing_rounds")
+        db.execute(
+            """
+            create table feedback_processing_rounds (
+                id integer primary key autoincrement,
+                feedback_key text not null,
+                round_number integer not null,
+                batch_id text not null default '',
+                status text not null
+                    check (status in ('processing', 'resolved')),
+                workbench_task_id text not null default '',
+                workbench_turn_id text not null default '',
+                attempt_id integer not null default 0,
+                agent_run_id integer not null default 0,
+                commit_sha text not null default '',
+                test_evidence_json text not null default '{}',
+                restart_evidence_json text not null default '{}',
+                health_evidence_json text not null default '{}',
+                note text not null default '',
+                started_at text not null default '',
+                resolved_at text not null default '',
+                reopened_at text not null default '',
+                reopen_reason text not null default '',
+                created_at text not null default current_timestamp,
+                updated_at text not null default current_timestamp,
+                unique (feedback_key, round_number),
+                unique (feedback_key, batch_id)
+            )
+            """
+        )
+        db.execute(
+            """
+            create index idx_feedback_processing_rounds_feedback
+                on feedback_processing_rounds(feedback_key, round_number desc)
+            """
+        )
+        db.execute(
+            """
+            create index idx_feedback_processing_rounds_batch
+                on feedback_processing_rounds(batch_id)
+            """
+        )
+        db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status, note
+            ) values ('feedback-invalid-legacy', ?, 'batch-invalid-legacy',
+                      'processing', 'must remain byte-for-byte equivalent')
+            """,
+            (round_number,),
+        )
+        for suffix, event in (
+            ("insert", "insert"),
+            ("update", "update of round_number"),
+        ):
+            db.execute(
+                f"""
+                create trigger
+                    trg_feedback_processing_round_number_positive_{suffix}
+                before {event} on feedback_processing_rounds
+                when new.round_number <= 0
+                     or typeof(new.round_number) = 'blob'
+                begin
+                    select raise(
+                        abort,
+                        'feedback_processing_round_number_must_be_positive'
+                    );
+                end
+                """
+            )
+
+    stable_error = "schema_migration_invalid_feedback_processing_round_number"
+    integrity_error_type = (
+        store_module.FeedbackProcessingRoundMigrationIntegrityError
+    )
+    assert store._schema_is_current() is False
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    with pytest.raises(integrity_error_type, match=stable_error) as first_error:
+        AutoReplyStore(db_path)
+    assert first_error.value.error_code == stable_error
+    assert str(first_error.value) == stable_error
+
+    def invalid_row_snapshot() -> tuple[object, str, str]:
+        with sqlite3.connect(db_path) as db:
+            return tuple(
+                db.execute(
+                    """
+                    select round_number, typeof(round_number), note
+                      from feedback_processing_rounds
+                     where feedback_key='feedback-invalid-legacy'
+                    """
+                ).fetchone()
+            )
+
+    assert invalid_row_snapshot() == (
+        round_number,
+        storage_type,
+        "must remain byte-for-byte equivalent",
+    )
+    with sqlite3.connect(db_path) as db:
+        triggers = {
+            row[0]
+            for row in db.execute(
+                """
+                select name from sqlite_master
+                 where type='trigger' and tbl_name='feedback_processing_rounds'
+                """
+            )
+        }
+    assert {
+        "trg_feedback_processing_round_integer_v2_insert",
+        "trg_feedback_processing_round_integer_v2_update",
+    } <= triggers
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    with pytest.raises(integrity_error_type, match=stable_error) as second_error:
+        AutoReplyStore(db_path)
+    assert second_error.value.error_code == stable_error
+    assert str(second_error.value) == stable_error
+    assert invalid_row_snapshot() == (
+        round_number,
+        storage_type,
+        "must remain byte-for-byte equivalent",
+    )
 
 
 def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
