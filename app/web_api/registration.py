@@ -68,6 +68,74 @@ def register_console_routes(
     def item_envelope(item: Any):
         return {"item": json_safe(item), "meta": {"snapshot_at": snapshot_at()}}
 
+    def history_log_detail_url(log: Any) -> str:
+        source_table = str(getattr(log, "source_table", "") or "")
+        source_id = int(getattr(log, "source_id", 0) or 0)
+        project_id = int(getattr(log, "project_id", 0) or 0)
+        todo_id = int(getattr(log, "todo_id", 0) or 0)
+        follow_up_id = int(getattr(log, "follow_up_id", 0) or 0)
+        if source_table == "meeting_alignment_runs":
+            return f"/meeting-attempts/{source_id}"
+        if source_table == "follow_up_drafts":
+            return f"/tasks/{project_id}#follow-up-{follow_up_id or source_id}"
+        if source_table in {
+            "work_updates",
+            "todo_evidence_candidates",
+            "work_todo_dingtalk_links",
+        }:
+            if project_id and todo_id:
+                return f"/tasks/{project_id}#todo-{todo_id}"
+            if project_id:
+                return f"/tasks/{project_id}"
+        if source_table == "reply_attempts":
+            return f"/attempts/{source_id}"
+        return ""
+
+    def history_log_item(log: Any) -> dict[str, Any]:
+        source_table = str(getattr(log, "source_table", "") or "")
+        history_type = str(getattr(log, "history_type", "") or "")
+        if source_table == "meeting_alignment_runs":
+            kind = "meeting"
+        elif source_table in {"work_updates", "todo_evidence_candidates", "follow_up_drafts", "work_todo_dingtalk_links"}:
+            kind = "task"
+        else:
+            kind = "reply"
+        title = normalize_display_value(getattr(log, "context", "") or getattr(log, "summary", "") or getattr(log, "category", ""))
+        summary = normalize_display_value(getattr(log, "summary", ""))
+        detail = normalize_display_value(getattr(log, "detail", ""))
+        if source_table == "meeting_alignment_runs":
+            input_text = normalize_display_value(getattr(log, "context", ""))
+            output_text = summary
+        elif source_table == "follow_up_drafts":
+            input_text = summary
+            output_text = detail
+        elif source_table == "todo_evidence_candidates":
+            input_text = summary
+            output_text = detail or summary
+        elif source_table == "work_updates":
+            input_text = summary
+            output_text = detail
+        elif source_table == "work_todo_dingtalk_links":
+            input_text = summary
+            output_text = detail
+        else:
+            input_text = summary
+            output_text = detail or summary
+        return {
+            "id": str(getattr(log, "source_id", 0) or 0),
+            "occurred_at": getattr(log, "occurred_at", ""),
+            "title": title,
+            "type": history_type or kind,
+            "status": normalize_display_value(getattr(log, "status", "")),
+            "summary": summary or output_text or input_text,
+            "actor": normalize_display_value(getattr(log, "source_actor", "")),
+            "detail_url": history_log_detail_url(log),
+            "kind": kind,
+            "input": input_text,
+            "output": output_text,
+            "action": normalize_display_value(getattr(log, "action", "")),
+        }
+
     def stored_json(value: str, fallback: Any):
         try:
             return json.loads(value or "")
@@ -186,34 +254,30 @@ def register_console_routes(
     ):
         store = store_factory()
         statuses = (status,) if status.strip() else None
-        object_types = (object_type,) if object_type.strip() else None
-        total = store.count_history_items(
-            send_statuses=statuses, query_text=q, object_types=object_types
+        history_types = (object_type,) if object_type.strip() else None
+        visible_source_tables = (
+            "reply_attempts",
+            "meeting_alignment_runs",
+            "work_updates",
+            "todo_evidence_candidates",
+            "follow_up_drafts",
+            "work_todo_dingtalk_links",
         )
-        rows = store.list_history_items(
-            limit=page_size, offset=(page - 1) * page_size,
-            send_statuses=statuses, query_text=q, object_types=object_types,
+        total = store.count_operation_logs(
+            query=q,
+            statuses=statuses,
+            history_types=history_types,
+            source_tables=visible_source_tables,
         )
-        items = []
-        for row in rows:
-            kind = str(row.kind)
-            detail = (
-                f"/meeting-attempts/{row.source_id}" if kind == "meeting"
-                else f"/tasks/{row.project_id}" if kind == "task" and row.project_id
-                else f"/attempts/{row.source_id}"
-            )
-            items.append({
-                "id": str(row.source_id), "occurred_at": row.created_at,
-                "title": normalize_display_value(row.source_title),
-                "type": normalize_display_value(row.object_type),
-                "status": normalize_display_value(row.status),
-                "summary": normalize_display_value(row.output_text or row.input_text),
-                "actor": normalize_display_value(row.source_actor),
-                "detail_url": detail,
-                "kind": kind, "input": normalize_display_value(row.input_text),
-                "output": normalize_display_value(row.output_text),
-                "action": normalize_display_value(row.action),
-            })
+        rows = store.list_operation_logs(
+            limit=page_size,
+            offset=(page - 1) * page_size,
+            query=q,
+            statuses=statuses,
+            history_types=history_types,
+            source_tables=visible_source_tables,
+        )
+        items = [history_log_item(row) for row in rows]
         response = list_envelope(items, page=page, page_size=page_size, total=total)
         if history_chart_factory is not None:
             response["chart"] = json_safe(history_chart_factory())

@@ -1127,7 +1127,8 @@ def test_operation_logs_include_dingtalk_todo_links(tmp_path: Path):
     assert len(logs) == 1
     assert logs[0].category == "DingTalk Todo"
     assert logs[0].status == "failed"
-    assert "dt-task-1" in logs[0].context
+    assert logs[0].context == "客户交付"
+    assert logs[0].action == "dt-task-1"
     assert "todo get failed" in logs[0].detail
 
 

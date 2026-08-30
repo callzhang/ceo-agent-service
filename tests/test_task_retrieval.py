@@ -2,6 +2,7 @@ import json
 
 from app.store import AutoReplyStore
 from app.task_retrieval import (
+    load_project_task_detail,
     render_candidate_prompt,
     render_project_task_details,
     retrieve_project_candidates,
@@ -243,6 +244,66 @@ def test_retrieve_project_task_details_expands_group_matched_project(tmp_path):
     assert payload[0]["todos"][0]["deadline_at"] == "2026-07-25 18:00:00"
     assert payload[0]["todos"][0]["follow_ups"][0]["id"] == follow_up_id
     assert payload[0]["recent_updates"][0]["summary"] == "新增 Colin 候选人评估 TODO"
+
+
+def test_load_project_task_detail_uses_batch_follow_up_lookup(tmp_path):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(
+        title="批量读取 follow-up",
+        category="projects",
+        status="active",
+        priority="P1",
+        risk_level="medium",
+    )
+    todo_one = store.create_work_todo(
+        project_id=project_id,
+        title="TODO A",
+        status="open",
+        priority="P1",
+    )
+    todo_two = store.create_work_todo(
+        project_id=project_id,
+        title="TODO B",
+        status="open",
+        priority="P1",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_one,
+        target_conversation_id="cid-a",
+        target_kind="group",
+        question_text="A?",
+        scheduled_at="2026-07-24 10:00:00",
+    )
+    store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_two,
+        target_conversation_id="cid-b",
+        target_kind="group",
+        question_text="B?",
+        scheduled_at="2026-07-24 11:00:00",
+    )
+
+    batch_calls = {"count": 0}
+    original_batch = store.list_follow_up_drafts_for_todos
+
+    def wrapped_batch(todo_ids, *, statuses=None):
+        batch_calls["count"] += 1
+        return original_batch(todo_ids, statuses=statuses)
+
+    def forbidden_follow_up_lookup(*args, **kwargs):
+        raise AssertionError("load_project_task_detail should use batch follow-up lookup")
+
+    store.list_follow_up_drafts_for_todos = wrapped_batch  # type: ignore[method-assign]
+    store.list_follow_up_drafts = forbidden_follow_up_lookup  # type: ignore[method-assign]
+
+    detail = load_project_task_detail(store, project_id)
+
+    assert detail is not None
+    assert batch_calls["count"] == 1
+    assert [todo.id for todo in detail.todos] == [todo_one, todo_two]
+    assert detail.follow_ups_by_todo[todo_one][0].question_text == "A?"
+    assert detail.follow_ups_by_todo[todo_two][0].question_text == "B?"
 
 
 def test_render_project_task_details_uses_todo_owner_as_project_display_fallback(tmp_path):

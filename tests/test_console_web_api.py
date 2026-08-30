@@ -1,3 +1,4 @@
+import sqlite3
 import json
 import os
 from pathlib import Path
@@ -462,6 +463,75 @@ def test_console_history_includes_chart_snapshot(tmp_path: Path):
     payload = response.json()
     assert payload["chart"]["total"] >= 1
     assert len(payload["chart"]["labels"]) == 24
+
+
+def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id = _project(store, "History project")
+    todo_id = store.create_work_todo(
+        project_id=project_id,
+        title="Review history links",
+        description="Check that history entries jump back to the task detail page.",
+        owner_name="Mina",
+        priority="P1",
+    )
+    update_id = store.create_work_update(
+        project_id=project_id,
+        source_type="reply_attempt",
+        source_ref="update-1",
+        summary="Task update for history links",
+        changes_json='{"todo_id":1}',
+        merge_reason="manual test",
+        confidence=0.9,
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update work_updates set created_at='2026-08-29 10:00:00' where id=?",
+            (update_id,),
+        )
+
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="history-meeting-1",
+        title="History meeting",
+        source_json='{"summary":"Discussed follow-up"}',
+        participants_json='[{"name":"Derek"}]',
+        ended_at="2026-08-29T09:50:00Z",
+        eligible_at="2026-08-29T10:00:00Z",
+        status="pending",
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="sent",
+        final_message="会后对齐：请确认需求。",
+    )
+    meeting_run_id = store.record_meeting_alignment_run(
+        job_id=job_id,
+        codex_session_id="history-session",
+        decision_json='{"action":"send"}',
+        audit_summary="会后对齐：请确认需求。",
+        status="sent",
+        error="",
+    )
+
+    with _client(tmp_path) as client:
+        task_response = client.get("/api/console/history?page=1&page_size=20&object_type=task")
+        meeting_response = client.get("/api/console/history?page=1&page_size=20&object_type=meeting")
+
+    assert task_response.status_code == 200
+    task_payload = task_response.json()
+    task_item = next(item for item in task_payload["items"] if item["id"] == str(update_id))
+    assert task_item["detail_url"] == f"/tasks/{project_id}"
+    assert task_item["kind"] == "task"
+    assert task_item["type"] == "task"
+    assert task_item["title"] == "History project"
+
+    assert meeting_response.status_code == 200
+    meeting_payload = meeting_response.json()
+    meeting_item = next(item for item in meeting_payload["items"] if item["id"] == str(meeting_run_id))
+    assert meeting_item["detail_url"] == f"/meeting-attempts/{meeting_run_id}"
+    assert meeting_item["kind"] == "meeting"
+    assert meeting_item["type"] == "meeting"
+    assert meeting_item["title"] == "History meeting"
 
 
 def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):

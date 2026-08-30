@@ -400,11 +400,16 @@ class OperationLog(BaseModel):
     category: str
     action: str
     status: str
+    history_type: str = ""
+    source_actor: str = ""
     context: str = ""
     summary: str = ""
     detail: str = ""
     conversation_id: str = ""
     message_id: str = ""
+    project_id: int = 0
+    todo_id: int = 0
+    follow_up_id: int = 0
 
 
 class SentTodoRecord(BaseModel):
@@ -2554,6 +2559,10 @@ class AutoReplyStore:
                 );
                 create index if not exists idx_follow_up_drafts_status
                     on follow_up_drafts(status, scheduled_at, id);
+                create index if not exists idx_follow_up_drafts_project_schedule
+                    on follow_up_drafts(project_id, scheduled_at, id);
+                create index if not exists idx_follow_up_drafts_todo_schedule
+                    on follow_up_drafts(todo_id, scheduled_at, id);
                 create index if not exists idx_follow_up_drafts_owner_sent
                     on follow_up_drafts(owner_user_id, sent_at, id);
                 create index if not exists idx_follow_up_drafts_conversation_sent
@@ -3304,6 +3313,18 @@ class AutoReplyStore:
                 """
                 create index if not exists idx_follow_up_drafts_owner_sent
                     on follow_up_drafts(owner_user_id, sent_at, id)
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_follow_up_drafts_project_schedule
+                    on follow_up_drafts(project_id, scheduled_at, id)
+                """
+            )
+            db.execute(
+                """
+                create index if not exists idx_follow_up_drafts_todo_schedule
+                    on follow_up_drafts(todo_id, scheduled_at, id)
                 """
             )
             db.execute(
@@ -21948,9 +21969,18 @@ class AutoReplyStore:
         offset: int = 0,
         query: str = "",
         log_type: str = "",
+        statuses: tuple[str, ...] | None = None,
+        history_types: tuple[str, ...] | None = None,
+        source_tables: tuple[str, ...] | None = None,
     ) -> list[OperationLog]:
-        sql = self._operation_logs_base_query()
-        where_sql, where_args = self._operation_log_filters(query=query, log_type=log_type)
+        sql = f"select * from ({self._operation_logs_base_query()}) as operation_logs"
+        where_sql, where_args = self._operation_log_filters(
+            query=query,
+            log_type=log_type,
+            statuses=statuses,
+            history_types=history_types,
+            source_tables=source_tables,
+        )
         sql = f"""
             {sql}
             {where_sql}
@@ -21969,22 +21999,32 @@ class AutoReplyStore:
             rows = db.execute(
                 f"""
                 select distinct category
-                from ({self._operation_logs_base_query()})
+                from ({self._operation_logs_base_query()}) as operation_logs
                 order by category asc
                 """
             ).fetchall()
             return [str(row["category"]) for row in rows if row["category"]]
 
-    def count_operation_logs(self, query: str = "", log_type: str = "") -> int:
+    def count_operation_logs(
+        self,
+        query: str = "",
+        log_type: str = "",
+        statuses: tuple[str, ...] | None = None,
+        history_types: tuple[str, ...] | None = None,
+        source_tables: tuple[str, ...] | None = None,
+    ) -> int:
         where_sql, where_args = self._operation_log_filters(
             query=query,
             log_type=log_type,
+            statuses=statuses,
+            history_types=history_types,
+            source_tables=source_tables,
         )
         with self._connect() as db:
             row = db.execute(
                 f"""
                 select count(*) as count
-                from ({self._operation_logs_base_query()} {where_sql})
+                from ({self._operation_logs_base_query()}) as operation_logs {where_sql}
                 """,
                 tuple(where_args),
             ).fetchone()
@@ -21992,9 +22032,7 @@ class AutoReplyStore:
 
     def _operation_logs_base_query(self) -> str:
         return """
-            select *
-            from (
-                select
+            select
                     'error:' || id as id,
                     'errors' as source_table,
                     id as source_id,
@@ -22006,12 +22044,17 @@ class AutoReplyStore:
                             'resolved: ' || coalesce(nullif(resolution, ''), 'verified recovery')
                         else 'active'
                     end as status,
+                    'replay' as history_type,
+                    'Service error' as source_actor,
                     coalesce(conversation_id, '') as context,
                     detail as summary,
                     case when coalesce(resolved_at, '')='' then detail
                          else detail || char(10) || 'Resolved: ' || resolution end as detail,
                     coalesce(conversation_id, '') as conversation_id,
-                    coalesce(message_id, '') as message_id
+                    coalesce(message_id, '') as message_id,
+                    0 as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id
                 from errors
                 union all
                 select
@@ -22022,11 +22065,16 @@ class AutoReplyStore:
                     'Reply task' as category,
                     status as action,
                     status as status,
+                    'replay' as history_type,
+                    'Reply task' as source_actor,
                     conversation_title as context,
                     trigger_text as summary,
                     error as detail,
                     conversation_id as conversation_id,
-                    trigger_message_id as message_id
+                    trigger_message_id as message_id,
+                    0 as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id
                 from reply_tasks
                 union all
                 select
@@ -22037,12 +22085,51 @@ class AutoReplyStore:
                     'Reply' as category,
                     action as action,
                     send_status as status,
+                    case
+                        when action='oa_approval' or oa_process_instance_id<>'' then 'approval'
+                        when channel='wechat' then 'wechat'
+                        else 'replay'
+                    end as history_type,
+                    trigger_sender as source_actor,
                     conversation_title as context,
                     trigger_text as summary,
                     send_error as detail,
                     conversation_id as conversation_id,
-                    trigger_message_id as message_id
+                    trigger_message_id as message_id,
+                    0 as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id
                 from reply_attempts
+                union all
+                select
+                    'meeting:' || runs.id as id,
+                    'meeting_alignment_runs' as source_table,
+                    runs.id as source_id,
+                    runs.created_at as occurred_at,
+                    'Meeting' as category,
+                    case
+                        when jobs.status='no_action' then 'no_action'
+                        else 'meeting_alignment'
+                    end as action,
+                    case
+                        when runs.status='no_action' then 'skipped'
+                        when runs.status in ('retry', 'failed') then 'failed'
+                        when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
+                        when runs.status='ready_to_send' and jobs.status in ('retry', 'failed') then 'failed'
+                        else runs.status
+                    end as status,
+                    'meeting' as history_type,
+                    'Meeting Alignment Agent' as source_actor,
+                    jobs.title as context,
+                    coalesce(nullif(jobs.final_message, ''), runs.audit_summary) as summary,
+                    runs.decision_json as detail,
+                    '' as conversation_id,
+                    '' as message_id,
+                    0 as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id
+                from meeting_alignment_runs as runs
+                join meeting_alignment_jobs as jobs on jobs.id=runs.job_id
                 union all
                 select
                     'task-input:' || id as id,
@@ -22052,95 +22139,148 @@ class AutoReplyStore:
                     'Task input' as category,
                     source_type || ':' || source_ref as action,
                     status as status,
+                    'task' as history_type,
+                    'Task input' as source_actor,
                     source_type || ':' || source_ref as context,
                     payload_json as summary,
                     error as detail,
                     '' as conversation_id,
-                    '' as message_id
+                    '' as message_id,
+                    0 as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id
                 from work_summary_inputs
                 union all
                 select
-                    'task-update:' || id as id,
+                    'task-update:' || updates.id as id,
                     'work_updates' as source_table,
-                    id as source_id,
-                    created_at as occurred_at,
+                    updates.id as source_id,
+                    updates.created_at as occurred_at,
                     'Task update' as category,
-                    source_type || ':' || source_ref as action,
+                    updates.source_type || ':' || updates.source_ref as action,
                     'done' as status,
-                    'project #' || project_id as context,
-                    summary as summary,
-                    changes_json as detail,
+                    'task' as history_type,
+                    'Task Agent' as source_actor,
+                    projects.title as context,
+                    updates.summary as summary,
+                    updates.changes_json as detail,
                     '' as conversation_id,
-                    '' as message_id
-                from work_updates
+                    '' as message_id,
+                    updates.project_id as project_id,
+                    0 as todo_id,
+                    0 as follow_up_id
+                from work_updates as updates
+                join work_projects as projects on projects.id=updates.project_id
                 union all
                 select
-                    'todo-evidence:' || id as id,
+                    'todo-evidence:' || candidates.id as id,
                     'todo_evidence_candidates' as source_table,
-                    id as source_id,
-                    updated_at as occurred_at,
+                    candidates.id as source_id,
+                    candidates.updated_at as occurred_at,
                     'TODO completion evidence' as category,
-                    source_type || ':' || source_ref as action,
-                    status as status,
-                    'project #' || project_id || ' todo #' || todo_id as context,
-                    evidence_text as summary,
-                    decision_json as detail,
+                    candidates.source_type || ':' || candidates.source_ref as action,
+                    candidates.status as status,
+                    'task' as history_type,
+                    'Task Agent' as source_actor,
+                    coalesce(nullif(todos.title, ''), projects.title) as context,
+                    candidates.evidence_text as summary,
+                    candidates.decision_json as detail,
                     '' as conversation_id,
-                    '' as message_id
-                from todo_evidence_candidates
+                    '' as message_id,
+                    candidates.project_id as project_id,
+                    candidates.todo_id as todo_id,
+                    0 as follow_up_id
+                from todo_evidence_candidates as candidates
+                join work_projects as projects on projects.id=candidates.project_id
+                left join work_todos as todos on todos.id=candidates.todo_id
                 union all
                 select
-                    'follow-up:' || id as id,
+                    'follow-up:' || drafts.id as id,
                     'follow_up_drafts' as source_table,
-                    id as source_id,
-                    coalesce(nullif(sent_at, ''), created_at) as occurred_at,
+                    drafts.id as source_id,
+                    coalesce(nullif(drafts.sent_at, ''), drafts.created_at) as occurred_at,
                     'Follow-up' as category,
-                    target_kind as action,
-                    status as status,
-                    'project #' || project_id || ' todo #' || todo_id as context,
-                    question_text as summary,
-                    send_result_json as detail,
-                    target_conversation_id as conversation_id,
-                    '' as message_id
-                from follow_up_drafts
+                    drafts.target_kind as action,
+                    drafts.status as status,
+                    'task' as history_type,
+                    'Follow-up' as source_actor,
+                    coalesce(nullif(todos.title, ''), drafts.owner_name, projects.title) as context,
+                    drafts.question_text as summary,
+                    drafts.send_result_json as detail,
+                    drafts.target_conversation_id as conversation_id,
+                    '' as message_id,
+                    drafts.project_id as project_id,
+                    drafts.todo_id as todo_id,
+                    drafts.id as follow_up_id
+                from follow_up_drafts as drafts
+                join work_projects as projects on projects.id=drafts.project_id
+                left join work_todos as todos on todos.id=drafts.todo_id
                 union all
                 select
-                    'dingtalk-todo:' || id as id,
+                    'dingtalk-todo:' || links.id as id,
                     'work_todo_dingtalk_links' as source_table,
-                    id as source_id,
-                    updated_at as occurred_at,
+                    links.id as source_id,
+                    links.updated_at as occurred_at,
                     'DingTalk Todo' as category,
-                    dingtalk_task_id as action,
-                    status as status,
-                    'work_todo #' || work_todo_id || ' dingtalk #' || dingtalk_task_id as context,
-                    title_snapshot as summary,
-                    last_error as detail,
+                    links.dingtalk_task_id as action,
+                    links.status as status,
+                    'task' as history_type,
+                    'DingTalk Todo' as source_actor,
+                    coalesce(nullif(projects.title, ''), title_snapshot) as context,
+                    links.title_snapshot as summary,
+                    links.last_error as detail,
                     '' as conversation_id,
-                    '' as message_id
-                from work_todo_dingtalk_links
-            )
+                    '' as message_id,
+                    coalesce(projects.id, 0) as project_id,
+                    links.work_todo_id as todo_id,
+                    0 as follow_up_id
+                from work_todo_dingtalk_links as links
+                left join work_todos as todos on todos.id=links.work_todo_id
+                left join work_projects as projects on projects.id=todos.project_id
         """
 
-    def _operation_log_filters(self, query: str = "", log_type: str = "") -> tuple[str, list[object]]:
+    def _operation_log_filters(
+        self,
+        query: str = "",
+        log_type: str = "",
+        statuses: tuple[str, ...] | None = None,
+        history_types: tuple[str, ...] | None = None,
+        source_tables: tuple[str, ...] | None = None,
+    ) -> tuple[str, list[object]]:
         filters: list[str] = []
         args: list[object] = []
         if log_type.strip():
             filters.append("category = ?")
             args.append(log_type.strip())
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            filters.append(f"status in ({placeholders})")
+            args.extend(statuses)
+        if history_types:
+            placeholders = ",".join("?" for _ in history_types)
+            filters.append(f"history_type in ({placeholders})")
+            args.extend(history_types)
+        if source_tables:
+            placeholders = ",".join("?" for _ in source_tables)
+            filters.append(f"source_table in ({placeholders})")
+            args.extend(source_tables)
         if query.strip():
             needle = f"%{query.strip().lower()}%"
             filters.append(
-                """(
-                    lower(coalesce(id, '')) like ?
-                    or lower(coalesce(category, '')) like ?
-                    or lower(coalesce(action, '')) like ?
-                    or lower(coalesce(status, '')) like ?
-                    or lower(coalesce(context, '')) like ?
-                    or lower(coalesce(summary, '')) like ?
-                    or lower(coalesce(detail, '')) like ?
-                )"""
+                "("
+                " lower(coalesce(id, '')) like ?"
+                " or lower(coalesce(category, '')) like ?"
+                " or lower(coalesce(action, '')) like ?"
+                " or lower(coalesce(status, '')) like ?"
+                " or lower(coalesce(history_type, '')) like ?"
+                " or lower(coalesce(source_actor, '')) like ?"
+                " or lower(coalesce(source_table, '')) like ?"
+                " or lower(coalesce(context, '')) like ?"
+                " or lower(coalesce(summary, '')) like ?"
+                " or lower(coalesce(detail, '')) like ?"
+                ")"
             )
-            args.extend([needle] * 7)
+            args.extend([needle] * 10)
         if not filters:
             return "", args
         return "where " + " and ".join(filters), args

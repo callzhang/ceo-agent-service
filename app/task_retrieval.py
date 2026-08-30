@@ -231,14 +231,9 @@ def retrieve_project_task_details(
                 todo_ids
             ).items()
         }
+        follow_up_rows_by_todo = store.list_follow_up_drafts_for_todos(todo_ids)
         follow_ups_by_todo = {
-            todo.id: tuple(
-                store.list_follow_up_drafts(
-                    project_id=project.id,
-                    todo_id=todo.id,
-                    limit=follow_ups_per_todo,
-                )
-            )
+            todo.id: tuple(follow_up_rows_by_todo.get(todo.id, ())[:follow_ups_per_todo])
             for todo in todos
         }
         details.append(
@@ -276,14 +271,9 @@ def load_project_task_detail(
             todo_ids
         ).items()
     }
+    follow_up_rows_by_todo = store.list_follow_up_drafts_for_todos(todo_ids)
     follow_ups_by_todo = {
-        todo.id: tuple(
-            store.list_follow_up_drafts(
-                project_id=project.id,
-                todo_id=todo.id,
-                limit=follow_ups_per_todo,
-            )
-        )
+        todo.id: tuple(follow_up_rows_by_todo.get(todo.id, ())[:follow_ups_per_todo])
         for todo in todos
     }
     return ProjectTaskDetail(
