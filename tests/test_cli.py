@@ -290,18 +290,47 @@ def test_parser_supports_skip_stale_wechat_delivery_with_default_retry_limit():
 
 
 @pytest.mark.parametrize(
-    ("timestamp", "expected"),
+    ("timestamp", "expected", "expected_sqlite_datetime"),
     [
-        ("2026-08-30T18:00:00", "2026-08-30T18:00:00"),
-        ("2026-08-30T18:00:00Z", "2026-08-30T18:00:00Z"),
+        (
+            "2026-08-30 18:00:00",
+            "2026-08-30 18:00:00",
+            "2026-08-30 18:00:00",
+        ),
+        (
+            "2026-08-30T18:00:00",
+            "2026-08-30 18:00:00",
+            "2026-08-30 18:00:00",
+        ),
+        (
+            "2026-08-30T18:00:00Z",
+            "2026-08-30 18:00:00Z",
+            "2026-08-30 18:00:00",
+        ),
         (
             " 2026-08-30T18:00:00-07:00 ",
-            "2026-08-30T18:00:00-07:00",
+            "2026-08-31 01:00:00Z",
+            "2026-08-31 01:00:00",
+        ),
+        (
+            "2026-W35-7T18:00:00",
+            "2026-08-30 18:00:00",
+            "2026-08-30 18:00:00",
+        ),
+        (
+            "20260830T180000",
+            "2026-08-30 18:00:00",
+            "2026-08-30 18:00:00",
+        ),
+        (
+            "2026-08-30T18:00:00+01:30:15",
+            "2026-08-30 16:29:45Z",
+            "2026-08-30 16:29:45",
         ),
     ],
 )
 def test_parser_accepts_iso8601_skip_stale_wechat_delivery_timestamps(
-    timestamp, expected
+    timestamp, expected, expected_sqlite_datetime
 ):
     args = build_parser().parse_args(
         [
@@ -316,6 +345,12 @@ def test_parser_accepts_iso8601_skip_stale_wechat_delivery_timestamps(
     )
 
     assert args.inactive_before == expected
+    with sqlite3.connect(":memory:") as db:
+        sqlite_datetime = db.execute(
+            "select datetime(?)",
+            (args.inactive_before,),
+        ).fetchone()[0]
+    assert sqlite_datetime == expected_sqlite_datetime
 
 
 def test_parser_rejects_malformed_skip_stale_wechat_delivery_timestamp(capsys):

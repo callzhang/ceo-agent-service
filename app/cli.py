@@ -257,12 +257,16 @@ def _non_blank(value: str) -> str:
 def _iso8601_timestamp(value: str) -> str:
     normalized = _non_blank(value).strip()
     try:
-        datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
     except ValueError as exc:
         raise argparse.ArgumentTypeError(
             "must be an ISO-8601 timestamp"
         ) from exc
-    return normalized
+    timespec = "microseconds" if parsed.microsecond else "seconds"
+    if parsed.utcoffset() is not None:
+        utc_timestamp = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return f"{utc_timestamp.isoformat(sep=' ', timespec=timespec)}Z"
+    return parsed.isoformat(sep=" ", timespec=timespec)
 
 
 def _non_negative_int(value: str) -> int:
