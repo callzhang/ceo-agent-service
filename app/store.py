@@ -14663,6 +14663,22 @@ class AutoReplyStore:
             round_by_id = {int(round_row["id"]): round_row for round_row in rounds}
             if len(round_by_id) != requested_count:
                 raise ValueError(stable_error)
+            batch_transitions = db.execute(
+                "select round_id, feedback_key "
+                "from feedback_processing_transitions where batch_id=?",
+                (batch_id,),
+            ).fetchall()
+            for transition in batch_transitions:
+                transition_round_id = transition["round_id"]
+                owned_round = (
+                    round_by_id.get(transition_round_id)
+                    if type(transition_round_id) is int
+                    else None
+                )
+                if owned_round is None or str(
+                    transition["feedback_key"]
+                ) != str(owned_round["feedback_key"]):
+                    raise ValueError(stable_error)
 
             version_two_rounds: list[sqlite3.Row] = []
             version_two_claim_timestamps: set[str] = set()

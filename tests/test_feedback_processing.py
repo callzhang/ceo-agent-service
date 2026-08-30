@@ -3984,6 +3984,133 @@ def _prepare_two_member_processing_batch(
     return receipt
 
 
+def _insert_orphan_feedback_batch_transition(
+    store: AutoReplyStore,
+    *,
+    batch_id: str,
+    damage: str,
+) -> None:
+    with store._connect() as db:
+        member_round = db.execute(
+            "select id from feedback_processing_rounds "
+            "where batch_id=? order by feedback_key limit 1",
+            (batch_id,),
+        ).fetchone()
+        assert member_round is not None
+        if damage == "nonexistent-round":
+            db.execute(
+                """
+                insert into feedback_processing_transitions (
+                    feedback_key, round_id, batch_id,
+                    from_status, to_status
+                ) values ('feedback-1', 999999999, ?, 'pending', 'processing')
+                """,
+                (batch_id,),
+            )
+            return
+        if damage == "wrong-feedback-key":
+            db.execute(
+                """
+                insert into feedback_processing_transitions (
+                    feedback_key, round_id, batch_id,
+                    from_status, to_status
+                ) values ('feedback-orphan', ?, ?, 'pending', 'processing')
+                """,
+                (int(member_round["id"]), batch_id),
+            )
+            return
+        assert damage == "outside-batch-round"
+        outside_round = db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status,
+                receipt_version, started_at
+            ) values ('feedback-shadow', 1, 'batch-shadow', 'processing', 2,
+                      current_timestamp)
+            """
+        )
+        db.execute(
+            """
+            insert into feedback_processing_transitions (
+                feedback_key, round_id, batch_id, from_status, to_status,
+                reason, workbench_task_id, workbench_turn_id, created_at
+            )
+            select 'feedback-shadow', ?, ?, from_status, to_status,
+                   reason, workbench_task_id, workbench_turn_id, created_at
+              from feedback_processing_transitions
+             where round_id=? and batch_id=?
+               and from_status='pending' and to_status='processing'
+            """,
+            (
+                int(outside_round.lastrowid),
+                batch_id,
+                int(member_round["id"]),
+                batch_id,
+            ),
+        )
+
+
+@pytest.mark.parametrize("operation", ("first-resolve", "same-batch-retry"))
+@pytest.mark.parametrize(
+    "damage",
+    ("nonexistent-round", "wrong-feedback-key", "outside-batch-round"),
+)
+def test_processing_batch_entrypoints_reject_orphan_batch_transitions(
+    tmp_path: Path,
+    operation: str,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"orphan-{operation}-{damage}.sqlite3")
+    receipt = _prepare_two_member_processing_batch(store)
+    _insert_orphan_feedback_batch_transition(
+        store,
+        batch_id="batch-1",
+        damage=damage,
+    )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError):
+        if operation == "first-resolve":
+            store.resolve_feedback_processing_batch(
+                "batch-1", receipt, commit_is_ancestor=True
+            )
+        else:
+            store.claim_feedback_processing_items(
+                "batch-1", ["feedback-1", "feedback-2"]
+            )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ("nonexistent-round", "wrong-feedback-key", "outside-batch-round"),
+)
+def test_old_batch_retry_rejects_orphan_newer_batch_transitions(
+    tmp_path: Path,
+    damage: str,
+):
+    store = AutoReplyStore(tmp_path / f"newer-orphan-{damage}.sqlite3")
+    old_receipt, _ = _prepare_old_batch_with_newer_batch(
+        store,
+        newer_status="processing",
+        include_second_member=True,
+    )
+    _insert_orphan_feedback_batch_transition(
+        store,
+        batch_id="batch-2",
+        damage=damage,
+    )
+    before = _feedback_processing_snapshot(store)
+
+    with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
+        store.resolve_feedback_processing_batch(
+            "batch-1", old_receipt, commit_is_ancestor=True
+        )
+
+    assert _feedback_processing_snapshot(store) == before
+
+
 @pytest.mark.parametrize("operation", ("first-resolve", "same-batch-retry"))
 @pytest.mark.parametrize(
     "damage",
