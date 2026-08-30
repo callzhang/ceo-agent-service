@@ -209,6 +209,12 @@ class ModelManifest:
 
 
 @dataclass(frozen=True)
+class ModelManifestSnapshot:
+    active: ModelManifest | None
+    previous: ModelManifest | None
+
+
+@dataclass(frozen=True)
 class ModelRecord:
     metadata: EmailModelMetadata
     status: ModelStatus
@@ -318,6 +324,56 @@ class EmailModelRegistry:
             self._append_lifecycle(model_id, "active", reason)
             return manifest
 
+    def snapshot_manifests(self) -> ModelManifestSnapshot:
+        with self._locked():
+            return ModelManifestSnapshot(
+                active=self._read_manifest(self.root / "active.json"),
+                previous=self._read_manifest(self.root / "previous.json"),
+            )
+
+    def restore_manifest_snapshot(
+        self,
+        snapshot: ModelManifestSnapshot,
+        *,
+        failed_model_id: str,
+        reason: str,
+    ) -> None:
+        with self._locked():
+            try:
+                self._restore_manifest(self.root / "active.json", snapshot.active)
+                self._restore_manifest(
+                    self.root / "previous.json", snapshot.previous
+                )
+                if self._read_manifest(self.root / "active.json") != snapshot.active:
+                    raise ModelRegistryError("active manifest restore mismatch")
+                if self._read_manifest(self.root / "previous.json") != snapshot.previous:
+                    raise ModelRegistryError("previous manifest restore mismatch")
+                if snapshot.active is not None:
+                    self._append_lifecycle(
+                        snapshot.active.model_id,
+                        "active",
+                        "consistency_restore",
+                    )
+                if snapshot.previous is not None:
+                    self._append_lifecycle(
+                        snapshot.previous.model_id,
+                        "previous",
+                        "consistency_restore",
+                    )
+                self._append_lifecycle(failed_model_id, "failed", reason)
+            except Exception as exc:
+                try:
+                    self._append_lifecycle(
+                        failed_model_id,
+                        "failed",
+                        "promotion_consistency_restore_failed",
+                    )
+                except Exception:
+                    pass
+                raise ModelRegistryError(
+                    "promotion consistency manifest restore failed"
+                ) from exc
+
     def reject(self, model_id: str, *, reason: str) -> None:
         record = self.get_model(model_id)
         if record.status != "candidate":
@@ -413,6 +469,13 @@ class EmailModelRegistry:
             metadata=str(self._metadata_path(metadata.model_id).relative_to(self.root)),
             switched_at=_format_timestamp(),
         )
+
+    @staticmethod
+    def _restore_manifest(path: Path, manifest: ModelManifest | None) -> None:
+        if manifest is None:
+            path.unlink(missing_ok=True)
+        else:
+            _write_json_atomic(path, manifest.to_dict())
 
     def _verify_manifest(self, manifest: ModelManifest) -> None:
         record = self.get_model(manifest.model_id)

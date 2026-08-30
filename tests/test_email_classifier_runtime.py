@@ -11,6 +11,7 @@ from app.email_classifier_training import CategoryEligibility
 from app.email_store import EmailStore
 from app.email_classifier_runtime import (
     EmailClassifierRuntime,
+    EmailClassifierRuntimeFactory,
     EmailClassifierUnavailable,
     load_active_classifier,
     scan_with_active_model,
@@ -215,6 +216,16 @@ def test_runtime_reuses_failure_counter_across_three_scan_calls(tmp_path: Path):
     assert result.scan.persisted_count == 1
 
 
+def test_task8_runtime_factory_returns_one_runtime_instance():
+    created = []
+    factory = EmailClassifierRuntimeFactory(
+        lambda: created.append(object()) or created[-1]
+    )
+
+    assert factory.get() is factory.get()
+    assert len(created) == 1
+
+
 def test_consecutive_prediction_failures_fallback_only_at_threshold():
     class Broken:
         def predict(self, text):
@@ -299,3 +310,23 @@ def test_controller_restart_fails_orphaned_running_record_and_allows_learning_re
 
     assert failed.status == "failed"
     assert failed.reason == "training_subprocess_orphaned"
+
+
+def test_controller_restart_keeps_known_live_pid_running_past_stale_timeout(tmp_path: Path):
+    now = datetime(2026, 8, 29, 21, 0, tzinfo=timezone.utc)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    first = TrainingSubprocessController(
+        registry,
+        launcher=lambda _command: SimpleNamespace(pid=4321, poll=lambda: None),
+    )
+    run = first.start(["python", "-m", "trainer"], now=now)
+    restarted = TrainingSubprocessController(
+        registry,
+        pid_is_alive=lambda pid: True,
+        stale_after_seconds=1,
+    )
+
+    observed = restarted.poll(run.run_id, now=now.replace(hour=22))
+
+    assert observed.status == "running"
+    assert observed.run_id == run.run_id

@@ -336,8 +336,27 @@ def train_and_promote(
     if rejection is not None:
         registry.reject(model_id, reason=rejection)
         return _result(metadata, promoted=False, status="rejected", reason=rejection)
-    registry.promote(model_id, reason="candidate_validation_passed")
-    store.mark_training_examples_included(new_sample_snapshots, model_id=model_id)
+    manifest_snapshot = registry.snapshot_manifests()
+    try:
+        store.commit_training_promotion(
+            new_sample_snapshots,
+            model_id=model_id,
+            promote=lambda: registry.promote(
+                model_id, reason="candidate_validation_passed"
+            ),
+            restore=lambda: registry.restore_manifest_snapshot(
+                manifest_snapshot,
+                failed_model_id=model_id,
+                reason="promotion_inclusion_consistency_failed",
+            ),
+        )
+    except Exception as exc:
+        if registry.get_model(model_id).status == "candidate":
+            registry.mark_failed(
+                model_id,
+                reason=f"promotion_inclusion_failed:{type(exc).__name__}",
+            )
+        raise
     return _result(metadata, promoted=True, status="active", reason="candidate_validation_passed")
 
 

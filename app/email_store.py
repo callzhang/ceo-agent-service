@@ -6,7 +6,7 @@ provider and never creates Agent, Audit, reply-task, or run records.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
@@ -335,6 +335,10 @@ class EmailClassificationConflict(RuntimeError):
 
 class EmailTrainingInclusionConflict(RuntimeError):
     """Authoritative training samples cannot be marked as one atomic batch."""
+
+
+class EmailTrainingConsistencyError(RuntimeError):
+    """Registry manifests could not be proven restored after a DB failure."""
 
 
 class EmailClassificationIdentityCollision(RuntimeError):
@@ -2693,14 +2697,55 @@ class EmailStore:
     def mark_training_examples_included(
         self, samples: Sequence[Mapping[str, object]], *, model_id: str
     ) -> None:
+        self.commit_training_promotion(
+            samples,
+            model_id=model_id,
+            promote=lambda: None,
+            restore=lambda: None,
+        )
+
+    def commit_training_promotion(
+        self,
+        samples: Sequence[Mapping[str, object]],
+        *,
+        model_id: str,
+        promote: Callable[[], object],
+        restore: Callable[[], object],
+    ) -> None:
         snapshots = {str(item.get("message_id", "")): item for item in samples}
         identities = tuple(snapshots)
         if not identities or not model_id.strip():
             raise ValueError("sample identities and model_id are required")
-        with self._connect() as db:
+        db = self._connect()
+        promotion_attempted = False
+        try:
             db.execute("begin immediate")
-            placeholders = ",".join("?" for _ in identities)
-            rows = db.execute(
+            self._verify_training_snapshots(
+                db, snapshots, identities, model_id=model_id
+            )
+            promotion_attempted = True
+            promote()
+            self._update_training_inclusion(db, identities, model_id=model_id)
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            if promotion_attempted:
+                try:
+                    restore()
+                except Exception as restore_exc:
+                    raise EmailTrainingConsistencyError(
+                        "training promotion manifest restore could not be proven"
+                    ) from restore_exc
+            raise exc
+        finally:
+            db.close()
+
+    @staticmethod
+    def _verify_training_snapshots(
+        db, snapshots, identities, *, model_id: str
+    ) -> None:
+        placeholders = ",".join("?" for _ in identities)
+        rows = db.execute(
                 f"""
                 select id, account_id, stable_message_identity, model_text,
                        confirmed_category as label, included_in_model_id,
@@ -2714,46 +2759,49 @@ class EmailStore:
                   and trim(model_text) != ''
                 """,
                 identities,
-            ).fetchall()
-            if {row["stable_message_identity"] for row in rows} != set(identities):
-                raise EmailTrainingInclusionConflict(
-                    "training sample set changed before inclusion"
-                )
-            for row in rows:
-                current = {
-                    "message_id": row["stable_message_identity"],
-                    "model_text": row["model_text"],
-                    "label": row["label"],
-                    "classification_id": row["id"],
-                    "account_id": row["account_id"],
-                    "included_in_model_id": row["included_in_model_id"],
-                    "confirmed_at": row["confirmed_at"],
-                    "classification_source": row["classification_source"],
-                    "status": row["status"],
-                }
-                expected_digest = snapshots[row["stable_message_identity"]].get(
-                    "sample_digest"
-                )
-                if expected_digest != _training_sample_digest(current):
-                    raise EmailTrainingInclusionConflict(
-                        "training sample changed before inclusion"
-                    )
-            if any(
-                row["included_in_model_id"] not in (None, model_id)
-                for row in rows
-            ):
-                raise EmailTrainingInclusionConflict(
-                    "training sample is already included in another model"
-                )
-            db.execute(
-                f"""
-                update email_classifications
-                set included_in_model_id=?
-                where stable_message_identity in ({placeholders})
-                  and included_in_model_id is null
-                """,
-                (model_id, *identities),
+        ).fetchall()
+        if {row["stable_message_identity"] for row in rows} != set(identities):
+            raise EmailTrainingInclusionConflict(
+                "training sample set changed before inclusion"
             )
+        for row in rows:
+            current = {
+                "message_id": row["stable_message_identity"],
+                "model_text": row["model_text"],
+                "label": row["label"],
+                "classification_id": row["id"],
+                "account_id": row["account_id"],
+                "included_in_model_id": row["included_in_model_id"],
+                "confirmed_at": row["confirmed_at"],
+                "classification_source": row["classification_source"],
+                "status": row["status"],
+            }
+            expected_digest = snapshots[row["stable_message_identity"]].get(
+                "sample_digest"
+            )
+            if expected_digest != _training_sample_digest(current):
+                raise EmailTrainingInclusionConflict(
+                    "training sample changed before inclusion"
+                )
+        if any(
+            row["included_in_model_id"] not in (None, model_id) for row in rows
+        ):
+            raise EmailTrainingInclusionConflict(
+                "training sample is already included in another model"
+            )
+
+    @staticmethod
+    def _update_training_inclusion(db, identities, *, model_id: str) -> None:
+        placeholders = ",".join("?" for _ in identities)
+        db.execute(
+            f"""
+            update email_classifications
+            set included_in_model_id=?
+            where stable_message_identity in ({placeholders})
+              and included_in_model_id is null
+            """,
+            (model_id, *identities),
+        )
 
     def confirm_classification(
         self, row_id: int, category: EmailCategory

@@ -2,6 +2,7 @@ from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -470,9 +471,10 @@ def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_p
 ):
     store = _store_with_confirmed_feedback(tmp_path)
     registry = EmailModelRegistry(tmp_path / "registry")
-    original_promote = registry.promote
+    original_stage = registry.stage_candidate
 
-    def promote_after_correction(model_id, *, reason):
+    def stage_before_correction(*args, **kwargs):
+        result = original_stage(*args, **kwargs)
         with store._connect() as db:
             db.execute(
                 """
@@ -481,9 +483,9 @@ def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_p
                 where id=(select min(id) from email_classifications)
                 """
             )
-        return original_promote(model_id, reason=reason)
+        return result
 
-    monkeypatch.setattr(registry, "promote", promote_after_correction)
+    monkeypatch.setattr(registry, "stage_candidate", stage_before_correction)
 
     with pytest.raises(
         EmailTrainingInclusionConflict,
@@ -497,6 +499,46 @@ def test_concurrent_feedback_correction_fails_snapshot_inclusion_and_leaves_it_p
 
     latest = store.list_unincluded_training_examples()
     assert any(example["label"] == "important" for example in latest)
+
+
+def test_inclusion_failure_after_promotion_restores_exact_prior_manifests(
+    tmp_path: Path, monkeypatch
+):
+    store = _store_with_confirmed_feedback(tmp_path)
+    registry = EmailModelRegistry(tmp_path / "registry")
+    first = train_and_promote(
+        store,
+        registry,
+        trained_at=datetime(2026, 8, 29, 21, 45, 30, tzinfo=timezone.utc),
+    )
+    prior_active = registry.active_manifest()
+    prior_previous = registry.previous_manifest()
+    for index, category in enumerate((EmailCategory.WORK, EmailCategory.JUNK), 20):
+        row = store.upsert_classification(
+            _classification(f"rollback-{index}", category),
+            model_text=f"__subject__rollback-{index} {category.value}",
+        )
+        store.confirm_classification(row["id"], category)
+    monkeypatch.setattr(
+        "app.email_classifier_training._promotion_rejection",
+        lambda _registry, _metadata: None,
+    )
+    monkeypatch.setattr(
+        store,
+        "_update_training_inclusion",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(sqlite3.DatabaseError("forced")),
+    )
+
+    with pytest.raises(sqlite3.DatabaseError, match="forced"):
+        train_and_promote(
+            store,
+            registry,
+            trained_at=datetime(2026, 8, 29, 21, 46, 30, tzinfo=timezone.utc),
+        )
+
+    assert registry.active_manifest() == prior_active
+    assert registry.previous_manifest() == prior_previous
+    assert registry.active_manifest().model_id == first.model_id  # type: ignore[union-attr]
 
 
 def test_training_not_ready_does_not_create_active_model(tmp_path: Path):

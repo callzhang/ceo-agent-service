@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from pickle import UnpicklingError
+import threading
+from collections.abc import Callable
 
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_scan import EmailScanConfig, EmailScanResult, scan_readonly_batch
@@ -108,6 +110,21 @@ class EmailClassifierRuntime:
             limit=limit,
         )
         return ReadonlyScanWithModelResult(loaded=self.loaded, scan=result)
+
+
+class EmailClassifierRuntimeFactory:
+    """Task8-owned singleton boundary; this module does not start a worker."""
+
+    def __init__(self, builder: Callable[[], EmailClassifierRuntime]) -> None:
+        self._builder = builder
+        self._runtime: EmailClassifierRuntime | None = None
+        self._lock = threading.Lock()
+
+    def get(self) -> EmailClassifierRuntime:
+        with self._lock:
+            if self._runtime is None:
+                self._runtime = self._builder()
+            return self._runtime
 
 
 def _load_registry_classifier(registry) -> LoadedEmailClassifier:

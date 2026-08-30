@@ -976,6 +976,66 @@ def test_training_inclusion_digest_cas_rejects_concurrent_correction_and_clears_
         store.mark_training_examples_included([snapshot], model_id="new-model")
 
 
+def test_training_promotion_lease_rejects_changed_snapshot_before_promote(tmp_path: Path):
+    store = EmailStore(tmp_path / "lease-cas.sqlite3")
+    row = store.upsert_classification(
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            message_id="lease-cas",
+        ),
+        model_text="__subject__before",
+    )
+    store.confirm_classification(row["id"], EmailCategory.WORK)
+    snapshot = store.list_unincluded_training_examples()[0]
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update email_classifications set model_text='__subject__after' where id=?",
+            (row["id"],),
+        )
+    promoted = []
+
+    with pytest.raises(EmailTrainingInclusionConflict):
+        store.commit_training_promotion(
+            [snapshot],
+            model_id="candidate",
+            promote=lambda: promoted.append(True),
+            restore=lambda: None,
+        )
+
+    assert promoted == []
+
+
+def test_training_promotion_lease_blocks_feedback_write_during_manifest_switch(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "lease-lock.sqlite3")
+    row = store.upsert_classification(
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            message_id="lease-lock",
+        ),
+        model_text="__subject__locked",
+    )
+    store.confirm_classification(row["id"], EmailCategory.WORK)
+    snapshot = store.list_unincluded_training_examples()[0]
+    blocked = []
+
+    def promote():
+        connection = sqlite3.connect(store.path, timeout=0)
+        try:
+            connection.execute("begin immediate")
+        except sqlite3.OperationalError as exc:
+            blocked.append("locked" in str(exc).lower())
+        finally:
+            connection.close()
+
+    store.commit_training_promotion(
+        [snapshot], model_id="candidate", promote=promote, restore=lambda: None
+    )
+
+    assert blocked == [True]
+
+
 def test_rescan_preserves_a_user_confirmed_category(tmp_path: Path):
     store = EmailStore(tmp_path / "worker.sqlite3")
     original = store.upsert_classification(

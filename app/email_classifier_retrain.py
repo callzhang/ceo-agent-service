@@ -209,15 +209,17 @@ class TrainingSubprocessController:
             return durable
         process = self._processes.get(run_id)
         if process is None:
+            if durable.pid > 0 and self.pid_is_alive(durable.pid):
+                return durable
+            if durable.pid > 0:
+                return self._fail_orphan(
+                    durable, now=now, reason="training_subprocess_orphaned"
+                )
             updated_at = _parse_timestamp(durable.updated_at or durable.started_at)
             stale = (_as_utc(now) - updated_at).total_seconds() >= self.stale_after_seconds
             if stale:
                 return self._fail_orphan(
                     durable, now=now, reason="training_subprocess_stale"
-                )
-            if durable.pid <= 0 or not self.pid_is_alive(durable.pid):
-                return self._fail_orphan(
-                    durable, now=now, reason="training_subprocess_orphaned"
                 )
             return durable
         exit_code = process.poll()
