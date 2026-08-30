@@ -221,6 +221,76 @@ def test_attachment_metadata_is_immutable_and_cannot_hold_payload_content():
             },
             "not configured",
         ),
+        (
+            {
+                "actions": (EmailAction.LABEL,),
+                "action_parameters": {
+                    EmailAction.LABEL: {"labels": ["work"], "color": "blue"}
+                },
+            },
+            "unsupported parameters",
+        ),
+        (
+            {
+                "actions": (EmailAction.MOVE,),
+                "action_parameters": {
+                    EmailAction.MOVE: {
+                        "target_folder": "Archive/2026",
+                        "copy": True,
+                    }
+                },
+            },
+            "unsupported parameters",
+        ),
+        (
+            {
+                "actions": (EmailAction.AUTO_REPLY,),
+                "action_parameters": {
+                    EmailAction.AUTO_REPLY: {
+                        "instruction": "Acknowledge receipt",
+                        "send_as": "other-account",
+                    }
+                },
+            },
+            "unsupported parameters",
+        ),
+        (
+            {
+                "actions": (EmailAction.MARK_READ,),
+                "action_parameters": {EmailAction.MARK_READ: {"flag": "\\Seen"}},
+            },
+            "does not accept parameters",
+        ),
+        (
+            {
+                "actions": (EmailAction.ARCHIVE,),
+                "action_parameters": {EmailAction.ARCHIVE: {"folder": "Archive"}},
+            },
+            "does not accept parameters",
+        ),
+        (
+            {
+                "actions": (EmailAction.TRASH,),
+                "action_parameters": {EmailAction.TRASH: {"permanent_delete": True}},
+            },
+            "does not accept parameters",
+        ),
+        (
+            {
+                "actions": (EmailAction.TRASH,),
+                "action_parameters": {EmailAction.TRASH: {"imap_command": "EXPUNGE"}},
+            },
+            "does not accept parameters",
+        ),
+        (
+            {
+                "actions": (EmailAction.UNSUBSCRIBE,),
+                "action_parameters": {
+                    EmailAction.UNSUBSCRIBE: {"unsubscribe_url": "https://example.test"}
+                },
+            },
+            "does not accept parameters",
+        ),
     ),
 )
 def test_action_plan_validates_configured_actions(

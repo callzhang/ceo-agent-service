@@ -180,10 +180,14 @@ class EmailStore:
                     category=case when email_classifications.classification_source='user'
                                   then email_classifications.category
                                   else excluded.category end,
-                    confidence=excluded.confidence,
+                    confidence=case when email_classifications.classification_source='user'
+                                    then email_classifications.confidence
+                                    else excluded.confidence end,
                     margin=excluded.margin,
                     probabilities_json=excluded.probabilities_json,
-                    model_id=excluded.model_id,
+                    model_id=case when email_classifications.classification_source='user'
+                                  then email_classifications.model_id
+                                  else excluded.model_id end,
                     config_version=case when email_classifications.classification_source='user'
                                         then email_classifications.config_version
                                         else excluded.config_version end,

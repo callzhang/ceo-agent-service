@@ -8,6 +8,13 @@ from fastapi.testclient import TestClient
 import app.audit_web as audit_web_module
 import app.config as app_config_module
 from app.audit_web import create_audit_app
+from app.email_classifier_contracts import (
+    EmailCategory,
+    EmailClassification,
+    EmailClassificationStatus,
+)
+from app.email_store import EmailStore
+from app.email_classifier_learning import EmailClassifierLearningService
 from app.store import AutoReplyStore
 from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
@@ -43,7 +50,13 @@ class NonExecutingExecutor:
         return True
 
 
-def _client(tmp_path: Path, *, spa_enabled: bool = False, asset: bytes = b""):
+def _client(
+    tmp_path: Path,
+    *,
+    spa_enabled: bool = False,
+    asset: bytes = b"",
+    email_learning_factory=None,
+):
     assets = tmp_path / "assets"
     assets.mkdir()
     (assets / "index.html").write_bytes(asset)
@@ -54,6 +67,7 @@ def _client(tmp_path: Path, *, spa_enabled: bool = False, asset: bytes = b""):
             workbench_workspace=tmp_path,
             workbench_executor=NonExecutingExecutor(tmp_path),
             spa_enabled=spa_enabled,
+            email_learning_factory=email_learning_factory,
         ),
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
@@ -710,3 +724,127 @@ def test_console_wechat_targets_and_reply_scope_use_json_contract(
     assert saved.status_code == 200
     assert saved.json()["item"] == {"account_id": "wx-account", "saved": 1}
     assert [scope.target_id for scope in store.list_wechat_reply_scopes("wx-account", enabled_only=True)] == ["team"]
+
+
+def test_console_email_tabs_and_feedback_are_local_classifier_operations(
+    tmp_path: Path,
+):
+    email_store = EmailStore(tmp_path / "worker.sqlite3")
+    classification = EmailClassification.model_validate(
+        {
+            "classification_id": 1,
+            "provider_locator": {
+                "account_id": "dingtalk-account",
+                "folder": "INBOX",
+                "uidvalidity": 1,
+                "uid": 1,
+                "rfc_message_id": "<email-1@example.test>",
+            },
+            "category": EmailCategory.WORK,
+            "confidence": 0.61,
+            "margin": 0.04,
+            "probabilities": {"work": 0.61, "important": 0.57},
+            "model_id": "email/logistic/model-1",
+            "config_version": "email-v1",
+            "status": EmailClassificationStatus.PENDING_FEEDBACK,
+            "classification_source": "model",
+            "action_plan": None,
+        }
+    )
+    row = email_store.upsert_classification(
+        classification, sender="sender@example.com", subject="Please decide"
+    )
+
+    with _client(tmp_path) as client:
+        default_tab = client.get("/api/console/email/classifications")
+        pending_tab = client.get(
+            "/api/console/email/classifications?status=pending_feedback"
+        )
+        feedback = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={"category": "important"},
+        )
+        processed_tab = client.get("/api/console/email/classifications")
+
+    assert default_tab.status_code == 200
+    assert default_tab.json()["items"] == []
+    assert pending_tab.status_code == 200
+    assert pending_tab.json()["items"][0]["subject"] == "Please decide"
+    assert feedback.status_code == 200
+    assert feedback.json()["item"]["classification_source"] == "user"
+    assert processed_tab.json()["items"][0]["category"] == "important"
+
+
+def test_console_email_config_is_separate_from_provider_actions(tmp_path: Path):
+    with _client(tmp_path) as client:
+        saved = client.put(
+            "/api/console/email/config/subscription",
+            json={
+                "description": "营销订阅",
+                "threshold": 0.98,
+                "actions": ["archive"],
+                "enabled": True,
+                "config_version": "email-v2",
+            },
+        )
+        listed = client.get("/api/console/email/config")
+
+    assert saved.status_code == 200
+    assert saved.json()["item"]["actions"] == ["archive"]
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["category"] == "subscription"
+
+
+def test_console_email_feedback_can_trigger_local_learning_service(tmp_path: Path):
+    email_store = EmailStore(tmp_path / "worker.sqlite3")
+    classification = EmailClassification.model_validate(
+        {
+            "classification_id": 2,
+            "provider_locator": {
+                "account_id": "dingtalk-account",
+                "folder": "INBOX",
+                "uidvalidity": 1,
+                "uid": 2,
+                "rfc_message_id": "<email-learning-1@example.test>",
+            },
+            "category": EmailCategory.WORK,
+            "confidence": 0.61,
+            "margin": 0.04,
+            "probabilities": {"work": 0.61, "important": 0.57},
+            "model_id": "email/logistic/model-1",
+            "config_version": "email-v1",
+            "status": EmailClassificationStatus.PENDING_FEEDBACK,
+            "classification_source": "model",
+            "action_plan": None,
+        }
+    )
+    row = email_store.upsert_classification(
+        classification,
+        sender="sender@example.com",
+        subject="Please decide",
+        model_text="__from_domain__example.com __subject__项目 工作",
+    )
+    learning_service = EmailClassifierLearningService(
+        email_store,
+        active_path=tmp_path / "models" / "model.active.pkl",
+        previous_path=tmp_path / "models" / "model.previous.pkl",
+        retrain_state_path=tmp_path / "models" / "retrain-state.json",
+    )
+
+    with _client(
+        tmp_path, email_learning_factory=lambda: learning_service
+    ) as client:
+        feedback = client.post(
+            f"/api/console/email/classifications/{row['id']}/feedback",
+            json={"category": "important"},
+        )
+
+    assert feedback.status_code == 200
+    assert feedback.json()["item"]["classification_source"] == "user"
+    assert feedback.json()["learning"] == {
+        "retrain_due": False,
+        "retrain_reason": None,
+        "promoted": False,
+        "error": None,
+    }
+    assert (tmp_path / "models" / "retrain-state.json").exists()

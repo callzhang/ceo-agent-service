@@ -188,6 +188,24 @@ class EmailActionPlan(BaseModel):
         if len(set(self.actions) & terminal_actions) > 1:
             raise ValueError("archive, move, and trash are mutually exclusive")
 
+        parameter_schemas = {
+            EmailAction.LABEL: {"labels"},
+            EmailAction.MOVE: {"target_folder"},
+            EmailAction.AUTO_REPLY: {"instruction"},
+        }
+        for action, parameters in self.action_parameters.items():
+            allowed_keys = parameter_schemas.get(action)
+            if allowed_keys is None:
+                if parameters:
+                    raise ValueError(f"{action.value} does not accept parameters")
+                continue
+            unexpected_keys = set(parameters) - allowed_keys
+            if unexpected_keys:
+                raise ValueError(
+                    f"{action.value} has unsupported parameters: "
+                    f"{', '.join(sorted(unexpected_keys))}"
+                )
+
         if EmailAction.LABEL in self.actions:
             labels = self.action_parameters.get(EmailAction.LABEL, {}).get("labels")
             if (

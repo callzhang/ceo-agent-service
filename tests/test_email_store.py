@@ -14,7 +14,11 @@ from app.email_store import EmailStore
 
 
 def _classification(
-    *, status: EmailClassificationStatus, message_id: str = "msg-1"
+    *,
+    status: EmailClassificationStatus,
+    message_id: str = "msg-1",
+    confidence: float = 0.93,
+    model_id: str = "email/logistic/model-1",
 ) -> EmailClassification:
     classification_id = int.from_bytes(
         sha256(message_id.encode("utf-8")).digest()[:8], "big"
@@ -28,8 +32,8 @@ def _classification(
             "account_id": "dingtalk-account",
             "category": EmailCategory.WORK,
             "classification_source": "model",
-            "confidence": 0.93,
-            "model_id": "email/logistic/model-1",
+            "confidence": confidence,
+            "model_id": model_id,
             "config_version": "email-v1",
             "actions": (EmailAction.LABEL,),
             "action_parameters": {
@@ -48,10 +52,10 @@ def _classification(
                 "rfc_message_id": f"<{message_id}@example.com>",
             },
             "category": EmailCategory.WORK,
-            "confidence": 0.93,
+            "confidence": confidence,
             "margin": 0.41,
             "probabilities": {"work": 0.93, "important": 0.52},
-            "model_id": "email/logistic/model-1",
+            "model_id": model_id,
             "config_version": "email-v1",
             "status": status,
             "classification_source": "model",
@@ -174,6 +178,38 @@ def test_rescan_preserves_a_user_confirmed_category(tmp_path: Path):
     assert rescanned["category"] == "important"
     assert rescanned["status"] == "processed"
     assert rescanned["classification_source"] == "user"
+
+
+def test_rescan_preserves_all_user_confirmed_action_plan_fields(tmp_path: Path):
+    store = EmailStore(tmp_path / "worker.sqlite3")
+    original = store.upsert_classification(
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            confidence=0.61,
+            model_id="email/logistic/model-v1",
+        )
+    )
+    confirmed = store.confirm_classification(original["id"], EmailCategory.IMPORTANT)
+    assert confirmed is not None
+
+    rescanned = store.upsert_classification(
+        _classification(
+            status=EmailClassificationStatus.PENDING_FEEDBACK,
+            confidence=0.88,
+            model_id="email/logistic/model-v2",
+        )
+    )
+
+    plan = rescanned["action_plan"]
+    assert plan is not None
+    assert rescanned["id"] == plan["classification_id"]
+    assert rescanned["account_id"] == plan["account_id"]
+    assert rescanned["category"] == plan["category"]
+    assert rescanned["classification_source"] == plan["classification_source"]
+    assert rescanned["confidence"] == plan["confidence"] == 0.61
+    assert rescanned["model_id"] == plan["model_id"] == "email/logistic/model-v1"
+    assert rescanned["config_version"] == plan["config_version"]
+    assert rescanned["action_plan"] == confirmed["action_plan"]
 
 
 def test_email_store_persists_category_configuration(tmp_path: Path):
