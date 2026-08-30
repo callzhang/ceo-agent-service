@@ -253,9 +253,13 @@ def _message_body(message: email.message.Message) -> str:
 
 def _attachment_metadata(message: email.message.Message) -> list[dict[str, object]]:
     result: list[dict[str, object]] = []
-    for part in _parts(message):
+
+    def visit(part: email.message.Message) -> None:
         if not _is_attachment(part):
-            continue
+            if part.is_multipart():
+                for child in part.iter_parts():
+                    visit(child)
+            return
         disposition = (part.get_content_disposition() or "").lower()
         result.append(
             {
@@ -265,6 +269,8 @@ def _attachment_metadata(message: email.message.Message) -> list[dict[str, objec
                 "inline": disposition == "inline",
             }
         )
+
+    visit(message)
     return result
 
 

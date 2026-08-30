@@ -2235,6 +2235,43 @@ class EmailStore:
         assert row is not None
         return self._classification_row(row)
 
+    def persist_empty_scan_cursor(
+        self,
+        *,
+        account_id: str,
+        folder: str,
+        uidvalidity: int,
+        last_success_at: str,
+        expected_cursor_uidvalidity: int | None = None,
+    ) -> dict[str, Any]:
+        """Commit a successful empty readonly scan without inventing a message."""
+
+        account_id = account_id.strip()
+        folder = folder.strip()
+        if not account_id or not folder:
+            raise ValueError("account_id and folder must be non-empty")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            self._advance_cursor(
+                db,
+                account_id=account_id,
+                folder=folder,
+                uidvalidity=uidvalidity,
+                last_seen_uid=0,
+                last_success_at=last_success_at,
+                last_error="",
+                expected_uidvalidity=expected_cursor_uidvalidity,
+            )
+            row = db.execute(
+                """
+                select * from email_scan_cursors
+                where account_id=? and folder=?
+                """,
+                (account_id, folder),
+            ).fetchone()
+        assert row is not None
+        return dict(row)
+
     def upsert_classification(
         self,
         classification: EmailClassification,

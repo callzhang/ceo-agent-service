@@ -10,7 +10,11 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
 )
 from app.email_classifier_model import CpuTfidfLogisticClassifier
-from app.email_classifier_scan import EmailScanConfig, scan_readonly_batch
+from app.email_classifier_scan import (
+    EmailScanConfig,
+    scan_imap_accounts,
+    scan_readonly_batch,
+)
 from app.email_classifier_training import CategoryEligibility
 from app.email_imap_readonly import ImapUidBatch
 from app.email_store import EmailStore
@@ -264,6 +268,91 @@ def test_classification_failure_does_not_persist_message_or_advance_cursor(
     with sqlite3.connect(tmp_path / "email.sqlite3") as db:
         assert db.execute("select count(*) from email_messages").fetchone()[0] == 0
         assert db.execute("select count(*) from email_classifications").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "failure_kind",
+    ("value_error", "runtime_error", "persistence_runtime_error"),
+)
+def test_multi_account_scan_isolates_ordinary_folder_failures(
+    tmp_path: Path,
+    failure_kind: str,
+):
+    class FolderSource:
+        def __init__(self, account_id: str):
+            self.account_id = account_id
+
+        def fetch_uid_batch(
+            self,
+            folder: str,
+            *,
+            cursor_uidvalidity: int | None,
+            last_seen_uid: int,
+            limit: int,
+        ) -> ImapUidBatch:
+            del cursor_uidvalidity, last_seen_uid, limit
+            if folder == "bad" and failure_kind == "value_error":
+                raise ValueError("malformed provider payload SECRET")
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=folder,
+                uidvalidity=42,
+                previous_uidvalidity=None,
+                messages=[
+                    {
+                        "messageId": f"<{self.account_id}-{folder}@example.com>",
+                        "accountId": self.account_id,
+                        "folder": folder,
+                        "uidValidity": 42,
+                        "uid": 1,
+                        "from": {"email": "sender@example.com"},
+                        "subject": f"{failure_kind}-{folder}",
+                        "textBody": "body",
+                    }
+                ],
+            )
+
+        def logout(self) -> None:
+            return None
+
+    class FolderClassifier:
+        def predict_message(self, message):
+            if message["folder"] == "bad" and failure_kind == "runtime_error":
+                raise RuntimeError("classifier failure SECRET")
+            return StaticPrediction("work", 0.61)
+
+    class FolderStore(EmailStore):
+        def persist_scan_result(self, classification, **kwargs):
+            if (
+                classification.provider_locator.folder == "bad"
+                and failure_kind == "persistence_runtime_error"
+            ):
+                raise RuntimeError("persistence operation failure SECRET")
+            return super().persist_scan_result(classification, **kwargs)
+
+    store = FolderStore(tmp_path / "isolated.sqlite3")
+    result = scan_imap_accounts(
+        [
+            {"account_id": "account-a", "enabled": True, "scan_folders": ("bad", "good")},
+            {"account_id": "account-b", "enabled": True, "scan_folders": ("good",)},
+        ],
+        lambda account: FolderSource(str(account["account_id"])),
+        FolderClassifier(),
+        store,
+        EmailScanConfig.cold_start(),
+    )
+
+    assert [
+        (account.account_id, [(folder.folder, folder.error_code) for folder in account.folders])
+        for account in result.accounts
+    ] == [
+        ("account-a", [("bad", "scan_failed"), ("good", "")]),
+        ("account-b", [("good", "")]),
+    ]
+    assert "SECRET" not in repr(result)
+    assert store.get_scan_cursor("account-a", "bad") is None
+    assert store.get_scan_cursor("account-a", "good")["last_seen_uid"] == 1
+    assert store.get_scan_cursor("account-b", "good")["last_seen_uid"] == 1
 
 
 def test_high_confidence_is_pending_when_category_lacks_validation_samples(

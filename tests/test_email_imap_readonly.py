@@ -254,6 +254,105 @@ def test_missing_message_id_identity_is_account_scoped_and_independent_of_locato
     assert first["stableMessageIdentity"] != other_account["stableMessageIdentity"]
 
 
+@pytest.mark.parametrize("disposition", ("attachment", "inline"))
+def test_message_rfc822_container_is_one_attachment_and_never_body(
+    disposition: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    raw = (
+        b"From: sender@example.com\r\n"
+        b"To: derek@example.com\r\n"
+        b"Subject: Outer message\r\n"
+        b"Message-ID: <outer@example.com>\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b"Content-Type: multipart/mixed; boundary=outer\r\n\r\n"
+        b"--outer\r\nContent-Type: text/plain\r\n\r\nVisible outer body.\r\n"
+        b"--outer\r\nContent-Type: message/rfc822\r\n"
+        + f"Content-Disposition: {disposition}; filename=forwarded.eml\r\n".encode()
+        + b"Content-Length: 321\r\n\r\n"
+        b"From: hidden@example.com\r\nSubject: Hidden\r\n"
+        b"Content-Type: text/plain\r\n\r\nSECRET NESTED BODY\r\n"
+        b"--outer--\r\n"
+    )
+    original_get_payload = email.message.Message.get_payload
+
+    def guarded_get_payload(self, *args, **kwargs):
+        decode = kwargs.get("decode", args[1] if len(args) > 1 else False)
+        if self.get_content_type() == "message/rfc822" and decode:
+            raise AssertionError("attached message payload must not be decoded")
+        return original_get_payload(self, *args, **kwargs)
+
+    monkeypatch.setattr(email.message.Message, "get_payload", guarded_get_payload)
+
+    parsed = parse_rfc822_message(
+        raw,
+        account_id="account-a",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=1,
+    )
+
+    assert parsed["textBody"] == "Visible outer body."
+    assert "SECRET NESTED BODY" not in repr(parsed)
+    assert parsed["attachments"] == [
+        {
+            "filename": "forwarded.eml",
+            "mime_type": "message/rfc822",
+            "size_bytes": 321,
+            "inline": disposition == "inline",
+        }
+    ]
+
+
+class EmptyUidSource:
+    def __init__(self, account_id: str, uidvalidity: int):
+        self.account_id = account_id
+        self.uidvalidity = uidvalidity
+
+    def fetch_uid_batch(
+        self,
+        folder: str,
+        *,
+        cursor_uidvalidity: int | None,
+        last_seen_uid: int,
+        limit: int,
+    ) -> ImapUidBatch:
+        del last_seen_uid, limit
+        return ImapUidBatch(
+            account_id=self.account_id,
+            folder=folder,
+            uidvalidity=self.uidvalidity,
+            previous_uidvalidity=cursor_uidvalidity,
+            messages=[],
+        )
+
+
+def test_successful_initial_and_reset_empty_scans_persist_zero_cursor(tmp_path: Path):
+    store = EmailStore(tmp_path / "empty-scans.sqlite3")
+    source = EmptyUidSource("account-a", 42)
+
+    initial = scan_readonly_batch(
+        source,
+        FakeClassifier({}),
+        store,
+        EmailScanConfig.cold_start(),
+    )
+    assert initial.fetched_count == 0
+    assert store.get_scan_cursor("account-a", "INBOX")["last_seen_uid"] == 0
+
+    source.uidvalidity = 84
+    reset = scan_readonly_batch(
+        source,
+        FakeClassifier({}),
+        store,
+        EmailScanConfig.cold_start(),
+    )
+    assert reset.fetched_count == 0
+    cursor = store.get_scan_cursor("account-a", "INBOX")
+    assert cursor["uidvalidity"] == 84
+    assert cursor["last_seen_uid"] == 0
+
+
 @dataclass(frozen=True)
 class FakePrediction:
     label: str

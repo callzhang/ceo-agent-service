@@ -3059,6 +3059,43 @@ def test_cursor_creation_and_same_generation_advancement_are_monotonic(
     assert cursor["last_seen_uid"] == 9
 
 
+def test_empty_scan_cursor_initialization_and_reset_use_compare_and_set(
+    tmp_path: Path,
+):
+    store = EmailStore(tmp_path / "empty-cursor.sqlite3")
+
+    store.persist_empty_scan_cursor(
+        account_id="dingtalk-account",
+        folder="INBOX",
+        uidvalidity=42,
+        last_success_at="2026-08-30T00:00:00+00:00",
+    )
+    assert store.get_scan_cursor("dingtalk-account", "INBOX")["last_seen_uid"] == 0
+
+    store.persist_empty_scan_cursor(
+        account_id="dingtalk-account",
+        folder="INBOX",
+        uidvalidity=84,
+        last_success_at="2026-08-30T00:01:00+00:00",
+        expected_cursor_uidvalidity=42,
+    )
+    reset = store.get_scan_cursor("dingtalk-account", "INBOX")
+    assert reset["uidvalidity"] == 84
+    assert reset["last_seen_uid"] == 0
+
+    with pytest.raises(email_store_module.EmailCursorConflict, match="expected 42"):
+        store.persist_empty_scan_cursor(
+            account_id="dingtalk-account",
+            folder="INBOX",
+            uidvalidity=126,
+            last_success_at="2026-08-30T00:02:00+00:00",
+            expected_cursor_uidvalidity=42,
+        )
+    unchanged = store.get_scan_cursor("dingtalk-account", "INBOX")
+    assert unchanged["uidvalidity"] == 84
+    assert unchanged["last_seen_uid"] == 0
+
+
 def test_cursor_generation_reset_requires_compare_and_set(tmp_path: Path):
     database = tmp_path / "cursor-reset.sqlite3"
     store = EmailStore(database)

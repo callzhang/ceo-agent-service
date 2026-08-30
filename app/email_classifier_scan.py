@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import imaplib
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -22,7 +23,13 @@ from app.email_classifier_contracts import (
 from app.email_classifier_model import email_message_to_text
 from app.email_classifier_training import CategoryEligibility
 from app.email_imap_readonly import ImapUidBatch, fallback_stable_message_identity
-from app.email_store import EmailStore
+from app.email_store import (
+    EmailActionPlanConflict,
+    EmailClassificationIdentityCollision,
+    EmailCursorConflict,
+    EmailPersistenceCorruption,
+    EmailStore,
+)
 
 
 class PredictionLike(Protocol):
@@ -193,6 +200,21 @@ def scan_readonly_batch(
     if batch.account_id != account_id or batch.folder != mailbox:
         raise ValueError("IMAP batch identity does not match requested account and folder")
     messages = batch.messages
+    if not messages:
+        reset_expectation = (
+            cursor_uidvalidity
+            if cursor_uidvalidity is not None
+            and cursor_uidvalidity != batch.uidvalidity
+            else None
+        )
+        store.persist_empty_scan_cursor(
+            account_id=batch.account_id,
+            folder=batch.folder,
+            uidvalidity=batch.uidvalidity,
+            last_success_at=datetime.now(timezone.utc).isoformat(),
+            expected_cursor_uidvalidity=reset_expectation,
+        )
+        return EmailScanResult(0, 0, 0, 0)
     persisted = 0
     processed = 0
     pending = 0
@@ -331,7 +353,15 @@ def scan_imap_accounts(
                         mailbox=folder,
                         limit=limit,
                     )
-                except (ConnectionError, OSError, imaplib.IMAP4.error):
+                except (
+                    EmailPersistenceCorruption,
+                    EmailClassificationIdentityCollision,
+                    EmailActionPlanConflict,
+                    EmailCursorConflict,
+                    sqlite3.DatabaseError,
+                ):
+                    raise
+                except Exception:
                     folder_outcomes.append(
                         EmailFolderScanResult(
                             folder=folder,
