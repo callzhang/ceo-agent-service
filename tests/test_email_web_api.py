@@ -1,4 +1,5 @@
 from pathlib import Path
+import gc
 import sqlite3
 
 from fastapi import FastAPI
@@ -68,6 +69,28 @@ def _assert_email_endpoints_unavailable(client: TestClient) -> None:
     for response in responses:
         assert response.status_code == 503
         assert response.json() == expected
+
+
+def _assert_audit_app_email_unavailable(database: Path, tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "index.html").write_text("", encoding="utf-8")
+    app = create_audit_app(
+        database,
+        workbench_asset_dir=assets,
+        workbench_workspace=tmp_path,
+        workbench_executor=_NonExecutingExecutor(tmp_path),
+    )
+
+    with TestClient(
+        app,
+        client=("127.0.0.1", 50000),
+        headers={"Host": "127.0.0.1:8765"},
+    ) as client:
+        assert client.get("/healthz").json() == {"ok": True, "status": "ok"}
+        tasks = client.get("/api/console/tasks?page=1&page_size=1")
+        assert tasks.status_code == 200
+        _assert_email_endpoints_unavailable(client)
 
 
 def test_email_routes_initialize_and_reuse_one_store(
@@ -229,26 +252,64 @@ def test_audit_app_starts_when_email_schema_is_unavailable(tmp_path: Path):
             "update email_schema_migrations set version=?",
             (email_store_module.EMAIL_SCHEMA_VERSION + 1,),
         )
-    assets = tmp_path / "assets"
-    assets.mkdir()
-    (assets / "index.html").write_text("", encoding="utf-8")
+    _assert_audit_app_email_unavailable(database, tmp_path)
 
-    app = create_audit_app(
-        database,
-        workbench_asset_dir=assets,
-        workbench_workspace=tmp_path,
-        workbench_executor=_NonExecutingExecutor(tmp_path),
-    )
 
-    with TestClient(
-        app,
-        client=("127.0.0.1", 50000),
-        headers={"Host": "127.0.0.1:8765"},
-    ) as client:
-        assert client.get("/healthz").json() == {"ok": True, "status": "ok"}
-        tasks = client.get("/api/console/tasks?page=1&page_size=1")
-        assert tasks.status_code == 200
-        _assert_email_endpoints_unavailable(client)
+def test_audit_app_starts_when_current_email_schema_is_missing_a_column(
+    tmp_path: Path,
+):
+    database = tmp_path / "audit-app-missing-email-column.sqlite3"
+    AutoReplyStore(database)
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.execute("alter table email_messages drop column normalized_text")
+
+    _assert_audit_app_email_unavailable(database, tmp_path)
+
+
+def test_audit_app_starts_when_email_json_contains_invalid_utf8_blob(
+    tmp_path: Path,
+):
+    database = tmp_path / "audit-app-invalid-email-json.sqlite3"
+    AutoReplyStore(database)
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.execute("pragma ignore_check_constraints = on")
+        db.execute(
+            """
+            insert into email_accounts (
+                account_id, display_name, email_address, imap_host, imap_port,
+                imap_tls, imap_username, imap_secret_reference, smtp_host,
+                smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
+                enabled, scan_folders_json, scan_interval_seconds, created_at,
+                updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "invalid-json-account",
+                "Invalid JSON",
+                "redacted@example.com",
+                "imap.example.com",
+                993,
+                1,
+                "redacted@example.com",
+                "IMAP_SECRET_REFERENCE",
+                "smtp.example.com",
+                465,
+                1,
+                "redacted@example.com",
+                "SMTP_SECRET_REFERENCE",
+                1,
+                sqlite3.Binary(b"\xff"),
+                60,
+                "2026-08-29T16:00:00+00:00",
+                "2026-08-29T16:00:00+00:00",
+            ),
+        )
+
+    _assert_audit_app_email_unavailable(database, tmp_path)
 
 
 def test_paginated_get_does_not_compete_with_scanner_write_transaction(

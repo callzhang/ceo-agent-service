@@ -38,6 +38,241 @@ _DIRECT_ACTION_VALUES = frozenset(action.value for action in DIRECT_ACTIONS)
 _UNREDACTED_EMAIL = re.compile(
     r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])"
 )
+_REQUIRED_TABLE_COLUMNS: Mapping[str, frozenset[str]] = {
+    "email_schema_migrations": frozenset({"version", "applied_at"}),
+    "email_classifications": frozenset(
+        {
+            "id",
+            "account_id",
+            "folder",
+            "uidvalidity",
+            "uid",
+            "rfc_message_id",
+            "thread_id",
+            "stable_message_identity",
+            "sender",
+            "subject",
+            "preview",
+            "model_text",
+            "received_at",
+            "category",
+            "predicted_category",
+            "confirmed_category",
+            "confidence",
+            "margin",
+            "probabilities_json",
+            "model_id",
+            "config_version",
+            "status",
+            "classification_source",
+            "action_plan_json",
+            "current_action_plan_id",
+            "legacy_processed_without_plan",
+            "confirmed_at",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "email_category_configs": frozenset(
+        {
+            "category",
+            "description",
+            "threshold",
+            "actions_json",
+            "action_parameters_json",
+            "enabled",
+            "config_version",
+            "updated_at",
+        }
+    ),
+    "email_accounts": frozenset(
+        {
+            "account_id",
+            "display_name",
+            "email_address",
+            "imap_host",
+            "imap_port",
+            "imap_tls",
+            "imap_username",
+            "imap_secret_reference",
+            "smtp_host",
+            "smtp_port",
+            "smtp_tls",
+            "smtp_username",
+            "smtp_secret_reference",
+            "enabled",
+            "scan_folders_json",
+            "scan_interval_seconds",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "email_scan_cursors": frozenset(
+        {
+            "account_id",
+            "folder",
+            "uidvalidity",
+            "last_seen_uid",
+            "last_success_at",
+            "last_error",
+        }
+    ),
+    "email_messages": frozenset(
+        {
+            "id",
+            "account_id",
+            "stable_message_identity",
+            "folder",
+            "uidvalidity",
+            "uid",
+            "rfc_message_id",
+            "thread_identity",
+            "sender",
+            "recipients_json",
+            "subject",
+            "normalized_text",
+            "preview",
+            "attachment_metadata_json",
+            "received_at",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "email_action_plans": frozenset(
+        {
+            "action_plan_id",
+            "action_plan_version",
+            "classification_id",
+            "account_id",
+            "category",
+            "classification_source",
+            "confidence",
+            "model_id",
+            "config_version",
+            "actions_json",
+            "action_parameters_json",
+            "created_at",
+        }
+    ),
+    "email_actions": frozenset(
+        {
+            "action_id",
+            "action_plan_id",
+            "classification_id",
+            "account_id",
+            "action_type",
+            "parameters_json",
+            "config_version",
+            "status",
+            "attempt_count",
+            "started_at",
+            "finished_at",
+            "provider_operation",
+            "provider_target",
+            "provider_result_id",
+            "error",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "email_action_attempts": frozenset(
+        {
+            "id",
+            "action_id",
+            "attempt_number",
+            "status",
+            "provider_operation",
+            "provider_target",
+            "provider_result_id",
+            "error",
+            "started_at",
+            "finished_at",
+        }
+    ),
+}
+_REQUIRED_PRIMARY_KEYS: Mapping[str, tuple[str, ...]] = {
+    "email_schema_migrations": ("version",),
+    "email_classifications": ("id",),
+    "email_category_configs": ("category",),
+    "email_accounts": ("account_id",),
+    "email_scan_cursors": ("account_id", "folder"),
+    "email_messages": ("id",),
+    "email_action_plans": ("action_plan_id",),
+    "email_actions": ("action_id",),
+    "email_action_attempts": ("id",),
+}
+_REQUIRED_UNIQUE_KEYS: Mapping[str, tuple[tuple[str, ...], ...]] = {
+    "email_classifications": (("stable_message_identity",),),
+    "email_messages": (("stable_message_identity",),),
+    "email_action_plans": (("classification_id", "action_plan_version"),),
+    "email_actions": (("action_plan_id", "action_type"),),
+    "email_action_attempts": (("action_id", "attempt_number"),),
+}
+_REQUIRED_FOREIGN_KEYS: Mapping[
+    str,
+    tuple[tuple[str, str, str, str], ...],
+] = {
+    "email_action_plans": (
+        ("classification_id", "email_classifications", "id", "RESTRICT"),
+    ),
+    "email_actions": (
+        ("action_plan_id", "email_action_plans", "action_plan_id", "RESTRICT"),
+        ("classification_id", "email_classifications", "id", "RESTRICT"),
+    ),
+    "email_action_attempts": (("action_id", "email_actions", "action_id", "RESTRICT"),),
+}
+_REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
+    "idx_email_classifications_status": (
+        "email_classifications",
+        ("status", "updated_at", "id"),
+    ),
+    "idx_email_classifications_account_status": (
+        "email_classifications",
+        ("account_id", "status", "updated_at"),
+    ),
+    "idx_email_messages_account_locator": (
+        "email_messages",
+        ("account_id", "folder", "uidvalidity", "uid"),
+    ),
+    "idx_email_actions_status": (
+        "email_actions",
+        ("status", "updated_at", "action_id"),
+    ),
+}
+_REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
+    "trg_email_classification_status_insert": """
+        create trigger trg_email_classification_status_insert
+        before insert on email_classifications
+        when new.status not in ('pending_feedback', 'processed')
+        begin
+            select raise(abort, 'invalid email classification status');
+        end
+    """,
+    "trg_email_classification_status_update": """
+        create trigger trg_email_classification_status_update
+        before update of status on email_classifications
+        when new.status not in ('pending_feedback', 'processed')
+        begin
+            select raise(abort, 'invalid email classification status');
+        end
+    """,
+    "trg_email_classification_source_insert": """
+        create trigger trg_email_classification_source_insert
+        before insert on email_classifications
+        when new.classification_source not in ('model', 'user')
+        begin
+            select raise(abort, 'invalid email classification source');
+        end
+    """,
+    "trg_email_classification_source_update": """
+        create trigger trg_email_classification_source_update
+        before update of classification_source on email_classifications
+        when new.classification_source not in ('model', 'user')
+        begin
+            select raise(abort, 'invalid email classification source');
+        end
+    """,
+}
 
 
 class EmailClassificationConflict(RuntimeError):
@@ -86,13 +321,17 @@ def _json_dump(value: object) -> str:
 def _json_load(raw: str, *, field: str, expected_type: type[Any]) -> Any:
     try:
         value = json.loads(raw)
-    except (TypeError, json.JSONDecodeError) as exc:
+    except (TypeError, UnicodeError, json.JSONDecodeError) as exc:
         raise EmailPersistenceCorruption(f"invalid {field} JSON") from exc
     if not isinstance(value, expected_type):
         raise EmailPersistenceCorruption(
             f"{field} must contain a JSON {expected_type.__name__}"
         )
     return value
+
+
+def _normalize_schema_sql(value: str) -> str:
+    return " ".join(value.lower().split())
 
 
 def _require_positive_int(value: int, *, field: str) -> None:
@@ -235,11 +474,23 @@ class EmailStore:
         ).fetchone()
         if migration_table is None:
             return None
-        return int(
-            db.execute(
-                "select coalesce(max(version), 0) from email_schema_migrations"
-            ).fetchone()[0]
-        )
+        column_names = {
+            row["name"]
+            for row in db.execute("pragma table_info(email_schema_migrations)")
+        }
+        missing_columns = {"version", "applied_at"} - column_names
+        if missing_columns:
+            missing = ", ".join(sorted(missing_columns))
+            raise EmailPersistenceCorruption(
+                "email_schema_migrations is missing required columns: " + missing
+            )
+        row = db.execute(
+            "select coalesce(max(version), 0) from email_schema_migrations"
+        ).fetchone()
+        try:
+            return int(row[0])
+        except (IndexError, TypeError, ValueError, OverflowError) as exc:
+            raise EmailPersistenceCorruption("invalid email schema version") from exc
 
     @staticmethod
     def _create_migration_table(db: sqlite3.Connection) -> None:
@@ -616,7 +867,131 @@ class EmailStore:
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
+    @staticmethod
+    def _index_columns(db: sqlite3.Connection, index_name: str) -> tuple[str, ...]:
+        return tuple(
+            row["name"]
+            for row in db.execute(f"pragma index_info({json.dumps(index_name)})")
+        )
+
+    @classmethod
+    def _validate_schema_shape(cls, db: sqlite3.Connection) -> None:
+        try:
+            table_names = {
+                row["name"]
+                for row in db.execute(
+                    "select name from sqlite_master where type='table'"
+                )
+            }
+            missing_tables = set(_REQUIRED_TABLE_COLUMNS) - table_names
+            if missing_tables:
+                missing = ", ".join(sorted(missing_tables))
+                raise EmailPersistenceCorruption(
+                    f"missing required email table: {missing}"
+                )
+
+            indexes_by_table: dict[str, dict[str, sqlite3.Row]] = {}
+            for table, required_columns in _REQUIRED_TABLE_COLUMNS.items():
+                column_rows = list(
+                    db.execute(f"pragma table_info({json.dumps(table)})")
+                )
+                column_names = {row["name"] for row in column_rows}
+                missing_columns = required_columns - column_names
+                if missing_columns:
+                    missing = ", ".join(sorted(missing_columns))
+                    raise EmailPersistenceCorruption(
+                        f"{table} is missing required columns: {missing}"
+                    )
+                primary_key = tuple(
+                    row["name"]
+                    for row in sorted(column_rows, key=lambda row: row["pk"])
+                    if row["pk"]
+                )
+                if primary_key != _REQUIRED_PRIMARY_KEYS[table]:
+                    raise EmailPersistenceCorruption(
+                        f"required primary key for {table} is missing or malformed"
+                    )
+
+                indexes = {
+                    row["name"]: row
+                    for row in db.execute(f"pragma index_list({json.dumps(table)})")
+                }
+                indexes_by_table[table] = indexes
+                unique_keys = {
+                    cls._index_columns(db, index_name)
+                    for index_name, index_row in indexes.items()
+                    if index_row["unique"] and not index_row["partial"]
+                }
+                for required_key in _REQUIRED_UNIQUE_KEYS.get(table, ()):
+                    if required_key not in unique_keys:
+                        raise EmailPersistenceCorruption(
+                            f"required unique key for {table} is missing or malformed"
+                        )
+
+                foreign_keys = {
+                    (
+                        row["from"],
+                        row["table"],
+                        row["to"],
+                        row["on_delete"].upper(),
+                    )
+                    for row in db.execute(
+                        f"pragma foreign_key_list({json.dumps(table)})"
+                    )
+                }
+                for required_key in _REQUIRED_FOREIGN_KEYS.get(table, ()):
+                    if required_key not in foreign_keys:
+                        raise EmailPersistenceCorruption(
+                            f"required foreign key for {table} is missing or malformed"
+                        )
+
+            for index_name, (table, required_columns) in _REQUIRED_INDEXES.items():
+                index_row = indexes_by_table[table].get(index_name)
+                if (
+                    index_row is None
+                    or index_row["unique"]
+                    or index_row["partial"]
+                    or cls._index_columns(db, index_name) != required_columns
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"required index {index_name} is missing or malformed"
+                    )
+
+            trigger_rows = {
+                row["name"]: row
+                for row in db.execute(
+                    "select name, tbl_name, sql from sqlite_master where type='trigger'"
+                )
+            }
+            for trigger_name, expected_sql in _REQUIRED_TRIGGER_SQL.items():
+                trigger = trigger_rows.get(trigger_name)
+                if (
+                    trigger is None
+                    or trigger["tbl_name"] != "email_classifications"
+                    or not isinstance(trigger["sql"], str)
+                    or _normalize_schema_sql(trigger["sql"])
+                    != _normalize_schema_sql(expected_sql)
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"required trigger {trigger_name} is missing or malformed"
+                    )
+        except (sqlite3.ProgrammingError, sqlite3.NotSupportedError):
+            raise
+        except sqlite3.DatabaseError as exc:
+            raise EmailPersistenceCorruption(
+                "unable to inspect required email schema"
+            ) from exc
+
     def _validate_durable_state(self, db: sqlite3.Connection) -> None:
+        self._validate_schema_shape(db)
+        try:
+            self._validate_durable_rows(db)
+        except IndexError as exc:
+            raise EmailPersistenceCorruption(
+                "durable email row is missing a required field"
+            ) from exc
+
+    def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
         for row in db.execute("select account_id, scan_folders_json from email_accounts"):
             folders = _json_load(
                 row["scan_folders_json"],

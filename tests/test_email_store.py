@@ -190,6 +190,42 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
         return db.execute(sql, parameters).fetchall()
 
 
+def _insert_account_with_scan_folders_json(database: Path, value: object) -> None:
+    with sqlite3.connect(database) as db:
+        db.execute("pragma ignore_check_constraints = on")
+        db.execute(
+            """
+            insert into email_accounts (
+                account_id, display_name, email_address, imap_host, imap_port,
+                imap_tls, imap_username, imap_secret_reference, smtp_host,
+                smtp_port, smtp_tls, smtp_username, smtp_secret_reference,
+                enabled, scan_folders_json, scan_interval_seconds, created_at,
+                updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "shape-test-account",
+                "Shape test",
+                "redacted@example.com",
+                "imap.example.com",
+                993,
+                1,
+                "redacted@example.com",
+                "IMAP_SECRET_REFERENCE",
+                "smtp.example.com",
+                465,
+                1,
+                "redacted@example.com",
+                "SMTP_SECRET_REFERENCE",
+                1,
+                value,
+                60,
+                "2026-08-29T16:00:00+00:00",
+                "2026-08-29T16:00:00+00:00",
+            ),
+        )
+
+
 def _create_prototype_database(
     database: Path,
     classification: EmailClassification,
@@ -964,6 +1000,7 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
     gc.collect()
     with sqlite3.connect(database) as db:
         journal_mode = db.execute("pragma journal_mode = delete").fetchone()[0]
+        schema_version_before = db.execute("pragma schema_version").fetchone()[0]
     assert journal_mode == "delete"
 
     statements: list[str] = []
@@ -980,15 +1017,275 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
 
     with sqlite3.connect(database) as db:
         journal_mode = db.execute("pragma journal_mode").fetchone()[0]
+        schema_version_after = db.execute("pragma schema_version").fetchone()[0]
     normalized = [" ".join(statement.lower().split()) for statement in statements]
     assert journal_mode == "delete"
+    assert schema_version_after == schema_version_before
     assert "begin" in normalized
     assert "begin immediate" not in normalized
-    assert not any(statement.startswith("pragma journal_mode") for statement in normalized)
+    assert not any(
+        statement.startswith("pragma journal_mode") for statement in normalized
+    )
+    read_pragma_prefixes = (
+        "pragma table_info",
+        "pragma index_list",
+        "pragma index_info",
+        "pragma foreign_key_list",
+    )
+    assert all(
+        statement in {"begin", "commit"}
+        or statement.startswith("select ")
+        or statement.startswith(read_pragma_prefixes)
+        for statement in normalized
+    )
+    assert all(
+        any(statement.startswith(prefix) for statement in normalized)
+        for prefix in read_pragma_prefixes
+    )
     assert not any(
         statement.startswith(("create ", "alter ", "insert ", "update ", "delete "))
         for statement in normalized
     )
+
+
+@pytest.mark.parametrize("populated", (False, True))
+def test_current_schema_missing_required_column_is_domain_corruption(
+    tmp_path: Path,
+    populated: bool,
+):
+    database = tmp_path / f"missing-column-{populated}.sqlite3"
+    store = EmailStore(database)
+    if populated:
+        _persist_scan(
+            store,
+            _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
+        )
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.execute("alter table email_messages drop column normalized_text")
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="email_messages.*normalized_text",
+    ):
+        EmailStore(database)
+
+
+def test_current_schema_allows_unrelated_extra_tables_and_columns(tmp_path: Path):
+    database = tmp_path / "extra-schema.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            alter table email_messages add column unrelated_extension text;
+            create table unrelated_email_extension (
+                extension_id integer primary key,
+                payload text
+            );
+            """
+        )
+
+    EmailStore(database)
+
+
+def test_durable_validation_boundary_normalizes_missing_row_field(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    database = tmp_path / "missing-row-field.sqlite3"
+    store = EmailStore(database)
+    _persist_scan(
+        store,
+        _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
+    )
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.execute("alter table email_messages drop column thread_identity")
+    monkeypatch.setattr(
+        EmailStore,
+        "_validate_schema_shape",
+        staticmethod(lambda _db: None),
+    )
+
+    with pytest.raises(EmailPersistenceCorruption, match="missing a required field"):
+        EmailStore(database)
+
+
+@pytest.mark.parametrize(
+    ("damage_sql", "match"),
+    (
+        ("drop table email_scan_cursors", "email_scan_cursors"),
+        ("drop index idx_email_actions_status", "idx_email_actions_status"),
+        (
+            "drop trigger trg_email_classification_status_insert",
+            "trg_email_classification_status_insert",
+        ),
+    ),
+)
+def test_current_schema_missing_required_structure_is_domain_corruption(
+    tmp_path: Path,
+    damage_sql: str,
+    match: str,
+):
+    database = tmp_path / f"missing-structure-{match}.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.execute(damage_sql)
+
+    with pytest.raises(EmailPersistenceCorruption, match=match):
+        EmailStore(database)
+
+
+def test_current_schema_missing_required_foreign_key_is_domain_corruption(
+    tmp_path: Path,
+):
+    database = tmp_path / "missing-action-attempt-foreign-key.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            alter table email_action_attempts rename to old_email_action_attempts;
+            create table email_action_attempts (
+                id integer primary key autoincrement,
+                action_id text not null,
+                attempt_number integer not null check(attempt_number > 0),
+                status text not null check(status in ('done', 'failed')),
+                provider_operation text not null,
+                provider_target text not null,
+                provider_result_id text not null,
+                error text not null,
+                started_at text not null,
+                finished_at text not null,
+                unique(action_id, attempt_number)
+            );
+            drop table old_email_action_attempts;
+            """
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption, match="foreign key.*email_action_attempts"
+    ):
+        EmailStore(database)
+
+
+def test_current_schema_missing_required_primary_key_is_domain_corruption(
+    tmp_path: Path,
+):
+    database = tmp_path / "missing-cursor-primary-key.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            alter table email_scan_cursors rename to old_email_scan_cursors;
+            create table email_scan_cursors as
+                select * from old_email_scan_cursors where false;
+            drop table old_email_scan_cursors;
+            """
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption, match="primary key.*email_scan_cursors"
+    ):
+        EmailStore(database)
+
+
+def test_current_schema_missing_required_unique_key_is_domain_corruption(
+    tmp_path: Path,
+):
+    database = tmp_path / "missing-message-unique-key.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            alter table email_messages rename to old_email_messages;
+            create table email_messages (
+                id integer primary key autoincrement,
+                account_id text not null,
+                stable_message_identity text not null,
+                folder text not null,
+                uidvalidity integer not null check(uidvalidity > 0),
+                uid integer not null check(uid > 0),
+                rfc_message_id text not null,
+                thread_identity text not null,
+                sender text not null,
+                recipients_json text not null check(json_valid(recipients_json)),
+                subject text not null,
+                normalized_text text not null,
+                preview text not null,
+                attachment_metadata_json text not null
+                    check(json_valid(attachment_metadata_json)),
+                received_at text not null,
+                created_at text not null,
+                updated_at text not null
+            );
+            drop table old_email_messages;
+            create index idx_email_messages_account_locator
+                on email_messages(account_id, folder, uidvalidity, uid);
+            """
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="unique key.*email_messages"):
+        EmailStore(database)
+
+
+def test_invalid_utf8_json_blob_is_domain_corruption(tmp_path: Path):
+    database = tmp_path / "invalid-utf8-json.sqlite3"
+    EmailStore(database)
+    gc.collect()
+    _insert_account_with_scan_folders_json(database, sqlite3.Binary(b"\xff"))
+
+    with pytest.raises(EmailPersistenceCorruption, match="scan_folders_json"):
+        EmailStore(database)
+
+
+def test_malformed_schema_version_is_domain_corruption(tmp_path: Path):
+    database = tmp_path / "malformed-schema-version.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            create table email_schema_migrations (
+                version text primary key,
+                applied_at text not null
+            );
+            insert into email_schema_migrations values (
+                'not-an-integer',
+                '2026-08-29T16:00:00+00:00'
+            );
+            """
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="schema version"):
+        EmailStore(database)
+
+
+def test_schema_version_table_missing_version_column_is_domain_corruption(
+    tmp_path: Path,
+):
+    database = tmp_path / "missing-schema-version-column.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.executescript(
+            """
+            create table email_schema_migrations (
+                schema_revision integer primary key,
+                applied_at text not null
+            );
+            insert into email_schema_migrations values (
+                3,
+                '2026-08-29T16:00:00+00:00'
+            );
+            """
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="email_schema_migrations.*version",
+    ):
+        EmailStore(database)
 
 
 def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
