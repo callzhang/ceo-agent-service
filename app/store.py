@@ -14566,6 +14566,7 @@ class AutoReplyStore:
         ).fetchall()
         if (
             len(claim_transitions) != 1
+            or not str(current_round["started_at"] or "").strip()
             or str(claim_transitions[0]["reason"] or "")
             or str(claim_transitions[0]["workbench_task_id"] or "")
             or str(claim_transitions[0]["workbench_turn_id"] or "")
@@ -14633,6 +14634,7 @@ class AutoReplyStore:
                 raise ValueError(stable_error)
 
             version_two_rounds: list[sqlite3.Row] = []
+            version_two_claim_timestamps: set[str] = set()
             common_resolved_receipt: ResolutionEvidence | None = None
             for item in items:
                 round_id = cls._feedback_processing_round_pointer(
@@ -14660,6 +14662,10 @@ class AutoReplyStore:
                     db,
                     current_round,
                 )
+                if cls._feedback_processing_receipt_version(current_round) == 2:
+                    version_two_claim_timestamps.add(
+                        str(current_round["started_at"] or "")
+                    )
                 if expected_status == "processing":
                     if str(source["resolved_at"] or "").strip():
                         raise ValueError(stable_error)
@@ -14705,6 +14711,11 @@ class AutoReplyStore:
                     ):
                         raise ValueError(stable_error)
 
+            if version_two_claim_timestamps and (
+                len(version_two_claim_timestamps) != 1
+                or not next(iter(version_two_claim_timestamps)).strip()
+            ):
+                raise ValueError(stable_error)
             if expected_status == "processing":
                 if str(batch["resolved_at"] or "").strip():
                     raise ValueError(stable_error)
@@ -14785,6 +14796,15 @@ class AutoReplyStore:
                 )
             ):
                 raise ValueError("resolved batch completion timestamp is incomplete")
+            claim_timestamps = {
+                str(round_row["started_at"] or "")
+                for round_row in version_two_rounds
+            }
+            if (
+                len(claim_timestamps) != 1
+                or not next(iter(claim_timestamps)).strip()
+            ):
+                raise ValueError("resolved batch claim timestamp is incomplete")
 
         association_fields = (
             "workbench_task_id",
@@ -14800,6 +14820,10 @@ class AutoReplyStore:
             feedback_key = str(resolved_round["feedback_key"])
             receipt_version = cls._feedback_processing_receipt_version(resolved_round)
             cls._validate_feedback_processing_completion_transition(
+                db,
+                resolved_round,
+            )
+            cls._validate_feedback_processing_claim_transition(
                 db,
                 resolved_round,
             )
