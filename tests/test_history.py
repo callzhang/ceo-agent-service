@@ -1,6 +1,6 @@
 import sqlite3
 
-from app.history import safe_observability_error
+from app.history import HistoryItem, safe_observability_error
 from app.store import AutoReplyStore
 
 
@@ -17,6 +17,25 @@ def test_observability_redacts_credentials_and_local_runtime_paths():
     assert safe_observability_error(
         "/tmp/private/runtime-transcript.jsonl"
     ) == "[redacted sensitive error]"
+
+
+def test_history_item_accepts_todo_completion_evidence_candidates():
+    item = HistoryItem(
+        kind="task",
+        object_type="todo_completion_evidence_candidate",
+        source_id=1,
+        source_title="客户项目",
+        source_actor="Task Agent",
+        input_label="证据",
+        input_text="meeting:42",
+        output_label="判断",
+        output_text="证据待确认",
+        action="todo_completion_evidence_candidate",
+        status="pending",
+        created_at="2026-08-30T00:00:00Z",
+    )
+
+    assert item.object_type == "todo_completion_evidence_candidate"
 
 
 def _seed_meeting_run(store: AutoReplyStore, *, status: str = "sent") -> int:
