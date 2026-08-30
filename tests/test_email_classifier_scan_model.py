@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
+import pytest
+
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -10,17 +12,38 @@ from app.email_classifier_contracts import (
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_scan import EmailScanConfig, scan_readonly_batch
 from app.email_classifier_training import CategoryEligibility
+from app.email_imap_readonly import ImapUidBatch
 from app.email_store import EmailStore
 
 
 class FakeSource:
     def __init__(self, messages: list[dict[str, object]]):
         self.messages = messages
-        self.calls: list[tuple[str, int]] = []
+        self.account_id = str(messages[0]["accountId"])
+        self.calls: list[tuple[str, int | None, int, int]] = []
 
-    def fetch_recent(self, mailbox: str = "INBOX", *, limit: int = 50):
-        self.calls.append((mailbox, limit))
-        return self.messages
+    def fetch_uid_batch(
+        self,
+        mailbox: str = "INBOX",
+        *,
+        cursor_uidvalidity: int | None,
+        last_seen_uid: int,
+        limit: int = 50,
+    ) -> ImapUidBatch:
+        uidvalidity = int(self.messages[0]["uidValidity"])
+        self.calls.append((mailbox, cursor_uidvalidity, last_seen_uid, limit))
+        minimum_uid = last_seen_uid if cursor_uidvalidity == uidvalidity else 0
+        return ImapUidBatch(
+            account_id=str(self.messages[0]["accountId"]),
+            folder=mailbox,
+            uidvalidity=uidvalidity,
+            previous_uidvalidity=cursor_uidvalidity,
+            messages=[
+                message
+                for message in self.messages
+                if int(message["uid"]) > minimum_uid
+            ][:limit],
+        )
 
 
 @dataclass
@@ -134,7 +157,7 @@ def test_cpu_model_feeds_readonly_scan_and_persists_only_classification(tmp_path
 
     result = scan_readonly_batch(source, classifier, store, config, limit=2)
 
-    assert source.calls == [("INBOX", 2)]
+    assert source.calls == [("INBOX", None, 0, 2)]
     assert result.fetched_count == result.persisted_count == 2
     assert result.pending_feedback_count == 0
     assert result.processed_count == 2
@@ -145,6 +168,16 @@ def test_cpu_model_feeds_readonly_scan_and_persists_only_classification(tmp_path
     assert {row["category"] for row in rows} == {"work", "junk"}
     assert all(row["model_id"] == "model-integration-test" for row in rows)
     assert all("https://" not in row["preview"] for row in rows)
+    assert store.get_scan_cursor("dingtalk-account", "INBOX") == {
+        "account_id": "dingtalk-account",
+        "folder": "INBOX",
+        "uidvalidity": 42,
+        "last_seen_uid": 2,
+        "last_success_at": store.get_scan_cursor("dingtalk-account", "INBOX")[
+            "last_success_at"
+        ],
+        "last_error": "",
+    }
 
 
 def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: Path):
@@ -186,6 +219,9 @@ def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: P
     confirmed = store.confirm_classification(pending[0]["id"], EmailCategory.IMPORTANT)
     assert confirmed is not None
 
+    for index, message in enumerate(source.messages, start=1):
+        message["uidValidity"] = 84
+        message["uid"] = index
     second = scan_readonly_batch(source, classifier, store, config, limit=2)
 
     processed, processed_total = store.list_classifications(
@@ -204,6 +240,30 @@ def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: P
         != processed[0]["stable_message_identity"]
     )
     assert len(store.list_training_examples()) == 1
+
+
+def test_classification_failure_does_not_persist_message_or_advance_cursor(
+    tmp_path: Path,
+):
+    class FailingClassifier:
+        def predict_message(self, message):
+            del message
+            raise RuntimeError("model unavailable")
+
+    store = EmailStore(tmp_path / "email.sqlite3")
+
+    with pytest.raises(RuntimeError, match="model unavailable"):
+        scan_readonly_batch(
+            FakeSource([_message()]),
+            FailingClassifier(),
+            store,
+            EmailScanConfig.cold_start(),
+        )
+
+    assert store.get_scan_cursor("dingtalk-account", "INBOX") is None
+    with sqlite3.connect(tmp_path / "email.sqlite3") as db:
+        assert db.execute("select count(*) from email_messages").fetchone()[0] == 0
+        assert db.execute("select count(*) from email_classifications").fetchone()[0] == 0
 
 
 def test_high_confidence_is_pending_when_category_lacks_validation_samples(
@@ -312,6 +372,8 @@ def test_processed_model_rescan_preserves_original_authorization_snapshot(
     classifier.prediction = StaticPrediction(
         "work", 0.99, model_version="static-model-v2"
     )
+    source.messages[0]["uidValidity"] = 84
+    source.messages[0]["uid"] = 2
     scan_readonly_batch(source, classifier, store, config)
     second_rows, _ = store.list_classifications(
         status=EmailClassificationStatus.PROCESSED,
