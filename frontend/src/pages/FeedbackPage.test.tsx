@@ -33,9 +33,16 @@ function round(roundNumber: number, overrides: Partial<FeedbackProcessingRound> 
     attempt_id: 8308,
     agent_run_id: 444 + roundNumber,
     commit_sha: `${roundNumber}`.repeat(40),
-    test_evidence: { command: "pnpm test", passed: 12 + roundNumber },
-    restart_evidence: { new_pid: 1200 + roundNumber },
-    health_evidence: { ok: true },
+    test_evidence: {
+      "feedback-page": { exit_code: 0 },
+      "console-api": { exit_code: roundNumber === 2 ? 0 : 1 },
+    },
+    restart_evidence: {
+      launchd_label: "com.ceo-agent-service.main",
+      before_pid: 1200 + roundNumber,
+      after_pid: 1300 + roundNumber,
+    },
+    health_evidence: { url: "http://127.0.0.1:8765/healthz", status_code: 200, ok: true },
     backlog_evidence: { processing: 0, failed: 0, retryable: 0 },
     receipt_version: 2,
     note: "",
@@ -78,6 +85,16 @@ function page(items: FeedbackItem[], pendingCount = 0) {
   return { items, pending_count: pendingCount, meta: { ...meta, total: items.length } };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("FeedbackPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -100,8 +117,13 @@ describe("FeedbackPage", () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
 
-    await user.click(await screen.findByRole("button", { name: "重新打开反馈" }));
+    const trigger = await screen.findByRole("button", { name: "重新打开反馈" });
+    await user.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "重新打开反馈" });
+    expect(within(dialog).getByLabelText("重新打开原因")).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: "取消" })).toHaveFocus();
+    await user.tab();
     expect(within(dialog).getByLabelText("重新打开原因")).toHaveFocus();
     expect(within(dialog).getByText("请写明此前为何过早完成，以及还缺少哪项可核验结果。")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "确认重新打开" })).toBeDisabled();
@@ -109,6 +131,12 @@ describe("FeedbackPage", () => {
     expect(within(dialog).getByRole("button", { name: "确认重新打开" })).toBeDisabled();
     await user.click(within(dialog).getByRole("button", { name: "取消" }));
     expect(screen.queryByRole("dialog", { name: "重新打开反馈" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "重新打开反馈" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 
   it("prevents duplicate submissions and shows loading feedback", async () => {
@@ -141,10 +169,129 @@ describe("FeedbackPage", () => {
     await user.click(screen.getByRole("button", { name: "确认重新打开" }));
 
     expect(await screen.findByRole("status", { name: "操作成功" })).toHaveTextContent("反馈已重新打开，已回到待处理列表。");
+    expect(screen.getByRole("status", { name: "操作成功" })).toHaveFocus();
     expect(screen.queryByRole("dialog", { name: "重新打开反馈" })).not.toBeInTheDocument();
     expect(screen.getByText("待处理 1")).toBeInTheDocument();
     expect(screen.getByText("待处理", { selector: ".status-badge" })).toBeInTheDocument();
     expect(listFeedback).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the authoritative pending projection when the follow-up refresh fails", async () => {
+    const user = userEvent.setup();
+    const refresh = deferred<ReturnType<typeof page>>();
+    listFeedback.mockReset();
+    listFeedback.mockResolvedValueOnce(page([feedback()])).mockReturnValueOnce(refresh.promise);
+    reopenFeedback.mockResolvedValue({
+      ok: true,
+      item: { feedback_key: "feedback-1", status: "pending", batch_id: "", workbench_task_id: "", current_processing: null, processing_history: [round(2), round(1)] },
+      message: "反馈已重新打开",
+      meta: { updated_at: "2026-08-30T00:00:00Z" },
+    });
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+
+    await user.click(await screen.findByRole("button", { name: "重新打开反馈" }));
+    await user.type(screen.getByLabelText("重新打开原因"), "服务重启核验尚未完成。");
+    await user.click(screen.getByRole("button", { name: "确认重新打开" }));
+
+    expect(await screen.findByText("待处理", { selector: ".status-badge" })).toBeInTheDocument();
+    expect(screen.getByText("待处理 1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新打开反馈" })).not.toBeInTheDocument();
+    refresh.reject(new Error("刷新服务暂时不可用"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("反馈已重新打开，但列表刷新失败");
+    expect(screen.getByText("待处理", { selector: ".status-badge" })).toBeInTheDocument();
+    expect(screen.getByText("待处理 1")).toBeInTheDocument();
+  });
+
+  it("removes the reopened row immediately when the active filter excludes pending", async () => {
+    const user = userEvent.setup();
+    const refresh = deferred<ReturnType<typeof page>>();
+    listFeedback.mockReset();
+    listFeedback.mockResolvedValueOnce(page([feedback()])).mockReturnValueOnce(refresh.promise);
+    reopenFeedback.mockResolvedValue({
+      ok: true,
+      item: { feedback_key: "feedback-1", status: "pending", current_processing: null, processing_history: [round(2), round(1)] },
+      message: "反馈已重新打开",
+      meta: { updated_at: "2026-08-30T00:00:00Z" },
+    });
+    render(<MemoryRouter initialEntries={["/?status=resolved"]}><FeedbackPage /></MemoryRouter>);
+
+    await user.click(await screen.findByRole("button", { name: "重新打开反馈" }));
+    await user.type(screen.getByLabelText("重新打开原因"), "已处理筛选中不应保留待处理项。");
+    await user.click(screen.getByRole("button", { name: "确认重新打开" }));
+
+    expect(await screen.findByRole("status", { name: "操作成功" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新打开反馈" })).not.toBeInTheDocument();
+    expect(screen.queryByText("请修复这个反馈")).not.toBeInTheDocument();
+    expect(screen.getByText("共 0 条")).toBeInTheDocument();
+    refresh.resolve(page([], 1));
+  });
+
+  it("applies only the newest list response across sync and filter reloads", async () => {
+    const user = userEvent.setup();
+    const stale = deferred<ReturnType<typeof page>>();
+    const fresh = deferred<ReturnType<typeof page>>();
+    listFeedback.mockReset();
+    listFeedback
+      .mockResolvedValueOnce(page([feedback({ comment: "initial" })]))
+      .mockReturnValueOnce(stale.promise)
+      .mockReturnValueOnce(fresh.promise);
+    syncFeedback.mockResolvedValue({ ok: true });
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+
+    await screen.findByText("initial");
+    await user.click(screen.getByRole("button", { name: "同步最新反馈" }));
+    await waitFor(() => expect(listFeedback).toHaveBeenCalledTimes(2));
+    await user.selectOptions(screen.getByLabelText("状态"), "resolved");
+    await waitFor(() => expect(listFeedback).toHaveBeenCalledTimes(3));
+    fresh.resolve(page([feedback({ comment: "fresh result" })]));
+    expect(await screen.findByText("fresh result")).toBeInTheDocument();
+    stale.resolve(page([feedback({ comment: "stale result", status: "processing" })]));
+    await waitFor(() => expect(screen.queryByText("stale result")).not.toBeInTheDocument());
+    expect(screen.getByText("fresh result")).toBeInTheDocument();
+    expect((listFeedback.mock.calls[1][1] as AbortSignal).aborted).toBe(true);
+  });
+
+  it("does not launch an obsolete sync reload after the list view changes", async () => {
+    const user = userEvent.setup();
+    const syncResult = deferred<{ ok: boolean }>();
+    syncFeedback.mockReturnValueOnce(syncResult.promise);
+    listFeedback.mockReset();
+    listFeedback
+      .mockResolvedValueOnce(page([feedback({ comment: "initial" })]))
+      .mockResolvedValueOnce(page([feedback({ comment: "filtered" })]));
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+
+    await screen.findByText("initial");
+    await user.click(screen.getByRole("button", { name: "同步最新反馈" }));
+    await user.selectOptions(screen.getByLabelText("状态"), "resolved");
+    expect(await screen.findByText("filtered")).toBeInTheDocument();
+    syncResult.resolve({ ok: true });
+    await screen.findByRole("button", { name: "同步最新反馈" });
+
+    expect(listFeedback).toHaveBeenCalledTimes(2);
+  });
+
+  it("clamps a resolved-only final page after its last item reopens", async () => {
+    const user = userEvent.setup();
+    listFeedback.mockReset();
+    listFeedback
+      .mockResolvedValueOnce({ items: [feedback()], pending_count: 0, meta: { ...meta, page: 2, total: 21 } })
+      .mockResolvedValueOnce({ items: [], pending_count: 1, meta: { ...meta, page: 1, total: 20 } });
+    reopenFeedback.mockResolvedValue({
+      ok: true,
+      item: { feedback_key: "feedback-1", status: "pending", batch_id: "", current_processing: null, processing_history: [round(2), round(1)] },
+      message: "反馈已重新打开",
+      meta: { updated_at: "2026-08-30T00:00:00Z" },
+    });
+    render(<MemoryRouter initialEntries={["/?status=resolved&page=2"]}><FeedbackPage /></MemoryRouter>);
+
+    await user.click(await screen.findByRole("button", { name: "重新打开反馈" }));
+    await user.type(screen.getByLabelText("重新打开原因"), "第二页最后一项需要重新处理。");
+    await user.click(screen.getByRole("button", { name: "确认重新打开" }));
+
+    await waitFor(() => expect(listFeedback).toHaveBeenCalledTimes(2));
+    expect(listFeedback.mock.calls[1][0]).toMatchObject({ status: "resolved", page: 1, page_size: 20 });
+    expect(screen.queryByText("第 2 / 2 页")).not.toBeInTheDocument();
   });
 
   it("keeps the reason after an error and permits retry", async () => {
@@ -179,9 +326,9 @@ describe("FeedbackPage", () => {
     expect(entries).toHaveLength(2);
     expect(entries[0]).toHaveTextContent("第 2 轮");
     expect(entries[1]).toHaveTextContent("第 1 轮");
-    expect(entries[0]).toHaveTextContent("测试：pnpm test · 14 项通过");
-    expect(entries[0]).toHaveTextContent("重启：新进程 1202");
-    expect(entries[0]).toHaveTextContent("健康：通过；积压 processing 0 / failed 0 / retryable 0");
+    expect(entries[0]).toHaveTextContent("测试：feedback-page exit 0；console-api exit 0");
+    expect(entries[0]).toHaveTextContent("重启：com.ceo-agent-service.main · PID 1202 → 1302");
+    expect(entries[0]).toHaveTextContent("健康：HTTP 200 · 通过；积压 processing 0 / failed 0 / retryable 0");
     expect(entries[1]).toHaveTextContent("重新打开原因：第一次修复尚未覆盖重新打开后的场景。");
     expect(within(history).getByRole("link", { name: "batch-2" })).toHaveAttribute("href", "/api/console/feedback/batches/batch-2");
     expect(screen.getAllByRole("link", { name: "attempt#8308" }).some((link) => link.getAttribute("href") === "/attempts/8308")).toBe(true);
@@ -192,7 +339,10 @@ describe("FeedbackPage", () => {
   it("loads history from the item detail when the list projection omits it", async () => {
     const user = userEvent.setup();
     listFeedback.mockResolvedValue(page([feedback({ current_processing: undefined, processing_history: undefined })]));
-    getFeedbackDetail.mockResolvedValue({ item: feedback(), meta: { snapshot_at: "2026-08-30T00:00:00Z" } });
+    getFeedbackDetail.mockResolvedValue({
+      item: feedback({ status: "pending", batch_id: "batch-from-stale-detail", processing_task_id: "task-from-stale-detail" }),
+      meta: { snapshot_at: "2026-08-30T00:00:00Z" },
+    });
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
 
     await screen.findByRole("button", { name: "重新打开反馈" });
@@ -201,6 +351,39 @@ describe("FeedbackPage", () => {
 
     expect(getFeedbackDetail).toHaveBeenCalledWith("feedback-1");
     expect(await screen.findByRole("list", { name: "处理历史" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新打开反馈" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Processing batch" })).toHaveAttribute("href", "/api/console/feedback/batches/batch-2");
+    expect(screen.getByRole("link", { name: "Workbench task" })).toHaveAttribute("href", "/?task=task-2");
+  });
+
+  it("ignores an older detail response after authoritative reopen history arrives", async () => {
+    const user = userEvent.setup();
+    const staleDetail = deferred<{ item: FeedbackItem; meta: { snapshot_at: string } }>();
+    listFeedback.mockReset();
+    listFeedback
+      .mockResolvedValueOnce(page([feedback({ current_processing: undefined, processing_history: undefined })]))
+      .mockResolvedValueOnce(page([feedback({ status: "pending", processing_status: "pending", batch_id: "", processing_task_id: "", current_processing: null, processing_history: [round(3)] })], 1));
+    getFeedbackDetail.mockReturnValueOnce(staleDetail.promise);
+    reopenFeedback.mockResolvedValue({
+      ok: true,
+      item: { feedback_key: "feedback-1", status: "pending", batch_id: "", current_processing: null, processing_history: [round(3)] },
+      message: "反馈已重新打开",
+      meta: { updated_at: "2026-08-30T00:00:00Z" },
+    });
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+
+    await screen.findByRole("button", { name: "重新打开反馈" });
+    await user.click(screen.getAllByRole("button", { name: "展开详情" }).at(-1)!);
+    await user.click(screen.getByRole("button", { name: "加载处理历史" }));
+    await user.click(screen.getByRole("button", { name: "重新打开反馈" }));
+    await user.type(screen.getByLabelText("重新打开原因"), "历史请求发出后反馈被重新打开。");
+    await user.click(screen.getByRole("button", { name: "确认重新打开" }));
+    expect(await screen.findByText("待处理", { selector: ".status-badge" })).toBeInTheDocument();
+
+    staleDetail.resolve({ item: feedback({ processing_history: [round(1)] }), meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    await waitFor(() => expect(screen.queryByText("第 1 轮")).not.toBeInTheDocument());
+    expect(screen.getByText("第 3 轮")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新打开反馈" })).not.toBeInTheDocument();
   });
 
   it("keeps the batch destination as a native navigation outside the SPA router", async () => {

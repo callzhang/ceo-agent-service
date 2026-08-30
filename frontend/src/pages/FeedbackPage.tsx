@@ -36,21 +36,27 @@ function evidenceValue(evidence: Record<string, unknown> | undefined, key: strin
 }
 
 function testEvidenceSummary(round: FeedbackProcessingRound) {
-  const command = evidenceValue(round.test_evidence, "command");
-  const passed = evidenceValue(round.test_evidence, "passed");
-  if (typeof command === "string" && typeof passed === "number") return `${command} · ${passed} 项通过`;
-  if (typeof command === "string") return command;
-  return Object.keys(round.test_evidence || {}).length ? "已记录" : "未提供";
+  const tests = Object.entries(round.test_evidence || {}).slice(0, 4);
+  if (!tests.length) return "未提供";
+  return tests.map(([name, result]) => {
+    const exitCode = result && typeof result === "object" && !Array.isArray(result) ? (result as Record<string, unknown>).exit_code : undefined;
+    return `${name} exit ${typeof exitCode === "number" ? exitCode : "未提供"}`;
+  }).join("；");
 }
 
 function restartEvidenceSummary(round: FeedbackProcessingRound) {
-  const newPid = evidenceValue(round.restart_evidence, "new_pid");
-  if (typeof newPid === "number" || typeof newPid === "string") return `新进程 ${newPid}`;
+  const label = evidenceValue(round.restart_evidence, "launchd_label");
+  const beforePid = evidenceValue(round.restart_evidence, "before_pid");
+  const afterPid = evidenceValue(round.restart_evidence, "after_pid");
+  if ((typeof beforePid === "number" || typeof beforePid === "string") && (typeof afterPid === "number" || typeof afterPid === "string")) {
+    return `${typeof label === "string" && label ? `${label} · ` : ""}PID ${beforePid} → ${afterPid}`;
+  }
   return Object.keys(round.restart_evidence || {}).length ? "已记录" : "未提供";
 }
 
 function healthEvidenceSummary(round: FeedbackProcessingRound) {
-  const health = evidenceValue(round.health_evidence, "ok") === true ? "通过" : Object.keys(round.health_evidence || {}).length ? "已记录" : "未提供";
+  const statusCode = evidenceValue(round.health_evidence, "status_code");
+  const health = `${typeof statusCode === "number" ? `HTTP ${statusCode} · ` : ""}${evidenceValue(round.health_evidence, "ok") === true ? "通过" : Object.keys(round.health_evidence || {}).length ? "已记录" : "未提供"}`;
   const backlog = round.backlog_evidence || {};
   const processing = evidenceValue(backlog, "processing");
   const failed = evidenceValue(backlog, "failed");
@@ -112,8 +118,14 @@ export function FeedbackPage() {
   const [reopenError, setReopenError] = useState("");
   const [reopening, setReopening] = useState(false);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const successRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const restoreTriggerRef = useRef(true);
   const reopeningRef = useRef(false);
+  const listGenerationRef = useRef(0);
+  const listAbortRef = useRef<AbortController | null>(null);
+  const historyGenerationRef = useRef(new Map<string, number>());
   reopeningRef.current = reopening;
   const query = searchParams.get("q") || "";
   const status = searchParams.get("status") || "";
@@ -121,43 +133,89 @@ export function FeedbackPage() {
   const page = Number.isFinite(pageValue) && pageValue > 0 ? pageValue : 1;
   const pageSizeValue = Number(searchParams.get("page_size") || 20);
   const pageSize = pageSizes.includes(pageSizeValue) ? pageSizeValue : 20;
+  const listViewKey = `${query}\u0000${status}\u0000${page}\u0000${pageSize}`;
+  const listViewKeyRef = useRef(listViewKey);
+  listViewKeyRef.current = listViewKey;
 
-  const loadRows = useCallback(async (signal?: AbortSignal, showLoading = true, reopened?: Partial<FeedbackItem>) => {
+  const invalidateListLoad = useCallback(() => {
+    listGenerationRef.current += 1;
+    listAbortRef.current?.abort();
+    listAbortRef.current = null;
+  }, []);
+
+  const loadRows = useCallback(async (showLoading = true) => {
+    const generation = listGenerationRef.current + 1;
+    listGenerationRef.current = generation;
+    listAbortRef.current?.abort();
+    const controller = new AbortController();
+    listAbortRef.current = controller;
     if (showLoading) setState("loading");
     setError("");
-    const result = await listFeedback({ q: query, status, page, page_size: pageSize }, signal);
-    const reopenedKey = reopened?.feedback_key || reopened?.id;
-    setRows(result.items.map((row) => reopenedKey && feedbackKey(row) === reopenedKey ? { ...row, ...reopened } : row));
-    setTotalCount(result.meta.total || 0);
-    setPendingCount(result.pending_count ?? result.items.filter((row) => row.status === "pending").length);
-    setSnapshot(result.meta.snapshot_at);
-    setState("ready");
+    try {
+      const result = await listFeedback({ q: query, status, page, page_size: pageSize }, controller.signal);
+      if (controller.signal.aborted || generation !== listGenerationRef.current) return false;
+      historyGenerationRef.current.forEach((value, key) => historyGenerationRef.current.set(key, value + 1));
+      setHistoryLoadingKey("");
+      setRows(result.items);
+      setTotalCount(result.meta.total || 0);
+      setPendingCount(result.pending_count ?? result.items.filter((row) => row.status === "pending").length);
+      setSnapshot(result.meta.snapshot_at);
+      setState("ready");
+      return true;
+    } catch (reason: unknown) {
+      if (controller.signal.aborted || generation !== listGenerationRef.current) return false;
+      throw reason;
+    } finally {
+      if (generation === listGenerationRef.current) listAbortRef.current = null;
+    }
   }, [page, pageSize, query, status]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void loadRows(controller.signal).catch((reason: unknown) => {
-      if (controller.signal.aborted) return;
+    void loadRows().catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : "加载失败");
       setState("error");
     });
-    return () => controller.abort();
-  }, [loadRows]);
+    return invalidateListLoad;
+  }, [invalidateListLoad, loadRows]);
+
+  useEffect(() => {
+    if (success) successRef.current?.focus();
+  }, [success]);
 
   useEffect(() => {
     if (!reopenTarget) return;
     reasonRef.current?.focus();
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || reopeningRef.current) return;
-      event.preventDefault();
-      setReopenTarget(null);
-      setReopenReason("");
-      setReopenError("");
+    const containFocus = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !reopeningRef.current) {
+        event.preventDefault();
+        setReopenTarget(null);
+        setReopenReason("");
+        setReopenError("");
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])") || []);
+      if (!focusable.length) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!dialogRef.current?.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("keydown", containFocus);
     return () => {
-      document.removeEventListener("keydown", closeOnEscape);
-      returnFocusRef.current?.focus();
+      document.removeEventListener("keydown", containFocus);
+      if (restoreTriggerRef.current) returnFocusRef.current?.focus();
     };
   }, [reopenTarget]);
 
@@ -169,12 +227,14 @@ export function FeedbackPage() {
   };
 
   const sync = async () => {
+    const requestedViewKey = listViewKeyRef.current;
     setSyncing(true);
     setError("");
     setSuccess("");
     try {
       await syncFeedback();
-      await loadRows(undefined, false);
+      if (requestedViewKey !== listViewKeyRef.current) return;
+      await loadRows(false);
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : "同步反馈失败");
     } finally {
@@ -184,6 +244,7 @@ export function FeedbackPage() {
 
   const openReopen = (row: FeedbackItem) => {
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    restoreTriggerRef.current = true;
     setSuccess("");
     setReopenError("");
     setReopenReason("");
@@ -205,13 +266,40 @@ export function FeedbackPage() {
     try {
       const response = await reopenFeedback(key, reopenReason);
       const reopened = response.item && typeof response.item === "object" ? response.item as Partial<FeedbackItem> : undefined;
+      invalidateListLoad();
+      historyGenerationRef.current.set(key, (historyGenerationRef.current.get(key) || 0) + 1);
+      setHistoryLoadingKey((current) => current === key ? "" : current);
+      const projected: Partial<FeedbackItem> = {
+        status: "pending",
+        processing_status: "pending",
+        batch_id: "",
+        processing_task_id: "",
+        current_processing: reopened?.current_processing ?? null,
+        processing_history: Array.isArray(reopened?.processing_history) ? reopened.processing_history : reopenTarget.processing_history,
+      };
+      const excludesPending = Boolean(status && status !== "pending");
+      const nextTotal = excludesPending ? Math.max(0, totalCount - 1) : totalCount;
+      setRows((current) => excludesPending
+        ? current.filter((item) => feedbackKey(item) !== key)
+        : current.map((item) => feedbackKey(item) === key ? { ...item, ...projected } : item));
+      setPendingCount((current) => current + 1);
+      setTotalCount(nextTotal);
+      setState("ready");
+      restoreTriggerRef.current = false;
       setReopenTarget(null);
       setReopenReason("");
       setSuccess("反馈已重新打开，已回到待处理列表。");
-      try {
-        await loadRows(undefined, false, { feedback_key: key, ...reopened });
-      } catch (reason: unknown) {
-        setError(`反馈已重新打开，但列表刷新失败：${reason instanceof Error ? reason.message : "请手动刷新"}`);
+      const maxPage = Math.max(1, Math.ceil(nextTotal / pageSize));
+      if (page > maxPage) {
+        const next = new URLSearchParams(searchParams);
+        if (maxPage === 1) next.delete("page"); else next.set("page", String(maxPage));
+        setSearchParams(next, { replace: true });
+      } else {
+        try {
+          await loadRows(false);
+        } catch (reason: unknown) {
+          setError(`反馈已重新打开，但列表刷新失败：${reason instanceof Error ? reason.message : "请手动刷新"}`);
+        }
       }
     } catch (reason: unknown) {
       setReopenError(reason instanceof Error ? reason.message : "重新打开失败，请重试");
@@ -222,15 +310,25 @@ export function FeedbackPage() {
 
   const loadHistory = async (row: FeedbackItem) => {
     const key = feedbackKey(row);
+    const generation = (historyGenerationRef.current.get(key) || 0) + 1;
+    historyGenerationRef.current.set(key, generation);
     setHistoryLoadingKey(key);
     setError("");
     try {
       const detail = await getFeedbackDetail(key);
-      setRows((current) => current.map((item) => feedbackKey(item) === key ? { ...item, ...detail.item } : item));
+      if (historyGenerationRef.current.get(key) !== generation) return;
+      setRows((current) => current.map((item) => {
+        if (feedbackKey(item) !== key) return item;
+        return {
+          ...item,
+          ...(Object.prototype.hasOwnProperty.call(detail.item, "current_processing") ? { current_processing: detail.item.current_processing } : {}),
+          ...(Object.prototype.hasOwnProperty.call(detail.item, "processing_history") ? { processing_history: detail.item.processing_history } : {}),
+        };
+      }));
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "加载处理历史失败");
+      if (historyGenerationRef.current.get(key) === generation) setError(reason instanceof Error ? reason.message : "加载处理历史失败");
     } finally {
-      setHistoryLoadingKey("");
+      if (historyGenerationRef.current.get(key) === generation) setHistoryLoadingKey("");
     }
   };
 
@@ -239,7 +337,7 @@ export function FeedbackPage() {
     <section className="console-card feedback-workspace-card">
       <div className="card-head"><div><p className="feedback-card-title">用户反馈</p><p className="muted">记录来自对话方的评分与处理结果。</p></div><button className="compact-button" type="button" disabled={syncing} onClick={() => void sync()}>{syncing ? "同步中…" : "同步最新反馈"}</button></div>
       <FilterBar><div className="filter-bar-main"><SearchField id="feedback-search-input" label="搜索反馈" value={query} placeholder="搜索反馈内容或上下文" onChange={(value) => update("q", value)} onClear={() => update("q", "")} /><SelectField id="feedback-status" label="状态" value={status} options={[{ value: "", label: "全部状态" }, { value: "pending", label: "待处理" }, { value: "processing", label: "处理中" }, { value: "resolved", label: "已处理" }]} onChange={(value) => update("status", value)} /></div><div className="filter-bar-side"><SelectField id="feedback-page-size" label="每页" value={String(pageSize)} options={pageSizes.map((size) => ({ value: String(size), label: `${size} 条` }))} onChange={(value) => update("page_size", value)} /><span className="table-toolbar-total">共 {listState === "loading" ? "—" : totalCount} 条</span></div></FilterBar>
-      {success && <div className="feedback-success" role="status" aria-label="操作成功">{success}</div>}
+      {success && <div ref={successRef} className="feedback-success" role="status" aria-label="操作成功" tabIndex={-1}>{success}</div>}
       {error && <div className="page-state page-state-error" role="alert">{error}</div>}
       <ResponsiveDataList ariaLabel="用户反馈列表" columns={[{ key: "status", label: "状态" }, { key: "rating", label: "评分" }, { key: "comment", label: "评语" }, { key: "context", label: "上下文" }, { key: "created_at", label: "时间" }, { key: "id", label: "操作" }]} rows={rows} state={listState} errorMessage={error} emptyMessage="当前没有用户反馈" expandable renderCell={(row, key) => {
         if (key === "status") return <StatusBadge value={row.status} />;
@@ -257,7 +355,7 @@ export function FeedbackPage() {
     </section>
     {reopenTarget && <>
       <div className="feedback-reopen-scrim" aria-hidden="true" onMouseDown={closeReopen} />
-      <section className="feedback-reopen-dialog" role="dialog" aria-modal="true" aria-labelledby="feedback-reopen-title" aria-describedby="feedback-reopen-help">
+      <section ref={dialogRef} className="feedback-reopen-dialog" role="dialog" aria-modal="true" aria-labelledby="feedback-reopen-title" aria-describedby="feedback-reopen-help">
         <h2 id="feedback-reopen-title">重新打开反馈</h2>
         <p id="feedback-reopen-help">请写明此前为何过早完成，以及还缺少哪项可核验结果。</p>
         {reopenError && <p className="feedback-reopen-error" role="alert">{reopenError}</p>}

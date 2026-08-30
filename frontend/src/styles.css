@@ -415,6 +415,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .feedback-card-title { margin: 0; color: var(--ink); font-size: 1rem; font-weight: 750; }
 .feedback-pending-badge { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border: 1px solid #e5b6b2; border-radius: 999px; color: var(--danger); background: #fff0ef; font-size: .78rem; font-weight: 800; }
 .feedback-success { margin: 0 0 12px; padding: 10px 12px; border: 1px solid #a9d5bd; border-radius: 9px; color: #1d6240; background: #effaf3; font-size: .82rem; font-weight: 680; }
+.feedback-success:focus-visible { outline: 3px solid rgb(42 122 82 / 34%); outline-offset: 2px; }
 .feedback-reopen-button { padding: 5px 10px; border: 1px solid #d3b36d; border-radius: 8px; color: #765009; background: #fffaf0; cursor: pointer; font-size: .76rem; font-weight: 700; }
 .feedback-reopen-button:hover { border-color: #b48c36; background: #fff4d9; }
 .feedback-expanded { display: grid; gap: 10px; min-width: min(640px, 76vw); padding-top: 4px; }
