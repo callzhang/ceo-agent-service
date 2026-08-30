@@ -3652,6 +3652,175 @@ def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
     assert old_action["status"] == "pending"
 
 
+def _correct_to_move_plan(
+    store: EmailStore,
+    original: EmailClassification,
+    *,
+    request_id: str,
+):
+    assert original.action_plan is not None
+    store.upsert_config(
+        category=EmailCategory.IMPORTANT,
+        description="Move important mail",
+        threshold=0.9,
+        actions=(EmailAction.MOVE,),
+        action_parameters={
+            EmailAction.MOVE: {"target_folder": "Important"},
+        },
+        enabled=True,
+        config_version="important-v2",
+    )
+    application = store.apply_human_classification(
+        original.classification_id,
+        EmailCategory.IMPORTANT,
+        feedback_request_id=request_id,
+        expected_current_action_plan_id=original.action_plan.action_plan_id,
+        created_at=datetime(2026, 8, 30, 12, 1, tzinfo=timezone.utc),
+    )
+    assert application is not None
+    return application
+
+
+@pytest.mark.parametrize("resolution", ("complete", "recover"))
+def test_historical_processing_blocks_current_plan_until_closed(
+    tmp_path: Path,
+    resolution: str,
+):
+    database = tmp_path / f"historical-processing-{resolution}.sqlite3"
+    store = EmailStore(database)
+    original = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id=f"historical-processing-{resolution}",
+    )
+    _persist_scan(store, original)
+    historical = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:00:00+00:00"
+    )
+    assert historical is not None
+    application = _correct_to_move_plan(
+        store,
+        original,
+        request_id=f"feedback-historical-processing-{resolution}",
+    )
+
+    assert store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:02:00+00:00"
+    ) is None
+
+    if resolution == "complete":
+        store.complete_direct_action_attempt(
+            historical,
+            status="done",
+            provider_operation="STORE LABELS",
+            provider_target=historical.locator.stable_message_identity,
+            provider_result_id="revision-v1",
+            error="",
+            finished_at="2026-08-30T12:03:00+00:00",
+        )
+    else:
+        assert store.recover_stale_processing_actions(
+            stale_before="2026-08-30T12:00:01+00:00",
+            recovered_at="2026-08-30T12:03:00+00:00",
+        ) == 1
+
+    current = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:04:00+00:00"
+    )
+    assert current is not None
+    assert current.action_plan_id == application.resulting_action_plan_id
+    assert current.action_type is EmailAction.MOVE
+
+
+@pytest.mark.parametrize("historical_status", ("pending", "failed"))
+def test_historical_non_processing_action_does_not_block_current_plan(
+    tmp_path: Path,
+    historical_status: str,
+):
+    database = tmp_path / f"historical-{historical_status}.sqlite3"
+    store = EmailStore(database)
+    original = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id=f"historical-{historical_status}",
+    )
+    _persist_scan(store, original)
+    if historical_status == "failed":
+        historical = store.claim_next_direct_action(
+            claimed_at="2026-08-30T12:00:00+00:00"
+        )
+        assert historical is not None
+        store.complete_direct_action_attempt(
+            historical,
+            status="failed",
+            provider_operation="STORE LABELS",
+            provider_target=historical.locator.stable_message_identity,
+            provider_result_id="",
+            error="provider_readback_mismatch",
+            finished_at="2026-08-30T12:00:01+00:00",
+        )
+    application = _correct_to_move_plan(
+        store,
+        original,
+        request_id=f"feedback-historical-{historical_status}",
+    )
+
+    current = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:02:00+00:00"
+    )
+
+    assert current is not None
+    assert current.action_plan_id == application.resulting_action_plan_id
+    assert current.action_type is EmailAction.MOVE
+
+
+def test_historical_processing_blocks_only_its_own_classification(tmp_path: Path):
+    database = tmp_path / "historical-processing-fairness.sqlite3"
+    store = EmailStore(database)
+    blocked = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="blocked-historical-processing",
+    )
+    available = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="available-current-plan",
+    )
+    _persist_scan(store, blocked)
+    historical = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:00:00+00:00"
+    )
+    assert historical is not None
+    _correct_to_move_plan(
+        store,
+        blocked,
+        request_id="feedback-blocked-historical-processing",
+    )
+    _persist_scan(store, available)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            update email_actions set updated_at='2026-08-30T11:00:00+00:00'
+            where classification_id=? and action_plan_id=(
+                select current_action_plan_id from email_classifications where id=?
+            )
+            """,
+            (blocked.classification_id, blocked.classification_id),
+        )
+        db.execute(
+            """
+            update email_actions set updated_at='2026-08-30T13:00:00+00:00'
+            where classification_id=?
+            """,
+            (available.classification_id,),
+        )
+
+    claimed = store.claim_next_direct_action(
+        claimed_at="2026-08-30T12:02:00+00:00"
+    )
+
+    assert claimed is not None
+    assert claimed.classification_id == available.classification_id
+    assert claimed.action_type is EmailAction.LABEL
+
+
 def test_concurrent_direct_action_claim_has_one_winner(tmp_path: Path):
     database = tmp_path / "concurrent-action-claim.sqlite3"
     seed = EmailStore(database)

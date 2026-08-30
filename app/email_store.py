@@ -3527,11 +3527,11 @@ class EmailStore:
             rows = db.execute(
                 """
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
-                       c.thread_id, c.stable_message_identity
+                       c.thread_id, c.stable_message_identity,
+                       c.current_action_plan_id
                 from email_actions as a
                 join email_classifications as c on c.id=a.classification_id
                 where c.status='processed'
-                  and c.current_action_plan_id=a.action_plan_id
                 """
             ).fetchall()
             if not rows:
@@ -3546,8 +3546,16 @@ class EmailStore:
             for siblings in rows_by_classification.values():
                 if any(sibling["status"] == "processing" for sibling in siblings):
                     continue
+                current_siblings = [
+                    sibling
+                    for sibling in siblings
+                    if sibling["action_plan_id"]
+                    == sibling["current_action_plan_id"]
+                ]
                 unfinished = [
-                    sibling for sibling in siblings if sibling["status"] != "done"
+                    sibling
+                    for sibling in current_siblings
+                    if sibling["status"] != "done"
                 ]
                 if not unfinished:
                     continue
