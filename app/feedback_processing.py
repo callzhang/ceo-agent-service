@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 FEEDBACK_PROCESSING_CLAIM_ERROR = "feedback processing claim rejected"
 FEEDBACK_PROCESSING_ALREADY_PROCESSING_ERROR = "feedback_already_processing"
 FEEDBACK_PROCESSING_BATCH_ERROR = "feedback processing batch definition conflict"
+FEEDBACK_REOPEN_INVALID = "feedback_reopen_invalid"
+FEEDBACK_REOPEN_PROCESSING = "feedback_reopen_processing"
+FEEDBACK_REOPEN_HISTORY_INCOMPLETE = "feedback_reopen_history_incomplete"
 FEEDBACK_PROCESSING_SKILL_PATH = "skills/ceo-feedback-processing/SKILL.md"
 
 
@@ -30,6 +33,14 @@ class FeedbackProcessingClaimError(ValueError):
 
 class FeedbackProcessingBatchError(ValueError):
     """Raised when a batch id is reused with a different key set."""
+
+
+class FeedbackProcessingReopenError(ValueError):
+    """Raised when a feedback item cannot be reopened safely."""
+
+    def __init__(self, message: str, *, error_code: str) -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 class _StrictProcessingModel(BaseModel):
@@ -147,6 +158,7 @@ class ResolutionEvidence(_StrictProcessingModel):
     health_evidence: dict[str, Any] = Field(
         default_factory=dict, validation_alias=AliasChoices("health_evidence", "health")
     )
+    backlog_evidence: dict[str, Any]
     # Optional association map used by API callers.  The store also verifies
     # the durable per-item associations, so callers cannot bypass that check.
     associations: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -283,16 +295,23 @@ def _all_test_exit_codes_zero(value: object) -> tuple[bool, bool]:
 
 
 def validate_resolution_evidence(
-    evidence: ResolutionEvidence, *, current_head: str
+    evidence: ResolutionEvidence,
+    *,
+    commit_is_ancestor: bool | None = None,
+    current_head: str | None = None,
 ) -> None:
     """Raise ``ValueError`` unless a complete successful receipt is present."""
 
     commit_sha = evidence.commit_sha.strip()
-    head = current_head.strip()
     if not _COMMIT_SHA_RE.fullmatch(commit_sha):
         raise ValueError("resolution requires a 40-character commit SHA")
-    if not _COMMIT_SHA_RE.fullmatch(head) or commit_sha.lower() != head.lower():
-        raise ValueError("resolution commit does not match current HEAD")
+    if commit_is_ancestor is not None:
+        if not isinstance(commit_is_ancestor, bool) or not commit_is_ancestor:
+            raise ValueError("resolution commit is not an ancestor of local main")
+    else:
+        head = str(current_head or "").strip()
+        if not _COMMIT_SHA_RE.fullmatch(head) or commit_sha.lower() != head.lower():
+            raise ValueError("resolution commit does not match current HEAD")
     test_codes_ok, has_test_code = _all_test_exit_codes_zero(evidence.test_evidence)
     if not evidence.test_evidence or not has_test_code or not test_codes_ok:
         raise ValueError("resolution requires successful test evidence")
@@ -342,3 +361,15 @@ def validate_resolution_evidence(
         raise ValueError("resolution requires successful local health evidence")
     if not isinstance(success, bool) or success is not True:
         raise ValueError("resolution requires successful local health evidence")
+
+    backlog = evidence.backlog_evidence
+    required_backlog_counts = {"processing", "failed", "retryable"}
+    if not required_backlog_counts <= set(backlog):
+        raise ValueError("resolution requires processing, failed, and retryable backlog counts")
+    if any(
+        not isinstance(backlog[name], int)
+        or isinstance(backlog[name], bool)
+        or backlog[name] != 0
+        for name in required_backlog_counts
+    ):
+        raise ValueError("resolution requires zero processing, failed, and retryable backlog")

@@ -1,4 +1,5 @@
 import json
+import inspect
 import sqlite3
 from pathlib import Path
 from threading import Event, Thread
@@ -14,6 +15,7 @@ from app.feedback_processing import (
     FeedbackProcessingClaimError,
     FeedbackProcessingItem,
     FeedbackProcessingRound,
+    FeedbackProcessingTransition,
     ResolutionEvidence,
     build_feedback_start_message,
     detail_references,
@@ -1189,6 +1191,24 @@ def test_feedback_round_backfill_self_heals_current_schema_and_interruption(
         health_evidence={"ok": True, "status_code": 200},
         note="self-heal note",
     )
+    # Simulate a Task 1-era interrupted migration after the projection was
+    # written but before its round and transition became durable.
+    with store._connect() as db:
+        db.execute(
+            "delete from feedback_processing_transitions where feedback_key=?",
+            ("feedback-claimed",),
+        )
+        db.execute(
+            "delete from feedback_processing_rounds where feedback_key=?",
+            ("feedback-claimed",),
+        )
+        db.execute(
+            """
+            update feedback_processing_items set current_round_id=0
+             where feedback_key=?
+            """,
+            ("feedback-claimed",),
+        )
 
     expected_item = store.get_feedback_processing_item("feedback-claimed")
     expected_pending = store.get_feedback_processing_item("feedback-pending")
@@ -1359,6 +1379,10 @@ def test_feedback_round_reconciliation_requires_pointer_ownership_and_batch(
     assert all(item is not None for item in items_before.values())
 
     with store._connect() as db:
+        db.execute("delete from feedback_processing_transitions")
+        db.execute("delete from feedback_processing_rounds")
+        db.execute("update feedback_processing_items set current_round_id=0")
+
         def insert_round(
             feedback_key: str,
             round_number: int,
@@ -1604,7 +1628,7 @@ def test_feedback_round_reconciliation_clears_ambiguous_matching_history(
         ] == rounds_before
         assert db.execute(
             "select count(*) from feedback_processing_transitions"
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 1
 
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     reopened = AutoReplyStore(db_path)
@@ -1653,7 +1677,7 @@ def test_claim_associate_patch_and_resolve_feedback_batch(tmp_path: Path):
     )
     store.associate_feedback_processing_turn("feedback-2", workbench_task_id="task-1", workbench_turn_id="turn-1", attempt_id=13, agent_run_id=35)
     store.patch_feedback_processing_item_evidence("feedback-2", test_evidence={"passed": {"exit_code": 0}}, restart_evidence={"process": "new", "launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, health_evidence={"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"}, commit_sha="a" * 40)
-    assert store.resolve_feedback_processing_batch("batch-1", {"commit_sha": "a" * 40, "test_evidence": {"passed": {"exit_code": 0}}, "restart_evidence": {"launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, "health_evidence": {"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"}}, current_head="a" * 40) is True
+    assert store.resolve_feedback_processing_batch("batch-1", {"commit_sha": "a" * 40, "test_evidence": {"passed": {"exit_code": 0}}, "restart_evidence": {"process": "new", "launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, "health_evidence": {"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"}, "backlog_evidence": {"processing": 0, "failed": 0, "retryable": 0}}, current_head="a" * 40) is True
     assert store.get_feedback_processing_batch("batch-1").status == "resolved"
     assert store.resolve_feedback_processing_batch("batch-1") is True
 
@@ -1851,6 +1875,7 @@ def test_resolution_evidence_requires_current_head_and_success_receipts():
         test_evidence={"pytest": {"exit_code": 0}},
         restart_evidence={"launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2},
         health_evidence={"url": "http://127.0.0.1:8765/healthz", "status_code": 200, "ok": True},
+        backlog_evidence={"processing": 0, "failed": 0, "retryable": 0},
     )
     validate_resolution_evidence(complete, current_head=head)
     for bad in (
@@ -1882,7 +1907,602 @@ def test_resolve_evidence_marks_every_item_in_batch_atomically(tmp_path: Path):
         test_evidence={"pytest": {"exit_code": 0}},
         restart_evidence={"launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2},
         health_evidence={"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"},
+        backlog_evidence={"processing": 0, "failed": 0, "retryable": 0},
     )
     assert store.resolve_feedback_processing_batch("batch-1", evidence, current_head=head)
     assert {store.get_feedback_processing_item(key).status for key in ("feedback-1", "feedback-2")} == {"resolved"}
     assert store.get_feedback_processing_batch("batch-1").status == "resolved"
+
+
+def _seed_resolved_feedback_round(
+    store: AutoReplyStore,
+    feedback_key: str,
+    *,
+    batch_id: str = "batch-1",
+    round_number: int = 1,
+    comment: str = "original feedback",
+) -> int:
+    store.upsert_feedback_event(
+        key=feedback_key,
+        feedback_token=f"token-{feedback_key}",
+        comment=comment,
+        raw_json='{"source":"preserved"}',
+    )
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into feedback_processing_batches (
+                batch_id, status, requested_count, resolved_at
+            ) values (?, 'resolved', 1, '2026-08-30 01:02:03')
+            """,
+            (batch_id,),
+        )
+        cursor = db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status,
+                workbench_task_id, workbench_turn_id, attempt_id,
+                agent_run_id, commit_sha, test_evidence_json,
+                restart_evidence_json, health_evidence_json, note,
+                started_at, resolved_at, created_at, updated_at
+            ) values (
+                ?, ?, ?, 'resolved', 'task-old', 'turn-old', 12, 34, ?,
+                ?, ?, ?, 'old note', '2026-08-30 00:00:00',
+                '2026-08-30 01:02:03', '2026-08-30 00:00:00',
+                '2026-08-30 01:02:03'
+            )
+            """,
+            (
+                feedback_key,
+                round_number,
+                batch_id,
+                "a" * 40,
+                json.dumps({"pytest": {"exit_code": 0}}),
+                json.dumps(
+                    {
+                        "launchd_label": "com.ceo-agent-service.main",
+                        "before_pid": 1,
+                        "after_pid": 2,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "url": "http://127.0.0.1:8765/healthz",
+                        "status_code": 200,
+                        "ok": True,
+                    }
+                ),
+            ),
+        )
+        round_id = int(cursor.lastrowid)
+        db.execute(
+            """
+            update feedback_processing_items
+               set current_round_id=?, batch_id=?, status='resolved',
+                   workbench_task_id='task-old', workbench_turn_id='turn-old',
+                   attempt_id=12, agent_run_id=34, commit_sha=?,
+                   test_evidence_json=?, restart_evidence_json=?,
+                   health_evidence_json=?, note='old note',
+                   resolved_at='2026-08-30 01:02:03',
+                   updated_at='2026-08-30 01:02:03'
+             where feedback_key=?
+            """,
+            (
+                round_id,
+                batch_id,
+                "a" * 40,
+                json.dumps({"pytest": {"exit_code": 0}}),
+                json.dumps(
+                    {
+                        "launchd_label": "com.ceo-agent-service.main",
+                        "before_pid": 1,
+                        "after_pid": 2,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "url": "http://127.0.0.1:8765/healthz",
+                        "status_code": 200,
+                        "ok": True,
+                    }
+                ),
+                feedback_key,
+            ),
+        )
+        db.execute(
+            """
+            update feedback_events
+               set resolved_at='2026-08-30 01:02:03',
+                   updated_at='2026-08-30 01:02:03'
+             where key=?
+            """,
+            (feedback_key,),
+        )
+    return round_id
+
+
+def _complete_resolution_receipt(commit_sha: str = "b" * 40) -> ResolutionEvidence:
+    return ResolutionEvidence(
+        commit_sha=commit_sha,
+        test_evidence={"pytest": {"exit_code": 0}},
+        restart_evidence={
+            "launchd_label": "com.ceo-agent-service.main",
+            "before_pid": 10,
+            "after_pid": 11,
+        },
+        health_evidence={
+            "url": "http://127.0.0.1:8765/healthz",
+            "status_code": 200,
+            "ok": True,
+        },
+        backlog_evidence={"processing": 0, "failed": 0, "retryable": 0},
+    )
+
+
+def test_feedback_reopen_public_signature_and_typed_validation(tmp_path: Path):
+    signature = inspect.signature(AutoReplyStore.reopen_feedback_processing_item)
+    assert list(signature.parameters) == ["self", "feedback_key", "reason"]
+    assert signature.parameters["reason"].kind is inspect.Parameter.KEYWORD_ONLY
+
+    store = AutoReplyStore(tmp_path / "reopen-validation.sqlite3")
+    store.upsert_feedback_event(key="pending", feedback_token="token-pending")
+    for reason in ("", "   ", "\t\n"):
+        with pytest.raises(
+            feedback_processing_module.FeedbackProcessingReopenError
+        ) as error:
+            store.reopen_feedback_processing_item("pending", reason=reason)
+        assert error.value.error_code == "feedback_reopen_invalid"
+    assert store.reopen_feedback_processing_item("missing", reason="factual reason") is None
+
+
+def test_reopen_resolved_item_preserves_history_and_clears_projection_atomically(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "reopen-resolved.sqlite3")
+    round_id = _seed_resolved_feedback_round(store, "feedback-1")
+    with store._connect() as db:
+        round_before = dict(
+            db.execute(
+                "select * from feedback_processing_rounds where id=?", (round_id,)
+            ).fetchone()
+        )
+        event_before = dict(
+            db.execute(
+                "select * from feedback_events where key='feedback-1'"
+            ).fetchone()
+        )
+
+    reason = "  The stored receipt predates the completed repair.  "
+    reopened = store.reopen_feedback_processing_item("feedback-1", reason=reason)
+
+    assert reopened is not None
+    assert reopened.status == "pending"
+    assert reopened.current_round_id == 0
+    assert reopened.batch_id == ""
+    assert reopened.workbench_task_id == ""
+    assert reopened.workbench_turn_id == ""
+    assert reopened.attempt_id == 0
+    assert reopened.agent_run_id == 0
+    assert reopened.commit_sha == ""
+    assert reopened.test_evidence == {}
+    assert reopened.restart_evidence == {}
+    assert reopened.health_evidence == {}
+    assert reopened.note == ""
+    assert reopened.resolved_at == ""
+
+    rounds = store.list_feedback_processing_rounds("feedback-1")
+    assert len(rounds) == 1
+    assert rounds[0].reopen_reason == reason
+    assert rounds[0].reopened_at
+    with store._connect() as db:
+        round_after = dict(
+            db.execute(
+                "select * from feedback_processing_rounds where id=?", (round_id,)
+            ).fetchone()
+        )
+        event_after = dict(
+            db.execute(
+                "select * from feedback_events where key='feedback-1'"
+            ).fetchone()
+        )
+    for field, value in round_before.items():
+        if field not in {"reopened_at", "reopen_reason"}:
+            assert round_after[field] == value
+    assert event_after["resolved_at"] == ""
+    for field in ("comment", "original_text", "reply_text", "raw_json", "created_at"):
+        assert event_after[field] == event_before[field]
+
+    transitions = store.list_feedback_processing_transitions("feedback-1")
+    assert len(transitions) == 1
+    assert transitions[0].round_id == round_id
+    assert transitions[0].batch_id == "batch-1"
+    assert transitions[0].from_status == "resolved"
+    assert transitions[0].to_status == "pending"
+    assert transitions[0].reason == reason
+    assert transitions[0].workbench_task_id == "task-old"
+    assert transitions[0].workbench_turn_id == "turn-old"
+
+
+def test_reopen_pending_is_idempotent_without_history_mutation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "reopen-pending.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    before = store.get_feedback_processing_item("feedback-1")
+
+    first = store.reopen_feedback_processing_item("feedback-1", reason="first reason")
+    second = store.reopen_feedback_processing_item("feedback-1", reason="second reason")
+
+    assert first == before
+    assert second == before
+    assert store.list_feedback_processing_rounds("feedback-1") == []
+    assert store.list_feedback_processing_transitions("feedback-1") == []
+
+
+def test_reopen_processing_raises_typed_error_without_mutation(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "reopen-processing.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    claimed = store.claim_feedback_processing_items("batch-1", ["feedback-1"])[0]
+    with store._connect() as db:
+        rounds_before = [dict(row) for row in db.execute("select * from feedback_processing_rounds")]
+        transitions_before = [dict(row) for row in db.execute("select * from feedback_processing_transitions")]
+
+    with pytest.raises(feedback_processing_module.FeedbackProcessingReopenError) as error:
+        store.reopen_feedback_processing_item("feedback-1", reason="active claim")
+
+    assert error.value.error_code == "feedback_reopen_processing"
+    assert store.get_feedback_processing_item("feedback-1") == claimed
+    with store._connect() as db:
+        assert [dict(row) for row in db.execute("select * from feedback_processing_rounds")] == rounds_before
+        assert [dict(row) for row in db.execute("select * from feedback_processing_transitions")] == transitions_before
+
+
+@pytest.mark.parametrize("damage", ["missing", "wrong-status", "wrong-owner", "wrong-pointer"])
+def test_reopen_incomplete_history_rolls_back_atomically(tmp_path: Path, damage: str):
+    store = AutoReplyStore(tmp_path / f"reopen-incomplete-{damage}.sqlite3")
+    round_id = _seed_resolved_feedback_round(store, "feedback-1")
+    with store._connect() as db:
+        if damage == "missing":
+            db.execute("delete from feedback_processing_rounds where id=?", (round_id,))
+        elif damage == "wrong-status":
+            db.execute(
+                "update feedback_processing_rounds set status='processing' where id=?",
+                (round_id,),
+            )
+        elif damage == "wrong-owner":
+            db.execute(
+                "update feedback_processing_rounds set feedback_key='other' where id=?",
+                (round_id,),
+            )
+        else:
+            db.execute(
+                "update feedback_processing_items set current_round_id=? where feedback_key='feedback-1'",
+                (round_id + 100,),
+            )
+        item_before = dict(
+            db.execute(
+                "select * from feedback_processing_items where feedback_key='feedback-1'"
+            ).fetchone()
+        )
+        event_before = dict(
+            db.execute(
+                "select * from feedback_events where key='feedback-1'"
+            ).fetchone()
+        )
+
+    with pytest.raises(feedback_processing_module.FeedbackProcessingReopenError) as error:
+        store.reopen_feedback_processing_item("feedback-1", reason="history is incomplete")
+
+    assert error.value.error_code == "feedback_reopen_history_incomplete"
+    with store._connect() as db:
+        assert dict(db.execute("select * from feedback_processing_items where feedback_key='feedback-1'").fetchone()) == item_before
+        assert dict(db.execute("select * from feedback_events where key='feedback-1'").fetchone()) == event_before
+        assert db.execute("select count(*) from feedback_processing_transitions").fetchone()[0] == 0
+
+
+def test_reopened_claim_creates_empty_next_round_and_transitions_newest_first(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "claim-round-two.sqlite3")
+    old_round_id = _seed_resolved_feedback_round(store, "feedback-1")
+    store.reopen_feedback_processing_item("feedback-1", reason="premature")
+
+    claimed = store.claim_feedback_processing_items("batch-2", ["feedback-1"])
+    retried = store.claim_feedback_processing_items("batch-2", ["feedback-1"])
+
+    assert len(claimed) == len(retried) == 1
+    current = claimed[0]
+    assert current.current_round_id > old_round_id
+    assert retried[0].current_round_id == current.current_round_id
+    assert current.batch_id == "batch-2"
+    assert current.status == "processing"
+    assert current.workbench_task_id == current.workbench_turn_id == ""
+    assert current.attempt_id == current.agent_run_id == 0
+    assert current.commit_sha == current.note == ""
+    assert current.test_evidence == current.restart_evidence == current.health_evidence == {}
+    rounds = store.list_feedback_processing_rounds("feedback-1")
+    assert [round_item.round_number for round_item in rounds] == [2, 1]
+    assert rounds[0].id == current.current_round_id
+    assert rounds[0].batch_id == "batch-2"
+    assert rounds[0].status == "processing"
+    assert rounds[0].workbench_task_id == rounds[0].workbench_turn_id == ""
+    assert rounds[0].test_evidence == rounds[0].restart_evidence == rounds[0].health_evidence == {}
+    transitions = store.list_feedback_processing_transitions("feedback-1")
+    assert [(item.from_status, item.to_status) for item in transitions] == [
+        ("pending", "processing"),
+        ("resolved", "pending"),
+    ]
+    with store._connect() as db:
+        assert db.execute("select count(*) from feedback_processing_rounds where feedback_key='feedback-1'").fetchone()[0] == 2
+        assert db.execute("select count(*) from feedback_processing_transitions where feedback_key='feedback-1'").fetchone()[0] == 2
+
+
+def test_batch_claim_rolls_back_when_one_pending_item_has_inconsistent_history(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "claim-history-conflict.sqlite3")
+    for key in ("good", "bad"):
+        store.upsert_feedback_event(key=key, feedback_token=f"token-{key}")
+    with store._connect() as db:
+        db.execute(
+            """
+            insert into feedback_processing_rounds (
+                feedback_key, round_number, batch_id, status, started_at
+            ) values ('bad', 1, 'old-batch', 'processing', current_timestamp)
+            """
+        )
+
+    with pytest.raises(FeedbackProcessingClaimError):
+        store.claim_feedback_processing_items("new-batch", ["good", "bad"])
+
+    assert store.get_feedback_processing_batch("new-batch") is None
+    assert {store.get_feedback_processing_item(key).status for key in ("good", "bad")} == {"pending"}
+    with store._connect() as db:
+        assert db.execute("select count(*) from feedback_processing_rounds where batch_id='new-batch'").fetchone()[0] == 0
+        assert db.execute("select count(*) from feedback_processing_transitions").fetchone()[0] == 0
+
+
+def test_association_and_evidence_patch_update_only_exact_current_round(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "round-patch.sqlite3")
+    _seed_resolved_feedback_round(store, "feedback-1")
+    store.reopen_feedback_processing_item("feedback-1", reason="premature")
+    item = store.claim_feedback_processing_items("batch-2", ["feedback-1"])[0]
+
+    associated = store.associate_feedback_processing_turn(
+        "feedback-1",
+        workbench_task_id="task-new",
+        workbench_turn_id="turn-new",
+        attempt_id=56,
+        agent_run_id=78,
+    )
+    patched = store.patch_feedback_processing_item_evidence(
+        "feedback-1",
+        commit_sha="b" * 40,
+        test_evidence={"pytest": {"exit_code": 0}},
+        restart_evidence={
+            "launchd_label": "com.ceo-agent-service.main",
+            "before_pid": 10,
+            "after_pid": 11,
+        },
+        health_evidence={
+            "url": "http://127.0.0.1:8765/healthz",
+            "status_code": 200,
+            "ok": True,
+        },
+        note="new note",
+    )
+
+    assert associated is not None and patched is not None
+    assert associated.current_round_id == patched.current_round_id == item.current_round_id
+    rounds = store.list_feedback_processing_rounds("feedback-1")
+    current_round, old_round = rounds
+    assert current_round.workbench_task_id == "task-new"
+    assert current_round.workbench_turn_id == "turn-new"
+    assert current_round.attempt_id == 56
+    assert current_round.agent_run_id == 78
+    assert current_round.commit_sha == "b" * 40
+    assert current_round.test_evidence == {"pytest": {"exit_code": 0}}
+    assert current_round.note == "new note"
+    assert old_round.workbench_task_id == "task-old"
+    assert old_round.commit_sha == "a" * 40
+    assert old_round.note == "old note"
+
+
+@pytest.mark.parametrize("operation", ["associate", "patch"])
+def test_stale_or_ambiguous_current_round_cannot_be_mutated(
+    tmp_path: Path, operation: str
+):
+    store = AutoReplyStore(tmp_path / f"stale-round-{operation}.sqlite3")
+    old_round_id = _seed_resolved_feedback_round(store, "feedback-1")
+    store.reopen_feedback_processing_item("feedback-1", reason="premature")
+    store.claim_feedback_processing_items("batch-2", ["feedback-1"])
+    with store._connect() as db:
+        round_rows_before = [dict(row) for row in db.execute("select * from feedback_processing_rounds order by id")]
+        item_before = dict(db.execute("select * from feedback_processing_items where feedback_key='feedback-1'").fetchone())
+        db.execute(
+            "update feedback_processing_items set current_round_id=? where feedback_key='feedback-1'",
+            (old_round_id,),
+        )
+
+    with pytest.raises(ValueError):
+        if operation == "associate":
+            store.associate_feedback_processing_turn(
+                "feedback-1",
+                workbench_task_id="wrong-task",
+                workbench_turn_id="wrong-turn",
+                attempt_id=90,
+                agent_run_id=91,
+            )
+        else:
+            store.patch_feedback_processing_item_evidence(
+                "feedback-1", commit_sha="c" * 40
+            )
+
+    with store._connect() as db:
+        assert [dict(row) for row in db.execute("select * from feedback_processing_rounds order by id")] == round_rows_before
+        after = dict(db.execute("select * from feedback_processing_items where feedback_key='feedback-1'").fetchone())
+    assert {key: value for key, value in after.items() if key != "current_round_id"} == {
+        key: value for key, value in item_before.items() if key != "current_round_id"
+    }
+
+
+def test_resolution_evidence_requires_zero_backlog_and_prevalidated_commit():
+    complete = _complete_resolution_receipt()
+    validate_resolution_evidence(complete, commit_is_ancestor=True)
+
+    for legacy_head in (None, "", "c" * 40):
+        with pytest.raises(ValueError):
+            validate_resolution_evidence(complete, current_head=legacy_head)
+
+    with pytest.raises(ValidationError):
+        ResolutionEvidence(
+            commit_sha="b" * 40,
+            test_evidence={"pytest": {"exit_code": 0}},
+            restart_evidence={
+                "launchd_label": "com.ceo-agent-service.main",
+                "before_pid": 10,
+                "after_pid": 11,
+            },
+            health_evidence={
+                "url": "http://127.0.0.1:8765/healthz",
+                "status_code": 200,
+                "ok": True,
+            },
+        )
+    for backlog in (
+        {"processing": 1, "failed": 0, "retryable": 0},
+        {"processing": 0, "failed": 1, "retryable": 0},
+        {"processing": 0, "failed": 0, "retryable": 1},
+        {"processing": 0, "failed": 0},
+        {"processing": False, "failed": 0, "retryable": 0},
+    ):
+        with pytest.raises(ValueError):
+            validate_resolution_evidence(
+                complete.model_copy(update={"backlog_evidence": backlog}),
+                commit_is_ancestor=True,
+            )
+    with pytest.raises(ValueError):
+        validate_resolution_evidence(complete, commit_is_ancestor=False)
+
+
+def test_resolve_uses_only_current_round_receipt_and_updates_batch_atomically(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "resolve-current-round.sqlite3")
+    old_round_id = _seed_resolved_feedback_round(store, "feedback-1")
+    store.reopen_feedback_processing_item("feedback-1", reason="premature")
+    claimed = store.claim_feedback_processing_items("batch-2", ["feedback-1"])[0]
+    store.associate_feedback_processing_turn(
+        "feedback-1",
+        workbench_task_id="task-new",
+        workbench_turn_id="turn-new",
+        attempt_id=56,
+        agent_run_id=78,
+    )
+    stale_receipt = _complete_resolution_receipt("a" * 40)
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-2", stale_receipt, commit_is_ancestor=True
+        )
+    assert store.get_feedback_processing_item("feedback-1").status == "processing"
+    assert store.get_feedback_processing_batch("batch-2").status == "processing"
+    assert store.list_feedback_processing_rounds("feedback-1")[0].status == "processing"
+
+    receipt = _complete_resolution_receipt()
+    store.patch_feedback_processing_item_evidence(
+        "feedback-1",
+        commit_sha=receipt.commit_sha,
+        test_evidence=receipt.test_evidence,
+        restart_evidence=receipt.restart_evidence,
+        health_evidence=receipt.health_evidence,
+    )
+    assert store.resolve_feedback_processing_batch(
+        "batch-2", receipt, commit_is_ancestor=True
+    )
+
+    item = store.get_feedback_processing_item("feedback-1")
+    rounds = store.list_feedback_processing_rounds("feedback-1")
+    assert item is not None
+    assert item.status == "resolved"
+    assert item.current_round_id == claimed.current_round_id
+    assert rounds[0].id == claimed.current_round_id
+    assert rounds[0].status == "resolved"
+    assert rounds[0].resolved_at
+    assert rounds[1].id == old_round_id
+    assert rounds[1].commit_sha == "a" * 40
+    assert store.get_feedback_processing_batch("batch-2").status == "resolved"
+    assert store.get_feedback_event("feedback-1").resolved_at
+    assert [
+        (transition.from_status, transition.to_status)
+        for transition in store.list_feedback_processing_transitions("feedback-1")
+    ] == [
+        ("processing", "resolved"),
+        ("pending", "processing"),
+        ("resolved", "pending"),
+    ]
+
+
+def test_resolve_rolls_back_entire_batch_on_one_invalid_current_round(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "resolve-batch-rollback.sqlite3")
+    for key in ("feedback-1", "feedback-2"):
+        store.upsert_feedback_event(key=key, feedback_token=f"token-{key}")
+    claimed = store.claim_feedback_processing_items(
+        "batch-1", ["feedback-1", "feedback-2"]
+    )
+    receipt = _complete_resolution_receipt()
+    for key in ("feedback-1", "feedback-2"):
+        store.associate_feedback_processing_turn(
+            key,
+            workbench_task_id="task",
+            workbench_turn_id="turn",
+            attempt_id=1,
+            agent_run_id=2,
+        )
+        store.patch_feedback_processing_item_evidence(
+            key,
+            commit_sha=receipt.commit_sha,
+            test_evidence=receipt.test_evidence,
+            restart_evidence=receipt.restart_evidence,
+            health_evidence=receipt.health_evidence,
+        )
+    with store._connect() as db:
+        db.execute(
+            "update feedback_processing_rounds set health_evidence_json='{}' where id=?",
+            (claimed[1].current_round_id,),
+        )
+
+    with pytest.raises(ValueError):
+        store.resolve_feedback_processing_batch(
+            "batch-1", receipt, commit_is_ancestor=True
+        )
+
+    assert {store.get_feedback_processing_item(key).status for key in ("feedback-1", "feedback-2")} == {"processing"}
+    assert store.get_feedback_processing_batch("batch-1").status == "processing"
+    assert {round_item.status for key in ("feedback-1", "feedback-2") for round_item in store.list_feedback_processing_rounds(key)} == {"processing"}
+    assert all(not store.get_feedback_event(key).resolved_at for key in ("feedback-1", "feedback-2"))
+    assert all(store.list_feedback_processing_transitions(key)[0].to_status == "processing" for key in ("feedback-1", "feedback-2"))
+
+
+def test_unresolved_batch_cannot_bypass_current_round_receipt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "resolve-receipt-required.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    item = store.claim_feedback_processing_items("batch-1", ["feedback-1"])[0]
+    with store._connect() as db:
+        db.execute(
+            "update feedback_processing_items set status='resolved' where feedback_key='feedback-1'"
+        )
+
+    assert store.resolve_feedback_processing_batch("batch-1") is False
+    assert store.get_feedback_processing_batch("batch-1").status == "processing"
+    assert store.list_feedback_processing_rounds("feedback-1")[0].id == item.current_round_id
+    assert store.list_feedback_processing_rounds("feedback-1")[0].status == "processing"
+
+
+def test_round_and_transition_models_are_strict_read_contracts():
+    with pytest.raises(ValidationError):
+        FeedbackProcessingTransition(
+            id=1,
+            feedback_key="feedback-1",
+            from_status="resolved",
+            to_status="pending",
+            unexpected=True,
+        )
