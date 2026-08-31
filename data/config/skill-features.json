@@ -1,0 +1,53 @@
+{
+  "features": [
+    {
+      "feature_id": "message_triage",
+      "name": "Message Triage",
+      "description": "处理普通业务消息并判断是否需要进一步行动。",
+      "skills": ["ceo-message-triage"],
+      "default_enabled": true
+    },
+    {
+      "feature_id": "calendar_invite",
+      "name": "Calendar Invite",
+      "description": "处理日历邀请、参会决策和日程冲突。",
+      "skills": ["ceo-calendar-invite"],
+      "default_enabled": true
+    },
+    {
+      "feature_id": "document_review",
+      "name": "Document Review",
+      "description": "审阅钉钉或飞书文档、文件、图片和表格。",
+      "skills": ["ceo-document-review"],
+      "default_enabled": true
+    },
+    {
+      "feature_id": "meeting_summary",
+      "name": "Meeting Summary",
+      "description": "处理会议记录、摘要、决策和行动项。",
+      "skills": ["ceo-meeting-work"],
+      "default_enabled": true
+    },
+    {
+      "feature_id": "mail_review",
+      "name": "Mail Review",
+      "description": "审阅邮件线程及其关联材料。",
+      "skills": ["ceo-mail-review"],
+      "default_enabled": true
+    },
+    {
+      "feature_id": "personnel_communication",
+      "name": "Personnel Communication",
+      "description": "处理人员、绩效、薪酬和候选人相关沟通。",
+      "skills": ["ceo-personnel-communication"],
+      "default_enabled": true
+    },
+    {
+      "feature_id": "work_tracking",
+      "name": "Work Tracking",
+      "description": "从消息、会议或决策中提取并跟踪可交付工作。",
+      "skills": ["ceo-work-tracking"],
+      "default_enabled": true
+    }
+  ]
+}
