@@ -64,6 +64,15 @@ def test_missing_state_uses_default_and_toggle_survives_reload(tmp_path):
     ) is False
 
 
+def test_missing_state_uses_disabled_default(tmp_path):
+    registry = write_registry(
+        tmp_path, {"features": [feature(default_enabled=False)]}
+    )
+    catalog = FeatureRegistry(registry_path=registry, state_path=tmp_path / "state.json")
+
+    assert catalog.is_enabled("meeting_summary") is False
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -113,6 +122,34 @@ def test_feature_status_reports_missing_skill_dependency(tmp_path):
 
     assert catalog.feature_status("meeting_summary", {"ceo-meeting-work"}) == "ready"
     assert catalog.feature_status("meeting_summary", set()) == "incomplete"
+
+
+def test_list_project_skill_names_only_includes_real_skill_files(tmp_path):
+    skills_root = tmp_path / "skills"
+    (skills_root / "valid").mkdir(parents=True)
+    (skills_root / "valid" / "SKILL.md").write_text("---\nname: valid\n---\n", encoding="utf-8")
+    (skills_root / "missing").mkdir()
+    (skills_root / "not-a-directory").write_text("x", encoding="utf-8")
+    (skills_root / "link").symlink_to(skills_root / "valid", target_is_directory=True)
+    registry = write_registry(tmp_path, {"features": [feature()]})
+
+    catalog = FeatureRegistry(
+        registry_path=registry,
+        state_path=tmp_path / "state.json",
+        project_skills_root=skills_root,
+    )
+
+    assert catalog.list_project_skill_names() == ("valid",)
+
+
+@pytest.mark.parametrize("content", [b"not utf-8: \xff", b'{"features": []}'])
+def test_state_file_encoding_and_shape_errors_are_value_errors(tmp_path, content):
+    registry = write_registry(tmp_path, {"features": [feature()]})
+    state = tmp_path / "state.json"
+    state.write_bytes(content)
+
+    with pytest.raises(ValueError):
+        FeatureRegistry(registry_path=registry, state_path=state)
 
 
 def test_failed_atomic_replacement_preserves_previous_state(tmp_path, monkeypatch):

@@ -148,12 +148,14 @@ class FeatureRegistry:
         if not self.state_path.exists():
             return {}
         payload = _read_json(self.state_path, "feature state")
-        if isinstance(payload, dict) and isinstance(payload.get("features"), dict):
-            values = payload["features"]
-        elif isinstance(payload, dict):
-            values = payload
-        else:
+        if not isinstance(payload, dict):
             raise ValueError("feature state must be an object")
+        if "features" in payload:
+            if not isinstance(payload["features"], dict):
+                raise ValueError("feature state features must be an object")
+            values = payload["features"]
+        else:
+            values = payload
         states: dict[str, bool] = {}
         for feature_id, enabled in values.items():
             self._definition(feature_id)
@@ -200,6 +202,8 @@ def _read_json(path: Path, label: str) -> Any:
         raise ValueError(f"unable to read {label}: {path}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid {label}: {path}") from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"invalid UTF-8 {label}: {path}") from exc
 
 
 def _required_string(payload: dict[str, Any], key: str) -> str:
