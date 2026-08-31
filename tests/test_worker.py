@@ -4483,6 +4483,29 @@ def test_produce_once_uses_recent_context_when_unread_read_fails_for_group_menti
     assert codex.calls == []
 
 
+def test_produce_once_falls_back_to_recent_messages_when_unread_shape_is_invalid(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws(
+        [conversation()],
+        {"cid-1": [message("@Alex Chen(明哥) 请确认这条消息。")]},
+        unread_messages={"cid-1": []},
+        unread_errors={
+            "cid-1": DwsError("unread messages response has no ordered message rows")
+        },
+    )
+    codex = FakeCodex(
+        CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
+    )
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+
+    assert worker.produce_once() == 0
+    assert dws.unread_message_reads == ["cid-1"]
+    assert dws.recent_message_reads == ["cid-1"]
+    assert worker.store.count_errors() == 1
+    assert worker.store.list_errors()[0].kind == "read_unread_messages"
+
+
 def test_produce_once_suppresses_repeated_forbidden_unread_reads(
     tmp_path: Path, monkeypatch
 ):

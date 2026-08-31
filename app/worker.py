@@ -705,6 +705,7 @@ class DingTalkAutoReplyWorker:
             "read_recent_messages_calendar_context",
             "read_recent_messages_rerun",
             "read_unread_messages_rerun",
+            "read_recent_messages_unread_fallback",
             "list_messages_by_ids_rerun",
         }
 
@@ -974,6 +975,13 @@ class DingTalkAutoReplyWorker:
                 if unread_messages is None:
                     unread_messages = []
                     candidate_unread_messages = context_messages
+                    if not candidate_unread_messages:
+                        candidate_unread_messages = self._read_conversation_messages(
+                            "read_recent_messages_unread_fallback",
+                            conversation,
+                            lambda: self.dws.read_recent_messages(conversation),
+                            default=[],
+                        )
                 else:
                     candidate_unread_messages = unread_messages
             if (

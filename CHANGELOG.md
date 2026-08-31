@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-08-31: when a conversation has an unread marker but the unread-message
+  response lacks message rows, the producer now reads that conversation's
+  recent messages as the context fallback instead of treating the conversation
+  as empty. The original read error remains auditable and the fallback uses the
+  source message ordering and timestamps.
+
 - 2026-08-30: normalize follow-up times in `Asia/Shanghai` before applying
   work-hour rules, so timezone-qualified model output cannot bypass the same
   business-window validation used when persisting a task-agent decision.
