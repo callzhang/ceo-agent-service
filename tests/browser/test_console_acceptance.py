@@ -160,6 +160,50 @@ def _install_interaction_routes(page) -> None:
     page.route("**/api/console/**", handle)
 
 
+def _install_route_matrix_routes(page) -> None:
+    def handle(route) -> None:
+        path = urlsplit(route.request.url).path
+        if not path.startswith("/api/console/"):
+            route.continue_()
+            return
+        meta = _meta(0)
+        if path.endswith("/api/console/status"):
+            payload = {
+                "item": {
+                    "service": {"state": "running", "ok": True},
+                    "summary": {"pending": 0, "processing": 0, "failed": 0, "retryable": 0, "attention": 0},
+                    "queues": [],
+                    "components": [],
+                    "connectors": {},
+                },
+                "meta": meta,
+            }
+        elif path.endswith("/api/console/attention"):
+            payload = {"items": [], "meta": meta}
+        elif "/api/console/history/" in path or "/api/console/meeting-attempts/" in path or "/api/console/oa-approvals/" in path:
+            payload = {
+                "item": {
+                    "id": "12830",
+                    "title": "验收详情",
+                    "status": "done",
+                    "input": "输入",
+                    "decision": "决定",
+                    "output": "输出",
+                    "reviewer_feedback": "",
+                    "corrected_reply": "",
+                    "runtime": {},
+                },
+                "meta": meta,
+            }
+        elif "/api/console/codex/sessions/" in path:
+            payload = {"item": {"available": True, "message": "执行记录可用", "events": [], "related_attempts": []}, "meta": meta}
+        else:
+            payload = {"items": [], "meta": meta}
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(payload, ensure_ascii=False))
+
+    page.route("**/api/console/**", handle)
+
+
 def _browser():
     return sync_api.sync_playwright()
 
@@ -318,6 +362,41 @@ def test_console_list_scale_is_paginated_and_interactive():
             browser.close()
     print(json.dumps(measurements, ensure_ascii=False), file=sys.stderr)
     assert {measurement["total"] for measurement in measurements} == set(totals)
+
+
+def test_console_remaining_route_matrix_renders_without_page_errors():
+    routes = [
+        "/history/attempts/12830",
+        "/history/meeting-attempts/1",
+        "/history/oa-approvals/1",
+        "/attempts/12830",
+        "/attempts/12830/execution/consumer",
+        "/meeting-attempts/1",
+        "/oa-approvals/1",
+        "/tutorial",
+        "/notifications",
+        "/codex",
+        "/codex/session-1",
+        "/wechat/review",
+        "/wechat/memory-review",
+        "/wechat/deliveries",
+        "/wechat/conversations",
+    ]
+    with _browser() as playwright:
+        browser = _launch(playwright)
+        try:
+            page = browser.new_page(viewport={"width": 1280, "height": 720})
+            _install_route_matrix_routes(page)
+            page_errors: list[str] = []
+            page.on("pageerror", lambda error: page_errors.append(str(error)))
+            for path in routes:
+                page.goto(f"{BASE_URL}{path}", wait_until="domcontentloaded")
+                page.locator("#console-page-title").wait_for(state="visible", timeout=30_000)
+                assert page.locator("#console-page-title").inner_text().strip(), path
+                assert not page.locator("[role='alert']").is_visible(), path
+            assert not page_errors, page_errors
+        finally:
+            browser.close()
 
 
 def test_browser_qa_inventory_is_documented():
