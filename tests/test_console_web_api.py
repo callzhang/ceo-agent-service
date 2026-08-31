@@ -102,6 +102,28 @@ def _project(store: AutoReplyStore, title: str) -> int:
     )
 
 
+def test_console_api_reuses_the_initialized_audit_store(
+    tmp_path: Path, monkeypatch
+):
+    constructions: list[Path] = []
+    original_store = audit_web_module.AutoReplyStore
+
+    class CountingStore(original_store):
+        def __init__(self, path, **kwargs):
+            constructions.append(Path(path))
+            super().__init__(path, **kwargs)
+
+    monkeypatch.setattr(audit_web_module, "AutoReplyStore", CountingStore)
+
+    with _client(tmp_path, spa_enabled=True) as client:
+        constructed_for_app = len(constructions)
+        assert client.get("/api/console/tasks").status_code == 200
+        assert client.get("/api/console/tasks/836").status_code in {200, 404}
+
+    assert constructed_for_app == 1
+    assert len(constructions) == constructed_for_app
+
+
 def test_common_envelopes_and_normalization_are_explicitly_json_serializable():
     item = ApiItemEnvelope(
         item={"label": normalize_display_value({"title": "Readable"})},

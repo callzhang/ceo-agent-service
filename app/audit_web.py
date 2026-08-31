@@ -9895,7 +9895,10 @@ def create_audit_app(
 
     register_console_routes(
         app,
-        store_factory=lambda: AutoReplyStore(db_path),
+        # Console routes are served by this long-lived audit process.  Reuse
+        # the already initialized store so every request does not repeat the
+        # schema/WAL health check while the worker may be writing SQLite.
+        store_factory=lambda: audit_store,
         status_payload_factory=render_settings_status_payload,
         feedback_backlog_factory=read_fresh_feedback_backlog,
         # The React Attention page must share Status's cached snapshot.  The
