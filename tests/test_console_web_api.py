@@ -1003,7 +1003,7 @@ def test_console_attention_humanizes_markup_and_bounds_primary_summary():
     assert service_error.detail == long_error
 
 
-def test_spa_attention_reuses_status_snapshot_after_cache_is_warm(monkeypatch, tmp_path: Path):
+def test_spa_attention_reads_current_snapshot_after_status_cache_is_warm(monkeypatch, tmp_path: Path):
     rows = [
         {
             "category": "Service error",
@@ -1031,16 +1031,24 @@ def test_spa_attention_reuses_status_snapshot_after_cache_is_warm(monkeypatch, t
         assert status_payload is not None
         assert status_payload["attention_rows"] == rows
 
-        def unexpected_direct_scan(_store):
-            raise AssertionError("SPA Attention must reuse the Status snapshot")
-
-        monkeypatch.setattr(audit_web_module, "_queue_attention_rows", unexpected_direct_scan)
+        refreshed_rows = [
+            {
+                **rows[0],
+                "id": "12831",
+                "summary": "new unresolved error",
+            }
+        ]
+        monkeypatch.setattr(
+            audit_web_module,
+            "_queue_attention_rows",
+            lambda _store: refreshed_rows,
+        )
         response = client.get("/api/console/attention")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["meta"]["total"] == 1
-    assert payload["items"][0]["records"][0]["detail_url"] == "/history/errors/12830"
+    assert payload["items"][0]["records"][0]["id"] == "12831"
 
 
 def test_spa_attention_does_not_expose_empty_cold_cache(monkeypatch, tmp_path: Path):

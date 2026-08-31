@@ -9754,13 +9754,10 @@ def create_audit_app(
         )
 
     def read_cached_attention_rows() -> list[dict[str, object]]:
-        """Read a complete Attention snapshot, including on a cold cache."""
+        """Read the current Attention snapshot without serving stale status data."""
 
-        # Attention is a user-facing list, so an empty cold-refresh placeholder
-        # must never be exposed as if there were no records.
-        payload = worker_status_cache.get_or_render(render_worker_status_payload)
-        rows = payload.get("attention_rows")
-        return rows if isinstance(rows, list) else []
+        with audit_store.read_snapshot():
+            return _queue_attention_rows(audit_store)
 
     def read_fresh_feedback_backlog() -> dict[str, object]:
         """Synchronously read authoritative queue counts for resolution."""
