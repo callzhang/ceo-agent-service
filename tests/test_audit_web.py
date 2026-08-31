@@ -7355,6 +7355,34 @@ def test_worker_attention_uses_work_input_title_before_raw_reference(tmp_path: P
     assert row["summary"] == "Hiring debrief"
 
 
+def test_worker_attention_excludes_pending_work_items_but_keeps_processing(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    pending_id = store.enqueue_work_summary_input(
+        "local_file", "pending-source", '{"title":"Queued material"}'
+    )
+    processing_id = store.enqueue_work_summary_input(
+        "local_file", "processing-source", '{"title":"Active material"}'
+    )
+    with store._connect() as db:
+        db.execute(
+            "update work_summary_inputs set status='processing' where id=?",
+            (processing_id,),
+        )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert all(
+        not (row["category"] == "Work item" and row["id"] == str(pending_id))
+        for row in rows
+    )
+    assert any(
+        row["category"] == "Work item" and row["id"] == str(processing_id)
+        for row in rows
+    )
+
+
 def test_worker_attention_uses_local_file_title_as_work_item_context(
     tmp_path: Path,
 ):

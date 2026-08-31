@@ -2641,7 +2641,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
             "nullif(json_extract(payload_json, '$.project_name'), ''), source_ref)",
             "updated_at",
             "error",
-            ("pending", "processing", "failed"),
+            ("processing", "failed"),
         ),
         (
             "Follow-up",
