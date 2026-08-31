@@ -165,6 +165,13 @@ def _agent_message_candidate(payload: dict) -> str | None:
 
 def _normalize_result_text(text: str) -> str:
     cleaned = _strip_json_fence(text.strip())
+    cleaned = cleaned.replace(
+        '\"}],\"sourced_facts\"',
+        '\"},\"sourced_facts\"',
+        1,
+    )
+    if '\"authored_judgment\":' in cleaned and not cleaned.rstrip().endswith("}"):
+        cleaned += "}"
     repaired = _remove_top_level_stray_array_close(cleaned)
     candidate = _first_balanced_json_object(repaired)
     remainder = repaired[len(candidate) :].lstrip()
