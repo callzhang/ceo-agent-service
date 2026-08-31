@@ -490,7 +490,7 @@ def test_console_history_includes_chart_snapshot(tmp_path: Path):
 def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = _project(store, "History project")
-    todo_id = store.create_work_todo(
+    store.create_work_todo(
         project_id=project_id,
         title="Review history links",
         description="Check that history entries jump back to the task detail page.",
