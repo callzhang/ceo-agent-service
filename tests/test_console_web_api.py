@@ -922,6 +922,40 @@ def test_console_attention_preserves_record_detail_url(monkeypatch, tmp_path: Pa
     assert response.json()["items"][0]["records"][0]["detail_url"] == "/history/errors/12830"
 
 
+def test_console_attention_humanizes_markup_and_bounds_primary_summary():
+    long_error = "dws command failed; command=" + "/very/long/path " * 40
+    groups = group_attention_rows(
+        [
+            {
+                "category": "Work item",
+                "id": "1",
+                "status": "processing",
+                "context": "todo_completion_check",
+                "summary": '> **主题**: 江淮汽车 POC > **时间**: <time data-ts="1738069232000">2026-07-03 17:00:32</time>',
+                "updated_at": "2026-08-29 18:00:00",
+            },
+            {
+                "category": "Service error",
+                "id": "2",
+                "status": "failed",
+                "context": "dws",
+                "summary": long_error,
+                "error": long_error,
+                "updated_at": "2026-08-29 18:01:00",
+            },
+        ]
+    )
+
+    work_item = next(group for group in groups if group.category == "Work item")
+    service_error = next(group for group in groups if group.category == "Service error")
+    assert work_item.summary == "主题: 江淮汽车 POC > 时间: 2026-07-03 17:00:32"
+    assert "<time" not in work_item.summary
+    assert "**" not in work_item.summary
+    assert len(service_error.summary) == 240
+    assert service_error.summary.endswith("…")
+    assert service_error.detail == long_error
+
+
 def test_spa_attention_reuses_status_snapshot_after_cache_is_warm(monkeypatch, tmp_path: Path):
     rows = [
         {

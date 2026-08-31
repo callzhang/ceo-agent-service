@@ -1,5 +1,6 @@
 """Attention row DTOs and root-cause grouping."""
 
+import re
 from typing import Any, Iterable
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,6 +49,32 @@ class AttentionListEnvelope(BaseModel):
     meta: ApiListMeta
 
 
+_ATTENTION_TAG_RE = re.compile(r"<[^>]+>")
+_ATTENTION_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_ATTENTION_TIME_RE = re.compile(r"<time\b[^>]*>(.*?)</time>", re.DOTALL | re.IGNORECASE)
+_ATTENTION_MARKDOWN_LINK_RE = re.compile(r"!?\[([^]]*)\]\([^)]*\)")
+_ATTENTION_MARKDOWN_EMPHASIS_RE = re.compile(r"[*_]{1,3}([^*_\n]+)[*_]{1,3}")
+_ATTENTION_CODE_RE = re.compile(r"`([^`\n]+)`")
+_ATTENTION_WHITESPACE_RE = re.compile(r"\s+")
+_ATTENTION_SUMMARY_LIMIT = 240
+
+
+def _humanized_summary(value: Any) -> str:
+    """Keep Attention's primary line readable without discarding evidence."""
+    text = normalize_display_value(value)
+    text = _ATTENTION_COMMENT_RE.sub("", text)
+    text = _ATTENTION_TIME_RE.sub(lambda match: match.group(1), text)
+    text = _ATTENTION_MARKDOWN_LINK_RE.sub(lambda match: match.group(1), text)
+    text = _ATTENTION_MARKDOWN_EMPHASIS_RE.sub(lambda match: match.group(1), text)
+    text = _ATTENTION_CODE_RE.sub(lambda match: match.group(1), text)
+    text = _ATTENTION_TAG_RE.sub("", text)
+    text = re.sub(r"^\s*>\s*", "", text)
+    text = _ATTENTION_WHITESPACE_RE.sub(" ", text).strip()
+    if len(text) <= _ATTENTION_SUMMARY_LIMIT:
+        return text
+    return text[: _ATTENTION_SUMMARY_LIMIT - 1].rstrip() + "…"
+
+
 def _record(row: dict[str, Any]) -> AttentionRecord:
     error = normalize_display_value(row.get("error"))
     status = normalize_display_value(row.get("status"))
@@ -64,7 +91,7 @@ def _record(row: dict[str, Any]) -> AttentionRecord:
         context=context,
         root_cause=root_cause,
         error_code=error_code,
-        summary=normalize_display_value(row.get("summary")),
+        summary=_humanized_summary(row.get("summary")),
         updated_at=normalize_display_value(row.get("updated_at")),
         error=error,
         detail_label=detail_label,
