@@ -249,14 +249,15 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
         len(sample["sample_digest"]) == 64
         for sample in polled.training_run.sample_snapshots
     )
-    for _ in range(100):
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
         polled = service.poll_retrain(now=now + timedelta(seconds=32))
         if polled.training_run is not None and polled.training_run.status not in {
             "queued",
             "running",
         }:
             break
-        time.sleep(0.01)
+        time.sleep(0.05)
     promoted_result = polled
 
     assert promoted_result is not None

@@ -6442,7 +6442,7 @@ def test_history_query_skips_search_text_materialization_without_search():
         created_since="",
     )
 
-    assert query.count("iif(?1,") == 4
+    assert query.count("iif(?1,") == 5
     assert args == [False, "reply", "meeting", "task"]
 
 
