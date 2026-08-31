@@ -131,3 +131,37 @@ def test_failed_atomic_replacement_preserves_previous_state(tmp_path, monkeypatc
 
     assert state.read_text(encoding="utf-8") == original
     assert catalog.is_enabled("meeting_summary") is True
+
+
+def test_toggles_from_two_instances_merge_without_losing_updates(tmp_path):
+    registry = write_registry(
+        tmp_path,
+        {"features": [feature(), feature("document_review")]},
+    )
+    state = tmp_path / "state.json"
+    first = FeatureRegistry(registry_path=registry, state_path=state)
+    second = FeatureRegistry(registry_path=registry, state_path=state)
+
+    first.set_enabled("meeting_summary", False)
+    second.set_enabled("document_review", False)
+
+    final = FeatureRegistry(registry_path=registry, state_path=state)
+    assert final.is_enabled("meeting_summary") is False
+    assert final.is_enabled("document_review") is False
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda catalog: catalog.is_enabled(["meeting_summary"]),
+        lambda catalog: catalog.skills_for({"meeting_summary"}),
+        lambda catalog: catalog.features_for_skill({"ceo-meeting-work"}),
+        lambda catalog: catalog.feature_status(["meeting_summary"], set()),
+    ],
+)
+def test_public_name_arguments_reject_non_string_values(tmp_path, operation):
+    registry = write_registry(tmp_path, {"features": [feature()]})
+    catalog = FeatureRegistry(registry_path=registry, state_path=tmp_path / "state.json")
+
+    with pytest.raises(ValueError):
+        operation(catalog)

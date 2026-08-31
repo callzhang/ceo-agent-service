@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -80,10 +82,13 @@ class FeatureRegistry:
         self._definition(feature_id)
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
-        next_states = dict(self._states)
-        next_states[feature_id] = enabled
-        self._write_state(next_states)
-        self._states = next_states
+        # Lock and reread so separate registry instances cannot overwrite each
+        # other's changes based on stale in-memory state.
+        with self._state_lock():
+            next_states = self._load_state()
+            next_states[feature_id] = enabled
+            self._write_state(next_states)
+            self._states = next_states
         return FeatureState(feature_id=feature_id, enabled=enabled)
 
     def feature_enabled(self, feature_id: str) -> bool:
@@ -176,6 +181,17 @@ class FeatureRegistry:
             if temporary_path.exists():
                 temporary_path.unlink()
 
+    @contextmanager
+    def _state_lock(self):
+        lock_path = self.state_path.with_name(f"{self.state_path.name}.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+", encoding="utf-8") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
 
 def _read_json(path: Path, label: str) -> Any:
     try:
@@ -201,5 +217,7 @@ def _validated_string(value: Any, label: str) -> str:
 
 
 def _validate_name(value: str, label: str) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a non-empty string")
     if not value or value in {".", ".."} or any(char not in _SAFE_NAME_CHARS for char in value):
         raise ValueError(f"invalid {label}: {value!r}")
