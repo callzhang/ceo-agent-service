@@ -707,6 +707,44 @@ npm run build:workbench
 WORKBENCH_BROWSER_TESTS=1 "$HOME/miniforge3/bin/python" -m pytest tests/test_workbench_browser.py -q
 ```
 
+React 控制台的页面级键盘、ARIA 和列表规模验收位于
+`tests/browser/test_console_acceptance.py`。它默认跳过；设置
+`WORKBENCH_BROWSER_TESTS=1` 后运行。规模场景使用浏览器路由拦截注入的合成 DTO，覆盖
+History、Tasks、用户反馈的 1、10、100、1000、10000 条数据，不写入 SQLite、不发送外部动作；
+它记录首屏可见、首次筛选交互、可见行数、DOM 节点和滚动高度，并要求 10000 条仍只挂载当前页。
+在隔离前端源码上运行时，先启动一个临时 Vite 端口（开发配置的 `/workbench-assets/` base
+需要覆盖为 `/`）：
+
+```bash
+pnpm --dir frontend exec vite --host 127.0.0.1 --port 5174 --base /
+WORKBENCH_BROWSER_TESTS=1 CONSOLE_BASE_URL=http://127.0.0.1:5174 \
+  "$HOME/miniforge3/bin/python" -m pytest tests/browser/test_console_acceptance.py -q -s
+```
+
+交互验收逐项检查主导航可用焦点、Prompt/Audit 的 `tablist/tab/tabpanel`、Runtime secret
+切换后的焦点保持、WeChat 回复范围搜索/勾选/保存、Attention badge 和展开详情。VoiceOver
+需要在 macOS 读屏打开的人工环境完成；自动化测试只负责 DOM、ARIA 和键盘行为，不将其冒充为
+读屏验收。
+
+普通业务页面统一由同一个 React SPA 渲染。FastAPI 对 `/`、`/history`、`/tasks`、
+`/tasks/{project_id}`、`/settings`、`/user-feedback`、`/tutorial`、`/notifications`、
+`/codex`、详情页和 WeChat 页面返回同一份 React 入口；`/api/console/*` 始终返回 JSON，
+未知 API 返回 JSON 404。DingTalk bridge/popup、通知 Service Worker 和 `/api/workbench/*`
+保留各自专用入口。Settings 的凭据会回填并可编辑，模型字段使用按 provider 分组的下拉菜单，
+Prompt/Audit 使用 Template 与 Rendered preview 两层切换，WeChat 回复范围在 Connectors 页面
+内联维护，不再跳转到独立页面。
+
+控制台状态颜色统一由 `StatusBadge` 表达：`ready`、`available`、`connected`、`completed`
+等成功状态为绿色；`unavailable`、`failed`、`error`、`blocked`、`denied` 等故障状态为红色；
+`processing`、`running` 为进行中；`pending`、`warning`、`stale` 为提醒；`skipped`、
+`cancelled`、`disabled` 为中性。颜色始终与中文状态文案并列，不单独依赖颜色。
+
+发布后的最小运行读回是：先记录旧 PID，再执行
+`launchctl kickstart -k gui/$(id -u)/com.ceo-agent-service.main`，确认新 PID、
+`/healthz`、`/tasks/836`、Settings 和未知 API 404；随后独立读取 SQLite 的
+`processing/running`、`failed`、`needs_human`、Attention、lease 和最近 receipt。页面 200
+只证明页面入口可达，不代表后台业务队列或外部动作已经完成；现有 backlog 必须单独报告和处理。
+
 只跑相关测试：
 
 ```bash
