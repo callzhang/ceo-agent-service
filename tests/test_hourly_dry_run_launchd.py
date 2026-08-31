@@ -102,7 +102,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert "CEO_OKR_LIVE_SOURCE_COMMAND" in command[2]
     assert "CEO_CODEX_MODEL" not in command[2]
     assert "CEO_CODEX_MODEL_REASONING_EFFORT" not in command[2]
-    assert "dingteam_okr_browser_source.py fetch --user-id " in command[2]
+    assert "dingteam_okr_headless_source.py --user-id " in command[2]
     assert "'{user_id}'" in command[2]
     assert "'{period_label}'" in command[2]
     assert 'if [[ -z "${CEO_OKR_LIVE_SOURCE_COMMAND:-}" ]]' in command[2]
