@@ -514,6 +514,33 @@ React 页面不能绕过缓存快照。
 - [ ] 队列状态单独列出：`running/processing`、`failed`、`needs_human`、Attention 和最近 receipt；说明哪些是历史问题、哪些由本轮引入、哪些需要后续业务处理。
 - [ ] 最终报告列出每个独立 commit SHA、验证命令、验证结果、未完成项和阻塞原因；禁止只报告“页面能打开”或单个 HTTP 200。
 
+### 本轮第四、第五项验收记录（2026-08-31）
+
+- [x] 新增 `tests/browser/test_console_acceptance.py`，使用独立 Vite 前端和 Playwright 合成 API
+  响应完成键盘/ARIA 验收；覆盖 Agent、History、Tasks、用户反馈、Settings、Prompt/Audit、
+  Runtime secret、WeChat 回复范围和 Attention 展开。结果：`1 passed`。
+- [x] 同一浏览器顺序执行 History、Tasks、用户反馈的 1、10、100、1000、10000 条 fixture；
+  结果要求当前页最多 20 行、DOM 节点少于 2500，并记录首屏可见、首次筛选交互、滚动高度。
+- [x] 前端验收测试使用路由拦截注入 DTO，不写生产 SQLite、不触发发送/审批/退订等外部动作；测试脚本
+  输出测量 JSON 到测试日志，不把机器相关的临时结果写进仓库。
+- [ ] VoiceOver 标题、状态、按钮和展开区顺序：当前环境未启动系统级读屏，仍需 macOS 人工读屏
+  验收；自动化 ARIA/键盘结果不替代 VoiceOver 结果。
+- [ ] 完整 1280×720 / 390×844 全业务路由矩阵、真实外部 provider 动作和 `/email` 入口仍按
+  本计划的剩余门禁单独验收；本记录不把局部浏览器通过写成全计划完成。
+
+本轮规模基准（隔离 Vite、合成 API、1280×720；单位 ms）示例结果：
+
+| 总数 | 页面 | 稳定可见行 | 首屏可见 | 首次筛选完成 | DOM 节点 |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | History / Tasks / Feedback | 1 / 1 / 1 | 1186.5 / 737.2 / 704.1 | 160.0 / 91.1 / 120.2 | 152 / 114 / 100 |
+| 10 | History / Tasks / Feedback | 10 / 10 / 10 | 851.5 / 918.2 / 1133.9 | 92.7 / 130.3 / 204.8 | 323 / 204 / 262 |
+| 100 | History / Tasks / Feedback | 20 / 20 / 20 | 1059.4 / 839.0 / 893.0 | 183.5 / 228.3 / 155.7 | 523 / 314 / 446 |
+| 1000 | History / Tasks / Feedback | 20 / 20 / 20 | 669.4 / 578.8 / 1140.4 | 129.5 / 55.9 / 49.7 | 523 / 314 / 446 |
+| 10000 | History / Tasks / Feedback | 20 / 20 / 20 | 474.5 / 756.1 / 572.3 | 110.2 / 168.5 / 93.4 | 523 / 314 / 446 |
+
+该表是一次隔离环境测量，不是性能 SLA；它证明数据总数从 100 增长到 10000 时，列表 DOM
+和当前页行数保持有界。正式发布仍需完成本计划的真实 HTTP、构建、launchd、队列和全路由门禁。
+
 ## 默认假设
 
 - 继续使用现有 React/Vite、FastAPI、SQLite 和 launchd，不迁移到 Ant Design、NestJS、PostgreSQL、Docker 或 Kubernetes；这些是通用内部应用建议，不是本仓库当前批准的架构替换。
