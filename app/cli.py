@@ -84,7 +84,6 @@ from app.org_cache import (
     refresh_org_cache,
 )
 from app.store import AgentRunLeaseLostError, AutoReplyStore
-from app.skill_features import FeatureRegistry
 from app.task_agent import TaskAgentCodexRunner, TaskAgentRunner, process_work_item
 from app.task_memory_backfill import (
     ProjectMemoryContextCodexRunner,
@@ -1085,9 +1084,6 @@ def process_work_items_command(settings: WorkerSettings) -> int:
     limit = 20 if settings.max_batches is None else settings.max_batches
     if limit <= 0:
         print("process-work-items processed=0", flush=True)
-        return 0
-    if not FeatureRegistry().feature_enabled("work_tracking"):
-        print("process-work-items disabled feature=work_tracking", flush=True)
         return 0
     store.recover_orphaned_task_agent_runs()
     store.recover_expired_terminal_task_runtime_attempts()

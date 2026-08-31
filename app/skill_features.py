@@ -77,6 +77,11 @@ class FeatureRegistry:
 
     def is_enabled(self, feature_id: str) -> bool:
         definition = self._definition(feature_id)
+        # Workers keep a registry instance alive for their whole process, while
+        # settings updates are written by another request/process.  Read the
+        # persisted state at each runtime check so a long-lived producer sees
+        # the latest toggle without requiring a service restart.
+        self._states = self._load_state()
         return self._states.get(feature_id, definition.default_enabled)
 
     def set_enabled(self, feature_id: str, enabled: bool) -> FeatureState:

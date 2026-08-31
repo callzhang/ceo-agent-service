@@ -297,14 +297,17 @@ def test_email_agent_consumer_claims_only_email_channel_without_dingtalk_adapter
     assert calls[5] == ("finalize", task, result)
 
 
-def test_email_agent_consumer_does_not_claim_when_mail_review_disabled():
+def test_email_agent_consumer_processes_existing_task_when_mail_review_disabled():
     module = _module()
     calls = []
 
     class Store:
         def claim_reply_tasks(self, limit, *, channel):
-            calls.append((limit, channel))
+            calls.append(("claim", limit, channel))
             return [SimpleNamespace(id=1)]
+
+        def fail_reply_task(self, *args, **kwargs):
+            pytest.fail("existing task should be processed, not failed")
 
     class DisabledRegistry:
         def feature_enabled(self, feature_id):
@@ -313,15 +316,20 @@ def test_email_agent_consumer_does_not_claim_when_mail_review_disabled():
 
     module.run_email_agent_task_loop(
         Store(),
-        SimpleNamespace(process=lambda *args, **kwargs: None),
-        load_task_context=lambda task: task,
-        finalize_task=lambda task, result: None,
+        SimpleNamespace(
+            process=lambda task, context, *, refresh_context: calls.append(
+                ("process", task.id, context)
+            )
+            or "done"
+        ),
+        load_task_context=lambda task: calls.append(("context", task.id)) or "ctx",
+        finalize_task=lambda task, result: calls.append(("finalize", task.id, result)),
         feature_registry=DisabledRegistry(),
         sleep=lambda _seconds: None,
         max_cycles=1,
     )
 
-    assert calls == []
+    assert calls == [("claim", 50, "email"), ("context", 1), ("process", 1, "ctx"), ("finalize", 1, "done")]
 
 
 def test_direct_actions_are_not_claimed_without_a_provider_executor_factory():

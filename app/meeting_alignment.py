@@ -418,10 +418,6 @@ def consume_meeting_alignment_jobs(
         raise ValueError("meeting retry delay must not be negative")
     if max_attempts <= 0:
         raise ValueError("meeting max attempts must be positive")
-    registry = feature_registry or FeatureRegistry()
-    if not registry.feature_enabled("meeting_summary"):
-        return 0
-
     processed_ids: set[int] = set()
     capacity_paused = bool(store.active_codex_capacity_pause(now=now))
     jobs = (

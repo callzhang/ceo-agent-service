@@ -159,20 +159,10 @@ def run_email_agent_task_loop(
     max_cycles: int | None = None,
     feature_registry: FeatureRegistry | None = None,
 ) -> None:
-    registry = feature_registry or FeatureRegistry()
     cycles = 0
     while max_cycles is None or cycles < max_cycles:
         failures = 0
         last_error_type = ""
-        if not registry.feature_enabled("mail_review"):
-            record_health(
-                "component:email-agent-consumer",
-                {"status": "disabled", "failures": 0},
-            )
-            cycles += 1
-            if max_cycles is None or cycles < max_cycles:
-                sleep(CONSUMER_POLL_INTERVAL_SECONDS)
-            continue
         try:
             tasks = task_store.claim_reply_tasks(50, channel="email")
         except Exception as exc:  # noqa: BLE001 - keep the component alive

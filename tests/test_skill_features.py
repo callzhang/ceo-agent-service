@@ -187,6 +187,18 @@ def test_toggles_from_two_instances_merge_without_losing_updates(tmp_path):
     assert final.is_enabled("document_review") is False
 
 
+def test_long_lived_registry_observes_toggle_written_by_another_instance(tmp_path):
+    registry = write_registry(tmp_path, {"features": [feature()]})
+    state = tmp_path / "state.json"
+    long_lived = FeatureRegistry(registry_path=registry, state_path=state)
+    controller = FeatureRegistry(registry_path=registry, state_path=state)
+
+    assert long_lived.feature_enabled("meeting_summary") is True
+    controller.set_enabled("meeting_summary", False)
+
+    assert long_lived.feature_enabled("meeting_summary") is False
+
+
 @pytest.mark.parametrize(
     "operation",
     [

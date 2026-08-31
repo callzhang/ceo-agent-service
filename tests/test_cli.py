@@ -43,6 +43,7 @@ from app.cli import (
 from app.corpus import CorpusRecord, append_records
 from app.dws_client import DwsError
 from app.external_retry import ExternalDependencyError
+from app.skill_features import FeatureRegistry
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_models import TaskAgentDecision, WorkItem
 
@@ -1976,30 +1977,68 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
     assert status == "done"
 
 
-def test_process_work_items_command_does_not_claim_when_work_tracking_disabled(
+def test_process_work_items_command_processes_existing_input_when_work_tracking_disabled(
     tmp_path, monkeypatch, capsys
 ):
-    class DisabledRegistry:
-        def feature_enabled(self, feature_id):
-            assert feature_id == "work_tracking"
-            return False
-
-    monkeypatch.setattr(cli, "FeatureRegistry", DisabledRegistry)
     db_path = tmp_path / "task.sqlite3"
     store = AutoReplyStore(db_path)
-    input_id = store.enqueue_work_summary_input("reply_attempt", "1", "{}")
-
-    assert (
-        process_work_items_command(
-            WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
-        )
-        == 0
+    item = WorkItem.model_validate(
+        {
+            "source": {
+                "type": "reply_attempt",
+                "ref": "1",
+                "title": "已存在事项",
+                "created_at": "2026-06-07 09:00:00",
+            },
+            "summary": "已有事项等待处理。",
+            "project_name": "已有项目",
+            "context": {
+                "sender": "Mina",
+                "participants": [],
+                "source_conversation_kind": "group",
+                "source_conversation_title": "已有事项群",
+            },
+        }
     )
-    assert capsys.readouterr().out == "process-work-items disabled feature=work_tracking\n"
+    input_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    registry.set_enabled("work_tracking", False)
+
+    class FakeTaskAgentCodexRunner:
+        last_session_id = "task-session-disabled-existing"
+        last_audit_tool_events = []
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def decide(self, *, prompt, workload_key=None, session_scope_id=None):
+            return TaskAgentDecision.model_validate(
+                {
+                    "action": "skip",
+                    "project": None,
+                    "todo_changes": [],
+                    "follow_up_drafts": [],
+                    "update_summary": "已有事项已处理。",
+                    "merge_reason": "existing item",
+                    "memory_recall_used": True,
+                    "confidence": 0.8,
+                }
+            )
+
+    monkeypatch.setattr(cli, "TaskAgentCodexRunner", FakeTaskAgentCodexRunner)
+
+    assert process_work_items_command(
+        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+    ) == 1
+    assert capsys.readouterr().out == "process-work-items processed=1\n"
     with store._connect() as db:
         assert db.execute(
             "select status from work_summary_inputs where id=?", (input_id,)
-        ).fetchone()["status"] == "pending"
+        ).fetchone()["status"] == "skipped"
 def test_process_work_items_command_reclaims_stale_processing_input(
     tmp_path,
     monkeypatch,

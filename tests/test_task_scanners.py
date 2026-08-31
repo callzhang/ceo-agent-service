@@ -33,6 +33,19 @@ def test_disabled_work_tracking_does_not_scan_or_enqueue_local_files(tmp_path):
     assert store.claim_work_summary_inputs(limit=1) == []
 
 
+def test_disabled_work_tracking_does_not_scan_or_enqueue_ai_minutes(tmp_path):
+    store = AutoReplyStore(tmp_path / "scanner.sqlite3")
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    registry.set_enabled("work_tracking", False)
+
+    class Dws:
+        def list_minutes(self):
+            raise AssertionError("disabled scanner must not read AI minutes")
+
+    assert scan_ai_minutes(store, Dws(), feature_registry=registry) == 0
+    assert store.claim_work_summary_inputs(limit=1) == []
+
+
 def test_scan_local_files_only_under_workspace(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
