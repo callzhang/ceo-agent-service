@@ -1936,15 +1936,13 @@ class DwsClient:
         conversation = self._with_single_chat_direct_target(conversation)
         payload = self.run_json(self.build_read_unread_messages_command(conversation))
         result = payload.get("result")
-        if not isinstance(result, dict) or not isinstance(
-            result.get("messages"), list
-        ):
+        if isinstance(result, list):
+            raw_unread_messages = result[: conversation.unread_point]
+        elif isinstance(result, dict) and isinstance(result.get("messages"), list):
+            raw_unread_messages = result["messages"][: conversation.unread_point]
+        else:
             raise DwsError("unread messages response has no ordered message rows")
-        raw_unread_messages = result["messages"][: conversation.unread_point]
-        unread_payload = {
-            **payload,
-            "result": {**result, "messages": raw_unread_messages},
-        }
+        unread_payload = {"result": {"messages": raw_unread_messages}}
         parsed_unread_messages = self.parse_messages(
             unread_payload,
             conversation_title=conversation.title,
