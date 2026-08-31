@@ -2155,6 +2155,11 @@ def build_worker_status_payload(
     with store.read_snapshot():
         queues = _queue_status_snapshots(store)
         attention_rows = _queue_attention_rows(store)
+    attention_count = sum(
+        max(0, int(row.get("count") or 1))
+        for row in attention_rows
+        if isinstance(row, Mapping)
+    )
     payload: dict[str, object] = {
         "service": service,
         "components": _service_component_snapshots(),
@@ -2170,7 +2175,7 @@ def build_worker_status_payload(
             "processing": sum(int(queue["processing"]) for queue in queues),
             "failed": sum(int(queue["failed"]) for queue in queues),
             "retryable": sum(int(queue["retryable"]) for queue in queues),
-            "attention": len(attention_rows),
+            "attention": attention_count,
         },
     }
     if include_system_health:
@@ -3154,10 +3159,20 @@ def render_settings_page(
         else None
     )
     if isinstance(payload_attention_rows, list):
-        attention_count = len(payload_attention_rows)
+        # Cards are grouped by root cause; the badge reports unresolved
+        # records, matching the count shown inside the Attention panel.
+        attention_count = sum(
+            max(0, int(row.get("count") or 1))
+            for row in payload_attention_rows
+            if isinstance(row, Mapping)
+        )
     else:
         with store.read_snapshot():
-            attention_count = len(_queue_attention_rows(store))
+            attention_count = sum(
+                max(0, int(row.get("count") or 1))
+                for row in _queue_attention_rows(store)
+                if isinstance(row, Mapping)
+            )
     body = (
         '<div class="settings-layout">'
         f"{_settings_tabs(active_tab, attention_count=attention_count)}"

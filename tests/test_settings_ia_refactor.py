@@ -291,3 +291,18 @@ def test_configuration_post_rejects_invalid_scheduling_value_without_overwrite(
 
     assert response.status_code == 400
     assert read_env_file(env_path)["CEO_PRODUCER_INTERVAL_SECONDS"] == "60"
+
+
+def test_settings_attention_badge_counts_records_not_groups(tmp_path: Path):
+    page = render_settings_page(
+        _store(tmp_path),
+        active_tab="info",
+        worker_status_payload={
+            "attention_rows": [
+                {"count": 8},
+                {"count": 3},
+            ]
+        },
+    )
+
+    assert 'class="nav-badge">11</span>' in page

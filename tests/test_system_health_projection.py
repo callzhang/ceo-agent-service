@@ -46,6 +46,20 @@ def test_recent_service_errors_project_to_system_health_observation(
     }
 
 
+def test_worker_summary_attention_counts_records_not_groups(monkeypatch, tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    monkeypatch.setattr(audit_web_module, "_launchd_service_status", _running_service)
+    monkeypatch.setattr(
+        audit_web_module,
+        "_queue_attention_rows",
+        lambda _store: [{"count": 8}, {"count": 3}],
+    )
+
+    payload = build_worker_status_payload(store, include_system_health=False)
+
+    assert payload["summary"]["attention"] == 11
+
+
 def test_non_error_quality_violation_projects_to_degraded_system_health(
     monkeypatch, tmp_path: Path
 ):
