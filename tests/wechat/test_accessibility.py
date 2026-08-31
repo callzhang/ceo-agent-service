@@ -676,9 +676,11 @@ def test_preflight_requires_a_usable_accessibility_window(monkeypatch):
     assert runner.preflight() == "wechat_window_unavailable"
 
 
-def test_preflight_activates_wechat_before_reporting_window_unavailable(monkeypatch):
+def test_preflight_does_not_activate_wechat_when_ax_window_is_temporarily_empty(
+    monkeypatch,
+):
     app = object()
-    ax_reads = iter([[], [object()]])
+    ax_reads = iter([[], [], []])
     activated = []
     monkeypatch.setitem(
         sys.modules,
@@ -710,8 +712,8 @@ def test_preflight_activates_wechat_before_reporting_window_unavailable(monkeypa
     monkeypatch.setattr(runner, "_reactivate", lambda app_ref: activated.append(app_ref))
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
-    assert runner.preflight() == "ready"
-    assert activated == ["wechat-app"]
+    assert runner.preflight() == "wechat_window_unavailable"
+    assert activated == []
 
 
 def test_reactivate_switches_wechat_to_current_space(monkeypatch):
