@@ -47,6 +47,7 @@ from app.notification import (
     send_macos_notification,
 )
 from app.store import AutoReplyStore
+from app.skill_features import FeatureRegistry
 
 DISCOVERY_PAGE_LIMIT = 100
 DISCOVERY_PAGE_SIZE = 50
@@ -92,6 +93,7 @@ def produce_meeting_alignment_jobs(
     now: datetime,
     settle_seconds: int = 600,
     discovery_lookback: timedelta = DEFAULT_MEETING_DISCOVERY_LOOKBACK,
+    feature_registry: FeatureRegistry | None = None,
 ) -> int:
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("meeting producer now must include a timezone")
@@ -99,6 +101,9 @@ def produce_meeting_alignment_jobs(
         raise ValueError("settle_seconds must not be negative")
     if discovery_lookback.total_seconds() <= 0:
         raise ValueError("meeting discovery lookback must be positive")
+    registry = feature_registry or FeatureRegistry()
+    if not registry.feature_enabled("meeting_summary"):
+        return 0
 
     activated_at: datetime | None = None
     activated_at_text = store.get_service_state(
@@ -215,6 +220,7 @@ def queue_recent_meeting_alignment_replay(
     offset: int = 0,
     settle_seconds: int = 600,
     discovery_lookback: timedelta = DEFAULT_MEETING_DISCOVERY_LOOKBACK,
+    feature_registry: FeatureRegistry | None = None,
 ) -> list[dict[str, Any]]:
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("meeting replay now must include a timezone")
@@ -231,6 +237,9 @@ def queue_recent_meeting_alignment_replay(
         raise ValueError("settle_seconds must not be negative")
     if discovery_lookback.total_seconds() <= 0:
         raise ValueError("meeting discovery lookback must be positive")
+    registry = feature_registry or FeatureRegistry()
+    if not registry.feature_enabled("meeting_summary"):
+        return []
 
     current_user_id = dws.get_current_user_id().strip()
     if not current_user_id:
@@ -399,6 +408,7 @@ def consume_meeting_alignment_jobs(
     max_attempts: int = DEFAULT_MEETING_MAX_ATTEMPTS,
     deliver: bool = True,
     embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
+    feature_registry: FeatureRegistry | None = None,
 ) -> int:
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("meeting consumer now must include a timezone")
@@ -408,6 +418,9 @@ def consume_meeting_alignment_jobs(
         raise ValueError("meeting retry delay must not be negative")
     if max_attempts <= 0:
         raise ValueError("meeting max attempts must be positive")
+    registry = feature_registry or FeatureRegistry()
+    if not registry.feature_enabled("meeting_summary"):
+        return 0
 
     processed_ids: set[int] = set()
     capacity_paused = bool(store.active_codex_capacity_pause(now=now))

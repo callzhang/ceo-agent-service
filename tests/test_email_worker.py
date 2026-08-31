@@ -297,6 +297,33 @@ def test_email_agent_consumer_claims_only_email_channel_without_dingtalk_adapter
     assert calls[5] == ("finalize", task, result)
 
 
+def test_email_agent_consumer_does_not_claim_when_mail_review_disabled():
+    module = _module()
+    calls = []
+
+    class Store:
+        def claim_reply_tasks(self, limit, *, channel):
+            calls.append((limit, channel))
+            return [SimpleNamespace(id=1)]
+
+    class DisabledRegistry:
+        def feature_enabled(self, feature_id):
+            assert feature_id == "mail_review"
+            return False
+
+    module.run_email_agent_task_loop(
+        Store(),
+        SimpleNamespace(process=lambda *args, **kwargs: None),
+        load_task_context=lambda task: task,
+        finalize_task=lambda task, result: None,
+        feature_registry=DisabledRegistry(),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert calls == []
+
+
 def test_direct_actions_are_not_claimed_without_a_provider_executor_factory():
     module = _module()
 

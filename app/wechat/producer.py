@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
+from app.skill_features import FeatureRegistry
 
 
 def is_reply_candidate(
@@ -33,14 +34,18 @@ def is_reply_candidate(
 
 class WechatReplyProducer:
     def __init__(self, store, reader, account: WechatAccount, *, self_user_id: str,
-                 read_limit: int = 200):
+                 read_limit: int = 200,
+                 feature_registry: FeatureRegistry | None = None):
         self.store = store
         self.reader = reader
         self.account = account
         self.self_user_id = self_user_id
         self.read_limit = read_limit
+        self.feature_registry = feature_registry or FeatureRegistry()
 
     def run_once(self) -> int:
+        if not self.feature_registry.feature_enabled("message_triage"):
+            return 0
         scopes = self.store.list_wechat_reply_scopes(
             self.account.account_id, enabled_only=True
         )

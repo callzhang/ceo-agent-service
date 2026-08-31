@@ -9,6 +9,7 @@ from urllib.parse import quote
 from app.dingtalk_models import DingTalkMessage
 from app.store import AutoReplyStore
 from app.task_models import WorkItem
+from app.skill_features import FeatureRegistry
 
 LOCAL_FILE_SCANNER = "local_files"
 AI_MINUTES_SCANNER = "ai_minutes"
@@ -87,7 +88,10 @@ def scan_local_workspace_files(
     exclude_globs: tuple[str, ...] = (),
     enqueue_existing_on_first_scan: bool = False,
     max_new_items: int | None = None,
+    feature_registry: FeatureRegistry | None = None,
 ) -> int:
+    if not (feature_registry or FeatureRegistry()).feature_enabled("work_tracking"):
+        return 0
     workspace = workspace.expanduser().resolve()
     if not workspace.exists() or not workspace.is_dir():
         store.set_daily_scan_state(
@@ -192,7 +196,10 @@ def scan_ai_minutes(
     *,
     enqueue_existing_on_first_scan: bool = False,
     max_new_items: int | None = None,
+    feature_registry: FeatureRegistry | None = None,
 ) -> int:
+    if not (feature_registry or FeatureRegistry()).feature_enabled("work_tracking"):
+        return 0
     list_minutes = getattr(dws, "list_minutes", None)
     list_minutes_page = getattr(dws, "list_minutes_page", None)
     if list_minutes is None and list_minutes_page is None:

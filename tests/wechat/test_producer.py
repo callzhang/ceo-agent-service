@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from app.store import AutoReplyStore
+from app.skill_features import FeatureRegistry
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
 from app.wechat.producer import WechatReplyProducer, is_reply_candidate
 
@@ -98,6 +99,38 @@ def test_direct_replies_to_every_inbound_text(producer, reader, store):
     reader.messages = [direct_message("d1", text="hi"), direct_message("d2", text="hello")]
     assert producer.run_once() == 2
     assert store.count_reply_tasks(channel="wechat") == 2
+
+
+def test_disabled_message_triage_does_not_create_wechat_tasks(
+    store, reader, account
+):
+    store.replace_wechat_reply_scopes(
+        "acct-1",
+        [
+            WechatReplyScope(
+                account_id="acct-1",
+                target_type="direct",
+                target_id="u9",
+                conversation_id="u9",
+                display_name="Alex",
+                trigger_mode="every_inbound_text",
+                last_active_at="2026-07-17T09:00:00+00:00",
+            )
+        ],
+    )
+    reader.messages = [direct_message("d1", text="hello")]
+    registry = FeatureRegistry(state_path=store.path.parent / "skill-state.json")
+    registry.set_enabled("message_triage", False)
+
+    producer = WechatReplyProducer(
+        store,
+        reader,
+        account,
+        self_user_id="self-1",
+        feature_registry=registry,
+    )
+    assert producer.run_once() == 0
+    assert store.count_reply_tasks(channel="wechat") == 0
 
 
 def test_outbound_and_nontext_ignored(producer, reader):

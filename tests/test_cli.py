@@ -1976,6 +1976,30 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
     assert status == "done"
 
 
+def test_process_work_items_command_does_not_claim_when_work_tracking_disabled(
+    tmp_path, monkeypatch, capsys
+):
+    class DisabledRegistry:
+        def feature_enabled(self, feature_id):
+            assert feature_id == "work_tracking"
+            return False
+
+    monkeypatch.setattr(cli, "FeatureRegistry", DisabledRegistry)
+    db_path = tmp_path / "task.sqlite3"
+    store = AutoReplyStore(db_path)
+    input_id = store.enqueue_work_summary_input("reply_attempt", "1", "{}")
+
+    assert (
+        process_work_items_command(
+            WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
+        )
+        == 0
+    )
+    assert capsys.readouterr().out == "process-work-items disabled feature=work_tracking\n"
+    with store._connect() as db:
+        assert db.execute(
+            "select status from work_summary_inputs where id=?", (input_id,)
+        ).fetchone()["status"] == "pending"
 def test_process_work_items_command_reclaims_stale_processing_input(
     tmp_path,
     monkeypatch,

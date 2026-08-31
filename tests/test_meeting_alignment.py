@@ -21,8 +21,53 @@ from app.meeting_alignment import (
 )
 from app.meeting_alignment_models import MeetingAlignmentDecision
 from app.store import AutoReplyStore
+from app.skill_features import FeatureRegistry
 
 NOW = datetime.fromisoformat("2026-07-14T10:10:00+08:00")
+
+
+def test_producer_does_not_create_new_job_when_feature_disabled(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+    registry = FeatureRegistry(
+        state_path=tmp_path / "skill-state.json"
+    )
+    registry.set_enabled("meeting_summary", False)
+
+    assert (
+        produce_meeting_alignment_jobs(
+            store,
+            dws,
+            now=NOW,
+            feature_registry=registry,
+        )
+        == 0
+    )
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+
+
+def test_disabled_feature_leaves_existing_meeting_job_queued(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    registry = FeatureRegistry(
+        state_path=tmp_path / "skill-state.json"
+    )
+    registry.set_enabled("meeting_summary", False)
+
+    assert (
+        consume_meeting_alignment_jobs(
+            store,
+            dws,
+            object(),
+            now=NOW,
+            feature_registry=registry,
+        )
+        == 0
+    )
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    assert job.status == "pending"
 
 
 def ended_meeting(

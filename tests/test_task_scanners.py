@@ -4,12 +4,33 @@ from pathlib import Path
 from datetime import datetime
 
 from app.dws_client import DwsOaApprovalCandidate
+from app.skill_features import FeatureRegistry
 from app.store import AutoReplyStore
 from app.task_scanners import (
     scan_ai_minutes,
     scan_local_workspace_files,
     scan_pending_oa_approvals,
 )
+
+
+def test_disabled_work_tracking_does_not_scan_or_enqueue_local_files(tmp_path):
+    store = AutoReplyStore(tmp_path / "scanner.sqlite3")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "note.md").write_text("待跟进事项", encoding="utf-8")
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    registry.set_enabled("work_tracking", False)
+
+    assert (
+        scan_local_workspace_files(
+            store,
+            workspace=workspace,
+            enqueue_existing_on_first_scan=True,
+            feature_registry=registry,
+        )
+        == 0
+    )
+    assert store.claim_work_summary_inputs(limit=1) == []
 
 
 def test_scan_local_files_only_under_workspace(tmp_path):

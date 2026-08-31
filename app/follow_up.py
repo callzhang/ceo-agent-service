@@ -7,6 +7,7 @@ from app.dws_client import DwsError
 from app.external_retry import is_external_dependency_error
 from app.feedback_spike import prepare_outgoing_reply_text
 from app.store import AutoReplyStore
+from app.skill_features import FeatureRegistry
 from app.task_models import ProjectStatus, TodoStatus, WorkItem
 from app.todo_sync import (
     refresh_dingtalk_todo_before_follow_up,
@@ -593,6 +594,8 @@ def _defer_follow_up_for_agent_review(
     repair_source_ref: str = "",
     additional_evidence: dict[str, object] | None = None,
 ) -> bool:
+    if not FeatureRegistry().feature_enabled("work_tracking"):
+        return False
     work_item, resolved_source_ref = _work_tracking_review_item(
         store,
         draft,
@@ -679,6 +682,8 @@ def _enqueue_prior_delivery_agent_review(
     *,
     now: str,
 ) -> bool:
+    if not FeatureRegistry().feature_enabled("work_tracking"):
+        return False
     attempt_revision = int(attempt.get("draft_revision") or 0)
     late_result = _json_dict(str(attempt.get("late_result_json") or "{}"))
     attempt_result = late_result or _json_dict(
