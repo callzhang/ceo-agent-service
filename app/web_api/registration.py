@@ -817,6 +817,16 @@ def register_console_routes(
             "referenced_by": list(registry.features_for_skill(document.name)),
         }
 
+    def _available_skill_names(service: SkillFileService) -> set[str]:
+        available: set[str] = set()
+        for project_skill in service.list_skills():
+            try:
+                document = service.get_skill(project_skill.name)
+            except SkillFileValidationError:
+                continue
+            available.add(document.name)
+        return available
+
     @app.get("/api/console/settings/skills")
     def console_settings_skills():
         registry = feature_registry_factory()
@@ -892,7 +902,10 @@ def register_console_routes(
         return {
             "feature_id": state.feature_id,
             "enabled": state.enabled,
-            "status": registry.feature_status(state.feature_id, set(registry.list_project_skill_names())),
+            "status": registry.feature_status(
+                state.feature_id,
+                _available_skill_names(skill_file_service_factory()),
+            ),
         }
 
     @app.get("/api/console/settings/skills/{skill_name}")
