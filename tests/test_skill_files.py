@@ -1,6 +1,7 @@
 import hashlib
 import os
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -66,6 +67,8 @@ def test_get_skill_returns_exact_utf8_sha_and_rejects_traversal(tmp_path: Path):
     assert document.sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
     with pytest.raises(SkillFileValidationError):
         SkillFileService(root).get_skill("../valid")
+    with pytest.raises(SkillFileValidationError):
+        SkillFileService(root).get_skill("bad\x00name")
 
 
 def test_crlf_bytes_are_hashed_and_restored_without_normalization(tmp_path: Path, monkeypatch):
@@ -113,6 +116,25 @@ def test_save_skill_sync_failure_restores_source_and_runtime(tmp_path: Path, mon
     assert source.read_bytes() == original
 
 
+def test_concurrent_save_with_same_sha_allows_only_one_writer(tmp_path: Path):
+    source_root = tmp_path / "skills"
+    runtime_root = tmp_path / "runtime"
+    _write_skill(source_root, "valid")
+    service = SkillFileService(source_root, runtime_skills_root=runtime_root)
+    expected = service.get_skill("valid").sha256
+    contents = [service.get_skill("valid").content + suffix for suffix in ("one\n", "two\n")]
+
+    def save(content: str):
+        try:
+            return service.save_skill("valid", content, expected)
+        except SkillFileConflict:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(save, contents))
+    assert sum(result != "conflict" for result in results) == 1
+
+
 def test_sync_rollback_failure_preserves_recovery_data(tmp_path: Path, monkeypatch):
     source_root = tmp_path / "skills"
     runtime_root = tmp_path / "runtime"
@@ -136,6 +158,20 @@ def test_sync_rollback_failure_preserves_recovery_data(tmp_path: Path, monkeypat
         sync_bundled_skill("valid", source_path=source, target_root=runtime_root)
     assert exc_info.value.recovery_path.is_dir()
     assert (exc_info.value.recovery_path / "backup" / "valid" / "SKILL.md").is_file()
+
+
+def test_sync_staging_failure_cleans_transaction_directory(tmp_path: Path, monkeypatch):
+    source_root = tmp_path / "skills"
+    runtime_root = tmp_path / "runtime"
+    source = _write_skill(source_root, "valid")
+
+    def fail_write(_self, _data):
+        raise OSError("staging failed")
+
+    monkeypatch.setattr(Path, "write_bytes", fail_write)
+    with pytest.raises(OSError, match="staging failed"):
+        sync_bundled_skill("valid", source_path=source, target_root=runtime_root)
+    assert not list(tmp_path.glob(".ceo-business-skill-*"))
 
 
 def test_sync_rejects_parent_name_without_touching_runtime(tmp_path: Path):

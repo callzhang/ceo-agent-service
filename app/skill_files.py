@@ -5,6 +5,7 @@ import hashlib
 import os
 from pathlib import Path
 import tempfile
+import threading
 
 from app.business_skills import (
     MANAGED_BY,
@@ -13,6 +14,9 @@ from app.business_skills import (
     _required_scalar,
     sync_bundled_skill,
 )
+
+_LOCKS_GUARD = threading.Lock()
+_SKILL_LOCKS: dict[Path, threading.Lock] = {}
 
 
 class SkillFileError(RuntimeError):
@@ -110,30 +114,31 @@ class SkillFileService:
     def save_skill(self, name: str, content: str, expected_sha256: str) -> SkillDocument:
         if not isinstance(content, str):
             raise SkillFileValidationError("Skill content must be text")
-        current = self.get_skill(name)
-        if current.sha256 != expected_sha256:
-            raise SkillFileConflict(
-                f"Skill {name!r} changed; expected {expected_sha256}, current {current.sha256}"
-            )
-        candidate = self._validate_content(name, current.path, content)
-        old_bytes = current.raw_bytes
-        try:
-            self._atomic_write(current.path, candidate.encode("utf-8"))
-        except BaseException as exc:
-            raise SkillFileSyncError("source", exc) from exc
-        try:
-            self._sync_runtime(name, current.path)
-        except BaseException as sync_error:
+        path = self._resolve_skill_path(name)
+        with _skill_lock(path):
+            current = self.get_skill(name)
+            if current.sha256 != expected_sha256:
+                raise SkillFileConflict(
+                    f"Skill {name!r} changed; expected {expected_sha256}, current {current.sha256}"
+                )
+            candidate = self._validate_content(name, current.path, content)
+            old_bytes = current.raw_bytes
             try:
-                self._atomic_write(current.path, old_bytes)
-            except BaseException as restore_error:
-                raise SkillFileSyncError("sync-and-restore", restore_error) from sync_error
-            raise SkillFileSyncError("runtime-sync", sync_error) from sync_error
-        return self.get_skill(name)
+                self._atomic_write(current.path, candidate.encode("utf-8"))
+            except BaseException as exc:
+                raise SkillFileSyncError("source", exc) from exc
+            try:
+                self._sync_runtime(name, current.path)
+            except BaseException as sync_error:
+                try:
+                    self._atomic_write(current.path, old_bytes)
+                except BaseException as restore_error:
+                    raise SkillFileSyncError("sync-and-restore", restore_error) from sync_error
+                raise SkillFileSyncError("runtime-sync", sync_error) from sync_error
+            return self.get_skill(name)
 
     def _resolve_skill_path(self, name: str) -> Path:
-        if not isinstance(name, str) or not name or Path(name).name != name or name in {".", ".."}:
-            raise SkillFileValidationError(f"invalid Skill name: {name!r}")
+        _validate_skill_name(name)
         path = self.project_skills_root / name / "SKILL.md"
         try:
             resolved = path.resolve(strict=False)
@@ -173,3 +178,19 @@ class SkillFileService:
 
     def _sync_runtime(self, name: str, source_path: Path) -> Path:
         return sync_bundled_skill(name, source_path=source_path, target_root=self.runtime_skills_root)
+
+
+def _skill_lock(path: Path) -> threading.Lock:
+    with _LOCKS_GUARD:
+        return _SKILL_LOCKS.setdefault(path, threading.Lock())
+
+
+def _validate_skill_name(name: str) -> None:
+    if (
+        not isinstance(name, str)
+        or not name
+        or name in {".", ".."}
+        or Path(name).name != name
+        or any(ord(char) < 32 or ord(char) == 127 for char in name)
+    ):
+        raise SkillFileValidationError(f"invalid Skill name: {name!r}")

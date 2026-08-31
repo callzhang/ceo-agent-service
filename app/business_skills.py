@@ -70,6 +70,7 @@ def sync_bundled_skill(
         or not name
         or name in {".", ".."}
         or Path(name).name != name
+        or any(ord(char) < 32 or ord(char) == 127 for char in name)
     ):
         raise BusinessSkillValidationError(f"invalid Skill name: {name!r}")
     source = Path(source_path) if source_path is not None else bundled_business_skills_root() / name / "SKILL.md"
@@ -81,6 +82,7 @@ def sync_bundled_skill(
     frontmatter = _parse_frontmatter(content, source)
     if _required_scalar(frontmatter, "name", source) != name:
         raise BusinessSkillValidationError(f"Skill name does not match directory: {source}")
+    _required_scalar(frontmatter, "description", source)
     metadata = frontmatter.get("metadata")
     if not isinstance(metadata, dict) or metadata.get("managed_by") != MANAGED_BY:
         raise BusinessSkillValidationError(f"Skill missing managed marker: {source}")
@@ -107,13 +109,13 @@ def sync_bundled_skill(
     transaction_root = Path(tempfile.mkdtemp(prefix=".ceo-business-skill-", dir=root.parent))
     staged_dir = transaction_root / "staged"
     backup_dir = transaction_root / "backup"
-    staged_dir.mkdir()
-    backup_dir.mkdir()
-    (staged_dir / "SKILL.md").write_bytes(raw_content)
     had_existing = target_dir.exists()
     backup_moved = False
     installed = False
     try:
+        staged_dir.mkdir()
+        backup_dir.mkdir()
+        (staged_dir / "SKILL.md").write_bytes(raw_content)
         if had_existing:
             os.replace(target_dir, backup_dir / name)
             backup_moved = True
@@ -389,7 +391,7 @@ def _validate_swap_destination(
 def _is_service_managed(path: Path) -> bool:
     try:
         frontmatter = _parse_frontmatter(path.read_text(encoding="utf-8"), path)
-    except (OSError, BusinessSkillValidationError):
+    except (OSError, UnicodeError, BusinessSkillValidationError):
         return False
     metadata = frontmatter.get("metadata")
     return isinstance(metadata, dict) and metadata.get("managed_by") == MANAGED_BY
