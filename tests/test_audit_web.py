@@ -7355,7 +7355,7 @@ def test_worker_attention_uses_work_input_title_before_raw_reference(tmp_path: P
     assert row["summary"] == "Hiring debrief"
 
 
-def test_worker_attention_excludes_pending_work_items_but_keeps_processing(
+def test_worker_attention_excludes_pending_and_processing_work_items(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -7377,8 +7377,8 @@ def test_worker_attention_excludes_pending_work_items_but_keeps_processing(
         not (row["category"] == "Work item" and row["id"] == str(pending_id))
         for row in rows
     )
-    assert any(
-        row["category"] == "Work item" and row["id"] == str(processing_id)
+    assert all(
+        not (row["category"] == "Work item" and row["id"] == str(processing_id))
         for row in rows
     )
 
