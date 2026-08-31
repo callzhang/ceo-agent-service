@@ -819,6 +819,72 @@ def test_parse_typed_agent_result_skips_later_malformed_candidate():
     assert result.outcome is ConsumerOutcome.PROPOSAL
 
 
+def test_parse_typed_agent_result_accepts_single_stray_array_close_after_proposal():
+    payload = {
+        "outcome": "proposal",
+        "summary": "Prepare the notice.",
+        "proposal": _proposal(),
+        "error": _error(),
+    }
+    valid_json = json.dumps(payload)
+    split_at = valid_json.rindex('}, "error"')
+    malformed = (
+        valid_json[:split_at]
+        + '}], "error"'
+        + valid_json[split_at + len('}, "error"') :]
+    )
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": malformed},
+        }
+    )
+
+    result = parse_typed_agent_result(raw, ConsumerAgentResult)
+
+    assert result.outcome is ConsumerOutcome.PROPOSAL
+
+
+def test_consumer_wire_result_normalizes_legacy_proposal_layout():
+    legacy_proposal = json.loads(json.dumps(_proposal()))
+    expected_verification = legacy_proposal.pop("expected_verification", None)
+    authored_judgment = legacy_proposal.pop("authored_judgment")
+    if expected_verification is None:
+        expected_verification = legacy_proposal["actions"][0].pop(
+            "expected_verification"
+        )
+    else:
+        legacy_proposal["actions"][0].pop("expected_verification", None)
+    sourced_facts = legacy_proposal.pop("sourced_facts")
+    payload = {
+        "outcome": "proposal",
+        "summary": "Prepare the notice.",
+        "proposal": {
+            **legacy_proposal,
+            "expected_verification": expected_verification,
+        },
+        "sourced_facts": sourced_facts,
+        "authored_judgment": authored_judgment,
+        "error_code": "",
+        "error_retryable": False,
+        "error_authorization_required": False,
+        "risk": "low",
+        "confidence": 1.0,
+        "decision_options": [],
+    }
+    raw = json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": json.dumps(payload)},
+        }
+    )
+
+    result = parse_typed_agent_result(raw, ConsumerAgentWireResult)
+
+    assert result.root.proposal.actions[0].expected_verification
+    assert result.root.proposal.sourced_facts
+
+
 def test_consumer_wire_result_preserves_nested_proposal_fields():
     result = ConsumerAgentWireResult.model_validate(
         {

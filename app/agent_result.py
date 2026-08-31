@@ -164,7 +164,68 @@ def _agent_message_candidate(payload: dict) -> str | None:
 
 
 def _normalize_result_text(text: str) -> str:
-    return _first_balanced_json_object(_strip_json_fence(text.strip()))
+    cleaned = _strip_json_fence(text.strip())
+    repaired = _remove_top_level_stray_array_close(cleaned)
+    candidate = _first_balanced_json_object(repaired)
+    remainder = repaired[len(candidate) :].lstrip()
+    if remainder.startswith(',"authored_judgment"'):
+        # The legacy envelope omitted the outer closing brace, so the first
+        # balanced object ends at the proposal object. Move the trailing
+        # judgment into that proposal before closing both objects.
+        try:
+            candidate_payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            candidate_payload = {}
+        if isinstance(candidate_payload, dict) and "sourced_facts" in candidate_payload:
+            candidate = candidate[:-1] + remainder
+            if not remainder.endswith("}"):
+                candidate += "}"
+        else:
+            trailing_root = remainder.endswith("}")
+            authored = remainder[:-1] if trailing_root else remainder
+            candidate = candidate[:-1] + authored + "}}"
+    # Some Codex turns close the proposal object and then emit one redundant
+    # array terminator before the next top-level field. Accept only that exact
+    # wire-format defect; the repaired result still has to satisfy the strict
+    # typed schema at the caller.
+    return _remove_top_level_stray_array_close(candidate)
+
+
+def _remove_top_level_stray_array_close(text: str) -> str:
+    depth = 0
+    in_string = False
+    escaped = False
+    result: list[str] = []
+    for index, character in enumerate(text):
+        if in_string:
+            result.append(character)
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+            result.append(character)
+            continue
+        if character == "}":
+            depth -= 1
+            result.append(character)
+            continue
+        if character == "]" and depth == 1:
+            previous = text[index - 1] if index else ""
+            remainder = text[index + 1 :].lstrip()
+            next_field = remainder[1:].lstrip() if remainder.startswith(",") else ""
+            if previous == "}" and next_field.startswith(
+                ('"error"', '"sourced_facts"')
+            ):
+                continue
+        if character == "{":
+            depth += 1
+        result.append(character)
+    return "".join(result)
 
 
 def _strip_json_fence(text: str) -> str:
