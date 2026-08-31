@@ -10256,7 +10256,14 @@ def create_audit_app(
         store = AutoReplyStore(db_path)
         with store.read_snapshot():
             rows = _queue_attention_rows(store)
-        return JSONResponse({"count": len(rows), "rows": rows})
+        return JSONResponse({
+            "count": sum(
+                max(0, int(row.get("count") or 1))
+                for row in rows
+                if isinstance(row, Mapping)
+            ),
+            "rows": rows,
+        })
 
     @app.get("/logs", response_class=HTMLResponse)
     def log_list(request: Request) -> str:

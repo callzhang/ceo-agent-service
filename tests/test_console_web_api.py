@@ -936,7 +936,7 @@ def test_console_attention_returns_grouped_json_with_snapshot(monkeypatch, tmp_p
     assert response.status_code == 200
     payload = response.json()
     assert payload["meta"]["snapshot_at"]
-    assert payload["meta"]["total"] == 1
+    assert payload["meta"]["total"] == 2
     assert payload["items"][0]["count"] == 2
     assert payload["items"][0]["root_cause"] == "db_locked"
 

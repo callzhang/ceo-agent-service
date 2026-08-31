@@ -243,7 +243,10 @@ def register_console_routes(
         groups = group_attention_rows(attention_rows_factory())
         return AttentionListEnvelope(
             items=groups,
-            meta=ApiListMeta(snapshot_at=snapshot_at(), total=len(groups)),
+            meta=ApiListMeta(
+                snapshot_at=snapshot_at(),
+                total=sum(group.count for group in groups),
+            ),
         )
 
     @app.get("/api/console/history")
