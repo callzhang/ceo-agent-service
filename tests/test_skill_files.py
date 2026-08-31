@@ -4,7 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from app.business_skills import BusinessSkillInstallRollbackError, sync_bundled_skill
+from app.business_skills import (
+    BusinessSkillInstallRollbackError,
+    BusinessSkillValidationError,
+    sync_bundled_skill,
+)
 from app.skill_files import (
     SkillFileConflict,
     SkillFileService,
@@ -64,6 +68,22 @@ def test_get_skill_returns_exact_utf8_sha_and_rejects_traversal(tmp_path: Path):
         SkillFileService(root).get_skill("../valid")
 
 
+def test_crlf_bytes_are_hashed_and_restored_without_normalization(tmp_path: Path, monkeypatch):
+    source_root = tmp_path / "skills"
+    runtime_root = tmp_path / "runtime"
+    path = _write_skill(source_root, "valid")
+    original = path.read_bytes().replace(b"\n", b"\r\n")
+    path.write_bytes(original)
+    service = SkillFileService(source_root, runtime_skills_root=runtime_root)
+    document = service.get_skill("valid")
+    assert document.raw_bytes == original
+    assert document.sha256 == hashlib.sha256(original).hexdigest()
+    monkeypatch.setattr(service, "_sync_runtime", lambda *_args: (_ for _ in ()).throw(OSError("sync failed")))
+    with pytest.raises(SkillFileSyncError):
+        service.save_skill("valid", document.content.replace("Body", "Changed"), document.sha256)
+    assert path.read_bytes() == original
+
+
 def test_save_skill_uses_expected_sha_and_syncs_runtime_copy(tmp_path: Path):
     source_root = tmp_path / "skills"
     runtime_root = tmp_path / "runtime"
@@ -116,3 +136,12 @@ def test_sync_rollback_failure_preserves_recovery_data(tmp_path: Path, monkeypat
         sync_bundled_skill("valid", source_path=source, target_root=runtime_root)
     assert exc_info.value.recovery_path.is_dir()
     assert (exc_info.value.recovery_path / "backup" / "valid" / "SKILL.md").is_file()
+
+
+def test_sync_rejects_parent_name_without_touching_runtime(tmp_path: Path):
+    source_root = tmp_path / "skills"
+    runtime_root = tmp_path / "runtime"
+    source = _write_skill(source_root, "valid")
+    with pytest.raises(BusinessSkillValidationError):
+        sync_bundled_skill("..", source_path=source, target_root=runtime_root)
+    assert not runtime_root.exists()

@@ -50,6 +50,7 @@ class SkillDocument:
     path: Path
     content: str
     sha256: str
+    raw_bytes: bytes = b""
 
 
 class SkillFileService:
@@ -82,7 +83,8 @@ class SkillFileService:
     def get_skill(self, name: str) -> SkillDocument:
         path = self._resolve_skill_path(name)
         try:
-            content = path.read_text(encoding="utf-8")
+            raw_bytes = path.read_bytes()
+            content = raw_bytes.decode("utf-8")
         except (OSError, UnicodeError) as exc:
             raise SkillFileValidationError(f"unable to read Skill: {path}: {exc}") from exc
         try:
@@ -101,7 +103,8 @@ class SkillFileService:
             managed_by=MANAGED_BY,
             path=path,
             content=content,
-            sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            sha256=hashlib.sha256(raw_bytes).hexdigest(),
+            raw_bytes=raw_bytes,
         )
 
     def save_skill(self, name: str, content: str, expected_sha256: str) -> SkillDocument:
@@ -113,16 +116,16 @@ class SkillFileService:
                 f"Skill {name!r} changed; expected {expected_sha256}, current {current.sha256}"
             )
         candidate = self._validate_content(name, current.path, content)
-        old_bytes = current.content.encode("utf-8")
+        old_bytes = current.raw_bytes
         try:
-            self._atomic_write(current.path, candidate)
+            self._atomic_write(current.path, candidate.encode("utf-8"))
         except BaseException as exc:
             raise SkillFileSyncError("source", exc) from exc
         try:
             self._sync_runtime(name, current.path)
         except BaseException as sync_error:
             try:
-                self._atomic_write(current.path, old_bytes.decode("utf-8"))
+                self._atomic_write(current.path, old_bytes)
             except BaseException as restore_error:
                 raise SkillFileSyncError("sync-and-restore", restore_error) from sync_error
             raise SkillFileSyncError("runtime-sync", sync_error) from sync_error
@@ -156,10 +159,10 @@ class SkillFileService:
         return content
 
     @staticmethod
-    def _atomic_write(path: Path, content: str) -> None:
+    def _atomic_write(path: Path, content: bytes) -> None:
         fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            with os.fdopen(fd, "wb") as handle:
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())

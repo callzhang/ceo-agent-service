@@ -65,12 +65,18 @@ def sync_bundled_skill(
     target_root: Path | None = None,
 ) -> Path:
     """Atomically synchronize one service-managed project Skill to its runtime copy."""
-    if not isinstance(name, str) or not name or Path(name).name != name:
+    if (
+        not isinstance(name, str)
+        or not name
+        or name in {".", ".."}
+        or Path(name).name != name
+    ):
         raise BusinessSkillValidationError(f"invalid Skill name: {name!r}")
     source = Path(source_path) if source_path is not None else bundled_business_skills_root() / name / "SKILL.md"
     try:
-        content = source.read_text(encoding="utf-8")
-    except OSError as exc:
+        raw_content = source.read_bytes()
+        content = raw_content.decode("utf-8")
+    except (OSError, UnicodeError) as exc:
         raise BusinessSkillValidationError(f"unable to read Skill: {source}: {exc}") from exc
     frontmatter = _parse_frontmatter(content, source)
     if _required_scalar(frontmatter, "name", source) != name:
@@ -81,6 +87,17 @@ def sync_bundled_skill(
     root = Path.home() / ".agents" / "skills" if target_root is None else Path(target_root).expanduser()
     _validate_install_target(root)
     target_dir = root / name
+    try:
+        resolved_root = root.resolve(strict=False)
+        resolved_target = target_dir.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise BusinessSkillInstallTargetError(
+            f"unable to validate business Skill destination: {target_dir}"
+        ) from exc
+    if resolved_target.parent != resolved_root:
+        raise BusinessSkillInstallTargetError(
+            f"business Skill destination escaped target root: {target_dir}"
+        )
     target_file = target_dir / "SKILL.md"
     if target_dir.is_symlink():
         raise BusinessSkillInstallTargetError(f"refusing symlinked business Skill directory: {target_dir}")
@@ -92,7 +109,7 @@ def sync_bundled_skill(
     backup_dir = transaction_root / "backup"
     staged_dir.mkdir()
     backup_dir.mkdir()
-    (staged_dir / "SKILL.md").write_text(content, encoding="utf-8")
+    (staged_dir / "SKILL.md").write_bytes(raw_content)
     had_existing = target_dir.exists()
     backup_moved = False
     installed = False
