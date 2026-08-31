@@ -7,6 +7,7 @@ old form routes during the migration, but React never consumes their HTML.
 
 from collections.abc import Callable
 import json
+import string
 import subprocess
 from typing import Any
 from urllib.parse import urlencode
@@ -29,6 +30,14 @@ from app.web_api.tasks import (
 )
 from app.web_api.settings import info_payload
 from app.web_api.email import register_email_routes
+from app.skill_features import FeatureRegistry
+from app.skill_files import (
+    SkillFileConflict,
+    SkillFileError,
+    SkillFileService,
+    SkillFileValidationError,
+    SkillFileSyncError,
+)
 from app.feedback_processing import (
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
@@ -52,7 +61,12 @@ def register_console_routes(
     history_chart_factory: Callable[[], Any] | None = None,
     email_store_factory: Callable[[], Any] | None = None,
     email_learning_factory: Callable[[], Any] | None = None,
+    feature_registry_factory: Callable[[], FeatureRegistry] | None = None,
+    skill_file_service_factory: Callable[[], SkillFileService] | None = None,
 ) -> None:
+    feature_registry_factory = feature_registry_factory or FeatureRegistry
+    skill_file_service_factory = skill_file_service_factory or SkillFileService
+
     def list_meta(*, page: int, page_size: int, total: int, snapshot: str):
         return ApiListMeta(
             snapshot_at=snapshot, page=page, page_size=page_size, total=total,
@@ -779,6 +793,163 @@ def register_console_routes(
         if status >= 400:
             return JSONResponse({"ok": False, "code": "sync_failed", "message": "同步反馈失败", "details": {}}, status_code=status)
         return command_result(message="已同步最新反馈")
+
+    def _skill_error_response(exc: SkillFileValidationError) -> JSONResponse:
+        message = str(exc)
+        if message.startswith("unknown Skill:"):
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "Skill not found", "details": {}},
+                status_code=404,
+            )
+        return JSONResponse(
+            {"ok": False, "code": "validation_error", "message": "Skill 校验失败", "details": {"reason": message}},
+            status_code=422,
+        )
+
+    def _skill_payload(document: Any, registry: FeatureRegistry) -> dict[str, Any]:
+        return {
+            "name": document.name,
+            "description": document.description,
+            "managed_by": document.managed_by,
+            "path": str(document.path),
+            "content": document.content,
+            "sha256": document.sha256,
+            "referenced_by": list(registry.features_for_skill(document.name)),
+        }
+
+    @app.get("/api/console/settings/skills")
+    def console_settings_skills():
+        registry = feature_registry_factory()
+        service = skill_file_service_factory()
+        documents: dict[str, Any] = {}
+        skills: list[dict[str, Any]] = []
+        for project_skill in service.list_skills():
+            try:
+                document = service.get_skill(project_skill.name)
+            except SkillFileValidationError as exc:
+                skills.append(
+                    {
+                        "name": project_skill.name,
+                        "description": "",
+                        "managed_by": "",
+                        "path": str(project_skill.path),
+                        "content": "",
+                        "sha256": "",
+                        "referenced_by": list(registry.features_for_skill(project_skill.name)),
+                        "status": "invalid",
+                        "error": str(exc),
+                    }
+                )
+                continue
+            documents[document.name] = document
+            skills.append({**_skill_payload(document, registry), "status": "ready"})
+        available_skills = set(documents)
+        features = [
+            {
+                "feature_id": definition.feature_id,
+                "name": definition.name,
+                "description": definition.description,
+                "skills": list(definition.skills),
+                "enabled": registry.is_enabled(definition.feature_id),
+                "status": registry.feature_status(definition.feature_id, available_skills),
+            }
+            for definition in registry.list_features()
+        ]
+        return {"features": features, "skills": skills}
+
+    @app.post("/api/console/settings/skills/{feature_id}/toggle")
+    async def console_settings_skill_toggle(feature_id: str, request: Request):
+        payload = await json_object(request)
+        enabled = payload.get("enabled")
+        if type(enabled) is not bool:
+            return JSONResponse(
+                {"ok": False, "code": "validation_error", "message": "enabled must be a boolean", "details": {}},
+                status_code=422,
+            )
+        registry = feature_registry_factory()
+        try:
+            state = registry.set_enabled(feature_id, enabled)
+        except KeyError:
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "Feature not found", "details": {}},
+                status_code=404,
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                {"ok": False, "code": "validation_error", "message": str(exc), "details": {}},
+                status_code=422,
+            )
+        except (OSError, IOError):
+            return JSONResponse(
+                {"ok": False, "code": "persistence_failed", "message": "功能状态保存失败", "details": {}},
+                status_code=500,
+            )
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "code": "persistence_failed", "message": "功能状态保存失败", "details": {"reason": normalize_display_value(exc)}},
+                status_code=500,
+            )
+        return {
+            "feature_id": state.feature_id,
+            "enabled": state.enabled,
+            "status": registry.feature_status(state.feature_id, set(registry.list_project_skill_names())),
+        }
+
+    @app.get("/api/console/settings/skills/{skill_name}")
+    def console_settings_skill_detail(skill_name: str):
+        registry = feature_registry_factory()
+        try:
+            document = skill_file_service_factory().get_skill(skill_name)
+        except SkillFileValidationError as exc:
+            return _skill_error_response(exc)
+        return _skill_payload(document, registry)
+
+    @app.put("/api/console/settings/skills/{skill_name}")
+    async def console_settings_skill_update(skill_name: str, request: Request):
+        payload = await json_object(request)
+        content = payload.get("content")
+        expected_sha256 = payload.get("expected_sha256")
+        if not isinstance(content, str) or not isinstance(expected_sha256, str):
+            return JSONResponse(
+                {"ok": False, "code": "validation_error", "message": "content and expected_sha256 are required", "details": {}},
+                status_code=422,
+            )
+        if len(expected_sha256) != 64 or any(char not in string.hexdigits for char in expected_sha256):
+            return JSONResponse(
+                {"ok": False, "code": "validation_error", "message": "expected_sha256 must be a SHA-256 hex digest", "details": {}},
+                status_code=422,
+            )
+        registry = feature_registry_factory()
+        try:
+            document = skill_file_service_factory().save_skill(skill_name, content, expected_sha256)
+        except SkillFileConflict as exc:
+            current_sha256 = ""
+            try:
+                current_sha256 = skill_file_service_factory().get_skill(skill_name).sha256
+            except SkillFileError:
+                pass
+            return JSONResponse(
+                {"ok": False, "code": "conflict", "message": str(exc), "details": {"current_sha256": current_sha256}},
+                status_code=409,
+            )
+        except SkillFileSyncError as exc:
+            return JSONResponse(
+                {"ok": False, "code": "sync_failed", "message": "Skill 保存或运行时同步失败", "details": {"stage": exc.stage}},
+                status_code=500,
+            )
+        except SkillFileValidationError as exc:
+            return _skill_error_response(exc)
+        except (OSError, IOError):
+            return JSONResponse(
+                {"ok": False, "code": "persistence_failed", "message": "Skill 持久化失败", "details": {}},
+                status_code=500,
+            )
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "code": "persistence_failed", "message": "Skill 持久化失败", "details": {"reason": normalize_display_value(exc)}},
+                status_code=500,
+            )
+        return _skill_payload(document, registry)
 
     @app.get("/api/console/settings/{section}")
     def console_settings(section: str):
