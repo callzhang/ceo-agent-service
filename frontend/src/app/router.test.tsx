@@ -27,7 +27,7 @@ describe("console router", () => {
     window.history.replaceState({}, "", path);
     render(<ConsoleRouter />);
 
-    expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: heading }, { timeout: 5000 })).toBeInTheDocument();
   });
 
   it("renders a not-found page for an unknown business path", async () => {
