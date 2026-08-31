@@ -58,6 +58,65 @@ class BusinessSkillInstallRollbackError(BusinessSkillError):
         )
 
 
+def sync_bundled_skill(
+    name: str,
+    *,
+    source_path: Path | None = None,
+    target_root: Path | None = None,
+) -> Path:
+    """Atomically synchronize one service-managed project Skill to its runtime copy."""
+    if not isinstance(name, str) or not name or Path(name).name != name:
+        raise BusinessSkillValidationError(f"invalid Skill name: {name!r}")
+    source = Path(source_path) if source_path is not None else bundled_business_skills_root() / name / "SKILL.md"
+    try:
+        content = source.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise BusinessSkillValidationError(f"unable to read Skill: {source}: {exc}") from exc
+    frontmatter = _parse_frontmatter(content, source)
+    if _required_scalar(frontmatter, "name", source) != name:
+        raise BusinessSkillValidationError(f"Skill name does not match directory: {source}")
+    metadata = frontmatter.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("managed_by") != MANAGED_BY:
+        raise BusinessSkillValidationError(f"Skill missing managed marker: {source}")
+    root = Path.home() / ".agents" / "skills" if target_root is None else Path(target_root).expanduser()
+    _validate_install_target(root)
+    target_dir = root / name
+    target_file = target_dir / "SKILL.md"
+    if target_dir.is_symlink():
+        raise BusinessSkillInstallTargetError(f"refusing symlinked business Skill directory: {target_dir}")
+    if target_dir.exists() and (not target_file.is_file() or not _is_service_managed(target_file)):
+        raise BusinessSkillInstallConflict(f"refusing to overwrite user-owned Skill: {target_dir}")
+    root.mkdir(parents=True, exist_ok=True)
+    transaction_root = Path(tempfile.mkdtemp(prefix=".ceo-business-skill-", dir=root.parent))
+    staged_dir = transaction_root / "staged"
+    backup_dir = transaction_root / "backup"
+    staged_dir.mkdir()
+    backup_dir.mkdir()
+    (staged_dir / "SKILL.md").write_text(content, encoding="utf-8")
+    had_existing = target_dir.exists()
+    backup_moved = False
+    installed = False
+    try:
+        if had_existing:
+            os.replace(target_dir, backup_dir / name)
+            backup_moved = True
+        os.replace(staged_dir, target_dir)
+        installed = True
+    except BaseException as install_error:
+        rollback_errors: list[tuple[Path, BaseException]] = []
+        try:
+            if installed:
+                os.replace(target_dir, staged_dir)
+            if backup_moved:
+                os.replace(backup_dir / name, target_dir)
+        except BaseException as rollback_error:
+            rollback_errors.append((target_dir, rollback_error))
+        if rollback_errors:
+            raise BusinessSkillInstallRollbackError(install_error, tuple(rollback_errors), transaction_root) from install_error
+        shutil.rmtree(transaction_root)
+        raise
+    shutil.rmtree(transaction_root)
+    return target_file
 @dataclass(frozen=True)
 class BundledBusinessSkill:
     name: str
