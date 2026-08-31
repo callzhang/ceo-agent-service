@@ -9754,12 +9754,11 @@ def create_audit_app(
         )
 
     def read_cached_attention_rows() -> list[dict[str, object]]:
-        """Read Attention rows from the same snapshot used by the SPA Status page."""
+        """Read a complete Attention snapshot, including on a cold cache."""
 
-        payload = worker_status_cache.get_or_refresh(
-            render_worker_status_payload,
-            worker_status_refreshing_payload,
-        )
+        # Attention is a user-facing list, so an empty cold-refresh placeholder
+        # must never be exposed as if there were no records.
+        payload = worker_status_cache.get_or_render(render_worker_status_payload)
         rows = payload.get("attention_rows")
         return rows if isinstance(rows, list) else []
 

@@ -1043,6 +1043,29 @@ def test_spa_attention_reuses_status_snapshot_after_cache_is_warm(monkeypatch, t
     assert payload["items"][0]["records"][0]["detail_url"] == "/history/errors/12830"
 
 
+def test_spa_attention_does_not_expose_empty_cold_cache(monkeypatch, tmp_path: Path):
+    rows = [
+        {
+            "category": "Service error",
+            "id": "12831",
+            "status": "failed",
+            "context": "reader",
+            "summary": "reader unavailable",
+            "updated_at": "2026-08-29 18:28:11",
+            "error": "reader unavailable",
+        },
+    ]
+    monkeypatch.setattr(audit_web_module, "_queue_attention_rows", lambda _store: rows)
+
+    with _client(tmp_path, spa_enabled=True, asset=b"<!doctype html>") as client:
+        response = client.get("/api/console/attention")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["total"] == 1
+    assert payload["items"][0]["records"][0]["id"] == "12831"
+
+
 def test_queue_attention_rows_routes_service_errors_to_history_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("", "", "producer_loop_error", "database is locked")
