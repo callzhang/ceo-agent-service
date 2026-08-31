@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const listAttention = vi.hoisted(() => vi.fn());
 
@@ -22,6 +22,10 @@ describe("AttentionPage", () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("shows a red unresolved-count badge and compact expandable issue cards", async () => {
     render(<MemoryRouter initialEntries={["/attention"]}><Routes><Route path="/attention" element={<AttentionPage />} /></Routes></MemoryRouter>);
 
@@ -34,5 +38,20 @@ describe("AttentionPage", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "查看详情" })[0]);
     expect(screen.getByText("retryable")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "查看 Attempt" })).toHaveAttribute("href", "/attempts/1");
+  });
+
+  it("refreshes the current attention snapshot automatically", async () => {
+    vi.useFakeTimers();
+    listAttention
+      .mockResolvedValueOnce({ items: [{ id: "first", category: "Service error", root_cause: "first", context: "worker", severity: "error", count: 1, summary: "First error", error: "first", updated_at: "2026-08-29 16:20:00", links: [] }], meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T16:20:00Z" } })
+      .mockResolvedValueOnce({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T16:20:10Z" } });
+
+    render(<MemoryRouter initialEntries={["/attention"]}><Routes><Route path="/attention" element={<AttentionPage />} /></Routes></MemoryRouter>);
+    await vi.waitFor(() => expect(screen.getByText("First error")).toBeInTheDocument());
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await vi.waitFor(() => expect(screen.getByText("当前没有待处理问题")).toBeInTheDocument());
+    expect(listAttention.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });

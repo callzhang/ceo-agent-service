@@ -7,6 +7,8 @@ import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { StatusBadge } from "../components/status/StatusBadge";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 
+const ATTENTION_REFRESH_INTERVAL_MS = 10_000;
+
 export function AttentionPanel({ onCountChange }: { onCountChange?: (count: number) => void } = {}) {
   const [rows, setRows] = useState<AttentionItem[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -27,7 +29,11 @@ export function AttentionPanel({ onCountChange }: { onCountChange?: (count: numb
       setState("error");
     });
   }, [onCountChange]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    const refreshTimer = window.setInterval(() => { void load(); }, ATTENTION_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(refreshTimer);
+  }, [load]);
 
   return (
     <section className="console-card attention-panel">
