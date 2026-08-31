@@ -184,11 +184,18 @@ def _active_focus_snapshot(page) -> dict[str, object]:
     )
 
 
-def test_console_keyboard_and_aria_acceptance():
+@pytest.mark.parametrize(
+    "viewport",
+    [
+        pytest.param({"width": 1280, "height": 720}, id="desktop-1280"),
+        pytest.param({"width": 390, "height": 844}, id="mobile-390"),
+    ],
+)
+def test_console_keyboard_and_aria_acceptance(viewport):
     with _browser() as playwright:
         browser = _launch(playwright)
         try:
-            page = browser.new_page(viewport={"width": 1280, "height": 720})
+            page = browser.new_page(viewport=viewport)
             _install_interaction_routes(page)
             for path in ["/", "/history", "/tasks", "/user-feedback", "/settings?tab=info"]:
                 page.goto(f"{BASE_URL}{path}", wait_until="domcontentloaded")
@@ -200,6 +207,20 @@ def test_console_keyboard_and_aria_acceptance():
                     if snapshot["visible"] and snapshot["tag"] != "BODY":
                         break
                 assert snapshot["visible"] and snapshot["tag"] != "BODY", path
+
+            if viewport["width"] <= 600:
+                mobile_page = browser.new_page(viewport=viewport)
+                try:
+                    _install_scale_routes(mobile_page, 1)
+                    mobile_page.goto(f"{BASE_URL}/tasks?page_size=20", wait_until="domcontentloaded")
+                    _wait_for_root(mobile_page)
+                    mobile_page.locator(".tasks-table tbody tr").first.wait_for(state="visible", timeout=30_000)
+                    assert mobile_page.get_by_role("link", name="查看详情 Scale task 1").is_visible()
+                    assert mobile_page.locator(".tasks-table .status-success[data-status='ready']").is_visible()
+                    assert mobile_page.get_by_text("4 个 TODO", exact=True).is_visible()
+                    assert mobile_page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")
+                finally:
+                    mobile_page.close()
 
             page.goto(f"{BASE_URL}/settings?tab=prompts&prompt=user&view=template", wait_until="domcontentloaded")
             _wait_for_root(page)
