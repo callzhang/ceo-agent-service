@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.store import AutoReplyStore
+from app.agent_runtime_router import RoutedResultValidationError
 from app.task_agent import (
     TaskAgentCodexRunner,
     TaskAgentRunner,
@@ -72,6 +73,13 @@ def test_task_agent_parser_recovers_complete_object_with_repeated_continuation()
     malformed = json.dumps(decision) + ',"todo_changes":[],"confidence":0.99}'
 
     assert _parse_task_agent_decision(malformed) == TaskAgentDecision.model_validate(decision)
+
+
+def test_task_agent_parser_marks_missing_decision_as_validation_failure():
+    with pytest.raises(RoutedResultValidationError, match="No TaskAgentDecision JSON found") as raised:
+        _parse_task_agent_decision("not a decision")
+
+    assert raised.value.raw_output == "not a decision"
 
 
 class FakeCodex:

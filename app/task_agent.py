@@ -1850,4 +1850,7 @@ def _parse_task_agent_decision(raw: str) -> TaskAgentDecision:
         for text in _task_decision_text_candidates(payload):
             if decision := validate_candidate(text):
                 return decision
-    raise ValueError("No TaskAgentDecision JSON found")
+    raise RoutedResultValidationError(
+        "No TaskAgentDecision JSON found",
+        raw_output=raw,
+    )
