@@ -134,3 +134,18 @@ def test_skill_api_maps_unknown_validation_conflict_and_persistence_failures(tmp
             json={"content": _skill_content("ceo-message-triage"), "expected_sha256": service.get_skill("ceo-message-triage").sha256},
         )
     assert failed.status_code == 500
+
+
+def test_skills_list_isolates_malformed_directory_names(tmp_path: Path):
+    client, _service = _client(tmp_path)
+    malformed = tmp_path / "skills" / "bad name"
+    malformed.mkdir()
+    malformed.joinpath("SKILL.md").write_text(_skill_content("bad name"), encoding="utf-8")
+
+    with client:
+        response = client.get("/api/console/settings/skills")
+
+    assert response.status_code == 200
+    row = next(item for item in response.json()["skills"] if item["name"] == "bad name")
+    assert row["status"] == "invalid"
+    assert row["referenced_by"] == []

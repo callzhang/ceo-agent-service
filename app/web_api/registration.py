@@ -814,8 +814,17 @@ def register_console_routes(
             "path": str(document.path),
             "content": document.content,
             "sha256": document.sha256,
-            "referenced_by": list(registry.features_for_skill(document.name)),
+            "referenced_by": _skill_references(registry, document.name),
         }
+
+    def _skill_references(registry: FeatureRegistry, name: str) -> list[str] | None:
+        try:
+            return list(registry.features_for_skill(name))
+        except ValueError:
+            # Discovery is intentionally broader than registry-name validation:
+            # expose malformed project directories as invalid rows instead of
+            # allowing one bad directory to break the complete catalog.
+            return None
 
     def _available_skill_names(service: SkillFileService) -> set[str]:
         available: set[str] = set()
@@ -834,6 +843,22 @@ def register_console_routes(
         documents: dict[str, Any] = {}
         skills: list[dict[str, Any]] = []
         for project_skill in service.list_skills():
+            references = _skill_references(registry, project_skill.name)
+            if references is None:
+                skills.append(
+                    {
+                        "name": project_skill.name,
+                        "description": "",
+                        "managed_by": "",
+                        "path": str(project_skill.path),
+                        "content": "",
+                        "sha256": "",
+                        "referenced_by": [],
+                        "status": "invalid",
+                        "error": f"invalid Skill name: {project_skill.name!r}",
+                    }
+                )
+                continue
             try:
                 document = service.get_skill(project_skill.name)
             except SkillFileValidationError as exc:
@@ -845,7 +870,7 @@ def register_console_routes(
                         "path": str(project_skill.path),
                         "content": "",
                         "sha256": "",
-                        "referenced_by": list(registry.features_for_skill(project_skill.name)),
+                        "referenced_by": references,
                         "status": "invalid",
                         "error": str(exc),
                     }
