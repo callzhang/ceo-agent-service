@@ -120,11 +120,11 @@ class FeatureRegistry:
             skills = raw.get("skills")
             if not isinstance(skills, list) or not skills:
                 raise ValueError(f"feature {feature_id!r} must have a non-empty skills list")
-            if len(set(skills)) != len(skills):
-                raise ValueError(f"feature {feature_id!r} has duplicate skills")
             validated_skills = tuple(
                 _validated_string(skill, "skill name") for skill in skills
             )
+            if len(set(validated_skills)) != len(validated_skills):
+                raise ValueError(f"feature {feature_id!r} has duplicate skills")
             default_enabled = raw.get("default_enabled")
             if not isinstance(default_enabled, bool):
                 raise ValueError(f"feature {feature_id!r} default_enabled must be boolean")

@@ -90,6 +90,23 @@ def test_unknown_feature_and_invalid_toggle_are_rejected(tmp_path):
         catalog.set_enabled("meeting_summary", "false")
 
 
+@pytest.mark.parametrize(
+    "definition",
+    [
+        feature(feature_id=["not-a-string"]),
+        feature(skills=[{"name": "not-a-string"}]),
+    ],
+)
+def test_registry_rejects_unhashable_or_non_string_names_with_value_error(
+    tmp_path, definition
+):
+    with pytest.raises(ValueError):
+        FeatureRegistry(
+            registry_path=write_registry(tmp_path, {"features": [definition]}),
+            state_path=tmp_path / "state.json",
+        )
+
+
 def test_feature_status_reports_missing_skill_dependency(tmp_path):
     registry = write_registry(tmp_path, {"features": [feature()]})
     catalog = FeatureRegistry(registry_path=registry, state_path=tmp_path / "state.json")
