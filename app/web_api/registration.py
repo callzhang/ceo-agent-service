@@ -936,6 +936,11 @@ def register_console_routes(
     @app.get("/api/console/settings/skills/{skill_name}")
     def console_settings_skill_detail(skill_name: str):
         registry = feature_registry_factory()
+        if _skill_references(registry, skill_name) is None:
+            return JSONResponse(
+                {"ok": False, "code": "validation_error", "message": "invalid Skill name", "details": {}},
+                status_code=422,
+            )
         try:
             document = skill_file_service_factory().get_skill(skill_name)
         except SkillFileValidationError as exc:
@@ -958,6 +963,11 @@ def register_console_routes(
                 status_code=422,
             )
         registry = feature_registry_factory()
+        if _skill_references(registry, skill_name) is None:
+            return JSONResponse(
+                {"ok": False, "code": "validation_error", "message": "invalid Skill name", "details": {}},
+                status_code=422,
+            )
         try:
             document = skill_file_service_factory().save_skill(skill_name, content, expected_sha256)
         except SkillFileConflict as exc:

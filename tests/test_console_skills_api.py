@@ -149,3 +149,11 @@ def test_skills_list_isolates_malformed_directory_names(tmp_path: Path):
     row = next(item for item in response.json()["skills"] if item["name"] == "bad name")
     assert row["status"] == "invalid"
     assert row["referenced_by"] == []
+    original = malformed.joinpath("SKILL.md").read_text(encoding="utf-8")
+    with client:
+        assert client.get("/api/console/settings/skills/bad%20name").status_code == 422
+        assert client.put(
+            "/api/console/settings/skills/bad%20name",
+            json={"content": original + "edited", "expected_sha256": "0" * 64},
+        ).status_code == 422
+    assert malformed.joinpath("SKILL.md").read_text(encoding="utf-8") == original
