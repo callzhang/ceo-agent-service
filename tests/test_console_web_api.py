@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import app.audit_web as audit_web_module
 import app.config as app_config_module
+import app.web_api.registration as registration_module
 from app.audit_web import create_audit_app
 from app.email_classifier_contracts import (
     EmailCategory,
@@ -439,6 +440,27 @@ def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
     assert item["evidence_candidates"][0]["source_ref"] == "dws_message:msg-1"
     assert item["evidence_candidates"][0]["status"] == "candidate"
     assert "[object Object]" not in json.dumps(item, ensure_ascii=False)
+
+
+def test_console_task_detail_builds_payload_inside_one_read_snapshot(
+    monkeypatch, tmp_path: Path
+):
+    seen_snapshot_connections: list[bool] = []
+
+    def fake_task_detail(store, project_id):
+        del project_id
+        seen_snapshot_connections.append(
+            store._read_snapshot_connection.get() is not None
+        )
+        return None
+
+    monkeypatch.setattr(registration_module, "task_detail", fake_task_detail)
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/tasks/836")
+
+    assert response.status_code == 404
+    assert seen_snapshot_connections == [True]
 
 
 def test_console_history_includes_chart_snapshot(tmp_path: Path):

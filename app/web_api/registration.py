@@ -220,7 +220,9 @@ def register_console_routes(
 
     @app.get("/api/console/tasks/{project_id}", response_model=ConsoleTaskDetailEnvelope)
     def console_task_detail(project_id: int):
-        item = task_detail(store_factory(), project_id)
+        store = store_factory()
+        with store.read_snapshot():
+            item = task_detail(store, project_id)
         if item is None:
             return JSONResponse(
                 {"ok": False, "code": "not_found", "message": "Task project not found", "details": {"project_id": project_id}},
