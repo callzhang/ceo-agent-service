@@ -2225,8 +2225,8 @@ def _system_health_snapshot(
         return {
             "state": "observing",
             "detail": (
-                f"{count} recent service error{'s' if count != 1 else ''} "
-                "remain in the four-hour health observation window."
+                "System health is observing recent service errors for four hours; "
+                f"{count} event{'s' if count != 1 else ''} already have terminal records."
             ),
             "checked_at": report.checked_at,
             "violations": count,

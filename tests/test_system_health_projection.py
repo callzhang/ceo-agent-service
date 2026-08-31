@@ -37,7 +37,10 @@ def test_recent_service_errors_project_to_system_health_observation(
     assert payload["service"]["state"] == "running"
     assert payload["system_health"] == {
         "state": "observing",
-        "detail": "2 recent service errors remain in the four-hour health observation window.",
+        "detail": (
+            "System health is observing recent service errors for four hours; "
+            "2 events already have terminal records."
+        ),
         "checked_at": "2026-08-29T22:00:00+00:00",
         "violations": 2,
     }
