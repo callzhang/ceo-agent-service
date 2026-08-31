@@ -922,6 +922,46 @@ def test_console_attention_preserves_record_detail_url(monkeypatch, tmp_path: Pa
     assert response.json()["items"][0]["records"][0]["detail_url"] == "/history/errors/12830"
 
 
+def test_spa_attention_reuses_status_snapshot_after_cache_is_warm(monkeypatch, tmp_path: Path):
+    rows = [
+        {
+            "category": "Service error",
+            "id": "12830",
+            "status": "failed",
+            "context": "producer_loop_error",
+            "summary": "database is locked",
+            "updated_at": "2026-08-29 18:27:11",
+            "error": "database is locked",
+            "detail_url": "/history/errors/12830",
+        },
+    ]
+    monkeypatch.setattr(audit_web_module, "_queue_attention_rows", lambda _store: rows)
+
+    with _client(tmp_path, spa_enabled=True, asset=b"<!doctype html>") as client:
+        deadline = time.monotonic() + 2.0
+        status_payload = None
+        while time.monotonic() < deadline:
+            status_response = client.get("/api/console/status")
+            assert status_response.status_code == 200
+            status_payload = status_response.json()["item"]
+            if status_payload["attention_rows"] == rows:
+                break
+            time.sleep(0.01)
+        assert status_payload is not None
+        assert status_payload["attention_rows"] == rows
+
+        def unexpected_direct_scan(_store):
+            raise AssertionError("SPA Attention must reuse the Status snapshot")
+
+        monkeypatch.setattr(audit_web_module, "_queue_attention_rows", unexpected_direct_scan)
+        response = client.get("/api/console/attention")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["total"] == 1
+    assert payload["items"][0]["records"][0]["detail_url"] == "/history/errors/12830"
+
+
 def test_queue_attention_rows_routes_service_errors_to_history_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("", "", "producer_loop_error", "database is locked")

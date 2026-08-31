@@ -9738,6 +9738,16 @@ def create_audit_app(
             include_system_health=False,
         )
 
+    def read_cached_attention_rows() -> list[dict[str, object]]:
+        """Read Attention rows from the same snapshot used by the SPA Status page."""
+
+        payload = worker_status_cache.get_or_refresh(
+            render_worker_status_payload,
+            worker_status_refreshing_payload,
+        )
+        rows = payload.get("attention_rows")
+        return rows if isinstance(rows, list) else []
+
     def read_fresh_feedback_backlog() -> dict[str, object]:
         """Synchronously read authoritative queue counts for resolution."""
 
@@ -9888,7 +9898,14 @@ def create_audit_app(
         store_factory=lambda: AutoReplyStore(db_path),
         status_payload_factory=render_settings_status_payload,
         feedback_backlog_factory=read_fresh_feedback_backlog,
-        attention_rows_factory=lambda: _queue_attention_rows(audit_store),
+        # The React Attention page must share Status's cached snapshot.  The
+        # legacy/non-SPA handlers retain their direct read for compatibility,
+        # while the SPA avoids a second multi-table SQLite scan per navigation.
+        attention_rows_factory=(
+            read_cached_attention_rows
+            if spa_enabled
+            else lambda: _queue_attention_rows(audit_store)
+        ),
         task_row_builder=_task_row_payload,
         history_chart_factory=lambda: _history_chart_payload(audit_store),
         email_store_factory=lambda: EmailStore(db_path),

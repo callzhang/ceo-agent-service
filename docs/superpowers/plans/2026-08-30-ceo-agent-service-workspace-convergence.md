@@ -496,6 +496,15 @@ curl -sS 'http://127.0.0.1:8765/settings?tab=info'
 - [ ] 记录 `ready/unavailable/failed/processing` 状态颜色和业务含义，避免后续页面自行定义另一套语义。
 - [ ] 记录 `/tasks/836` 直达、静态构建、launchd restart/readback、SQLite 队列检查命令和已知业务 backlog；不把某次测试中的业务 failed 数量写成永久事实。
 
+#### 实施补充：Status 与 Attention 共用快照
+
+React SPA 的 `/api/console/status` 和 `/api/console/attention` 必须使用同一份
+worker status snapshot。Status 快照已经包含队列、未解决 Attention 原始记录和同一代
+数据的汇总；Attention 只负责对这批记录做根因聚合和 DTO 转换，不得在页面请求期间再次
+扫描多张 SQLite 表。这样可以保证数量、列表和更新时间一致，也避免 worker 持有写锁时
+Status 可以返回而 Attention 单独卡住。非 SPA 的旧兼容处理可以继续使用直接读取，但
+React 页面不能绕过缓存快照。
+
 ### Task 5.3：最终门禁
 
 - [ ] 工作区没有未解释的 tracked modification；未跟踪文件均已确认是本任务产物、用户文件或明确的临时缓存。
