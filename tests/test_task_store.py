@@ -411,7 +411,7 @@ def test_todo_evidence_candidate_dedupes_and_marks_decision(tmp_path: Path):
     assert len(logs) == 1
     assert logs[0].category == "TODO completion evidence"
     assert logs[0].status == "accepted"
-    assert logs[0].context == f"project #{project_id} todo #{todo_id}"
+    assert logs[0].context == "确认客户验收完成"
 
 
 def test_claim_work_summary_input_uses_lock_retrying_transaction(
