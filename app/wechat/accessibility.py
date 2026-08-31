@@ -454,6 +454,21 @@ class MacWechatAccessibility:
                     NSApplicationActivateAllWindows
                     | NSApplicationActivateIgnoringOtherApps
                 )
+                if app_ref.bundleIdentifier() == MacWechatAccessibility.BUNDLE_ID:
+                    # AppKit activation does not move a window from another
+                    # Mission Control Space. System Events does.
+                    import subprocess
+                    subprocess.run(
+                        [
+                            "/usr/bin/osascript",
+                            "-e",
+                            'tell application "System Events" to tell process "WeChat" to set frontmost to true',
+                        ],
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=2,
+                    )
         except Exception:
             pass
 

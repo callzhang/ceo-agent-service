@@ -714,6 +714,43 @@ def test_preflight_activates_wechat_before_reporting_window_unavailable(monkeypa
     assert activated == ["wechat-app"]
 
 
+def test_reactivate_switches_wechat_to_current_space(monkeypatch):
+    calls = []
+
+    class WechatApp:
+        def bundleIdentifier(self):
+            return MacWechatAccessibility.BUNDLE_ID
+
+        def activateWithOptions_(self, options):
+            calls.append(("activate", options))
+
+    monkeypatch.setitem(
+        sys.modules,
+        "AppKit",
+        SimpleNamespace(
+            NSApplicationActivateAllWindows=1,
+            NSApplicationActivateIgnoringOtherApps=2,
+        ),
+    )
+
+    class Completed:
+        returncode = 0
+
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or Completed(),
+    )
+
+    MacWechatAccessibility._reactivate(WechatApp())
+
+    assert calls[0] == ("activate", 3)
+    assert calls[1][0] == [
+        "/usr/bin/osascript",
+        "-e",
+        'tell application "System Events" to tell process "WeChat" to set frontmost to true',
+    ]
+
+
 def test_preflight_reports_ready_when_wechat_has_accessibility_window(monkeypatch):
     app = object()
     monkeypatch.setitem(
