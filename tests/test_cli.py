@@ -43,7 +43,6 @@ from app.cli import (
 from app.corpus import CorpusRecord, append_records
 from app.dws_client import DwsError
 from app.external_retry import ExternalDependencyError
-from app.skill_features import FeatureRegistry
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_models import TaskAgentDecision, WorkItem
 
@@ -1977,7 +1976,7 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
     assert status == "done"
 
 
-def test_process_work_items_command_processes_existing_input_when_work_tracking_disabled(
+def test_process_work_items_command_processes_existing_input_without_feature_gate(
     tmp_path, monkeypatch, capsys
 ):
     db_path = tmp_path / "task.sqlite3"
@@ -2003,9 +2002,6 @@ def test_process_work_items_command_processes_existing_input_when_work_tracking_
     input_id = store.enqueue_work_summary_input(
         item.source.type.value, item.source.ref, item.model_dump_json()
     )
-    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
-    registry.set_enabled("work_tracking", False)
-
     class FakeTaskAgentCodexRunner:
         last_session_id = "task-session-disabled-existing"
         last_audit_tool_events = []
