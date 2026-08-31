@@ -55,6 +55,10 @@ _ATTENTION_TIME_RE = re.compile(r"<time\b[^>]*>(.*?)</time>", re.DOTALL | re.IGN
 _ATTENTION_MARKDOWN_LINK_RE = re.compile(r"!?\[([^]]*)\]\([^)]*\)")
 _ATTENTION_MARKDOWN_EMPHASIS_RE = re.compile(r"[*_]{1,3}([^*_\n]+)[*_]{1,3}")
 _ATTENTION_CODE_RE = re.compile(r"`([^`\n]+)`")
+_ATTENTION_TECHNICAL_TAIL_RE = re.compile(
+    r"(?:;|\n|\s+)\b(?:command|cmd|path|stderr|traceback|stack)\s*[:=].*$",
+    re.IGNORECASE,
+)
 _ATTENTION_WHITESPACE_RE = re.compile(r"\s+")
 _ATTENTION_SUMMARY_LIMIT = 240
 
@@ -69,6 +73,7 @@ def _humanized_summary(value: Any) -> str:
     text = _ATTENTION_CODE_RE.sub(lambda match: match.group(1), text)
     text = _ATTENTION_TAG_RE.sub("", text)
     text = re.sub(r"^\s*>\s*", "", text)
+    text = _ATTENTION_TECHNICAL_TAIL_RE.sub("", text)
     text = _ATTENTION_WHITESPACE_RE.sub(" ", text).strip()
     if len(text) <= _ATTENTION_SUMMARY_LIMIT:
         return text
@@ -80,10 +85,10 @@ def _record(row: dict[str, Any]) -> AttentionRecord:
     status = normalize_display_value(row.get("status"))
     detail_label, detail = _detail(status, error)
     context = normalize_display_value(row.get("context"))
-    root_cause = normalize_display_value(row.get("root_cause"))
+    root_cause = _humanized_summary(row.get("root_cause"))
     error_code = normalize_display_value(row.get("error_code"))
     if not root_cause:
-        root_cause = error or error_code or detail or context or "unknown"
+        root_cause = _humanized_summary(error) or error_code or detail or context or "unknown"
     return AttentionRecord(
         id=normalize_display_value(row.get("id")),
         category=normalize_display_value(row.get("category")),

@@ -945,6 +945,7 @@ def test_console_attention_preserves_record_detail_url(monkeypatch, tmp_path: Pa
 
 
 def test_console_attention_humanizes_markup_and_bounds_primary_summary():
+    long_summary = "dws command failed; " + "diagnostic detail " * 40
     long_error = "dws command failed; command=" + "/very/long/path " * 40
     groups = group_attention_rows(
         [
@@ -961,7 +962,7 @@ def test_console_attention_humanizes_markup_and_bounds_primary_summary():
                 "id": "2",
                 "status": "failed",
                 "context": "dws",
-                "summary": long_error,
+                "summary": long_summary,
                 "error": long_error,
                 "updated_at": "2026-08-29 18:01:00",
             },
@@ -975,6 +976,8 @@ def test_console_attention_humanizes_markup_and_bounds_primary_summary():
     assert "**" not in work_item.summary
     assert len(service_error.summary) == 240
     assert service_error.summary.endswith("…")
+    assert "command=" not in service_error.summary
+    assert "command=" not in service_error.root_cause
     assert service_error.detail == long_error
 
 
