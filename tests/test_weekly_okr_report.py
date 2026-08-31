@@ -337,6 +337,33 @@ class FakeGateway:
         return "sent"
 
 
+class MessageDws:
+    def __init__(self):
+        self.sent = []
+
+    def send_message(self, conversation_id, text, **kwargs):
+        self.sent.append(
+            {"conversation_id": conversation_id, "text": text, **kwargs}
+        )
+        return {"success": True}
+
+    def verify_message_send_result(self, send_result):
+        assert send_result == {"success": True}
+        return {"state": "sent"}
+
+
+def test_weekly_okr_group_summary_includes_assistant_postfix():
+    dws = MessageDws()
+
+    assert DwsWeeklyOkrGateway(dws).send_group_summary(
+        conversation_id="cid-ceo-2",
+        title="2026-W35 管理周报",
+        text="2026-W35 管理周报\n\n本周完成 3 项。",
+    ) == "sent"
+
+    assert dws.sent[0]["text"].endswith("（by明哥分身）")
+
+
 class FakeSource:
     def __init__(self):
         self.calls = []

@@ -4,6 +4,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
+from app.codex_decision import append_signature
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsError, DwsUserProfile
 from app.meeting_alignment_models import (
@@ -199,6 +200,7 @@ def deliver_meeting_alignment(
         source,
         final_message=final_message,
     )
+    message_text = append_signature(message_text)
     try:
         if target_kind == "group":
             send_result = dws.send_message(

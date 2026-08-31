@@ -1,5 +1,10 @@
 # Changelog
 
+- 2026-08-31: restore the configured assistant postfix for DingTalk messages
+  sent by meeting-alignment delivery and weekly OKR group summaries. These
+  two system-generated send paths now use the same idempotent signature
+  formatter as ordinary replies, so the postfix is added exactly once.
+
 - 2026-08-30: WeChat Accessibility preflight now opens the running WeChat app
   before raising its process, which switches a window from another Mission
   Control Space into the active Space. Preflight retries activation up to three

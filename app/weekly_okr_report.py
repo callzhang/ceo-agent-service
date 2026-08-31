@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, ValidationError
 
+from app.codex_decision import append_signature
 from app.dws_client import DwsClient, DwsError
 from app.okr_review import DwsLiveOkrSource, current_quarter_period
 
@@ -965,6 +966,7 @@ class DwsWeeklyOkrGateway:
         title: str,
         text: str,
     ) -> str:
+        text = append_signature(text)
         send_result = self.dws.send_message(
             conversation_id,
             text,
