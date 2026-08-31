@@ -744,7 +744,8 @@ def test_reactivate_switches_wechat_to_current_space(monkeypatch):
     MacWechatAccessibility._reactivate(WechatApp())
 
     assert calls[0] == ("activate", 3)
-    assert calls[1][0] == [
+    assert calls[1][0] == ["/usr/bin/open", "-a", "WeChat"]
+    assert calls[2][0] == [
         "/usr/bin/osascript",
         "-e",
         'tell application "System Events" to tell process "WeChat" to set frontmost to true',

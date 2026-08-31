@@ -455,9 +455,18 @@ class MacWechatAccessibility:
                     | NSApplicationActivateIgnoringOtherApps
                 )
                 if app_ref.bundleIdentifier() == MacWechatAccessibility.BUNDLE_ID:
-                    # AppKit activation does not move a window from another
-                    # Mission Control Space. System Events does.
+                    # AppKit activation does not reliably move a window from
+                    # another Mission Control Space. Opening the running app
+                    # and then raising its process gives macOS two independent
+                    # ways to select the app's current window.
                     import subprocess
+                    subprocess.run(
+                        ["/usr/bin/open", "-a", "WeChat"],
+                        check=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=2,
+                    )
                     subprocess.run(
                         [
                             "/usr/bin/osascript",
@@ -510,7 +519,7 @@ class MacWechatAccessibility:
         if not pid:
             return "wechat_not_running"
         app = AXUIElementCreateApplication(pid)
-        for attempt in range(2):
+        for attempt in range(3):
             for w in Quartz.CGWindowListCopyWindowInfo(
                 Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID
             ):
@@ -520,7 +529,7 @@ class MacWechatAccessibility:
                 if error == 0 and windows:
                     return "ready"
                 break
-            if attempt == 0:
+            if attempt < 2:
                 self._reactivate(self._wechat_app_ref(pid))
                 import time
                 time.sleep(1.0)

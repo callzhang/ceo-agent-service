@@ -1,5 +1,11 @@
 # Changelog
 
+- 2026-08-30: WeChat Accessibility preflight now opens the running WeChat app
+  before raising its process, which switches a window from another Mission
+  Control Space into the active Space. Preflight retries activation up to three
+  times with one-second settling intervals before reporting the window as
+  unavailable.
+
 - 2026-08-31: when a conversation has an unread marker but the unread-message
   response lacks message rows, the producer now reads that conversation's
   recent messages as the context fallback instead of treating the conversation
