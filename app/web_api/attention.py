@@ -74,7 +74,7 @@ def _humanized_summary(value: Any) -> str:
     text = _ATTENTION_TAG_RE.sub("", text)
     text = re.sub(r"^\s*>\s*", "", text)
     text = _ATTENTION_TECHNICAL_TAIL_RE.sub("", text)
-    text = _ATTENTION_WHITESPACE_RE.sub(" ", text).strip()
+    text = _ATTENTION_WHITESPACE_RE.sub(" ", text).strip().rstrip(" ;")
     if len(text) <= _ATTENTION_SUMMARY_LIMIT:
         return text
     return text[: _ATTENTION_SUMMARY_LIMIT - 1].rstrip() + "…"

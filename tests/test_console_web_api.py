@@ -977,7 +977,7 @@ def test_console_attention_humanizes_markup_and_bounds_primary_summary():
     assert len(service_error.summary) == 240
     assert service_error.summary.endswith("…")
     assert "command=" not in service_error.summary
-    assert "command=" not in service_error.root_cause
+    assert service_error.root_cause == "dws command failed"
     assert service_error.detail == long_error
 
 
