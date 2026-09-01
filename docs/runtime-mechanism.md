@@ -28,6 +28,22 @@ pending -> running -> done
 - `needs_human`：现有 Skill 没有覆盖的一类规则需要人工确定；技术读取或 provider 失败使用 `failed`。
 - `failed`：执行、依赖、解析、状态转换或外部系统最终失败；必须保留失败原因和阶段。
 
+## 功能机制开关与任务生产
+
+`Settings -> Skills` 的开关位于任务生产边界。功能与业务 Skill 的多对多关系由
+`data/config/skill-features.json` 声明，运行时开关由 `data/config/skill-state.json`
+持久化；每次生产检查都会读取最新状态，因此常驻 worker 不需要因开关变更而重启。
+
+关闭一个功能只拒绝该功能对应的**新任务/新作业创建**，并不会取消、删除或改写已经存在的
+`pending`、`running` 或重试任务。消费者领取和继续处理已有任务时不再重新判断该开关，保证
+切换不会中断正在进行的生命周期。缺少或校验失败的关联 Skill 会让该功能标记为配置不完整，
+并阻止它继续创建新任务；其他功能不受影响。
+
+项目 `skills/*/SKILL.md` 是 Settings 的编辑源。编辑保存使用当前内容的 SHA 做乐观并发
+控制，校验通过后原子写回并同步 `~/.agents/skills` 中的 service-managed 运行时副本；同步
+失败会恢复源文件。共享 Skill 的内容修改会影响所有引用它的启用功能。外部 operation Skill、
+用户 Skill、系统 Skill 和插件 Skill 不属于这个编辑器。
+
 每个执行 Agent 和审核 Agent 的结构化结果都带有通用的 `risk`（`low`、`medium`、
 `high`）和 `confidence`（0 到 1）字段，不区分任务领域。`needs_human` 只有在风险为
 `high` 且置信度严格低于 `0.5` 时才允许；低置信度的技术或依赖失败仍然是 `failed`，
