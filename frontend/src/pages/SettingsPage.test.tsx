@@ -325,6 +325,7 @@ describe("SettingsPage", () => {
     renderSettings("/settings?tab=skills");
 
     await user.click(await screen.findByRole("button", { name: "查看 ceo-message-triage" }));
+    await user.click(await screen.findByRole("tab", { name: "编辑" }));
     const editor = await screen.findByRole("textbox", { name: "Skill 内容" });
     await user.clear(editor);
     await user.type(editor, "我的草稿");
@@ -345,6 +346,23 @@ describe("SettingsPage", () => {
     expect(toggleSkillFeature).toHaveBeenCalledWith("message_triage", false);
     expect(await screen.findByRole("status")).toHaveTextContent("功能开关已保存");
     expect(toggle).not.toBeChecked();
+  });
+
+  it("switches Skill detail between independent preview and edit tabs", async () => {
+    const user = userEvent.setup();
+    getSkillFeatures.mockResolvedValueOnce({ features: [], skills: [{ name: "ceo-message-triage", description: "消息判断规则", referenced_by: [], status: "ready" }] });
+    getSkillDetail.mockResolvedValueOnce({ name: "ceo-message-triage", description: "消息判断规则", managed_by: "ceo-agent-service", content: "# preview content", sha256: "b".repeat(64), referenced_by: [] });
+    renderSettings("/settings?tab=skills");
+
+    await user.click(await screen.findByRole("button", { name: "查看 ceo-message-triage" }));
+    expect(await screen.findByRole("tab", { name: "预览" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Skill 预览" })).toHaveTextContent("# preview content");
+    expect(screen.queryByRole("textbox", { name: "Skill 内容" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "编辑" }));
+    expect(screen.getByRole("tab", { name: "编辑" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("textbox", { name: "Skill 内容" })).toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "Skill 预览" })).not.toBeInTheDocument();
   });
 
   it("shows API validation errors without crashing and keeps an invalid project skill row visible", async () => {

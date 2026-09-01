@@ -318,7 +318,7 @@ export interface ProjectSkill {
   content?: string;
   sha256?: string;
   referenced_by: string[];
-  status: string;
+  status?: string;
   error?: string;
 }
 export interface SkillSettings { features: SkillFeature[]; skills: ProjectSkill[]; }
