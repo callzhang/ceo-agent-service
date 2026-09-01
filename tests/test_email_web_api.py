@@ -1,6 +1,7 @@
 from pathlib import Path
 import gc
 import sqlite3
+from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -8,6 +9,7 @@ import pytest
 
 import app.email_store as email_store_module
 from app.audit_web import create_audit_app
+from app.email_model_registry import EmailModelRegistry
 from app.email_store import EmailStore
 from app.store import AutoReplyStore
 from app.web_api.email import register_email_routes
@@ -57,6 +59,7 @@ def _assert_email_endpoints_unavailable(client: TestClient) -> None:
     responses = (
         client.get("/api/console/email/classifications?status=invalid"),
         client.post("/api/console/email/classifications/999/feedback"),
+        client.get("/api/console/email/classifications/999"),
         client.get("/api/console/email/config"),
         client.put("/api/console/email/config/invalid"),
         client.get("/api/console/email/accounts"),
@@ -150,6 +153,82 @@ def test_email_routes_initialize_and_reuse_one_store(
     assert feedback.status_code == 404
     assert factory_calls == 1
     assert initialize_calls == 1
+
+
+def test_email_learning_endpoint_exposes_current_state_without_private_paths(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "learning.sqlite3"
+    registry = EmailModelRegistry(tmp_path / "models")
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=tmp_path / "models" / "retrain-state.json",
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(database),
+        email_learning_factory=lambda: service,
+    )
+
+    response = TestClient(app).get("/api/console/email/learning")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["learning"]["active_model_id"] is None
+    assert payload["learning"]["pending_examples"] == 0
+    assert payload["learning"]["models"] == []
+
+
+def test_email_classification_detail_projects_observability(tmp_path: Path) -> None:
+    classification = {
+        "id": 41,
+        "account_id": "account-1",
+        "stable_message_identity": "message-1",
+        "status": "processed",
+        "category": "subscription",
+    }
+
+    class DetailStore:
+        def get_classification(self, classification_id: int):
+            return classification if classification_id == 41 else None
+
+        def list_email_classification_observability(self, classification_id: int):
+            assert classification_id == 41
+            return [
+                {
+                    "kind": "unsubscribe",
+                    "operation": "unsubscribe",
+                    "status": "done",
+                    "receipt_id": "receipt-41",
+                    "result_text": "退订成功",
+                }
+            ]
+
+    app = FastAPI()
+    register_email_routes(app, lambda: DetailStore())
+
+    response = TestClient(app).get("/api/console/email/classifications/41")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["item"] == classification
+    assert payload["observability"] == [
+        {
+            "kind": "unsubscribe",
+            "operation": "unsubscribe",
+            "status": "done",
+            "receipt_id": "receipt-41",
+            "result_text": "退订成功",
+        }
+    ]
+    assert payload["meta"]["snapshot_at"]
+
+    missing = TestClient(app).get("/api/console/email/classifications/42")
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "not_found"
 
 
 def test_future_email_schema_isolated_from_non_email_routes(tmp_path: Path):

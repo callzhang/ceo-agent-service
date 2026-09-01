@@ -2,11 +2,12 @@
 
 **Date:** 2026-08-30
 
-**Status:** Approved design, pending written spec review
+**Status:** Approved design; written review complete; implementation remains
+production-disabled
 
 **Repository:** `/Users/derek/Documents/Projects/ceo-agent-service`
 
-**Feature branch:** `codex/email-ceo-agent-integration`
+**Feature branch:** `codex/email-integration-main`
 
 **Target branch:** `main`
 
@@ -34,10 +35,13 @@ here is Consumer-direct.
 
 ## 2. Current Truth
 
-The branch contains a mature unsubscribe execution core, browser tests, mail
-review boundaries, and an independently supervised Email worker. The current
-unsubscribe core still expects Audit-accepted operations and the Email worker
-does not yet connect a Consumer task to a complete production unsubscribe run.
+The branch contains the Consumer-direct unsubscribe execution core, browser
+tests, mail-review boundaries, and an independently supervised Email worker.
+The Email worker selects the Consumer-direct lifecycle only for an intact,
+current unsubscribe authorization; it falls back to the normal audited
+lifecycle when the authorization is malformed or inconsistent. The current
+branch is not deployed and the Email account remains disabled, so this wiring
+has not performed a real unsubscribe.
 
 The production runtime currently has no active email classifier registry, no
 production classifier metrics, no saved email classifications, and no category

@@ -132,8 +132,11 @@ account_id + stable_message_identity + action_type + action_plan_version
 Adapter 只创建 `pending` task 和受限上下文，不直接发送邮件、打开网页或写入新的任务
 状态。邮件正文和 thread 纯文本在运行时上下文中提供；附件只有 metadata material，
 没有读取命令和 image path。持久 trigger payload 不包含凭证、附件内容、本地路径或
-完整退订 URL。之后仍由标准执行 Agent 产生候选、Audit Agent 审核和执行、反馈产生
-新 revision；旧 run、session、receipt 和失败事实保持不可变。
+完整退订 URL。`auto_reply` 继续使用 Consumer → Audit，由 Audit 执行 SMTP 外部写并
+产生新 revision。`unsubscribe` 使用 Consumer-direct，不创建 Audit run 或 Audit
+revision；Consumer 对当前邮件和 thread 做最终判断，只执行被冻结的退订计划，并保存
+步骤、terminal result text、receipt 和 observation digest。两条路径的旧 run、session、
+receipt 和失败事实都保持不可变。
 
 ## 统一禁止事项
 

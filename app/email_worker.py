@@ -8,13 +8,11 @@ import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from typing import Any, TextIO
-
-from app.skill_features import FeatureRegistry
 
 
 SCAN_INTERVAL_SECONDS = 60
@@ -39,6 +37,7 @@ class EmailWorkerDependencies:
     finalize_task: Callable[[object, object], object]
     training_tick: Callable[[], object]
     record_health: Callable[[str, Mapping[str, object]], object]
+    unsubscribe_consumer: object | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +47,7 @@ class EmailWorkerBootstrap:
     build_dependencies: Callable[
         [Sequence[Mapping[str, object]], object], EmailWorkerDependencies
     ]
+    record_health: Callable[[str, Mapping[str, object]], object] | None = None
 
 
 def _account_id(account: Mapping[str, object]) -> str:
@@ -87,6 +87,41 @@ def _ignore_health(_scope: str, _payload: Mapping[str, object]) -> None:
     return None
 
 
+class EmailWorkerReadiness:
+    """Publish process readiness only after every component heartbeats once."""
+
+    def __init__(
+        self,
+        component_names: Sequence[str],
+        *,
+        record_health: Callable[[str, Mapping[str, object]], object],
+        accounts: int,
+    ) -> None:
+        self._component_names = frozenset(component_names)
+        self._record_health = record_health
+        self._accounts = accounts
+        self._ready: set[str] = set()
+        self._published = False
+        self._lock = Lock()
+
+    def mark_ready(self, component_name: str) -> None:
+        if component_name not in self._component_names:
+            raise ValueError("unknown email worker component")
+        with self._lock:
+            self._ready.add(component_name)
+            if self._published or self._ready != self._component_names:
+                return
+            self._published = True
+        self._record_health(
+            "process:email-worker",
+            {
+                "status": "ready",
+                "accounts": self._accounts,
+                "components": len(self._component_names),
+            },
+        )
+
+
 def run_scan_and_direct_actions_loop(
     accounts: Sequence[Mapping[str, object]],
     active_model: object,
@@ -94,6 +129,7 @@ def run_scan_and_direct_actions_loop(
     scan_account: Callable[[Mapping[str, object], object], object],
     run_direct_actions_once: Callable[[], object],
     record_health: Callable[[str, Mapping[str, object]], object] = _ignore_health,
+    component_ready: Callable[[str], object] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
 ) -> None:
@@ -128,14 +164,22 @@ def run_scan_and_direct_actions_loop(
                 },
             )
         try:
-            run_direct_actions_once()
+            direct_result = run_direct_actions_once()
+            if getattr(direct_result, "status", "") == "failed":
+                failures += 1
+                record_health(
+                    "component:email-provider-actions",
+                    {"status": "degraded", "error_code": "provider_action_failed"},
+                )
         except Exception as exc:  # noqa: BLE001 - keep the scan cadence alive
             failures += 1
-            record_health("component:email-direct-actions", _safe_health_error(exc))
+            record_health("component:email-provider-actions", _safe_health_error(exc))
         record_health(
             "component:email-scan-actions",
             {"status": "ready" if failures == 0 else "degraded", "failures": failures},
         )
+        if failures == 0 and component_ready is not None:
+            component_ready("email-scan-actions")
         cycles += 1
         if max_cycles is None or cycles < max_cycles:
             interval = min(
@@ -155,9 +199,10 @@ def run_email_agent_task_loop(
     load_task_context: Callable[[object], object],
     finalize_task: Callable[[object, object], object],
     record_health: Callable[[str, Mapping[str, object]], object] = _ignore_health,
+    component_ready: Callable[[str], object] | None = None,
+    unsubscribe_consumer: object | None = None,
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
-    feature_registry: FeatureRegistry | None = None,
 ) -> None:
     cycles = 0
     while max_cycles is None or cycles < max_cycles:
@@ -172,11 +217,28 @@ def run_email_agent_task_loop(
         for task in tasks:
             try:
                 context = load_task_context(task)
-                result = orchestrator.process(
-                    task,
-                    context,
-                    refresh_context=lambda task=task: load_task_context(task),
+                from app.task_lifecycle import (
+                    TaskLifecycle,
+                    select_task_lifecycle,
                 )
+
+                lifecycle = TaskLifecycle.CONSUMER_AUDIT
+                try:
+                    lifecycle = select_task_lifecycle(task, context)
+                except (AttributeError, TypeError, ValueError):
+                    pass
+                if lifecycle is TaskLifecycle.EMAIL_UNSUBSCRIBE_CONSUMER_DIRECT:
+                    if unsubscribe_consumer is None or not callable(
+                        getattr(unsubscribe_consumer, "run", None)
+                    ):
+                        raise RuntimeError("email unsubscribe Consumer is unavailable")
+                    result = unsubscribe_consumer.run(task, context)
+                else:
+                    result = orchestrator.process(
+                        task,
+                        context,
+                        refresh_context=lambda task=task: load_task_context(task),
+                    )
                 finalize_task(task, result)
             except Exception as exc:  # noqa: BLE001 - isolate one Email task
                 failures += 1
@@ -201,6 +263,8 @@ def run_email_agent_task_loop(
                 }
             )
         record_health("component:email-agent-consumer", health)
+        if failures == 0 and component_ready is not None:
+            component_ready("email-agent-consumer")
         cycles += 1
         if max_cycles is None or cycles < max_cycles:
             sleep(CONSUMER_POLL_INTERVAL_SECONDS)
@@ -210,6 +274,7 @@ def run_training_scheduler_loop(
     training_tick: Callable[[], object],
     *,
     record_health: Callable[[str, Mapping[str, object]], object],
+    component_ready: Callable[[str], object] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
 ) -> None:
@@ -232,6 +297,8 @@ def run_training_scheduler_loop(
                 "component:email-training",
                 {"status": "ready", "failures": 0},
             )
+            if component_ready is not None:
+                component_ready("email-training")
         cycles += 1
         if max_cycles is None or cycles < max_cycles:
             sleep(TRAINING_INTERVAL_SECONDS)
@@ -242,6 +309,7 @@ def email_worker_components(
     *,
     accounts: Sequence[Mapping[str, object]],
     active_model: object,
+    component_ready: Callable[[str], object] | None = None,
 ) -> tuple[tuple[str, partial], ...]:
     return (
         (
@@ -253,6 +321,7 @@ def email_worker_components(
                 scan_account=dependencies.scan_account,
                 run_direct_actions_once=dependencies.run_direct_actions_once,
                 record_health=dependencies.record_health,
+                component_ready=component_ready,
             ),
         ),
         (
@@ -264,6 +333,8 @@ def email_worker_components(
                 load_task_context=dependencies.load_task_context,
                 finalize_task=dependencies.finalize_task,
                 record_health=dependencies.record_health,
+                component_ready=component_ready,
+                unsubscribe_consumer=getattr(dependencies, "unsubscribe_consumer", None),
             ),
         ),
         (
@@ -272,6 +343,7 @@ def email_worker_components(
                 run_training_scheduler_loop,
                 dependencies.training_tick,
                 record_health=dependencies.record_health,
+                component_ready=component_ready,
             ),
         ),
     )
@@ -354,13 +426,26 @@ def _scan_config(email_store: object, model_metadata: object | None):
 def _run_next_direct_action(
     email_store: object,
     executor_factory: Callable[[str], object] | None,
+    *,
+    available_account_ids: Callable[[], Sequence[str]] | Sequence[str] | None = None,
 ) -> object | None:
     """Run one claimed action, or leave it pending when no provider exists."""
 
     if executor_factory is None:
         return None
+    if callable(available_account_ids):
+        available_account_ids = available_account_ids()
+    if available_account_ids is not None and not tuple(available_account_ids):
+        return None
     claimed_at = datetime.now(timezone.utc).isoformat()
-    action = email_store.claim_next_direct_action(claimed_at=claimed_at)
+    stale_before = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    recover = getattr(email_store, "recover_stale_processing_actions", None)
+    if callable(recover):
+        recover(stale_before=stale_before, recovered_at=claimed_at)
+    claim_kwargs = {"claimed_at": claimed_at}
+    if available_account_ids is not None:
+        claim_kwargs["account_ids"] = available_account_ids
+    action = email_store.claim_next_direct_action(**claim_kwargs)
     if action is None:
         return None
 
@@ -378,6 +463,7 @@ def _run_next_direct_action(
             provider_target=action.locator.stable_message_identity,
             provider_result_id="",
             error=f"provider_factory_failed:{type(exc).__name__}",
+            retryable=True,
         )
     email_store.complete_direct_action_attempt(
         action,
@@ -387,6 +473,7 @@ def _run_next_direct_action(
         provider_result_id=result.provider_result_id,
         error=result.error,
         finished_at=datetime.now(timezone.utc).isoformat(),
+        retryable=bool(getattr(result, "retryable", True)),
     )
     return result
 
@@ -446,121 +533,15 @@ def _load_email_task_input(
     source_factory: Callable[[Mapping[str, object]], object],
     task: object,
 ):
-    from app.agent_context import PriorReceipt
-    from app.email_classifier_contracts import EmailAttachmentMetadata
-    from app.email_task_adapter import EmailAgentTaskInput, EmailThreadMessage
+    from app.email_context_source import EmailContextSource
 
-    payload = json.loads(task.trigger_message_json)
-    classification_id = int(payload["classification_id"])
-    classification = email_store.get_classification(classification_id)
-    if classification is None:
-        raise EmailWorkerStartupError("email task classification is unavailable")
-    account_id = str(payload["account_id"])
-    stable_identity = str(payload["stable_message_identity"])
-    thread_identity = str(payload["thread_identity"])
-    if (
-        classification["account_id"] != account_id
-        or classification["stable_message_identity"] != stable_identity
-        or str(classification["thread_id"]) != thread_identity
-    ):
-        raise EmailWorkerStartupError("email task identity does not match its source")
-    account = email_store.get_account(account_id)
-    if account is None:
-        raise EmailWorkerStartupError("email task account is unavailable")
-
-    source = source_factory(account)
     try:
-        trigger_uid = int(classification["uid"])
-        batch = source.fetch_uid_batch(
-            str(classification["folder"]),
-            cursor_uidvalidity=int(classification["uidvalidity"]),
-            last_seen_uid=max(0, trigger_uid - 50),
-            limit=50,
-        )
-        if int(batch.uidvalidity) != int(classification["uidvalidity"]):
-            raise EmailWorkerStartupError("email task provider generation changed")
-        messages = tuple(batch.messages)
-    finally:
-        _close_email_source(source)
-
-    trigger_message = next(
-        (message for message in messages if _message_identity(message) == stable_identity),
-        None,
-    )
-    if trigger_message is None:
-        raise EmailWorkerStartupError("email task source message is unavailable")
-    trigger_time = str(
-        trigger_message.get("date")
-        or classification["received_at"]
-        or getattr(task, "trigger_create_time", "")
-    )
-    trigger = EmailThreadMessage(
-        message_id=stable_identity,
-        sender=_message_sender(trigger_message),
-        text=_message_text(trigger_message),
-        create_time=trigger_time,
-    )
-    thread_messages = tuple(
-        EmailThreadMessage(
-            message_id=_message_identity(message),
-            sender=_message_sender(message),
-            text=_message_text(message),
-            create_time=str(message.get("date") or trigger_time),
-        )
-        for message in messages
-        if _message_identity(message)
-        and _message_identity(message) != stable_identity
-        and str(message.get("threadId") or "") == thread_identity
-    )
-    attachments_value = trigger_message.get("attachments") or ()
-    if not isinstance(attachments_value, Sequence) or isinstance(
-        attachments_value, str | bytes
-    ):
-        raise EmailWorkerStartupError("email attachment metadata is invalid")
-    attachments = tuple(
-        EmailAttachmentMetadata.model_validate(item) for item in attachments_value
-    )
-
-    action_identity = str(
-        payload.get("action_identity") or getattr(task, "trigger_message_id", "")
-    )
-    prior_receipts: list[PriorReceipt] = []
-    reply_receipt = email_store.get_email_reply_receipt(action_identity)
-    if reply_receipt is not None:
-        prior_receipts.append(
-            PriorReceipt(
-                receipt_id=str(reply_receipt["provider_result_id"]),
-                operation=str(reply_receipt["provider_operation"]),
-                summary=str(reply_receipt["display_excerpt"]),
-                completed=True,
-            )
-        )
-    unsubscribe_receipt = email_store.get_email_unsubscribe_receipt(action_identity)
-    if unsubscribe_receipt is not None:
-        prior_receipts.append(
-            PriorReceipt(
-                receipt_id=str(unsubscribe_receipt["receipt_id"]),
-                operation="unsubscribe_readback",
-                summary=(
-                    "Automatic email unsubscribe completed with outcome "
-                    f"{unsubscribe_receipt['outcome']}."
-                ),
-                completed=True,
-            )
-        )
-    return EmailAgentTaskInput(
-        stable_message_identity=stable_identity,
-        thread_identity=thread_identity,
-        subject=str(trigger_message.get("subject") or classification["subject"]),
-        trigger=trigger,
-        thread_messages=thread_messages,
-        attachments=attachments,
-        prior_receipts=tuple(prior_receipts),
-        list_unsubscribe=str(trigger_message.get("listUnsubscribe") or ""),
-        list_unsubscribe_post=str(trigger_message.get("listUnsubscribePost") or ""),
-        body_text=_message_text(trigger_message),
-        body_html="",
-    )
+        return EmailContextSource(
+            email_store,
+            source_factory=source_factory,
+        ).load_task_input(task)
+    except ValueError as exc:
+        raise EmailWorkerStartupError(str(exc)) from exc
 
 
 def _load_email_task_context(
@@ -588,6 +569,39 @@ def _load_email_task_context(
 
 
 def _finalize_email_task(store: object, task: object, result: object) -> None:
+    from app.email_unsubscribe_consumer import EmailUnsubscribeConsumerResult
+
+    if isinstance(result, EmailUnsubscribeConsumerResult):
+        outcome = str(getattr(result, "outcome", ""))
+        error = getattr(result, "error", None)
+        error_code = str(getattr(error, "code", "") or "")
+        retryable = bool(getattr(error, "retryable", False))
+        if outcome == "no_action":
+            task_status, send_status = "done", "skipped"
+        elif outcome == "executed":
+            task_status, send_status = "done", "completed"
+        elif outcome == "failed" and retryable:
+            task_status, send_status = "pending", "failed"
+        else:
+            task_status, send_status = "failed", "failed"
+        store.finalize_reply_task_without_run(
+            task_id=task.id,
+            expected_execution_generation=task.execution_generation,
+            task_status=task_status,
+            task_error=error_code,
+            available_at="",
+            conversation_id=task.conversation_id,
+            conversation_title=task.conversation_title,
+            trigger_message_id=task.trigger_message_id,
+            trigger_sender=task.trigger_sender,
+            trigger_text=task.trigger_text,
+            codex_reason=str(getattr(result, "summary", "")),
+            audit_summary="",
+            send_status=send_status,
+            send_error=error_code,
+            channel="email",
+        )
+        return
     status_map = {
         "executed": ("done", "completed"),
         "no_action": ("done", "skipped"),
@@ -637,14 +651,15 @@ def build_email_worker_dependencies(
     from app.email_classifier_learning import EmailClassifierLearningService
     from app.email_classifier_runtime import EmailClassifierRuntime
     from app.email_classifier_scan import scan_imap_accounts
-    from app.email_connector_config import resolve_secret
-    from app.email_imap_readonly import ImapReadonlyAdapter
     from app.email_model_registry import EmailModelRegistry
     from app.email_store import EmailStore
+    from app.email_task_producer import EmailActionTaskProducer
     from app.store import AutoReplyStore
 
     email_store = EmailStore(Path(settings.db_path))
     task_store = AutoReplyStore(Path(settings.db_path))
+    task_producer = EmailActionTaskProducer(task_store, email_store)
+    source_factory = _build_email_source_factory(settings)
     model_root = Path(settings.db_path).parent / "email-models"
     registry = EmailModelRegistry(model_root)
     learning = EmailClassifierLearningService(
@@ -659,20 +674,6 @@ def build_email_worker_dependencies(
         return EmailClassifierRuntime(
             registry,
             learning_service=learning,
-        )
-
-    def source_factory(account: Mapping[str, object]):
-        if not bool(account["imap_tls"]):
-            raise ConnectionError("email IMAP TLS is required")
-        secret = resolve_secret(str(account["imap_secret_reference"]), os.environ)
-        if not secret:
-            raise ConnectionError("email IMAP credential is unavailable")
-        return ImapReadonlyAdapter.connect(
-            str(account["imap_host"]),
-            str(account["imap_username"]),
-            secret,
-            port=int(account["imap_port"]),
-            account_id=str(account["account_id"]),
         )
 
     def record_health(scope: str, payload: Mapping[str, object]):
@@ -724,6 +725,7 @@ def build_email_worker_dependencies(
                 current_model.loaded.classifier,
                 email_store,
                 load_scan_config(current_model),
+                task_producer=task_producer.produce,
             )
 
         return EmailWorkerDependencies(
@@ -734,6 +736,11 @@ def build_email_worker_dependencies(
                 _run_next_direct_action,
                 email_store,
                 direct_action_executor_factory,
+                available_account_ids=lambda: tuple(
+                    str(account["account_id"])
+                    for account in load_enabled_accounts()
+                    if str(account.get("account_id") or "").strip()
+                ),
             ),
             task_store=task_store,
             orchestrator=_build_agent_orchestrator(settings, task_store),
@@ -746,13 +753,195 @@ def build_email_worker_dependencies(
             finalize_task=partial(_finalize_email_task, task_store),
             training_tick=active_model.tick,
             record_health=record_health,
+            unsubscribe_consumer=_build_email_unsubscribe_consumer(
+                settings,
+                task_store=task_store,
+                email_store=email_store,
+                source_factory=source_factory,
+            )[0],
         )
 
     return EmailWorkerBootstrap(
         load_enabled_accounts=load_enabled_accounts,
         load_active_model=load_active_model,
         build_dependencies=build_dependencies,
+        record_health=record_health,
     )
+
+
+def _build_email_source_factory(settings: object):
+    from app.email_connector_config import resolve_secret
+    from app.email_imap_readonly import ImapReadonlyAdapter
+
+    def source_factory(account: Mapping[str, object]):
+        if not bool(account["imap_tls"]):
+            raise ConnectionError("email IMAP TLS is required")
+        secret = resolve_secret(str(account["imap_secret_reference"]), os.environ)
+        if not secret:
+            raise ConnectionError("email IMAP credential is unavailable")
+        return ImapReadonlyAdapter.connect(
+            str(account["imap_host"]),
+            str(account["imap_username"]),
+            secret,
+            port=int(account["imap_port"]),
+            account_id=str(account["account_id"]),
+        )
+
+    return source_factory
+
+
+def _build_email_unsubscribe_consumer(
+    settings: object,
+    *,
+    task_store: object,
+    email_store: object,
+    source_factory: Callable[[Mapping[str, object]], object],
+) -> object:
+    from app.email_unsubscribe import (
+        BrowserNetworkPolicy,
+        EmailUnsubscribeEffect,
+        UnsubscribeAuthenticationEvidence,
+        execute_unsubscribe_in_dedicated_profile,
+        extract_unsubscribe_entries,
+    )
+    from app.email_browser_profile import EmailBrowserProfile
+    from app.email_unsubscribe_consumer import EmailUnsubscribeConsumerAgentRunner
+    from app.email_unsubscribe_operation import EmailUnsubscribeTaskOperation
+    from app.email_classifier_contracts import EmailProviderLocator
+    from urllib.parse import urlsplit
+
+    def resolve_entries(
+        locator: EmailProviderLocator,
+        expected_reference: str,
+        authentication: UnsubscribeAuthenticationEvidence | None = None,
+    ):
+        account = email_store.get_account(locator.account_id)
+        if not isinstance(account, Mapping):
+            raise ValueError("email unsubscribe account is unavailable")
+        source = source_factory(account)
+        try:
+            batch = source.fetch_uid_batch(
+                locator.folder,
+                cursor_uidvalidity=locator.uidvalidity,
+                last_seen_uid=max(0, locator.uid - 1),
+                limit=2,
+            )
+            if batch.uidvalidity != locator.uidvalidity:
+                raise ValueError("email unsubscribe provider generation changed")
+            message = next(
+                (
+                    item
+                    for item in batch.messages
+                    if _message_identity(item) == locator.stable_message_identity
+                    and int(item.get("uid") or 0) == locator.uid
+                ),
+                None,
+            )
+            if not isinstance(message, Mapping):
+                raise ValueError("email unsubscribe source message is unavailable")
+            entries = extract_unsubscribe_entries(
+                list_unsubscribe=str(message.get("listUnsubscribe") or ""),
+                list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
+                body_text=str(message.get("textBody") or message.get("markdownBody") or ""),
+                body_html="",
+                authentication_evidence=authentication,
+            )
+            return tuple(item for item in entries if item.reference == expected_reference)
+        finally:
+            _close_email_source(source)
+
+    def execute_effect(
+        effect: EmailUnsubscribeEffect,
+        entry: object,
+        *,
+        owner: Mapping[str, object],
+        automatic_continuation: Callable[..., Mapping[str, object]],
+    ):
+        parsed = urlsplit(str(getattr(entry, "private_url", "")))
+        if parsed.scheme.casefold() != "https" or not parsed.hostname:
+            raise ValueError("email unsubscribe entry origin is invalid")
+        origin = f"https://{parsed.netloc}"
+        profile = EmailBrowserProfile(
+            Path(settings.db_path).parent / "email-browser-runtime"
+        )
+        policy = BrowserNetworkPolicy(frozenset({origin}))
+        result = execute_unsubscribe_in_dedicated_profile(
+            effect, (entry,), store=email_store, profile=profile,
+            network_policy=policy, owner=owner, automatic=True,
+            automatic_continuation=automatic_continuation,
+        )
+        receipt = result.receipt
+        return {
+            "status": "done" if result.disposition.task_status == "done" else "failed",
+            "outcome": result.outcome.value,
+            "receipt_id": receipt.receipt_id if receipt is not None else "",
+            "evidence": receipt.evidence if receipt is not None else "",
+            "result_text": result.result_text,
+            "observation_digest": result.observation_digest,
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+            "summary": result.result_text or result.outcome.value,
+            "error": {
+                "code": result.error_code,
+                "retryable": result.disposition.retryable,
+                "authorization_required": False,
+            },
+            "final_step": (
+                None
+                if not result.journal
+                else {
+                    "sequence": len(result.journal),
+                    "operation": result.journal[-1].operation,
+                    "state": result.journal[-1].state,
+                    "reference": result.journal[-1].reference,
+                }
+            ),
+        }
+
+    operation = EmailUnsubscribeTaskOperation(
+        task_store=task_store,
+        email_store=email_store,
+        resolve_entries=resolve_entries,
+        execute_effect=execute_effect,
+    )
+    return EmailUnsubscribeConsumerAgentRunner(
+        store=task_store,
+        workspace=Path(settings.workspace),
+        receipt_loader=email_store.get_email_unsubscribe_receipt,
+    ), operation
+
+
+def build_email_unsubscribe_operation(settings: object) -> object:
+    """Build the task-bound operation for the Agent CLI and explicit CLI entry."""
+
+    from app.email_store import EmailStore
+    from app.store import AutoReplyStore
+
+    email_store = EmailStore(Path(settings.db_path))
+    task_store = AutoReplyStore(Path(settings.db_path))
+    return _build_email_unsubscribe_consumer(
+        settings,
+        task_store=task_store,
+        email_store=email_store,
+        source_factory=_build_email_source_factory(settings),
+    )[1]
+
+
+def run_email_unsubscribe_task(
+    db_path: str | Path,
+    task_id: int,
+    execution_generation: str,
+) -> dict[str, object]:
+    """Execute one already-claimed unsubscribe task using service settings."""
+
+    from types import SimpleNamespace
+
+    settings = SimpleNamespace(
+        db_path=Path(db_path),
+        workspace=Path(db_path).parent,
+    )
+    operation = build_email_unsubscribe_operation(settings)
+    return operation.execute(task_id, execution_generation)
 
 
 def _validate_email_worker_dependencies(dependencies: object) -> None:
@@ -772,6 +961,44 @@ def _validate_email_worker_dependencies(dependencies: object) -> None:
         raise EmailWorkerStartupError("email Agent orchestrator is unavailable")
 
 
+def _wait_for_email_components(threads: Sequence[object]) -> None:
+    while True:
+        dead = [
+            thread
+            for thread in threads
+            if callable(getattr(thread, "is_alive", None)) and not thread.is_alive()
+        ]
+        if dead:
+            raise RuntimeError("email worker component exited unexpectedly")
+        Event().wait(1.0)
+
+
+def _report_waiting_configuration(
+    bootstrap: object,
+    *,
+    reason: str,
+    output: TextIO,
+) -> None:
+    record_health = getattr(bootstrap, "record_health", None)
+    if callable(record_health):
+        record_health(
+            "process:email-worker",
+            {"status": "waiting_configuration", "reason": reason},
+        )
+    print(
+        f"email-worker waiting_configuration reason={reason}",
+        file=output,
+        flush=True,
+    )
+
+
+def _wait_for_configuration(wait: Callable[[], object] | None) -> None:
+    if wait is not None:
+        wait()
+        return
+    Event().wait()
+
+
 def run_email_worker(
     settings: object,
     *,
@@ -787,12 +1014,31 @@ def run_email_worker(
         bootstrap = dependencies or dependency_builder(settings)
         accounts = tuple(bootstrap.load_enabled_accounts())
         if not accounts:
-            print("email-worker idle accounts=0", file=output, flush=True)
-            (wait or Event().wait)()
+            _report_waiting_configuration(
+                bootstrap,
+                reason="empty_accounts",
+                output=output,
+            )
+            _wait_for_configuration(wait)
             return
-        active_model = bootstrap.load_active_model()
+        try:
+            active_model = bootstrap.load_active_model()
+        except Exception:
+            _report_waiting_configuration(
+                bootstrap,
+                reason="missing_model",
+                output=output,
+            )
+            _wait_for_configuration(wait)
+            return
         if active_model is None:
-            raise EmailWorkerStartupError("no active email classifier")
+            _report_waiting_configuration(
+                bootstrap,
+                reason="missing_model",
+                output=output,
+            )
+            _wait_for_configuration(wait)
+            return
         build_dependencies = getattr(bootstrap, "build_dependencies", None)
         dependencies = (
             build_dependencies(accounts, active_model)
@@ -800,10 +1046,21 @@ def run_email_worker(
             else bootstrap
         )
         _validate_email_worker_dependencies(dependencies)
+        component_names = (
+            "email-scan-actions",
+            "email-agent-consumer",
+            "email-training",
+        )
+        readiness = EmailWorkerReadiness(
+            component_names,
+            record_health=dependencies.record_health,
+            accounts=len(accounts),
+        )
         components = email_worker_components(
             dependencies,
             accounts=accounts,
             active_model=active_model,
+            component_ready=readiness.mark_ready,
         )
     except EmailWorkerStartupError:
         raise
@@ -815,20 +1072,26 @@ def run_email_worker(
     dependencies.record_health(
         "process:email-worker",
         {
-            "status": "ready",
+            "status": "starting",
             "accounts": len(accounts),
             "components": len(components),
         },
     )
     print(
-        f"email-worker ready accounts={len(accounts)} components={len(components)}",
+        f"email-worker starting accounts={len(accounts)} components={len(components)}",
         file=output,
         flush=True,
     )
+    threads = []
     for name, target in components:
-        thread_factory(
+        thread = thread_factory(
             target=target,
             name=f"ceo-agent-{name}",
             daemon=True,
-        ).start()
-    (wait or Event().wait)()
+        )
+        threads.append(thread)
+        thread.start()
+    if wait is not None:
+        wait()
+    else:
+        _wait_for_email_components(threads)

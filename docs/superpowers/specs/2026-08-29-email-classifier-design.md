@@ -5,8 +5,9 @@
 分类、反馈学习和固定动作边界已在对话中确认；当前模型选型已根据
 修正后的真实邮箱实验更新。本文只定义 MVP 的分类、反馈学习和固定
 动作边界，不包含 CEO Agent 运行时实现计划。已确认：`label`、`mark_read`、
-`archive`、`move`、`trash` 是直接动作，不创建 Agent/Audit 任务；只有
-`auto_reply`、`unsubscribe` 创建 Agent/Audit 工作并遵循其反馈和 readback 契约。
+`archive`、`move`、`trash` 是直接动作，不创建 Agent/Audit 任务；
+`auto_reply` 继续使用 Consumer → Audit，`unsubscribe` 使用 Consumer-direct。两者都创建
+`channel=email` task，并遵循各自的 effect/readback 契约。
 
 ## 背景与目标
 
@@ -102,15 +103,16 @@ IMAP 只读连接器
 
 - `label`、`mark_read`、`archive`、`move`、`trash` 由邮件执行层按稳定 locator
   直接执行，不创建 Agent/Audit 任务；
-- `auto_reply`、`unsubscribe` 是 Agent 动作，只有这两个动作创建 Agent/Audit
-  工作，并由 A/B 生命周期完成反馈、执行和 provider readback。
+- `auto_reply` 和 `unsubscribe` 是 Email task 动作，只有这两个动作创建
+  `channel=email` task；前者使用 Consumer → Audit，后者使用 Consumer-direct，
+  并分别完成 provider effect/readback。
 
 因此第一版采用以下边界：
 
 1. 分类器负责毫秒级分类、拒判和生成不可变的 `ActionPlan`；
 2. 邮件执行层只消费 `direct_actions`，不得扩大或改写计划中的动作和参数；
-3. 后续 Agent 路由只消费 `agent_actions`，并且仅对 `auto_reply`、`unsubscribe`
-   应用 Agent/Audit 生命周期；
+3. 后续 Agent 路由只消费 `agent_actions`：`auto_reply` 应用 Consumer → Audit，
+   `unsubscribe` 应用 Consumer-direct；
 4. 只有消息置信度达到类别阈值且该类别 `auto_action_eligible=true` 才形成计划，
    但不能授权计划之外的动作。
 
@@ -122,11 +124,11 @@ IMAP 只读连接器
 | B. 决策 | 用户在 Email“待反馈”中选择八类之一；反馈回 classifier store | 不写邮箱 |
 | C. Dry-run | 生成直接动作和 Agent 动作的拟执行计划，展示目标与原因 | 不执行 |
 | D. 直接动作 | 按类别配置逐项开启 label/mark_read/archive/move/trash | 不创建 Agent/Audit 任务，记录 provider 结果 |
-| E. Agent 动作 | 单独开启 auto_reply 或 unsubscribe，并分别设阈值和停用条件 | 创建 Agent/Audit 工作并完成 readback |
+| E. Email task 动作 | 单独开启 auto_reply 或 unsubscribe，并分别设阈值和停用条件 | 分别创建 Consumer → Audit 或 Consumer-direct 工作并完成 readback |
 
 本节是集成边界设计，不代表直接动作执行器或 Agent 动作路由已经上线。
-直接动作不经过 Audit B；`auto_reply`、`unsubscribe` 才进入现有 A/B 生命周期并执行
-provider readback。
+直接动作不经过 Audit B；`auto_reply` 进入现有 A/B 生命周期，`unsubscribe` 进入
+Consumer-direct 生命周期，并分别执行 provider readback。
 
 ### CEO Agent Email Adapter Contract（第一版待实现）
 
@@ -154,8 +156,9 @@ trigger_message_id  = "<provider-stable-message-id>"
 `conversation_id` 和 `trigger_message_id` 必须由 provider locator 原样生成，
 不能由主题、发件人或正文推导；同一三元组
 `(channel, conversation_id, trigger_message_id)` 只允许一个业务队列任务。
-仅 `auto_reply`、`unsubscribe` 的 Consumer/Audit 尝试产生独立 `agent_run`，而当前业务结果继续由
-对应的 `reply_attempt` 投影，不能把 classifier queue 的 `pending/resolved`
+仅 `auto_reply`、`unsubscribe` 的 Consumer 尝试产生独立 `agent_run`；只有
+`auto_reply` 还会产生 Audit run。当前业务结果继续由对应的 `reply_attempt` 投影，
+不能把 classifier queue 的 `pending/resolved`
 状态写进 CEO Agent 的 `running/done/failed/needs_human` 状态列。
 
 adapter 给 `AgentTaskContext` 的最小字段应为：
@@ -166,18 +169,20 @@ adapter 给 `AgentTaskContext` 的最小字段应为：
   `ceo-mail-review` 和 `dingtalk-mail` 按 locator 重新读取；
 - `materials` 中声明准确的邮件读取入口，不把原始密码、应用密码或完整认证配置放入
   `trigger_raw_payload`；
-- `required_reviewed_skills` 至少指向 `ceo-mail-review`；当动作是 `auto_reply`
-  或 `unsubscribe` 时，再由 Audit B 读取相应邮件操作 Skill。
+- `required_reviewed_skills` 至少指向 `ceo-mail-review`；`auto_reply` 的 Audit B
+  读取相应邮件操作 Skill，`unsubscribe` 则由 Consumer 读取并执行退订 Skill。
 
 直接动作不进入 Consumer A；邮件执行层只能执行计划中的 `direct_actions`。Consumer A
-只处理 `auto_reply`、`unsubscribe`，不能重新分类或扩大动作。用户确认类别时，系统应
-直接写 classifier feedback，不要求 Consumer A 再次猜类别。
+只处理 `auto_reply`、`unsubscribe`，不能重新分类或扩大动作。`auto_reply` 的候选交给
+Audit B；`unsubscribe` 由 Consumer 对邮件和 thread 做最终判断后直接执行已冻结计划。
+用户确认类别时，系统应直接写 classifier feedback，不要求 Consumer A 再次猜类别。
 
-Audit B 只接收 `auto_reply`、`unsubscribe` 的 Consumer A 候选和配置版本，而不是
-重新分类的输入。B 按现有生命周期审核、执行并保存 provider 返回的最小
+Audit B 只接收 `auto_reply` 的 Consumer A 候选和配置版本，而不是重新分类的输入。
+B 按现有生命周期审核、执行并保存 provider 返回的最小
 `operation`、`target` 和稳定 result identifier；若配置仍是 dry-run，则返回
 `dry_run`，不能伪造 `executed`。分类概率、动作阈值和 dry-run 结果不能替代外部执行后的
-provider readback。
+provider readback。`unsubscribe` 不创建 Audit run 或 revision，但同样必须保存完整步骤、
+terminal result text、receipt 和 observation digest。
 
 第一版的可验证验收边界是：
 
@@ -185,10 +190,11 @@ provider readback。
 2. 仅确认类别不会产生 `reply_task`；
 3. 明确要求处理的邮件才会按上述映射创建 `channel=email` 任务；
 4. 直接动作不创建 Consumer/Audit 任务，且只能执行计划内参数；
-5. `auto_reply`、`unsubscribe` 调用都能关联到 Audit B 的审核/执行记录；
-6. 这两个 Agent 动作仍遵循现有 revision、反馈、lease 和 result readback 契约；
-7. 外部动作未启用时只保存 dry-run 计划，不改变邮箱；
-8. provider 读取失败进入 `failed`，不能伪装成 `needs_human` 或分类 `unknown`。
+5. `auto_reply` 能关联到 Audit B 的审核/执行记录；
+6. `unsubscribe` 能关联到 Consumer-direct 的步骤、terminal receipt 和 observation；
+7. 两个 Email task 动作都遵循各自的 lease、幂等和 result readback 契约；
+8. 外部动作未启用时只保存 dry-run 计划，不改变邮箱；
+9. provider 读取失败进入 `failed`，不能伪装成 `needs_human` 或分类 `unknown`。
 
 直接动作执行器和两个 Agent 动作的 CEO Agent 路由仍未实现；
 不修改 `reply_tasks` schema、worker channel gate、Attention 页面或 launchd 配置。
@@ -227,9 +233,9 @@ HashingVectorizer + SGD Logistic 保留为在线学习对照；当前实验显�
 模型文件原子替换，以及独立的配置/决策契约，但邮箱动作和 CEO Agent
 runtime 仍未实现。自动动作的
 开放仍等待更多人工确认数据及时间 holdout；直接动作与 Agent 动作的边界已经确认：
-`label`、`mark_read`、`archive`、`move`、`trash` 不创建 Agent/Audit 任务，
-只有 `auto_reply`、`unsubscribe` 进入 Agent/Audit 生命周期并执行 provider
-readback。
+`label`、`mark_read`、`archive`、`move`、`trash` 不创建 Agent/Audit 任务；
+`auto_reply` 进入 Consumer → Audit，`unsubscribe` 进入 Consumer-direct，并分别执行
+provider readback。
 
 ## 类别体系
 
@@ -530,8 +536,8 @@ classifier。它尚未连接邮箱或 CEO Agent，也不执行任何邮件动作
 动作开关和自动回复模板；`build_decision` 将一次 `Prediction` 转成带
 provider locator、模型/配置版本的 `EmailDecision`。低置信度决策进入
 Email“待反馈”，状态为 `pending_feedback` 且 `action_plan=None`；已处理分类
-持有不可变 `ActionPlan`。直接动作由邮件执行层消费，只有 `auto_reply`、
-`unsubscribe` 进入 Agent/Audit 生命周期。
+持有不可变 `ActionPlan`。直接动作由邮件执行层消费；`auto_reply` 进入
+Consumer → Audit，`unsubscribe` 进入 Consumer-direct 生命周期。
 
 在此契约之上，`email_classifier_pipeline.py` 提供了一个无连接器的批量
 编排入口：逐封调用分类器，将低于类别阈值或类别不具备自动动作资格的决策交给本地
@@ -663,6 +669,68 @@ p99 < 200ms
 得到 p50/p95/p99/max=`2.3379/11.1640/18.3518/56.9990 ms`；当前
 73 条样本模型的内存序列化体积为 `338,720` bytes，词表为 `4,924`
 个特征。该体积会随人工反馈增长，需要在模型晋级时持续记录。
+
+### 2026-08-31 生产特征重跑和新随机 holdout
+
+先前 73 条 assistant provisional annotations 已通过 readonly DWS 重新取得，
+并全部使用当前生产 `email_message_to_text` 生成脱敏特征。原始邮件只存在于
+进程内存，没有写入文件；附件没有下载，邮箱没有写操作。生产特征版 73 条
+临时数据 SHA-256 为
+`e038e5e2309f22958ae5f1c887b988ae46b20503299332bf583e8c772fba74e9`。
+
+同一数据上重新比较后：word-unigram TF-IDF + balanced Logistic 的时间顺序
+70/30 结果仍为 `45.45% Accuracy / 38.47% Macro F1`；严格单线程纯预测
+P95 约 `0.55 ms`，现有完整预处理 + jieba + inference P95 约 `6.0 ms`。
+fastText 本轮最好的时间顺序候选约为 `50.0% Accuracy / 26.19% Macro F1`，
+`important` recall 仍为 0，且没有 0.5 以上的自动候选；未量化模型约
+`26.4 MB`，Logistic 约 `339 KB`。fastText 0.9.3 在小样本单线程 softmax
+训练时还可重复触发 `Encountered NaN`。因此延迟不是瓶颈，模型选择继续保持
+TF-IDF + balanced Logistic。
+
+随后从当前 2,283 个 INBOX UID 中用固定随机种子 `2026083102` 抽取 40 封。
+邮件头标注和正文特征读取均为 readonly；附件仍只使用 metadata。assistant
+provisional label 分布为 `billing=5`、`important=10`、`junk=1`、
+`notification=14`、`work=10`，没有 `personal`、`shopping` 或
+`subscription`。脱敏 holdout SHA-256 为
+`cc9d99ee22f6b4b61061ffedec8e94d375b7135e2d5db59c6ba15e824245d68a`。
+
+用 73 条训练、40 条独立测试时，word-unigram、word-bigram、char 2-5 和
+word+char 都只有约 `20% Accuracy / 13% Macro F1`。训练和测试全部重建为
+同一生产特征后结果不变，排除了预处理版本错配。主要分布缺口是：旧 73 条
+实验明确排除了身份验证/验证码邮件，而新随机样本包含大量登录码和安全通知，
+旧模型因此没有预测出 `notification`。
+
+把随机 40 条的最后 10 条固定为未见测试集，并逐批加入前面的 provisional
+feedback 后，20 条反馈把 Accuracy 从 10% 提升到 50%，`notification`
+达到 100% precision / 80% recall；30 条没有继续改善，`work` recall 仍为 0。
+每次重训约 `16-20 ms`，模型约 `343-404 KB`。合并 113 条的五折 OOF 为
+`54.87% Accuracy / 50.71% Macro F1`，最大 top-1 confidence 只有
+`0.3109`，所以 0.85 生产 threshold 的自动覆盖率仍为 0。
+
+这些标签不是 user-confirmed gold feedback，不进入生产 feedback store、模型
+promotion 或 category eligibility。实验支持 feedback + debounce + batch retrain
+结构，但不支持开放任何自动动作。下一批数据应组合随机漂移样本、低置信度
+active learning 和 `billing/personal/shopping/subscription` 定向补样，并保留
+user-confirmed chronological holdout。
+
+同日又用随机种子 `2026083103` 只读取了 80 封邮件头，用于独立观察分布；provisional
+标注为 `important=26`、`notification=18`、`work=15`、`junk=10`、`billing=8`、
+`subscription=2`、`personal=1`、`shopping=0`。这批数据没有读取正文，也不进入
+模型评估、生产 feedback 或 model promotion；与前一轮 40 封不能未经 UID 去重就
+合并计算样本支持。
+
+同日对当前 INBOX 做了全量有限 header 的 readonly `UID FETCH` 分段扫描：
+2,282/2,282 个 UID 成功解析且没有失败分段，`List-Unsubscribe` 和
+`List-Unsubscribe-Post` 均为 0。该结果只描述本次邮箱快照，不授权自动退订，也不
+替代未来新邮件的持续监测；正文和附件仍未读取。
+
+随后对随机种子 `2026083103` 的同一 80 个 UID 按生产 readonly adapter 读取了纯文本，
+附件仍只保留 metadata，并做随机 5-fold OOF：`67.50% Accuracy / 47.24% Macro F1`。
+其中 `notification` 为 `93.75% precision / 83.33% recall`（support 18），但
+`subscription` 只有 2 条 provisional 样本且 precision/recall 均为 0；该结果不是
+时间顺序 holdout，也不是 user-confirmed gold，不能授权 model promotion 或任何自动
+退订动作。脱敏特征 SHA-256 为
+`e81c24f2a2da68f7f10467e5c812a1d6d669185c6e0be61164369783d96359b2`。
 
 ## 模型评测
 

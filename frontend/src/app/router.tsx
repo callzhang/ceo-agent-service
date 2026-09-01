@@ -10,6 +10,7 @@ const AttentionPage = lazy(() => import("../pages/AttentionPage").then((module) 
 const HistoryPage = lazy(() => import("../pages/HistoryPage").then((module) => ({ default: module.HistoryPage })));
 const StatusPage = lazy(() => import("../pages/StatusPage").then((module) => ({ default: module.StatusPage })));
 const FeedbackPage = lazy(() => import("../pages/FeedbackPage").then((module) => ({ default: module.FeedbackPage })));
+const EmailPage = lazy(() => import("../pages/EmailPage").then((module) => ({ default: module.EmailPage })));
 const SettingsPage = lazy(() => import("../pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 const DomainListPage = lazy(() => import("../pages/DomainListPage").then((module) => ({ default: module.DomainListPage })));
 const TutorialPage = lazy(() => import("../pages/TutorialPage").then((module) => ({ default: module.TutorialPage })));
@@ -60,6 +61,7 @@ function ConsoleRoutes() {
       <Route path="/tasks/:projectId" element={<TaskDetailRoute />} />
       <Route path="/settings" element={<SettingsRoute />} />
       <Route path="/user-feedback" element={<FeedbackPage />} />
+      <Route path="/email" element={<EmailPage />} />
       <Route path="/tutorial" element={<TutorialPage />} />
       <Route path="/notifications" element={<DomainListPage title="Notifications" endpoint="/api/console/notifications" showNotificationStatus />} />
       <Route path="/codex" element={<DomainListPage title="Codex Sessions" endpoint="/api/console/codex/sessions" kind="codex" />} />
