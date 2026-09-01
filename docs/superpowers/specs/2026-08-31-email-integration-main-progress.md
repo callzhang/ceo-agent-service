@@ -339,6 +339,29 @@ Email worker 健康状态为 `waiting_configuration / missing_model`；在获得
 training set；候选模型只能先做 time-ordered validation，类别 action eligibility
 仍需独立通过 precision、support 和当前 threshold 一致性门槛。
 
+## 2026-09-01 混合采样实验与类别边界校正
+
+为验证“随机漂移样本 + 定向稀有类别样本”的组合，合并前两轮不重复的临时样本，
+并重新按 UID 时间顺序切分。两批样本共有 `90` 个唯一 UID；前 `70` 封训练，后
+`20` 封 holdout。所有标签仍是 assistant provisional annotations，仅存在于本次
+进程内。
+
+- 合并分布为 `billing=22`、`work=23`、`notification=16`、`junk=10`、
+  `subscription=11`、`important=6`、`shopping=2`，`personal=0`；
+- 当前 word-unigram TF-IDF + balanced Logistic 得到 `30% Accuracy`，按 holdout
+  实际出现的五个类别计算 `22.44% Macro F1`；预测 P95 约 `0.57 ms`；
+- `subscription` 在 holdout 上 precision `100%`、recall `12.5%`，但 support
+  仍只有 `8`，且这些不是用户确认样本，不能触发自动退订资格；
+- 在合并过程中发现同一 UID 的“Business subscription renews soon”曾被一轮标成
+  `billing`、另一轮标成 `subscription`。按类别定义，续费/账单通知应归
+  `billing`；只有用户不希望继续接收的批量订阅才归 `subscription`。修正冲突后
+  重新计算，上述指标才作为本节结果记录。
+
+这说明 Email 页面“待反馈”不能只显示类别名称，还应在用户选择时显示简短定义：
+`billing=发票、账单、付款、续费`，`subscription=用户不希望继续接收的批量订阅`，
+并在冲突类别之间给出一个具体例子。否则反馈标签本身会成为模型噪声，尤其会影响
+自动退订的 precision gate。
+
 已实际落地并回读：
 
 - `dingtalk_primary.enabled=true`，IMAP/SMTP 继续使用既有环境变量 reference；API 只返回 `secret_configured`，没有返回 secret 值；
