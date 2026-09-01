@@ -835,6 +835,9 @@ h1, h2, h3, p { margin-top: 0; }
 
 /* Attempt detail keeps the legacy reading order: one review card plus a side rail. */
 .attempt-conversation-banner { width: 100%; }
+.console-page:has(> .attempt-detail-page-marker) > .console-page-header,
+.console-page:has(> .attempt-detail-page-marker) > .attempt-conversation-banner,
+.console-page:has(> .attempt-detail-page-marker) > .attempt-metadata-card { max-width: 1004px; }
 .attempt-banner-actions { min-width: 0; }
 .agent-log-button, .compact-button, .disabled-action {
   display: inline-flex;
@@ -859,6 +862,13 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-banner-actions .open-dingtalk-action:hover { color: white; background: var(--accent); }
 .attempt-banner-actions .disabled-action { color: var(--ink-soft); background: var(--surface-muted); }
 .attempt-review-main { width: 100%; max-width: none; margin: 0; }
+.console-page:has(> .attempt-detail-page-marker) > .attempt-review-grid {
+  width: calc(100% + 56px);
+  max-width: none;
+  margin-right: -28px;
+  margin-left: -28px;
+}
+.console-page:has(> .attempt-detail-page-marker) > .attempt-review-grid .review-side { width: min(1004px, calc(100% - 56px)); margin: 16px auto 0; }
 .attempt-review-main { border-color: #cbded3; box-shadow: 0 12px 28px rgb(24 31 27 / 7%); }
 .attempt-review-main .reply-meta { margin: -4px 0 16px; padding-bottom: 13px; border-bottom: 1px solid var(--line); }
 .attempt-review-block { min-width: 0; margin: 0 0 14px; }
@@ -881,6 +891,8 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-runtime-card[open] > .attempt-runtime-list { padding: 16px 20px 20px; }
 
 @media (max-width: 760px) {
+  .console-page:has(> .attempt-detail-page-marker) > .attempt-review-grid { width: 100%; margin-right: 0; margin-left: 0; }
+  .console-page:has(> .attempt-detail-page-marker) > .attempt-review-grid .review-side { width: 100%; margin-top: 16px; }
   .attempt-conversation-card, .attempt-primary-grid { display: grid; grid-template-columns: 1fr; }
   .attempt-header-actions, .attempt-bottom-actions { justify-content: flex-start; }
   .attempt-metadata-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
