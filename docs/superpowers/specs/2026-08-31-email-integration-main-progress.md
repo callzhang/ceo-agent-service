@@ -260,8 +260,9 @@ Chromium 都在启动后收到 `SIGABRT`，结果为 `1 passed, 33 errors`；这
 
 Derek 已明确授权启用 Email 集成。本轮在保留主工作树既有 UI/Settings WIP 的前提
 下完成了 Email 集成合并，并提交了兼容旧生产库的 unsubscribe schema 修复
-`fb091bfb`。生产库在变更前创建并通过一致性校验的备份为：
-`/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-email-enable-20260901T174537Z.sqlite3`。
+`fb091bfb`。生产库在变更前保留并通过一致性校验的备份为：
+`/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-09-01.sqlite3`。
+该快照只读回读为 schema v11、`dingtalk_primary.enabled=0`、邮件数为 0。
 
 已实际落地并回读：
 
