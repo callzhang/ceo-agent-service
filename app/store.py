@@ -1026,6 +1026,10 @@ class AutoReplyStore:
         self._read_snapshot_connection: ContextVar[sqlite3.Connection | None] = (
             ContextVar(f"audit_read_snapshot_{id(self)}", default=None)
         )
+        self._history_page_cache_lock = threading.Lock()
+        self._history_page_cache: tuple[
+            float, tuple[str, ...], int, list[OperationLog]
+        ] | None = None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_initialized()
 
@@ -22013,6 +22017,24 @@ class AutoReplyStore:
         source_tables: tuple[str, ...] | None = None,
     ) -> tuple[int, list[OperationLog]]:
         """Return one page and its exact count from a single materialized query."""
+        cacheable = (
+            limit <= 100
+            and offset == 0
+            and not query.strip()
+            and not log_type.strip()
+            and not statuses
+            and not history_types
+            and bool(source_tables)
+        )
+        if cacheable:
+            with self._history_page_cache_lock:
+                cached = self._history_page_cache
+                if (
+                    cached is not None
+                    and cached[1] == tuple(source_tables or ())
+                    and time.monotonic() - cached[0] < 1.0
+                ):
+                    return cached[2], list(cached[3])
         where_sql, where_args = self._operation_log_filters(
             query=query,
             log_type=log_type,
@@ -22040,17 +22062,40 @@ class AutoReplyStore:
                 payload = dict(row)
                 payload.pop("__total", None)
                 items.append(OperationLog.model_validate(payload))
-            return total, items
-        return (
-            self.count_operation_logs(
-                query=query,
-                log_type=log_type,
-                statuses=statuses,
-                history_types=history_types,
-                source_tables=source_tables,
-            ),
-            [],
+            result = (total, items)
+        else:
+            result = (
+                self.count_operation_logs(
+                    query=query,
+                    log_type=log_type,
+                    statuses=statuses,
+                    history_types=history_types,
+                    source_tables=source_tables,
+                ),
+                [],
+            )
+        if cacheable:
+            with self._history_page_cache_lock:
+                self._history_page_cache = (
+                    time.monotonic(),
+                    tuple(source_tables or ()),
+                    result[0],
+                    list(result[1]),
+                )
+        return result
+
+    def warm_history_page_cache(
+        self, *, source_tables: tuple[str, ...], limit: int = 20
+    ) -> int:
+        """Pre-render the default History page before the web listener is ready."""
+        with self._history_page_cache_lock:
+            self._history_page_cache = None
+        total, _rows = self.list_operation_logs_with_count(
+            limit=limit,
+            offset=0,
+            source_tables=source_tables,
         )
+        return total
 
     def list_operation_log_types(self) -> list[str]:
         with self._connect() as db:

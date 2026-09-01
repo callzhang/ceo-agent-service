@@ -9860,6 +9860,20 @@ def create_audit_app(
             if workbench_lifecycle is None:
                 raise RuntimeError("workbench lifecycle is unavailable")
             workbench_lifecycle.start()
+            # Warm the default History page before advertising the listener as
+            # ready. This moves the one-time SQLite scan out of the user's
+            # first request; subsequent reads are served from the short-lived
+            # store cache and still refresh after its TTL.
+            audit_store.warm_history_page_cache(
+                source_tables=(
+                    "reply_attempts",
+                    "meeting_alignment_runs",
+                    "work_updates",
+                    "todo_evidence_candidates",
+                    "follow_up_drafts",
+                    "work_todo_dingtalk_links",
+                )
+            )
             yield
         finally:
             if workbench_lifecycle is not None:

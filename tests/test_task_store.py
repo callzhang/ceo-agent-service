@@ -1647,3 +1647,30 @@ def test_read_connections_use_bounded_cache_and_mmap(tmp_path: Path):
 
     assert cache_size <= -32768
     assert mmap_size >= 268435456
+
+
+def test_history_page_cache_can_be_warmed_for_the_default_view(tmp_path: Path):
+    store = _store(tmp_path)
+    store.record_reply_attempt(
+        conversation_id="history-cache",
+        conversation_title="History cache",
+        trigger_message_id="history-cache-message",
+        trigger_sender="Derek",
+        trigger_text="Warm the history view",
+        action="chat_message",
+        sensitivity_kind="",
+        codex_reason="test",
+        draft_reply_text="ready",
+        send_status="sent",
+    )
+    sources = ("reply_attempts",)
+
+    warmed = store.warm_history_page_cache(source_tables=sources)
+    total, rows = store.list_operation_logs_with_count(
+        limit=20,
+        source_tables=sources,
+    )
+
+    assert warmed == total
+    assert rows
+    assert rows[0].source_table == "reply_attempts"
