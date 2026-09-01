@@ -14,6 +14,8 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Any, TextIO
 
+from app.skill_features import FeatureRegistry
+
 
 SCAN_INTERVAL_SECONDS = 60
 CONSUMER_POLL_INTERVAL_SECONDS = 10
@@ -155,6 +157,7 @@ def run_email_agent_task_loop(
     record_health: Callable[[str, Mapping[str, object]], object] = _ignore_health,
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
+    feature_registry: FeatureRegistry | None = None,
 ) -> None:
     cycles = 0
     while max_cycles is None or cycles < max_cycles:

@@ -51,6 +51,7 @@ from app.dws_client import (
     DwsUserProfile,
 )
 from app.store import AgentRole, AutoReplyStore
+from app.skill_features import FeatureRegistry
 from app.runtime_environment import central_python
 from app.worker import (
     DWS_AUTH_LOGIN_STATE_KEY,
@@ -1647,6 +1648,50 @@ def make_worker(
     if agent_orchestrator is None:
         worker.agent_orchestrator = FakeAgentOrchestrator(worker)
     return worker
+
+
+def test_disabled_message_triage_skips_new_dingtalk_task(tmp_path, monkeypatch):
+    dws = FakeDws([], {})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    registry.set_enabled("message_triage", False)
+    worker.feature_registry = registry
+
+    assert worker._enqueue_reply_task(conversation(), message("请跟进")) is False
+    assert worker.store.count_reply_tasks(channel="dingtalk") == 0
+
+
+def test_disabled_calendar_invite_leaves_new_calendar_task_uncreated(tmp_path, monkeypatch):
+    dws = FakeDws([], {})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    registry.set_enabled("calendar_invite", False)
+    worker.feature_registry = registry
+
+    assert (
+        worker._enqueue_reply_task(
+            conversation(), message("[日程] 请确认", message_type="calendar")
+        )
+        is False
+    )
+    assert worker.store.count_reply_tasks(channel="dingtalk") == 0
+
+
+def test_disabled_message_triage_does_not_create_manual_rerun_task(tmp_path, monkeypatch):
+    trigger = message("请跟进")
+    dws = FakeDws([conversation()], {"cid-1": [trigger]})
+    worker = make_worker(tmp_path, dws, FakeCodex([]), monkeypatch)
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    registry.set_enabled("message_triage", False)
+    worker.feature_registry = registry
+    monkeypatch.setattr(
+        worker,
+        "_process_queued_task",
+        lambda *_args: pytest.fail("disabled rerun must not process a new task"),
+    )
+
+    assert worker.rerun_message(conversation(), trigger.open_message_id, force_new_decision=True) == trigger.open_message_id
+    assert worker.store.count_reply_tasks(channel="dingtalk") == 0
 
 
 def test_worker_defaults_to_real_channel_gates(tmp_path, monkeypatch):

@@ -33,6 +33,7 @@ from app.email_task_adapter import (
 )
 from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 from app.store import AutoReplyStore
+from app.skill_features import FeatureRegistry
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -248,6 +249,40 @@ def test_only_agent_actions_create_idempotent_email_reply_tasks(tmp_path: Path):
             action_type=route.action_type,
             action_plan_version=plan.action_plan_version,
         )
+
+
+def test_disabled_mail_review_does_not_create_email_tasks(tmp_path: Path):
+    store = _store(tmp_path)
+    plan = _plan((EmailAction.AUTO_REPLY,))
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    _persist_authorization(email_store, plan, task_input)
+    registry = FeatureRegistry(
+        state_path=tmp_path / "skill-state.json"
+    )
+    registry.set_enabled("mail_review", False)
+
+    adapter = EmailAgentTaskAdapter(store, email_store, feature_registry=registry)
+    assert adapter.ensure_action_plan_tasks(plan, task_input) == ()
+    assert store.count_reply_tasks(channel="email") == 0
+
+
+def test_disabling_mail_review_does_not_change_existing_email_task(tmp_path: Path):
+    store = _store(tmp_path)
+    plan = _plan((EmailAction.AUTO_REPLY,))
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    _persist_authorization(email_store, plan, task_input)
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    enabled_adapter = EmailAgentTaskAdapter(
+        store, email_store, feature_registry=registry
+    )
+    [existing] = enabled_adapter.ensure_action_plan_tasks(plan, task_input)
+    registry.set_enabled("mail_review", False)
+
+    [replayed] = enabled_adapter.ensure_action_plan_tasks(plan, task_input)
+    assert replayed.task.id == existing.task.id
+    assert replayed.task.status == existing.task.status == "pending"
 
 
 def test_classification_with_zero_agent_actions_creates_no_reply_task(tmp_path: Path):

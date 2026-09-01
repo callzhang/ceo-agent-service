@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 from app.store import AutoReplyStore
+from app.skill_features import FeatureRegistry
 from app.todo_completion import (
     close_todo_with_completion_evidence,
     enqueue_follow_up_completion_checks,
@@ -81,6 +82,31 @@ def test_close_todo_completion_evidence_completes_bound_follow_ups(tmp_path):
     check = json.loads(follow_up.evidence_check_json)
     assert check["source"] == "reply_attempt:7"
     assert check["reason"] == "Alex 明确回复验收 ETA 已同步。"
+
+
+def test_disabled_work_tracking_does_not_enqueue_todo_completion_checks(tmp_path):
+    store = _store(tmp_path)
+    _project_todo_follow_up(store)
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    registry.set_enabled("work_tracking", False)
+
+    class Dws:
+        def search_messages(self, *args, **kwargs):
+            raise AssertionError("disabled scanner must not search messages")
+
+        def list_minutes(self, *args, **kwargs):
+            raise AssertionError("disabled scanner must not read AI minutes")
+
+    assert (
+        enqueue_todo_completion_evidence_checks(
+            store,
+            Dws(),
+            now="2026-06-28 12:00:00",
+            feature_registry=registry,
+        )
+        == 0
+    )
+    assert store.claim_work_summary_inputs(limit=1) == []
 
 
 def test_completion_check_enqueues_one_evidence_work_item(tmp_path):

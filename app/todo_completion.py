@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from app.store import AutoReplyStore
+from app.skill_features import FeatureRegistry
 from app.task_models import ProjectPriority, ProjectStatus, TodoStatus, WorkItem
 
 FOLLOW_UP_COMPLETION_CHECK_SCANNER = "follow_up_completion_check"
@@ -118,8 +119,11 @@ def enqueue_todo_completion_evidence_checks(
     now: str,
     limit: int = TODO_COMPLETION_CANDIDATE_LIMIT,
     require_follow_up: bool = False,
+    feature_registry: FeatureRegistry | None = None,
 ) -> int:
     if limit <= 0:
+        return 0
+    if not (feature_registry or FeatureRegistry()).feature_enabled("work_tracking"):
         return 0
     todos_checked = 0
     candidates_enqueued = 0

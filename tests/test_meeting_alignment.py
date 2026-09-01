@@ -21,8 +21,112 @@ from app.meeting_alignment import (
 )
 from app.meeting_alignment_models import MeetingAlignmentDecision
 from app.store import AutoReplyStore
+from app.skill_features import FeatureRegistry
 
 NOW = datetime.fromisoformat("2026-07-14T10:10:00+08:00")
+
+
+def test_producer_does_not_create_new_job_when_feature_disabled(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+    registry = FeatureRegistry(
+        state_path=tmp_path / "skill-state.json"
+    )
+    registry.set_enabled("meeting_summary", False)
+
+    assert (
+        produce_meeting_alignment_jobs(
+            store,
+            dws,
+            now=NOW,
+            feature_registry=registry,
+        )
+        == 0
+    )
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+
+
+def test_disabled_feature_still_processes_existing_meeting_job(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    registry = FeatureRegistry(
+        state_path=tmp_path / "skill-state.json"
+    )
+    registry.set_enabled("meeting_summary", False)
+    analyzed: list[int] = []
+    monkeypatch.setattr(
+        meeting_alignment,
+        "_analyze_meeting_job",
+        lambda _store, _dws, _runner, claimed, **_kwargs: analyzed.append(claimed.id),
+    )
+
+    assert (
+        consume_meeting_alignment_jobs(
+            store,
+            dws,
+            object(),
+            now=NOW,
+            deliver=False,
+            feature_registry=registry,
+        )
+        == 1
+    )
+    assert analyzed == [job.id]
+    assert store.get_meeting_alignment_job(job.id).status == "processing"
+
+
+def test_disabled_feature_still_delivers_existing_ready_meeting_job(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws()
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    store.update_meeting_alignment_job(job.id, status="ready_to_send")
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    registry.set_enabled("meeting_summary", False)
+    delivered: list[int] = []
+    monkeypatch.setattr(
+        meeting_alignment,
+        "_deliver_meeting_job",
+        lambda _store, _dws, claimed, **_kwargs: delivered.append(claimed.id),
+    )
+
+    assert (
+        consume_meeting_alignment_jobs(
+            store,
+            dws,
+            object(),
+            now=NOW,
+            feature_registry=registry,
+        )
+        == 1
+    )
+    assert delivered == [job.id]
+
+
+def test_disabled_feature_does_not_queue_new_meeting_replay(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    registry.set_enabled("meeting_summary", False)
+
+    class Dws:
+        def list_minutes_page(self, **_kwargs):
+            raise AssertionError("disabled replay must not read meeting minutes")
+
+    assert (
+        queue_recent_meeting_alignment_replay(
+            store,
+            Dws(),
+            now=NOW,
+            limit=1,
+            feature_registry=registry,
+        )
+        == []
+    )
+    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
 
 
 def ended_meeting(

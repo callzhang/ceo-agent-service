@@ -42,6 +42,7 @@ from app.store import (
     ReplyTaskIdentityConflict,
     ReplyTaskSpec,
 )
+from app.skill_features import FeatureRegistry
 
 
 _PAYLOAD_SCHEMA = "email_agent_action.v1"
@@ -613,12 +614,19 @@ def accepted_email_unsubscribe_effect(
 class EmailAgentTaskAdapter:
     """Create Email tasks while leaving execution and Audit to the existing runtime."""
 
-    def __init__(self, store: AutoReplyStore, email_store: EmailStore):
+    def __init__(
+        self,
+        store: AutoReplyStore,
+        email_store: EmailStore,
+        *,
+        feature_registry: FeatureRegistry | None = None,
+    ):
         if store.path.resolve() != email_store.path.resolve():
             raise ValueError(
                 "email task and classification stores must share one database"
             )
         self.store = store
+        self.feature_registry = feature_registry or FeatureRegistry()
 
     def ensure_action_plan_tasks(
         self,
@@ -674,6 +682,30 @@ class EmailAgentTaskAdapter:
                         trigger_message_json=payload_json,
                     ),
                 )
+            )
+        if not self.feature_registry.feature_enabled("mail_review"):
+            existing_tasks = [
+                self.store.get_reply_task_for_message(
+                    spec.conversation_id,
+                    spec.trigger_message_id,
+                    channel="email",
+                )
+                for _, _, spec in prepared
+            ]
+            return tuple(
+                EmailAgentTaskRoute(
+                    action_type=action_type,
+                    task=task,
+                    context=self._build_context(
+                        task=task,
+                        payload=payload,
+                        task_input=task_input,
+                    ),
+                )
+                for (action_type, payload, _), task in zip(
+                    prepared, existing_tasks, strict=True
+                )
+                if task is not None
             )
         try:
             tasks = self.store.ensure_authorized_email_reply_tasks(

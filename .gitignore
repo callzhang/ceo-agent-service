@@ -35,6 +35,11 @@ __pycache__/
 *.before-*
 data/*
 !data/README.md
+!data/config/
+!data/config/skill-features.json
+data/config/skill-state.json
+data/config/skill-state.json.lock
+data/config/skill-state.json.*.tmp
 data/prompts/
 data/work-profile/
 logs/

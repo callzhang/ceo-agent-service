@@ -302,6 +302,41 @@ export function getSettings(section: string, signal?: AbortSignal) {
   return request<ConsoleResource<Record<string, unknown>>>(`/api/console/settings/${encodeURIComponent(section)}`, { signal });
 }
 
+export interface SkillFeature {
+  feature_id: string;
+  name: string;
+  description: string;
+  skills: string[];
+  enabled: boolean;
+  status: string;
+}
+export interface ProjectSkill {
+  name: string;
+  description: string;
+  managed_by?: string;
+  path?: string;
+  content?: string;
+  sha256?: string;
+  referenced_by: string[];
+  status?: string;
+  error?: string;
+}
+export interface SkillSettings { features: SkillFeature[]; skills: ProjectSkill[]; }
+export interface SkillDetail extends ProjectSkill { content: string; sha256: string; }
+
+export function getSkillFeatures(signal?: AbortSignal) {
+  return request<SkillSettings>("/api/console/settings/skills", { signal });
+}
+export function toggleSkillFeature(featureId: string, enabled: boolean) {
+  return request<{ feature_id: string; enabled: boolean; status: string }>(`/api/console/settings/skills/${encodeURIComponent(featureId)}/toggle`, { method: "POST", body: JSON.stringify({ enabled }) });
+}
+export function getSkillDetail(name: string, signal?: AbortSignal) {
+  return request<SkillDetail>(`/api/console/settings/skills/${encodeURIComponent(name)}`, { signal });
+}
+export function saveSkill(name: string, content: string, expectedSha256: string) {
+  return request<SkillDetail>(`/api/console/settings/skills/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ content, expected_sha256: expectedSha256 }) });
+}
+
 export function getResource(path: string, signal?: AbortSignal) {
   return request<ConsoleResource<Record<string, unknown>>>(path, { signal });
 }

@@ -287,6 +287,23 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则：分别加载
 `dingtalk-oa-approval`、`xiaoqing_interview`/现有面试 Skill、`dingtang-okr-review`。
 
+### Settings 中的功能机制开关
+
+`Settings -> Skills` 管理的是功能机制，而不是单个文件的可读性。功能清单保存在
+`data/config/skill-features.json`，一个功能可以关联多个顶层业务 Skill，一个业务 Skill
+也可以被多个功能复用；不存在 Skill 下的子 Skill。启用状态单独保存在
+`data/config/skill-state.json`，默认值来自功能清单，状态写入采用原子更新。
+
+开关只作用于对应机制为**新输入创建任务**的入口。关闭后，新的会议、邮件、跟进、任务扫描或
+其他有明确生产边界的输入不会入队；已经排队、运行中或可重试的任务仍按原有生命周期继续处理。
+共享 Skill 不会从 catalog 删除，其他启用功能仍可使用它。普通消息无法在任务创建前可靠地按
+业务领域分类，因此不会用关键词把文档或人员 Skill 拆成独立路由；这些 Skill 仍由通用消息
+Consumer 在完整上下文中按需发现。
+
+Settings 编辑的权威来源是仓库内 `skills/*/SKILL.md`。保存会校验 frontmatter、以 SHA
+防止并发覆盖，并同步 service-managed 的运行时副本；源文件和运行时副本未同时成功时，保存
+失败并保留原内容。用户、系统或插件目录中的外部 operation Skill 不在该页面的编辑范围内。
+
 ### Consumer Agent A
 
 A 的身份是 Derek 本人，而不是旁观审核员。A 会：

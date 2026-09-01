@@ -4,7 +4,9 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from app.dws_client import DwsUserProfile
+import app.follow_up as follow_up
 from app.follow_up import process_due_follow_ups, resolve_failed_follow_up
+from app.skill_features import FeatureRegistry
 from app.store import AutoReplyStore
 from app.task_agent import apply_task_agent_decision
 from app.task_models import TaskAgentDecision, WorkItem
@@ -140,6 +142,48 @@ def test_due_follow_up_sends_group_message(tmp_path):
     assert send_result["at_users"] == ["owner-1"]
     assert send_result["at_open_dingtalk_ids"] == ["open-owner-1"]
     assert send_result["at_open_dingtalk_names"] == ["Alex"]
+
+
+def test_disabled_work_tracking_does_not_enqueue_follow_up_agent_review(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    project_id = store.create_work_project(title="客户交付")
+    todo_id = _create_bound_todo(store, project_id)
+    draft_id = store.create_follow_up_draft(
+        project_id=project_id,
+        todo_id=todo_id,
+        owner_user_id="owner-1",
+        owner_name="Alex",
+        target_conversation_id="cid-1",
+        target_kind="group",
+        question_text="请确认当前进展。",
+        scheduled_at="2026-06-08 01:00:00",
+    )
+    draft = store.get_follow_up_draft(draft_id)
+    assert draft is not None
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
+    registry.set_enabled("work_tracking", False)
+    monkeypatch.setattr(follow_up, "FeatureRegistry", lambda: registry)
+    assert (
+        follow_up._defer_follow_up_for_agent_review(
+            store,
+            draft,
+            now="2026-06-08 02:00:00",
+            reason="manual repair",
+        )
+        is False
+    )
+    assert (
+        follow_up._enqueue_prior_delivery_agent_review(
+            store,
+            draft,
+            {"draft_revision": 1},
+            now="2026-06-08 02:00:00",
+        )
+        is False
+    )
+    assert store.claim_work_summary_inputs(limit=1) == []
 
 
 def test_concurrent_correction_invalidates_unclaimed_send_revision(tmp_path):

@@ -96,6 +96,7 @@ from app.store import (
     AutoReplyStore,
     ReplyTask,
 )
+from app.skill_features import FeatureRegistry
 from app.task_scanners import oa_originator_user_id
 from app.work_profile import safe_excerpt
 from PIL import Image, UnidentifiedImageError
@@ -478,6 +479,7 @@ class DingTalkAutoReplyWorker:
         login_coordinator: LoginCoordinator | None = None,
         agent_orchestrator: AgentOrchestrator | None = None,
         agent_runtime: "ProductionAgentRuntime | None" = None,
+        feature_registry: FeatureRegistry | None = None,
     ):
         self.store = store
         self.dws = dws
@@ -510,6 +512,7 @@ class DingTalkAutoReplyWorker:
         self._sqlite_lock_failures: dict[str, int] = {}
         self.agent_orchestrator = agent_orchestrator
         self.agent_runtime = agent_runtime
+        self.feature_registry = feature_registry or FeatureRegistry()
 
     def _agent_orchestrator(self) -> AgentOrchestrator:
         if self.agent_orchestrator is not None:
@@ -3068,6 +3071,18 @@ class DingTalkAutoReplyWorker:
         error: str = "",
         replace_pending_single_chat: bool = True,
     ) -> bool:
+        feature_id = (
+            "calendar_invite"
+            if self._is_calendar_message(trigger)
+            else "message_triage"
+        )
+        if not self.feature_registry.feature_enabled(feature_id):
+            logger.info(
+                "feature disabled; skipping new input feature_id=%s message_id=%s",
+                feature_id,
+                trigger.open_message_id,
+            )
+            return False
         if conversation.single_chat and replace_pending_single_chat:
             updated = self.store.replace_pending_single_chat_reply_task_trigger(
                 conversation_id=conversation.open_conversation_id,
@@ -3431,6 +3446,18 @@ class DingTalkAutoReplyWorker:
             self._mark_seen([trigger])
             return trigger.open_message_id
         trigger = self._restore_richer_rerun_trigger(trigger)
+        feature_id = (
+            "calendar_invite"
+            if self._is_calendar_message(trigger)
+            else "message_triage"
+        )
+        if not self.feature_registry.feature_enabled(feature_id):
+            logger.info(
+                "feature disabled; skipping manual rerun feature_id=%s message_id=%s",
+                feature_id,
+                trigger.open_message_id,
+            )
+            return trigger.open_message_id
         if force_new_decision:
             task = self.store.enqueue_manual_rerun_reply_task(
                 conversation_id=conversation.open_conversation_id,

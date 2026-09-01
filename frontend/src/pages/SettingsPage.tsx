@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { displayValue, getSettings, listAttention, listWechat, listWechatTargets, saveSettings, saveWechatReplyScope, type WechatScopeTarget } from "../api/console";
+import { displayValue, getSettings, getSkillDetail, getSkillFeatures, listAttention, listWechat, listWechatTargets, saveSettings, saveSkill as saveSkillApi, saveWechatReplyScope, toggleSkillFeature, type ProjectSkill, type SkillDetail, type SkillFeature, type WechatScopeTarget } from "../api/console";
 import { TokenEditor } from "../components/editor/TokenEditor";
 import { SecretField } from "../components/forms/SecretField";
 import { SearchField } from "../components/filters/SearchField";
@@ -11,11 +11,11 @@ import { AttentionPanel } from "./AttentionPage";
 import { StatusPanel } from "./StatusPage";
 
 type RecordValue = Record<string, unknown>;
-type SettingsSection = "status" | "info" | "configuration" | "agent-runtime" | "prompts" | "connectors" | "audit-rules" | "attention";
+type SettingsSection = "status" | "info" | "configuration" | "agent-runtime" | "prompts" | "connectors" | "audit-rules" | "skills" | "attention";
 
 const sections: Array<[SettingsSection, string]> = [
   ["status", "Status"], ["info", "Info"], ["configuration", "Configuration"], ["agent-runtime", "Agent Runtime"],
-  ["prompts", "Prompts"], ["connectors", "Connectors"], ["audit-rules", "Audit Rules"], ["attention", "Attention"],
+  ["prompts", "Prompts"], ["connectors", "Connectors"], ["audit-rules", "Audit Rules"], ["skills", "Skills"], ["attention", "Attention"],
 ];
 
 function record(value: unknown): RecordValue {
@@ -260,6 +260,110 @@ function ConnectorTab({ value, label, active }: { value: string; label: string; 
 
 function StateItem({ label, value }: { label: string; value: string }) { return <div className="connector-state-item"><span>{label}</span><strong>{value}</strong></div>; }
 
+function skillErrorMessage(reason: unknown, fallback: string) {
+  if (reason instanceof Error && reason.message) return reason.message;
+  return fallback;
+}
+
+function SkillsPanel() {
+  const [features, setFeatures] = useState<SkillFeature[]>([]);
+  const [skills, setSkills] = useState<ProjectSkill[]>([]);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [error, setError] = useState("");
+  const [showAll, setShowAll] = useState(true);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [detail, setDetail] = useState<SkillDetail | null>(null);
+  const [draft, setDraft] = useState("");
+  const [detailState, setDetailState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [detailError, setDetailError] = useState("");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [editorMode, setEditorMode] = useState<"preview" | "edit">("preview");
+  const [toggleMessage, setToggleMessage] = useState("");
+  const draftCache = useRef(new Map<string, string>());
+  const detailRequest = useRef<{ id: number; controller: AbortController | null }>({ id: 0, controller: null });
+  const [toggleBusy, setToggleBusy] = useState<Set<string>>(new Set());
+
+  async function load(signal?: AbortSignal) {
+    setState("loading"); setError("");
+    try {
+      const result = await getSkillFeatures(signal);
+      if (signal?.aborted) return;
+      setFeatures(Array.isArray(result.features) ? result.features : []);
+      setSkills(Array.isArray(result.skills) ? result.skills : []);
+      setState("ready");
+    } catch (reason) {
+      if (signal?.aborted) return;
+      setState("error"); setError(skillErrorMessage(reason, "Skills 加载失败"));
+    }
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, []);
+
+  async function openSkill(name: string) {
+    if (expanded === name) { setExpanded(null); return; }
+    if (detail && draft !== detail.content) draftCache.current.set(detail.name, draft);
+    detailRequest.current.controller?.abort();
+    const id = detailRequest.current.id + 1;
+    const controller = new AbortController();
+    detailRequest.current = { id, controller };
+    setShowAll(true); setExpanded(name); setDetail(null); setDraft(draftCache.current.get(name) || ""); setDetailError(""); setSaveState("idle"); setEditorMode("preview"); setDetailState("loading");
+    try {
+      const result = await getSkillDetail(name, controller.signal);
+      if (detailRequest.current.id !== id) return;
+      setDetail(result); setDraft(draftCache.current.get(name) || result.content); setDetailState("ready");
+    } catch (reason) {
+      if (controller.signal.aborted || detailRequest.current.id !== id) return;
+      setDetailState("error"); setDetailError(skillErrorMessage(reason, "Skill 读取失败"));
+    }
+  }
+
+  async function saveSkill() {
+    if (!detail) return;
+    setSaveState("saving"); setDetailError("");
+    try {
+      const result = await saveSkillApi(detail.name, draft, detail.sha256);
+      setDetail(result); setDraft(result.content); draftCache.current.delete(result.name); setSaveState("saved");
+      setSkills((current) => current.map((skill) => skill.name === result.name ? { ...skill, description: result.description, sha256: result.sha256, status: "ready" } : skill));
+    } catch (reason) {
+      setSaveState("error");
+      const status = typeof reason === "object" && reason !== null && "status" in reason ? Number((reason as { status?: unknown }).status) : 0;
+      setDetailError(status === 409 ? "保存冲突：Skill 内容已被其他修改，请重新读取后再保存；当前草稿已保留。" : status === 422 ? "Skill 内容校验失败；当前草稿已保留。" : status >= 500 ? "Skill 保存失败；当前草稿已保留。" : skillErrorMessage(reason, "Skill 保存失败；当前草稿已保留。"));
+    }
+  }
+
+  async function changeFeature(feature: SkillFeature, enabled: boolean) {
+    setToggleMessage("");
+    setToggleBusy((current) => new Set(current).add(feature.feature_id));
+    setFeatures((current) => current.map((item) => item.feature_id === feature.feature_id ? { ...item, enabled } : item));
+    try {
+      const result = await toggleSkillFeature(feature.feature_id, enabled);
+      setFeatures((current) => current.map((item) => item.feature_id === feature.feature_id ? { ...item, enabled: result.enabled, status: result.status } : item));
+      setToggleMessage("功能开关已保存；开关只影响新任务。");
+    } catch (reason) {
+      setFeatures((current) => current.map((item) => item.feature_id === feature.feature_id ? { ...item, enabled: feature.enabled } : item));
+      setError(skillErrorMessage(reason, "功能开关保存失败；当前状态已恢复。"));
+    } finally {
+      setToggleBusy((current) => { const next = new Set(current); next.delete(feature.feature_id); return next; });
+    }
+  }
+
+  return <SettingsCard>
+    <div className="settings-card-heading"><div><h2>Skills</h2><p className="muted">管理功能开关和项目内共享 Skills。开关只影响新任务；共享 skill 编辑影响引用功能。</p></div><span className="settings-path">Project skills</span></div>
+    {state === "loading" && <div className="page-state" role="status">正在加载 Skills…</div>}
+    {state === "error" && <div className="page-state page-state-error" role="alert">{error}<button type="button" className="secondary-button" onClick={() => void load()}>重试</button></div>}
+    {state === "ready" && <>
+      {error && <p className="field-error" role="alert">{error}</p>}{toggleMessage && <p className="save-success" role="status">{toggleMessage}</p>}
+      <div className="skills-feature-grid">{features.map((feature) => <article className="skills-feature-card" key={feature.feature_id}><div className="skills-feature-heading"><div><h3>{feature.name}</h3><p>{feature.description}</p></div><label className="skills-toggle"><span className="sr-only">{feature.name}</span><input type="checkbox" role="switch" aria-label={feature.name} checked={feature.enabled} disabled={toggleBusy.has(feature.feature_id)} onChange={(event) => void changeFeature(feature, event.target.checked)} /><span aria-hidden="true" /></label></div><div className="skills-feature-meta"><span className={`skills-status ${feature.status}`}>{feature.status === "ready" ? "Ready" : "Incomplete"}</span><span>{feature.enabled ? "ON" : "OFF"}</span></div><div className="skills-associated"><span>关联 Skills</span><div>{feature.skills.map((name) => <button type="button" className="skill-link" key={name} onClick={() => void openSkill(name)}>{name}</button>)}</div></div></article>)}</div>
+      <div className="skills-project-heading"><div><h3>全部 project skills</h3><p className="muted">非法 skill 行不影响其他内容。</p></div><button type="button" className="secondary-button" onClick={() => setShowAll((value) => !value)}>{showAll ? "收起列表" : `查看全部 (${skills.length})`}</button></div>
+      {showAll && <div className="skills-project-list">{skills.map((skill) => <article className={`skills-project-row ${skill.status === "invalid" ? "is-invalid" : ""}`} key={skill.name}><div><strong>{skill.name}</strong>{skill.status === "invalid" ? <p className="field-error">{skill.error || "Skill 无法读取"}</p> : <p className="muted">{skill.description || "未提供描述"}</p>}<div className="skills-references">{skill.referenced_by?.length ? <>引用功能：{skill.referenced_by.join("、")}</> : "暂无引用功能"}</div></div>{skill.status !== "invalid" && <button type="button" className="secondary-button" onClick={() => void openSkill(skill.name)}>{expanded === skill.name ? "收起" : `查看 ${skill.name}`}</button>}{expanded === skill.name && <div className="skill-editor" aria-label={`${skill.name} 编辑器`}>{detailState === "loading" && <p role="status">正在读取 Skill…</p>}{detailState === "error" && <p className="field-error" role="alert">{detailError}</p>}{detailState === "ready" && detail && <><p className="muted">共享 skill 编辑影响引用功能。SHA-256: <code>{detail.sha256}</code></p><div className="settings-pill-row skill-editor-tabs" role="tablist" aria-label="Skill detail view"><button type="button" role="tab" id="skill-preview-tab" aria-controls="skill-preview-panel" tabIndex={editorMode === "preview" ? 0 : -1} aria-selected={editorMode === "preview"} className={editorMode === "preview" ? "active" : ""} onClick={() => setEditorMode("preview")} onKeyDown={(event) => { if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); setEditorMode("edit"); document.getElementById("skill-edit-tab")?.focus(); } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); setEditorMode("edit"); document.getElementById("skill-edit-tab")?.focus(); } }}>预览</button><button type="button" role="tab" id="skill-edit-tab" aria-controls="skill-edit-panel" tabIndex={editorMode === "edit" ? 0 : -1} aria-selected={editorMode === "edit"} className={editorMode === "edit" ? "active" : ""} onClick={() => setEditorMode("edit")} onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); setEditorMode("preview"); document.getElementById("skill-preview-tab")?.focus(); } }}>编辑</button></div>{editorMode === "preview" ? <div id="skill-preview-panel" role="tabpanel" aria-labelledby="skill-preview-tab" aria-label="Skill 预览"><pre className="prompt-preview skill-preview">{draft}</pre></div> : <div id="skill-edit-panel" role="tabpanel" aria-labelledby="skill-edit-tab" aria-label="Skill 编辑"><label className="skill-content-label" htmlFor="skill-content">Skill 内容</label><textarea id="skill-content" aria-label="Skill 内容" value={draft} onChange={(event) => { setDraft(event.target.value); setSaveState("idle"); }} rows={16} /><div className="skill-editor-actions"><button type="button" className="primary-button" onClick={() => void saveSkill()} disabled={saveState === "saving"}>{saveState === "saving" ? "保存中…" : "保存 Skill"}</button><button type="button" className="secondary-button" onClick={() => { setDraft(detail.content); draftCache.current.delete(detail.name); setSaveState("idle"); setDetailError(""); }}>取消</button>{saveState === "saved" && <span className="save-success" role="status">已保存</span>}{detailError && <span className="save-error" role="alert">{detailError}</span>}</div></div>}</>}</div>}</article>)}</div>}
+    </>}
+  </SettingsCard>;
+}
+
 const CODEX_MODEL_OPTIONS = [
   { value: "gpt-5.5", label: "GPT-5.5" },
   { value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
@@ -316,6 +420,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState }: { payload: Record
 function SettingsContent({ section, payload, draft, setDraft, prompt, view, connector, auditRule, saveState, onAttentionCountChange }: { section: SettingsSection; payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; prompt: "developer" | "user"; view: "template" | "preview"; connector: string; auditRule: "template" | "consumer" | "audit"; saveState: "idle" | "saving" | "saved" | "error"; onAttentionCountChange: (count: number) => void }) {
   if (section === "status") return <StatusPanel />;
   if (section === "attention") return <AttentionPanel onCountChange={onAttentionCountChange} />;
+  if (section === "skills") return <SkillsPanel />;
   if (section === "prompts") return <PromptPanel payload={payload} prompt={prompt} view={view} draft={draft} setDraft={setDraft} saveState={saveState} />;
   if (section === "connectors") return <ConnectorPanel payload={payload} connector={connector} />;
   if (section === "agent-runtime") return <RuntimePanel payload={payload} draft={draft} setDraft={setDraft} saveState={saveState} />;
@@ -360,12 +465,13 @@ export function SettingsPage() {
     return () => { active = false; };
   }, [section]);
   useEffect(() => {
+    if (section === "skills") { setState("ready"); setPayload(null); setError(""); return; }
     if (section === "status" || section === "attention") return;
     const controller = new AbortController(); setState("loading"); setSaveState("idle");
     getSettings(section, controller.signal).then((response) => { setPayload(response.item); setDraft(fieldsOf(response.item)); setState("ready"); setError(""); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
     return () => controller.abort();
   }, [section]);
   async function save() { if (!payload) return; setSaveState("saving"); try { const fields = section === "prompts" ? { template: displayValue(draft[`${prompt}_template`]) } : section === "audit-rules" ? { template: displayValue(draft.template) } : draft; await saveSettings(section, fields, section === "prompts" ? { prompt } : {}); setSaveState("saved"); } catch { setSaveState("error"); } }
-  const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} onAttentionCountChange={setAttentionCount} />;
+  const content = state === "error" ? <SettingsCard><div className="page-state page-state-error" role="alert">{error}</div></SettingsCard> : state === "loading" && !payload && section !== "status" && section !== "attention" && section !== "skills" ? <SettingsCard><div className="page-state" role="status">正在加载…</div></SettingsCard> : <SettingsContent section={section} payload={payload || {}} draft={draft} setDraft={setDraft} prompt={prompt} view={view} connector={connector} auditRule={auditRule} saveState={saveState} onAttentionCountChange={setAttentionCount} />;
   return <main className="console-page settings-page" aria-labelledby="settings-page-title"><h1 id="settings-page-title" className="sr-only">Settings</h1><div className="settings-layout-react"><SectionNav section={section} attentionCount={attentionCount} /><div className="settings-content" onSubmit={(event) => { const form = event.target as HTMLFormElement; if (form.tagName === "FORM" && form.elements.namedItem("settings-save")) { event.preventDefault(); void save(); } }}>{content}</div></div></main>;
 }
