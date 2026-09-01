@@ -1,101 +1,46 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Bar, BarChart, Brush, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import type { HistoryChart } from "../../api/console";
 
 const COLORS = ["#176b50", "#237fc2", "#99610d", "#a43a34", "#7b61a8", "#0f766e", "#c05621", "#64748b"];
+const RANGE_OPTIONS = [
+  { value: "24h", label: "24 小时", title: "最近 24 小时事件" },
+  { value: "1w", label: "1 周", title: "最近 1 周事件" },
+  { value: "1m", label: "1 个月", title: "最近 1 个月事件" },
+] as const;
 
-interface ChartSeries {
-  name: string;
-  data: number[];
+interface StackedBarChartProps { chart?: HistoryChart; loading?: boolean; range?: string; onRangeChange?: (range: string) => void; }
+
+function normalizedSeries(series: HistoryChart["series"], length: number) {
+  return series.map((item) => ({ ...item, data: Array.from({ length }, (_, index) => Math.max(0, Number(item.data[index] || 0))) }));
 }
+function rangeTitle(value: string) { return RANGE_OPTIONS.find((option) => option.value === value)?.title || RANGE_OPTIONS[0].title; }
+function rangeLabel(value: string) { return RANGE_OPTIONS.find((option) => option.value === value)?.label || RANGE_OPTIONS[0].label; }
 
-interface StackedBarChartProps {
-  chart?: HistoryChart;
-  minWindow?: number;
-  loading?: boolean;
-}
-
-function normalizedSeries(series: ChartSeries[], length: number) {
-  return series.map((item) => ({
-    ...item,
-    data: Array.from({ length }, (_, index) => Math.max(0, Number(item.data[index] || 0))),
-  }));
-}
-
-function formatRange(labels: string[], start: number, end: number) {
-  if (!labels.length) return "暂无快照";
-  return `${labels[start]} — ${labels[end - 1]}`;
-}
-
-export function StackedBarChart({ chart, minWindow = 6, loading = false }: StackedBarChartProps) {
+export function StackedBarChart({ chart, loading = false, range, onRangeChange }: StackedBarChartProps) {
+  const activeRange = range || "24h";
   const labels = chart?.labels || [];
   const series = useMemo(() => normalizedSeries(chart?.series || [], labels.length), [chart?.series, labels.length]);
-  const safeMinWindow = Math.max(1, Math.min(minWindow, labels.length || minWindow));
-  const [windowSize, setWindowSize] = useState(Math.max(safeMinWindow, labels.length));
-  const [startIndex, setStartIndex] = useState(0);
-  const clampedWindow = labels.length ? Math.min(labels.length, Math.max(safeMinWindow, windowSize)) : 0;
-  const maxStart = Math.max(0, labels.length - clampedWindow);
-  const clampedStart = Math.min(startIndex, maxStart);
-  const visibleLabels = labels.slice(clampedStart, clampedStart + clampedWindow);
-  const visibleSeries = series.map((item) => ({ ...item, data: item.data.slice(clampedStart, clampedStart + clampedWindow) }));
-  const totals = visibleLabels.map((_label, index) => visibleSeries.reduce((sum, item) => sum + item.data[index], 0));
-  const maxTotal = Math.max(1, ...totals);
-  const chartWidth = Math.max(620, visibleLabels.length * 42);
-  const chartHeight = 220;
-  const plotTop = 14;
-  const plotBottom = 34;
-  const plotHeight = chartHeight - plotTop - plotBottom;
+  const [brushWindow, setBrushWindow] = useState<[number, number]>([0, Math.max(0, labels.length - 1)]);
 
-  function changeWindow(next: number) {
-    const value = Math.max(safeMinWindow, Math.min(labels.length, next));
-    setWindowSize(value);
-    setStartIndex((current) => Math.min(current, Math.max(0, labels.length - value)));
-  }
+  useEffect(() => { setBrushWindow([0, Math.max(0, labels.length - 1)]); }, [labels.length, activeRange]);
 
-  if (!labels.length || !series.length) {
-    return (
-      <section className="card history-chart-card" aria-label="Recent 24 hour events">
-        <div className="history-chart-head"><div><h2 className="history-chart-title">最近 24 小时事件</h2><div className="history-chart-subtitle">{chart?.range || "暂无快照"}</div></div><span className="pill">- events</span></div>
-        <div className="history-chart-empty" role={loading ? "status" : undefined}>{loading ? "正在加载…" : "暂无事件"}</div>
-      </section>
-    );
-  }
-
+  const chartData = labels.map((label, index) => {
+    const row: Record<string, string | number> = { label };
+    for (const item of series) row[item.name] = item.data[index] || 0;
+    return row;
+  });
   const totalEvents = chart?.total || 0;
+  const rangeChange = (nextRange: string) => {
+    onRangeChange?.(nextRange);
+  };
 
-  return (
-    <section className="card history-chart-card" aria-label="Recent 24 hour events">
-      <div className="history-chart-head">
-        <div><h2 className="history-chart-title">最近 24 小时事件</h2><div className="history-chart-subtitle">{formatRange(labels, clampedStart, clampedStart + clampedWindow)}</div></div>
-        <span className="pill">{totalEvents ? `${totalEvents} events` : "- events"}</span>
-      </div>
-      <div className="history-chart-toolbar" aria-label="图表范围控制">
-        <label className="history-chart-range-control"><span>显示范围</span><input type="range" min={safeMinWindow} max={labels.length} value={clampedWindow} aria-label="图表显示小时数" onChange={(event) => changeWindow(Number(event.target.value))} /><strong>显示 {clampedWindow} 小时</strong></label>
-        <label className="history-chart-range-control"><span>起始位置</span><input type="range" min={0} max={maxStart} value={clampedStart} aria-label="图表起始位置" disabled={maxStart === 0} onChange={(event) => setStartIndex(Number(event.target.value))} /><strong>{labels[clampedStart]}</strong></label>
-      </div>
-      <div className="history-chart-legend" aria-label="事件类型图例">{visibleSeries.map((item, index) => <span className="history-chart-legend-item" key={item.name}><i style={{ backgroundColor: COLORS[index % COLORS.length] }} aria-hidden="true" />{item.name}</span>)}</div>
-      <div className="history-chart-scroll" role="img" aria-label={`最近 24 小时共 ${totalEvents} 个事件，当前显示 ${clampedWindow} 小时`}>
-        <svg className="history-chart-svg" viewBox={`0 0 ${chartWidth} ${chartHeight}`} width={chartWidth} height={chartHeight} preserveAspectRatio="none">
-          {[0, 0.25, 0.5, 0.75, 1].map((ratio) => <line key={ratio} x1="0" x2={chartWidth} y1={plotTop + plotHeight * ratio} y2={plotTop + plotHeight * ratio} className="history-chart-gridline" />)}
-          {visibleLabels.map((label, index) => {
-            const total = totals[index];
-            const columnWidth = chartWidth / visibleLabels.length;
-            const barWidth = Math.max(8, columnWidth * 0.66);
-            const x = index * columnWidth + (columnWidth - barWidth) / 2;
-            let offset = 0;
-            return <g data-testid="stacked-bar-column" key={`${label}-${index}`}>
-              {visibleSeries.map((item, seriesIndex) => {
-                const value = item.data[index];
-                const height = total ? value / maxTotal * plotHeight : 0;
-                const y = plotTop + plotHeight - offset - height;
-                offset += height;
-                return value > 0 ? <rect data-testid="stacked-bar-segment" key={item.name} x={x} y={y} width={barWidth} height={height} rx="3" fill={COLORS[seriesIndex % COLORS.length]}><title>{`${label} · ${item.name}: ${value}`}</title></rect> : null;
-              })}
-              <text x={index * columnWidth + columnWidth / 2} y={chartHeight - 10} textAnchor="middle" className="history-chart-axis-label">{label}</text>
-            </g>;
-          })}
-        </svg>
-      </div>
-    </section>
-  );
+  return <section className="card history-chart-card" aria-label="Recent 24 hour events">
+    <div className="history-chart-head"><h2 className="history-chart-title">{rangeTitle(activeRange)}</h2><div className="history-chart-head-meta">{loading && labels.length > 0 && <span className="history-chart-loading" role="status">正在更新…</span>}<span className="pill">{totalEvents ? `${totalEvents} events` : "- events"}</span></div></div>
+    <div className="history-chart-range-tabs" role="tablist" aria-label="事件时间范围">{RANGE_OPTIONS.map((option) => <button key={option.value} type="button" role="tab" aria-selected={activeRange === option.value} className={activeRange === option.value ? "active" : ""} onClick={() => rangeChange(option.value)}>{option.label}</button>)}</div>
+    {!labels.length || !series.length ? <div className="history-chart-empty" role={loading ? "status" : undefined}>{loading ? "正在加载…" : "暂无事件"}</div> : <>
+      <div className="history-chart-scroll" role="img" aria-label={`${rangeLabel(activeRange)}共 ${totalEvents} 个事件`}><div className="history-chart-recharts" data-testid="history-chart-brush"><ResponsiveContainer width="100%" height={300} minWidth={Math.max(860, labels.length * 18)}><BarChart data={chartData} margin={{ top: 8, right: 18, left: 0, bottom: 26 }}><CartesianGrid strokeDasharray="3 4" vertical={false} stroke="var(--line)" /><XAxis dataKey="label" tick={{ fill: "var(--ink-soft)", fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={18} /><YAxis allowDecimals={false} width={32} tick={{ fill: "var(--ink-soft)", fontSize: 11 }} tickLine={false} axisLine={false} /><Tooltip cursor={{ fill: "rgba(35,127,194,.08)" }} contentStyle={{ borderRadius: 10, border: "1px solid var(--line-strong)", boxShadow: "0 8px 24px rgba(17,24,39,.12)" }} /><Legend verticalAlign="top" align="left" iconType="circle" wrapperStyle={{ paddingBottom: 10, fontSize: 12 }} />{series.map((item, index) => <Bar key={item.name} dataKey={item.name} stackId="events" fill={COLORS[index % COLORS.length]} radius={index === series.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} />)}<Brush dataKey="label" height={22} travellerWidth={10} startIndex={brushWindow[0]} endIndex={brushWindow[1]} tickFormatter={() => ""} onChange={(next) => { if (next.startIndex !== undefined && next.endIndex !== undefined) setBrushWindow([next.startIndex, next.endIndex]); }} /></BarChart></ResponsiveContainer></div></div>
+    </>}
+  </section>;
 }

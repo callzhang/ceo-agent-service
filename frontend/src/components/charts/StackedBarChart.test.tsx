@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import type { HistoryChart } from "../../api/console";
 import { StackedBarChart } from "./StackedBarChart";
@@ -19,21 +19,21 @@ describe("StackedBarChart", () => {
   it("renders a coloured stacked plot with a legend for every series", () => {
     render(<StackedBarChart chart={chart} />);
 
-    expect(screen.getByRole("img", { name: /最近 24 小时共 13 个事件/ })).toBeInTheDocument();
-    expect(screen.getByText("reply")).toBeInTheDocument();
-    expect(screen.getByText("task")).toBeInTheDocument();
-    expect(screen.getByText("failed")).toBeInTheDocument();
-    expect(screen.getAllByTestId("stacked-bar-segment")).toHaveLength(8);
+    expect(screen.getByRole("img", { name: /24 小时共 13 个事件/ })).toBeInTheDocument();
+    expect(document.querySelector(".history-chart-legend")).not.toBeInTheDocument();
+    expect(screen.getByTestId("history-chart-brush")).toBeInTheDocument();
   });
 
-  it("zooms the visible range without changing the source chart", async () => {
-    render(<StackedBarChart chart={chart} minWindow={2} />);
+  it("uses a chart component with a time-range picker and horizontal brush", () => {
+    render(<StackedBarChart chart={chart} range="24h" onRangeChange={vi.fn()} />);
 
-    const zoom = screen.getByRole("slider", { name: "图表显示小时数" });
-    expect(zoom).toHaveValue("4");
-    fireEvent.change(zoom, { target: { value: "2" } });
-    expect(screen.getByText("显示 2 小时")).toBeInTheDocument();
-    expect(screen.getAllByTestId("stacked-bar-column")).toHaveLength(2);
+    expect(screen.getByRole("tablist", { name: "事件时间范围" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "24 小时" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "1 周" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "1 个月" })).toBeInTheDocument();
+    expect(screen.getByTestId("history-chart-brush")).toBeInTheDocument();
+    expect(screen.queryByText("显示范围")).not.toBeInTheDocument();
+    expect(screen.queryByText("起始位置")).not.toBeInTheDocument();
   });
 
   it("shows an explicit empty state when there is no chart data", () => {
@@ -47,5 +47,10 @@ describe("StackedBarChart", () => {
     render(<StackedBarChart loading />);
     expect(screen.getByRole("status")).toHaveTextContent("正在加载…");
     expect(screen.getByText("- events")).toBeInTheDocument();
+  });
+
+  it("shows feedback while refreshing an existing range", () => {
+    render(<StackedBarChart chart={chart} loading />);
+    expect(screen.getByRole("status")).toHaveTextContent("正在更新…");
   });
 });
