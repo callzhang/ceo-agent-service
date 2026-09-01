@@ -724,6 +724,14 @@ user-confirmed chronological holdout。
 `List-Unsubscribe-Post` 均为 0。该结果只描述本次邮箱快照，不授权自动退订，也不
 替代未来新邮件的持续监测；正文和附件仍未读取。
 
+随后对随机种子 `2026083103` 的同一 80 个 UID 按生产 readonly adapter 读取了纯文本，
+附件仍只保留 metadata，并做随机 5-fold OOF：`67.50% Accuracy / 47.24% Macro F1`。
+其中 `notification` 为 `93.75% precision / 83.33% recall`（support 18），但
+`subscription` 只有 2 条 provisional 样本且 precision/recall 均为 0；该结果不是
+时间顺序 holdout，也不是 user-confirmed gold，不能授权 model promotion 或任何自动
+退订动作。脱敏特征 SHA-256 为
+`e81c24f2a2da68f7f10467e5c812a1d6d669185c6e0be61164369783d96359b2`。
+
 ## 模型评测
 
 模型比较采用同一份用户邮件和同一套输入标准化逻辑，至少比较：

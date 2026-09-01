@@ -178,6 +178,25 @@ readonly header fetch 扫描或服务端支持的其他只读分页接口，并�
 header-only 扫描可以作为当前快照的覆盖率证据，但不能推断未来邮件不会带退订入口，
 也不能替代后续新邮件的持续观察。扫描仍未读取正文或附件，未执行任何邮箱写操作。
 
+在同一随机种子 `2026083103` 的 80 个 UID 上，又按生产 `ImapReadonlyAdapter`
+读取了标准纯文本部分；附件仍只保留 metadata，原始正文只存在进程内存。用这些
+assistant provisional annotations 做随机 5-fold OOF，得到 `67.50% Accuracy /
+47.24% Macro F1`，特征语料脱敏 SHA-256 为
+`e81c24f2a2da68f7f10467e5c812a1d6d669185c6e0be61164369783d96359b2`。按类别：
+
+- `notification`: `93.75% precision / 83.33% recall`，support 18；
+- `important`: `68.97% precision / 76.92% recall`，support 26；
+- `billing`: `60.00% precision / 75.00% recall`，support 8；
+- `work`: `57.14% precision / 26.67% recall`，support 15；
+- `junk`: `52.94% precision / 90.00% recall`，support 10；
+- `subscription`: `0% precision / 0% recall`，support 2；
+- `personal`: `0% precision / 0% recall`，support 1。
+
+这次是随机 OOF，不是时间顺序 holdout，而且标签只根据邮件头做了 provisional
+标注；它不能和前一轮独立 40 条 holdout 直接比较，也不能用于 model promotion、
+类别 eligibility 或自动退订 support。它只说明生产特征路径对当前重复的通知分布有
+学习信号，同时暴露出 subscription/personal 样本仍然不足，work recall 仍不稳定。
+
 ## 尚未开放的门槛
 
 - 当前 DingTalk 企业邮箱配置仍保持 disabled；没有把实验标注当作用户 gold feedback，也没有自动启用模型或动作。
