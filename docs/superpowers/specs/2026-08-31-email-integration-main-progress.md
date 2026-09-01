@@ -32,9 +32,11 @@
 
 当前未提交的第三批包含 Email worker、unsubscribe Consumer/operation、browser profile/context source、provider action 生命周期、严格 task lifecycle 选择，以及对应测试。
 
+随后补齐了实验快照、unsubscribe Consumer/context source、direct-consumer e2e 测试，以及受控 CLI 中唯一的 `execute_email_unsubscribe` 工具接线。
+
 当前 Email 扩展回归命令覆盖 classifier contracts、connector config、store、只读 IMAP、model、registry、training、learning、runtime、scan、pipeline、provider actions、task adapter、reply delivery、unsubscribe、worker、web API 和 task lifecycle，共：
 
-`633 passed, 5 warnings`
+最终 Email 扩展回归为 `675 passed, 1 skipped, 5 warnings`。
 
 warning 来自既有 path-based model promotion deprecation，不影响本批次通过。
 

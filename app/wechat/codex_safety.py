@@ -183,6 +183,7 @@ def make_role_agent_command(
     controlled_cli: ControlledCliConfig,
     allow_write: bool,
     allow_local_credential_store: bool = False,
+    additional_agent_cli_tools: tuple[str, ...] = (),
 ) -> None:
     _insert_command_options(command, service_mcp_config_options())
     _isolate_background_agent_context(command)
@@ -207,6 +208,7 @@ def make_role_agent_command(
         "read_text_file",
         "read_spreadsheet",
     ]
+    agent_cli_tools.extend(additional_agent_cli_tools)
     approval_options = ["-c", 'approval_policy="never"']
     if allow_write:
         agent_cli_tools.insert(1, "execute_reviewed_write")
@@ -249,12 +251,14 @@ def make_consumer_agent_command(
     command: list[str],
     *,
     controlled_cli: ControlledCliConfig,
+    additional_agent_cli_tools: tuple[str, ...] = (),
 ) -> None:
     make_role_agent_command(
         command,
         controlled_cli=controlled_cli,
         allow_write=False,
         allow_local_credential_store=True,
+        additional_agent_cli_tools=additional_agent_cli_tools,
     )
 
 

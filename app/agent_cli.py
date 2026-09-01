@@ -797,6 +797,37 @@ server = FastMCP(
 
 
 @server.tool(
+    name="execute_email_unsubscribe",
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+def execute_email_unsubscribe_tool(
+    task_id: int,
+    execution_generation: str,
+) -> dict[str, object]:
+    """Execute only the currently claimed task-bound email unsubscribe."""
+
+    if isinstance(task_id, bool) or task_id <= 0:
+        raise AgentReadOnlyViolationError("email_unsubscribe_task_id_invalid")
+    if not isinstance(execution_generation, str) or not execution_generation.strip():
+        raise AgentReadOnlyViolationError(
+            "email_unsubscribe_execution_generation_invalid"
+        )
+    from app.config import worker_db_path
+    from app.email_worker import run_email_unsubscribe_task
+
+    return run_email_unsubscribe_task(
+        worker_db_path(),
+        task_id,
+        execution_generation,
+    )
+
+
+@server.tool(
     name="read_skill",
     annotations=ToolAnnotations(
         readOnlyHint=True,

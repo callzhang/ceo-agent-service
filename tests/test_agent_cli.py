@@ -25,9 +25,11 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
         "read_spreadsheet",
         "execute_reviewed_read",
         "execute_reviewed_write",
+        "execute_email_unsubscribe",
     }
     assert all(description.strip() for description in descriptions.values())
     assert "calendar event" in descriptions["execute_reviewed_read"]
+    assert "email unsubscribe" in descriptions["execute_email_unsubscribe"]
 
 
 def test_registered_reaction_write_is_accepted_when_dws_schema_is_incomplete():
