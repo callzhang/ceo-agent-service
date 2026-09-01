@@ -118,7 +118,7 @@ export function AttemptDetailPage() {
       <DetailSection title="Audit summary" value={detail.audit_summary} />
       {!detail.agent_execution_record && <DetailSection title="Tool uses" value={detail.tool_uses} />}
       <DetailSection title="Draft reply (raw Codex reply)" value={detail.draft_reply} />
-      {detail.runtime_attempts.length > 0 && <section className="console-card attempt-runtime-card"><h2>Runtime attempts</h2><div className="attempt-runtime-list">{detail.runtime_attempts.map((entry, index) => <RuntimeEntry entry={entry} key={`${entry.route}-${index}`} />)}</div></section>}
+      {detail.runtime_attempts.length > 0 && <details className="console-card attempt-runtime-card"><summary><h2>Runtime attempts</h2><span>{detail.runtime_attempts.length} 条执行记录</span></summary><div className="attempt-runtime-list">{detail.runtime_attempts.map((entry, index) => <RuntimeEntry entry={entry} key={`${entry.route}-${index}`} />)}</div></details>}
       {message && <p className="attempt-action-message" role="status" aria-live="polite">{message}</p>}
       <div className="attempt-bottom-actions">{detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认重新处理这条 Attempt？")) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>重新处理</button>}{detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}</div>
     </>}
