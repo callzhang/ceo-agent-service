@@ -34,7 +34,20 @@
 
 随后补齐了实验快照、unsubscribe Consumer/context source、direct-consumer e2e 测试，以及受控 CLI 中唯一的 `execute_email_unsubscribe` 工具接线。
 
-当前 Email 扩展回归命令覆盖 classifier contracts、connector config、store、只读 IMAP、model、registry、training、learning、runtime、scan、pipeline、provider actions、task adapter、reply delivery、unsubscribe、worker、web API 和 task lifecycle，共：
+## Console 集成
+
+Email Console 已接入独立页面和全局导航 `/email`，页面包含四个分区：
+
+- `已处理`：展示已有最终分类的邮件及处理详情；
+- `待反馈`：展示模型建议和置信度，由用户确认最终分类；
+- `邮件配置`：维护类别描述、阈值、启用状态和固定动作；
+- `学习`：展示当前/历史模型版本、训练时间、样本数量、准确率、Macro F1 和预测延迟。
+
+已处理详情只展示持久化的 observability，包括 provider action、自动回复和自动退订结果；退订的最终结果页文字、步骤和 observation digest 可追溯，但不展示私密 URL 或附件正文。
+
+前端验证为 `29 个测试文件、270 个测试通过`，TypeScript 检查和 Vite production build 均通过。构建过程中补齐了现有 History 图表已经使用但依赖声明缺失的 `recharts`。
+
+当前 Email 扩展回归命令覆盖 classifier contracts、connector config、store、只读 IMAP、model、registry、training、learning、runtime、scan、pipeline、provider actions、task adapter、reply delivery、unsubscribe、worker、web API、task lifecycle、Consumer、context source、实验快照和 Agent CLI，共：
 
 最终 Email 扩展回归为 `675 passed, 1 skipped, 5 warnings`。
 
