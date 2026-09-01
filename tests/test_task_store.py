@@ -1636,3 +1636,14 @@ def test_operation_logs_page_and_count_share_one_materialized_query(tmp_path: Pa
     assert total == 3
     assert len(rows) == 2
     assert all(row.source_table == "reply_attempts" for row in rows)
+
+
+def test_read_connections_use_bounded_cache_and_mmap(tmp_path: Path):
+    store = _store(tmp_path)
+
+    with store._connect() as db:
+        cache_size = int(db.execute("pragma cache_size").fetchone()[0])
+        mmap_size = int(db.execute("pragma mmap_size").fetchone()[0])
+
+    assert cache_size <= -32768
+    assert mmap_size >= 268435456

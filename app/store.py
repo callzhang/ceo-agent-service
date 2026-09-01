@@ -75,6 +75,8 @@ from app.wechat.models import WechatReplyScope
 FAST_PATH_UNREAD_BACKOFF_TASK_ERROR = "waiting_fast_path_unread_backoff"
 SQLITE_BUSY_TIMEOUT_SECONDS = 30
 SQLITE_BUSY_TIMEOUT_MILLISECONDS = SQLITE_BUSY_TIMEOUT_SECONDS * 1000
+SQLITE_READ_CACHE_SIZE = -65536
+SQLITE_MMAP_SIZE_BYTES = 512 * 1024 * 1024
 STORE_WRITE_LOCK_RETRY_ATTEMPTS = 3
 STORE_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
@@ -1577,6 +1579,11 @@ class AutoReplyStore:
         )
         connection.execute(f"pragma busy_timeout = {self.busy_timeout_milliseconds}")
         connection.execute("pragma synchronous = normal")
+        # History is a read-heavy UNION over a large, text-heavy database. A
+        # bounded per-connection cache plus mmap keeps cold scans off the
+        # filesystem path without allowing unbounded process memory growth.
+        connection.execute(f"pragma cache_size = {SQLITE_READ_CACHE_SIZE}")
+        connection.execute(f"pragma mmap_size = {SQLITE_MMAP_SIZE_BYTES}")
         connection.execute("pragma foreign_keys = on")
         connection.row_factory = sqlite3.Row
         return connection
