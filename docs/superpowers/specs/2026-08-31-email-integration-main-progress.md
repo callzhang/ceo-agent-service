@@ -143,6 +143,15 @@ warning 来自既有 path-based model promotion deprecation，不影响本批次
 4. 后续实验需要“定向补稀有类别 + 保留随机漂移样本”，并建立 user-confirmed、时间顺序 holdout；assistant annotations 只用于研究方向，不进入生产反馈库。
 5. 当前生产代码不因本次实验更换模型；新增工作只更新实验记录和 CEO Agent 激活方案，生产配置继续 disabled。
 
+## Email worker 默认 disabled 烟测
+
+在隔离的临时 SQLite 数据库上直接启动 `email-worker` CLI，数据库没有任何
+`email_accounts` 配置。进程输出 `email-worker waiting_configuration
+reason=empty_accounts`，没有启动扫描、Consumer 或训练组件；该进程按设计继续
+等待配置，随后由本轮实验显式结束。临时数据库、WAL/SHM、workspace、corpus
+和环境文件均已删除并复核不存在。这个烟测只证明默认空配置的启动边界，不代表
+生产 launchd 已部署或 Email shadow 已启用。
+
 ## 新一轮随机邮件头分布抽样
 
 在用户允许随机读取而不是按 cursor 顺序读取后，使用随机种子
