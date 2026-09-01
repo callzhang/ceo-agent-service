@@ -295,6 +295,16 @@ def test_context_renders_reference_and_command_without_resolved_body():
     assert "评论已提交" in rendered
 
 
+def test_context_marks_trigger_as_authoritative_over_recent_context():
+    rendered = _context(trigger_text="我今天需要休息一天").render()
+
+    assert "Task trigger authority" in rendered
+    assert '"authoritative_message_id": "mid"' in rendered
+    assert "supporting evidence only" in rendered
+    assert '"text": "我今天需要休息一天"' in rendered
+    assert '"text": "预算已经确认。"' in rendered
+
+
 def test_email_attachment_materials_expose_metadata_without_read_capability():
     materials = email_attachment_metadata_materials(
         (

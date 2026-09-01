@@ -108,7 +108,7 @@ def _audit_result(
     feedback = None
     external_result = None
     decision_options = []
-    if outcome == "revision_required":
+    if outcome in {"revision_required", "feedback_provided"}:
         feedback = {
             "rule": "current evidence",
             "observation": f"revision {revision} is stale",
@@ -984,6 +984,27 @@ def test_two_feedback_cycles_resume_same_consumer_and_create_fresh_auditors(stor
     assert [call["revision"] for call in audit.calls] == [0, 1, 2]
     assert len({call["session_id"] for call in audit.calls}) == 3
     assert all(call["feedback"] is not None for call in consumer.calls[1:])
+
+
+def test_canonical_audit_feedback_provided_regenerates_consumer_reply(store):
+    task = _task(store)
+    consumer = ScriptedConsumer(
+        store,
+        _consumer_result("proposal", "candidate-0"),
+        _consumer_result("proposal", "candidate-1"),
+    )
+    audit = ScriptedAudit(
+        store,
+        _audit_result("feedback_provided", 0),
+        _audit_result("executed", 1),
+    )
+
+    result = _process(AgentOrchestrator(store=store, consumer=consumer, audit=audit), task)
+
+    assert result.status == "executed"
+    assert [call["revision"] for call in consumer.calls] == [0, 1]
+    assert consumer.calls[1]["feedback"] is not None
+    assert [call["revision"] for call in audit.calls] == [0, 1]
 
 
 def test_corrected_revision_is_not_blocked_by_old_exact_success(store):

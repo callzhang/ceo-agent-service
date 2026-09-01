@@ -66,6 +66,12 @@ pending -> running -> done
 
 反馈必须包含规则、观察结果和修改要求。审核 Agent 不能直接改写执行 Agent 的业务正文；服务只保存 run、revision、反馈、session 和 provider 结果标识之间的关系。同一任务最多允许两个内容反馈周期；基础设施失败不消耗内容反馈周期。
 
+每个队列任务的 `Original trigger` 是该任务唯一的权威输入，由
+`trigger_message_id` 标识。近期会话消息、材料和实时读取结果只能补充事实，不能把
+Consumer 的任务改成另一个消息、日程或审批事项。Audit 返回 `feedback_provided` 后，服务
+必须把规则、观察结果和修改要求传给下一版 Consumer proposal，再创建对应的 Audit run；
+Audit 只反馈修改要求，不直接替换 Consumer 的业务正文。
+
 ## Task、Agent Run 与 Reply Attempt
 
 运行时使用三层对象：`reply_task` 是可领取和重试的队列任务，`agent_run` 是一次
