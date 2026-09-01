@@ -1600,3 +1600,39 @@ def test_operation_logs_sort_follow_up_by_operation_time_not_schedule(tmp_path: 
     logs = store.list_operation_logs(limit=2)
 
     assert [log.category for log in logs] == ["Reply", "Follow-up"]
+
+
+def test_operation_logs_query_prunes_unrequested_sources(tmp_path: Path):
+    store = _store(tmp_path)
+
+    query = store._operation_logs_base_query(source_tables=("reply_attempts",))
+
+    assert "from reply_attempts" in query
+    assert "from errors" not in query
+    assert "from reply_tasks" not in query
+
+
+def test_operation_logs_page_and_count_share_one_materialized_query(tmp_path: Path):
+    store = _store(tmp_path)
+    for index in range(3):
+        store.record_reply_attempt(
+            conversation_id=f"history-{index}",
+            conversation_title="History",
+            trigger_message_id=f"message-{index}",
+            trigger_sender="Derek",
+            trigger_text=f"History event {index}",
+            action="chat_message",
+            sensitivity_kind="",
+            codex_reason="test",
+            draft_reply_text="done",
+            send_status="sent",
+        )
+
+    total, rows = store.list_operation_logs_with_count(
+        limit=2,
+        source_tables=("reply_attempts",),
+    )
+
+    assert total == 3
+    assert len(rows) == 2
+    assert all(row.source_table == "reply_attempts" for row in rows)

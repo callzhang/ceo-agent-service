@@ -264,6 +264,13 @@ export function listHistory(params: Record<string, string | number | undefined> 
   });
 }
 
+export function getHistoryChart(range = "24h", signal?: AbortSignal) {
+  return request<unknown>(`/api/console/history/chart${query({ range })}`, { signal }).then((value) => {
+    const row = asRecord(value);
+    return isRecord(row.chart) ? row.chart as unknown as HistoryChart : undefined;
+  });
+}
+
 export function listAttention(signal?: AbortSignal) {
   return request<ConsoleList<Record<string, unknown>>>("/api/console/attention", { signal }).then((page) => ({
     ...page,

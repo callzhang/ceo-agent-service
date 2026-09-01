@@ -502,11 +502,54 @@ def test_console_history_includes_chart_snapshot(tmp_path: Path):
 
     with _client(tmp_path) as client:
         response = client.get("/api/console/history?page=1&page_size=20")
+        week = client.get("/api/console/history?page=1&page_size=20&chart_range=1w")
+        month = client.get("/api/console/history?page=1&page_size=20&chart_range=1m")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["chart"]["total"] >= 1
     assert len(payload["chart"]["labels"]) == 24
+
+    assert len(week.json()["chart"]["labels"]) == 24 * 7
+    assert len(month.json()["chart"]["labels"]) == 24 * 30
+
+
+def test_console_history_chart_can_load_independently(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_reply_attempt(
+        conversation_id="history-chart-conversation",
+        conversation_title="History chart",
+        trigger_message_id="history-chart-message",
+        trigger_sender="Derek",
+        trigger_text="Show chart",
+        action="chat_message",
+        sensitivity_kind="",
+        codex_reason="test",
+        draft_reply_text="Chart event",
+        send_status="sent",
+    )
+
+    with _client(tmp_path) as client:
+        list_response = client.get(
+            "/api/console/history?page=1&page_size=20&include_chart=false"
+        )
+        chart_response = client.get("/api/console/history/chart?range=1w")
+
+    assert list_response.status_code == 200
+    assert "chart" not in list_response.json()
+    assert chart_response.status_code == 200
+    assert len(chart_response.json()["chart"]["labels"]) == 24 * 7
+
+
+def test_console_history_completed_filter_includes_sent_records(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_attempt(store)
+
+    with _client(tmp_path) as client:
+        response = client.get("/api/console/history?page=1&page_size=20&status=done")
+
+    assert response.status_code == 200
+    assert response.json()["meta"]["total"] >= 1
 
 
 def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path: Path):

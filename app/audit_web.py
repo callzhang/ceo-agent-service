@@ -9921,7 +9921,7 @@ def create_audit_app(
             else lambda: _queue_attention_rows(audit_store)
         ),
         task_row_builder=_task_row_payload,
-        history_chart_factory=lambda: _history_chart_payload(audit_store),
+        history_chart_factory=lambda hours: _history_chart_payload(audit_store, hours=hours),
         email_store_factory=lambda: EmailStore(db_path),
         email_learning_factory=email_learning_factory,
     )

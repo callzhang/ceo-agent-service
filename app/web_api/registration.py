@@ -58,7 +58,7 @@ def register_console_routes(
     feedback_backlog_factory: Callable[[], Any],
     attention_rows_factory: Callable[[], Any],
     task_row_builder: Callable[..., Any] | None = None,
-    history_chart_factory: Callable[[], Any] | None = None,
+    history_chart_factory: Callable[[int], Any] | None = None,
     email_store_factory: Callable[[], Any] | None = None,
     email_learning_factory: Callable[[], Any] | None = None,
     feature_registry_factory: Callable[[], FeatureRegistry] | None = None,
@@ -270,9 +270,12 @@ def register_console_routes(
         q: str = "",
         status: str = "",
         object_type: str = "",
+        chart_range: str = Query(default="24h"),
+        include_chart: bool = Query(default=True),
     ):
         store = store_factory()
-        statuses = (status,) if status.strip() else None
+        status_key = status.strip().lower()
+        statuses = ("done", "sent") if status_key == "done" else ((status_key,) if status_key else None)
         history_types = (object_type,) if object_type.strip() else None
         visible_source_tables = (
             "reply_attempts",
@@ -282,13 +285,7 @@ def register_console_routes(
             "follow_up_drafts",
             "work_todo_dingtalk_links",
         )
-        total = store.count_operation_logs(
-            query=q,
-            statuses=statuses,
-            history_types=history_types,
-            source_tables=visible_source_tables,
-        )
-        rows = store.list_operation_logs(
+        total, rows = store.list_operation_logs_with_count(
             limit=page_size,
             offset=(page - 1) * page_size,
             query=q,
@@ -298,9 +295,17 @@ def register_console_routes(
         )
         items = [history_log_item(row) for row in rows]
         response = list_envelope(items, page=page, page_size=page_size, total=total)
-        if history_chart_factory is not None:
-            response["chart"] = json_safe(history_chart_factory())
+        if include_chart and history_chart_factory is not None:
+            chart_hours = {"24h": 24, "1w": 24 * 7, "1m": 24 * 30}.get(chart_range.strip().lower(), 24)
+            response["chart"] = json_safe(history_chart_factory(chart_hours))
         return response
+
+    @app.get("/api/console/history/chart")
+    def console_history_chart(range: str = Query(default="24h")):
+        if history_chart_factory is None:
+            return {"chart": {}}
+        chart_hours = {"24h": 24, "1w": 24 * 7, "1m": 24 * 30}.get(range.strip().lower(), 24)
+        return {"chart": json_safe(history_chart_factory(chart_hours)), "meta": {"snapshot_at": snapshot_at()}}
 
     @app.get("/api/console/history/errors/{error_id}")
     def console_error_detail(error_id: int):

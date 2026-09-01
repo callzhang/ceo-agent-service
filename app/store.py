@@ -2,6 +2,7 @@ import errno
 import fcntl
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -21973,7 +21974,7 @@ class AutoReplyStore:
         history_types: tuple[str, ...] | None = None,
         source_tables: tuple[str, ...] | None = None,
     ) -> list[OperationLog]:
-        sql = f"select * from ({self._operation_logs_base_query()}) as operation_logs"
+        sql = f"select * from ({self._operation_logs_base_query(source_tables)}) as operation_logs"
         where_sql, where_args = self._operation_log_filters(
             query=query,
             log_type=log_type,
@@ -21993,6 +21994,56 @@ class AutoReplyStore:
         with self._connect() as db:
             rows = db.execute(sql, tuple(args)).fetchall()
             return [OperationLog.model_validate(dict(row)) for row in rows]
+
+    def list_operation_logs_with_count(
+        self,
+        limit: int,
+        offset: int = 0,
+        query: str = "",
+        log_type: str = "",
+        statuses: tuple[str, ...] | None = None,
+        history_types: tuple[str, ...] | None = None,
+        source_tables: tuple[str, ...] | None = None,
+    ) -> tuple[int, list[OperationLog]]:
+        """Return one page and its exact count from a single materialized query."""
+        where_sql, where_args = self._operation_log_filters(
+            query=query,
+            log_type=log_type,
+            statuses=statuses,
+            history_types=history_types,
+            source_tables=source_tables,
+        )
+        sql = f"""
+            with operation_logs as (
+                {self._operation_logs_base_query(source_tables)}
+            )
+            select operation_logs.*, count(*) over() as __total
+            from operation_logs
+            {where_sql}
+            order by occurred_at desc, source_table desc, source_id desc
+            limit ? offset ?
+        """
+        args = [*where_args, max(0, limit), max(0, offset)]
+        with self._connect() as db:
+            rows = db.execute(sql, tuple(args)).fetchall()
+        if rows:
+            total = int(rows[0]["__total"] or 0)
+            items = []
+            for row in rows:
+                payload = dict(row)
+                payload.pop("__total", None)
+                items.append(OperationLog.model_validate(payload))
+            return total, items
+        return (
+            self.count_operation_logs(
+                query=query,
+                log_type=log_type,
+                statuses=statuses,
+                history_types=history_types,
+                source_tables=source_tables,
+            ),
+            [],
+        )
 
     def list_operation_log_types(self) -> list[str]:
         with self._connect() as db:
@@ -22024,14 +22075,16 @@ class AutoReplyStore:
             row = db.execute(
                 f"""
                 select count(*) as count
-                from ({self._operation_logs_base_query()}) as operation_logs {where_sql}
+                from ({self._operation_logs_base_query(source_tables)}) as operation_logs {where_sql}
                 """,
                 tuple(where_args),
             ).fetchone()
             return int(row["count"] or 0)
 
-    def _operation_logs_base_query(self) -> str:
-        return """
+    def _operation_logs_base_query(
+        self, source_tables: tuple[str, ...] | None = None
+    ) -> str:
+        query = """
             select
                     'error:' || id as id,
                     'errors' as source_table,
@@ -22238,6 +22291,15 @@ class AutoReplyStore:
                 left join work_todos as todos on todos.id=links.work_todo_id
                 left join work_projects as projects on projects.id=todos.project_id
         """
+        if not source_tables:
+            return query
+        requested = set(source_tables)
+        branches = []
+        for branch in query.split("union all"):
+            match = re.search(r"'([^']+)' as source_table", branch)
+            if match and match.group(1) in requested:
+                branches.append(branch)
+        return "union all".join(branches)
 
     def _operation_log_filters(
         self,
