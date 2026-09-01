@@ -1937,7 +1937,11 @@ class DwsClient:
         payload = self.run_json(self.build_read_unread_messages_command(conversation))
         raw_unread_messages = self._extract_message_rows(payload)
         if raw_unread_messages is None:
-            raise DwsError("unread messages response has no ordered message rows")
+            recent_messages = self.read_recent_messages(
+                conversation,
+                limit=max(conversation.unread_point, MIN_UNREAD_MESSAGE_LIST_LIMIT),
+            )
+            return recent_messages[-conversation.unread_point :]
         raw_unread_messages = raw_unread_messages[: conversation.unread_point]
         unread_payload = {"result": {"messages": raw_unread_messages}}
         parsed_unread_messages = self.parse_messages(
