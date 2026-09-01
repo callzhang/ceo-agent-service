@@ -279,6 +279,9 @@ function SkillsPanel() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [editorMode, setEditorMode] = useState<"preview" | "edit">("preview");
   const [toggleMessage, setToggleMessage] = useState("");
+  const draftCache = useRef(new Map<string, string>());
+  const detailRequest = useRef<{ id: number; controller: AbortController | null }>({ id: 0, controller: null });
+  const [toggleBusy, setToggleBusy] = useState<Set<string>>(new Set());
 
   async function load(signal?: AbortSignal) {
     setState("loading"); setError("");
@@ -302,11 +305,18 @@ function SkillsPanel() {
 
   async function openSkill(name: string) {
     if (expanded === name) { setExpanded(null); return; }
-    setShowAll(true); setExpanded(name); setDetail(null); setDraft(""); setDetailError(""); setSaveState("idle"); setEditorMode("preview"); setDetailState("loading");
+    if (detail && draft !== detail.content) draftCache.current.set(detail.name, draft);
+    detailRequest.current.controller?.abort();
+    const id = detailRequest.current.id + 1;
+    const controller = new AbortController();
+    detailRequest.current = { id, controller };
+    setShowAll(true); setExpanded(name); setDetail(null); setDraft(draftCache.current.get(name) || ""); setDetailError(""); setSaveState("idle"); setEditorMode("preview"); setDetailState("loading");
     try {
-      const result = await getSkillDetail(name);
-      setDetail(result); setDraft(result.content); setDetailState("ready");
+      const result = await getSkillDetail(name, controller.signal);
+      if (detailRequest.current.id !== id) return;
+      setDetail(result); setDraft(draftCache.current.get(name) || result.content); setDetailState("ready");
     } catch (reason) {
+      if (controller.signal.aborted || detailRequest.current.id !== id) return;
       setDetailState("error"); setDetailError(skillErrorMessage(reason, "Skill 读取失败"));
     }
   }
@@ -316,7 +326,7 @@ function SkillsPanel() {
     setSaveState("saving"); setDetailError("");
     try {
       const result = await saveSkillApi(detail.name, draft, detail.sha256);
-      setDetail(result); setDraft(result.content); setSaveState("saved");
+      setDetail(result); setDraft(result.content); draftCache.current.delete(result.name); setSaveState("saved");
       setSkills((current) => current.map((skill) => skill.name === result.name ? { ...skill, description: result.description, sha256: result.sha256, status: "ready" } : skill));
     } catch (reason) {
       setSaveState("error");
@@ -327,6 +337,7 @@ function SkillsPanel() {
 
   async function changeFeature(feature: SkillFeature, enabled: boolean) {
     setToggleMessage("");
+    setToggleBusy((current) => new Set(current).add(feature.feature_id));
     setFeatures((current) => current.map((item) => item.feature_id === feature.feature_id ? { ...item, enabled } : item));
     try {
       const result = await toggleSkillFeature(feature.feature_id, enabled);
@@ -335,6 +346,8 @@ function SkillsPanel() {
     } catch (reason) {
       setFeatures((current) => current.map((item) => item.feature_id === feature.feature_id ? { ...item, enabled: feature.enabled } : item));
       setError(skillErrorMessage(reason, "功能开关保存失败；当前状态已恢复。"));
+    } finally {
+      setToggleBusy((current) => { const next = new Set(current); next.delete(feature.feature_id); return next; });
     }
   }
 
@@ -344,9 +357,9 @@ function SkillsPanel() {
     {state === "error" && <div className="page-state page-state-error" role="alert">{error}<button type="button" className="secondary-button" onClick={() => void load()}>重试</button></div>}
     {state === "ready" && <>
       {error && <p className="field-error" role="alert">{error}</p>}{toggleMessage && <p className="save-success" role="status">{toggleMessage}</p>}
-      <div className="skills-feature-grid">{features.map((feature) => <article className="skills-feature-card" key={feature.feature_id}><div className="skills-feature-heading"><div><h3>{feature.name}</h3><p>{feature.description}</p></div><label className="skills-toggle"><span className="sr-only">{feature.name}</span><input type="checkbox" role="switch" aria-label={feature.name} checked={feature.enabled} onChange={(event) => void changeFeature(feature, event.target.checked)} /><span aria-hidden="true" /></label></div><div className="skills-feature-meta"><span className={`skills-status ${feature.status}`}>{feature.status === "ready" ? "Ready" : "Incomplete"}</span><span>{feature.enabled ? "ON" : "OFF"}</span></div><div className="skills-associated"><span>关联 Skills</span><div>{feature.skills.map((name) => <button type="button" className="skill-link" key={name} onClick={() => void openSkill(name)}>{name}</button>)}</div></div></article>)}</div>
+      <div className="skills-feature-grid">{features.map((feature) => <article className="skills-feature-card" key={feature.feature_id}><div className="skills-feature-heading"><div><h3>{feature.name}</h3><p>{feature.description}</p></div><label className="skills-toggle"><span className="sr-only">{feature.name}</span><input type="checkbox" role="switch" aria-label={feature.name} checked={feature.enabled} disabled={toggleBusy.has(feature.feature_id)} onChange={(event) => void changeFeature(feature, event.target.checked)} /><span aria-hidden="true" /></label></div><div className="skills-feature-meta"><span className={`skills-status ${feature.status}`}>{feature.status === "ready" ? "Ready" : "Incomplete"}</span><span>{feature.enabled ? "ON" : "OFF"}</span></div><div className="skills-associated"><span>关联 Skills</span><div>{feature.skills.map((name) => <button type="button" className="skill-link" key={name} onClick={() => void openSkill(name)}>{name}</button>)}</div></div></article>)}</div>
       <div className="skills-project-heading"><div><h3>全部 project skills</h3><p className="muted">非法 skill 行不影响其他内容。</p></div><button type="button" className="secondary-button" onClick={() => setShowAll((value) => !value)}>{showAll ? "收起列表" : `查看全部 (${skills.length})`}</button></div>
-      {showAll && <div className="skills-project-list">{skills.map((skill) => <article className={`skills-project-row ${skill.status === "invalid" ? "is-invalid" : ""}`} key={skill.name}><div><strong>{skill.name}</strong>{skill.status === "invalid" ? <p className="field-error">{skill.error || "Skill 无法读取"}</p> : <p className="muted">{skill.description || "未提供描述"}</p>}<div className="skills-references">{skill.referenced_by?.length ? <>引用功能：{skill.referenced_by.join("、")}</> : "暂无引用功能"}</div></div>{skill.status !== "invalid" && <button type="button" className="secondary-button" onClick={() => void openSkill(skill.name)}>{expanded === skill.name ? "收起" : `查看 ${skill.name}`}</button>}{expanded === skill.name && <div className="skill-editor" aria-label={`${skill.name} 编辑器`}>{detailState === "loading" && <p role="status">正在读取 Skill…</p>}{detailState === "error" && <p className="field-error" role="alert">{detailError}</p>}{detailState === "ready" && detail && <><p className="muted">共享 skill 编辑影响引用功能。SHA-256: <code>{detail.sha256}</code></p><div className="settings-pill-row skill-editor-tabs" role="tablist" aria-label="Skill detail view"><button type="button" role="tab" aria-selected={editorMode === "preview"} className={editorMode === "preview" ? "active" : ""} onClick={() => setEditorMode("preview")}>预览</button><button type="button" role="tab" aria-selected={editorMode === "edit"} className={editorMode === "edit" ? "active" : ""} onClick={() => setEditorMode("edit")}>编辑</button></div>{editorMode === "preview" ? <div role="tabpanel" aria-label="Skill 预览"><pre className="prompt-preview skill-preview">{draft}</pre></div> : <><label className="skill-content-label" htmlFor="skill-content">Skill 内容</label><textarea id="skill-content" aria-label="Skill 内容" value={draft} onChange={(event) => { setDraft(event.target.value); setSaveState("idle"); }} rows={16} /><div className="skill-editor-actions"><button type="button" className="primary-button" onClick={() => void saveSkill()} disabled={saveState === "saving"}>{saveState === "saving" ? "保存中…" : "保存 Skill"}</button><button type="button" className="secondary-button" onClick={() => { setDraft(detail.content); setSaveState("idle"); setDetailError(""); }}>取消</button>{saveState === "saved" && <span className="save-success" role="status">已保存</span>}{detailError && <span className="save-error" role="alert">{detailError}</span>}</div></>}</>}</div>}</article>)}</div>}
+      {showAll && <div className="skills-project-list">{skills.map((skill) => <article className={`skills-project-row ${skill.status === "invalid" ? "is-invalid" : ""}`} key={skill.name}><div><strong>{skill.name}</strong>{skill.status === "invalid" ? <p className="field-error">{skill.error || "Skill 无法读取"}</p> : <p className="muted">{skill.description || "未提供描述"}</p>}<div className="skills-references">{skill.referenced_by?.length ? <>引用功能：{skill.referenced_by.join("、")}</> : "暂无引用功能"}</div></div>{skill.status !== "invalid" && <button type="button" className="secondary-button" onClick={() => void openSkill(skill.name)}>{expanded === skill.name ? "收起" : `查看 ${skill.name}`}</button>}{expanded === skill.name && <div className="skill-editor" aria-label={`${skill.name} 编辑器`}>{detailState === "loading" && <p role="status">正在读取 Skill…</p>}{detailState === "error" && <p className="field-error" role="alert">{detailError}</p>}{detailState === "ready" && detail && <><p className="muted">共享 skill 编辑影响引用功能。SHA-256: <code>{detail.sha256}</code></p><div className="settings-pill-row skill-editor-tabs" role="tablist" aria-label="Skill detail view"><button type="button" role="tab" id="skill-preview-tab" aria-controls="skill-preview-panel" tabIndex={editorMode === "preview" ? 0 : -1} aria-selected={editorMode === "preview"} className={editorMode === "preview" ? "active" : ""} onClick={() => setEditorMode("preview")} onKeyDown={(event) => { if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); setEditorMode("edit"); document.getElementById("skill-edit-tab")?.focus(); } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); setEditorMode("edit"); document.getElementById("skill-edit-tab")?.focus(); } }}>预览</button><button type="button" role="tab" id="skill-edit-tab" aria-controls="skill-edit-panel" tabIndex={editorMode === "edit" ? 0 : -1} aria-selected={editorMode === "edit"} className={editorMode === "edit" ? "active" : ""} onClick={() => setEditorMode("edit")} onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); setEditorMode("preview"); document.getElementById("skill-preview-tab")?.focus(); } }}>编辑</button></div>{editorMode === "preview" ? <div id="skill-preview-panel" role="tabpanel" aria-labelledby="skill-preview-tab" aria-label="Skill 预览"><pre className="prompt-preview skill-preview">{draft}</pre></div> : <div id="skill-edit-panel" role="tabpanel" aria-labelledby="skill-edit-tab" aria-label="Skill 编辑"><label className="skill-content-label" htmlFor="skill-content">Skill 内容</label><textarea id="skill-content" aria-label="Skill 内容" value={draft} onChange={(event) => { setDraft(event.target.value); setSaveState("idle"); }} rows={16} /><div className="skill-editor-actions"><button type="button" className="primary-button" onClick={() => void saveSkill()} disabled={saveState === "saving"}>{saveState === "saving" ? "保存中…" : "保存 Skill"}</button><button type="button" className="secondary-button" onClick={() => { setDraft(detail.content); draftCache.current.delete(detail.name); setSaveState("idle"); setDetailError(""); }}>取消</button>{saveState === "saved" && <span className="save-success" role="status">已保存</span>}{detailError && <span className="save-error" role="alert">{detailError}</span>}</div></div>}</>}</div>}</article>)}</div>}
     </>}
   </SettingsCard>;
 }
@@ -452,7 +465,8 @@ export function SettingsPage() {
     return () => { active = false; };
   }, [section]);
   useEffect(() => {
-    if (section === "status" || section === "attention" || section === "skills") return;
+    if (section === "skills") { setState("ready"); setPayload(null); setError(""); return; }
+    if (section === "status" || section === "attention") return;
     const controller = new AbortController(); setState("loading"); setSaveState("idle");
     getSettings(section, controller.signal).then((response) => { setPayload(response.item); setDraft(fieldsOf(response.item)); setState("ready"); setError(""); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
     return () => controller.abort();

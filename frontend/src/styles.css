@@ -194,6 +194,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .settings-pill-row a:hover { color: var(--ink); }
 .settings-pill-row a.active, .settings-pill-row a[aria-selected="true"] { color: white; background: #1c1c1c; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%); }
 .settings-pill-row a[aria-selected="false"] { color: var(--ink-soft); background: transparent; }
+.settings-pill-row button { min-height: 32px; padding: 7px 14px; border: 0; border-radius: 999px; color: var(--ink-soft); background: transparent; font: inherit; font-size: 0.78rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.settings-pill-row button:hover { color: var(--ink); }
+.settings-pill-row button.active, .settings-pill-row button[aria-selected="true"] { color: white; background: #1c1c1c; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%); }
+.settings-pill-row button[aria-selected="false"] { color: var(--ink-soft); background: transparent; }
 .settings-control-group { display: grid; gap: 6px; margin-top: 16px; }
 .settings-control-label { color: var(--ink-soft); font-size: 0.76rem; font-weight: 750; }
 .settings-control-group .settings-pill-row { width: max-content; max-width: 100%; margin: 0; }
@@ -276,6 +280,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .skills-toggle span::after { content: ""; display: block; width: 19px; height: 19px; margin: 3px; border-radius: 50%; background: #fff; transition: .16s ease; }
 .skills-toggle input:checked + span { background: var(--accent); }
 .skills-toggle input:checked + span::after { transform: translateX(18px); }
+.skills-toggle input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 3px; }
 .skills-project-heading { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--line); }
 .skills-project-heading h3 { margin: 0 0 5px; }
 .skills-project-heading p { margin: 0; }

@@ -356,13 +356,13 @@ describe("SettingsPage", () => {
 
     await user.click(await screen.findByRole("button", { name: "查看 ceo-message-triage" }));
     expect(await screen.findByRole("tab", { name: "预览" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel", { name: "Skill 预览" })).toHaveTextContent("# preview content");
+    expect(screen.getByRole("tabpanel", { name: "预览" })).toHaveTextContent("# preview content");
     expect(screen.queryByRole("textbox", { name: "Skill 内容" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "编辑" }));
     expect(screen.getByRole("tab", { name: "编辑" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("textbox", { name: "Skill 内容" })).toBeInTheDocument();
-    expect(screen.queryByRole("tabpanel", { name: "Skill 预览" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "预览" })).not.toBeInTheDocument();
   });
 
   it("shows API validation errors without crashing and keeps an invalid project skill row visible", async () => {
