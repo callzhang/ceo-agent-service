@@ -212,3 +212,14 @@ assistant provisional annotations 做随机 5-fold OOF，得到 `67.50% Accuracy
 - unsubscribe 仍遵守订阅来源级门槛：precision >= 0.95 且 support >= 20；冷启动仅允许用户确认后的订阅来源进入自动化候选。
 - 真实邮箱实验只允许 readonly header/metadata 抽样；生产启用前仍需独立 review、全量回归和用户确认。
 - 外部邮箱回复等写动作仍需现有 Audit Agent 生命周期；unsubscribe 是已批准的唯一 Consumer-direct 例外。
+
+## 2026-08-31 全量回归复核
+
+在独立 Email 工作树使用普通 conda Python 完成一次全量测试：
+
+- 结果：`5410 passed, 91 skipped, 40 deselected, 9 failed, 5 warnings`，耗时约 319 秒；
+- 9 个失败均不属于 Email 路径，分别位于 Audit Web（4）、Console 健康探针（2）、会议对齐发送时序（2）和设置页导航（1）；
+- 本轮选择的 Email 回归集合（`tests/test_email*.py`、`tests/test_mail_review_skill.py` 和文档契约）执行为 `644 passed, 5 warnings`，没有 Email 失败；warning 仍是既有 path-based model promotion deprecation；
+- 本次验证没有修改源代码、没有连接真实邮箱、没有写邮箱，也没有重启主 launchd。工作树保持干净。
+
+因此当前 Email 代码的本地专项基线是通过的，但整个仓库仍不能报告为全绿；上述 9 个非 Email 失败需要由对应模块单独处理，不能作为 Email 集成已可生产激活的证据。
