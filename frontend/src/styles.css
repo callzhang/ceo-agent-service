@@ -883,7 +883,7 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-detail-section, .attempt-feedback-card, .attempt-feedback-events { width: 100%; }
 .attempt-review-grid .attempt-feedback-events { margin: 0; }
 .attempt-review-grid .attempt-decision-card { width: 100%; max-width: none; }
-.attempt-review-grid .attempt-feedback-card { border-color: #cbded3; background: linear-gradient(180deg, var(--surface) 0%, #f6fbf8 100%); }
+.attempt-review-grid .attempt-feedback-card { border-color: #cbded3; background: var(--surface); }
 .attempt-runtime-card { padding: 0; overflow: hidden; }
 .attempt-runtime-card > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 20px; color: var(--ink); cursor: pointer; list-style: none; }
 .attempt-runtime-card > summary::-webkit-details-marker { display: none; }
