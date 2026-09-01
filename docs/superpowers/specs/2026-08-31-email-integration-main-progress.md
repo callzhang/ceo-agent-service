@@ -172,6 +172,12 @@ header-search 统计接口；本次也未据此推断邮箱没有退订头。有
 `BODY.PEEK` header fetch 的随机样本结果。后续若要估计退订头覆盖率，应使用受限的
 readonly header fetch 扫描或服务端支持的其他只读分页接口，并单独记录成本与采样偏差。
 
+随后使用 `UID FETCH` 分段读取所有当前 INBOX 的有限 header 字段，分段大小为 100；
+2,282/2,282 个 UID 均成功解析，没有失败分段。当前邮箱快照中
+`List-Unsubscribe=0`、`List-Unsubscribe-Post=0`、`Auto-Submitted=0`。这次全量
+header-only 扫描可以作为当前快照的覆盖率证据，但不能推断未来邮件不会带退订入口，
+也不能替代后续新邮件的持续观察。扫描仍未读取正文或附件，未执行任何邮箱写操作。
+
 ## 尚未开放的门槛
 
 - 当前 DingTalk 企业邮箱配置仍保持 disabled；没有把实验标注当作用户 gold feedback，也没有自动启用模型或动作。

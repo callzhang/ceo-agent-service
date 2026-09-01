@@ -719,6 +719,11 @@ user-confirmed chronological holdout。
 模型评估、生产 feedback 或 model promotion；与前一轮 40 封不能未经 UID 去重就
 合并计算样本支持。
 
+同日对当前 INBOX 做了全量有限 header 的 readonly `UID FETCH` 分段扫描：
+2,282/2,282 个 UID 成功解析且没有失败分段，`List-Unsubscribe` 和
+`List-Unsubscribe-Post` 均为 0。该结果只描述本次邮箱快照，不授权自动退订，也不
+替代未来新邮件的持续监测；正文和附件仍未读取。
+
 ## 模型评测
 
 模型比较采用同一份用户邮件和同一套输入标准化逻辑，至少比较：
