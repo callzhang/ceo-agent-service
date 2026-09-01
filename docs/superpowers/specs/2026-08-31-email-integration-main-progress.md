@@ -223,3 +223,18 @@ assistant provisional annotations 做随机 5-fold OOF，得到 `67.50% Accuracy
 - 本次验证没有修改源代码、没有连接真实邮箱、没有写邮箱，也没有重启主 launchd。工作树保持干净。
 
 因此当前 Email 代码的本地专项基线是通过的，但整个仓库仍不能报告为全绿；上述 9 个非 Email 失败需要由对应模块单独处理，不能作为 Email 集成已可生产激活的证据。
+
+## 2026-08-31 浏览器验收复核
+
+首次在受限沙箱中开启浏览器测试时，Playwright 启动系统 Chrome 和自带
+Chromium 都在启动后收到 `SIGABRT`，结果为 `1 passed, 33 errors`；这发生在
+浏览器 fixture 建立阶段，不是应用断言失败。最小启动诊断也复现了相同现象。
+
+随后在正常本机进程权限下，用同一套 Playwright 依赖和自带 Chromium 重跑：
+
+- 最小 headless Chromium 启动：通过；
+- `WORKBENCH_BROWSER_TESTS=1 pytest -q tests/browser/test_email_unsubscribe_browser.py`：`34 passed`，约 26 秒；
+- 测试只访问 loopback fixture，没有访问真实邮箱或真实退订站点；
+- 工作树没有因浏览器测试产生未提交源代码改动。
+
+因此浏览器验收代码基线通过；受限沙箱中的失败记录为执行环境限制，不应被当成 Email 浏览器实现失败。生产验证仍不得借此替代真实部署后的健康检查，也不得在未获单独授权时访问真实退订站点。
