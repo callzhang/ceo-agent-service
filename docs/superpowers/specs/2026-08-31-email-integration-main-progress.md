@@ -382,3 +382,17 @@ active-model gate 阻止；这是 fail-closed 的预期结果，不应误报为�
 本轮验证记录：后端 Email/Skill 专项 `683 passed, 1 skipped`；Email 页面单测
 `5 passed`；前端 TypeScript/Vite build 通过。整套前端测试有 2 个既有 Settings
 WIP 与旧测试契约不一致的失败，未修改该 WIP。
+
+## 2026-09-01 待反馈分类定义与学习入口复核
+
+为降低真实邮箱标注中的类别歧义，Email 页面的“待反馈”操作现在在每个分类按钮
+下方同时展示该类别的短定义；“邮件配置”选中类别时也显示同一份定义。重点边界
+包括：`billing=发票、账单、付款、续费`，`subscription=用户不希望继续接收的批量订阅`。
+这与本轮混合采样中发现的续费邮件标注冲突相对应，用户确认时可以直接按定义选择，
+而不是只根据相近的类别名称判断。该页面仍然只确认分类并写入反馈，不因展示定义而
+创建 Email task 或执行邮箱写操作。
+
+本轮 TDD 验证结果：EmailPage focused tests `6 passed`；前端 TypeScript 检查和
+Vite production build 通过。构建使用前端 package 自带的 build 脚本；仓库根目录
+没有同名 build 脚本，因此根目录 build 命令不作为有效验证。现有 Settings/UI WIP
+未纳入本轮提交。

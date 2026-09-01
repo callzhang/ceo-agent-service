@@ -23,6 +23,16 @@ const categoryLabels: Record<string, string> = {
   important: "重要", work: "工作", personal: "个人", notification: "通知",
   billing: "账单", shopping: "购物", subscription: "订阅", junk: "垃圾",
 };
+const categoryDescriptions: Record<string, string> = {
+  important: "明确需要尽快关注或处理",
+  work: "与日常工作有关，但不要求立即处理",
+  personal: "真实个人关系或个人生活邮件",
+  notification: "验证码、安全提醒、系统状态等时效通知",
+  billing: "发票、账单、付款、续费",
+  shopping: "订单确认、物流、退款和购物状态",
+  subscription: "用户不希望继续接收的批量订阅",
+  junk: "广告、营销、钓鱼或无价值邮件",
+};
 
 function localTime(value: string) {
   if (!value) return "未提供";
@@ -107,7 +117,7 @@ function ClassificationTable({ rows, pending, onConfirm }: { rows: EmailClassifi
         <td>{percent(row.confidence)}<br /><span className="muted">{percent(row.margin)}</span></td>
         <td>{row.classification_source === "user" ? "人工确认" : "模型"}</td>
         <td>{localTime(row.received_at || row.updated_at)}</td>
-        {pending && <td><div className="console-page-actions">{categories.map((category) => <button type="button" className="compact-button" key={category} onClick={() => onConfirm(row, category)}>{categoryLabels[category]}</button>)}</div></td>}
+        {pending && <td><div className="console-page-actions email-feedback-category-options">{categories.map((category) => <button type="button" className="compact-button email-feedback-category-option" key={category} onClick={() => onConfirm(row, category)}><strong>{categoryLabels[category]}</strong><small>{categoryDescriptions[category]}</small></button>)}</div></td>}
       </tr>
         {!pending && expandedId === row.id && <tr key={`${row.id}-detail`}><td colSpan={5}><section aria-label="邮件处理详情"><h2>邮件处理详情</h2>{detailLoading && <div className="page-state" role="status">正在加载处理详情…</div>}{detailError && <div className="page-state page-state-error" role="alert">{detailError}</div>}{detail && <ObservabilityDetails events={detail.observability || []} />}</section></td></tr>}
       </Fragment>)}</tbody>
@@ -149,6 +159,7 @@ function ConfigPanel() {
 
   return <section className="console-card"><div className="card-head"><div><h2>邮件类型配置</h2><p className="muted">类别、描述、置信度阈值和固定动作。这里不直接执行邮箱动作。</p></div></div>
     <div className="settings-control-group"><span className="settings-control-label">邮件类型</span><div className="settings-pill-row">{categories.map((category) => <button type="button" className={selected === category ? "active" : ""} key={category} onClick={() => setSelected(category)}>{categoryLabels[category]}</button>)}</div></div>
+    <p className="email-category-definition"><strong>{categoryLabels[selected]}</strong>：{categoryDescriptions[selected]}</p>
     <label className="settings-field">描述<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个类别用于什么邮件" /></label>
     <label className="settings-field">自动处理阈值<input type="number" min="0" max="1" step="0.01" value={threshold} onChange={(event) => setThreshold(event.target.value)} /></label>
     <label className="settings-field">配置版本<input value={version} onChange={(event) => setVersion(event.target.value)} /></label>

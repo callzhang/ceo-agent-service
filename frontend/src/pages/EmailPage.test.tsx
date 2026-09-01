@@ -56,11 +56,19 @@ describe("EmailPage", () => {
 
     expect(await screen.findByText("需要确认")).toBeInTheDocument();
     expect(screen.getByText("61.0%")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "重要" }));
+    await user.click(screen.getByRole("button", { name: /^重要/ }));
 
     expect(confirmEmailClassification).toHaveBeenCalledWith(1, "important", "email-feedback:1", null);
     expect(await screen.findByText("邮件分类反馈已保存")).toBeInTheDocument();
     expect(screen.queryByText("需要确认")).not.toBeInTheDocument();
+  });
+
+  it("shows category definitions while asking for feedback", async () => {
+    renderEmail("/email?tab=pending_feedback");
+
+    expect(await screen.findByText("需要确认")).toBeInTheDocument();
+    expect(screen.getByText("发票、账单、付款、续费")).toBeInTheDocument();
+    expect(screen.getByText("用户不希望继续接收的批量订阅")).toBeInTheDocument();
   });
 
   it("states that category configuration does not execute provider writes", async () => {
