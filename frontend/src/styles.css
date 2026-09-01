@@ -594,6 +594,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .responsive-data-list .responsive-expanded-row td::before { content: none; }
   .history-chart-range-tabs { width: 100%; justify-content: space-between; }
   .history-chart-range-tabs button { flex: 1; }
+  .history-chart-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 10px; }
+  .history-chart-legend-item { min-width: 0; line-height: 1.35; }
   .history-workspace-card, .tasks-workspace-card, .feedback-workspace-card, .sent-todos-section { padding: 14px; }
   .history-toolbar .table-toolbar-left, .tasks-toolbar .table-toolbar-left, .feedback-toolbar .table-toolbar-left { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
   .history-toolbar .table-toolbar-search, .tasks-toolbar .table-toolbar-search, .feedback-toolbar .table-toolbar-search { grid-column: 1 / -1; width: 100%; }
