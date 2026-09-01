@@ -713,6 +713,12 @@ promotion 或 category eligibility。实验支持 feedback + debounce + batch re
 active learning 和 `billing/personal/shopping/subscription` 定向补样，并保留
 user-confirmed chronological holdout。
 
+同日又用随机种子 `2026083103` 只读取了 80 封邮件头，用于独立观察分布；provisional
+标注为 `important=26`、`notification=18`、`work=15`、`junk=10`、`billing=8`、
+`subscription=2`、`personal=1`、`shopping=0`。这批数据没有读取正文，也不进入
+模型评估、生产 feedback 或 model promotion；与前一轮 40 封不能未经 UID 去重就
+合并计算样本支持。
+
 ## 模型评测
 
 模型比较采用同一份用户邮件和同一套输入标准化逻辑，至少比较：

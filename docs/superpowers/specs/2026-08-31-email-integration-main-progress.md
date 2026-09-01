@@ -143,6 +143,29 @@ warning 来自既有 path-based model promotion deprecation，不影响本批次
 4. 后续实验需要“定向补稀有类别 + 保留随机漂移样本”，并建立 user-confirmed、时间顺序 holdout；assistant annotations 只用于研究方向，不进入生产反馈库。
 5. 当前生产代码不因本次实验更换模型；新增工作只更新实验记录和 CEO Agent 激活方案，生产配置继续 disabled。
 
+## 新一轮随机邮件头分布抽样
+
+在用户允许随机读取而不是按 cursor 顺序读取后，使用随机种子
+`2026083103` 从 INBOX 抽取了 80 封邮件头。此次只执行了 readonly
+`select`、UID search 和 header fetch，没有读取正文、下载附件、保存原始邮件或
+执行任何邮箱写操作。assistant 仅根据邮件头的主题和发件域做 provisional
+annotation，分布为：
+
+- `important=26`
+- `notification=18`
+- `work=15`
+- `junk=10`
+- `billing=8`
+- `subscription=2`
+- `personal=1`
+- `shopping=0`
+
+这不是新的模型 holdout，也不是 user-confirmed feedback；它只用于观察真实邮箱
+分布和选择下一批只读文本实验。它与前一轮 40 条样本不能未经 UID 去重就合并为
+独立样本量。当前结果再次说明，纯随机抽样仍然几乎覆盖不到 `shopping`，并且
+`subscription` 与 `personal` 支持很低；后续应继续保留随机漂移监测，同时定向补
+稀有类别和低置信度样本。生产配置继续 disabled。
+
 ## 尚未开放的门槛
 
 - 当前 DingTalk 企业邮箱配置仍保持 disabled；没有把实验标注当作用户 gold feedback，也没有自动启用模型或动作。
