@@ -541,6 +541,24 @@ def test_console_history_chart_can_load_independently(tmp_path: Path):
     assert len(chart_response.json()["chart"]["labels"]) == 24 * 7
 
 
+def test_console_history_chart_reuses_a_short_lived_snapshot(monkeypatch, tmp_path: Path):
+    calls: list[int] = []
+
+    def fake_chart(_store, *, hours):
+        calls.append(hours)
+        return {"labels": [], "series": [], "total": 0, "range": str(hours)}
+
+    monkeypatch.setattr(audit_web_module, "_history_chart_payload", fake_chart)
+
+    with _client(tmp_path) as client:
+        first = client.get("/api/console/history/chart?range=1m")
+        second = client.get("/api/console/history/chart?range=1m")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert calls == [24, 24 * 7, 24 * 30]
+
+
 def test_console_history_completed_filter_includes_sent_records(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     seed_attempt(store)

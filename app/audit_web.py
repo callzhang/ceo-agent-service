@@ -790,6 +790,7 @@ RECOVERED_REPLY_ATTEMPT_STATUSES = frozenset(
 )
 HISTORY_CHART_HOURS = 24
 DEFAULT_HISTORY_CACHE_TTL_SECONDS = 2.0
+DEFAULT_HISTORY_CHART_CACHE_TTL_SECONDS = 5.0
 DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS = 10.0
 HISTORY_CHART_COLORS = {
     "💬 Sent": "#00b48a",
@@ -9720,6 +9721,8 @@ def create_audit_app(
     default_attempt_list_cache = _RecentHtmlCache(
         DEFAULT_HISTORY_CACHE_TTL_SECONDS
     )
+    history_chart_cache: dict[int, tuple[float, dict[str, object]]] = {}
+    history_chart_cache_lock = threading.Lock()
     worker_status_cache = _RecentPayloadCache(
         DEFAULT_WORKER_STATUS_CACHE_TTL_SECONDS
     )
@@ -9752,6 +9755,27 @@ def create_audit_app(
             audit_store,
             include_system_health=False,
         )
+
+    def render_history_chart(hours: int) -> dict[str, object]:
+        """Return a short-lived chart snapshot shared by list/chart requests.
+
+        The chart is independent from the History list, but both can be
+        requested together during navigation or when the range changes. Keep a
+        bounded per-range snapshot so repeated requests do not rescan all
+        operation-log sources while the user is looking at the same chart.
+        """
+        now = time.monotonic()
+        with history_chart_cache_lock:
+            cached = history_chart_cache.get(hours)
+            if (
+                cached is not None
+                and now - cached[0] < DEFAULT_HISTORY_CHART_CACHE_TTL_SECONDS
+            ):
+                return cached[1]
+        payload = _history_chart_payload(audit_store, hours=hours)
+        with history_chart_cache_lock:
+            history_chart_cache[hours] = (time.monotonic(), payload)
+        return payload
 
     def read_cached_attention_rows() -> list[dict[str, object]]:
         """Read the current Attention snapshot without serving stale status data."""
@@ -9874,6 +9898,12 @@ def create_audit_app(
                     "work_todo_dingtalk_links",
                 )
             )
+            # The chart is requested immediately after the list on a History
+            # navigation. Precompute the supported ranges while the service is
+            # still starting so the first user-visible range switch is served
+            # from the same short-lived snapshot cache.
+            for chart_hours in (24, 24 * 7, 24 * 30):
+                render_history_chart(chart_hours)
             yield
         finally:
             if workbench_lifecycle is not None:
@@ -9935,7 +9965,7 @@ def create_audit_app(
             else lambda: _queue_attention_rows(audit_store)
         ),
         task_row_builder=_task_row_payload,
-        history_chart_factory=lambda hours: _history_chart_payload(audit_store, hours=hours),
+        history_chart_factory=render_history_chart,
         email_store_factory=lambda: EmailStore(db_path),
         email_learning_factory=email_learning_factory,
     )
