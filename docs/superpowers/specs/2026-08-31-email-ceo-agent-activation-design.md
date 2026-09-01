@@ -179,3 +179,25 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 3. shadow 阶段是扫描全部新邮件，还是只抽样进入待反馈；
 4. 是否采用“随机漂移样本 + 定向稀有类别 + 低置信度 active learning”的反馈采样组合；
 5. 在当前批准的 precision/support 门槛之外，是否要为 `important` 增加 recall 下限。该项属于新的 safety gate，必须单独确认并单独实现，不能顺手加入本次合并。
+
+## 9. 2026-08-31 完成审计矩阵
+
+| 要求 | 当前证据 | 状态 |
+| --- | --- | --- |
+| CPU 分类器满足 100 ms 目标 | 当前 Logistic 端到端 P95 约 6 ms | 已验证 |
+| 分类、反馈、训练和模型版本化 | Email worker、Console 四个分区、模型 registry 及相关回归 | 已验证 |
+| 分类确认不创建 task | pipeline/action-plan boundary 测试通过 | 已验证 |
+| `auto_reply` 写操作经过 Audit | `consumer_audit_v1` 路径及测试通过 | 已验证 |
+| `unsubscribe` 使用 Consumer-direct 例外 | lifecycle、Consumer、task-bound operation 及 loopback E2E 通过 | 已验证 |
+| 退订使用独立 headless 浏览器 profile | 34 个 loopback browser tests 通过 | 已验证 |
+| 退订 terminal result text 可追溯 | receipt、digest、步骤和 Email projection 测试通过 | 已验证 |
+| 低置信度邮件进入待反馈 | 冷启动和 threshold/eligibility fail-closed 测试通过 | 已验证 |
+| subscription 自动门槛达到 precision >= 0.95、support >= 20 | 当前只有 provisional 样本，且 support 不足 | 未满足，保持关闭 |
+| user-confirmed 时间顺序 holdout | 当前尚未积累足够 user-confirmed feedback | 待实验 |
+| 主分支合并、launchd 重启和线上 readback | 当前仍在独立工作树，未部署 | 等待 Derek 授权 |
+| 真实邮箱写操作小批量验收 | 尚未获得本阶段单独的外部效果授权 | 等待 Derek 授权 |
+
+该矩阵的“已验证”只表示独立工作树中的实现和测试证据，不表示主分支已经
+合并，也不表示生产服务已经加载这些代码。当前唯一需要产品决策的动作是先否
+允许以 disabled 配置合并，并随后开启只读 shadow；在此之前所有外部邮箱写动作
+继续关闭。
