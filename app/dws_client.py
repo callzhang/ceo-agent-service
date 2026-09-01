@@ -1955,7 +1955,24 @@ class DwsClient:
     def _extract_message_rows(payload: object) -> list[dict[str, Any]] | None:
         """Find the structured message list returned by supported DWS envelopes."""
         if isinstance(payload, list):
-            return payload if all(isinstance(row, dict) for row in payload) else None
+            if not all(isinstance(row, dict) for row in payload):
+                return None
+            if not payload:
+                return []
+            message_keys = {
+                "openMessageId",
+                "messageId",
+                "openConversationId",
+                "conversationId",
+                "createTime",
+                "sender",
+                "content",
+            }
+            return (
+                payload
+                if any(message_keys.intersection(row) for row in payload)
+                else None
+            )
         if not isinstance(payload, dict):
             return None
         for key in ("messages", "rows", "items", "list"):
@@ -1966,6 +1983,10 @@ class DwsClient:
             nested = payload.get(key)
             rows = DwsClient._extract_message_rows(nested)
             if rows is not None:
+                return rows
+        for value in payload.values():
+            rows = DwsClient._extract_message_rows(value)
+            if rows:
                 return rows
         return None
 
