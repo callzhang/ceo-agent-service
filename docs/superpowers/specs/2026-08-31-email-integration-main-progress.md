@@ -166,6 +166,12 @@ annotation，分布为：
 `subscription` 与 `personal` 支持很低；后续应继续保留随机漂移监测，同时定向补
 稀有类别和低置信度样本。生产配置继续 disabled。
 
+随后尝试使用同一 SSL IMAP 连接做 `UID SEARCH HEADER` 定向统计。阿里云服务端对
+`HEADER List-Unsubscribe` 和已知存在的 Subject 关键词都返回 0，不能作为有效的
+header-search 统计接口；本次也未据此推断邮箱没有退订头。有效证据仍只限于实际
+`BODY.PEEK` header fetch 的随机样本结果。后续若要估计退订头覆盖率，应使用受限的
+readonly header fetch 扫描或服务端支持的其他只读分页接口，并单独记录成本与采样偏差。
+
 ## 尚未开放的门槛
 
 - 当前 DingTalk 企业邮箱配置仍保持 disabled；没有把实验标注当作用户 gold feedback，也没有自动启用模型或动作。
