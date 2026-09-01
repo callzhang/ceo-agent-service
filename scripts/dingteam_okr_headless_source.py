@@ -5,10 +5,14 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import time
 from pathlib import Path
+
+from playwright.sync_api import sync_playwright
 
 
 SCRIPT_DIR = Path("/Users/derek/.agents/skills/dingtang-okr-review/scripts")
+HEADLESS_REFRESH_SECONDS = 40
 _browser_spec = importlib.util.spec_from_file_location(
     "dingteam_okr_browser_source", SCRIPT_DIR / "dingteam_okr_browser_source.py"
 )
@@ -18,13 +22,81 @@ browser = importlib.util.module_from_spec(_browser_spec)
 _browser_spec.loader.exec_module(browser)
 
 
+def _get_headless_headers() -> dict[str, str]:
+    """Reuse a valid token or refresh it through the headless browser only."""
+    cached = browser._read_cache()
+    if cached:
+        return cached
+    headers = _capture_stable_headless_headers()
+    browser._write_cache(headers)
+    return headers
+
+
+def _capture_stable_headless_headers() -> dict[str, str]:
+    """Capture source headers after the OKR page has finished navigating."""
+    browser.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    captured: dict[str, str] = {}
+    with sync_playwright() as playwright:
+        launch_kwargs = {
+            "user_data_dir": str(browser.PROFILE_DIR),
+            "headless": True,
+        }
+        chrome = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        if chrome.is_file():
+            launch_kwargs["executable_path"] = str(chrome)
+        else:
+            launch_kwargs["channel"] = "chrome"
+        context = playwright.chromium.launch_persistent_context(**launch_kwargs)
+        try:
+            def on_request(request):
+                if "/data/okr/" not in request.url or captured:
+                    return
+                for key, value in request.headers.items():
+                    if key.lower() in browser.AUTH_HEADER_KEYS:
+                        captured[browser._canonical(key)] = value
+
+            context.on("request", on_request)
+            page = context.new_page()
+            page.goto(browser.ENTRY_URL, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(2500)
+            for _ in range(3):
+                try:
+                    page.evaluate("() => document.readyState")
+                    break
+                except Exception as exc:
+                    if "execution context was destroyed" not in str(exc).lower():
+                        raise
+                    page.wait_for_timeout(1000)
+            app_state = page.evaluate(
+                """() => ({
+                    root: !!document.querySelector('#root-master'),
+                    mounted: !!document.querySelector('#root-master > * > *'),
+                })"""
+            )
+            if app_state.get("root") and not app_state.get("mounted"):
+                raise RuntimeError("okr_website_unavailable: Dingteam OKR website did not render")
+            deadline = time.monotonic() + HEADLESS_REFRESH_SECONDS
+            while time.monotonic() < deadline and "Authorization" not in captured:
+                try:
+                    page.wait_for_timeout(800)
+                    page.evaluate("() => document.readyState")
+                except Exception as exc:
+                    if "execution context was destroyed" not in str(exc).lower():
+                        raise
+        finally:
+            context.close()
+    if "Authorization" not in captured:
+        raise RuntimeError("could not capture Dingteam auth token from the browser")
+    return captured
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--user-id", required=True)
     parser.add_argument("--period-label", required=True)
     args = parser.parse_args()
 
-    headers = browser.get_headers(allow_browser=False)
+    headers = _get_headless_headers()
     result = browser.direct.fetch_with_headers(
         args.user_id,
         args.period_label,
