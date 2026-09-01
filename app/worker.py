@@ -2402,13 +2402,26 @@ class DingTalkAutoReplyWorker:
             return None
         readback = reference.get("readback")
         if not isinstance(readback, dict):
-            return None
+            readback = reference
         conversation_id = str(
-            readback.get("conversationId") or readback.get("conversation_id") or ""
+            readback.get("conversationId")
+            or readback.get("conversation_id")
+            or readback.get("openConversationId")
+            or readback.get("open_conversation_id")
+            or ""
         ).strip()
         if conversation_id != task.conversation_id:
             return None
         reply_text = str(readback.get("text") or readback.get("content") or "").strip()
+        if not reply_text and result.consumer_result is not None:
+            proposal = result.consumer_result.proposal
+            if proposal is not None:
+                for action in proposal.actions:
+                    payload = action.payload
+                    candidate = payload.get("content") or payload.get("text")
+                    if isinstance(candidate, str) and candidate.strip():
+                        reply_text = candidate.strip()
+                        break
         if not reply_text:
             return None
         return (

@@ -464,6 +464,74 @@ def test_sent_reply_projection_rejects_unmatched_readback():
     assert DingTalkAutoReplyWorker._sent_reply_projection_from_result(task, result) is None
 
 
+def test_sent_reply_projection_accepts_flat_send_receipt_and_proposal_text():
+    task = SimpleNamespace(channel="dingtalk", conversation_id="cid-1")
+    audit_result = AuditAgentResult.model_validate(
+        {
+            "outcome": "executed",
+            "summary": "sent",
+            "proposal_revision": 0,
+            "feedback": None,
+            "external_result": {
+                "operation_id": "op-1",
+                "verification_summary": "provider success",
+                "live_result_reference": {
+                    "sendStatus": "SUCCESS",
+                    "openConversationId": "cid-1",
+                    "openMessageId": "msg-2",
+                    "readbackComplete": True,
+                },
+            },
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    )
+    consumer_result = ConsumerAgentResult.model_validate(
+        {
+            "outcome": "proposal",
+            "summary": "send",
+            "proposal": {
+                "objective": "send",
+                "actions": [
+                    {
+                        "description": "send",
+                        "capability": "dingtalk-chat",
+                        "operation": "send_direct_message",
+                        "target": {"conversation_id": "cid-1"},
+                        "payload": {"content": "来自 proposal 的回复"},
+                        "expected_verification": "provider success",
+                    }
+                ],
+                "sourced_facts": [],
+                "authored_judgment": "",
+            },
+            "error": {
+                "code": "",
+                "retryable": False,
+                "authorization_required": False,
+            },
+        }
+    )
+    result = OrchestrationResult(
+        status="executed",
+        final_run_id=1,
+        final_role=AgentRole.AUDIT,
+        summary="sent",
+        error=AgentError(code="", retryable=False, authorization_required=False),
+        feedback_cycles=0,
+        consumer_result=consumer_result,
+        audit_result=audit_result,
+    )
+
+    assert DingTalkAutoReplyWorker._sent_reply_projection_from_result(task, result) == (
+        "来自 proposal 的回复",
+        '{"openConversationId":"cid-1","openMessageId":"msg-2","readbackComplete":true,"sendStatus":"SUCCESS"}',
+    )
+
+
 def explicit_agent_result(
     outcome: ScriptOutcome,
     summary: str,
