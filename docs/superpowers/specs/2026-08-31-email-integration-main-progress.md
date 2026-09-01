@@ -289,6 +289,32 @@ Derek 已明确授权启用 Email 集成。本轮在保留主工作树既有 UI/
 Email worker 健康状态为 `waiting_configuration / missing_model`；在获得足够的
 用户确认反馈并完成时间顺序 holdout 评估前，不生成或晋升生产 active model。
 
+### 这一批样本的模型对照
+
+对上述 40 封邮件的临时标注做了一个仅存在于内存的时间顺序实验：前 30 封用于
+训练，后 10 封用于 holdout。标签仍然是 `assistant_provisional_annotation`，不是
+用户确认的 gold label。当前生产的 word-unigram TF-IDF + balanced Logistic 结果为
+`30% Accuracy`，按 holdout 实际出现的四个类别计算 `21.43% Macro F1`；最新的
+通知类邮件主要被误判为 `billing`，且最高置信度约只有 `0.21`，不满足现有自动
+处理阈值。
+
+在同一训练/holdout 划分和同一临时标签上，以下候选均为 `30% Accuracy`，没有质量
+改进：
+
+| 候选 | Accuracy | Macro F1（实际 holdout 类别） | 单次预测耗时 |
+| --- | ---: | ---: | ---: |
+| word unigram Logistic | 30% | 21.43% | 约 0.003 ms |
+| word bigram Logistic | 30% | 21.43% | 约 0.005 ms |
+| char 2–5 Logistic | 30% | 21.43% | 约 0.039 ms |
+| word + char Logistic | 30% | 21.43% | 约 0.035 ms |
+| word bigram LinearSVC | 30% | 21.43% | 约 0.002 ms |
+
+该对照没有改变模型选型：稀疏线性模型已经有数量级的延迟余量，继续更换特征或
+分类器不能解决当前的分布漂移和类别缺口。下一步应优先收集用户确认的
+`notification`、`billing`、`subscription`、`personal` 和 `shopping` 样本，并用
+时间顺序的用户标签 holdout 验证；没有这项证据就不进入 active model 晋升或自动
+动作开放。
+
 已实际落地并回读：
 
 - `dingtalk_primary.enabled=true`，IMAP/SMTP 继续使用既有环境变量 reference；API 只返回 `secret_configured`，没有返回 secret 值；
