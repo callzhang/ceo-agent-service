@@ -664,6 +664,49 @@ p99 < 200ms
 73 条样本模型的内存序列化体积为 `338,720` bytes，词表为 `4,924`
 个特征。该体积会随人工反馈增长，需要在模型晋级时持续记录。
 
+### 2026-08-31 生产特征重跑和新随机 holdout
+
+先前 73 条 assistant provisional annotations 已通过 readonly DWS 重新取得，
+并全部使用当前生产 `email_message_to_text` 生成脱敏特征。原始邮件只存在于
+进程内存，没有写入文件；附件没有下载，邮箱没有写操作。生产特征版 73 条
+临时数据 SHA-256 为
+`e038e5e2309f22958ae5f1c887b988ae46b20503299332bf583e8c772fba74e9`。
+
+同一数据上重新比较后：word-unigram TF-IDF + balanced Logistic 的时间顺序
+70/30 结果仍为 `45.45% Accuracy / 38.47% Macro F1`；严格单线程纯预测
+P95 约 `0.55 ms`，现有完整预处理 + jieba + inference P95 约 `6.0 ms`。
+fastText 本轮最好的时间顺序候选约为 `50.0% Accuracy / 26.19% Macro F1`，
+`important` recall 仍为 0，且没有 0.5 以上的自动候选；未量化模型约
+`26.4 MB`，Logistic 约 `339 KB`。fastText 0.9.3 在小样本单线程 softmax
+训练时还可重复触发 `Encountered NaN`。因此延迟不是瓶颈，模型选择继续保持
+TF-IDF + balanced Logistic。
+
+随后从当前 2,283 个 INBOX UID 中用固定随机种子 `2026083102` 抽取 40 封。
+邮件头标注和正文特征读取均为 readonly；附件仍只使用 metadata。assistant
+provisional label 分布为 `billing=5`、`important=10`、`junk=1`、
+`notification=14`、`work=10`，没有 `personal`、`shopping` 或
+`subscription`。脱敏 holdout SHA-256 为
+`cc9d99ee22f6b4b61061ffedec8e94d375b7135e2d5db59c6ba15e824245d68a`。
+
+用 73 条训练、40 条独立测试时，word-unigram、word-bigram、char 2-5 和
+word+char 都只有约 `20% Accuracy / 13% Macro F1`。训练和测试全部重建为
+同一生产特征后结果不变，排除了预处理版本错配。主要分布缺口是：旧 73 条
+实验明确排除了身份验证/验证码邮件，而新随机样本包含大量登录码和安全通知，
+旧模型因此没有预测出 `notification`。
+
+把随机 40 条的最后 10 条固定为未见测试集，并逐批加入前面的 provisional
+feedback 后，20 条反馈把 Accuracy 从 10% 提升到 50%，`notification`
+达到 100% precision / 80% recall；30 条没有继续改善，`work` recall 仍为 0。
+每次重训约 `16-20 ms`，模型约 `343-404 KB`。合并 113 条的五折 OOF 为
+`54.87% Accuracy / 50.71% Macro F1`，最大 top-1 confidence 只有
+`0.3109`，所以 0.85 生产 threshold 的自动覆盖率仍为 0。
+
+这些标签不是 user-confirmed gold feedback，不进入生产 feedback store、模型
+promotion 或 category eligibility。实验支持 feedback + debounce + batch retrain
+结构，但不支持开放任何自动动作。下一批数据应组合随机漂移样本、低置信度
+active learning 和 `billing/personal/shopping/subscription` 定向补样，并保留
+user-confirmed chronological holdout。
+
 ## 模型评测
 
 模型比较采用同一份用户邮件和同一套输入标准化逻辑，至少比较：

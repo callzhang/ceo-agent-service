@@ -68,6 +68,81 @@ warning 来自既有 path-based model promotion deprecation，不影响本批次
 
 实验过程中仅发现临时实验适配器的两个字段形状错误，均已在重跑前修正；当前生产代码和工作树文件没有因该实验修改。
 
+## 分类质量、fastText 对照和反馈学习实验
+
+2026-08-31 重新只读取得先前 73 条 assistant provisional annotation 对应的邮件，并在内存中使用当前生产 `email_message_to_text` 路径脱敏。没有写入原始邮件文件、没有下载附件、没有执行 provider 写操作。生成的临时脱敏训练集为 73 条，类别分布是：
+
+- `billing=3`
+- `important=11`
+- `junk=26`
+- `notification=7`
+- `subscription=12`
+- `work=14`
+- `personal=0`
+- `shopping=0`
+
+该临时脱敏数据的 SHA-256 为 `e038e5e2309f22958ae5f1c887b988ae46b20503299332bf583e8c772fba74e9`。哈希只用于本次实验一致性检查；数据不进入 Git，也不进入生产反馈库。
+
+### CPU 和模型对照
+
+当前 word-unigram TF-IDF + balanced Logistic 在 73 条数据上的时间顺序 70/30 结果仍为 `45.45% Accuracy / 38.47% Macro F1`；严格单线程纯预测 P95 为约 `0.55 ms`，包括标准化和 jieba 的既有端到端复测 P95 为约 `6.0 ms`，模型约 `339 KB`。100 ms 延迟目标有充分余量。
+
+同一数据上重跑 fastText 对照后：
+
+- 最好的本轮时间顺序候选约为 `50.0% Accuracy / 26.19% Macro F1`；
+- `important` recall 仍为 `0`；
+- 0.5 以上没有可自动处理样本；
+- 预测 P95 约 `0.17 ms`，但未量化模型约 `26.4 MB`；
+- 当前 fastText 0.9.3 的单线程 softmax 训练在该小样本上稳定出现 `Encountered NaN`，双线程或 OVA 路径可以训练，但 OVA 质量不可用。
+
+因此延迟不是模型选择瓶颈。当前数据不支持用 fastText 替换 sparse Logistic；继续保留 TF-IDF + Logistic，避免以更大的模型和更不稳定的训练换取没有质量收益的预测速度。
+
+### 新随机 40 条分布外 holdout
+
+随后从当前 2,283 个 INBOX UID 中使用固定随机种子 `2026083102` 随机抽取 40 封。第一步只读取邮件头并由 assistant 按现有八分类语义做 provisional annotation；第二步对同一 UID 做 readonly 文本读取，附件仍只保留 metadata，立即转换为脱敏 `model_text`。没有保存原始邮件文件、没有下载附件、没有创建 task、没有执行邮箱写操作。
+
+新 40 条标签分布是：
+
+- `billing=5`
+- `important=10`
+- `junk=1`
+- `notification=14`
+- `work=10`
+- `personal/shopping/subscription=0`
+
+临时 holdout SHA-256 为 `cc9d99ee22f6b4b61061ffedec8e94d375b7135e2d5db59c6ba15e824245d68a`。40 条中有 39 个唯一脱敏模板，与生产特征版 73 条训练集只有 1 条完全相同的脱敏文本。
+
+用 73 条训练、40 条独立 holdout 测试时，word-unigram、word-bigram、char 2–5 和 word+char 四种 sparse Logistic 都只有约 `20% Accuracy / 13% Macro F1`。这不是预处理版本错配：将 73 条训练数据和 40 条 holdout 全部重建为当前生产特征后，结果不变。根因是旧 73 条实验集明确排除了登录验证/验证码邮件，而新随机样本中 `notification` 有 14 条，主要来自这一新分布；旧模型完全没有预测出 `notification`。
+
+### 反馈批量重训模拟
+
+保持随机 40 条的最后 10 条为固定未见测试集，只将前面的 provisional labels 逐批加入 73 条训练集：
+
+| 新反馈数量 | 固定最新 10 条 Accuracy | notification Precision / Recall | 训练时间 | 模型大小 |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 10% | 0% / 0% | 约 16 ms | 约 343 KB |
+| 5 | 10% | 0% / 0% | 约 17 ms | 约 357 KB |
+| 10 | 10% | 0% / 0% | 约 16 ms | 约 368 KB |
+| 20 | 50% | 100% / 80% | 约 19 ms | 约 393 KB |
+| 30 | 50% | 100% / 80% | 约 20 ms | 约 404 KB |
+
+这说明反馈保存后做轻量批量重训能够快速学会新的重复模板，但没有解决类别覆盖：固定测试中的 `work` recall 仍为 0。全部 113 条 assistant provisional annotations 做五折 OOF 时为 `54.87% Accuracy / 50.71% Macro F1`，其中：
+
+- `notification`: `84.21% precision / 76.19% recall`
+- `important`: `47.06% precision / 38.10% recall`
+- `subscription`: `57.14% precision / 66.67% recall`
+- `billing`: `11.11% precision / 12.50% recall`
+
+113 条 OOF 的最大 top-1 confidence 只有 `0.3109`；在生产 0.85 threshold 下自动覆盖率仍为 0。所有标签均为 assistant provisional annotations，不是 user-confirmed gold feedback，因此不能用于 active model promotion、类别 eligibility 或自动退订 support。
+
+### 当前实验结论
+
+1. 保留 TF-IDF + balanced Logistic；100 ms 目标已经满足，不为更低的亚毫秒延迟改用质量更差、训练更不稳定且体积更大的 fastText。
+2. 当前只适合 readonly scan + Email 待反馈；不得开放任何 model-only provider action。
+3. feedback → debounce → batch retrain 的生产结构有效，但纯随机抽样会继续集中在 work/important/notification，无法补齐 `personal`、`shopping`、`subscription` 和低样本 `billing`。
+4. 后续实验需要“定向补稀有类别 + 保留随机漂移样本”，并建立 user-confirmed、时间顺序 holdout；assistant annotations 只用于研究方向，不进入生产反馈库。
+5. 当前生产代码不因本次实验更换模型；新增工作只更新实验记录和 CEO Agent 激活方案，生产配置继续 disabled。
+
 ## 尚未开放的门槛
 
 - 当前 DingTalk 企业邮箱配置仍保持 disabled；没有把实验标注当作用户 gold feedback，也没有自动启用模型或动作。
