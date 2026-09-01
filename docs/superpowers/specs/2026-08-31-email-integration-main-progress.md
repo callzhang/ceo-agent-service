@@ -264,6 +264,31 @@ Derek 已明确授权启用 Email 集成。本轮在保留主工作树既有 UI/
 `/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-09-01.sqlite3`。
 该快照只读回读为 schema v11、`dingtalk_primary.enabled=0`、邮件数为 0。
 
+## 2026-09-01 启用后随机正文实验
+
+启用回读后，使用同一 DingTalk 企业邮箱执行了一轮新的随机只读正文实验，固定
+随机种子为 `20260901`：
+
+- 当前 `INBOX` UID 总量为 `2297`，从 UID 集合随机抽取 `20` 封，并通过生产
+  `ImapReadonlyAdapter` 读取标准纯文本部分；没有按生产 cursor 顺序扫描；
+- 读取范围仅包含标准邮件头和正文文本，附件仍只保留文件名、MIME、大小和
+  inline 标记，没有下载、打开、解析或推断附件内容；没有执行 `STORE`、移动、
+  删除、`EXPUNGE`、SMTP 发信或其他邮箱写操作；
+- 20/20 封正文读取成功。临时 assistant annotation 仅用于实验，不写入生产反馈
+  库、不创建 Email task，也不触发固定动作。按现有八分类语义的 provisional
+  分布为：`important=7`、`work=6`、`notification=3`、`junk=3`、
+  `subscription=1`，`billing/personal/shopping=0`；
+- 样本覆盖了 CRM 订阅报表、客户需求与内部工作、人事/招聘通知、系统登录与
+  网络告警、主动商务推销等形态。随机样本仍明显偏向 `important/work`，稀有类别
+  未得到有效 support；
+- 原始发件地址、主题、正文、URL、UID 和附件内容没有写入仓库、生产数据库或
+  实验文档；本节只记录计数和实验边界。
+
+本轮验证了启用后的真实 IMAP 随机抽样和正文规范化链路，但不构成模型准确率、
+自动处理资格或自动退订资格证据。当前生产学习页仍显示 `active_model_id=null`，
+Email worker 健康状态为 `waiting_configuration / missing_model`；在获得足够的
+用户确认反馈并完成时间顺序 holdout 评估前，不生成或晋升生产 active model。
+
 已实际落地并回读：
 
 - `dingtalk_primary.enabled=true`，IMAP/SMTP 继续使用既有环境变量 reference；API 只返回 `secret_configured`，没有返回 secret 值；
