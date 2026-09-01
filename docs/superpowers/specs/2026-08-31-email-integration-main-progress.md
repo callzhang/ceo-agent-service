@@ -30,9 +30,9 @@
 - `8455c52c feat: integrate email readonly classifier core`
 - `8e784d07 feat: integrate email learning and task projection`
 
-当前未提交的第三批包含 Email worker、unsubscribe Consumer/operation、browser profile/context source、provider action 生命周期、严格 task lifecycle 选择，以及对应测试。
+第三批包含 Email worker、unsubscribe Consumer/operation、browser profile/context source、provider action 生命周期、严格 task lifecycle 选择，以及对应测试。
 
-随后补齐了实验快照、unsubscribe Consumer/context source、direct-consumer e2e 测试，以及受控 CLI 中唯一的 `execute_email_unsubscribe` 工具接线。
+随后补齐了实验快照、unsubscribe Consumer/context source、direct-consumer e2e 测试，以及受控 CLI 中唯一的 `execute_email_unsubscribe` 工具接线；这些改动已在当前独立工作树提交，尚未合并或部署。
 
 ## Console 集成
 
@@ -52,6 +52,21 @@ Email Console 已接入独立页面和全局导航 `/email`，页面包含四个
 最终 Email 扩展回归为 `675 passed, 1 skipped, 5 warnings`。
 
 warning 来自既有 path-based model promotion deprecation，不影响本批次通过。
+
+## 真实邮箱随机只读实验
+
+2026-08-31 使用当前集成工作树中的 IMAP readonly adapter，对已配置的 DingTalk 企业邮箱 `INBOX` 做了一次隔离实验：
+
+- 连接方式：IMAPS `imap.qiye.aliyun.com:993`，只执行 readonly select、UID SEARCH 和 `BODY.PEEK`；没有 STORE、COPY、MOVE、EXPUNGE、SMTP 发信或其他邮箱写操作；
+- 抽样方式：不依赖生产 cursor，在本次运行内用固定随机种子 `20260831` 从当前 UID 集合随机抽取 8 封；
+- 数据边界：分类器只使用规范化邮件输入，持久化仅写临时隔离 SQLite，实验结束后删除；输出和文档不记录发件人、主题、正文、URL 或 UID；
+- 结果：当前 INBOX 观察到 2,283 个 UID，随机抽样/抓取/持久化均为 `8/8`；冷启动配置下自动资格关闭，因此 `processed=0`、`pending_feedback=8`，Email task producer 未提供，`mailbox_writes=0`；
+- 实验标注：这是用于验证链路的 `experiment-metadata-v1` 临时标注，不是用户 gold feedback；按只读 metadata 规则得到 `important=7`、`notification=1`；
+- 隐私检查：隔离库中的 `model_text` 未发现未脱敏 URL 或邮箱地址（均为 `0` 行）。
+
+本次实验验证了“真实 IMAP → 随机抽样 → 规范化 → classifier → 冷启动待反馈 → 本地持久化”的闭环，但不能据此宣称分类准确率，也不能作为自动退订的 precision/support 资格证据。后续需要通过用户反馈积累各订阅来源的独立样本，再按 `precision >= 0.95` 且 `support >= 20` 评估自动退订资格。
+
+实验过程中仅发现临时实验适配器的两个字段形状错误，均已在重跑前修正；当前生产代码和工作树文件没有因该实验修改。
 
 ## 尚未开放的门槛
 
