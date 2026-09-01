@@ -142,6 +142,53 @@ def test_common_envelopes_and_normalization_are_explicitly_json_serializable():
     assert "<structured error>" not in json.dumps(json_safe({"detail": "<structured error>"}), ensure_ascii=False)
 
 
+def test_attempt_detail_api_preserves_legacy_business_sections(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = seed_attempt(store)
+
+    with _client(tmp_path, spa_enabled=True) as client:
+        response = client.get(f"/api/console/history/{attempt_id}")
+
+    assert response.status_code == 200
+    item = response.json()["item"]
+    assert item["id"] == attempt_id
+    assert item["conversation"] == {
+        "label": "群名",
+        "title": "技术部",
+        "trigger_sender": "Xiaomin",
+    }
+    assert item["trigger"] == {
+        "title": "Trigger",
+        "text": "Xiaomin: @Alex Chen 这个怎么处理？",
+    }
+    assert item["audit_explanation"] == {
+        "title": "审计说明",
+        "text": "查看岗位画像后建议先按A方案走。\ndirect ask",
+    }
+    assert item["generated_reply"] == {
+        "title": "生成回复",
+        "text": "> Xiaomin: 这个怎么处理？\n\n先按A方案走（by明哥分身）",
+    }
+    assert {row["label"] for row in item["metadata"]} >= {
+        "trigger message id",
+        "action",
+        "sensitivity",
+        "permission",
+        "send status",
+        "retry count",
+        "created",
+        "updated",
+        "reviewed",
+    }
+    assert item["audit_summary"] == "查看岗位画像后建议先按A方案走。"
+    assert item["draft_reply"] == "先按A方案走"
+    assert item["feedback"]["feedback_url"].endswith(f"/{attempt_id}/feedback")
+    assert item["actions"]["can_submit_feedback"] is True
+    assert item["actions"]["can_rerun"] is False
+    assert item["actions"]["terminal"] is True
+    assert item["actions"]["dingtalk_url"].startswith("/open-dingtalk-popup?")
+
+
 def test_feedback_direct_resolve_requires_batch(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1", comment="Needs work")

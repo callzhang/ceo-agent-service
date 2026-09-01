@@ -9968,6 +9968,10 @@ def create_audit_app(
         history_chart_factory=render_history_chart,
         email_store_factory=lambda: EmailStore(db_path),
         email_learning_factory=email_learning_factory,
+        dws_factory=lambda: DwsClient(
+            ding_robot_code=ding_robot_code,
+            ding_robot_name=ding_robot_name,
+        ),
     )
 
     register_repository_upgrade_routes(

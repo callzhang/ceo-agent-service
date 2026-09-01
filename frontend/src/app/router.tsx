@@ -14,6 +14,7 @@ const SettingsPage = lazy(() => import("../pages/SettingsPage").then((module) =>
 const DomainListPage = lazy(() => import("../pages/DomainListPage").then((module) => ({ default: module.DomainListPage })));
 const TutorialPage = lazy(() => import("../pages/TutorialPage").then((module) => ({ default: module.TutorialPage })));
 const CodexSessionDetailPage = lazy(() => import("../pages/CodexPages").then((module) => ({ default: module.CodexSessionDetailPage })));
+const AttemptDetailPage = lazy(() => import("../pages/AttemptDetailPage").then((module) => ({ default: module.AttemptDetailPage })));
 const BusinessDetailPage = lazy(() => import("../pages/BusinessDetailPage").then((module) => ({ default: module.BusinessDetailPage })));
 const RuntimeErrorDetailPage = lazy(() => import("../pages/RuntimeErrorDetailPage").then((module) => ({ default: module.RuntimeErrorDetailPage })));
 
@@ -52,7 +53,7 @@ function ConsoleRoutes() {
       <Route path="/" element={<AgentRoute />} />
       <Route path="/history" element={<HistoryPage />} />
       <Route path="/history/errors/:errorId" element={<RuntimeErrorDetailPage />} />
-      <Route path="/history/attempts/:attemptId" element={<BusinessDetailPage kind="Attempt" endpoint="/api/console/history/:id" attemptActions />} />
+      <Route path="/history/attempts/:attemptId" element={<AttemptDetailPage />} />
       <Route path="/history/meeting-attempts/:runId" element={<BusinessDetailPage kind="Meeting Attempt" endpoint="/api/console/meeting-attempts/:id" />} />
       <Route path="/history/oa-approvals/:processInstanceId" element={<BusinessDetailPage kind="OA Approval" endpoint="/api/console/oa-approvals/:id" />} />
       <Route path="/tasks" element={<TasksPage />} />
@@ -67,8 +68,8 @@ function ConsoleRoutes() {
       <Route path="/wechat/memory-review" element={<DomainListPage title="WeChat Memory Review" endpoint="/api/console/wechat/memory-review" kind="wechat" />} />
       <Route path="/wechat/deliveries" element={<DomainListPage title="WeChat Deliveries" endpoint="/api/console/wechat/deliveries" kind="wechat" />} />
       <Route path="/wechat/conversations" element={<DomainListPage title="WeChat Conversations" endpoint="/api/console/wechat/conversations" kind="wechat" />} />
-      <Route path="/attempts/:attemptId" element={<BusinessDetailPage kind="Attempt" endpoint="/api/console/history/:id" attemptActions />} />
-      <Route path="/attempts/:attemptId/execution/:role" element={<BusinessDetailPage kind="Execution details" endpoint="/api/console/history/:id" attemptActions />} />
+      <Route path="/attempts/:attemptId" element={<AttemptDetailPage />} />
+      <Route path="/attempts/:attemptId/execution/:role" element={<AttemptDetailPage />} />
       <Route path="/meeting-attempts/:runId" element={<BusinessDetailPage kind="Meeting Attempt" endpoint="/api/console/meeting-attempts/:id" />} />
       <Route path="/oa-approvals/:processInstanceId" element={<BusinessDetailPage kind="OA Approval" endpoint="/api/console/oa-approvals/:id" />} />
       <Route path="/status" element={<StatusPage />} />

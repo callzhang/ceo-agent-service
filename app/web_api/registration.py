@@ -17,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.web_api.attention import AttentionListEnvelope, group_attention_rows
+from app.web_api.attempts import build_attempt_detail
 from app.web_api.common import ApiItemEnvelope, ApiListMeta, ApiMeta, json_safe, normalize_display_value, snapshot_at
 from app.web_api.tasks import (
     ConsoleTaskDetail,
@@ -63,6 +64,7 @@ def register_console_routes(
     email_learning_factory: Callable[[], Any] | None = None,
     feature_registry_factory: Callable[[], FeatureRegistry] | None = None,
     skill_file_service_factory: Callable[[], SkillFileService] | None = None,
+    dws_factory: Callable[[], Any] | None = None,
 ) -> None:
     feature_registry_factory = feature_registry_factory or FeatureRegistry
     skill_file_service_factory = skill_file_service_factory or SkillFileService
@@ -336,20 +338,10 @@ def register_console_routes(
 
     @app.get("/api/console/history/{attempt_id}")
     def console_history_detail(attempt_id: int):
-        attempt = store_factory().get_reply_attempt(attempt_id)
-        if attempt is None:
+        status, payload = build_attempt_detail(store_factory(), attempt_id)
+        if payload is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Attempt not found", "details": {}}, status_code=404)
-        return item_envelope({
-            "id": attempt.id, "title": attempt.conversation_title,
-            "status": attempt.send_status, "type": attempt.action,
-            "input": attempt.trigger_text, "decision": attempt.codex_reason,
-            "output": attempt.final_reply_text or attempt.draft_reply_text,
-            "reviewer_feedback": attempt.reviewer_feedback,
-            "corrected_reply": attempt.corrected_reply_text,
-            "created_at": attempt.created_at, "updated_at": attempt.updated_at,
-            "runtime": {"agent_run_id": attempt.agent_run_id, "retry_count": attempt.retry_count,
-                        "send_error": normalize_display_value(attempt.send_error)},
-        })
+        return JSONResponse(item_envelope(payload), status_code=status)
 
     @app.post("/api/console/history/{attempt_id}/feedback")
     async def console_history_feedback(attempt_id: int, request: Request):
@@ -373,6 +365,38 @@ def register_console_routes(
         if status >= 400:
             return JSONResponse({"ok": False, "code": "rerun_failed", "message": "无法重跑该 Attempt", "details": {"technical": normalize_display_value(body)}}, status_code=status)
         return command_result(message="重跑已提交")
+
+    @app.post("/api/console/history/{attempt_id}/recall")
+    async def console_history_recall(attempt_id: int, request: Request):
+        del request
+        if dws_factory is None:
+            return JSONResponse({"ok": False, "code": "recall_unavailable", "message": "当前服务未配置撤回通道", "details": {}}, status_code=503)
+        from app.audit_web import handle_recall_post
+        status, _headers, body = handle_recall_post(
+            store_factory(), dws_factory(), attempt_id, return_to="/history"
+        )
+        if status >= 400:
+            return JSONResponse({"ok": False, "code": "recall_failed", "message": "无法撤回该 Attempt", "details": {"technical": normalize_display_value(body)}}, status_code=status)
+        return command_result(message="撤回已提交")
+
+    @app.post("/api/console/history/{attempt_id}/human-decision")
+    async def console_history_human_decision(attempt_id: int, request: Request):
+        payload = await json_object(request)
+        instruction = str(payload.get("instruction") or "").strip()
+        feedback_scope = str(payload.get("feedback_scope") or "one_time").strip()
+        skill_update_requested = bool(payload.get("skill_update_requested", False))
+        from app.audit_web import handle_needs_human_decision_post
+        form = urlencode({
+            "instruction": instruction,
+            "feedback_scope": feedback_scope,
+            "skill_update_requested": "1" if skill_update_requested else "",
+        }).encode("utf-8")
+        status, _headers, body = handle_needs_human_decision_post(
+            store_factory(), attempt_id, form, return_to="/history"
+        )
+        if status >= 400:
+            return JSONResponse({"ok": False, "code": "decision_failed", "message": "无法提交人工决策", "details": {"technical": normalize_display_value(body)}}, status_code=status)
+        return command_result(message="人工决策已提交")
 
     @app.get("/api/console/meeting-attempts/{run_id}")
     def console_meeting_detail(run_id: int):
