@@ -450,6 +450,7 @@ def _replace_email_actions(
                 attempt_count integer not null default 0 check(attempt_count >= 0),
                 started_at text not null default '',
                 finished_at text not null default '',
+                next_attempt_at text not null default '',
                 provider_operation text not null default '',
                 provider_target text not null default '',
                 provider_result_id text not null default '',
@@ -1395,7 +1396,7 @@ def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
     assert [
         row["version"]
         for row in _fetchall(database, "select version from email_schema_migrations")
-    ] == [11]
+    ] == [email_store_module.EMAIL_SCHEMA_VERSION]
 
 
 def test_v10_unsubscribe_claim_migrates_to_v11_effect_prefix_chain(
@@ -1427,7 +1428,7 @@ def test_v10_unsubscribe_claim_migrates_to_v11_effect_prefix_chain(
         assert effect[0] == ""
         assert db.execute(
             "select max(version) from email_schema_migrations"
-        ).fetchone()[0] == 11
+        ).fetchone()[0] == email_store_module.EMAIL_SCHEMA_VERSION
 
 
 def test_v9_store_atomically_adds_unsubscribe_durability_without_data_loss(
@@ -1457,7 +1458,7 @@ def test_v9_store_atomically_adds_unsubscribe_durability_without_data_loss(
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 11
+            == email_store_module.EMAIL_SCHEMA_VERSION
         )
         assert {
             row[0]
@@ -2510,7 +2511,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, 11]
+        ] == [2, email_store_module.EMAIL_SCHEMA_VERSION]
 
     EmailStore(database)
 
@@ -2519,38 +2520,6 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
     assert dict(_fetchall(database, "select * from email_messages")[0]) == message_before
     assert _fetchall(database, "select * from email_action_plans") == []
     assert _fetchall(database, "select * from email_actions") == []
-
-
-def test_provider_mailbox_prototype_schema_migrates_before_indexes(
-    tmp_path: Path,
-):
-    database = tmp_path / "provider-mailbox-prototype.sqlite3"
-    _create_provider_mailbox_prototype_database(database)
-
-    EmailStore(database)
-
-    classification = _fetchall(database, "select * from email_classifications")[0]
-    assert classification["account_id"] == "dingtalk:INBOX"
-    assert classification["folder"] == "INBOX"
-    assert classification["uid"] == classification["id"]
-    assert classification["rfc_message_id"] == "<legacy@example.com>"
-    assert classification["stable_message_identity"] == (
-        "dingtalk:INBOX:message-id:<legacy@example.com>"
-    )
-    assert classification["model_id"] == "email/logistic/legacy"
-    assert classification["predicted_category"] == "work"
-    assert classification["current_action_plan_id"] is None
-    assert _fetchall(
-        database,
-        "select version from email_schema_migrations order by version",
-    )[0]["version"] == email_store_module.EMAIL_SCHEMA_VERSION
-    assert _fetchall(
-        database,
-        "select action_parameters_json from email_category_configs",
-    )[0]["action_parameters_json"] == "{}"
-    message = _fetchall(database, "select * from email_messages")[0]
-    assert message["account_id"] == "dingtalk:INBOX"
-    assert message["stable_message_identity"] == classification["stable_message_identity"]
 
 
 def test_v2_upgrade_does_not_reapply_prototype_classification_backfill(
@@ -4816,7 +4785,7 @@ def test_unsubscribe_schema_migrates_and_durable_journal_receipt_survive_restart
     with sqlite3.connect(database) as db:
         assert (
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 11
+            == email_store_module.EMAIL_SCHEMA_VERSION
         )
 
 

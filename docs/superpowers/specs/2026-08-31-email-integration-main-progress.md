@@ -1,0 +1,46 @@
+# Email integration main 工作树进展记录
+
+更新时间：2026-08-31
+
+## 当前边界
+
+本记录对应独立工作树：
+
+`/Users/derek/Documents/Projects/ceo-agent-service/.worktrees/email-integration-main`
+
+分支从 `main` 的 `aaac3fe5bef2b70af4dcd894c551e55097277d4f` 建立。所有改动只在该工作树中验证；没有修改主工作树、没有重启生产 launchd、没有启用真实邮箱扫描，也没有执行真实邮箱写操作。
+
+## 已移植能力
+
+1. Email classifier 的只读扫描、模型 registry、训练/反馈和模型版本化核心。
+2. Email 消息线程上下文和 `In-Reply-To` / `References` 元数据持久化；附件只保留 metadata。
+3. Email 页面所需的分类详情、学习反馈和 task producer。
+4. 独立 Email worker：扫描与确定性 provider action、Email Agent/Audit consumer、训练 scheduler 为三个独立组件。
+5. 所有 Email Agent task payload 带显式 `lifecycle_version`：
+   - `auto_reply` → `consumer_audit_v1`，经过 Consumer → Audit；
+   - `unsubscribe` → `email_unsubscribe_consumer_direct_v1`，由独立 unsubscribe Consumer 执行并记录 observability，不创建 Agent/Audit run。
+6. `unsubscribe` 的生命周期选择 fail-closed：只有任务、上下文、原始 payload、分类、action identity 全部一致且为当前版本时才允许直通；其他任何不一致都走普通 Consumer → Audit。
+7. 直接 provider action 具备 claim、租约恢复、有限重试和退订 terminal result / observation digest 持久化。
+
+## 验证证据
+
+已提交的核心批次：
+
+- `5327fc2e fix: persist email thread metadata`
+- `8455c52c feat: integrate email readonly classifier core`
+- `8e784d07 feat: integrate email learning and task projection`
+
+当前未提交的第三批包含 Email worker、unsubscribe Consumer/operation、browser profile/context source、provider action 生命周期、严格 task lifecycle 选择，以及对应测试。
+
+当前 Email 扩展回归命令覆盖 classifier contracts、connector config、store、只读 IMAP、model、registry、training、learning、runtime、scan、pipeline、provider actions、task adapter、reply delivery、unsubscribe、worker、web API 和 task lifecycle，共：
+
+`633 passed, 5 warnings`
+
+warning 来自既有 path-based model promotion deprecation，不影响本批次通过。
+
+## 尚未开放的门槛
+
+- 当前 DingTalk 企业邮箱配置仍保持 disabled；没有把实验标注当作用户 gold feedback，也没有自动启用模型或动作。
+- unsubscribe 仍遵守订阅来源级门槛：precision >= 0.95 且 support >= 20；冷启动仅允许用户确认后的订阅来源进入自动化候选。
+- 真实邮箱实验只允许 readonly header/metadata 抽样；生产启用前仍需独立 review、全量回归和用户确认。
+- 外部邮箱回复等写动作仍需现有 Audit Agent 生命周期；unsubscribe 是已批准的唯一 Consumer-direct 例外。
