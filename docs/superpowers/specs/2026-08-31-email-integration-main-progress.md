@@ -315,6 +315,30 @@ Email worker 健康状态为 `waiting_configuration / missing_model`；在获得
 时间顺序的用户标签 holdout 验证；没有这项证据就不进入 active model 晋升或自动
 动作开放。
 
+## 2026-09-01 定向稀有类别只读实验
+
+在随机实验之后，对当前 `INBOX` 的 `2298/2298` 个 UID 做了分段的 header-only
+扫描，仅根据 `From`、`Subject` 和 `Date` 选择可能覆盖稀有类别的候选；随后对
+候选执行正文只读读取。没有读取附件内容，没有执行邮箱写操作，也没有把原文或
+临时标签写入生产数据库。
+
+- 定向候选正文读取成功 `51/51`；临时标注分布为 `billing=17`、`work=12`、
+  `notification=10`、`subscription=10`、`shopping=2`，`personal=0`；
+- 保持 UID 的时间顺序，前 `31` 封训练、后 `20` 封 holdout。当前 word-unigram
+  TF-IDF + balanced Logistic 得到 `30% Accuracy`，按 holdout 实际出现的
+  `billing` 与 `subscription` 两类计算 `35.29% Macro F1`；
+- `billing` precision 为 `100%`、recall 为 `54.55%`；`subscription` 的
+  precision/recall 均为 `0%`。后段订阅邮件主要被预测为 `work`，最高置信度约
+  `0.25`，仍低于自动处理阈值；
+- 本轮验证了定向采样可以补到订阅、账单和订单候选，但这些仍是 assistant
+  provisional annotations，不能替代 user-confirmed feedback，也不能作为
+  `subscription` 自动退订的 precision/support 证据。
+
+综合随机与定向实验，下一阶段的收益点不在继续替换分类器，而在建立可追溯的用户
+确认反馈：分类建议必须带 `model_id` 和来源，用户确认才进入 authoritative
+training set；候选模型只能先做 time-ordered validation，类别 action eligibility
+仍需独立通过 precision、support 和当前 threshold 一致性门槛。
+
 已实际落地并回读：
 
 - `dingtalk_primary.enabled=true`，IMAP/SMTP 继续使用既有环境变量 reference；API 只返回 `secret_configured`，没有返回 secret 值；
