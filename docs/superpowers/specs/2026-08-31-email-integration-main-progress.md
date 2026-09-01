@@ -255,3 +255,31 @@ Chromium 都在启动后收到 `SIGABRT`，结果为 `1 passed, 33 errors`；这
 该结果与此前对 `2282/2282` 个 UID 的 header-only 快照一致，增强了当前快照的
 重复采样证据，但不能推断未来邮件不会提供退订入口，也不能作为自动退订资格或
 订阅来源 support 的证据。
+
+## 2026-09-01 启用回读
+
+Derek 已明确授权启用 Email 集成。本轮在保留主工作树既有 UI/Settings WIP 的前提
+下完成了 Email 集成合并，并提交了兼容旧生产库的 unsubscribe schema 修复
+`fb091bfb`。生产库在变更前创建并通过一致性校验的备份为：
+`/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-email-enable-20260901T174537Z.sqlite3`。
+
+已实际落地并回读：
+
+- `dingtalk_primary.enabled=true`，IMAP/SMTP 继续使用既有环境变量 reference；API 只返回 `secret_configured`，没有返回 secret 值；
+- `mail_review=true`，关联 `ceo-mail-review`，Skill catalog 状态为 `ready`；项目 bundled business Skills 均已安装；
+- 生产 Email schema 从旧 v11 安全迁移到当前 v15，claims/receipt 旧数据迁移路径有回归测试；
+- 主 launchd 新进程已启动，`/healthz` 返回 OK；
+- Email worker 已识别启用账号，但因为生产模型目录没有 active manifest，健康状态明确为 `waiting_configuration / missing_model`；
+- 当前 `email_messages`、`email_classifications`、`email_action_plans`、`email_actions`、
+  `email_action_attempts`、`email_feedback_requests`、unsubscribe claims/receipts 均为 0；
+  没有读取真实邮箱、创建任务或执行外部邮箱写操作。
+
+因此本次“enable”完成的是配置、Skill 和运行时接线，实际 mailbox shadow 仍由
+active-model gate 阻止；这是 fail-closed 的预期结果，不应误报为已开始扫描。当前
+不能把 assistant provisional annotations 当作生产 gold，也不能为了让 worker
+启动而伪造模型。下一步应先用明确标注策略积累足够的 confirmed feedback，训练并
+验证带版本的模型，再单独决定是否开放 readonly shadow。
+
+本轮验证记录：后端 Email/Skill 专项 `683 passed, 1 skipped`；Email 页面单测
+`5 passed`；前端 TypeScript/Vite build 通过。整套前端测试有 2 个既有 Settings
+WIP 与旧测试契约不一致的失败，未修改该 WIP。
