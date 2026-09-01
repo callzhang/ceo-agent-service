@@ -10,8 +10,12 @@ const listAttention = vi.hoisted(() => vi.fn());
 const listWechat = vi.hoisted(() => vi.fn());
 const listWechatTargets = vi.hoisted(() => vi.fn());
 const saveWechatReplyScope = vi.hoisted(() => vi.fn());
+const getSkillFeatures = vi.hoisted(() => vi.fn());
+const toggleSkillFeature = vi.hoisted(() => vi.fn());
+const getSkillDetail = vi.hoisted(() => vi.fn());
+const saveSkill = vi.hoisted(() => vi.fn());
 
-vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
+vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, getSkillFeatures, toggleSkillFeature, getSkillDetail, saveSkill, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
 
 import { SettingsPage } from "./SettingsPage";
 
@@ -296,5 +300,62 @@ describe("SettingsPage", () => {
     ]));
     expect(await screen.findByText("回复范围已保存")).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "回复范围同步状态" })).toHaveTextContent("已保存");
+  });
+
+  it("renders Skills feature cards and project skill associations", async () => {
+    getSkillFeatures.mockResolvedValueOnce({
+      features: [{ feature_id: "message_triage", name: "Message Triage", description: "处理普通业务消息", skills: ["ceo-message-triage"], enabled: true, status: "ready" }],
+      skills: [{ name: "ceo-message-triage", description: "消息判断规则", referenced_by: ["message_triage"], status: "ready" }],
+    });
+    renderSettings("/settings?tab=skills");
+
+    expect(await screen.findByRole("heading", { name: "Skills" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Message Triage" })).toBeInTheDocument();
+    expect(screen.getByText("处理普通业务消息")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /Message Triage/ })).toBeChecked();
+    expect(screen.getAllByText("ceo-message-triage").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/开关只影响新任务/)).toBeInTheDocument();
+  });
+
+  it("expands a skill preview and preserves a draft after a SHA conflict", async () => {
+    const user = userEvent.setup();
+    getSkillFeatures.mockResolvedValueOnce({ features: [{ feature_id: "message_triage", name: "Message Triage", description: "处理消息", skills: ["ceo-message-triage"], enabled: true, status: "ready" }], skills: [{ name: "ceo-message-triage", description: "原描述", referenced_by: ["message_triage"], status: "ready" }] });
+    getSkillDetail.mockResolvedValueOnce({ name: "ceo-message-triage", description: "原描述", managed_by: "ceo-agent-service", content: "原始内容", sha256: "a".repeat(64), referenced_by: ["message_triage"] });
+    saveSkill.mockRejectedValueOnce(Object.assign(new Error("Skill 已被其他修改"), { status: 409, code: "conflict" }));
+    renderSettings("/settings?tab=skills");
+
+    await user.click(await screen.findByRole("button", { name: "查看 ceo-message-triage" }));
+    const editor = await screen.findByRole("textbox", { name: "Skill 内容" });
+    await user.clear(editor);
+    await user.type(editor, "我的草稿");
+    await user.click(screen.getByRole("button", { name: "保存 Skill" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/冲突|最新版本/);
+    expect(screen.getByRole("textbox", { name: "Skill 内容" })).toHaveValue("我的草稿");
+    expect(screen.getAllByText(/共享 skill 编辑影响引用功能/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("persists a feature toggle and reports success", async () => {
+    const user = userEvent.setup();
+    getSkillFeatures.mockResolvedValueOnce({ features: [{ feature_id: "message_triage", name: "Message Triage", description: "处理消息", skills: [], enabled: true, status: "ready" }], skills: [] });
+    toggleSkillFeature.mockResolvedValueOnce({ feature_id: "message_triage", enabled: false, status: "ready" });
+    renderSettings("/settings?tab=skills");
+    const toggle = await screen.findByRole("switch", { name: "Message Triage" });
+    await user.click(toggle);
+    expect(toggleSkillFeature).toHaveBeenCalledWith("message_triage", false);
+    expect(await screen.findByRole("status")).toHaveTextContent("功能开关已保存");
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("shows API validation errors without crashing and keeps an invalid project skill row visible", async () => {
+    getSkillFeatures.mockResolvedValueOnce({
+      features: [],
+      skills: [{ name: "bad skill", description: "", referenced_by: [], status: "invalid", error: "invalid Skill name" }],
+    });
+    renderSettings("/settings?tab=skills");
+
+    expect(await screen.findByText("bad skill")).toBeInTheDocument();
+    expect(screen.getByText("invalid Skill name")).toBeInTheDocument();
+    expect(screen.getByText("非法 skill 行不影响其他内容。")).toBeInTheDocument();
   });
 });
