@@ -88,6 +88,9 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByRole("heading", { name: "Audit summary" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Draft reply (raw Codex reply)" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Runtime attempts" })).toBeInTheDocument();
+    expect(document.querySelector(".attempt-review-grid")).toBeInTheDocument();
+    expect(document.querySelector(".attempt-review-main .attempt-review-block + .attempt-review-block")).toBeInTheDocument();
+    expect(document.querySelector(".attempt-status-card")).not.toBeInTheDocument();
     expect(screen.getByText("已关联会话（标识已隐藏）")).toBeInTheDocument();
     expect(screen.queryByText("session-8448")).not.toBeInTheDocument();
   });
