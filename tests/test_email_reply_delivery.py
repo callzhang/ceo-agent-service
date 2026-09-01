@@ -8,6 +8,7 @@ import threading
 
 import pytest
 
+import app.email_store as email_store_module
 from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
     EmailAction,
@@ -353,7 +354,7 @@ def test_v7_store_migrates_fenced_reply_dispatch_claims_without_changing_rows(
     with sqlite3.connect(database) as db:
         assert db.execute(
             "select version from email_schema_migrations order by version desc limit 1"
-        ).fetchone()[0] == 11
+        ).fetchone()[0] == email_store_module.EMAIL_SCHEMA_VERSION
         assert db.execute(
             "select count(*) from email_reply_dispatch_claims"
         ).fetchone()[0] == 0

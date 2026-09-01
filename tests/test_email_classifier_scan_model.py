@@ -184,6 +184,47 @@ def test_cpu_model_feeds_readonly_scan_and_persists_only_classification(tmp_path
     }
 
 
+def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path):
+    message = _message()
+    source = FakeSource([message])
+    store = EmailStore(tmp_path / "email.sqlite3")
+    config = EmailScanConfig(
+        config_version="scan-task-production-v1",
+        thresholds={category: 0.0 for category in EmailCategory},
+        actions={EmailCategory.WORK: (EmailAction.AUTO_REPLY,)},
+        action_parameters={
+            EmailCategory.WORK: {
+                EmailAction.AUTO_REPLY: {"instruction": "Acknowledge the email."}
+            }
+        },
+        category_eligibility=_category_eligibility(
+            eligible=(EmailCategory.WORK,),
+            threshold=0.0,
+        ),
+    )
+    callbacks: list[tuple[object, dict[str, object]]] = []
+
+    result = scan_readonly_batch(
+        source,
+        StaticClassifier(StaticPrediction("work", 0.99)),
+        store,
+        config,
+        task_producer=lambda classification, raw_message: callbacks.append(
+            (classification, dict(raw_message))
+        ),
+    )
+
+    assert result.processed_count == 1
+    assert len(callbacks) == 1
+    classification, callback_message = callbacks[0]
+    assert classification.action_plan is not None
+    assert classification.action_plan.agent_actions == (EmailAction.AUTO_REPLY,)
+    assert callback_message["messageId"] == message["messageId"]
+    persisted = store.get_classification(classification.classification_id)
+    assert persisted is not None
+    assert persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
+
+
 def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: Path):
     training_messages, labels = _training_messages()
     classifier = CpuTfidfLogisticClassifier(model_version="model-idempotence-test")

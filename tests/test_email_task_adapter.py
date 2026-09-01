@@ -31,6 +31,7 @@ from app.email_task_adapter import (
     email_action_identity,
     email_conversation_id,
 )
+from app.email_task_producer import EmailActionTaskProducer
 from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
@@ -249,6 +250,39 @@ def test_only_agent_actions_create_idempotent_email_reply_tasks(tmp_path: Path):
             action_type=route.action_type,
             action_plan_version=plan.action_plan_version,
         )
+
+
+def test_task_producer_builds_email_task_from_persisted_message_context(
+    tmp_path: Path,
+):
+    plan = _plan((EmailAction.AUTO_REPLY,))
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    _persist_authorization(email_store, plan, task_input)
+    task_store = _store(tmp_path)
+    producer = EmailActionTaskProducer(task_store, email_store)
+
+    routes = producer.produce(
+        plan,
+        {
+            "accountId": plan.account_id,
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": 41,
+            "messageId": "<mail-41@example.com>",
+            "stableMessageIdentity": task_input.stable_message_identity,
+            "threadId": task_input.thread_identity,
+            "from": {"email": task_input.trigger.sender},
+            "subject": task_input.subject,
+            "textBody": task_input.trigger.text,
+            "markdownBody": task_input.trigger.text,
+        },
+    )
+
+    assert len(routes) == 1
+    assert routes[0].action_type is EmailAction.AUTO_REPLY
+    assert routes[0].task.channel == "email"
+    assert task_store.count_reply_tasks(channel="email") == 1
 
 
 def test_disabled_mail_review_does_not_create_email_tasks(tmp_path: Path):

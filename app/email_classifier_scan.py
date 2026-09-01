@@ -62,7 +62,9 @@ class EmailScanConfig:
     category_enabled: Mapping[EmailCategory, bool] = field(default_factory=dict)
 
     @classmethod
-    def cold_start(cls, *, config_version: str = "email-cold-start-v1") -> "EmailScanConfig":
+    def cold_start(
+        cls, *, config_version: str = "email-cold-start-v1"
+    ) -> "EmailScanConfig":
         """Conservative defaults for the review-only validation phase."""
         return cls(
             config_version=config_version,
@@ -109,7 +111,9 @@ class EmailScanConfig:
             if category_eligibility.category is not category:
                 raise ValueError("category_eligibility category keys must match values")
             if category_eligibility.configured_threshold != self.thresholds[category]:
-                raise ValueError("category eligibility threshold must match scan threshold")
+                raise ValueError(
+                    "category eligibility threshold must match scan threshold"
+                )
         unexpected_categories = set(self.action_parameters) - set(self.actions)
         if unexpected_categories:
             raise ValueError("action parameters contain a category with no actions")
@@ -176,6 +180,8 @@ def scan_readonly_batch(
     *,
     mailbox: str = "INBOX",
     limit: int = 50,
+    task_producer: Callable[[EmailClassification, Mapping[str, object]], object]
+    | None = None,
 ) -> EmailScanResult:
     if limit <= 0:
         raise ValueError("limit must be positive")
@@ -214,7 +220,9 @@ def scan_readonly_batch(
     if not isinstance(batch, ImapUidBatch):
         raise TypeError("fetch_uid_batch must return ImapUidBatch")
     if batch.account_id != account_id or batch.folder != mailbox:
-        raise ValueError("IMAP batch identity does not match requested account and folder")
+        raise ValueError(
+            "IMAP batch identity does not match requested account and folder"
+        )
     messages = batch.messages
     if not messages:
         reset_expectation = (
@@ -296,7 +304,11 @@ def scan_readonly_batch(
             action_plan=decision.action_plan,
         )
         sender = message.get("from") or {}
-        sender_value = str(sender.get("email") or sender.get("name") or "") if isinstance(sender, Mapping) else ""
+        sender_value = (
+            str(sender.get("email") or sender.get("name") or "")
+            if isinstance(sender, Mapping)
+            else ""
+        )
         recipients = _recipient_values(message)
         attachments = _attachment_values(message)
         model_text = email_message_to_text(message)
@@ -308,6 +320,8 @@ def scan_readonly_batch(
             normalized_text=_normalized_message_text(message),
             preview=_redacted_preview(message),
             attachment_metadata=attachments,
+            in_reply_to=str(message.get("inReplyTo") or ""),
+            references=_message_id_values(message.get("references")),
             received_at=str(message.get("date") or message.get("received_at") or ""),
             model_text=model_text,
             cursor_uidvalidity=batch.uidvalidity,
@@ -315,6 +329,8 @@ def scan_readonly_batch(
             cursor_last_success_at=created_at.isoformat(),
             expected_cursor_uidvalidity=reset_expectation,
         )
+        if task_producer is not None and classification.action_plan is not None:
+            task_producer(classification, message)
         reset_expectation = None
         persisted += 1
         if decision.status is EmailClassificationStatus.PROCESSED:
@@ -332,6 +348,8 @@ def scan_imap_accounts(
     config: EmailScanConfig,
     *,
     limit: int = 50,
+    task_producer: Callable[[EmailClassification, Mapping[str, object]], object]
+    | None = None,
 ) -> EmailAccountsScanResult:
     """Scan enabled accounts independently and expose only sanitized outcomes."""
 
@@ -367,6 +385,7 @@ def scan_imap_accounts(
                         config,
                         mailbox=folder,
                         limit=limit,
+                        task_producer=task_producer,
                     )
                 except (
                     EmailPersistenceCorruption,
@@ -463,6 +482,18 @@ def _attachment_values(
     if not isinstance(values, Sequence) or isinstance(values, str | bytes):
         raise ValueError("attachments must be a sequence")
     return tuple(EmailAttachmentMetadata.model_validate(item) for item in values)
+
+
+def _message_id_values(value: object) -> tuple[str, ...]:
+    if value in (None, ""):
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    if not isinstance(value, Sequence) or isinstance(value, bytes | bytearray):
+        raise ValueError("references must be text or a sequence")
+    if any(not isinstance(item, str) for item in value):
+        raise ValueError("references must contain text values")
+    return tuple(value)
 
 
 def _normalized_message_text(message: Mapping[str, object]) -> str:

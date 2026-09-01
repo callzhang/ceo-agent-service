@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +18,21 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     build_versioned_email_action_plan,
 )
-from app.email_store import EmailStore, email_action_identity
+from app.email_store import (
+    EmailStore,
+    EmailUnsubscribeClaimConflict,
+    email_action_identity,
+)
+from app.email_browser_profile import (
+    EmailBrowserProfile,
+    EmailBrowserProfileError,
+    launch_persistent_email_context,
+)
+from app.email_unsubscribe_operation import (
+    DIRECT_LIFECYCLE_VERSION,
+    EmailUnsubscribeTaskOperation,
+)
+from app.store import AutoReplyStore, ReplyTask
 from app.email_unsubscribe import (
     BrowserNetworkPolicy,
     EmailUnsubscribeEffect,
@@ -36,12 +51,32 @@ from app.email_unsubscribe import (
     UnsubscribePageState,
     UnsubscribeProviderAuthError,
     UnsubscribeTerminalReceipt,
+    automatic_unsubscribe_operation,
     disposition_for_unsubscribe_outcome,
     extract_unsubscribe_entries,
+    normalize_unsubscribe_result_text,
     select_browser_unsubscribe_entry,
     unsubscribe_entry_reference,
 )
-from app.store import ReplyTask
+
+
+def test_unsubscribe_result_text_is_redacted_bounded_and_digest_is_full_text() -> None:
+    result, digest = normalize_unsubscribe_result_text(
+        "退订成功\r\nhttps://news.example.com/unsubscribe?token=private-token "
+        "/Users/derek/private-profile secret=super-secret\x00\n"
+        + "你好" * 10_000
+    )
+
+    assert "private-token" not in result
+    assert "super-secret" not in result
+    assert "/Users/derek" not in result
+    assert "\r" not in result
+    assert "\n" in result
+    assert len(result.encode("utf-8")) <= 16 * 1024
+
+    short_result, short_digest = normalize_unsubscribe_result_text("退订成功\n")
+    assert short_result == "退订成功\n"
+    assert digest != short_digest
 
 
 TOKEN_URL = "https://news.example.com/unsubscribe?token=private-token"
@@ -815,16 +850,20 @@ def test_same_owner_concurrent_executor_has_exactly_one_write_winner(
         _ConcurrentWinnerBrowser(barrier, effect),
         _ConcurrentWinnerBrowser(barrier, effect),
     ]
+    owners = [
+        {**UNSUBSCRIBE_OWNER, "lease_token": "unsubscribe-unit-owner-1"},
+        {**UNSUBSCRIBE_OWNER, "lease_token": "unsubscribe-unit-owner-2"},
+    ]
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(
             pool.map(
-                lambda browser: UnsubscribeExecutor(
+                lambda pair: UnsubscribeExecutor(
                     store,
-                    browser,
-                    owner=UNSUBSCRIBE_OWNER,
+                    pair[0],
+                    owner=pair[1],
                 ).execute(effect, (_entry(),)),
-                browsers,
+                zip(browsers, owners),
             )
         )
 
@@ -1208,6 +1247,159 @@ def test_action_required_persists_typed_continuation_without_executing_control(
     assert store.get_email_unsubscribe_claim(ACTION_IDENTITY)["status"] == "awaiting_audit"
 
 
+def test_automatic_executor_completes_bounded_multistep_flow_without_audit(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    initial = _effect()
+    task = _enqueue_claimable_direct_unsubscribe_task(store)
+    initial_claim = store.claim_email_unsubscribe_write(
+        **UnsubscribeExecutor._store_arguments(initial),
+        owner=UNSUBSCRIBE_OWNER,
+        task_id=task.id,
+        task_execution_generation=task.execution_generation,
+        task_lifecycle_version=DIRECT_LIFECYCLE_VERSION,
+        task_action_type=EmailAction.UNSUBSCRIBE.value,
+    )
+    assert initial_claim is not None and initial_claim["acquired"] is True
+    discovered = UnsubscribeDiscoveredControl(
+        reference="control-form",
+        kind="form",
+        intent="unsubscribe",
+    )
+    next_operation = automatic_unsubscribe_operation(discovered)
+    browser = _ScriptedBrowser(
+        [
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-not-opened",
+                next_operation_reference="step-1",
+            ),
+            UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-form",
+                next_operation_reference=next_operation.operation_reference,
+            ),
+        ]
+    )
+
+    def execute_operation(effect, private_url, operation):
+        browser.calls.append(operation.operation_reference)
+        if operation.operation_reference == "step-1":
+            return UnsubscribeObservation(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state-form",
+                controls=(discovered,),
+            )
+        return UnsubscribeObservation(
+            state=UnsubscribePageState.DONE,
+            state_reference="state-done",
+            receipt=UnsubscribeTerminalReceipt(
+                receipt_id="provider-receipt:automatic",
+                evidence="terminal-page",
+                entry_reference=effect.entry_reference,
+                effect_digest=effect.effect_digest,
+            ),
+            visible_text="You have been successfully unsubscribed.",
+        )
+
+    browser.execute_operation = execute_operation
+    result = UnsubscribeExecutor(
+        store,
+        browser,
+        owner=UNSUBSCRIBE_OWNER,
+        automatic_continuation=lambda **kwargs: store.continue_email_unsubscribe_consumer_direct(
+            **kwargs,
+            task_id=task.id,
+            task_execution_generation=task.execution_generation,
+            task_lifecycle_version=DIRECT_LIFECYCLE_VERSION,
+            task_action_type=EmailAction.UNSUBSCRIBE.value,
+        ),
+    ).execute(
+        initial,
+        (_entry(),),
+        automatic=True,
+    )
+
+    assert isinstance(result, UnsubscribeExecutionResult)
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert result.result_text == "You have been successfully unsubscribed."
+    assert len(browser.calls) == 6
+    assert store.get_email_unsubscribe_claim(ACTION_IDENTITY)["status"] == "done"
+
+
+def test_consumer_direct_continuation_rechecks_task_lease_and_control_atomically(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    initial = _effect()
+    task = _enqueue_claimable_direct_unsubscribe_task(store)
+    claim = store.claim_email_unsubscribe_write(
+        **UnsubscribeExecutor._store_arguments(initial),
+        owner=UNSUBSCRIBE_OWNER,
+        task_id=task.id,
+        task_execution_generation=task.execution_generation,
+        task_lifecycle_version=DIRECT_LIFECYCLE_VERSION,
+        task_action_type=EmailAction.UNSUBSCRIBE.value,
+    )
+    assert claim is not None and claim["acquired"] is True
+    discovered = UnsubscribeDiscoveredControl(
+        reference="control-form",
+        kind="form",
+        intent="unsubscribe",
+    )
+    next_effect = _effect(
+        initial.operations
+        + (automatic_unsubscribe_operation(discovered),),
+        previous_effect_digest=initial.effect_digest,
+    )
+    transition = {
+        "current_effect": UnsubscribeExecutor._store_arguments(initial),
+        "next_effect": UnsubscribeExecutor._store_arguments(next_effect),
+        "controls": ({"reference": "control-form", "kind": "form", "intent": "unsubscribe"},),
+        "final_step": {
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "action_required",
+            "reference": "state-form",
+        },
+        "owner": UNSUBSCRIBE_OWNER,
+        "task_id": task.id,
+        "task_execution_generation": task.execution_generation,
+        "task_lifecycle_version": DIRECT_LIFECYCLE_VERSION,
+        "task_action_type": EmailAction.UNSUBSCRIBE.value,
+    }
+
+    with pytest.raises(EmailUnsubscribeClaimConflict, match="authorization is stale"):
+        store.continue_email_unsubscribe_consumer_direct(
+            **{**transition, "task_execution_generation": "stale-generation"}
+        )
+    with pytest.raises(EmailUnsubscribeClaimConflict, match="control is invalid"):
+        store.continue_email_unsubscribe_consumer_direct(
+            **{
+                **transition,
+                "controls": (
+                    {"reference": "wrong-control", "kind": "form", "intent": "unsubscribe"},
+                ),
+            }
+        )
+
+    advanced = store.continue_email_unsubscribe_consumer_direct(**transition)
+    assert advanced["acquired"] is True
+    assert advanced["effect_digest"] == next_effect.effect_digest
+    assert advanced["executed_prefix_length"] == 1
+    assert store.get_email_unsubscribe_continuation(ACTION_IDENTITY) is None
+    assert store.list_email_unsubscribe_steps(ACTION_IDENTITY) == [
+        {
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "action_required",
+            "reference": "state-form",
+            "created_at": store.list_email_unsubscribe_steps(ACTION_IDENTITY)[0]["created_at"],
+        }
+    ]
+
+
 def test_accepted_continuation_executes_only_new_operation_and_never_prefix(
     tmp_path: Path,
 ) -> None:
@@ -1566,3 +1758,228 @@ def test_stale_plan_cannot_claim_a_persisted_continuation(tmp_path: Path) -> Non
     assert store.get_email_unsubscribe_claim(ACTION_IDENTITY)["status"] == (
         "awaiting_audit"
     )
+
+
+def _enqueue_claimable_direct_unsubscribe_task(store: EmailStore) -> ReplyTask:
+    task_store = AutoReplyStore(store.path)
+    payload = json.loads(_task().trigger_message_json)
+    payload["lifecycle_version"] = "email_unsubscribe_consumer_direct_v1"
+    task = task_store.ensure_reply_task(
+        channel="email",
+        conversation_id="email-thread:test",
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id=ACTION_IDENTITY,
+        trigger_create_time="2026-08-30T08:00:00+00:00",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        trigger_message_json=json.dumps(payload, sort_keys=True),
+        execution_generation="generation-1",
+    )
+    claimed = task_store.claim_reply_task(task.id)
+    assert claimed is not None
+    return claimed
+
+
+def test_task_bound_unsubscribe_operation_re_resolves_entry_after_atomic_claim(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    task = _enqueue_claimable_direct_unsubscribe_task(store)
+    events: list[object] = []
+
+    def resolve(locator, expected_reference):
+        events.append(
+            (
+                "resolve",
+                locator,
+                expected_reference,
+                store.get_email_unsubscribe_claim(ACTION_IDENTITY),
+            )
+        )
+        return (_entry(),)
+
+    def execute(effect, entry):
+        events.append(("execute", effect, entry))
+        return {
+            "status": "done",
+            "outcome": "done",
+            "receipt_id": "provider-receipt:task-41",
+            "evidence": "terminal-page",
+            "summary": "Unsubscribe completed.",
+            "final_step": {
+                "sequence": 1,
+                "operation": "open_entry",
+                "state": "done",
+                "reference": "provider-receipt:task-41",
+            },
+        }
+
+    result = EmailUnsubscribeTaskOperation(
+        task_store=AutoReplyStore(store.path),
+        email_store=store,
+        resolve_entries=resolve,
+        execute_effect=execute,
+    ).execute(task.id, "generation-1")
+
+    assert result["status"] == "done"
+    assert result["receipt_id"] == "provider-receipt:task-41"
+    assert events[0][0] == "resolve"
+    assert events[0][3]["status"] == "dispatching"
+    assert events[0][1].stable_message_identity == (
+        "account-primary:message-id:<mail-41@example.com>"
+    )
+    assert store.get_email_unsubscribe_receipt(ACTION_IDENTITY)["receipt_id"] == (
+        "provider-receipt:task-41"
+    )
+    assert TOKEN_URL not in json.dumps(
+        store.get_email_unsubscribe_claim(ACTION_IDENTITY)
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("generation", "channel", "action", "lifecycle", "plan", "inactive"),
+)
+def test_task_bound_unsubscribe_operation_rejects_stale_or_changed_task_before_network(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    store = _authorized_store(tmp_path)
+    task = _enqueue_claimable_direct_unsubscribe_task(store)
+    task_store = AutoReplyStore(store.path)
+    if mutation == "generation":
+        generation = "wrong-generation"
+    else:
+        generation = "generation-1"
+        with sqlite3.connect(store.path) as db:
+            if mutation == "channel":
+                db.execute(
+                    "update reply_tasks set channel='dingtalk' where id=?",
+                    (task.id,),
+                )
+            elif mutation == "action":
+                payload = json.loads(task.trigger_message_json)
+                payload["action_type"] = "auto_reply"
+                db.execute(
+                    "update reply_tasks set trigger_message_json=? where id=?",
+                    (json.dumps(payload), task.id),
+                )
+            elif mutation == "lifecycle":
+                payload = json.loads(task.trigger_message_json)
+                payload["lifecycle_version"] = "consumer_audit_v1"
+                db.execute(
+                    "update reply_tasks set trigger_message_json=? where id=?",
+                    (json.dumps(payload), task.id),
+                )
+            elif mutation == "plan":
+                payload = json.loads(task.trigger_message_json)
+                payload["action_plan_id"] = "email-action-plan:changed"
+                db.execute(
+                    "update reply_tasks set trigger_message_json=? where id=?",
+                    (json.dumps(payload), task.id),
+                )
+            elif mutation == "inactive":
+                db.execute(
+                    "update reply_tasks set status='done' where id=?",
+                    (task.id,),
+                )
+    calls: list[object] = []
+    operation = EmailUnsubscribeTaskOperation(
+        task_store=task_store,
+        email_store=store,
+        resolve_entries=lambda *_args: calls.append("resolve") or (_entry(),),
+        execute_effect=lambda *_args: calls.append("execute") or {},
+    )
+
+    result = operation.execute(task.id, generation)
+
+    assert result["status"] == "failed"
+    assert calls == []
+    assert store.get_email_unsubscribe_claim(ACTION_IDENTITY) is None
+
+
+def test_task_bound_unsubscribe_operation_allows_only_one_concurrent_claim(
+    tmp_path: Path,
+) -> None:
+    store = _authorized_store(tmp_path)
+    task = _enqueue_claimable_direct_unsubscribe_task(store)
+    calls: list[str] = []
+    operation = EmailUnsubscribeTaskOperation(
+        task_store=AutoReplyStore(store.path),
+        email_store=store,
+        resolve_entries=lambda *_args: calls.append("resolve") or (_entry(),),
+        execute_effect=lambda *_args: calls.append("execute") or {
+            "status": "failed",
+            "outcome": "browser_error",
+            "summary": "operation interrupted",
+            "error": {"code": "browser_error", "retryable": True},
+        },
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda _index: operation.execute(task.id, "generation-1"),
+                (1, 2),
+            )
+        )
+
+    assert sum(result["status"] == "failed" for result in results) == 2
+    assert calls.count("resolve") == 1
+    claim = store.get_email_unsubscribe_claim(ACTION_IDENTITY)
+    assert claim is not None and claim["status"] == "uncertain"
+
+
+def test_email_browser_profile_is_owner_only_and_serializes_access(tmp_path: Path) -> None:
+    profile = EmailBrowserProfile(tmp_path / "runtime")
+
+    with profile.lock(timeout_seconds=0) as profile_path:
+        assert profile_path == tmp_path / "runtime" / "email-browser-profile"
+        assert profile_path.stat().st_mode & 0o777 == 0o700
+        assert profile.runtime_root.stat().st_mode & 0o777 == 0o700
+        with pytest.raises(EmailBrowserProfileError, match="busy"):
+            with profile.lock(timeout_seconds=0):
+                pass
+
+
+def test_email_browser_profile_rejects_symlink_and_main_browser_locations(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    target = tmp_path / "outside"
+    target.mkdir()
+    (runtime / "email-browser-profile").symlink_to(target, target_is_directory=True)
+    with pytest.raises(EmailBrowserProfileError, match="symlink"):
+        EmailBrowserProfile(runtime)
+
+    with pytest.raises(EmailBrowserProfileError, match="main browser"):
+        EmailBrowserProfile(
+            Path.home() / "Library/Application Support/Google/Chrome",
+            name="email-browser-profile",
+        )
+
+
+def test_persistent_email_browser_launch_is_always_headless_and_dedicated(tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Chromium:
+        def launch_persistent_context(self, **kwargs):
+            calls.append(kwargs)
+            return "context"
+
+    class Playwright:
+        chromium = Chromium()
+
+    profile = EmailBrowserProfile(tmp_path / "runtime")
+    assert launch_persistent_email_context(Playwright(), profile) == "context"
+    assert calls == [
+        {
+            "user_data_dir": str(tmp_path / "runtime" / "email-browser-profile"),
+            "headless": True,
+            "accept_downloads": False,
+        }
+    ]
+    with pytest.raises(EmailBrowserProfileError, match="headless"):
+        launch_persistent_email_context(Playwright(), profile, headless=False)

@@ -8,7 +8,7 @@ confirmation receipt and the current page/provider state before another write.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 from hashlib import sha256
 from html.parser import HTMLParser
@@ -25,7 +25,7 @@ from app.email_store import (
     EmailUnsubscribeReceiptConflict,
     email_unsubscribe_effect_digest,
 )
-from app.leak_check import assert_no_credentials
+from app.leak_check import assert_no_credentials, redact_credentials
 
 
 _MAX_OPAQUE_REFERENCE_LENGTH = 512
@@ -43,6 +43,39 @@ _TERMINAL_STATES = frozenset(
     {"done", "already_unsubscribed", "login_required", "captcha", "payment"}
 )
 _UNRESOLVED_ERROR = "email_unsubscribe_outcome_unresolved"
+_MAX_RESULT_TEXT_BYTES = 16 * 1024
+_PRIVATE_RESULT_URL = re.compile(r"\b(?:https?|file)://[^\s<>'\"]+")
+_PRIVATE_RESULT_PATH = re.compile(r"(?<![A-Za-z0-9_])/(?:Users|home|private|tmp)/[^\s<>'\"]+")
+
+
+def normalize_unsubscribe_result_text(value: str) -> tuple[str, str]:
+    """Normalize and redact terminal page text before it crosses the boundary.
+
+    The digest covers the complete redacted observation, while the persisted
+    text is bounded by UTF-8 bytes. This makes retries auditable without
+    retaining private unsubscribe URLs, local paths, or credentials.
+    """
+
+    if not isinstance(value, str):
+        raise TypeError("unsubscribe result text must be text")
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = "".join(
+        character
+        for character in normalized
+        if character in {"\n", "\t"} or ord(character) >= 32
+    )
+    redacted = redact_credentials(
+        normalized,
+        "[REDACTED]",
+        credential_context=True,
+    )
+    redacted = _PRIVATE_RESULT_URL.sub("[REDACTED_URL]", redacted)
+    redacted = _PRIVATE_RESULT_PATH.sub("[REDACTED_PATH]", redacted)
+    digest = sha256(redacted.encode("utf-8")).hexdigest()
+    bounded = redacted.encode("utf-8")[:_MAX_RESULT_TEXT_BYTES].decode(
+        "utf-8", "ignore"
+    )
+    return bounded, digest
 
 
 class UnsubscribeOutcome(str, Enum):
@@ -528,6 +561,26 @@ class UnsubscribeDiscoveredControl:
         _assert_strict_opaque_reference(self.reference, field_name="control_reference")
 
 
+def automatic_unsubscribe_operation(
+    control: UnsubscribeDiscoveredControl,
+) -> UnsubscribeOperation:
+    """Translate a discovered, explicitly labelled control into one next step."""
+
+    kind = {
+        "form": UnsubscribeOperationKind.SUBMIT_FORM,
+        "link": UnsubscribeOperationKind.CLICK_CONFIRMATION,
+        "button": UnsubscribeOperationKind.CLICK_CONFIRMATION,
+        "confirmation_email": UnsubscribeOperationKind.CONFIRM_EMAIL,
+    }[control.kind]
+    return UnsubscribeOperation(
+        operation_reference="unsubscribe-operation:" + sha256(
+            control.reference.encode("utf-8")
+        ).hexdigest(),
+        kind=kind,
+        target_reference=control.reference,
+    )
+
+
 @dataclass(frozen=True)
 class UnsubscribeObservation:
     state: UnsubscribePageState
@@ -535,6 +588,7 @@ class UnsubscribeObservation:
     next_operation_reference: str = ""
     receipt: UnsubscribeTerminalReceipt | None = None
     controls: tuple[UnsubscribeDiscoveredControl, ...] = ()
+    visible_text: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, UnsubscribePageState):
@@ -582,6 +636,10 @@ class UnsubscribeExecutionResult:
     journal: tuple[RedactedUnsubscribeStep, ...]
     receipt: UnsubscribeTerminalReceipt | None = None
     error_code: str = ""
+    result_text: str = ""
+    observation_digest: str = ""
+    started_at: str = ""
+    completed_at: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.outcome, UnsubscribeOutcome):
@@ -590,6 +648,10 @@ class UnsubscribeExecutionResult:
             _assert_opaque_reference(self.error_code, field_name="error_code")
         if any(not isinstance(item, RedactedUnsubscribeStep) for item in self.journal):
             raise TypeError("journal must contain RedactedUnsubscribeStep")
+        if self.observation_digest and re.fullmatch(
+            r"[0-9a-f]{64}", self.observation_digest
+        ) is None:
+            raise ValueError("observation_digest must be canonical sha256 hex")
 
     @property
     def redacted(self) -> dict[str, object]:
@@ -601,6 +663,10 @@ class UnsubscribeExecutionResult:
             "journal": [asdict(item) for item in self.journal],
             "receipt": asdict(self.receipt) if self.receipt is not None else None,
             "error_code": self.error_code,
+            "result_text": self.result_text,
+            "observation_digest": self.observation_digest,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
         }
 
 
@@ -865,7 +931,7 @@ class PlaywrightUnsubscribeBrowser:
         text = self.page.locator("body").inner_text(timeout=self.timeout_ms).strip()
         if not text:
             raise UnsubscribeBrowserError("unsubscribe page has no visible state")
-        return text[:16_384]
+        return text
 
     @staticmethod
     def _control_intent(
@@ -1123,6 +1189,7 @@ class PlaywrightUnsubscribeBrowser:
                 "unsubscribe complete",
                 "unsubscribe confirmation complete",
                 "subscription cancelled",
+                "list-unsubscribe post returned http 2",
                 "退订成功",
             )
         ):
@@ -1227,6 +1294,7 @@ class PlaywrightUnsubscribeBrowser:
                 )
             del private_url
             discovery = self.discover_current_page(effect)
+            visible_text = self._visible_text()
             state = discovery.state
             state_reference = discovery.state_reference
             if state is UnsubscribePageState.ACTION_REQUIRED:
@@ -1234,6 +1302,7 @@ class PlaywrightUnsubscribeBrowser:
                     state=state,
                     state_reference=state_reference,
                     controls=discovery.controls,
+                    visible_text=visible_text,
                 )
             receipt_id = f"unsubscribe-receipt:{effect.effect_digest[:24]}:{state.value}"
             return UnsubscribeObservation(
@@ -1245,6 +1314,7 @@ class PlaywrightUnsubscribeBrowser:
                     entry_reference=effect.entry_reference,
                     effect_digest=effect.effect_digest,
                 ),
+                visible_text=visible_text,
             )
         except UnsubscribeBrowserError:
             raise
@@ -1332,7 +1402,9 @@ class PlaywrightUnsubscribeBrowser:
                     self._validate_navigation_target(response.url)
                     if response.status < 200 or response.status >= 300:
                         raise UnsubscribeBrowserError("one-click provider response rejected")
-                    visible = response.text()[:16_384]
+                    visible = response.text()
+                    if not visible.strip():
+                        visible = f"List-Unsubscribe POST returned HTTP {response.status}"
                 finally:
                     isolated.close()
                 state = self._state_from_text(visible)
@@ -1350,6 +1422,7 @@ class PlaywrightUnsubscribeBrowser:
                         entry_reference=effect.entry_reference,
                         effect_digest=effect.effect_digest,
                     ),
+                    visible_text=visible,
                 )
             if operation.kind is UnsubscribeOperationKind.OPEN_ENTRY:
                 self.page.goto(
@@ -1440,12 +1513,61 @@ class PlaywrightUnsubscribeBrowser:
                         entry_reference=effect.entry_reference,
                         effect_digest=effect.effect_digest,
                     ),
+                    visible_text=observation.visible_text,
                 )
             return observation
         except (UnsubscribeBrowserError, UnsubscribeProviderAuthError):
             raise
         except Exception:
             raise UnsubscribeBrowserError("browser operation failed") from None
+
+
+def execute_unsubscribe_in_dedicated_profile(
+    effect: EmailUnsubscribeEffect,
+    entries: tuple[UnsubscribeEntry, ...],
+    *,
+    store: EmailStore,
+    profile: object,
+    network_policy: BrowserNetworkPolicy,
+    owner: Mapping[str, object],
+    timeout_ms: int = 5_000,
+    automatic: bool = False,
+    automatic_continuation: Callable[..., Mapping[str, object]] | None = None,
+) -> UnsubscribeExecutionResult | UnsubscribeContinuationResult:
+    """Run one unsubscribe effect only in a locked headless profile.
+
+    The profile and lock are supplied by the service runtime.  This helper has
+    no path or URL arguments: the entry URL is retained only in the in-memory
+    ``UnsubscribeEntry`` selected by the task-bound operation.
+    """
+
+    from app.email_browser_profile import launch_persistent_email_context
+
+    with profile.lock():
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise UnsubscribeBrowserError(
+                "headless browser runtime is unavailable"
+            ) from exc
+        with sync_playwright() as playwright:
+            context = launch_persistent_email_context(playwright, profile)
+            try:
+                pages = getattr(context, "pages", ())
+                page = pages[0] if pages else context.new_page()
+                browser = PlaywrightUnsubscribeBrowser(
+                    page,
+                    timeout_ms=timeout_ms,
+                    network_policy=network_policy,
+                )
+                return UnsubscribeExecutor(
+                    store,
+                    browser,
+                    owner=owner,
+                    automatic_continuation=automatic_continuation,
+                ).execute(effect, entries, automatic=automatic)
+            finally:
+                context.close()
 
 
 def _header_values(value: str) -> tuple[str, ...]:
@@ -1618,6 +1740,10 @@ def _result(
     *,
     receipt: UnsubscribeTerminalReceipt | None = None,
     error_code: str = "",
+    result_text: str = "",
+    observation_digest: str = "",
+    started_at: str = "",
+    completed_at: str = "",
 ) -> UnsubscribeExecutionResult:
     return UnsubscribeExecutionResult(
         outcome=outcome,
@@ -1625,6 +1751,10 @@ def _result(
         journal=tuple(journal),
         receipt=receipt,
         error_code=error_code,
+        result_text=result_text,
+        observation_digest=observation_digest,
+        started_at=started_at,
+        completed_at=completed_at,
     )
 
 
@@ -1657,7 +1787,16 @@ def _terminal_result(
             journal,
             error_code="email_unsubscribe_receipt_mismatch",
         )
-    return _result(outcome, journal, receipt=observation.receipt)
+    result_text, observation_digest = normalize_unsubscribe_result_text(
+        observation.visible_text
+    )
+    return _result(
+        outcome,
+        journal,
+        receipt=observation.receipt,
+        result_text=result_text,
+        observation_digest=observation_digest if observation.visible_text else "",
+    )
 
 
 class UnsubscribeExecutor:
@@ -1669,10 +1808,12 @@ class UnsubscribeExecutor:
         browser: UnsubscribeBrowser,
         *,
         owner: Mapping[str, object],
+        automatic_continuation: Callable[..., Mapping[str, object]] | None = None,
     ) -> None:
         self.store = store
         self.browser = browser
         self.owner = dict(owner)
+        self.automatic_continuation = automatic_continuation
 
     @staticmethod
     def _store_arguments(effect: EmailUnsubscribeEffect) -> dict[str, object]:
@@ -1759,6 +1900,10 @@ class UnsubscribeExecutor:
             UnsubscribeOutcome(receipt["outcome"]),
             journal,
             receipt=terminal_receipt,
+            result_text=receipt["result_text"],
+            observation_digest=receipt["observation_digest"],
+            started_at=receipt["started_at"],
+            completed_at=receipt["completed_at"],
         )
 
     def _persist_terminal(
@@ -1770,6 +1915,8 @@ class UnsubscribeExecutor:
         *,
         final_step: RedactedUnsubscribeStep | None,
         claim_owned: bool,
+        result_text: str = "",
+        observation_digest: str = "",
     ) -> UnsubscribeExecutionResult:
         if receipt.effect_digest != effect.effect_digest:
             return _result(
@@ -1789,11 +1936,13 @@ class UnsubscribeExecutor:
                 "reference": final_step.reference,
             }
         try:
-            self.store.persist_email_unsubscribe_terminal(
+            persisted = self.store.persist_email_unsubscribe_terminal(
                 **self._store_arguments(effect),
                 outcome=outcome.value,
                 receipt_id=receipt.receipt_id,
                 evidence=receipt.evidence,
+                result_text=result_text,
+                observation_digest=observation_digest,
                 final_step=final_mapping,
                 claim_owner=self.owner if claim_owned else None,
             )
@@ -1805,7 +1954,15 @@ class UnsubscribeExecutor:
             )
         if final_step is not None:
             journal.append(final_step)
-        return _result(outcome, journal, receipt=receipt)
+        return _result(
+            outcome,
+            journal,
+            receipt=receipt,
+            result_text=persisted["result_text"],
+            observation_digest=persisted["observation_digest"],
+            started_at=persisted["started_at"],
+            completed_at=persisted["completed_at"],
+        )
 
     def _claim_write(self, effect: EmailUnsubscribeEffect) -> Mapping[str, object] | None:
         try:
@@ -1815,7 +1972,30 @@ class UnsubscribeExecutor:
             )
         except (EmailUnsubscribeClaimConflict, EmailUnsubscribeReceiptConflict):
             return None
-        if claim is None or not claim.get("acquired"):
+        if claim is None:
+            return None
+        if not claim.get("acquired"):
+            if not (
+                claim.get("status") == "dispatching"
+                and claim.get("effect_digest") == effect.effect_digest
+                and claim.get("owner_id") == self.owner.get("owner_id")
+                and claim.get("owner_generation") == self.owner.get("generation")
+                and claim.get("lease_token") == self.owner.get("lease_token")
+                and claim.get("operations") == list(effect.operation_mappings)
+            ):
+                return None
+            claim = {
+                **claim,
+                "acquired": True,
+                "executed_prefix_length": max(0, len(effect.operations) - 1),
+            }
+        try:
+            self.store.advance_email_unsubscribe_phase(
+                effect.action_identity,
+                "navigating",
+                owner=self.owner,
+            )
+        except EmailUnsubscribeClaimConflict:
             return None
         return claim
 
@@ -1823,7 +2003,12 @@ class UnsubscribeExecutor:
         self,
         effect: EmailUnsubscribeEffect,
         entries: tuple[UnsubscribeEntry, ...],
+        *,
+        automatic: bool = False,
+        _automatic_depth: int = 0,
     ) -> UnsubscribeExecutionResult | UnsubscribeContinuationResult:
+        if _automatic_depth < 0 or _automatic_depth > 8:
+            raise ValueError("automatic unsubscribe continuation depth exceeded")
         durable = self._durable_result(effect)
         if durable is not None:
             return durable
@@ -1940,6 +2125,8 @@ class UnsubscribeExecutor:
                         reference=observation.state_reference,
                     ),
                     claim_owned=False,
+                    result_text=terminal.result_text,
+                    observation_digest=terminal.observation_digest,
                 )
             return existing_continuation
 
@@ -1994,6 +2181,8 @@ class UnsubscribeExecutor:
                 journal,
                 final_step=reconcile_step,
                 claim_owned=False,
+                result_text=terminal.result_text,
+                observation_digest=terminal.observation_digest,
             )
 
         if reconciliation_only:
@@ -2083,8 +2272,62 @@ class UnsubscribeExecutor:
                     journal,
                     final_step=operation_step,
                     claim_owned=True,
+                    result_text=terminal.result_text,
+                    observation_digest=terminal.observation_digest,
                 )
             if observation.controls:
+                journal.append(operation_step)
+                if automatic:
+                    if self.automatic_continuation is None:
+                        return _result(
+                            UnsubscribeOutcome.FAILED_BROWSER,
+                            journal,
+                            error_code="email_unsubscribe_direct_continuation_unavailable",
+                        )
+                    control = min(
+                        observation.controls,
+                        key=lambda item: (
+                            {"unsubscribe": 0, "confirm": 1, "continue": 2}[item.intent],
+                            item.reference,
+                        ),
+                    )
+                    next_effect = replace(
+                        effect,
+                        operations=effect.operations
+                        + (automatic_unsubscribe_operation(control),),
+                        previous_effect_digest=effect.effect_digest,
+                    )
+                    try:
+                        claim = self.automatic_continuation(
+                            current_effect=self._store_arguments(effect),
+                            next_effect=self._store_arguments(next_effect),
+                            controls=tuple(asdict(item) for item in observation.controls),
+                            final_step={
+                                "sequence": len(effect.operations),
+                                "operation": operation_step.operation,
+                                "state": operation_step.state,
+                                "reference": operation_step.reference,
+                            },
+                            owner=self.owner,
+                        )
+                    except EmailUnsubscribeClaimConflict:
+                        return _result(
+                            UnsubscribeOutcome.FAILED_BROWSER,
+                            journal,
+                            error_code="email_unsubscribe_persistence_conflict",
+                        )
+                    if not claim.get("acquired"):
+                        return _result(
+                            UnsubscribeOutcome.FAILED_BROWSER,
+                            journal,
+                            error_code="email_unsubscribe_authorization_stale",
+                        )
+                    return self.execute(
+                        next_effect,
+                        entries,
+                        automatic=True,
+                        _automatic_depth=_automatic_depth + 1,
+                    )
                 try:
                     self.store.persist_email_unsubscribe_continuation(
                         **self._store_arguments(effect),
@@ -2104,7 +2347,6 @@ class UnsubscribeExecutor:
                         journal,
                         error_code="email_unsubscribe_persistence_conflict",
                     )
-                journal.append(operation_step)
                 continuation = self._continuation_result(effect, journal)
                 assert continuation is not None
                 return continuation

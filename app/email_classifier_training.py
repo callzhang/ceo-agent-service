@@ -19,7 +19,7 @@ from types import MappingProxyType
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
 from app.email_classifier_contracts import EmailCategory
-from app.email_classifier_model import CpuTfidfLogisticClassifier
+from app.email_classifier_model import CpuTfidfLogisticClassifier, EmailModelPrediction
 from app.email_model_registry import (
     MODEL_FAMILY,
     EmailModelMetadata,
@@ -56,11 +56,30 @@ class TrainingReadiness:
 class CategoryValidation:
     validated_precision: float | None
     validation_sample_count: int
+    validated_recall: float | None = None
+    validated_f1: float | None = None
+    automatic_candidate_count: int = 0
+    evaluated_threshold: float | None = None
 
     def __post_init__(self) -> None:
-        if self.validated_precision is not None:
-            _validate_unit_interval_float("validated_precision", self.validated_precision)
-        _validate_integer("validation_sample_count", self.validation_sample_count, minimum=0)
+        for field_name in ("validated_precision", "validated_recall", "validated_f1"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _validate_unit_interval_float(field_name, value)
+        _validate_integer(
+            "validation_sample_count", self.validation_sample_count, minimum=0
+        )
+        _validate_integer(
+            "automatic_candidate_count", self.automatic_candidate_count, minimum=0
+        )
+        if self.evaluated_threshold is not None:
+            _validate_unit_interval_float(
+                "evaluated_threshold", self.evaluated_threshold
+            )
+
+    @property
+    def validation_positive_support(self) -> int:
+        return self.validation_sample_count
 
 
 @dataclass(frozen=True)
@@ -85,6 +104,14 @@ class CategoryEligibility:
     validation_sample_count: int
     auto_action_eligible: bool
     reason: str
+    validated_recall: float | None = None
+    validated_f1: float | None = None
+    automatic_candidate_count: int = 0
+    evaluated_threshold: float | None = None
+
+    @property
+    def validation_positive_support(self) -> int:
+        return self.validation_sample_count
 
 
 @dataclass(frozen=True)
@@ -126,6 +153,7 @@ def assess_candidate(
     readiness: TrainingReadiness,
     *,
     validation_score: float,
+    validation_method: str,
     per_category: Mapping[EmailCategory, CategoryValidation],
     category_requirements: Mapping[EmailCategory, EligibilityRequirement],
 ) -> CandidateAssessment:
@@ -142,24 +170,90 @@ def assess_candidate(
             validation.validated_precision is not None
             and validation.validated_precision >= requirement.minimum_precision
         )
-        samples_met = validation.validation_sample_count >= requirement.minimum_validation_samples
-        if precision_met and samples_met:
+        samples_met = (
+            validation.validation_sample_count >= requirement.minimum_validation_samples
+        )
+        threshold_matches = (
+            validation.evaluated_threshold is not None
+            and validation.evaluated_threshold == requirement.configured_threshold
+        )
+        has_threshold_metrics = (
+            validation.validated_precision is not None
+            or validation.validation_sample_count > 0
+            or validation.automatic_candidate_count > 0
+        )
+        if validation_method != "time-ordered-holdout":
+            eligible = False
+            reason = "time_ordered_validation_required"
+        elif has_threshold_metrics and validation.evaluated_threshold is None:
+            eligible = False
+            reason = "threshold_metrics_missing"
+        elif validation.evaluated_threshold is not None and not threshold_matches:
+            eligible = False
+            reason = "threshold_changed_since_training"
+        elif precision_met and samples_met:
+            eligible = True
             reason = "precision_and_sample_gate_met"
         elif not precision_met and not samples_met:
+            eligible = False
             reason = "precision_and_sample_gate_not_met"
         elif not precision_met:
+            eligible = False
             reason = "precision_gate_not_met"
         else:
+            eligible = False
             reason = "sample_gate_not_met"
         categories[category] = CategoryEligibility(
             category=category,
             configured_threshold=requirement.configured_threshold,
             validated_precision=validation.validated_precision,
             validation_sample_count=validation.validation_sample_count,
-            auto_action_eligible=precision_met and samples_met,
+            auto_action_eligible=eligible,
             reason=reason,
+            validated_recall=validation.validated_recall,
+            validated_f1=validation.validated_f1,
+            automatic_candidate_count=validation.automatic_candidate_count,
+            evaluated_threshold=validation.evaluated_threshold,
         )
     return CandidateAssessment(promote_model, promotion_reason, categories)
+
+
+def evaluate_category_validation(
+    expected: Sequence[str],
+    predictions: Sequence[EmailModelPrediction],
+    requirements: Mapping[EmailCategory, EligibilityRequirement],
+) -> dict[EmailCategory, CategoryValidation]:
+    """Compute action evidence from candidates at each exact configured threshold."""
+    if len(expected) != len(predictions):
+        raise ValueError("validation labels and predictions must be aligned")
+    result: dict[EmailCategory, CategoryValidation] = {}
+    for category, requirement in requirements.items():
+        label = category.value
+        positive_support = sum(actual == label for actual in expected)
+        candidates = [
+            index
+            for index, prediction in enumerate(predictions)
+            if prediction.label == label
+            and prediction.probability >= requirement.configured_threshold
+        ]
+        true_positives = sum(expected[index] == label for index in candidates)
+        candidate_count = len(candidates)
+        precision = float(true_positives / candidate_count) if candidate_count else 0.0
+        recall = float(true_positives / positive_support) if positive_support else 0.0
+        f1 = (
+            0.0
+            if precision + recall == 0
+            else float(2 * precision * recall / (precision + recall))
+        )
+        result[category] = CategoryValidation(
+            validated_precision=precision,
+            validation_sample_count=positive_support,
+            validated_recall=recall,
+            validated_f1=f1,
+            automatic_candidate_count=candidate_count,
+            evaluated_threshold=requirement.configured_threshold,
+        )
+    return result
 
 
 def assess_feedback_readiness(
@@ -218,7 +312,9 @@ def train_and_promote(
     """Train a candidate, validate its immutable artifact, and promote atomically."""
     if not isinstance(registry, EmailModelRegistry):
         if previous_path is None or model_version is None:
-            raise TypeError("path-based promotion requires previous_path and model_version")
+            raise TypeError(
+                "path-based promotion requires previous_path and model_version"
+            )
         return _train_and_promote_paths(
             store,
             Path(registry),
@@ -250,21 +346,27 @@ def train_and_promote(
     if not inclusion_snapshots:
         raise TrainingNotReady("no unincluded authoritative feedback")
 
-    validation_method, expected, predicted = _validation_predictions(examples, c=c)
+    validation_method, expected, validation_predictions = _validation_predictions(
+        examples, c=c
+    )
+    predicted = [prediction.label for prediction in validation_predictions]
     labels = sorted(readiness.category_counts)
     accuracy = float(accuracy_score(expected, predicted))
-    precisions, recalls, f1s, supports = precision_recall_fscore_support(
+    _, _, f1s, _ = precision_recall_fscore_support(
         expected, predicted, labels=labels, zero_division=0
     )
     macro_f1 = float(sum(float(value) for value in f1s) / len(f1s))
-    per_category_validation = {
-        EmailCategory(label): CategoryValidation(float(precisions[index]), int(supports[index]))
-        for index, label in enumerate(labels)
-    }
-    requirements = dict(category_requirements or _default_requirements(labels))
+    requirements = _default_requirements(labels)
+    requirements.update(category_requirements or {})
+    per_category_validation = evaluate_category_validation(
+        expected,
+        validation_predictions,
+        requirements,
+    )
     assessment = assess_candidate(
         readiness,
         validation_score=accuracy,
+        validation_method=validation_method,
         per_category=per_category_validation,
         category_requirements=requirements,
     )
@@ -306,16 +408,42 @@ def train_and_promote(
             macro_f1=macro_f1,
             per_category_metrics={
                 label: {
-                    "precision": float(precisions[index]),
-                    "recall": float(recalls[index]),
-                    "f1": float(f1s[index]),
-                    "validation_sample_count": int(supports[index]),
-                    "configured_threshold": assessment.categories[EmailCategory(label)].configured_threshold,
-                    "minimum_validation_samples": requirements[EmailCategory(label)].minimum_validation_samples,
-                    "auto_action_eligible": assessment.categories[EmailCategory(label)].auto_action_eligible,
-                    "eligibility_reason": assessment.categories[EmailCategory(label)].reason,
+                    "precision": per_category_validation[
+                        EmailCategory(label)
+                    ].validated_precision,
+                    "recall": per_category_validation[
+                        EmailCategory(label)
+                    ].validated_recall,
+                    "f1": per_category_validation[EmailCategory(label)].validated_f1,
+                    "validation_sample_count": per_category_validation[
+                        EmailCategory(label)
+                    ].validation_positive_support,
+                    "validation_positive_support": per_category_validation[
+                        EmailCategory(label)
+                    ].validation_positive_support,
+                    "automatic_candidate_count": per_category_validation[
+                        EmailCategory(label)
+                    ].automatic_candidate_count,
+                    "evaluated_threshold": per_category_validation[
+                        EmailCategory(label)
+                    ].evaluated_threshold,
+                    "configured_threshold": assessment.categories[
+                        EmailCategory(label)
+                    ].configured_threshold,
+                    "minimum_precision": requirements[
+                        EmailCategory(label)
+                    ].minimum_precision,
+                    "minimum_validation_samples": requirements[
+                        EmailCategory(label)
+                    ].minimum_validation_samples,
+                    "auto_action_eligible": assessment.categories[
+                        EmailCategory(label)
+                    ].auto_action_eligible,
+                    "eligibility_reason": assessment.categories[
+                        EmailCategory(label)
+                    ].reason,
                 }
-                for index, label in enumerate(labels)
+                for label in labels
             },
             prediction_latency_p50_ms=p50,
             prediction_latency_p95_ms=p95,
@@ -359,7 +487,9 @@ def train_and_promote(
                 reason=f"promotion_inclusion_failed:{type(exc).__name__}",
             )
         raise
-    return _result(metadata, promoted=True, status="active", reason="candidate_validation_passed")
+    return _result(
+        metadata, promoted=True, status="active", reason="candidate_validation_passed"
+    )
 
 
 def _train_and_promote_paths(
@@ -386,13 +516,15 @@ def _train_and_promote_paths(
     if not readiness.ready:
         raise TrainingNotReady("; ".join(readiness.reasons))
     examples = store.list_training_examples()
-    method, expected, predicted = _validation_predictions(examples, c=c)
-    accuracy = float(accuracy_score(expected, predicted))
+    method, expected, predictions = _validation_predictions(examples, c=c)
+    accuracy = float(accuracy_score(expected, [item.label for item in predictions]))
     classifier = CpuTfidfLogisticClassifier(c=c, model_version=model_version).fit(
         [item["model_text"] for item in examples],
         [item["label"] for item in examples],
     )
-    p50, p95 = _prediction_latency(classifier, [item["model_text"] for item in examples])
+    p50, p95 = _prediction_latency(
+        classifier, [item["model_text"] for item in examples]
+    )
     active.parent.mkdir(parents=True, exist_ok=True)
     candidate: Path | None = None
     try:
@@ -414,7 +546,9 @@ def _train_and_promote_paths(
         example_count=len(examples),
         new_sample_count=len(examples),
         category_counts=readiness.category_counts,
-        account_counts=dict(Counter(_account_id(item["message_id"]) for item in examples)),
+        account_counts=dict(
+            Counter(_account_id(item["message_id"]) for item in examples)
+        ),
         validation_method=method,
         accuracy=accuracy,
         macro_f1=accuracy,
@@ -427,7 +561,7 @@ def _train_and_promote_paths(
 
 def _validation_predictions(
     examples: Sequence[Mapping[str, str]], *, c: float
-) -> tuple[str, list[str], list[str]]:
+) -> tuple[str, list[str], list[EmailModelPrediction]]:
     if len(examples) >= 50:
         split = max(1, int(len(examples) * 0.8))
         training = list(examples[:split])
@@ -441,10 +575,10 @@ def _validation_predictions(
             return (
                 "time-ordered-holdout",
                 [item["label"] for item in validation],
-                [classifier.predict(item["model_text"]).label for item in validation],
+                [classifier.predict(item["model_text"]) for item in validation],
             )
     expected: list[str] = []
-    predicted: list[str] = []
+    predicted: list[EmailModelPrediction] = []
     for index, example in enumerate(examples):
         training = list(examples[:index]) + list(examples[index + 1 :])
         if len({item["label"] for item in training}) < 2:
@@ -455,7 +589,7 @@ def _validation_predictions(
             [item["label"] for item in training],
         )
         expected.append(example["label"])
-        predicted.append(classifier.predict(example["model_text"]).label)
+        predicted.append(classifier.predict(example["model_text"]))
     return "leave-one-out", expected, predicted
 
 
@@ -502,17 +636,23 @@ def _promotion_rejection(
         minimum = int(previous.get("minimum_validation_samples", 1))
         if previous_count < minimum or incoming_count < minimum:
             continue
-        if float(incoming.get("precision", 0.0)) < float(previous.get("precision", 0.0)):
+        if float(incoming.get("precision", 0.0)) < float(
+            previous.get("precision", 0.0)
+        ):
             return f"category_precision_regressed:{label}"
     return None
 
 
-def _default_requirements(labels: Sequence[str]) -> dict[EmailCategory, EligibilityRequirement]:
+def _default_requirements(
+    labels: Sequence[str],
+) -> dict[EmailCategory, EligibilityRequirement]:
     return {
         EmailCategory(label): EligibilityRequirement(
             configured_threshold=0.85,
             minimum_precision=0.95,
-            minimum_validation_samples=30,
+            minimum_validation_samples=(
+                20 if label == EmailCategory.SUBSCRIPTION.value else 30
+            ),
         )
         for label in labels
     }

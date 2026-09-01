@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import email
 import email.header
 import email.policy
@@ -9,6 +11,7 @@ import email.utils
 import html.parser
 import imaplib
 import json
+import quopri
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping
@@ -18,6 +21,13 @@ from hashlib import sha256
 from typing import Any
 
 from app.email_classifier_contracts import EmailProviderLocator
+
+
+_HEADER_FETCH = (
+    "(BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID REFERENCES "
+    "IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED)])"
+)
+_MAX_TEXT_FETCH_BYTES = 64 * 1024
 
 
 class _HTMLTextExtractor(html.parser.HTMLParser):
@@ -41,6 +51,18 @@ class ImapUidBatch:
     uidvalidity: int
     previous_uidvalidity: int | None
     messages: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
+class _BodyPart:
+    section: str
+    mime_type: str
+    charset: str
+    transfer_encoding: str
+    size_bytes: int
+    filename: str
+    disposition: str
+    children: tuple["_BodyPart", ...] = ()
 
 
 class ImapReadonlyAdapter:
@@ -102,11 +124,35 @@ class ImapReadonlyAdapter:
         uids = [uid for uid in _search_uids(data) if int(uid) >= first_uid][:limit]
         messages: list[dict[str, object]] = []
         for uid in uids:
-            status, fetch_data = self.session.uid("FETCH", uid, "(RFC822)")
-            _require_ok(status, "IMAP UID fetch failed")
+            status, structure_data = self.session.uid("FETCH", uid, "(BODYSTRUCTURE)")
+            _require_ok(status, "IMAP BODYSTRUCTURE fetch failed")
+            structure = _parse_bodystructure(structure_data)
+            status, header_data = self.session.uid("FETCH", uid, _HEADER_FETCH)
+            _require_ok(status, "IMAP header fetch failed")
+            headers = email.message_from_bytes(
+                _fetch_payload(header_data), policy=email.policy.default
+            )
+            remaining = _MAX_TEXT_FETCH_BYTES
+            body_parts: list[str] = []
+            for part in _selected_text_parts(structure):
+                if remaining <= 0:
+                    break
+                status, body_data = self.session.uid(
+                    "FETCH",
+                    uid,
+                    f"(BODY.PEEK[{part.section}]<0.{remaining}>)",
+                )
+                _require_ok(status, "IMAP text section fetch failed")
+                payload = _fetch_payload(body_data)[:remaining]
+                remaining -= len(payload)
+                if text := _decode_fetched_text(payload, part).strip():
+                    body_parts.append(text)
+            body = "\n".join(body_parts).strip()
             messages.append(
-                parse_rfc822_message(
-                    _fetch_payload(fetch_data),
+                _normalized_message_record(
+                    headers,
+                    body=body,
+                    attachments=_bodystructure_attachment_metadata(structure),
                     account_id=self.account_id,
                     folder=mailbox,
                     uidvalidity=uidvalidity,
@@ -164,9 +210,35 @@ def parse_rfc822_message(
     uid: int,
 ) -> dict[str, object]:
     parsed = email.message_from_bytes(raw, policy=email.policy.default)
+    return _normalized_message_record(
+        parsed,
+        body=_message_body(parsed),
+        attachments=_attachment_metadata(parsed),
+        account_id=account_id,
+        folder=folder,
+        uidvalidity=uidvalidity,
+        uid=uid,
+    )
+
+
+def _normalized_message_record(
+    parsed: email.message.Message,
+    *,
+    body: str,
+    attachments: list[dict[str, object]],
+    account_id: str,
+    folder: str,
+    uidvalidity: int,
+    uid: int,
+) -> dict[str, object]:
     message_id = _decode_header(parsed.get("Message-ID", ""))
-    references = parsed.get("References") or parsed.get("In-Reply-To") or message_id
-    thread_id = _thread_identity(str(references or ""), account_id=account_id)
+    in_reply_to = _message_ids(parsed.get("In-Reply-To", ""))
+    references = _message_ids(parsed.get("References", ""))
+    thread_source = references or in_reply_to or _message_ids(message_id)
+    thread_id = _thread_identity(
+        thread_source[0] if thread_source else "",
+        account_id=account_id,
+    )
     locator = EmailProviderLocator(
         account_id=account_id,
         folder=folder,
@@ -175,8 +247,6 @@ def parse_rfc822_message(
         rfc_message_id=message_id,
         thread_id=thread_id,
     )
-    body = _message_body(parsed)
-    attachments = _attachment_metadata(parsed)
     sender_name, sender_email = _first_address(parsed.get("From", ""))
     to_recipients = _addresses(parsed.get_all("To", []))
     cc_recipients = _addresses(parsed.get_all("Cc", []))
@@ -203,6 +273,8 @@ def parse_rfc822_message(
         "uidValidity": locator.uidvalidity,
         "uid": locator.uid,
         "messageId": locator.rfc_message_id,
+        "inReplyTo": in_reply_to[0] if in_reply_to else "",
+        "references": list(references),
         "threadId": locator.thread_id,
         "from": {"name": sender_name, "email": sender_email},
         "toRecipients": to_recipients,
@@ -212,10 +284,247 @@ def parse_rfc822_message(
         "textBody": body,
         "markdownBody": body,
         "listUnsubscribe": parsed.get("List-Unsubscribe", ""),
+        "listUnsubscribePost": parsed.get("List-Unsubscribe-Post", ""),
         "autoSubmitted": parsed.get("Auto-Submitted", ""),
         "hasAttachment": bool(attachments),
         "attachments": attachments,
     }
+
+
+def _parse_bodystructure(data: object) -> _BodyPart:
+    metadata = _fetch_metadata(data)
+    match = re.search(rb"\bBODYSTRUCTURE\b", metadata, flags=re.IGNORECASE)
+    if match is None:
+        raise ConnectionError("IMAP BODYSTRUCTURE fetch returned invalid data")
+    expression = metadata[match.end() :].lstrip()
+    try:
+        value, _ = _parse_imap_value(expression, 0)
+        return _body_part(value, section="")
+    except (IndexError, TypeError, ValueError) as exc:
+        raise ConnectionError("IMAP BODYSTRUCTURE fetch returned invalid data") from exc
+
+
+def _fetch_metadata(data: object) -> bytes:
+    if not isinstance(data, (list, tuple)):
+        raise ConnectionError("IMAP FETCH returned invalid data")
+    parts: list[bytes] = []
+    for item in data:
+        if isinstance(item, bytes):
+            parts.append(item)
+        elif isinstance(item, tuple) and item and isinstance(item[0], bytes):
+            parts.append(item[0])
+    return b" ".join(parts)
+
+
+def _parse_imap_value(data: bytes, index: int) -> tuple[object, int]:
+    while index < len(data) and data[index : index + 1].isspace():
+        index += 1
+    if index >= len(data):
+        raise ValueError("missing IMAP value")
+    if data[index] == ord("("):
+        values: list[object] = []
+        index += 1
+        while True:
+            while index < len(data) and data[index : index + 1].isspace():
+                index += 1
+            if index >= len(data):
+                raise ValueError("unterminated IMAP list")
+            if data[index] == ord(")"):
+                return values, index + 1
+            value, index = _parse_imap_value(data, index)
+            values.append(value)
+    if data[index] == ord('"'):
+        index += 1
+        value = bytearray()
+        while index < len(data):
+            character = data[index]
+            index += 1
+            if character == ord('"'):
+                return value.decode("utf-8", errors="replace"), index
+            if character == ord("\\"):
+                if index >= len(data):
+                    raise ValueError("unterminated IMAP quoted string")
+                character = data[index]
+                index += 1
+            value.append(character)
+        raise ValueError("unterminated IMAP quoted string")
+    end = index
+    while (
+        end < len(data)
+        and not data[end : end + 1].isspace()
+        and data[end]
+        not in (
+            ord("("),
+            ord(")"),
+        )
+    ):
+        end += 1
+    atom = data[index:end].decode("ascii", errors="replace")
+    if atom.upper() == "NIL":
+        return None, end
+    if atom.isdigit():
+        return int(atom), end
+    return atom, end
+
+
+def _body_part(value: object, *, section: str) -> _BodyPart:
+    if not isinstance(value, list) or not value:
+        raise ValueError("BODYSTRUCTURE node must be a non-empty list")
+    if isinstance(value[0], list):
+        child_count = 0
+        while child_count < len(value) and isinstance(value[child_count], list):
+            child_count += 1
+        if child_count == 0 or child_count >= len(value):
+            raise ValueError("multipart BODYSTRUCTURE is incomplete")
+        children = tuple(
+            _body_part(
+                child,
+                section=f"{section}.{index}" if section else str(index),
+            )
+            for index, child in enumerate(value[:child_count], start=1)
+        )
+        disposition, disposition_params = _body_disposition(
+            value[child_count + 2] if len(value) > child_count + 2 else None
+        )
+        return _BodyPart(
+            section=section,
+            mime_type=f"multipart/{_body_string(value[child_count]).lower()}",
+            charset="",
+            transfer_encoding="",
+            size_bytes=0,
+            filename=_body_filename({}, disposition_params),
+            disposition=disposition,
+            children=children,
+        )
+    if len(value) < 7:
+        raise ValueError("single-part BODYSTRUCTURE is incomplete")
+    media_type = _body_string(value[0]).lower()
+    subtype = _body_string(value[1]).lower()
+    params = _body_params(value[2])
+    if media_type == "text":
+        disposition_index = 9
+    elif media_type == "message" and subtype == "rfc822":
+        disposition_index = 11
+    else:
+        disposition_index = 8
+    disposition, disposition_params = _body_disposition(
+        value[disposition_index] if len(value) > disposition_index else None
+    )
+    size = value[6] if isinstance(value[6], int) else 0
+    return _BodyPart(
+        section=section or "1",
+        mime_type=f"{media_type}/{subtype}",
+        charset=params.get("CHARSET", ""),
+        transfer_encoding=_body_string(value[5]).lower(),
+        size_bytes=max(size, 0),
+        filename=_body_filename(params, disposition_params),
+        disposition=disposition,
+    )
+
+
+def _body_string(value: object) -> str:
+    return "" if value is None else str(value)
+
+
+def _body_params(value: object) -> dict[str, str]:
+    if not isinstance(value, list):
+        return {}
+    return {
+        _body_string(value[index]).upper(): _body_string(value[index + 1])
+        for index in range(0, len(value) - 1, 2)
+    }
+
+
+def _body_disposition(value: object) -> tuple[str, dict[str, str]]:
+    if not isinstance(value, list) or not value:
+        return "", {}
+    return _body_string(value[0]).lower(), _body_params(
+        value[1] if len(value) > 1 else None
+    )
+
+
+def _body_filename(
+    content_params: Mapping[str, str], disposition_params: Mapping[str, str]
+) -> str:
+    return _decode_header(
+        disposition_params.get("FILENAME") or content_params.get("NAME") or ""
+    )
+
+
+def _is_bodystructure_attachment(part: _BodyPart) -> bool:
+    return part.disposition in {"attachment", "inline"} or bool(part.filename)
+
+
+def _selected_text_parts(part: _BodyPart) -> tuple[_BodyPart, ...]:
+    if _is_bodystructure_attachment(part):
+        return ()
+    if part.mime_type == "multipart/alternative":
+        descendants = tuple(_text_descendants(part))
+        for preferred_type in ("text/plain", "text/html"):
+            for candidate in descendants:
+                if candidate.mime_type == preferred_type:
+                    return (candidate,)
+        return ()
+    if part.children:
+        return tuple(
+            child_part
+            for child in part.children
+            for child_part in _selected_text_parts(child)
+        )
+    if part.mime_type in {"text/plain", "text/html"}:
+        return (part,)
+    return ()
+
+
+def _text_descendants(part: _BodyPart) -> Iterable[_BodyPart]:
+    for child in part.children:
+        if _is_bodystructure_attachment(child):
+            continue
+        if child.children:
+            yield from _text_descendants(child)
+        elif child.mime_type in {"text/plain", "text/html"}:
+            yield child
+
+
+def _bodystructure_attachment_metadata(
+    part: _BodyPart,
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+
+    def visit(candidate: _BodyPart) -> None:
+        if _is_bodystructure_attachment(candidate):
+            result.append(
+                {
+                    "filename": candidate.filename,
+                    "mime_type": candidate.mime_type,
+                    "size_bytes": candidate.size_bytes,
+                    "inline": candidate.disposition == "inline",
+                }
+            )
+            return
+        for child in candidate.children:
+            visit(child)
+
+    visit(part)
+    return result
+
+
+def _decode_fetched_text(payload: bytes, part: _BodyPart) -> str:
+    decoded = payload
+    if part.transfer_encoding == "base64":
+        compact = b"".join(payload.split())
+        compact += b"=" * (-len(compact) % 4)
+        try:
+            decoded = base64.b64decode(compact, validate=False)
+        except binascii.Error:
+            decoded = b""
+    elif part.transfer_encoding == "quoted-printable":
+        decoded = quopri.decodestring(payload)
+    value = decoded.decode(part.charset or "utf-8", errors="replace")
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    if part.mime_type == "text/html":
+        return _html_to_text(value)
+    return value
 
 
 def _parts(message: email.message.Message) -> Iterable[email.message.Message]:
@@ -245,9 +554,7 @@ def _message_body(message: email.message.Message) -> str:
                     return text
         return ""
     return "\n".join(
-        text
-        for child in children
-        if (text := _message_body(child).strip())
+        text for child in children if (text := _message_body(child).strip())
     ).strip()
 
 
@@ -343,7 +650,9 @@ def fallback_stable_message_identity(
     for field in ("toRecipients", "ccRecipients"):
         values = message.get(field) or ()
         if isinstance(values, Iterable) and not isinstance(values, str | bytes):
-            recipients.extend(dict(item) for item in values if isinstance(item, Mapping))
+            recipients.extend(
+                dict(item) for item in values if isinstance(item, Mapping)
+            )
     canonical = json.dumps(
         {
             "sender": _canonical_address(sender),
@@ -398,6 +707,21 @@ def _thread_identity(value: str, *, account_id: str) -> str | None:
     ).rfc_message_id
 
 
+def _message_ids(value: object) -> tuple[str, ...]:
+    result: list[str] = []
+    for candidate in re.findall(r"<[^<>\s]+@[^<>\s]+>", str(value or "")):
+        normalized = EmailProviderLocator(
+            account_id="message-id-normalizer",
+            folder="message-id-normalizer",
+            uidvalidity=1,
+            uid=1,
+            rfc_message_id=candidate,
+        ).rfc_message_id
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return tuple(result)
+
+
 def _decode_part(part: email.message.Message) -> str:
     payload = part.get_payload(decode=True)
     if payload is None:
@@ -416,7 +740,9 @@ def _html_to_text(value: str) -> str:
 
 def _decode_header(value: object) -> str:
     try:
-        return str(email.header.make_header(email.header.decode_header(str(value or ""))))
+        return str(
+            email.header.make_header(email.header.decode_header(str(value or "")))
+        )
     except (LookupError, UnicodeError, ValueError):
         return str(value or "")
 
@@ -443,13 +769,13 @@ def _require_ok(status: object, message: str) -> None:
 
 
 def _search_uids(data: object) -> list[bytes]:
-    if not isinstance(data, (list, tuple)) or not data or not isinstance(data[0], bytes):
+    if (
+        not isinstance(data, (list, tuple))
+        or not data
+        or not isinstance(data[0], bytes)
+    ):
         return []
-    values = {
-        int(uid)
-        for uid in data[0].split()
-        if uid.isdigit() and int(uid) > 0
-    }
+    values = {int(uid) for uid in data[0].split() if uid.isdigit() and int(uid) > 0}
     return [str(uid).encode("ascii") for uid in sorted(values)]
 
 
@@ -459,7 +785,7 @@ def _fetch_payload(data: object) -> bytes:
     for item in data:
         if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], bytes):
             return item[1]
-    raise ConnectionError("IMAP UID fetch returned no RFC822 payload")
+    raise ConnectionError("IMAP UID fetch returned no literal payload")
 
 
 def _uidvalidity(response: object) -> int:

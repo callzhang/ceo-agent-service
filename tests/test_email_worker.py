@@ -7,6 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.agent_context import AgentTaskContext
+from app.email_classifier_contracts import EmailAction
+from app.email_store import email_action_identity
+
 
 def _module():
     return import_module("app.email_worker")
@@ -57,7 +61,7 @@ def test_startup_loads_enabled_accounts_and_active_model_before_ready_and_thread
 
     assert events[:2] == ["accounts", "model"]
     assert output.getvalue().strip() == (
-        "email-worker ready accounts=1 components=3"
+        "email-worker starting accounts=1 components=3"
     )
     assert events[2:] == [
         ("create", "ceo-agent-email-scan-actions", True),
@@ -70,53 +74,65 @@ def test_startup_loads_enabled_accounts_and_active_model_before_ready_and_thread
     ]
 
 
-def test_startup_without_enabled_accounts_idles_without_threads():
+@pytest.mark.parametrize("failure", ["empty_accounts", "model_failure"])
+def test_startup_failure_does_not_report_ready_or_start_threads(failure):
     module = _module()
     output = StringIO()
     started = []
     events = []
     dependencies = _dependencies(
         events,
-        accounts=(),
+        accounts=()
+        if failure == "empty_accounts"
+        else ({"account_id": "account-1", "enabled": True},),
     )
+    if failure == "model_failure":
+        dependencies.load_active_model = lambda: (_ for _ in ()).throw(
+            RuntimeError("active model missing")
+        )
 
     module.run_email_worker(
         SimpleNamespace(),
         dependencies=dependencies,
         thread_factory=lambda **kwargs: started.append(kwargs),
-        wait=lambda: events.append("wait"),
+        wait=lambda: None,
         output=output,
     )
 
-    assert events == ["accounts", "wait"]
-    assert output.getvalue().strip() == "email-worker idle accounts=0"
+    assert output.getvalue().startswith("email-worker waiting_configuration")
     assert started == []
 
 
-def test_startup_failure_does_not_report_ready_or_start_threads():
+@pytest.mark.parametrize("configuration", ["empty_accounts", "missing_model"])
+def test_missing_configuration_reports_waiting_configuration_without_starting_threads(
+    configuration,
+):
     module = _module()
-    output = StringIO()
-    started = []
+    health = []
     events = []
     dependencies = _dependencies(
         events,
-        accounts=({"account_id": "account-1", "enabled": True},),
+        accounts=()
+        if configuration == "empty_accounts"
+        else ({"account_id": "account-1", "enabled": True},),
+        model=None if configuration == "missing_model" else object(),
     )
-    dependencies.load_active_model = lambda: (_ for _ in ()).throw(
-        RuntimeError("active model missing")
+    dependencies.record_health = lambda scope, payload: health.append((scope, payload))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=lambda **_kwargs: pytest.fail("waiting worker must not start"),
+        wait=lambda: None,
+        output=StringIO(),
     )
 
-    with pytest.raises(module.EmailWorkerStartupError):
-        module.run_email_worker(
-            SimpleNamespace(),
-            dependencies=dependencies,
-            thread_factory=lambda **kwargs: started.append(kwargs),
-            wait=lambda: None,
-            output=output,
+    assert health == [
+        (
+            "process:email-worker",
+            {"status": "waiting_configuration", "reason": configuration},
         )
-
-    assert output.getvalue() == ""
-    assert started == []
+    ]
 
 
 def test_email_worker_components_are_three_independent_daemon_threads():
@@ -297,39 +313,190 @@ def test_email_agent_consumer_claims_only_email_channel_without_dingtalk_adapter
     assert calls[5] == ("finalize", task, result)
 
 
-def test_email_agent_consumer_processes_existing_task_when_mail_review_disabled():
+def test_unsubscribe_task_uses_direct_consumer_without_orchestrator():
     module = _module()
+    action_identity = email_action_identity(
+        account_id="account-1",
+        stable_message_identity="account-1:message-id:<mail@example.com>",
+        action_type=EmailAction.UNSUBSCRIBE,
+        action_plan_version=1,
+    )
+    payload = {
+        "schema": "email_agent_action.v1",
+        "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+        "action_type": "unsubscribe",
+        "action_identity": action_identity,
+        "action_plan_id": "email-plan:1",
+        "action_plan_version": 1,
+        "classification_id": 1,
+        "account_id": "account-1",
+        "stable_message_identity": "account-1:message-id:<mail@example.com>",
+        "thread_identity": "thread-1",
+        "category": "subscription",
+        "classification_source": "user",
+        "confidence": 1.0,
+        "model_id": "email-model:test",
+        "config_version": "email-config:test",
+        "action_parameters": {},
+    }
+    task = SimpleNamespace(
+        id=7,
+        execution_generation="generation-1",
+        channel="email",
+        conversation_id="email-thread:1",
+        conversation_title="Email unsubscribe",
+        trigger_message_id=action_identity,
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        trigger_create_time="2026-08-30T08:00:00+00:00",
+        trigger_message_json=json.dumps(payload),
+    )
+    context = AgentTaskContext(
+        task_id=task.id,
+        channel="email",
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        single_chat=False,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        trigger_create_time=task.trigger_create_time,
+        messages=(),
+        materials=(),
+        prior_receipts=(),
+        trigger_raw_payload=payload,
+    )
     calls = []
 
     class Store:
         def claim_reply_tasks(self, limit, *, channel):
             calls.append(("claim", limit, channel))
-            return [SimpleNamespace(id=1)]
+            return [task]
 
-        def fail_reply_task(self, *args, **kwargs):
-            pytest.fail("existing task should be processed, not failed")
+    class DirectConsumer:
+        def run(self, claimed, loaded):
+            calls.append(("direct", claimed, loaded))
+            return "direct-result"
 
-    class DisabledRegistry:
-        def feature_enabled(self, feature_id):
-            assert feature_id == "mail_review"
-            return False
-
+    orchestrator = SimpleNamespace(
+        process=lambda *_args, **_kwargs: pytest.fail("Audit orchestrator was called")
+    )
     module.run_email_agent_task_loop(
         Store(),
-        SimpleNamespace(
-            process=lambda task, context, *, refresh_context: calls.append(
-                ("process", task.id, context)
-            )
-            or "done"
+        orchestrator,
+        unsubscribe_consumer=DirectConsumer(),
+        load_task_context=lambda claimed: context,
+        finalize_task=lambda claimed, result: calls.append(
+            ("finalize", claimed, result)
         ),
-        load_task_context=lambda task: calls.append(("context", task.id)) or "ctx",
-        finalize_task=lambda task, result: calls.append(("finalize", task.id, result)),
-        feature_registry=DisabledRegistry(),
         sleep=lambda _seconds: None,
         max_cycles=1,
     )
 
-    assert calls == [("claim", 50, "email"), ("context", 1), ("process", 1, "ctx"), ("finalize", 1, "done")]
+    assert calls[1] == ("direct", task, context)
+    assert calls[2] == ("finalize", task, "direct-result")
+
+
+def test_default_dependency_builder_wires_a_real_unsubscribe_consumer(
+    tmp_path, monkeypatch
+):
+    module = _module()
+    sentinel = object()
+    captured = []
+
+    monkeypatch.setattr(
+        module,
+        "_build_email_unsubscribe_consumer",
+        lambda *args, **kwargs: captured.append((args, kwargs))
+        or (sentinel, object()),
+    )
+    from app.email_model_registry import EmailModelRegistry
+
+    monkeypatch.setattr(
+        EmailModelRegistry,
+        "get_model",
+        lambda self, _model_id: SimpleNamespace(
+            metadata=SimpleNamespace(per_category_metrics={})
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_scan_config",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            config_version="test",
+            thresholds={},
+            actions={},
+            category_eligibility={},
+            action_parameters={},
+            category_enabled={},
+        ),
+    )
+
+    settings = SimpleNamespace(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path,
+        dry_run=False,
+    )
+    bootstrap = module.build_email_worker_dependencies(settings)
+    dependencies = bootstrap.build_dependencies(
+        ({"account_id": "account-1", "enabled": True},),
+        SimpleNamespace(
+            loaded=SimpleNamespace(model_id="email-model:test", classifier=object()),
+            tick=lambda: None,
+        ),
+    )
+
+    assert dependencies.unsubscribe_consumer is sentinel
+    assert captured
+
+
+def test_unsubscribe_result_finalizes_without_agent_or_audit_run():
+    module = _module()
+    from app.agent_result import AgentError
+    from app.email_unsubscribe_consumer import EmailUnsubscribeConsumerResult
+
+    task = SimpleNamespace(
+        id=7,
+        execution_generation="generation-1",
+        conversation_id="email-thread:1",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:unsubscribe-1",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def finalize_reply_task_without_run(self, **kwargs):
+            calls.append(kwargs)
+
+    result = EmailUnsubscribeConsumerResult(
+        outcome="no_action",
+        summary="Already unsubscribed.",
+        error=AgentError(),
+    )
+
+    module._finalize_email_task(Store(), task, result)
+
+    assert calls == [
+        {
+            "task_id": 7,
+            "expected_execution_generation": "generation-1",
+            "task_status": "done",
+            "task_error": "",
+            "available_at": "",
+            "conversation_id": "email-thread:1",
+            "conversation_title": "Email unsubscribe",
+            "trigger_message_id": "email-action:unsubscribe-1",
+            "trigger_sender": "sender@example.com",
+            "trigger_text": "Immutable ActionPlan authorizes unsubscribe.",
+            "codex_reason": "Already unsubscribed.",
+            "audit_summary": "",
+            "send_status": "skipped",
+            "send_error": "",
+            "channel": "email",
+        }
+    ]
 
 
 def test_direct_actions_are_not_claimed_without_a_provider_executor_factory():
@@ -379,6 +546,72 @@ def test_direct_action_executor_result_completes_the_exact_claim():
     assert completed[0][1]["finished_at"]
 
 
+def test_direct_action_does_not_claim_an_unavailable_account():
+    module = _module()
+    calls = []
+
+    class Store:
+        def claim_next_direct_action(self, **kwargs):
+            calls.append(kwargs)
+            pytest.fail("unavailable account must not be claimed")
+
+    assert module._run_next_direct_action(
+        Store(),
+        lambda _account_id: None,
+        available_account_ids=(),
+    ) is None
+    assert calls == []
+
+
+def test_direct_action_loop_recovers_stale_claim_before_claiming_next_action():
+    module = _module()
+    calls = []
+
+    class Store:
+        def recover_stale_processing_actions(self, **kwargs):
+            calls.append(("recover", kwargs))
+            return 1
+
+        def claim_next_direct_action(self, **kwargs):
+            calls.append(("claim", kwargs))
+            return None
+
+    assert module._run_next_direct_action(
+        Store(),
+        lambda _account_id: object(),
+        available_account_ids=("account-1",),
+    ) is None
+    assert [name for name, _kwargs in calls] == ["recover", "claim"]
+
+
+def test_failed_direct_action_degrades_provider_component_health():
+    module = _module()
+    health = []
+    failed = type(
+        "FailedProviderResult",
+        (),
+        {
+            "status": "failed",
+            "error": "provider_apply_failed:TimeoutError",
+        },
+    )()
+
+    module.run_scan_and_direct_actions_loop(
+        ({"account_id": "account-1", "scan_interval_seconds": 60},),
+        object(),
+        scan_account=lambda _account, _model: {"persisted_count": 1},
+        run_direct_actions_once=lambda: failed,
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert ("component:email-provider-actions", {
+        "status": "degraded",
+        "error_code": "provider_action_failed",
+    }) in health
+
+
 def test_scan_config_uses_active_model_category_eligibility():
     module = _module()
     contracts = import_module("app.email_classifier_contracts")
@@ -389,7 +622,9 @@ def test_scan_config_uses_active_model_category_eligibility():
             "description": category.value,
             "enabled": True,
             "threshold": 0.8,
-            "actions": ["mark_read"] if category is contracts.EmailCategory.WORK else [],
+            "actions": ["mark_read"]
+            if category is contracts.EmailCategory.WORK
+            else [],
             "action_parameters": {},
             "config_version": "config-v3",
         }
@@ -489,7 +724,7 @@ def test_startup_builds_real_loop_dependencies_only_after_accounts_and_model():
         "model",
         ("dependencies", accounts, model),
     ]
-    assert output.getvalue().startswith("email-worker ready")
+    assert output.getvalue().startswith("email-worker starting")
 
 
 def test_startup_records_process_heartbeat_only_after_dependencies_are_ready():
@@ -509,20 +744,58 @@ def test_startup_records_process_heartbeat_only_after_dependencies_are_ready():
     assert health == [
         (
             "process:email-worker",
+            {"status": "starting", "accounts": 1, "components": 3},
+        )
+    ]
+
+
+def test_readiness_barrier_reports_ready_only_after_all_component_heartbeats():
+    module = _module()
+    health = []
+    barrier = module.EmailWorkerReadiness(
+        ("email-scan-actions", "email-agent-consumer", "email-training"),
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        accounts=1,
+    )
+
+    barrier.mark_ready("email-scan-actions")
+    barrier.mark_ready("email-training")
+    assert [scope for scope, _payload in health] == []
+
+    barrier.mark_ready("email-agent-consumer")
+    assert health == [
+        (
+            "process:email-worker",
             {"status": "ready", "accounts": 1, "components": 3},
         )
     ]
+
+
+def test_default_worker_wait_detects_an_unexpected_component_exit():
+    module = _module()
+
+    class DeadThread:
+        def is_alive(self):
+            return False
+
+    with pytest.raises(RuntimeError, match="component exited unexpectedly"):
+        module._wait_for_email_components((DeadThread(),))
 
 
 def test_email_task_input_uses_thread_text_attachment_metadata_and_receipts():
     module = _module()
     stable_identity = "account-1:message-id:<current@example.com>"
     payload = {
+        "schema": "email_agent_action.v1",
         "account_id": "account-1",
         "stable_message_identity": stable_identity,
         "thread_identity": "thread-1",
         "classification_id": 17,
         "action_identity": "email-action:auto-reply-1",
+        "action_plan_id": "email-plan:17:v1",
+        "action_plan_version": 1,
+        "model_id": "email-model:test",
+        "config_version": "email-config:test",
     }
     task = SimpleNamespace(trigger_message_json=json.dumps(payload))
     classification = {
@@ -534,6 +807,13 @@ def test_email_task_input_uses_thread_text_attachment_metadata_and_receipts():
         "thread_id": "thread-1",
         "stable_message_identity": stable_identity,
         "subject": "Current subject",
+        "current_action_plan_id": "email-plan:17:v1",
+        "action_plan": {
+            "action_plan_id": "email-plan:17:v1",
+            "action_plan_version": 1,
+            "model_id": "email-model:test",
+            "config_version": "email-config:test",
+        },
     }
     email_store = SimpleNamespace(
         get_classification=lambda classification_id: (
@@ -548,6 +828,41 @@ def test_email_task_input_uses_thread_text_attachment_metadata_and_receipts():
             "display_excerpt": "Automatic email reply verified in Sent.",
         },
         get_email_unsubscribe_receipt=lambda _action_identity: None,
+        list_email_context_thread=lambda **_kwargs: [
+            {
+                "stable_message_identity": "account-1:message-id:<prior@example.com>",
+                "thread_identity": "thread-1",
+                "sender": "prior@example.com",
+                "subject": "Prior subject",
+                "normalized_text": "Prior thread text",
+                "attachment_metadata": [],
+                "received_at": "2026-08-30T08:00:00+00:00",
+            },
+            {
+                "stable_message_identity": stable_identity,
+                "thread_identity": "thread-1",
+                "sender": "sender@example.com",
+                "subject": "Current subject",
+                "normalized_text": "Current message text",
+                "attachment_metadata": [
+                    {
+                        "filename": "contract.pdf",
+                        "mime_type": "application/pdf",
+                        "size_bytes": 1234,
+                        "inline": False,
+                    }
+                ],
+                "received_at": "2026-08-30T09:00:00+00:00",
+            },
+        ],
+        list_email_context_receipts=lambda **_kwargs: [
+            {
+                "receipt_id": "sent-17",
+                "operation": "sent_readback",
+                "summary": "Automatic email reply verified in Sent.",
+                "completed": True,
+            }
+        ],
     )
     source = SimpleNamespace(
         fetch_uid_batch=lambda *args, **kwargs: SimpleNamespace(

@@ -12,6 +12,7 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     EmailProviderLocator,
 )
+from app.email_classifier_model import EmailModelPrediction
 from app.email_classifier_training import (
     CandidateAssessment,
     CategoryEligibility,
@@ -21,6 +22,7 @@ from app.email_classifier_training import (
     TrainingReadiness,
     assess_candidate,
     assess_feedback_readiness,
+    evaluate_category_validation,
     train_and_promote,
 )
 from app.email_model_registry import EmailModelRegistry
@@ -48,6 +50,10 @@ def _assess_important(
             EmailCategory.IMPORTANT: CategoryValidation(
                 validated_precision=validated_precision,
                 validation_sample_count=validation_sample_count,
+                validated_recall=0.80,
+                validated_f1=0.87,
+                automatic_candidate_count=validation_sample_count,
+                evaluated_threshold=0.85,
             )
         }
         if include_metrics
@@ -61,6 +67,7 @@ def _assess_important(
             reasons=() if readiness else ("feedback not ready",),
         ),
         validation_score=validation_score,
+        validation_method="time-ordered-holdout",
         per_category=per_category,
         category_requirements={
             EmailCategory.IMPORTANT: EligibilityRequirement(
@@ -73,9 +80,11 @@ def _assess_important(
 
 
 def _classification(message_id: str, category: EmailCategory) -> EmailClassification:
-    classification_id = int.from_bytes(
-        sha256(message_id.encode("utf-8")).digest()[:8], "big"
-    ) & ((1 << 63) - 1) or 1
+    classification_id = (
+        int.from_bytes(sha256(message_id.encode("utf-8")).digest()[:8], "big")
+        & ((1 << 63) - 1)
+        or 1
+    )
     return EmailClassification(
         classification_id=classification_id,
         stable_message_identity=f"test-account:imap:INBOX:1:{classification_id}",
@@ -174,10 +183,15 @@ def test_model_promotion_does_not_imply_category_action_eligibility():
             reasons=(),
         ),
         validation_score=0.61,
+        validation_method="time-ordered-holdout",
         per_category={
             EmailCategory.IMPORTANT: CategoryValidation(
                 validated_precision=0.84,
                 validation_sample_count=19,
+                validated_recall=0.75,
+                validated_f1=0.79,
+                automatic_candidate_count=20,
+                evaluated_threshold=0.85,
             )
         },
         category_requirements={
@@ -194,6 +208,7 @@ def test_model_promotion_does_not_imply_category_action_eligibility():
     assert important.auto_action_eligible is False
     assert important.validated_precision == 0.84
     assert important.validation_sample_count == 19
+    assert important.validation_positive_support == 19
     assert important.reason == "precision_and_sample_gate_not_met"
 
 
@@ -252,6 +267,115 @@ def test_missing_category_precision_fails_closed():
     result = assessment.categories[EmailCategory.IMPORTANT]
     assert result.auto_action_eligible is False
     assert result.reason == "precision_gate_not_met"
+
+
+def test_non_time_ordered_validation_cannot_authorize_automatic_action():
+    assessment = assess_candidate(
+        TrainingReadiness(True, 40, {"important": 20, "work": 20}, ()),
+        validation_score=0.90,
+        validation_method="leave-one-out",
+        per_category={
+            EmailCategory.IMPORTANT: CategoryValidation(
+                validated_precision=1.0,
+                validation_sample_count=20,
+                validated_recall=1.0,
+                validated_f1=1.0,
+                automatic_candidate_count=20,
+                evaluated_threshold=0.85,
+            )
+        },
+        category_requirements={
+            EmailCategory.IMPORTANT: EligibilityRequirement(0.85, 0.95, 20)
+        },
+    )
+
+    result = assessment.categories[EmailCategory.IMPORTANT]
+    assert result.auto_action_eligible is False
+    assert result.reason == "time_ordered_validation_required"
+
+
+def test_threshold_mismatch_cannot_authorize_automatic_action():
+    assessment = assess_candidate(
+        TrainingReadiness(True, 100, {"subscription": 20, "work": 80}, ()),
+        validation_score=0.90,
+        validation_method="time-ordered-holdout",
+        per_category={
+            EmailCategory.SUBSCRIPTION: CategoryValidation(
+                validated_precision=1.0,
+                validation_sample_count=20,
+                validated_recall=1.0,
+                validated_f1=1.0,
+                automatic_candidate_count=20,
+                evaluated_threshold=0.80,
+            )
+        },
+        category_requirements={
+            EmailCategory.SUBSCRIPTION: EligibilityRequirement(0.85, 0.95, 20)
+        },
+    )
+
+    result = assessment.categories[EmailCategory.SUBSCRIPTION]
+    assert result.auto_action_eligible is False
+    assert result.reason == "threshold_changed_since_training"
+
+
+def test_category_validation_is_computed_at_exact_automatic_threshold():
+    expected = ["subscription", "subscription", "work", "work"]
+    predictions = [
+        EmailModelPrediction(
+            "subscription",
+            0.96,
+            0.50,
+            {"subscription": 0.96, "work": 0.04},
+            "v",
+        ),
+        EmailModelPrediction(
+            "work", 0.70, 0.40, {"subscription": 0.30, "work": 0.70}, "v"
+        ),
+        EmailModelPrediction(
+            "subscription",
+            0.97,
+            0.60,
+            {"subscription": 0.97, "work": 0.03},
+            "v",
+        ),
+        EmailModelPrediction(
+            "work", 0.99, 0.98, {"subscription": 0.01, "work": 0.99}, "v"
+        ),
+    ]
+    requirements = {EmailCategory.SUBSCRIPTION: EligibilityRequirement(0.95, 0.95, 20)}
+
+    validation = evaluate_category_validation(expected, predictions, requirements)[
+        EmailCategory.SUBSCRIPTION
+    ]
+
+    assert validation.validated_precision == 0.5
+    assert validation.validated_recall == 0.5
+    assert validation.validated_f1 == 0.5
+    assert validation.validation_positive_support == 2
+    assert validation.automatic_candidate_count == 2
+    assert validation.evaluated_threshold == 0.95
+
+
+def test_zero_threshold_candidates_record_zero_metrics_and_fail_closed():
+    validation = evaluate_category_validation(
+        ["work", "work"],
+        [
+            EmailModelPrediction(
+                "work", 0.99, 0.98, {"subscription": 0.01, "work": 0.99}, "v"
+            ),
+            EmailModelPrediction(
+                "work", 0.98, 0.96, {"subscription": 0.02, "work": 0.98}, "v"
+            ),
+        ],
+        {EmailCategory.SUBSCRIPTION: EligibilityRequirement(0.95, 0.95, 20)},
+    )[EmailCategory.SUBSCRIPTION]
+
+    assert validation.validated_precision == 0.0
+    assert validation.validated_recall == 0.0
+    assert validation.validated_f1 == 0.0
+    assert validation.validation_positive_support == 0
+    assert validation.automatic_candidate_count == 0
 
 
 def test_feedback_readiness_prevents_model_promotion():
@@ -384,7 +508,9 @@ def test_train_and_promote_round_trips_candidate_and_previous_model(tmp_path: Pa
     assert previous.exists()
 
 
-def test_registry_promotion_marks_only_authoritative_samples_after_success(tmp_path: Path):
+def test_registry_promotion_marks_only_authoritative_samples_after_success(
+    tmp_path: Path,
+):
     store = _store_with_confirmed_feedback(tmp_path)
     registry = EmailModelRegistry(tmp_path / "registry")
 
@@ -595,7 +721,9 @@ def test_inclusion_failure_after_promotion_restores_exact_prior_manifests(
     monkeypatch.setattr(
         store,
         "_update_training_inclusion",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(sqlite3.DatabaseError("forced")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            sqlite3.DatabaseError("forced")
+        ),
     )
 
     with pytest.raises(sqlite3.DatabaseError, match="forced"):
@@ -619,7 +747,9 @@ def test_training_not_ready_does_not_create_active_model(tmp_path: Path):
     active = tmp_path / "model.active.pkl"
 
     with pytest.raises(TrainingNotReady):
-        train_and_promote(store, active, tmp_path / "model.previous.pkl", model_version="x")
+        train_and_promote(
+            store, active, tmp_path / "model.previous.pkl", model_version="x"
+        )
 
     assert not active.exists()
 

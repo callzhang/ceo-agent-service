@@ -50,7 +50,11 @@ def _metadata(*, digest: str, model_id: str) -> EmailModelMetadata:
                 "recall": 0.7,
                 "f1": 0.75,
                 "validation_sample_count": 2,
+                "validation_positive_support": 2,
+                "automatic_candidate_count": 0,
+                "evaluated_threshold": 0.85,
                 "configured_threshold": 0.85,
+                "minimum_precision": 0.95,
                 "minimum_validation_samples": 30,
                 "auto_action_eligible": False,
                 "eligibility_reason": "sample_gate_not_met",
@@ -60,7 +64,11 @@ def _metadata(*, digest: str, model_id: str) -> EmailModelMetadata:
                 "recall": 0.8,
                 "f1": 0.74,
                 "validation_sample_count": 2,
+                "validation_positive_support": 2,
+                "automatic_candidate_count": 0,
+                "evaluated_threshold": 0.85,
                 "configured_threshold": 0.85,
+                "minimum_precision": 0.95,
                 "minimum_validation_samples": 30,
                 "auto_action_eligible": False,
                 "eligibility_reason": "sample_gate_not_met",
@@ -90,12 +98,15 @@ def _stage(registry: EmailModelRegistry, tmp_path: Path, *, suffix: str = "") ->
 
 
 def test_model_id_contains_utc_second_and_final_artifact_digest():
-    assert build_model_id(
-        trained_at=datetime(
-            2026, 8, 29, 14, 45, 30, tzinfo=timezone(timedelta(hours=-7))
-        ),
-        artifact_sha256="7f3a91c2" + "0" * 56,
-    ) == "email-tfidf-lr-20260829T214530Z-7f3a91c2"
+    assert (
+        build_model_id(
+            trained_at=datetime(
+                2026, 8, 29, 14, 45, 30, tzinfo=timezone(timedelta(hours=-7))
+            ),
+            artifact_sha256="7f3a91c2" + "0" * 56,
+        )
+        == "email-tfidf-lr-20260829T214530Z-7f3a91c2"
+    )
 
 
 def test_stage_candidate_writes_immutable_artifact_metadata_and_reload_parity(
@@ -110,7 +121,10 @@ def test_stage_candidate_writes_immutable_artifact_metadata_and_reload_parity(
     assert record.metadata.sample_count == 4
     assert record.metadata.account_counts == {"account-a": 3, "account-b": 1}
     assert record.metadata.per_category_metrics["work"]["auto_action_eligible"] is False
-    assert sha256(record.artifact_path.read_bytes()).hexdigest() == record.metadata.artifact_sha256
+    assert (
+        sha256(record.artifact_path.read_bytes()).hexdigest()
+        == record.metadata.artifact_sha256
+    )
     loaded = registry.load_classifier(model_id)
     assert loaded.model_version == model_id
     assert loaded.predict("work project").label == "work"
@@ -124,7 +138,35 @@ def test_stage_candidate_writes_immutable_artifact_metadata_and_reload_parity(
         )
 
 
-def test_promote_switches_small_manifests_and_preserves_previous_artifacts(tmp_path: Path):
+def test_legacy_metrics_remain_readable_but_are_forced_ineligible():
+    source = _metadata(
+        digest="a" * 64,
+        model_id="email-tfidf-lr-20260829T214530Z-aaaaaaaa",
+    )
+    mapping = source.to_dict()
+    metrics = {key: dict(value) for key, value in source.per_category_metrics.items()}
+    for metric in metrics.values():
+        metric.pop("validation_positive_support")
+        metric.pop("automatic_candidate_count")
+        metric.pop("evaluated_threshold")
+        metric.pop("minimum_precision")
+        metric["auto_action_eligible"] = True
+    mapping["per_category_metrics"] = metrics
+
+    loaded = EmailModelMetadata.from_mapping(mapping)
+
+    for metric in loaded.per_category_metrics.values():
+        assert metric["auto_action_eligible"] is False
+        assert metric["eligibility_reason"] == "threshold_metrics_missing"
+        assert metric["automatic_candidate_count"] == 0
+        assert (
+            metric["validation_positive_support"] == metric["validation_sample_count"]
+        )
+
+
+def test_promote_switches_small_manifests_and_preserves_previous_artifacts(
+    tmp_path: Path,
+):
     registry = EmailModelRegistry(tmp_path / "registry")
     first = _stage(registry, tmp_path, suffix="-first")
     registry.promote(first, reason="initial_candidate_passed")
@@ -144,7 +186,11 @@ def test_promote_switches_small_manifests_and_preserves_previous_artifacts(tmp_p
     second = build_model_id(trained_at=later, artifact_sha256=digest)
     metadata = _metadata(digest=digest, model_id=second)
     metadata = EmailModelMetadata.from_mapping(
-        {**metadata.to_dict(), "trained_at": later.isoformat(), "parent_model_id": first}
+        {
+            **metadata.to_dict(),
+            "trained_at": later.isoformat(),
+            "parent_model_id": first,
+        }
     )
     registry.stage_candidate(
         source,
@@ -300,3 +346,20 @@ def test_candidate_protocol_requires_exact_artifact_metadata_and_metric_shape(
             expected_labels=("work",),
         )
     assert malformed_registry.get_model(model_id).status == "failed"
+
+    unsafe_metrics = {
+        key: {**value, "auto_action_eligible": True}
+        for key, value in base.per_category_metrics.items()
+    }
+    unsafe = EmailModelMetadata.from_mapping(
+        {**base.to_dict(), "per_category_metrics": unsafe_metrics}
+    )
+    unsafe_registry = EmailModelRegistry(tmp_path / "unsafe-eligibility-registry")
+    with pytest.raises(ModelRegistryError, match="eligibility protocol mismatch"):
+        unsafe_registry.stage_candidate(
+            source,
+            unsafe,
+            parity_texts=("work project",),
+            expected_labels=("work",),
+        )
+    assert unsafe_registry.get_model(model_id).status == "failed"

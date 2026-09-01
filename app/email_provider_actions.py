@@ -16,6 +16,7 @@ class ProviderActionResult:
     provider_target: str
     provider_result_id: str
     error: str = ""
+    retryable: bool = True
 
 
 @dataclass(frozen=True)

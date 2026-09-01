@@ -132,6 +132,113 @@ export interface FeedbackItem {
   processing_history?: FeedbackProcessingRound[];
 }
 export interface FeedbackList extends ConsoleList<FeedbackItem> { pending_count?: number; }
+export interface EmailClassificationItem {
+  id: number;
+  provider: string;
+  mailbox: string;
+  message_id: string;
+  thread_id: string;
+  sender: string;
+  subject: string;
+  preview: string;
+  received_at: string;
+  category: string;
+  confidence: number;
+  margin: number;
+  probabilities: Record<string, number>;
+  model_version: string;
+  config_version: string;
+  status: string;
+  classification_source: "model" | "user";
+  action_plan: Record<string, unknown>;
+  current_action_plan_id: string | null;
+  confirmed_at: string;
+  created_at: string;
+  updated_at: string;
+}
+export interface EmailObservabilityAttempt {
+  attempt_number: number;
+  status: string;
+  provider_operation: string;
+  provider_result_id: string;
+  error: string;
+  started_at: string;
+  finished_at: string;
+}
+export interface EmailObservabilityStep {
+  sequence: number;
+  operation: string;
+  state: string;
+  reference: string;
+}
+export interface EmailObservabilityEvent {
+  kind: "provider_action" | "auto_reply" | "unsubscribe" | string;
+  operation: string;
+  action_id?: string;
+  action_identity?: string;
+  action_plan_id?: string;
+  action_plan_version?: number;
+  status: string;
+  attempt_count?: number;
+  provider_operation?: string;
+  provider_result_id?: string;
+  receipt_id?: string;
+  error?: string;
+  summary?: string;
+  entry_reference?: string;
+  evidence?: string;
+  result_text?: string;
+  observation_digest?: string;
+  started_at?: string;
+  finished_at?: string;
+  completed_at?: string;
+  created_at?: string;
+  attempts?: EmailObservabilityAttempt[];
+  steps?: EmailObservabilityStep[];
+}
+export interface EmailClassificationDetail {
+  ok: boolean;
+  item: EmailClassificationItem;
+  observability: EmailObservabilityEvent[];
+  meta: { snapshot_at: string };
+}
+export interface EmailCategoryConfig {
+  category: string;
+  description: string;
+  threshold: number;
+  actions: string[];
+  action_parameters?: Record<string, Record<string, unknown>>;
+  enabled: boolean;
+  config_version: string;
+  updated_at: string;
+}
+export interface EmailModelEvidence {
+  model_id: string;
+  model_version: string;
+  status: string;
+  trained_at: string;
+  training_started_at: string;
+  training_finished_at: string;
+  sample_count: number;
+  new_sample_count: number;
+  category_counts: Record<string, number>;
+  validation_method: string;
+  accuracy: number;
+  macro_f1: number;
+  per_category_metrics: Record<string, Record<string, unknown>>;
+  prediction_latency_p50_ms: number;
+  prediction_latency_p95_ms: number;
+}
+export interface EmailLearningEvidence {
+  active_model_id: string | null;
+  pending_examples: number;
+  last_trained_feedback_count: number;
+  last_trained_at: string | null;
+  last_feedback_at: string | null;
+  active_run_id: string | null;
+  models: EmailModelEvidence[];
+  category_thresholds: Record<string, number>;
+}
 export interface SentTodoItem { id: string; kind: string; kind_label: string; sent_at: string; status: string; owner: string; project_title: string; todo_title: string; description: string; original_text: string; deadline: string; priority: string; target: string; external_id: string; detail_url: string; }
 export interface WechatScopeTarget {
   account_id?: string;
@@ -149,6 +256,42 @@ export interface WechatTargetList extends ConsoleList<WechatScopeTarget> {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
+}
+
+function emailText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function mapEmailClassification(value: unknown): EmailClassificationItem {
+  const row = asRecord(value);
+  const confirmedCategory = emailText(row.confirmed_category);
+  const predictedCategory = emailText(row.predicted_category);
+  return {
+    id: Number(row.id || 0),
+    provider: emailText(row.provider),
+    mailbox: emailText(row.mailbox || row.folder),
+    message_id: emailText(row.message_id || row.rfc_message_id || row.stable_message_identity),
+    thread_id: emailText(row.thread_id || row.thread_identity),
+    sender: emailText(row.sender),
+    subject: emailText(row.subject),
+    preview: emailText(row.preview),
+    received_at: emailText(row.received_at),
+    category: confirmedCategory || predictedCategory || emailText(row.category),
+    confidence: Number(row.confidence || 0),
+    margin: Number(row.margin || 0),
+    probabilities: (isRecord(row.probabilities) ? row.probabilities : {}) as Record<string, number>,
+    model_version: emailText(row.model_version || row.model_id),
+    config_version: emailText(row.config_version),
+    status: emailText(row.status),
+    classification_source: row.classification_source === "user" ? "user" : "model",
+    action_plan: asRecord(row.action_plan),
+    current_action_plan_id: typeof row.current_action_plan_id === "string" && row.current_action_plan_id.trim() !== ""
+      ? row.current_action_plan_id
+      : null,
+    confirmed_at: emailText(row.confirmed_at),
+    created_at: emailText(row.created_at),
+    updated_at: emailText(row.updated_at),
+  };
 }
 
 function resolveOwnerDisplay(project: Record<string, unknown>, todos: Array<Record<string, unknown>> = []): string {
@@ -262,6 +405,70 @@ export function listHistory(params: Record<string, string | number | undefined> 
     const row = asRecord(value);
     return { ...page, chart: isRecord(row.chart) ? row.chart as unknown as HistoryChart : undefined };
   });
+}
+
+export function listEmailClassifications(
+  status: "processed" | "pending_feedback",
+  params: Record<string, string | number | undefined> = {},
+  signal?: AbortSignal,
+) {
+  return request<unknown>(`/api/console/email/classifications${query({ status, ...params })}`, { signal }).then((value) => {
+    const page = parseConsoleList<Record<string, unknown>>(value);
+    return { ...page, items: page.items.map(mapEmailClassification) } satisfies ConsoleList<EmailClassificationItem>;
+  });
+}
+
+export function getEmailClassification(id: number, signal?: AbortSignal) {
+  return request<unknown>(`/api/console/email/classifications/${id}`, { signal }).then((value) => {
+    const payload = asRecord(value);
+    return {
+      ok: payload.ok === true,
+      item: mapEmailClassification(payload.item),
+      observability: Array.isArray(payload.observability) ? payload.observability as EmailObservabilityEvent[] : [],
+      meta: asRecord(payload.meta) as { snapshot_at: string },
+    } satisfies EmailClassificationDetail;
+  });
+}
+
+export function confirmEmailClassification(
+  id: number,
+  category: string,
+  feedbackRequestId: string,
+  expectedCurrentActionPlanId: string | null,
+) {
+  return request<Record<string, unknown>>(`/api/console/email/classifications/${id}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({
+      category,
+      feedback_request_id: feedbackRequestId,
+      expected_current_action_plan_id: expectedCurrentActionPlanId,
+    }),
+  }).then((payload) => ({
+    ok: payload.ok === true,
+    item: mapEmailClassification(payload.item),
+    message: displayValue(payload.message),
+  }));
+}
+
+export function listEmailConfigs(signal?: AbortSignal) {
+  return request<{ items: EmailCategoryConfig[]; meta: { snapshot_at: string } }>("/api/console/email/config", { signal });
+}
+
+export function saveEmailConfig(
+  category: string,
+  payload: Omit<EmailCategoryConfig, "category" | "updated_at">,
+) {
+  return request<{ ok: boolean; item: EmailCategoryConfig; message: string }>(
+    `/api/console/email/config/${encodeURIComponent(category)}`,
+    { method: "PUT", body: JSON.stringify(payload) },
+  );
+}
+
+export function listEmailLearning(signal?: AbortSignal) {
+  return request<{ ok: boolean; learning: EmailLearningEvidence; meta: { snapshot_at: string } }>(
+    "/api/console/email/learning",
+    { signal },
+  );
 }
 
 export function getHistoryChart(range = "24h", signal?: AbortSignal) {

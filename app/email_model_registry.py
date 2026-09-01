@@ -137,9 +137,13 @@ class EmailModelMetadata:
         try:
             return cls(
                 model_id=_text(value["model_id"], "model_id"),
-                parent_model_id=_optional_text(value.get("parent_model_id"), "parent_model_id"),
+                parent_model_id=_optional_text(
+                    value.get("parent_model_id"), "parent_model_id"
+                ),
                 model_family=_text(value["model_family"], "model_family"),
-                tokenizer_version=_text(value["tokenizer_version"], "tokenizer_version"),
+                tokenizer_version=_text(
+                    value["tokenizer_version"], "tokenizer_version"
+                ),
                 feature_version=_text(value["feature_version"], "feature_version"),
                 training_dataset_version=_text(
                     value["training_dataset_version"], "training_dataset_version"
@@ -152,13 +156,21 @@ class EmailModelMetadata:
                     value["training_finished_at"], "training_finished_at"
                 ),
                 sample_count=_integer(value["sample_count"], "sample_count"),
-                new_sample_count=_integer(value["new_sample_count"], "new_sample_count"),
-                category_counts=_integer_mapping(value["category_counts"], "category_counts"),
-                account_counts=_integer_mapping(value["account_counts"], "account_counts"),
-                validation_method=_text(value["validation_method"], "validation_method"),
+                new_sample_count=_integer(
+                    value["new_sample_count"], "new_sample_count"
+                ),
+                category_counts=_integer_mapping(
+                    value["category_counts"], "category_counts"
+                ),
+                account_counts=_integer_mapping(
+                    value["account_counts"], "account_counts"
+                ),
+                validation_method=_text(
+                    value["validation_method"], "validation_method"
+                ),
                 accuracy=_float(value["accuracy"], "accuracy"),
                 macro_f1=_float(value["macro_f1"], "macro_f1"),
-                per_category_metrics=_mapping_of_mappings(
+                per_category_metrics=_normalized_category_metrics(
                     value["per_category_metrics"], "per_category_metrics"
                 ),
                 prediction_latency_p50_ms=_float(
@@ -201,7 +213,9 @@ class ModelManifest:
     def from_mapping(cls, value: Mapping[str, object]) -> "ModelManifest":
         return cls(
             model_id=_text(value.get("model_id"), "model_id"),
-            artifact_sha256=_digest(_text(value.get("artifact_sha256"), "artifact_sha256")),
+            artifact_sha256=_digest(
+                _text(value.get("artifact_sha256"), "artifact_sha256")
+            ),
             artifact=_relative_path(value.get("artifact"), "artifact"),
             metadata=_relative_path(value.get("metadata"), "metadata"),
             switched_at=_text(value.get("switched_at"), "switched_at"),
@@ -236,7 +250,9 @@ class ModelRuntimeFailure:
         return cls(
             event_id=_text(value.get("event_id"), "event_id"),
             failed_model_id=_text(value.get("failed_model_id"), "failed_model_id"),
-            fallback_model_id=_text(value.get("fallback_model_id"), "fallback_model_id"),
+            fallback_model_id=_text(
+                value.get("fallback_model_id"), "fallback_model_id"
+            ),
             reason=_text(value.get("reason"), "reason"),
             occurred_at=_text(value.get("occurred_at"), "occurred_at"),
         )
@@ -273,23 +289,33 @@ class EmailModelRegistry:
         if metadata.status != "candidate":
             raise ModelRegistryError("new model metadata must have candidate status")
         if len(parity_texts) != len(expected_labels) or not parity_texts:
-            raise ModelRegistryError("reload parity inputs must be non-empty and aligned")
+            raise ModelRegistryError(
+                "reload parity inputs must be non-empty and aligned"
+            )
         source = Path(source_artifact)
         digest = _sha256_file(source)
         if digest != metadata.artifact_sha256:
-            raise ModelRegistryError("candidate artifact digest does not match metadata")
+            raise ModelRegistryError(
+                "candidate artifact digest does not match metadata"
+            )
         trained_at = _timestamp(metadata.trained_at)
         expected_id = build_model_id(trained_at=trained_at, artifact_sha256=digest)
         if metadata.model_id != expected_id:
-            raise ModelRegistryError("candidate model_id does not match final artifact digest")
+            raise ModelRegistryError(
+                "candidate model_id does not match final artifact digest"
+            )
         artifact_path = self._artifact_path(metadata.model_id)
         metadata_path = self._metadata_path(metadata.model_id)
         with self._locked():
             if artifact_path.exists() or metadata_path.exists():
-                raise ModelRegistryError(f"model artifact already exists: {metadata.model_id}")
+                raise ModelRegistryError(
+                    f"model artifact already exists: {metadata.model_id}"
+                )
             _copy_immutable(source, artifact_path)
             _write_json_immutable(metadata_path, metadata.to_dict())
-            self._append_lifecycle(metadata.model_id, "candidate", metadata.promotion_reason)
+            self._append_lifecycle(
+                metadata.model_id, "candidate", metadata.promotion_reason
+            )
         try:
             loaded = self.load_classifier(metadata.model_id)
             _validate_category_protocol(metadata, set(loaded.class_labels()))
@@ -318,7 +344,9 @@ class EmailModelRegistry:
             if current is not None:
                 self._verify_manifest(current)
                 _write_json_atomic(self.root / "previous.json", current.to_dict())
-                self._append_lifecycle(current.model_id, "previous", "superseded_by:" + model_id)
+                self._append_lifecycle(
+                    current.model_id, "previous", "superseded_by:" + model_id
+                )
             manifest = self._manifest_for(candidate.metadata)
             _write_json_atomic(self.root / "active.json", manifest.to_dict())
             self._append_lifecycle(model_id, "active", reason)
@@ -341,12 +369,13 @@ class EmailModelRegistry:
         with self._locked():
             try:
                 self._restore_manifest(self.root / "active.json", snapshot.active)
-                self._restore_manifest(
-                    self.root / "previous.json", snapshot.previous
-                )
+                self._restore_manifest(self.root / "previous.json", snapshot.previous)
                 if self._read_manifest(self.root / "active.json") != snapshot.active:
                     raise ModelRegistryError("active manifest restore mismatch")
-                if self._read_manifest(self.root / "previous.json") != snapshot.previous:
+                if (
+                    self._read_manifest(self.root / "previous.json")
+                    != snapshot.previous
+                ):
                     raise ModelRegistryError("previous manifest restore mismatch")
                 if snapshot.active is not None:
                     self._append_lifecycle(
@@ -412,7 +441,8 @@ class EmailModelRegistry:
                 occurred_at=event_time,
             )
             _write_json_immutable(
-                self.runtime_failures / f"{event_time.replace(':', '')}-{event.event_id}.json",
+                self.runtime_failures
+                / f"{event_time.replace(':', '')}-{event.event_id}.json",
                 event.__dict__,
             )
             return switched
@@ -439,7 +469,9 @@ class EmailModelRegistry:
             raise ModelRegistryError(f"invalid model metadata: {model_id}") from exc
         if metadata.model_id != model_id:
             raise ModelRegistryError("model metadata identity mismatch")
-        status, reason = self._latest_lifecycle(model_id, metadata.status, metadata.promotion_reason)
+        status, reason = self._latest_lifecycle(
+            model_id, metadata.status, metadata.promotion_reason
+        )
         return ModelRecord(metadata, status, reason, artifact_path, metadata_path)
 
     def load_classifier(self, model_id: str) -> CpuTfidfLogisticClassifier:
@@ -481,7 +513,10 @@ class EmailModelRegistry:
         record = self.get_model(manifest.model_id)
         expected_artifact = self.root / manifest.artifact
         expected_metadata = self.root / manifest.metadata
-        if expected_artifact != record.artifact_path or expected_metadata != record.metadata_path:
+        if (
+            expected_artifact != record.artifact_path
+            or expected_metadata != record.metadata_path
+        ):
             raise ModelRegistryError("model manifest paths do not match registry")
         if manifest.artifact_sha256 != record.metadata.artifact_sha256:
             raise ModelRegistryError("model manifest digest mismatch")
@@ -511,7 +546,9 @@ class EmailModelRegistry:
     def _metadata_path(self, model_id: str) -> Path:
         return self.metadata / f"{_model_id(model_id)}.json"
 
-    def _append_lifecycle(self, model_id: str, status: ModelStatus, reason: str) -> None:
+    def _append_lifecycle(
+        self, model_id: str, status: ModelStatus, reason: str
+    ) -> None:
         event_id = uuid.uuid4().hex
         _write_json_immutable(
             self.lifecycle / f"{model_id}-{event_id}.json",
@@ -591,12 +628,17 @@ def _copy_immutable(source: Path, destination: Path) -> None:
             writer.flush()
             os.fsync(writer.fileno())
     except FileExistsError as exc:
-        raise ModelRegistryError(f"immutable path already exists: {destination.name}") from exc
+        raise ModelRegistryError(
+            f"immutable path already exists: {destination.name}"
+        ) from exc
 
 
 def _write_json_immutable(path: Path, value: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    payload = (
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    )
     try:
         with path.open("x", encoding="utf-8") as handle:
             handle.write(payload)
@@ -619,7 +661,9 @@ def _write_json_atomic(path: Path, value: Mapping[str, object]) -> None:
             delete=False,
         ) as handle:
             temporary = Path(handle.name)
-            json.dump(value, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            json.dump(
+                value, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
@@ -667,7 +711,9 @@ def _timestamp(value: str) -> datetime:
 
 def _digest(value: str) -> str:
     normalized = value.strip().lower()
-    if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+    if len(normalized) != 64 or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
         raise ValueError("artifact_sha256 must be 64 lowercase hexadecimal characters")
     return normalized
 
@@ -742,6 +788,30 @@ def _mapping_of_mappings(value: object, field: str) -> dict[str, dict[str, objec
     return result
 
 
+def _normalized_category_metrics(
+    value: object, field: str
+) -> dict[str, dict[str, object]]:
+    result = _mapping_of_mappings(value, field)
+    threshold_fields = {
+        "validation_positive_support",
+        "automatic_candidate_count",
+        "evaluated_threshold",
+        "minimum_precision",
+    }
+    for metric in result.values():
+        if not threshold_fields <= metric.keys():
+            metric.setdefault(
+                "validation_positive_support",
+                metric.get("validation_sample_count", 0),
+            )
+            metric.setdefault("automatic_candidate_count", 0)
+            metric.setdefault("evaluated_threshold", metric.get("configured_threshold"))
+            metric.setdefault("minimum_precision", 0.95)
+            metric["auto_action_eligible"] = False
+            metric["eligibility_reason"] = "threshold_metrics_missing"
+    return result
+
+
 def _status(value: object) -> ModelStatus:
     result = _text(value, "status")
     if result not in MODEL_STATUSES:
@@ -768,14 +838,25 @@ def _validate_category_protocol(
             "recall",
             "f1",
             "validation_sample_count",
+            "validation_positive_support",
+            "automatic_candidate_count",
+            "evaluated_threshold",
             "configured_threshold",
+            "minimum_precision",
             "minimum_validation_samples",
             "auto_action_eligible",
             "eligibility_reason",
         }
         if set(metric) != required:
             raise ModelRegistryError(f"candidate metrics protocol mismatch: {label}")
-        for field in ("precision", "recall", "f1", "configured_threshold"):
+        for field in (
+            "precision",
+            "recall",
+            "f1",
+            "configured_threshold",
+            "evaluated_threshold",
+            "minimum_precision",
+        ):
             value = metric[field]
             if (
                 isinstance(value, bool)
@@ -783,19 +864,51 @@ def _validate_category_protocol(
                 or not math.isfinite(float(value))
                 or not 0 <= float(value) <= 1
             ):
-                raise ModelRegistryError(f"candidate metric {field} is invalid: {label}")
-        for field in ("validation_sample_count", "minimum_validation_samples"):
+                raise ModelRegistryError(
+                    f"candidate metric {field} is invalid: {label}"
+                )
+        for field in (
+            "validation_sample_count",
+            "validation_positive_support",
+            "automatic_candidate_count",
+            "minimum_validation_samples",
+        ):
             value = metric[field]
-            minimum = 0 if field == "validation_sample_count" else 1
+            minimum = 1 if field == "minimum_validation_samples" else 0
             if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-                raise ModelRegistryError(f"candidate metric {field} is invalid: {label}")
+                raise ModelRegistryError(
+                    f"candidate metric {field} is invalid: {label}"
+                )
+        if metric["validation_positive_support"] != metric["validation_sample_count"]:
+            raise ModelRegistryError(
+                f"candidate metric validation support mismatch: {label}"
+            )
+        if (
+            metric["validation_positive_support"] > metadata.sample_count
+            or metric["automatic_candidate_count"] > metadata.sample_count
+        ):
+            raise ModelRegistryError(
+                f"candidate metric validation count exceeds sample count: {label}"
+            )
         if not isinstance(metric["auto_action_eligible"], bool):
             raise ModelRegistryError(
                 f"candidate metric auto_action_eligible is invalid: {label}"
             )
-        if not isinstance(metric["eligibility_reason"], str) or not metric[
-            "eligibility_reason"
-        ].strip():
+        if metric["auto_action_eligible"] and (
+            metadata.validation_method != "time-ordered-holdout"
+            or metric["evaluated_threshold"] != metric["configured_threshold"]
+            or metric["precision"] < metric["minimum_precision"]
+            or metric["validation_positive_support"]
+            < metric["minimum_validation_samples"]
+            or metric["automatic_candidate_count"] <= 0
+        ):
+            raise ModelRegistryError(
+                f"candidate metric eligibility protocol mismatch: {label}"
+            )
+        if (
+            not isinstance(metric["eligibility_reason"], str)
+            or not metric["eligibility_reason"].strip()
+        ):
             raise ModelRegistryError(
                 f"candidate metric eligibility_reason is invalid: {label}"
             )

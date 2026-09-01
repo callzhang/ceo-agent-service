@@ -46,6 +46,10 @@ from app.skill_features import FeatureRegistry
 
 
 _PAYLOAD_SCHEMA = "email_agent_action.v1"
+_ACTION_LIFECYCLE_VERSIONS = {
+    EmailAction.AUTO_REPLY: "consumer_audit_v1",
+    EmailAction.UNSUBSCRIBE: "email_unsubscribe_consumer_direct_v1",
+}
 _MAX_METADATA_TEXT_LENGTH = 64 * 1024
 _MAX_METADATA_JSON_LENGTH = 256 * 1024
 _MAX_METADATA_DECODE_ROUNDS = 8
@@ -624,7 +628,7 @@ class EmailAgentTaskAdapter:
         if store.path.resolve() != email_store.path.resolve():
             raise ValueError(
                 "email task and classification stores must share one database"
-            )
+        )
         self.store = store
         self.feature_registry = feature_registry or FeatureRegistry()
 
@@ -755,6 +759,7 @@ class EmailAgentTaskAdapter:
         )
         payload: dict[str, object] = {
             "schema": _PAYLOAD_SCHEMA,
+            "lifecycle_version": _ACTION_LIFECYCLE_VERSIONS[action_type],
             "account_id": action_plan.account_id,
             "stable_message_identity": task_input.stable_message_identity,
             "thread_identity": task_input.thread_identity,

@@ -249,15 +249,18 @@ def test_feedback_service_retrains_after_batch_threshold(tmp_path: Path):
         len(sample["sample_digest"]) == 64
         for sample in polled.training_run.sample_snapshots
     )
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
+    # The real trainer is intentionally a subprocess.  On CPU-only machines
+    # importing sklearn can exceed one second before the first poll observes
+    # the terminal result, so keep the test bounded without assuming a
+    # particular workstation startup time.
+    for _ in range(1000):
         polled = service.poll_retrain(now=now + timedelta(seconds=32))
         if polled.training_run is not None and polled.training_run.status not in {
             "queued",
             "running",
         }:
             break
-        time.sleep(0.05)
+        time.sleep(0.01)
     promoted_result = polled
 
     assert promoted_result is not None
