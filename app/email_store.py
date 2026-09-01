@@ -32,7 +32,7 @@ from app.email_classifier_contracts import (
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 14
+EMAIL_SCHEMA_VERSION = 15
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 DIRECT_ACTION_RETRY_BASE_SECONDS = 2
 _CLASSIFICATION_STATUSES = frozenset(
@@ -1596,6 +1596,9 @@ class EmailStore:
             legacy_unsubscribe_claims = False
             if latest_version == 10:
                 legacy_unsubscribe_claims = self._prepare_v10_unsubscribe_migration(db)
+            legacy_unsubscribe_schema = False
+            if latest_version < 14:
+                legacy_unsubscribe_schema = self._prepare_unsubscribe_schema_migration(db)
             self._create_base_tables(db)
             self._create_durable_tables(db)
             self._ensure_email_context_columns(db)
@@ -1606,6 +1609,8 @@ class EmailStore:
                 self._finish_v8_reply_claim_migration(db)
             if legacy_unsubscribe_claims:
                 self._finish_v10_unsubscribe_migration(db)
+            if legacy_unsubscribe_schema:
+                self._finish_unsubscribe_schema_migration(db)
             self._create_indexes_and_triggers(db)
             if latest_version < EMAIL_SCHEMA_VERSION:
                 is_prototype = latest_version == 0
@@ -1765,6 +1770,154 @@ class EmailStore:
         ):
             if table in tables:
                 db.execute(f"drop table {table}")
+
+    @classmethod
+    def _prepare_unsubscribe_schema_migration(cls, db: sqlite3.Connection) -> bool:
+        """Rebuild pre-v14 unsubscribe tables with their current constraints."""
+        tables = {
+            row["name"]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }
+        claims_sql = next(
+            (
+                row["sql"]
+                for row in db.execute(
+                    "select sql from sqlite_master where type='table' and name=?",
+                    ("email_unsubscribe_claims",),
+                )
+            ),
+            "",
+        )
+        receipts_sql = next(
+            (
+                row["sql"]
+                for row in db.execute(
+                    "select sql from sqlite_master where type='table' and name=?",
+                    ("email_unsubscribe_receipts",),
+                )
+            ),
+            "",
+        )
+        if "phase" in claims_sql and "result_text" in receipts_sql:
+            return False
+        legacy_suffix = "_pre_v14"
+        family = (
+            "email_unsubscribe_steps",
+            "email_unsubscribe_receipts",
+            "email_unsubscribe_continuations",
+            "email_unsubscribe_effects",
+            "email_unsubscribe_claims",
+        )
+        if any(f"{table}{legacy_suffix}" in tables for table in family):
+            raise EmailPersistenceCorruption(
+                "incomplete unsubscribe schema migration is present"
+            )
+        for name in _REQUIRED_TRIGGER_SQL:
+            if name.startswith("trg_email_unsubscribe_"):
+                db.execute(
+                    f"drop trigger if exists {_schema_identifier(name, field='trigger')}"
+                )
+        db.execute("drop index if exists idx_email_unsubscribe_claims_status")
+        for table in family:
+            if table in tables:
+                db.execute(f"alter table {table} rename to {table}{legacy_suffix}")
+        return True
+
+    @classmethod
+    def _finish_unsubscribe_schema_migration(cls, db: sqlite3.Connection) -> None:
+        """Copy the pre-v14 unsubscribe family without losing durable evidence."""
+        suffix = "_pre_v14"
+        tables = {
+            row["name"]
+            for row in db.execute("select name from sqlite_master where type='table'")
+        }
+        if "email_unsubscribe_claims" + suffix in tables:
+            db.execute(
+                """
+                insert into email_unsubscribe_claims (
+                    action_identity, effect_digest, action_plan_id,
+                    action_plan_version, classification_id, account_id,
+                    stable_message_identity, thread_identity, entry_reference,
+                    operations_json, owner_id, owner_generation, lease_token,
+                    account_updated_at, status, phase, claimed_at, updated_at
+                )
+                select action_identity, effect_digest, action_plan_id,
+                    action_plan_version, classification_id, account_id,
+                    stable_message_identity, thread_identity, entry_reference,
+                    operations_json, owner_id, owner_generation, lease_token,
+                    account_updated_at, status,
+                    case status when 'uncertain' then 'effect_uncertain'
+                        when 'done' then 'terminal' else 'prepared' end,
+                    claimed_at, updated_at
+                from email_unsubscribe_claims_pre_v14
+                """
+            )
+        if "email_unsubscribe_effects" + suffix in tables:
+            db.execute(
+                """
+                insert into email_unsubscribe_effects (
+                    action_identity, effect_digest, previous_effect_digest,
+                    operations_json, network_policy_reference,
+                    network_policy_origins_json, created_at
+                )
+                select action_identity, effect_digest, previous_effect_digest,
+                    operations_json, network_policy_reference,
+                    network_policy_origins_json, created_at
+                from email_unsubscribe_effects_pre_v14
+                """
+            )
+        if "email_unsubscribe_continuations" + suffix in tables:
+            db.execute(
+                """
+                insert into email_unsubscribe_continuations (
+                    action_identity, effect_digest, observation_reference,
+                    controls_json, created_at, updated_at
+                )
+                select action_identity, effect_digest, observation_reference,
+                    controls_json, created_at, updated_at
+                from email_unsubscribe_continuations_pre_v14
+                """
+            )
+        if "email_unsubscribe_steps" + suffix in tables:
+            db.execute(
+                """
+                insert into email_unsubscribe_steps (
+                    id, action_identity, effect_digest, sequence, operation,
+                    state, reference, created_at
+                )
+                select id, action_identity, effect_digest, sequence, operation,
+                    state, reference, created_at
+                from email_unsubscribe_steps_pre_v14
+                """
+            )
+        if "email_unsubscribe_receipts" + suffix in tables:
+            db.execute(
+                """
+                insert into email_unsubscribe_receipts (
+                    action_identity, effect_digest, action_plan_id,
+                    action_plan_version, classification_id, account_id,
+                    stable_message_identity, thread_identity, entry_reference,
+                    outcome, receipt_id, evidence, result_text,
+                    observation_digest, started_at, completed_at, created_at
+                )
+                select action_identity, effect_digest, action_plan_id,
+                    action_plan_version, classification_id, account_id,
+                    stable_message_identity, thread_identity, entry_reference,
+                    outcome, receipt_id, evidence, '', '', created_at,
+                    created_at, created_at
+                from email_unsubscribe_receipts_pre_v14
+                """
+            )
+        for table in (
+            "email_unsubscribe_steps",
+            "email_unsubscribe_receipts",
+            "email_unsubscribe_continuations",
+            "email_unsubscribe_effects",
+            "email_unsubscribe_claims",
+        ):
+            legacy = table + suffix
+            if legacy in tables:
+                db.execute(f"drop table {legacy}")
 
     @staticmethod
     def _read_schema_version(db: sqlite3.Connection) -> int | None:

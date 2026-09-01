@@ -1431,6 +1431,120 @@ def test_v10_unsubscribe_claim_migrates_to_v11_effect_prefix_chain(
         ).fetchone()[0] == email_store_module.EMAIL_SCHEMA_VERSION
 
 
+def test_v11_unsubscribe_schema_migrates_missing_phase_and_receipt_evidence(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v11-unsubscribe-schema-migration.sqlite3"
+    store = EmailStore(database)
+    authorization = _unsubscribe_authorization(store)
+    claim = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    assert claim is not None and claim["acquired"] is True
+
+    # Reproduce the deployed v11 shape: the tables already exist, but the
+    # later phase/result evidence constraints were never rebuilt in place.
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys = off")
+        for trigger in (
+            "trg_email_unsubscribe_blocks_plan_switch",
+            "trg_email_unsubscribe_blocks_account_update",
+            "trg_email_unsubscribe_blocks_account_delete",
+            "trg_email_unsubscribe_blocks_message_update",
+            "trg_email_unsubscribe_blocks_message_delete",
+        ):
+            db.execute(f"drop trigger if exists {trigger}")
+        db.execute("drop index if exists idx_email_unsubscribe_claims_status")
+        db.execute(
+            """
+            create table email_unsubscribe_claims_pre_v14 as
+            select action_identity, effect_digest, action_plan_id,
+                action_plan_version, classification_id, account_id,
+                stable_message_identity, thread_identity, entry_reference,
+                operations_json, owner_id, owner_generation, lease_token,
+                account_updated_at, status, claimed_at, updated_at
+            from email_unsubscribe_claims
+            """
+        )
+        db.execute(
+            """
+            create table email_unsubscribe_effects_pre_v14 as
+            select action_identity, effect_digest, previous_effect_digest,
+                operations_json, network_policy_reference,
+                network_policy_origins_json, created_at
+            from email_unsubscribe_effects
+            """
+        )
+        db.execute(
+            """
+            create table email_unsubscribe_continuations_pre_v14 as
+            select action_identity, effect_digest, observation_reference,
+                controls_json, created_at, updated_at
+            from email_unsubscribe_continuations
+            """
+        )
+        db.execute(
+            """
+            create table email_unsubscribe_steps_pre_v14 as
+            select id, action_identity, effect_digest, sequence, operation,
+                state, reference, created_at
+            from email_unsubscribe_steps
+            """
+        )
+        db.execute(
+            """
+            create table email_unsubscribe_receipts_pre_v14 as
+            select action_identity, effect_digest, action_plan_id,
+                action_plan_version, classification_id, account_id,
+                stable_message_identity, thread_identity, entry_reference,
+                outcome, receipt_id, evidence, created_at
+            from email_unsubscribe_receipts
+            """
+        )
+        for table in (
+            "email_unsubscribe_steps",
+            "email_unsubscribe_receipts",
+            "email_unsubscribe_continuations",
+            "email_unsubscribe_effects",
+            "email_unsubscribe_claims",
+        ):
+            db.execute(f"drop table {table}")
+        for table in (
+            "email_unsubscribe_claims",
+            "email_unsubscribe_effects",
+            "email_unsubscribe_continuations",
+            "email_unsubscribe_steps",
+            "email_unsubscribe_receipts",
+        ):
+            db.execute(f"alter table {table}_pre_v14 rename to {table}")
+        db.execute("update email_schema_migrations set version=11")
+
+    migrated = EmailStore(database)
+
+    migrated_claim = migrated.get_email_unsubscribe_claim(
+        authorization["action_identity"]
+    )
+    assert migrated_claim is not None
+    assert migrated_claim["phase"] == "prepared"
+    with sqlite3.connect(database) as db:
+        assert (
+            db.execute("select max(version) from email_schema_migrations").fetchone()[0]
+            == email_store_module.EMAIL_SCHEMA_VERSION
+        )
+        claims_sql = db.execute(
+            "select sql from sqlite_master where type='table' and name=?",
+            ("email_unsubscribe_claims",),
+        ).fetchone()[0]
+        receipts_sql = db.execute(
+            "select sql from sqlite_master where type='table' and name=?",
+            ("email_unsubscribe_receipts",),
+        ).fetchone()[0]
+        assert "phase text not null default 'prepared'" in claims_sql
+        assert "phase in (" in claims_sql
+        assert "result_text text not null default ''" in receipts_sql
+
+
 def test_v9_store_atomically_adds_unsubscribe_durability_without_data_loss(
     tmp_path: Path,
 ) -> None:
