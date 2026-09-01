@@ -4394,6 +4394,37 @@ def test_read_unread_messages_accepts_direct_result_rows(monkeypatch):
     ]
 
 
+def test_read_unread_messages_accepts_nested_message_rows(monkeypatch):
+    monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
+    payload = {
+        "result": {
+            "data": {
+                "rows": [
+                    {
+                        "openConversationId": "cid-1",
+                        "openMessageId": "msg-newer",
+                        "sender": "Mina Zou",
+                        "createTime": "2026-05-13 20:26:00",
+                        "content": "好的",
+                    }
+                ]
+            }
+        }
+    }
+    client = RecordingDwsClient(payload)
+    conversation = DingTalkConversation(
+        open_conversation_id="cid-1",
+        title="Friday",
+        single_chat=False,
+        unread_point=1,
+        last_message_create_at=1778666181403,
+    )
+
+    messages = client.read_unread_messages(conversation)
+
+    assert [message.open_message_id for message in messages] == ["msg-newer"]
+
+
 def test_read_unread_messages_discards_read_overlap_rows(monkeypatch):
     monkeypatch.setattr(dws_client, "_local_time_zone", lambda: TEST_LOCAL_TZ)
     payload = {

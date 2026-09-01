@@ -1935,13 +1935,10 @@ class DwsClient:
             return []
         conversation = self._with_single_chat_direct_target(conversation)
         payload = self.run_json(self.build_read_unread_messages_command(conversation))
-        result = payload.get("result")
-        if isinstance(result, list):
-            raw_unread_messages = result[: conversation.unread_point]
-        elif isinstance(result, dict) and isinstance(result.get("messages"), list):
-            raw_unread_messages = result["messages"][: conversation.unread_point]
-        else:
+        raw_unread_messages = self._extract_message_rows(payload)
+        if raw_unread_messages is None:
             raise DwsError("unread messages response has no ordered message rows")
+        raw_unread_messages = raw_unread_messages[: conversation.unread_point]
         unread_payload = {"result": {"messages": raw_unread_messages}}
         parsed_unread_messages = self.parse_messages(
             unread_payload,
@@ -1953,6 +1950,24 @@ class DwsClient:
         # avoids failing the whole conversation without promoting older,
         # already-read overlap rows into the unread set.
         return list(reversed(parsed_unread_messages))
+
+    @staticmethod
+    def _extract_message_rows(payload: object) -> list[dict[str, Any]] | None:
+        """Find the structured message list returned by supported DWS envelopes."""
+        if isinstance(payload, list):
+            return payload if all(isinstance(row, dict) for row in payload) else None
+        if not isinstance(payload, dict):
+            return None
+        for key in ("messages", "rows", "items", "list"):
+            value = payload.get(key)
+            if isinstance(value, list) and all(isinstance(row, dict) for row in value):
+                return value
+        for key in ("result", "data"):
+            nested = payload.get(key)
+            rows = DwsClient._extract_message_rows(nested)
+            if rows is not None:
+                return rows
+        return None
 
     def list_messages_by_ids(self, message_ids: list[str]) -> list[DingTalkMessage]:
         if not message_ids:
