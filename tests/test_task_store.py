@@ -6,6 +6,7 @@ from threading import Barrier
 
 import pytest
 
+import app.store as store_module
 from app.store import AgentRole, AutoReplyStore
 from app.task_models import WorkItem
 
@@ -1674,3 +1675,49 @@ def test_history_page_cache_can_be_warmed_for_the_default_view(tmp_path: Path):
     assert warmed == total
     assert rows
     assert rows[0].source_table == "reply_attempts"
+
+
+def test_history_page_cache_serves_stale_snapshot_during_refresh(
+    monkeypatch, tmp_path: Path
+):
+    store = _store(tmp_path)
+    store.record_reply_attempt(
+        conversation_id="history-stale-cache",
+        conversation_title="History stale cache",
+        trigger_message_id="history-stale-cache-message",
+        trigger_sender="Derek",
+        trigger_text="Serve stale while refreshing",
+        action="chat_message",
+        sensitivity_kind="",
+        codex_reason="test",
+        draft_reply_text="ready",
+        send_status="sent",
+    )
+    sources = ("reply_attempts",)
+    store.warm_history_page_cache(source_tables=sources)
+    with store._history_page_cache_lock:
+        cached = store._history_page_cache
+        assert cached is not None
+        store._history_page_cache = (cached[0] - 2.0, *cached[1:])
+
+    started: list[object] = []
+
+    class FakeThread:
+        def __init__(self, *, target, args, daemon):
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self):
+            started.append(self)
+
+    monkeypatch.setattr(store_module.threading, "Thread", FakeThread)
+
+    total, rows = store.list_operation_logs_with_count(
+        limit=20,
+        source_tables=sources,
+    )
+
+    assert total == 1
+    assert rows
+    assert len(started) == 1

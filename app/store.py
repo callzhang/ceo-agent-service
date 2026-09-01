@@ -1030,6 +1030,7 @@ class AutoReplyStore:
         self._history_page_cache: tuple[
             float, tuple[str, ...], int, list[OperationLog]
         ] | None = None
+        self._history_page_cache_refreshing = False
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_initialized()
 
@@ -22006,6 +22007,35 @@ class AutoReplyStore:
             rows = db.execute(sql, tuple(args)).fetchall()
             return [OperationLog.model_validate(dict(row)) for row in rows]
 
+    def _refresh_history_page_cache(
+        self,
+        limit: int,
+        offset: int,
+        query: str,
+        log_type: str,
+        statuses: tuple[str, ...] | None,
+        history_types: tuple[str, ...] | None,
+        source_tables: tuple[str, ...] | None,
+    ) -> None:
+        try:
+            self.list_operation_logs_with_count(
+                limit,
+                offset,
+                query,
+                log_type,
+                statuses,
+                history_types,
+                source_tables,
+                _skip_history_cache=True,
+            )
+        except Exception:
+            # A stale page is still preferable to making the web request wait
+            # for a failed background refresh. The next request can retry.
+            pass
+        finally:
+            with self._history_page_cache_lock:
+                self._history_page_cache_refreshing = False
+
     def list_operation_logs_with_count(
         self,
         limit: int,
@@ -22015,6 +22045,7 @@ class AutoReplyStore:
         statuses: tuple[str, ...] | None = None,
         history_types: tuple[str, ...] | None = None,
         source_tables: tuple[str, ...] | None = None,
+        _skip_history_cache: bool = False,
     ) -> tuple[int, list[OperationLog]]:
         """Return one page and its exact count from a single materialized query."""
         cacheable = (
@@ -22026,14 +22057,27 @@ class AutoReplyStore:
             and not history_types
             and bool(source_tables)
         )
-        if cacheable:
+        if cacheable and not _skip_history_cache:
             with self._history_page_cache_lock:
                 cached = self._history_page_cache
-                if (
-                    cached is not None
-                    and cached[1] == tuple(source_tables or ())
-                    and time.monotonic() - cached[0] < 1.0
-                ):
+                if cached is not None and cached[1] == tuple(source_tables or ()):
+                    if time.monotonic() - cached[0] < 1.0:
+                        return cached[2], list(cached[3])
+                    if not self._history_page_cache_refreshing:
+                        self._history_page_cache_refreshing = True
+                        threading.Thread(
+                            target=self._refresh_history_page_cache,
+                            args=(
+                                limit,
+                                offset,
+                                query,
+                                log_type,
+                                statuses,
+                                history_types,
+                                source_tables,
+                            ),
+                            daemon=True,
+                        ).start()
                     return cached[2], list(cached[3])
         where_sql, where_args = self._operation_log_filters(
             query=query,
@@ -22082,6 +22126,7 @@ class AutoReplyStore:
                     result[0],
                     list(result[1]),
                 )
+                self._history_page_cache_refreshing = False
         return result
 
     def warm_history_page_cache(
