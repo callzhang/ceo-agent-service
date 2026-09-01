@@ -171,7 +171,7 @@ def test_supervisor_requires_all_three_child_commands():
     assert parameter.default is inspect.Parameter.empty
 
 
-def test_supervisor_restarts_only_the_child_that_exits(monkeypatch):
+def test_supervisor_restarts_only_the_child_that_exits(monkeypatch, capsys):
     worker = FakeChild(returncode=7)
     replacement_worker = FakeChild()
     audit_web = FakeChild()
@@ -212,6 +212,7 @@ def test_supervisor_restarts_only_the_child_that_exits(monkeypatch):
     assert email_worker.terminated is True
     assert email_worker.waited is True
     assert replacement_worker.terminated is True
+    assert "child worker exited returncode=7" in capsys.readouterr().out
 
 
 def test_supervisor_restarts_only_email_worker_and_stops_all_children(monkeypatch):

@@ -96,6 +96,10 @@ def run_supervisor(
                 returncode = child.poll()
                 if returncode is not None:
                     child.wait()
+                    print(
+                        f"child {name} exited returncode={returncode}; restarting",
+                        flush=True,
+                    )
                     start_child(name)
                     break
             sleep(POLL_INTERVAL_SECONDS)
