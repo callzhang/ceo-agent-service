@@ -115,7 +115,7 @@ trigger_message_id
 
 同一 ActionPlan 的重复扫描、进程重启或模型重训只会取回原任务，不改写原任务、
 generation 或运行历史。新的计划版本获得新的动作身份，因此可以在保留旧 run 的同时
-形成新的受审 revision 生命周期。
+形成与动作类型匹配的新生命周期。
 
 任务的 `trigger_message_json` 只保存可追溯的动作身份、账户/邮件/thread 身份、
 ActionPlan、分类、模型和配置版本，以及经过凭证、URL 和本地路径检查的当前动作参数。
@@ -124,9 +124,11 @@ ActionPlan、分类、模型和配置版本，以及经过凭证、URL 和本地
 运行时 `AgentTaskContext` 从 Email 数据源读取当前邮件和 thread 的纯文本；附件只投影
 为文件名、MIME、字节大小和 inline 标记，material 没有读取命令，并固定
 `image_paths=()`。上下文可以携带已有的 sent/unsubscribe state receipt。当前不可变
-ActionPlan 是唯一动作授权；Adapter 只排队，不发送、不打开退订页面，也不改变现有
-Consumer A → Audit Agent B → feedback/revision 生命周期。外部写仍只能由 Audit 接受
-候选后执行并读回。
+ActionPlan 是唯一动作授权；Adapter 只排队，不发送、不打开退订页面。
+`auto_reply` 继续使用 Consumer → Audit，SMTP 外部写只能由 Audit 接受候选后执行并读回。
+`unsubscribe` 使用 Consumer-direct：不创建 Audit run 或 Audit revision，由 Consumer
+对当前邮件和 thread 做最终判断后执行已冻结的退订计划，并保存步骤、terminal result
+text、receipt 和 observation digest。
 
 ### Repository Upgrade
 

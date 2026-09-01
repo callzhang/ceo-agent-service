@@ -35,3 +35,18 @@ def test_current_docs_describe_upgrade_backup_and_mcp_boundary() -> None:
     assert "not a runtime command allowlist" in inventory
     assert "## CEO Service Command Reference" in inventory
     assert "Current practical allowlist" not in inventory
+
+
+def test_current_email_docs_describe_unsubscribe_consumer_direct_boundary() -> None:
+    architecture = _read("docs/architecture.md")
+    runtime = _read("docs/runtime-mechanism.md")
+    classifier = _read("docs/superpowers/specs/2026-08-29-email-classifier-design.md")
+
+    for document in (architecture, runtime, classifier):
+        assert "`auto_reply` 继续使用 Consumer → Audit" in document
+        assert "`unsubscribe` 使用 Consumer-direct" in document
+
+    assert "外部写仍只能由 Audit" not in architecture
+    assert "之后仍由标准执行 Agent 产生候选、Audit Agent 审核和执行" not in runtime
+    assert "`auto_reply`、`unsubscribe` 创建 Agent/Audit 工作" not in classifier
+    assert "只有 `auto_reply`、`unsubscribe` 进入 Agent/Audit 生命周期" not in classifier
