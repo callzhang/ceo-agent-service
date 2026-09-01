@@ -190,6 +190,37 @@ def _persist_scan(
     )
 
 
+def test_persist_scan_result_stores_thread_reference_metadata(tmp_path: Path):
+    database = tmp_path / "thread-metadata.sqlite3"
+    store = EmailStore(database)
+    classification = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        message_id="thread-metadata",
+        thread_id="thread-1",
+    )
+
+    store.persist_scan_result(
+        classification,
+        sender="sender@example.com",
+        subject="Re: project",
+        normalized_text="__subject__re project",
+        preview="Project update",
+        model_text="__subject__re project",
+        in_reply_to="<parent@example.com>",
+        references=("<thread@example.com>", "<parent@example.com>"),
+        cursor_uidvalidity=42,
+        cursor_last_seen_uid=classification.provider_locator.uid,
+        cursor_last_success_at="2026-08-31T20:00:00+00:00",
+    )
+
+    row = _fetchall(database, "select in_reply_to, references_json from email_messages")[0]
+    assert row["in_reply_to"] == "<parent@example.com>"
+    assert json.loads(row["references_json"]) == [
+        "<thread@example.com>",
+        "<parent@example.com>",
+    ]
+
+
 def _confirm(
     store: EmailStore,
     row_id: int,

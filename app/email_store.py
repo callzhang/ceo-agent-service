@@ -149,6 +149,8 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "uidvalidity": ("integer", True, None),
         "uid": ("integer", True, None),
         "rfc_message_id": ("text", True, None),
+        "in_reply_to": ("text", True, "''"),
+        "references_json": ("text", True, "'[]'"),
         "thread_identity": ("text", True, None),
         "sender": ("text", True, None),
         "recipients_json": ("text", True, None),
@@ -332,6 +334,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "uidvalidity > 0",
         "uid > 0",
         "json_valid(recipients_json)",
+        "json_valid(references_json)",
         "json_valid(attachment_metadata_json)",
     ),
     "email_action_plans": (
@@ -863,6 +866,32 @@ def _validate_model_text(model_text: str) -> None:
         or "https://" in lowered
     ):
         raise ValueError("model_text must be redacted")
+
+
+def _normalized_message_id(value: object) -> str:
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str):
+        raise ValueError("message ID must be text")
+    locator = EmailProviderLocator.model_validate(
+        {
+            "account_id": "message-id-normalizer",
+            "folder": "message-id-normalizer",
+            "uidvalidity": 1,
+            "uid": 1,
+            "rfc_message_id": value,
+        }
+    )
+    return locator.rfc_message_id or ""
+
+
+def _normalized_message_ids(values: Sequence[str]) -> tuple[str, ...]:
+    if isinstance(values, str | bytes | bytearray):
+        raise ValueError("references must be a sequence of message IDs")
+    normalized = tuple(
+        message_id for value in values if (message_id := _normalized_message_id(value))
+    )
+    return tuple(dict.fromkeys(normalized))
 
 
 def _json_dump(value: object) -> str:
@@ -1494,6 +1523,7 @@ class EmailStore:
             db.execute("begin")
             latest_version = self._read_schema_version(db)
             if latest_version == EMAIL_SCHEMA_VERSION:
+                self._ensure_email_context_columns(db)
                 self._validate_durable_state(db)
                 return
             if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
@@ -1517,6 +1547,7 @@ class EmailStore:
                     f"this runtime supports {EMAIL_SCHEMA_VERSION}"
                 )
             if latest_version == EMAIL_SCHEMA_VERSION:
+                self._ensure_email_context_columns(db)
                 self._validate_durable_state(db)
                 return
             legacy_reply_claims = False
@@ -1531,6 +1562,7 @@ class EmailStore:
                 self._migrate_prototype_schema(db)
                 prototype_migrated = True
             self._create_durable_tables(db)
+            self._ensure_email_context_columns(db)
             if legacy_reply_claims:
                 self._finish_v8_reply_claim_migration(db)
             if legacy_unsubscribe_claims:
@@ -2086,6 +2118,21 @@ class EmailStore:
             declaration="text",
         )
 
+    @classmethod
+    def _ensure_email_context_columns(cls, db: sqlite3.Connection) -> None:
+        cls._ensure_column(
+            db,
+            table="email_messages",
+            column="in_reply_to",
+            declaration="text not null default ''",
+        )
+        cls._ensure_column(
+            db,
+            table="email_messages",
+            column="references_json",
+            declaration="text not null default '[]' check(json_valid(references_json))",
+        )
+
     @staticmethod
     def _ensure_training_inclusion_trigger(db: sqlite3.Connection) -> None:
         db.execute(
@@ -2171,6 +2218,9 @@ class EmailStore:
                 uidvalidity integer not null check(uidvalidity > 0),
                 uid integer not null check(uid > 0),
                 rfc_message_id text not null,
+                in_reply_to text not null default '',
+                references_json text not null default '[]'
+                    check(json_valid(references_json)),
                 thread_identity text not null,
                 sender text not null,
                 recipients_json text not null check(json_valid(recipients_json)),
@@ -3905,6 +3955,8 @@ class EmailStore:
         normalized_text: str,
         preview: str,
         attachment_metadata: Sequence[EmailAttachmentMetadata],
+        in_reply_to: str,
+        references: Sequence[str],
         received_at: str,
         now: str,
     ) -> None:
@@ -3915,19 +3967,24 @@ class EmailStore:
             for item in attachment_metadata
         ):
             raise ValueError("attachment_metadata must contain metadata records")
+        normalized_in_reply_to = _normalized_message_id(in_reply_to)
+        normalized_references = _normalized_message_ids(references)
         locator = classification.provider_locator
         db.execute(
             """
             insert into email_messages (
                 account_id, stable_message_identity, folder, uidvalidity, uid,
-                rfc_message_id, thread_identity, sender, recipients_json,
+                rfc_message_id, in_reply_to, references_json, thread_identity,
+                sender, recipients_json,
                 subject, normalized_text, preview, attachment_metadata_json,
                 received_at, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(stable_message_identity) do update set
                 folder=excluded.folder,
                 uidvalidity=excluded.uidvalidity,
                 uid=excluded.uid,
+                in_reply_to=excluded.in_reply_to,
+                references_json=excluded.references_json,
                 thread_identity=excluded.thread_identity,
                 updated_at=excluded.updated_at
             """,
@@ -3938,6 +3995,8 @@ class EmailStore:
                 locator.uidvalidity,
                 locator.uid,
                 locator.rfc_message_id or "",
+                normalized_in_reply_to,
+                _json_dump(list(normalized_references)),
                 locator.thread_id or "",
                 sender,
                 _json_dump(list(recipients)),
@@ -4199,6 +4258,8 @@ class EmailStore:
         normalized_text: str = "",
         preview: str = "",
         attachment_metadata: Sequence[EmailAttachmentMetadata] = (),
+        in_reply_to: str = "",
+        references: Sequence[str] = (),
         received_at: str = "",
         model_text: str = "",
         cursor_uidvalidity: int | None = None,
@@ -4234,6 +4295,8 @@ class EmailStore:
                 normalized_text=normalized_text,
                 preview=preview,
                 attachment_metadata=attachment_metadata,
+                in_reply_to=in_reply_to,
+                references=references,
                 received_at=received_at,
                 now=now,
             )
