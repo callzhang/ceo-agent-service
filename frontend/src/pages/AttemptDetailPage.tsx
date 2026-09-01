@@ -102,7 +102,6 @@ export function AttemptDetailPage() {
   };
 
   return <ConsolePageLayout title={detail ? `Attempt #${detail.id}` : "Attempt"} actions={<><SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} /><Link className="secondary-button" to="/history">返回 History</Link></>}>
-    <span className="attempt-detail-page-marker" aria-hidden="true" />
     {state === "loading" && !detail && <section className="console-card page-state" role="status">正在加载…</section>}
     {state === "error" && <section className="console-card page-state page-state-error" role="alert">{message}</section>}
     {detail && <>
