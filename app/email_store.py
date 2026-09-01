@@ -6437,6 +6437,109 @@ class EmailStore:
             ).fetchall()
         return [self._classification_row(row) for row in rows], total
 
+    @staticmethod
+    def _email_context_message_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "account_id": row["account_id"],
+            "stable_message_identity": row["stable_message_identity"],
+            "folder": row["folder"],
+            "uidvalidity": row["uidvalidity"],
+            "uid": row["uid"],
+            "rfc_message_id": row["rfc_message_id"],
+            "in_reply_to": row["in_reply_to"],
+            "references": _json_load(
+                row["references_json"], field="references_json", expected_type=list
+            ),
+            "thread_identity": row["thread_identity"],
+            "sender": row["sender"],
+            "recipients": _json_load(
+                row["recipients_json"], field="recipients_json", expected_type=list
+            ),
+            "subject": row["subject"],
+            "normalized_text": row["normalized_text"],
+            "attachment_metadata": _json_load(
+                row["attachment_metadata_json"],
+                field="attachment_metadata_json",
+                expected_type=list,
+            ),
+            "received_at": row["received_at"],
+        }
+
+    def list_email_context_thread(
+        self,
+        *,
+        account_id: str,
+        stable_message_identity: str,
+    ) -> list[dict[str, Any]]:
+        """Return the complete stored relation component for one message."""
+
+        account_id = account_id.strip()
+        stable_message_identity = stable_message_identity.strip()
+        if not account_id or not stable_message_identity:
+            raise ValueError("email context identity must be non-empty")
+        with self._connect() as db:
+            rows = db.execute(
+                "select * from email_messages where account_id=? order by received_at, id",
+                (account_id,),
+            ).fetchall()
+        trigger = next(
+            (
+                row
+                for row in rows
+                if row["stable_message_identity"] == stable_message_identity
+            ),
+            None,
+        )
+        if trigger is None:
+            return []
+        thread_identity = str(trigger["thread_identity"] or "")
+        known_ids = {
+            value
+            for value in (
+                trigger["rfc_message_id"],
+                trigger["in_reply_to"],
+                *_json_load(
+                    trigger["references_json"],
+                    field="references_json",
+                    expected_type=list,
+                ),
+            )
+            if value
+        }
+        related = {stable_message_identity}
+        changed = True
+        while changed:
+            changed = False
+            for row in rows:
+                row_identity = str(row["stable_message_identity"])
+                row_links = set(
+                    _json_load(
+                        row["references_json"],
+                        field="references_json",
+                        expected_type=list,
+                    )
+                )
+                row_links.update(
+                    value
+                    for value in (row["rfc_message_id"], row["in_reply_to"])
+                    if value
+                )
+                if not (
+                    row_identity in related
+                    or (thread_identity and row["thread_identity"] == thread_identity)
+                    or known_ids & row_links
+                ):
+                    continue
+                if row_identity not in related or not row_links <= known_ids:
+                    related.add(row_identity)
+                    known_ids.update(row_links)
+                    changed = True
+        return [
+            self._email_context_message_row(row)
+            for row in rows
+            if row["stable_message_identity"] in related
+        ]
+
     def get_classification(self, classification_id: int) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
