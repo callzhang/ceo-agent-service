@@ -4,8 +4,10 @@
 
 **状态：** Proposed，等待 Derek 反馈
 
-**工作树：** `/Users/derek/Documents/Projects/ceo-agent-service/.worktrees/email-integration-main`
-**生产状态：** 未合并、未部署、Email account disabled、没有真实邮箱写操作
+**工作树：** `/Users/derek/Documents/Projects/ceo-agent-service`
+**当前生产状态：** Email 集成代码已合并到 `main`，`dingtalk_primary` 账号和相关
+Skills 已启用；由于没有可晋升的 active model，Email worker 仍保持
+`waiting_configuration / missing_model`，没有真实邮箱分类、任务创建或邮箱写操作
 
 ## 1. 这份方案解决什么
 
@@ -90,19 +92,19 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 
 ## 5. 分阶段激活
 
-### 阶段 A：合并但保持 disabled
+### 阶段 A：代码合并与动作关闭（已完成）
 
-- 合并 Email integration 代码；
-- 不启动真实扫描；
-- 不创建 active model；
-- 不执行 provider action；
-- 完成主分支回归、迁移检查和 launchd 配置审阅。
+- Email integration 代码已合并到 `main`；
+- 生产账号配置已启用，但由于没有 active model，worker 没有启动有效扫描；
+- 没有创建 active model；
+- 没有执行 provider action；
+- 已完成主分支 Email 专项回归、旧库迁移检查、launchd 重启和本地健康回读。
 
 这是代码融合，不是生产能力激活。
 
-### 阶段 B：readonly shadow + 待反馈
+### 阶段 B：readonly shadow + 待反馈（尚待产品确认）
 
-- 只启用一个邮箱的 readonly scan；
+- 在明确批准后，只启用一个邮箱的 readonly scan；
 - 所有类别 `auto_action_eligible=false`；
 - 所有邮件进入 `待反馈`，模型预测只作建议；
 - 用户确认写入 authoritative feedback；
@@ -148,7 +150,7 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 | CPU 延迟 | Logistic 端到端 P95 约 6 ms | 通过 100 ms 门槛 |
 | 模型体积 | Logistic 约 339–404 KB | 可接受 |
 | fastText | 更快但 Macro F1 更低、约 26.4 MB、小样本训练不稳定 | 不替换当前模型 |
-| 新随机 holdout | 40 条约 20% accuracy | 不开放自动分类动作 |
+| 新随机 holdout | 40 条时间顺序 holdout：30% Accuracy / 21.43% Macro F1 | 不开放自动分类动作 |
 | 反馈学习 | 20 条后 notification 达到 100% precision / 80% recall（固定 10 条 provisional test） | 反馈闭环值得进入 shadow |
 | 合并 113 条 OOF | 54.87% Accuracy / 50.71% Macro F1 | 仅研究证据 |
 | 最大 confidence | 0.3109 | 0.85 threshold 下自动覆盖为 0 |
@@ -172,13 +174,17 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 
 ## 8. 等待 Derek 决定的事项
 
-本方案到此停在产品激活决策，不执行合并、部署或真实邮箱写操作。需要确认：
+代码合并、账号/Skills 启用和“动作关闭”的生产回读已经完成。本方案现在停在
+下一阶段的产品激活决策，不执行模型晋升、真实邮箱写操作或自动任务开放。需要确认：
 
-1. 是否先合并 Email integration，但所有账户保持 disabled；
-2. 是否允许随后开启一个邮箱的 readonly shadow + 待反馈；
-3. shadow 阶段是扫描全部新邮件，还是只抽样进入待反馈；
-4. 是否采用“随机漂移样本 + 定向稀有类别 + 低置信度 active learning”的反馈采样组合；
-5. 在当前批准的 precision/support 门槛之外，是否要为 `important` 增加 recall 下限。该项属于新的 safety gate，必须单独确认并单独实现，不能顺手加入本次合并。
+1. 是否允许使用当前唯一配置邮箱开启 readonly shadow，让邮件进入 Email 页面
+   的“待反馈”；当前没有 active model，批准后仍需先生成候选模型，不能把本轮
+   assistant provisional annotations 直接当作生产 gold；
+2. shadow 阶段是扫描全部新邮件，还是只对有限样本进入“待反馈”；
+3. 是否采用“随机漂移样本 + 定向稀有类别 + 低置信度 active learning”的反馈采样组合；
+4. 用户确认样本达到什么最低总量后，才开始第一次 time-ordered candidate 评估；
+5. 在当前批准的 precision/support 门槛之外，是否要为 `important` 增加 recall 下限。
+   该项属于新的 safety gate，必须单独确认并单独实现，不能顺手加入现有代码。
 
 ## 9. 2026-08-31 完成审计矩阵
 
@@ -194,7 +200,7 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 | 低置信度邮件进入待反馈 | 冷启动和 threshold/eligibility fail-closed 测试通过 | 已验证 |
 | subscription 自动门槛达到 precision >= 0.95、support >= 20 | 当前只有 provisional 样本，且 support 不足 | 未满足，保持关闭 |
 | user-confirmed 时间顺序 holdout | 当前尚未积累足够 user-confirmed feedback | 待实验 |
-| 主分支合并、launchd 重启和线上 readback | 当前仍在独立工作树，未部署 | 等待 Derek 授权 |
+| 主分支合并、launchd 重启和线上 readback | `main` 已包含 Email 集成；launchd 已重启，健康和学习 API 已回读 | 已完成 |
 | 真实邮箱写操作小批量验收 | 尚未获得本阶段单独的外部效果授权 | 等待 Derek 授权 |
 
 该矩阵的“已验证”只表示独立工作树中的实现和测试证据，不表示主分支已经
