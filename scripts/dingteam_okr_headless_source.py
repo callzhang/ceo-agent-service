@@ -67,14 +67,6 @@ def _capture_stable_headless_headers() -> dict[str, str]:
                     if "execution context was destroyed" not in str(exc).lower():
                         raise
                     page.wait_for_timeout(1000)
-            app_state = page.evaluate(
-                """() => ({
-                    root: !!document.querySelector('#root-master'),
-                    mounted: !!document.querySelector('#root-master > * > *'),
-                })"""
-            )
-            if app_state.get("root") and not app_state.get("mounted"):
-                raise RuntimeError("okr_website_unavailable: Dingteam OKR website did not render")
             deadline = time.monotonic() + HEADLESS_REFRESH_SECONDS
             while time.monotonic() < deadline and "Authorization" not in captured:
                 try:
@@ -83,6 +75,15 @@ def _capture_stable_headless_headers() -> dict[str, str]:
                 except Exception as exc:
                     if "execution context was destroyed" not in str(exc).lower():
                         raise
+            if "Authorization" not in captured:
+                app_state = page.evaluate(
+                    """() => ({
+                        root: !!document.querySelector('#root-master'),
+                        mounted: !!document.querySelector('#root-master > * > *'),
+                    })"""
+                )
+                if app_state.get("root") and not app_state.get("mounted"):
+                    raise RuntimeError("okr_website_unavailable: Dingteam OKR website did not render")
         finally:
             context.close()
     if "Authorization" not in captured:

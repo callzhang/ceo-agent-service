@@ -53,3 +53,12 @@ def test_valid_cache_skips_browser_refresh(monkeypatch):
     )
 
     assert module._get_headless_headers() == cached
+
+
+def test_unmounted_okr_shell_is_checked_only_after_auth_wait():
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    wait_marker = 'deadline = time.monotonic() + HEADLESS_REFRESH_SECONDS'
+    state_check = 'if app_state.get("root") and not app_state.get("mounted"):'
+
+    assert source.index(wait_marker) < source.index(state_check)
