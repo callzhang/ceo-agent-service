@@ -504,3 +504,24 @@ active manifest: none
 path-based promotion deprecation。候选 artifact 位于 Git 忽略的本地
 `data/email-shadow-models/`，不包含原始邮件或凭据。它可以用于后续真实新邮件的
 readonly shadow prediction，但当前不能触发 label、move、archive 或 Trash。
+
+### 真实邮箱只读 shadow smoke
+
+随后使用该 candidate 对真实 DingTalk 企业邮箱做一次独立 readonly smoke。固定随机
+种子 `2026090210`，从当前 2,321 个 INBOX UID 的最近 500 封中随机抽取 10 封，
+只通过生产 `ImapReadonlyAdapter` 读取 header、BODYSTRUCTURE 和受限文本部分：
+
+- 模型预测分布：`billing=3`、`important=1`、`junk=3`、`notification=3`；
+- `notification >=0.25` 候选：3；通用 `confidence >=0.85` 候选：0；
+- mailbox writes：0；SMTP connections：0；attachments downloaded：0；
+- 未输出或持久化发件人、主题、正文、URL、UID 或附件名。
+
+这次没有 assistant gold label，因此只能验证真实输入兼容性和候选覆盖率，不能把
+3 个 notification 候选计入 precision/support。逐封 IMAP 网络读取 10 封约 34 秒，
+明显慢于模型 P95 0.61 ms；生产应依靠 UID cursor 只处理新增邮件，并保持小批串行，
+不能把大范围随机回扫的耗时归因于分类器。
+
+完整测试时，shell 通配符还收集到 4 个被 `.gitignore` 的本地旧副本
+`tests/test_email_* 2.py`，其旧 contract 产生 12 个失败。这些文件不属于 Git
+工作树，未修改也未删除。使用 `git ls-files` 选择正式测试后为 `649 passed,
+5 warnings`，新增 shadow 测试另为 `1 passed`；提交后合并计数应为 650。
