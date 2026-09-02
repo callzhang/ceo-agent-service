@@ -313,6 +313,40 @@ def test_email_agent_consumer_claims_only_email_channel_without_dingtalk_adapter
     assert calls[5] == ("finalize", task, result)
 
 
+def test_email_agent_consumer_does_not_execute_legacy_auto_reply_task():
+    module = _module()
+    task = SimpleNamespace(
+        id=42,
+        execution_generation="generation-1",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "action_type": "auto_reply",
+            }
+        ),
+    )
+    failures = []
+
+    class Store:
+        def claim_reply_tasks(self, limit, *, channel):
+            assert (limit, channel) == (50, "email")
+            return [task]
+
+        def fail_reply_task(self, task_id, error, *, expected_execution_generation):
+            failures.append((task_id, error, expected_execution_generation))
+
+    module.run_email_agent_task_loop(
+        Store(),
+        SimpleNamespace(process=lambda *_args, **_kwargs: pytest.fail("reply executed")),
+        load_task_context=lambda _task: pytest.fail("reply context loaded"),
+        finalize_task=lambda *_args: pytest.fail("reply finalized"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+    assert failures == [(42, "email_auto_reply_disabled", "generation-1")]
+
+
 def test_unsubscribe_task_uses_direct_consumer_without_orchestrator():
     module = _module()
     action_identity = email_action_identity(

@@ -70,6 +70,16 @@ def _health_error_code(value: object, *, fallback: str) -> str:
     return candidate[:MAX_HEALTH_TEXT_LENGTH]
 
 
+def _is_disabled_email_auto_reply_task(task: object) -> bool:
+    """Recognize persisted reply tasks that the current Email policy forbids."""
+
+    try:
+        payload = json.loads(str(getattr(task, "trigger_message_json", "")))
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("action_type") == "auto_reply"
+
+
 def _scan_result_error_code(result: object) -> str:
     outcomes = getattr(result, "accounts", ())
     for outcome in outcomes:
@@ -215,6 +225,17 @@ def run_email_agent_task_loop(
             failures += 1
             last_error_type = type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH]
         for task in tasks:
+            if _is_disabled_email_auto_reply_task(task):
+                try:
+                    task_store.fail_reply_task(
+                        task.id,
+                        "email_auto_reply_disabled",
+                        expected_execution_generation=task.execution_generation,
+                    )
+                except Exception as exc:  # noqa: BLE001 - keep the component alive
+                    failures += 1
+                    last_error_type = type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH]
+                continue
             try:
                 context = load_task_context(task)
                 from app.task_lifecycle import (

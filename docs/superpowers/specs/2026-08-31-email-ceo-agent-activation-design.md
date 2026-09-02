@@ -2,14 +2,14 @@
 
 **日期：** 2026-08-31
 
-**状态：** Proposed，等待 Derek 反馈
+**状态：** 用户已授权高置信度确定性邮箱处理；回复邮件保持全局关闭；模型质量门槛仍未满足
 
 **工作树：** `/Users/derek/Documents/Projects/ceo-agent-service/.worktrees/email-integration-main`
-**生产状态：** 未合并、未部署、Email account disabled、没有真实邮箱写操作
+**生产状态：** 未合并、未部署；当前没有合格 active model，因此没有真实邮箱写操作
 
 ## 1. 这份方案解决什么
 
-Email 的代码集成已经覆盖多邮箱 connector、独立 Email worker、分类/反馈/训练、Email Console、确定性 provider action、自动回复的 Consumer → Audit，以及 unsubscribe 的 Consumer-direct 例外。
+Email 的代码集成已经覆盖多邮箱 connector、独立 Email worker、分类/反馈/训练、Email Console、确定性 provider action，以及 unsubscribe 的 Consumer-direct 例外。当前部署明确关闭邮件回复；历史 `auto_reply` contract 和审计回执仍保留用于兼容读取，但不能从 Email 配置或 worker 运行时生成。
 
 当前问题不再是“代码能不能跑”，而是“在分类质量不够时，哪些能力可以安全进入 CEO Agent”。最新实验结论是：CPU 延迟充分达标，但分类质量和类别覆盖不足，不能开放任何 model-only 自动动作。
 
@@ -43,7 +43,7 @@ category + confidence + alternatives + versioned model_id
 └─────────────────────────────────────────────────────────┘
 ```
 
-分类确认本身只写分类反馈，不创建 CEO Agent task。只有当前类别配置明确要求 `auto_reply` 或 `unsubscribe` 时，才创建 `channel=email` task。
+分类确认本身只写分类反馈，不创建 CEO Agent task。当前部署只有明确授权且通过质量门槛的 `unsubscribe` 才创建 `channel=email` task；`auto_reply` 被全局禁用。
 
 附件只进入 metadata；不下载、不 OCR、不提取、不让 classifier 或 Agent 阅读附件正文。
 
@@ -71,9 +71,9 @@ Email 不共享普通 task worker。一个由现有 supervisor 管理的 Email �
 | --- | --- | --- |
 | 用户仅确认分类 | 否 | 保存 feedback，进入批量学习 |
 | 配置的 label/read/archive/move/trash | 否 | direct provider action + effect record/readback；trash 仅可恢复，不永久删除 |
-| 配置的 `auto_reply` | 是 | Email Consumer → Audit Agent → effect/readback |
+| 配置的 `auto_reply` | 否，当前配置/API/worker 均禁止 | 不创建 task，不连接 SMTP；历史 contract 仅保留兼容读取 |
 | 配置的 `unsubscribe` | 是 | Email unsubscribe Consumer-direct；记录完整 observability，不进入 Audit |
-| 开放式分析、回复、跟进 | 只有用户明确要求时 | 普通 `channel=email` task；附件仍只有 metadata |
+| 开放式分析、回复、跟进 | 分析可按明确需求创建；回复当前禁用 | 普通 `channel=email` task；附件仍只有 metadata；不发送邮件 |
 
 `unsubscribe` 是唯一跳过 Audit 的已批准例外。它仍受不可变 ActionPlan、Consumer 最终判断、可靠退订入口、幂等、独立持久浏览器 profile 和 terminal outcome 约束。
 
@@ -107,25 +107,28 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 - 所有邮件进入 `待反馈`，模型预测只作建议；
 - 用户确认写入 authoritative feedback；
 - batch retrain 允许生成 versioned candidate/active model，但 category action eligibility 继续关闭；
-- 不执行标签、归档、trash、回复或退订。
+- 没有类别达到 eligibility 时不执行标签、归档、trash 或退订；邮件回复始终不执行。
 
 建议采样不是 100% 随机：保留随机样本监测真实分布，同时定向补齐 `billing`、`personal`、`shopping`、`subscription` 和模型最不确定的类别。最新随机 40 条没有任何 personal/shopping/subscription，已经证明纯随机无法快速建立八分类训练集。
 
-### 阶段 C：逐类别开启低风险 direct action
+### 阶段 C：逐类别开启已授权 direct action
 
 只有某个类别自己的 user-confirmed、time-ordered validation 达到当前批准门槛，且配置 threshold 与模型评测 threshold 完全一致时，才把该类别设为 `auto_action_eligible=true`。
 
 - 不用 aggregate accuracy 或 aggregate Macro F1 代替类别证据；
 - 不因为其他类别达标而连带开放当前类别；
 - threshold 改动立即使 eligibility stale，重新回到待反馈；
-- 第一批只考虑 label/read/archive 等可恢复、可 readback 的 direct action；
+- Derek 已明确授权高置信度类别执行 label/read/archive/move/trash；仍必须满足类别级质量门槛、threshold 一致性和 provider effect/readback；
+- `trash` 只移动到可恢复的 Trash，禁止永久删除和 `EXPUNGE`；
 - permanent delete 永远不进入 v1。
 
-### 阶段 D：自动回复
+### 阶段 D：邮件回复（当前关闭）
 
-只有配置明确的固定回复场景进入 automatic `channel=email` task。回复正文仍由 Email Consumer 生成或读取配置，但任何 SMTP 外部写入必须经过 Audit Agent 并完成 effect reconciliation/readback。
+当前不允许任何 Email 回复。API 不接受 `auto_reply` 配置，worker runtime 不接受包含
+`auto_reply` 的 scan config，也不连接 SMTP。若未来重新开放，必须作为独立策略变更重新确认
+Consumer → Audit → effect reconciliation/readback；本次授权不包含该项。
 
-开放式回复不因分类结果自动创建；必须来自用户明确要求。
+分类结果、人工确认和既有 Email task 都不构成回复授权。
 
 ### 阶段 E：自动退订候选
 
@@ -166,19 +169,18 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 5. user-confirmed 时间顺序 holdout；
 6. 每类别 eligibility 和 threshold 的不可变模型 metadata；
 7. direct provider action 的真实小批量 effect/readback；
-8. 自动回复的 Consumer → Audit → effect reconciliation；
-9. unsubscribe 只在单独确认后做受控真实站点小批量验收；
+8. Email 回复禁用策略的 API、worker、skill 和 SMTP 不调用测试；
+9. unsubscribe 只在订阅级门槛满足后做受控真实站点小批量验收；
 10. 生产 launchd 新进程、Email worker 新进程、无 failed/processing backlog。
 
 ## 8. 等待 Derek 决定的事项
 
 本方案到此停在产品激活决策，不执行合并、部署或真实邮箱写操作。需要确认：
 
-1. 是否先合并 Email integration，但所有账户保持 disabled；
-2. 是否允许随后开启一个邮箱的 readonly shadow + 待反馈；
-3. shadow 阶段是扫描全部新邮件，还是只抽样进入待反馈；
-4. 是否采用“随机漂移样本 + 定向稀有类别 + 低置信度 active learning”的反馈采样组合；
-5. 在当前批准的 precision/support 门槛之外，是否要为 `important` 增加 recall 下限。该项属于新的 safety gate，必须单独确认并单独实现，不能顺手加入本次合并。
+1. 是否先合并 Email integration，并由一个邮箱开启 readonly shadow + 待反馈；
+2. shadow 阶段是扫描全部新邮件，还是只抽样进入待反馈；
+3. 是否采用“随机漂移样本 + 定向稀有类别 + 低置信度 active learning”的反馈采样组合；
+4. 在当前批准的 precision/support 门槛之外，是否要为 `important` 增加 recall 下限。该项属于新的 safety gate，必须单独确认并单独实现，不能顺手加入本次合并。
 
 ## 9. 2026-08-31 完成审计矩阵
 
@@ -187,15 +189,15 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 | CPU 分类器满足 100 ms 目标 | 当前 Logistic 端到端 P95 约 6 ms | 已验证 |
 | 分类、反馈、训练和模型版本化 | Email worker、Console 四个分区、模型 registry 及相关回归 | 已验证 |
 | 分类确认不创建 task | pipeline/action-plan boundary 测试通过 | 已验证 |
-| `auto_reply` 写操作经过 Audit | `consumer_audit_v1` 路径及测试通过 | 已验证 |
+| Email 回复全局关闭 | API、worker scan config、Email skill 和前端均拒绝/隐藏 `auto_reply` | 已实现，未启用 SMTP |
 | `unsubscribe` 使用 Consumer-direct 例外 | lifecycle、Consumer、task-bound operation 及 loopback E2E 通过 | 已验证 |
 | 退订使用独立 headless 浏览器 profile | 34 个 loopback browser tests 通过 | 已验证 |
 | 退订 terminal result text 可追溯 | receipt、digest、步骤和 Email projection 测试通过 | 已验证 |
 | 低置信度邮件进入待反馈 | 冷启动和 threshold/eligibility fail-closed 测试通过 | 已验证 |
 | subscription 自动门槛达到 precision >= 0.95、support >= 20 | 当前只有 provisional 样本，且 support 不足 | 未满足，保持关闭 |
 | user-confirmed 时间顺序 holdout | 当前尚未积累足够 user-confirmed feedback | 待实验 |
-| 主分支合并、launchd 重启和线上 readback | 当前仍在独立工作树，未部署 | 等待 Derek 授权 |
-| 真实邮箱写操作小批量验收 | 尚未获得本阶段单独的外部效果授权 | 等待 Derek 授权 |
+| 主分支合并、launchd 重启和线上 readback | 当前仍在独立工作树，未部署 | 待部署操作 |
+| 高置信度 direct action 真实小批量验收 | 已获得外部效果授权，但当前没有合格 active model | 保持关闭，待模型门槛 |
 
 该矩阵的“已验证”只表示独立工作树中的实现和测试证据，不表示主分支已经
 合并，也不表示生产服务已经加载这些代码。当前唯一需要产品决策的动作是先否

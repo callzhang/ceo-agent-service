@@ -666,6 +666,11 @@ def register_email_routes(
             ) from exc
         if len(actions) != len(set(actions)):
             raise HTTPException(status_code=400, detail="actions must be unique")
+        if EmailAction.AUTO_REPLY in actions:
+            raise HTTPException(
+                status_code=400,
+                detail="auto_reply is disabled; email worker cannot send replies",
+            )
         try:
             row = email_store.upsert_config(
                 category=email_category,

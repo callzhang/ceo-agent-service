@@ -82,8 +82,9 @@ describe("EmailPage", () => {
 
     await user.click(await screen.findByRole("button", { name: "保存本地配置" }));
 
-    expect(await screen.findByText("配置已保存：确定性动作由 Email worker 执行；自动回复经过 Audit Agent；退订由 Consumer-direct 退订 Agent 处理。"))
+    expect(await screen.findByText("配置已保存：确定性动作由 Email worker 执行；退订由 Consumer-direct 退订 Agent 处理。邮件回复已全局禁用。"))
       .toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "auto_reply" })).not.toBeInTheDocument();
   });
 
   it("shows model version and training evidence", async () => {

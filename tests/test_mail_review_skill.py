@@ -75,6 +75,14 @@ def test_mail_review_skill_separates_linked_materials_from_email_attachments():
     assert "Task 11 unsubscribe browser execution" in text
 
 
+def test_mail_review_skill_disables_email_replies():
+    text = _skill_prose()
+
+    assert "Automatic `auto_reply` is disabled for the current Email subsystem" in text
+    assert "Never propose or send an email reply from a classifier result or Email task" in text
+    assert "The current deployment permits only its exact `unsubscribe` action" in text
+
+
 def test_canonical_prompt_delegates_mail_policy_to_skill():
     text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
 

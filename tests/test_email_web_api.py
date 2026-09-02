@@ -551,11 +551,6 @@ def test_paginated_get_does_not_compete_with_scanner_write_transaction(
             ["move"],
             {"move": {"target_folder": "Archive/Billing"}},
         ),
-        (
-            "important",
-            ["auto_reply"],
-            {"auto_reply": {"instruction": "Acknowledge receipt"}},
-        ),
     ),
 )
 def test_email_config_api_persists_valid_action_parameters(
@@ -579,6 +574,28 @@ def test_email_config_api_persists_valid_action_parameters(
 
     assert response.status_code == 200
     assert response.json()["item"]["action_parameters"] == action_parameters
+
+
+def test_email_config_api_rejects_auto_reply_even_with_valid_instruction(tmp_path: Path):
+    with _client(tmp_path) as client:
+        response = client.put(
+            "/api/console/email/config/important",
+            json={
+                "description": "No outbound replies",
+                "threshold": 0.95,
+                "actions": ["auto_reply"],
+                "action_parameters": {
+                    "auto_reply": {"instruction": "Acknowledge receipt"}
+                },
+                "enabled": True,
+                "config_version": "email-config-v1",
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "auto_reply is disabled; email worker cannot send replies"
+    )
 
 
 @pytest.mark.parametrize(

@@ -191,12 +191,7 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
     config = EmailScanConfig(
         config_version="scan-task-production-v1",
         thresholds={category: 0.0 for category in EmailCategory},
-        actions={EmailCategory.WORK: (EmailAction.AUTO_REPLY,)},
-        action_parameters={
-            EmailCategory.WORK: {
-                EmailAction.AUTO_REPLY: {"instruction": "Acknowledge the email."}
-            }
-        },
+        actions={EmailCategory.WORK: (EmailAction.UNSUBSCRIBE,)},
         category_eligibility=_category_eligibility(
             eligible=(EmailCategory.WORK,),
             threshold=0.0,
@@ -218,11 +213,25 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
     assert len(callbacks) == 1
     classification, callback_message = callbacks[0]
     assert classification.action_plan is not None
-    assert classification.action_plan.agent_actions == (EmailAction.AUTO_REPLY,)
+    assert classification.action_plan.agent_actions == (EmailAction.UNSUBSCRIBE,)
     assert callback_message["messageId"] == message["messageId"]
     persisted = store.get_classification(classification.classification_id)
     assert persisted is not None
     assert persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
+
+
+def test_scan_config_rejects_auto_reply_when_outbound_reply_is_disabled():
+    with pytest.raises(ValueError, match="auto_reply is disabled"):
+        EmailScanConfig(
+            config_version="scan-no-reply-v1",
+            thresholds={category: 0.95 for category in EmailCategory},
+            actions={EmailCategory.WORK: (EmailAction.AUTO_REPLY,)},
+            action_parameters={
+                EmailCategory.WORK: {
+                    EmailAction.AUTO_REPLY: {"instruction": "Acknowledge the email."}
+                }
+            },
+        )
 
 
 def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: Path):

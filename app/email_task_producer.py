@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from app.email_classifier_contracts import (
+    EmailAction,
     EmailActionPlan,
     EmailAttachmentMetadata,
     EmailProviderLocator,
@@ -36,6 +37,8 @@ class EmailActionTaskProducer:
         action_plan: EmailActionPlan,
         message: Mapping[str, object],
     ) -> tuple[EmailAgentTaskRoute, ...]:
+        if EmailAction.AUTO_REPLY in action_plan.agent_actions:
+            raise ValueError("auto_reply is disabled for email task production")
         if not action_plan.agent_actions:
             return ()
         task_input = self._task_input(action_plan, message)

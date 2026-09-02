@@ -115,9 +115,9 @@ turn、attempt/run、commit 和测试/重启/健康证据都归属该轮次。�
 
 ### Email task 的运行边界
 
-Email 的分类确认不是 Agent 运行。确认后生成的不可变 `ActionPlan` 只有包含
-`auto_reply` 或 `unsubscribe` 时，才创建 `channel=email` 的 `reply_task`；零 Agent
-动作和所有确定性邮箱动作都不会创建任务。
+Email 的分类确认不是 Agent 运行。确认后生成的不可变 `ActionPlan` 只有包含当前部署允许的
+`unsubscribe` 时，才创建 `channel=email` 的 `reply_task`；零 Agent 动作和所有确定性邮箱
+动作都不会创建任务。`auto_reply` 当前全局禁用，不会由配置、分类结果或人工确认生成。
 
 Email action task 的去重身份由以下四项确定：
 
@@ -132,8 +132,8 @@ account_id + stable_message_identity + action_type + action_plan_version
 Adapter 只创建 `pending` task 和受限上下文，不直接发送邮件、打开网页或写入新的任务
 状态。邮件正文和 thread 纯文本在运行时上下文中提供；附件只有 metadata material，
 没有读取命令和 image path。持久 trigger payload 不包含凭证、附件内容、本地路径或
-完整退订 URL。`auto_reply` 继续使用 Consumer → Audit，由 Audit 执行 SMTP 外部写并
-产生新 revision。`unsubscribe` 使用 Consumer-direct，不创建 Audit run 或 Audit
+完整退订 URL。邮件回复当前不执行、不连接 SMTP。未来若单独重新开放，必须重新确认
+Consumer → Audit 和 effect reconciliation 策略。`unsubscribe` 使用 Consumer-direct，不创建 Audit run 或 Audit
 revision；Consumer 对当前邮件和 thread 做最终判断，只执行被冻结的退订计划，并保存
 步骤、terminal result text、receipt 和 observation digest。两条路径的旧 run、session、
 receipt 和失败事实都保持不可变。

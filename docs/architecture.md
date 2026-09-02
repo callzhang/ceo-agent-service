@@ -99,8 +99,9 @@ Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 A
 
 Email 分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。如果当前计划没有
 Agent 动作，就不会创建 `reply_task`。确定性的 `label`、`mark_read`、`archive`、
-`move` 和 `trash` 也不进入 Agent 队列；只有计划明确授权的 `auto_reply` 和
-`unsubscribe` 才映射为 `channel=email` 的 `pending` 任务。
+`move` 和 `trash` 也不进入 Agent 队列；当前部署只有计划明确授权且通过订阅级门槛的
+`unsubscribe` 才映射为 `channel=email` 的 `pending` 任务。`auto_reply` 在 Email 配置、
+worker runtime 和当前 skill 中全局禁用，不创建任务、不连接 SMTP。
 
 Email task 继续使用现有唯一键 `(channel, conversation_id, trigger_message_id)`：
 
@@ -125,8 +126,8 @@ ActionPlan、分类、模型和配置版本，以及经过凭证、URL 和本地
 为文件名、MIME、字节大小和 inline 标记，material 没有读取命令，并固定
 `image_paths=()`。上下文可以携带已有的 sent/unsubscribe state receipt。当前不可变
 ActionPlan 是唯一动作授权；Adapter 只排队，不发送、不打开退订页面。
-`auto_reply` 继续使用 Consumer → Audit，SMTP 外部写只能由 Audit 接受候选后执行并读回。
-`unsubscribe` 使用 Consumer-direct：不创建 Audit run 或 Audit revision，由 Consumer
+邮件回复当前不执行、不连接 SMTP。未来若单独重新开放，必须重新确认 Consumer → Audit 和
+effect reconciliation 策略。`unsubscribe` 使用 Consumer-direct：不创建 Audit run 或 Audit
 对当前邮件和 thread 做最终判断后执行已冻结的退订计划，并保存步骤、terminal result
 text、receipt 和 observation digest。
 

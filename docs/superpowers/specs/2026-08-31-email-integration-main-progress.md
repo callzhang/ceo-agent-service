@@ -1,6 +1,6 @@
 # Email integration main 工作树进展记录
 
-更新时间：2026-08-31
+更新时间：2026-09-02
 
 ## 当前边界
 
@@ -8,7 +8,9 @@
 
 `/Users/derek/Documents/Projects/ceo-agent-service/.worktrees/email-integration-main`
 
-分支从 `main` 的 `aaac3fe5bef2b70af4dcd894c551e55097277d4f` 建立。所有改动只在该工作树中验证；没有修改主工作树、没有重启生产 launchd、没有启用真实邮箱扫描，也没有执行真实邮箱写操作。
+分支当前为 `codex/email-integration-main`。所有改动只在该工作树中验证；没有修改主工作树、没有重启生产 launchd、没有启用真实邮箱扫描，也没有执行真实邮箱写操作。
+
+2026-09-02 Derek 已明确授权高置信度类别的确定性邮件处理，包括 label、mark_read、archive、move 和 trash；trash 仅进入可恢复 Trash，禁止永久删除。当前明确禁止所有 Email 回复：配置 API、worker runtime 和 `ceo-mail-review` skill 均不得生成或发送 `auto_reply`，SMTP 不启用。该授权不绕过模型/类别 eligibility，也不改变 unsubscribe 的订阅级 precision/support 门槛。
 
 ## 已移植能力
 
@@ -17,7 +19,7 @@
 3. Email 页面所需的分类详情、学习反馈和 task producer。
 4. 独立 Email worker：扫描与确定性 provider action、Email Agent/Audit consumer、训练 scheduler 为三个独立组件。
 5. 所有 Email Agent task payload 带显式 `lifecycle_version`：
-   - `auto_reply` → `consumer_audit_v1`，经过 Consumer → Audit；
+   - `auto_reply` 历史 contract 保留用于兼容读取，但当前 runtime/API/skill 全局禁用，不创建任务、不连接 SMTP；
    - `unsubscribe` → `email_unsubscribe_consumer_direct_v1`，由独立 unsubscribe Consumer 执行并记录 observability，不创建 Agent/Audit run。
 6. `unsubscribe` 的生命周期选择 fail-closed：只有任务、上下文、原始 payload、分类、action identity 全部一致且为当前版本时才允许直通；其他任何不一致都走普通 Consumer → Audit。
 7. 直接 provider action 具备 claim、租约恢复、有限重试和退订 terminal result / observation digest 持久化。

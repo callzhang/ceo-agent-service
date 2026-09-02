@@ -255,7 +255,7 @@ def test_only_agent_actions_create_idempotent_email_reply_tasks(tmp_path: Path):
 def test_task_producer_builds_email_task_from_persisted_message_context(
     tmp_path: Path,
 ):
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = _task_input()
     email_store = _email_store(tmp_path)
     _persist_authorization(email_store, plan, task_input)
@@ -280,9 +280,35 @@ def test_task_producer_builds_email_task_from_persisted_message_context(
     )
 
     assert len(routes) == 1
-    assert routes[0].action_type is EmailAction.AUTO_REPLY
+    assert routes[0].action_type is EmailAction.UNSUBSCRIBE
     assert routes[0].task.channel == "email"
     assert task_store.count_reply_tasks(channel="email") == 1
+
+
+def test_task_producer_rejects_auto_reply_under_current_email_policy(tmp_path: Path):
+    plan = _plan((EmailAction.AUTO_REPLY,))
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    _persist_authorization(email_store, plan, task_input)
+    producer = EmailActionTaskProducer(_store(tmp_path), email_store)
+
+    with pytest.raises(ValueError, match="auto_reply is disabled"):
+        producer.produce(
+            plan,
+            {
+                "accountId": plan.account_id,
+                "folder": "INBOX",
+                "uidValidity": 42,
+                "uid": 41,
+                "messageId": "<mail-41@example.com>",
+                "stableMessageIdentity": task_input.stable_message_identity,
+                "threadId": task_input.thread_identity,
+                "from": {"email": task_input.trigger.sender},
+                "subject": task_input.subject,
+                "textBody": task_input.trigger.text,
+                "markdownBody": task_input.trigger.text,
+            },
+        )
 
 
 def test_disabled_mail_review_does_not_create_email_tasks(tmp_path: Path):

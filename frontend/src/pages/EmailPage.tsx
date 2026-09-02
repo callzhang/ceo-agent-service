@@ -18,7 +18,7 @@ import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 
 const categories = ["important", "work", "personal", "notification", "billing", "shopping", "subscription", "junk"];
-const actions = ["label", "mark_read", "archive", "move", "trash", "unsubscribe", "auto_reply"];
+const actions = ["label", "mark_read", "archive", "move", "trash", "unsubscribe"];
 const categoryLabels: Record<string, string> = {
   important: "重要", work: "工作", personal: "个人", notification: "通知",
   billing: "账单", shopping: "购物", subscription: "订阅", junk: "垃圾",
@@ -143,7 +143,7 @@ function ConfigPanel() {
     try {
       const result = await saveEmailConfig(selected, { description, threshold: Number(threshold), actions: selectedActions, enabled, config_version: version });
       setConfigs((previous) => [...previous.filter((config) => config.category !== selected), result.item].sort((a, b) => a.category.localeCompare(b.category)));
-      setMessage("配置已保存：确定性动作由 Email worker 执行；自动回复经过 Audit Agent；退订由 Consumer-direct 退订 Agent 处理。");
+      setMessage("配置已保存：确定性动作由 Email worker 执行；退订由 Consumer-direct 退订 Agent 处理。邮件回复已全局禁用。");
     } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "配置保存失败"); }
   };
 
