@@ -32,20 +32,21 @@ def _get_headless_headers() -> dict[str, str]:
     return headers
 
 
+def _headless_launch_kwargs(playwright) -> dict[str, object]:
+    """Use Playwright's isolated browser binary, never the user's Chrome app."""
+    return {
+        "user_data_dir": str(browser.PROFILE_DIR),
+        "headless": True,
+        "executable_path": playwright.chromium.executable_path,
+    }
+
+
 def _capture_stable_headless_headers() -> dict[str, str]:
     """Capture source headers after the OKR page has finished navigating."""
     browser.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     captured: dict[str, str] = {}
     with sync_playwright() as playwright:
-        launch_kwargs = {
-            "user_data_dir": str(browser.PROFILE_DIR),
-            "headless": True,
-        }
-        chrome = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-        if chrome.is_file():
-            launch_kwargs["executable_path"] = str(chrome)
-        else:
-            launch_kwargs["channel"] = "chrome"
+        launch_kwargs = _headless_launch_kwargs(playwright)
         context = playwright.chromium.launch_persistent_context(**launch_kwargs)
         try:
             def on_request(request):

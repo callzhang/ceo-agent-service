@@ -62,3 +62,19 @@ def test_unmounted_okr_shell_is_checked_only_after_auth_wait():
     state_check = 'if app_state.get("root") and not app_state.get("mounted"):'
 
     assert source.index(wait_marker) < source.index(state_check)
+
+
+def test_headless_launch_uses_playwright_browser_binary():
+    module = load_module()
+
+    class Chromium:
+        executable_path = "/tmp/playwright-chrome"
+
+    class Playwright:
+        chromium = Chromium()
+
+    assert module._headless_launch_kwargs(Playwright()) == {
+        "user_data_dir": str(module.browser.PROFILE_DIR),
+        "headless": True,
+        "executable_path": "/tmp/playwright-chrome",
+    }
