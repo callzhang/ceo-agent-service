@@ -148,3 +148,52 @@ holdout。按组的最大 UID 排序，前 120 组作为训练、后 41 组作�
 仍是实验分组启发式，但足以说明重复模板会明显抬高普通 holdout 指标。后续
 评估应同时报告消息级时间 holdout 和模板/来源分组 holdout，不能只用前者晋升
 模型或开启 provider action。
+
+## 新一轮随机 100 封实验（2026-09-12）
+
+为继续验证真实邮箱分布，而不是重复使用之前的固定样本，本轮通过 readonly
+IMAP `UID SEARCH` 后使用随机种子 `20260912` 抽取 100 封邮件。读取过程只使用
+`SELECT(readonly=True)`、`UID SEARCH` 和 `UID FETCH`；没有执行 `STORE`、`COPY`、
+`MOVE`、`EXPUNGE`、SMTP 发信、退订或其他 provider 写操作。邮件正文只在内存中
+用于本轮研究标注和评测，附件只记录是否存在，不读取附件正文。
+
+本轮标签仍为 `assistant_provisional_annotation`，不是用户确认的 gold feedback，
+也没有写入生产 feedback 表。样本摘要的 SHA-256 为
+`0887efe46d7fcfd18052e823d7292ea2123509211506e674e530e3a62d0b76e6`，类别分布为：
+
+`billing=8`、`important=21`、`junk=21`、`notification=19`、
+`subscription=8`、`work=23`；本轮没有 `personal` 或 `shopping` 样本。
+
+### UID 时间顺序 holdout
+
+按 UID 从旧到新排序，前 80 封训练、后 20 封 holdout。使用当前生产候选
+`jieba-tfidf-word-unigram-v1 + balanced Logistic`，比较三个正则强度：
+
+| C | Accuracy | Macro F1（实际 holdout 类别） | 预测 P95 | 最大置信度 | 达到 0.85 的数量 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.10 | 50.00% | 39.80% | 0.4468 ms | 0.2064 | 0/20 |
+| 0.25 | 50.00% | 39.80% | 0.4515 ms | 0.2655 | 0/20 |
+| 1.00 | 55.00% | 41.15% | 0.4254 ms | 0.4784 | 0/20 |
+
+### 未见主题组 holdout
+
+将去除常见回复/转发前缀并把数字归一化后的主题分成 87 组，使用固定随机种子
+`42` 做按组的 80/20 holdout，训练/测试规模为 `80/20`。这组切分避免了同一
+主题模板的副本同时出现在训练和测试中：
+
+| C | Accuracy | Macro F1（实际 holdout 类别） | 预测 P95 | 最大置信度 | 达到 0.85 的数量 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.10 | 50.00% | 44.43% | 0.5446 ms | 0.2104 | 0/20 |
+| 0.25 | 50.00% | 44.43% | 0.5613 ms | 0.2760 | 0/20 |
+| 1.00 | 50.00% | 44.43% | 0.5881 ms | 0.5041 | 0/20 |
+
+本轮与前一批 210 封结果的方向一致：CPU 延迟仍不到 1 ms，远低于 100 ms
+目标；但是普通时间切分只有 `50%–55% Accuracy`，未见主题组也只有 `50%`，
+且所有模型在 `0.85` 门槛下均为零覆盖。C 从 `0.25` 调到 `1.0` 没有带来可
+重复的跨模板质量改善。
+
+本轮 100 封仍是 assistant provisional annotation，不能用于 active model
+晋升、类别 eligibility 或自动退订 support。它进一步支持以下决策：继续采用
+word-unigram TF-IDF + balanced Logistic 作为实现候选，但先进入 readonly shadow
+和用户确认反馈阶段；在取得 user-confirmed、按类别和时间窗口分布的反馈前，不
+开发或开启 model-only provider action。
