@@ -836,6 +836,12 @@ support。动态邮箱的随机实验必须用完整 `sample_id_digest` 集合�
 最近 UID 池变化后复现同一批邮件。该结果仍不改变 user-confirmed 和 30-positive
 正式门槛。
 
+再增加两个不重叠随机批次后，四批 label-only shadow 共 37 条。与 F/G 合并，
+notification 0.25 门槛为 29/29 自动候选正确、32 个 positive support、recall
+90.63%。但新增 10 个自动候选全部来自同一登录/安全通知来源；跨来源的 Flight Watch
+通知仍被预测为 subscription。该结果跨过研究样本数，不证明跨来源泛化，也不改变
+assistant 标签的非权威状态。不能仅因累计 support 超过 30 就切换 active 或执行动作。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)

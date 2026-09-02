@@ -552,3 +552,41 @@ support，但仍全部是 assistant-authorized 标注，且没有达到当前正
 同一 seed 在稍后复跑时邮箱从 2,321 增加到 2,322 个 UID，最近 500 封的滑动池随之
 改变，所得样本也改变。固定随机 seed 不能单独构成动态邮箱的实验身份；后续所有
 可复核实验以完整 `sample_id_digest` 集合为准，seed 和 UID count 只作为采样说明。
+
+### notification 30-positive 研究复核
+
+继续完成两个互不重叠的小批次。第三批从 15 个随机 UID 中去重后剩 7 条；对两封
+正文开头被 CSS 占满的 OpenAI 邮件额外查看脱敏文本末尾后，确认一封是产品推广
+`subscription`，另一封是 Flight Watch `notification`。本批 top-1 为 4/7，
+notification 正样本 1 条，但模型预测为 subscription，因此 0.25 门槛没有候选。
+摘要文件及 SHA-256：
+
+```text
+data/email-experiments/2026-09-02-shadow-7-labels-c.json
+6040c161210fe5be8ed899354f3d5ae05105dc42dab4d859bfda775abe3c7e57
+```
+
+第四批从 20 个随机 UID 中排除既有消息后取得 10 条，人工标签分布为
+`work=3`、`notification=3`、`junk=2`、`important=1`、`subscription=1`，
+top-1 为 7/10。三个 notification 候选均为明确登录/安全通知，全部在 0.25 以上且
+3/3 正确。摘要文件及 SHA-256：
+
+```text
+data/email-experiments/2026-09-02-shadow-10-labels-d.json
+7f2919fb1d792ce09e5bec3c6ad07deda27c9916b6e59596dc1c445a599e27bf
+```
+
+四个新 label-only 批次共 37 条、37 个唯一消息摘要。合并此前去重 F/G holdout 后，
+冻结 notification 0.25 门槛的最终研究结果是：
+
+- 自动候选：29；正确候选：29；precision 100%；
+- notification positive support：32；recall 90.63%；
+- 新增 37 条的 top-1 错误仍集中在 work/important/subscription/junk 边界；
+- 新增 10 个自动 notification 候选全部来自同一个登录/安全通知来源模板，跨来源
+  notification（例如航班更新）仍可能落在 threshold 以下或被预测成 subscription。
+
+因此 0.25 已跨过“30 个 notification 正样本”的研究门槛，但证据存在明显来源集中，
+并且标签仍是 assistant-authorized。当前 candidate 保持不 active，生产 provider action
+仍为零。后续不再继续扩大同一邮箱的 assistant 自标样本；融合方案需要明确
+assistant 标签是否可以成为 authoritative training data，以及类别 gate 是否需要按已配置
+动作的风险采用更严格 precision。
