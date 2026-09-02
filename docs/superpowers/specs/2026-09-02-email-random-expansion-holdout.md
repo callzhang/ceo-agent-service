@@ -83,3 +83,38 @@ word-unigram 在合并 holdout 中：
 5. 暂不开发 active model 和生产自动动作。下一步最有价值的是积累用户确认的
    Email feedback，按类别和时间窗口补齐 `subscription`、`shopping`、`personal`
    以及 `work` 的训练/holdout 样本，再进行新的时间后置验证。
+
+## 轻量 Naive Bayes 架构对照
+
+为验证是否存在比 Logistic 更适合小样本稀疏文本的 CPU 架构，在完全相同的
+110 封样本、80/30 时间顺序切分上增加了 ComplementNB 和 MultinomialNB；随后
+在 60 封独立随机样本、45/15 切分上复核。所有候选都使用同一个
+`email_message_to_text` 特征入口，没有引入向量数据库或附件内容。
+
+110 封合并样本的结果：
+
+| 候选 | Accuracy | Macro F1 | 预测 P95 | 最大置信度 | 达到 0.85 的数量 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| TF-IDF + Logistic，balanced，C=0.25 | 43.33% | 27.61% | 0.40 ms | 0.2226 | 0/30 |
+| TF-IDF + ComplementNB，alpha=0.1 | 36.67% | 31.79% | 0.58 ms | 0.9987 | 3/30 |
+| Count + MultinomialNB，alpha=0.1 | 53.33% | 42.96% | 0.32 ms | 1.0000 | 27/30 |
+
+在独立的 60 封样本上：
+
+| 候选 | Accuracy | Macro F1 | 预测 P95 | 最大置信度 | 达到 0.85 的数量 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| TF-IDF + Logistic，balanced，C=0.25 | 66.67% | 66.81% | 0.63 ms | 0.2103 | 0/15 |
+| Count + MultinomialNB，alpha=0.1 | 53.33% | 35.65% | 0.40 ms | 1.0000 | 15/15 |
+| TF-IDF + ComplementNB，alpha=0.1 | 66.67% | 66.81% | 0.48 ms | 0.9759 | 1/15 |
+
+### 对照结论
+
+1. MultinomialNB 在 110 封合并样本上的 F1 和 Accuracy 看起来较高，但在 60 封
+   独立样本上明显下降；其概率严重过度自信，不能把 `0.85` 或 `1.0` 当成可靠
+   的自动动作置信度。
+2. ComplementNB 的质量在两个切分上分别表现为 `31.79%` 和 `66.81%` Macro F1，
+   波动同样很大；TF-IDF 版本的置信度虽比 Count 版本保守，但仍不能证明已校准。
+3. 这轮对照没有改变架构选择：继续保留 word-unigram TF-IDF + balanced Logistic，
+   因为它的概率至少表现为保守，能安全地把当前不确定样本送入“待反馈”；如果
+   将来引入 Naive Bayes，必须单独做概率校准和类别级 precision 验证，不能直接
+   进入自动标签、自动回复或自动退订。
