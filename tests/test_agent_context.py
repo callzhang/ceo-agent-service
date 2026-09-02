@@ -34,6 +34,11 @@ def test_role_boundary_invariant_is_complete_across_all_core_prompts():
 
     assert _CONSUMER_AGENT_RULES.splitlines()[1] == expected_runtime
     assert _AUDIT_AGENT_RULES.splitlines()[1] == expected_runtime
+    assert "personal blocked or sleep hold" in _AUDIT_AGENT_RULES
+    assert "If the existing meeting is more important" in _AUDIT_AGENT_RULES
+    assert "If the new meeting is more important" in _AUDIT_AGENT_RULES
+    assert "If importance cannot be determined" in _AUDIT_AGENT_RULES
+    assert "starts after 23:00" in _AUDIT_AGENT_RULES
     assert "Consumer Agent A gathers facts and proposes a typed candidate" in (
         SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
     )
