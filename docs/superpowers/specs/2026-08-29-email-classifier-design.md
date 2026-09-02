@@ -822,6 +822,13 @@ feedback；正式非 subscription 类别门槛仍要求 30 个 validation positi
 生产自动动作资格。用户已授权门槛满足后的 label、mark-read、archive、move 和
 可恢复 Trash，但明确禁止 Email 回复；SMTP 保持关闭，Trash 永不 EXPUNGE。
 
+实现上，实验 snapshot 只能进入不可变 `candidate` 记录：不切换 active manifest，
+不标记生产 feedback 已纳入模型，并把所有类别写为
+`auto_action_eligible=false / non_authoritative_validation_labels`。第一版候选
+`email-tfidf-lr-20260902T192218Z-6d8a1ca9` 使用 144 条训练、79 条去重验证，得到
+68.35% Accuracy、62.18% Macro F1 和 0.61 ms P95；notification 结果保持 19/19，
+但仍只允许 readonly shadow。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)

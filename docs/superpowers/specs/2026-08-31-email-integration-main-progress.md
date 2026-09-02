@@ -470,3 +470,37 @@ move 和可恢复 Trash；Trash 永不执行 EXPUNGE 或永久删除。任何 Em
 训练/registry 路径，生成完整版本号、训练时间、样本数、类别指标和延迟，并对真实
 新邮件做只读 shadow scan。只有 user-confirmed 数据达到正式类别门槛后，才允许
 对应确定性动作进入受控小批执行。
+
+### 第一版生产影子候选
+
+新增 `app.email_classifier_shadow.stage_snapshot_shadow_candidate`，把隐私受限 snapshot
+转成不可变 registry candidate，同时保持以下硬边界：
+
+- 只接受 `assistant_authorized_manual_annotation` snapshot；
+- 训练集内出现重复消息时拒绝生成模型；验证集与训练集或验证集内部重复时排除并计数；
+- 记录完整 `model_id`、artifact SHA-256、训练时间、训练/验证样本数、类别指标和
+  p50/p95 延迟；
+- 每个类别都写入 `auto_action_eligible=false` 和
+  `non_authoritative_validation_labels`；
+- 只登记 `candidate`，不创建或切换 active manifest，也不更新生产 feedback 的
+  `included_in_model_id`。
+
+使用 A30+B30+C40+D40+定向 4 条共 144 条训练，F40+G40 做最终验证。自动排除
+D/F 重复的 1 条后，第一版候选为：
+
+```text
+model_id: email-tfidf-lr-20260902T192218Z-6d8a1ca9
+status: candidate
+reason: shadow_only_non_authoritative_labels
+training samples: 144
+validation samples: 79
+Accuracy / Macro F1: 68.35% / 62.18%
+prediction latency p50 / p95: 0.31 ms / 0.61 ms
+notification >= 0.25: 19/19, precision 100%, recall 90.48%, positive support 21
+active manifest: none
+```
+
+对应 focused model/snapshot tests 为 `78 passed, 5 warnings`；warning 仍来自既有
+path-based promotion deprecation。候选 artifact 位于 Git 忽略的本地
+`data/email-shadow-models/`，不包含原始邮件或凭据。它可以用于后续真实新邮件的
+readonly shadow prediction，但当前不能触发 label、move、archive 或 Trash。
