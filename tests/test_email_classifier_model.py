@@ -71,6 +71,24 @@ def test_message_text_is_segmented_and_redacted():
     assert "NUMBER" in text
 
 
+def test_message_text_redacts_quota_access_tokens():
+    opaque_token = "qrp_ExampleAccessToken123456789"
+    signed_token = "qrp.eyJleGFtcGxlIjoiYWNjb3VudCJ9.Signature123456"
+
+    text = email_message_to_text(
+        {
+            "from": {"email": "alerts@example.com"},
+            "toRecipients": [],
+            "subject": "Quota Report Hub access token",
+            "textBody": f"Paste {opaque_token} or {signed_token} into setup.",
+        }
+    )
+
+    assert opaque_token not in text
+    assert signed_token not in text
+    assert text.count("TOKEN") >= 2
+
+
 def test_cpu_classifier_predicts_and_round_trips_model_version(tmp_path: Path):
     messages, labels = _messages()
     classifier = CpuTfidfLogisticClassifier(model_version="email-model-test-1")

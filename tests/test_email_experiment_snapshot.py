@@ -88,6 +88,18 @@ def test_snapshot_rejects_raw_provider_fields_and_unredacted_features():
             label_source="test",
         )
 
+    with pytest.raises(EmailExperimentSnapshotError, match="redacted"):
+        build_snapshot(
+            [
+                {
+                    **_examples()[0],
+                    "model_text": "__subject__access token qrp_ExampleSecret123456",
+                }
+            ],
+            captured_at=CAPTURED_AT,
+            label_source="test",
+        )
+
 
 def test_snapshot_rejects_tampered_digest(tmp_path):
     snapshot = build_snapshot(

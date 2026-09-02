@@ -67,6 +67,11 @@ _DIRECT_ACTION_PRIORITY = {
     action.value: priority for priority, action in enumerate(DIRECT_ACTIONS)
 }
 _UNREDACTED_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
+_UNREDACTED_SECRET_TOKEN = re.compile(
+    r"\b(?:sub|ch|pi|sk|tok|token|sess|session|order|invoice|qrp)"
+    r"[_.-]?[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]{6,})*\b",
+    flags=re.IGNORECASE,
+)
 _ColumnContract = tuple[str, bool, str | None]
 _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
     "email_schema_migrations": {
@@ -872,6 +877,7 @@ def _validate_model_text(model_text: str) -> None:
     lowered = model_text.lower()
     if (
         _UNREDACTED_EMAIL.search(model_text)
+        or _UNREDACTED_SECRET_TOKEN.search(model_text)
         or "http://" in lowered
         or "https://" in lowered
     ):
