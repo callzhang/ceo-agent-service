@@ -77,3 +77,10 @@ def test_headless_launch_uses_playwright_browser_binary():
         "headless": True,
         "executable_path": "/tmp/playwright-chrome",
     }
+
+
+def test_headless_browser_uses_process_lock():
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "_headless_browser_lock" in source
+    assert "fcntl.LOCK_EX" in source

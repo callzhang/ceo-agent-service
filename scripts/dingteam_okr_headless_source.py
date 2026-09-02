@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import fcntl
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -40,56 +42,68 @@ def _headless_launch_kwargs(playwright) -> dict[str, object]:
     }
 
 
+@contextmanager
+def _headless_browser_lock():
+    """Serialize Chrome startup across the service's OKR workers."""
+    with open("/private/tmp/ceo-okr-headless.lock", "a", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def _capture_stable_headless_headers() -> dict[str, str]:
     """Capture source headers after the OKR page has finished navigating."""
     browser.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     captured: dict[str, str] = {}
-    with sync_playwright() as playwright:
-        launch_kwargs = _headless_launch_kwargs(playwright)
-        browser_instance = playwright.chromium.launch(**launch_kwargs)
-        context = browser_instance.new_context(
-            storage_state=str(browser.PROFILE_DIR / "storage_state.json")
-        )
-        try:
-            def on_request(request):
-                if "/data/okr/" not in request.url or captured:
-                    return
-                for key, value in request.headers.items():
-                    if key.lower() in browser.AUTH_HEADER_KEYS:
-                        captured[browser._canonical(key)] = value
+    with _headless_browser_lock():
+        with sync_playwright() as playwright:
+            launch_kwargs = _headless_launch_kwargs(playwright)
+            browser_instance = playwright.chromium.launch(**launch_kwargs)
+            context = browser_instance.new_context(
+                storage_state=str(browser.PROFILE_DIR / "storage_state.json")
+            )
+            try:
+                def on_request(request):
+                    if "/data/okr/" not in request.url or captured:
+                        return
+                    for key, value in request.headers.items():
+                        if key.lower() in browser.AUTH_HEADER_KEYS:
+                            captured[browser._canonical(key)] = value
 
-            context.on("request", on_request)
-            page = context.new_page()
-            page.goto(browser.ENTRY_URL, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(2500)
-            for _ in range(3):
-                try:
-                    page.evaluate("() => document.readyState")
-                    break
-                except Exception as exc:
-                    if "execution context was destroyed" not in str(exc).lower():
-                        raise
-                    page.wait_for_timeout(1000)
-            deadline = time.monotonic() + HEADLESS_REFRESH_SECONDS
-            while time.monotonic() < deadline and "Authorization" not in captured:
-                try:
-                    page.wait_for_timeout(800)
-                    page.evaluate("() => document.readyState")
-                except Exception as exc:
-                    if "execution context was destroyed" not in str(exc).lower():
-                        raise
-            if "Authorization" not in captured:
-                app_state = page.evaluate(
-                    """() => ({
-                        root: !!document.querySelector('#root-master'),
-                        mounted: !!document.querySelector('#root-master > * > *'),
-                    })"""
-                )
-                if app_state.get("root") and not app_state.get("mounted"):
-                    raise RuntimeError("okr_website_unavailable: Dingteam OKR website did not render")
-        finally:
-            context.close()
-            browser_instance.close()
+                context.on("request", on_request)
+                page = context.new_page()
+                page.goto(browser.ENTRY_URL, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(2500)
+                for _ in range(3):
+                    try:
+                        page.evaluate("() => document.readyState")
+                        break
+                    except Exception as exc:
+                        if "execution context was destroyed" not in str(exc).lower():
+                            raise
+                        page.wait_for_timeout(1000)
+                deadline = time.monotonic() + HEADLESS_REFRESH_SECONDS
+                while time.monotonic() < deadline and "Authorization" not in captured:
+                    try:
+                        page.wait_for_timeout(800)
+                        page.evaluate("() => document.readyState")
+                    except Exception as exc:
+                        if "execution context was destroyed" not in str(exc).lower():
+                            raise
+                if "Authorization" not in captured:
+                    app_state = page.evaluate(
+                        """() => ({
+                            root: !!document.querySelector('#root-master'),
+                            mounted: !!document.querySelector('#root-master > * > *'),
+                        })"""
+                    )
+                    if app_state.get("root") and not app_state.get("mounted"):
+                        raise RuntimeError("okr_website_unavailable: Dingteam OKR website did not render")
+            finally:
+                context.close()
+                browser_instance.close()
     if "Authorization" not in captured:
         raise RuntimeError("could not capture Dingteam auth token from the browser")
     return captured
