@@ -407,18 +407,96 @@ def register_console_routes(
         job = store.get_meeting_alignment_job(run.job_id)
         if job is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting job not found", "details": {}}, status_code=404)
+        decision = stored_json(run.decision_json, {})
+        if not isinstance(decision, dict):
+            decision = {}
+        trigger_reasons = decision.get("trigger_reasons")
+        trigger_text = ", ".join(str(item) for item in trigger_reasons) if isinstance(trigger_reasons, list) else ""
+        target = decision.get("target")
+        decision_target = ""
+        if isinstance(target, dict):
+            decision_target = str(target.get("title") or target.get("conversation_id") or "")
+        participants = stored_json(job.participants_json, [])
+        if not participants:
+            source = stored_json(job.source_json, {})
+            if isinstance(source, dict):
+                evidence = source.get("calendar_evidence")
+                if isinstance(evidence, dict):
+                    participants = evidence.get("participants") or []
+        participant_names = [
+            str(item.get("name") or "").strip()
+            for item in participants
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+        participant_preview = ", ".join(participant_names)
+        mentions = stored_json(job.mentions_json, [])
+        mention_values = []
+        if isinstance(mentions, list):
+            for mention in mentions:
+                if isinstance(mention, dict):
+                    value = mention.get("display_name") or mention.get("name") or mention.get("mention_name") or mention.get("user_id") or ""
+                else:
+                    value = mention
+                if str(value).strip():
+                    mention_values.append(str(value).strip())
+        mention_text = ", ".join(mention_values)
+        run_status = run.status
+        if run_status == "no_action":
+            run_status = "skipped"
+        elif run_status in {"retry", "failed"}:
+            run_status = "failed"
+        elif run_status == "ready_to_send" and job.status == "sent":
+            run_status = "sent"
+        elif run_status == "ready_to_send" and store.has_later_meeting_alignment_run(run.job_id, run.id):
+            run_status = "ready_to_send"
+        elif run_status == "ready_to_send" and job.status in {"retry", "failed"}:
+            run_status = "failed"
+        fields = [
+            {"label": "meeting id", "value": job.meeting_id},
+            {"label": "action", "value": str(decision.get("action") or "")},
+            {"label": "status", "value": run_status},
+            {"label": "job status", "value": job.status},
+            {"label": "target kind", "value": job.target_kind},
+            {"label": "delivery target", "value": job.target_title or job.target_id},
+            {"label": "decision target", "value": decision_target},
+            {"label": "Mention resolution", "value": mention_text},
+            {"label": "ended at", "value": job.ended_at},
+            {"label": "participants", "value": participant_preview},
+        ]
         return item_envelope({
             "id": run.id,
             "title": job.title,
             "type": "meeting",
-            "status": job.status,
+            "status": run_status,
+            "conversation": {
+                "label": "会议",
+                "title": job.title,
+                "subtitle": f"参会人：{participant_preview}" if participant_preview else "",
+            },
+            "metadata": fields,
+            # Keep the generic resource fields for API consumers while the
+            # meeting-specific presentation uses the structured sections below.
             "input": {
                 "meeting_id": job.meeting_id,
                 "ended_at": job.ended_at,
-                "participants": stored_json(job.participants_json, []),
+                "participants": participants,
             },
-            "decision": stored_json(run.decision_json, {}),
+            "decision": decision,
             "output": job.final_message,
+            "trigger": {
+                "title": "Trigger",
+                "text": "\n".join([
+                    f"title: {job.title}",
+                    f"meeting id: {job.meeting_id}",
+                    f"ended at: {job.ended_at}",
+                    f"participants: {participant_preview}",
+                    *([f"trigger reasons: {trigger_text}"] if trigger_text else []),
+                ]),
+            },
+            "audit_explanation": {"title": "Codex reason", "text": run.audit_summary},
+            "generated_reply": {"title": "生成回复", "text": job.final_message or "No generated reply recorded."},
+            "audit_summary": run.audit_summary,
+            "tool_uses": stored_json(run.audit_tool_events_json, []),
             "runtime": {
                 "run_status": run.status,
                 "job_status": job.status,
@@ -429,6 +507,7 @@ def register_console_routes(
                 "finished_at": run.finished_at,
                 "updated_at": run.updated_at,
             },
+            "actions": {"agent_url": f"/codex/{run.codex_session_id}" if run.codex_session_id else ""},
         })
 
     @app.get("/api/console/oa-approvals/{process_instance_id:path}")

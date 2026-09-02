@@ -25,7 +25,14 @@ function renderDetail(kind: string, endpoint: string, path: string, initialEntry
 describe("BusinessDetailPage", () => {
   beforeEach(() => {
     getResource.mockResolvedValue({
-      item: { status: "done", title: "Business result", runtime: {} },
+      item: {
+        status: "done", title: "Business result", runtime: {},
+        conversation: { label: "会议", title: "Business result", subtitle: "" },
+        metadata: [], trigger: { title: "Trigger", text: "" },
+        audit_explanation: { title: "Codex reason", text: "" },
+        generated_reply: { title: "生成回复", text: "" }, audit_summary: "",
+        tool_uses: [], actions: { agent_url: "" }, id: 1,
+      },
       meta: { snapshot_at: "2026-08-30T08:00:00Z" },
     });
     command.mockReset();
@@ -48,5 +55,40 @@ describe("BusinessDetailPage", () => {
     expect(await screen.findByText("Business result")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "重跑" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "提交反馈" })).not.toBeInTheDocument();
+  });
+
+  it("renders Meeting Attempt in the legacy business reading order", async () => {
+    getResource.mockResolvedValueOnce({
+      item: {
+        id: 1974,
+        title: "Friday Beta 产品发布",
+        status: "sent",
+        conversation: { label: "会议", title: "Friday Beta 产品发布", subtitle: "参会人：张毅倜(ET), 磊哥" },
+        metadata: [
+          { label: "meeting id", value: "meeting-1974" },
+          { label: "action", value: "send" },
+          { label: "status", value: "sent" },
+        ],
+        trigger: { title: "Trigger", text: "title: Friday Beta 产品发布" },
+        audit_explanation: { title: "Codex reason", text: "会议已完成对齐分析。" },
+        generated_reply: { title: "生成回复", text: "今天发布 Beta。" },
+        audit_summary: "会议存在未决验收问题。",
+        tool_uses: [{ tool: "document", title: "会议记录" }],
+        runtime: { run_status: "ready_to_send", job_status: "sent" },
+        actions: { agent_url: "" },
+      },
+      meta: { snapshot_at: "2026-08-30T08:00:00Z" },
+    });
+
+    renderDetail("Meeting Attempt", "/api/console/meeting-attempts/:id", "/meeting-attempts/:runId", "/meeting-attempts/1974");
+
+    expect(await screen.findByText("会议")).toBeInTheDocument();
+    expect(screen.getByText("Friday Beta 产品发布")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Trigger" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Codex reason" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "生成回复" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Audit summary" })).toBeInTheDocument();
+    expect(screen.getByText("Tool uses")).toBeInTheDocument();
+    expect(screen.queryByText("input")).not.toBeInTheDocument();
   });
 });
