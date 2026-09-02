@@ -151,6 +151,7 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 | 模型体积 | Logistic 约 339–404 KB | 可接受 |
 | fastText | 更快但 Macro F1 更低、约 26.4 MB、小样本训练不稳定 | 不替换当前模型 |
 | 新随机/合并 holdout | 100 封：70.00% Accuracy / 43.11% Macro F1；210 封：160/50 为 60.00% / 34.10%，170/40 为 75.00% / 53.75% | 结果随时间切分波动，不开放自动分类动作 |
+| 2026-09-12 新随机 100 封 holdout | UID 时间 80/20：C=0.25 为 50.00% / 39.80%，C=1.0 为 55.00% / 41.15%；主题组 80/20：三组 C 均为 50.00% / 44.43%；预测 P95 约 0.43–0.59 ms，0.85 覆盖为 0 | 延迟继续通过，但质量和覆盖不足，不开放自动分类动作 |
 | 反馈学习 | 20 条后 notification 达到 100% precision / 80% recall（固定 10 条 provisional test） | 反馈闭环值得进入 shadow |
 | 合并 210 条时间顺序 holdout | 160/50：60.00% Accuracy / 34.10% Macro F1；170/40：75.00% / 53.75% | 仅研究证据，不能用 aggregate 指标晋升 |
 | 最大 confidence | C=0.25 为 0.3792；C=1.0 为 0.6626 | 0.85 threshold 下自动覆盖为 0 |
@@ -159,6 +160,12 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 | personal/shopping | personal=0、shopping=1 | 不具备完整训练或评测资格 |
 
 这些标签全部是 assistant provisional annotations，不是 production gold feedback。它们只能决定实验方向，不能授权 provider action。
+
+2026-09-12 新增的随机 100 封样本（实验摘要
+`0887efe46d7fcfd18052e823d7292ea2123509211506e674e530e3a62d0b76e6`）再次得到
+相同结论：UID 时间切分最高只有 `55.00% Accuracy / 41.15% Macro F1`，未见主题
+组切分为 `50.00% / 44.43%`，且 `0.85` 门槛下仍然零覆盖。它没有改变模型候选，
+但进一步排除了仅靠 C 调参进入自动动作的路径。
 
 2026-09-02 的 210 封样本进一步证明：增加样本会改善部分时间窗口，但不能消除
 类别漂移；最高置信度仍低于批准的 `0.85` 门槛，且 threshold `0.20` 的 precision
