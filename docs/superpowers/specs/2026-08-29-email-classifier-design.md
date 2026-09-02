@@ -890,6 +890,18 @@ precision 和样本门槛后，才讨论可恢复 Trash；否则最多进入标�
 scikit-learn 版本不得直接加载该 pickle 后用于验证或生产判断。
 它保持 inactive，等待另一批全新来源 holdout；label 通过不能自动推导出 Trash 通过。
 
+v2 的独立来源验证也未通过。首批随机 30 个新来源只有 5 个阈值候选，虽为 5/5，
+但证据量不足；随后从随机未知来源流收集 15 个额外候选，其中只有 12 个为 junk。
+两批合计 17/20，precision 85%，低于 label-only 的 95%要求。三个错误都是不能忽略的
+潜在商业机会：收购/M&A 接洽、研究合作和机构投资接洽。因此 v2 状态变为 rejected，
+不得注册 active，也不得把“只加标签”扩大为移动或 Trash。
+
+用户已授权高置信度标签、归档、移动和可恢复 move-to-Trash，但永久删除、EXPUNGE、
+清空垃圾箱和邮件回复仍禁止。授权与模型准入是两个独立条件：只有某一类别、某一动作
+通过冻结版本的来源独立验证，才允许该动作执行。下一版只能继续使用同一个 word+char
+Logistic 分类器，把本轮 45 个主动学习样本加入训练，专门学习 junk 与有价值战略接洽
+的边界；冻结 v3 后必须再用全新来源 holdout。若 v3 仍失败，停止自动动作实验。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)

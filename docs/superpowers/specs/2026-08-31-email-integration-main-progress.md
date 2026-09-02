@@ -788,3 +788,50 @@ auto_action_eligible: false
 v2 仍未注册 active。下一步必须使用另一批与 98 个训练来源、此前 17 个来源去重样本
 均不重叠的新来源 holdout；只有该批也达到 label precision 门槛，才进入 label-only
 生产代码开发。即使通过，也不开放移动或 Trash。
+
+### 用户动作授权与 junk label-only v2 拒绝
+
+用户现已授权后续高置信度邮件的标签、归档、移动和删除动作。删除在当前方案中固定为
+可恢复的 move-to-Trash；永久删除、EXPUNGE 和清空垃圾箱不在授权范围。用户同时明确
+禁止回复邮件，因此 SMTP 和 `auto_reply` 保持关闭。该授权只是允许在模型分别达到
+动作门槛后执行，不能替代 precision、样本数、版本冻结和 provider readback。
+
+v2 冻结提交 `6b0d63d8` 后，先以 seed `2026090216` 从最近 2,000 个 UID 随机读取
+221 个 header，得到 30 个与已有 115 个来源 digest 均不重叠的新来源，每个来源一封。
+冻结的 0.312 阈值命中 5 封，人工保守标注均为 junk；30 封整体 top-1 为 21/30，
+junk positive support 为 14，阈值召回 5/14。5 个候选不足以跨过至少 20 个候选的
+证据门槛，因此没有启用标签。
+
+随后保持模型和阈值不变，以 seed `2026090217` 在同一最近 2,000 UID 池中继续随机
+遍历未知来源。读取 636 个 header 和 73 个互不重复的新来源正文后，取得 15 个额外
+阈值命中者。按 `ceo-mail-review` 的保守边界标注为 `junk=12`、`important=2`、
+`work=1`，precision 为 12/15。三个误判分别是可能的收购/M&A 接洽、IITM 研究者的
+免费数据评估提案以及 PSG Equity 的投资接洽；这些邮件即使形式像冷邮件，也不能被
+自动标成 Junk。
+
+两批合计 20 个新来源候选，17 个为 junk，最终 precision 85%，低于 label-only 的
+95%门槛。v2 因而被拒绝，不能进入 production registry；标签、移动、Trash 等全部
+mailbox effect 仍关闭。本轮共标注 45 个新来源；候选定向续样只用于 precision，不能
+与首批随机 30 封混合计算 recall。
+
+```text
+random 30 predictions sha256:
+c993ea78c64b13fb664f741f505ca77dad525f1497eee0dab2975fbc62be3781
+
+random 30 labels sha256:
+ca0364ca9d424c1dc480b0bf61a25c9748ea2fc595099911a9432f982cb8b86f
+
+candidate 15 predictions sha256:
+f7a6044b5682d92f9968f9462c414f0c573874136c36216b20ebc4933b99b7a8
+
+candidate 15 labels sha256:
+7b5f1d290a52a7d139ad86642d1410c38fc138f3817e5c6bf0fae0bf0f713575
+
+v2 rejection lifecycle sha256:
+70ac4562b9f1f7a97f8cc15cc8c3cfe1cd8f4ab7a73b7ecc33a0fb81f13ace91
+```
+
+这 45 封现在可以作为一次主动学习增量进入下一版开发集，但不再能充当 v3 holdout。
+下一轮只允许做一次保持单分类器的 hard-example v3：重点学习“无价值推销”和“有价值
+战略/投资/研究接洽”的边界，重新做来源分组开发验证，再在冻结后使用全新来源验证。
+若仍达不到 95% label precision，就停止迭代并将自动动作范围收敛为待反馈模式。
