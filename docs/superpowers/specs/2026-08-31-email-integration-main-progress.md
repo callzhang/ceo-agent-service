@@ -374,3 +374,99 @@ Chromium 都在启动后收到 `SIGABRT`，结果为 `1 passed, 33 errors`；这
 该结果与此前对 `2282/2282` 个 UID 的 header-only 快照一致，增强了当前快照的
 重复采样证据，但不能推断未来邮件不会提供退订入口，也不能作为自动退订资格或
 订阅来源 support 的证据。
+
+## 2026-09-02 扩展标注、模型稳定性与 notification 最终验证
+
+在固定邮箱快照（2,319 个 UID，最大 UID `32425`）上继续完成了 8 份隐私受限
+实验快照。所有读取仍为 IMAP readonly；没有创建 Email task、没有连接 SMTP、
+没有执行 provider 写操作。8 份快照共 264 行，标签总分布为：
+
+- `notification=78`
+- `junk=59`
+- `important=48`
+- `work=33`
+- `subscription=26`
+- `billing=20`
+
+快照重新加载和 SHA-256 校验全部通过。按 `sample_id_digest` 检查发现 D、F 两批
+各包含同一封 `junk` 邮件，因此 264 行对应 263 封唯一邮件。最终 holdout 重新按
+消息摘要去重；这条重复不属于 `notification`，不会改变 notification 的候选数、
+precision 或 recall，但去重后的整体指标以 79 条而不是 80 条为准。
+
+### 候选模型和特征消融
+
+在最初 60 条的较早 48 条训练、较新 12 条 holdout 上：
+
+| 候选 | Accuracy | Macro F1 | 高置信度结论 |
+| --- | ---: | ---: | --- |
+| 生产 balanced Logistic，`C=0.25` | 66.7% | 41.7% | 最大 confidence 0.201，无 0.5+ 候选 |
+| ComplementNB，`alpha=0.05` | 66.7% | 43.2% | 高 confidence precision 约 75%，不安全 |
+| SGD log-loss，`alpha=1e-5` | 75.0% | 80.8% | 本切分 5 个 0.85+ 全对，但跨切分失效 |
+
+SGD 的表面优势没有通过稳定性验证：换时间切分后 0.85 门槛 precision 降到 70%；
+分层 OOF 为 69.4%–81.2%，按来源分组 OOF 为 60%–71.4%。MultinomialNB 质量更差
+且更过度自信。取消 `class_weight=balanced` 后，多个时间切分 Accuracy 只有
+8.3%–50%，Macro F1 只有 5.6%–28.6%。因此继续保留 balanced Logistic，
+`C=0.25`；不能用过度自信的模型制造“高置信度”。
+
+在互不重叠的三批随机样本 A30、B30、C40 合计 100 条上，按日期保留最新 20 条：
+
+- Logistic：`55% Accuracy / 25% Macro F1`，最大 confidence 0.222；
+- SGD：`45% / 44.4%`，0.85+ precision 66.7%；
+- ComplementNB：`60% / 31%`，只有 1 个 0.85+ 候选；
+- Logistic 对最新 20 条中的 notification 为 `100% precision / 100% recall`
+  （support 10），但 `important`、`work`、`subscription` 仍不可靠。
+
+把 4 条含退订/偏好入口措辞的定向样本加入训练后，Logistic Accuracy 从 55%
+降到 30%，notification recall 从 100% 降到 10%，subscription 虽然 recall 为
+100%，precision 只有 18.2%。同一来源会同时发送 notification、billing 和
+subscription，这证明“来源”或“出现退订文字”不能直接决定类别。subject boost、
+CSS 清理和正文截断都没有修复；subject-only 虽达到 70% Accuracy，但把
+`important` recall 降到 0，因而不修改生产特征。
+
+### 时间漂移学习模拟
+
+用较早随机 80 条训练、D40 测试时，balanced Logistic 得到
+`72.5% Accuracy / 43.5% Macro F1`。notification 在 confidence `>=0.20` 时
+有 15 个自动候选，其中 14 个正确；唯一误报是 LinkedIn 冷销售邮件。加一个
+margin 条件后本批为 14/14，但该条件没有跨批稳定价值。
+
+同一旧模型直接测试 E40 时，`>=0.20` 且带 margin 的 notification 候选只有
+14/20 正确；误报包括需要处理的 Vercel 邮件、LinkedIn subscription 和需要登录
+恢复的 Quota 邮件。这再次表明 notification 与 important/subscription 的边界必须
+通过新反馈学习，不能靠固定关键词。
+
+加入 D40 反馈后再测试 E40：`70% Accuracy / 63.9% Macro F1`，在预先评估的
+notification confidence `>=0.25` 下为 15/15，recall 93.8%。再加入 4 条定向样本
+后整体提高到 `75% / 73.9%`，notification 仍为 15/15。由此冻结
+`notification >=0.25`，不再查看后续 F/G 批来调门槛。
+
+### 最终未见 holdout
+
+使用“较早随机 80 条 + D40 + 4 条定向样本”训练，只在冻结门槛后评估 F40 与
+G40。去除与训练集重复的 1 条 `junk` 后，最终 holdout 为 79 条，分布是
+`notification=21`、`junk=20`、`subscription=16`、`important=11`、
+`billing=6`、`work=5`：
+
+- 整体：`63.29% Accuracy / 54.55% Macro F1`；
+- notification `confidence >=0.25`：19 个候选，19 个正确，precision 100%；
+- notification positive support：21；recall 90.48%；
+- `0.22`、`0.25`、`0.27` 三个门槛在该 holdout 上均为 19/19；
+- `0.20` 会扩大到 25 个候选、其中仅 19 个正确，precision 降到 76%；
+- `0.30` 为 17/17，但 recall 降到 80.95%。
+
+因此 notification 已形成值得进入生产影子链路的类别级信号，且无需新增 margin
+规则。不过这 21 个 positive support 全部是
+`assistant_authorized_manual_annotation`，不是生产 `user-confirmed` feedback；同时
+当前非 subscription 类别的正式默认门槛仍是 30 个 validation positive samples。
+所以本结果只批准开发“可追溯候选模型 + 只读 shadow 评估”，不能把 notification
+直接标记为生产 `auto_action_eligible`，也不能据此执行真实移动或 Trash。
+
+### 当前授权与下一步
+
+Derek 已明确授权未来对满足类别门槛的高置信度邮件执行 label、mark-read、archive、
+move 和可恢复 Trash；Trash 永不执行 EXPUNGE 或永久删除。任何 Email 回复都明确
+禁止，SMTP 保持关闭。下一步先把上述脱敏快照接入不会污染生产 feedback 的候选模型
+训练/registry 路径，生成完整版本号、训练时间、样本数、类别指标和延迟，并对真实
+新邮件做只读 shadow scan。只有 user-confirmed 数据达到正式类别门槛后，才允许
+对应确定性动作进入受控小批执行。

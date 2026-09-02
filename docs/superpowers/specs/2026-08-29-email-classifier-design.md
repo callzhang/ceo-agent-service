@@ -806,6 +806,22 @@ Trash：precision >= 99.5%，否则关闭
 
 Trash 只作为可恢复状态，不执行永久清空。
 
+## 2026-09-02 notification 影子候选证据
+
+在固定门槛后使用未见时间批次 F/G 验证，去除 1 条与训练集重复的 `junk` 邮件，
+最终 holdout 为 79 条，其中 notification positive support 为 21。balanced
+TF-IDF Logistic（`C=0.25`）在 notification confidence `>=0.25` 时选出 19 条，
+19 条全部正确，precision 100%、recall 90.48%；整体为 63.29% Accuracy、
+54.55% Macro F1。`0.20` 门槛的 precision 只有 76%，`0.30` 虽保持 100%
+precision 但 recall 降到 80.95%。SGD、Naive Bayes、取消 balanced class weight、
+subject-only 和额外 margin 均未通过跨切分或跨批稳定性验证，不进入生产方案。
+
+这批标签全部来自 `assistant_authorized_manual_annotation`，不是 user-confirmed
+feedback；正式非 subscription 类别门槛仍要求 30 个 validation positive samples。
+因此 notification 只进入“版本化候选模型 + readonly shadow”开发，不直接获得
+生产自动动作资格。用户已授权门槛满足后的 label、mark-read、archive、move 和
+可恢复 Trash，但明确禁止 Email 回复；SMTP 保持关闭，Trash 永不 EXPUNGE。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)
