@@ -873,3 +873,39 @@ auto_action_eligible: false
 v3 artifact 不注册 active。提交此冻结记录后，只允许再做一次全新来源、随机候选流
 precision 验证；不能查看新样本后修改 0.324。通过 95%且满足候选数，才进入 label-only
 生产代码；失败则停止模型迭代并保持待反馈/shadow。
+
+### hard-example junk label-only v3 最终拒绝
+
+v3 冻结提交 `11f80ebc` 后，以 seed `2026090218` 在最近 2,000 UID 中继续随机遍历
+所有既有实验未见来源。读取 868 个 header 和 87 个互不重复的新来源正文后，取得 20 个
+超过冻结阈值 0.324 的候选。预测先落盘并锁定 SHA，随后才由 assistant 按保守业务价值
+边界标注；模型和阈值没有再修改。
+
+20 个候选中 16 个为 junk，3 个为 important，1 个为 work，precision 80%。四个误判是：
+
+1. 免费媒体报道邀请；
+2. 可能接入大额政府合同车辆的合作邀约；
+3. 与 Stardust 训练数据业务直接相关的 screen-recording 产品合作；
+4. Pilot 面向旧金山企业 CEO 的活动邀请。
+
+这些邮件都来自新来源，外观与批量冷推销相似，但有合理商业价值，不能自动标成 Junk。
+v3 的独立结果低于 label-only 95%门槛，已生成 rejection lifecycle；不进入 production
+registry，也不执行标签、移动、Trash、退订或其他 mailbox effect。邮箱写入、SMTP 连接
+和附件下载均为 0。
+
+```text
+v3 candidate predictions sha256:
+54fbd0e3e39c82b080095824e8b23f090b0f2c429d3b4e3448a20421d2505ce8
+
+v3 candidate labels sha256:
+0e2960748d8068e4b31bb7106091f1063b00a1d27394538d59f7700a698dacac
+
+v3 rejection lifecycle sha256:
+c3fa46827f16a97f92f428551f7a94fb68e0ce408368716b2b6254d4082570a3
+```
+
+到此停止继续用 assistant 标签循环拟合自动 Junk 动作。实验已证明 CPU 延迟和单分类器
+体积不是障碍，真正限制是用户价值边界；继续在同一邮箱反复训练/抽样会逐渐把测试集变成
+训练集，却不能证明未来新来源泛化。下一阶段只保留 readonly shadow、待反馈、版本记录和
+用户确认后的学习；所有 model-only 邮箱写动作保持关闭。生产代码和 CEO Agent 融合必须
+以这一失败结论为输入，不得把开发集 97.14%冒充上线证据。

@@ -909,6 +909,16 @@ precision 97.14%、recall 36.96%，覆盖 33 个候选来源。模型
 禁止 mark-read/archive/move/Trash/unsubscribe/auto-reply。最后一次全新来源验证必须在
 该版本和阈值已提交后进行；失败即停止迭代。
 
+v3 最终全新来源 precision 验证仍失败。随机遍历 87 个新来源后取得 20 个 0.324 阈值
+候选，其中 `junk=16`、`important=3`、`work=1`，precision 80%。误判继续集中于媒体
+报道、政府合同合作、相关产品合作和 CEO 活动等可能有价值的陌生接洽。这证明单封文本
+可以很好识别典型推销模板，但当前 assistant 标签规模不足以稳定学习“陌生商业邮件的
+用户价值”。`email-tfidf-word-char-junk-label-v3-eb1dfe4a` 因此 rejected。
+
+当前模型结论收敛为：保留一个 CPU 单分类器提供建议和排序，所有类别默认进入待反馈；
+只有未来真实用户反馈形成新的来源独立验证并达到对应动作门槛，才允许开启 model-only
+动作。现阶段不开发或启用自动标签、移动、Trash；用户授权仍保留，但不替代质量门槛。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)
