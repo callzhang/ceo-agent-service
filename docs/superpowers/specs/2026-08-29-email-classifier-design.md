@@ -842,6 +842,26 @@ notification 0.25 门槛为 29/29 自动候选正确、32 个 positive support�
 通知仍被预测为 subscription。该结果跨过研究样本数，不证明跨来源泛化，也不改变
 assistant 标签的非权威状态。不能仅因累计 support 超过 30 就切换 active 或执行动作。
 
+来源整体留出验证进一步证明类别级指标会产生误导。八个 snapshot 去重后共有 263
+封邮件和 78 个匿名来源组；`LeaveOneGroupOut` 保证每一折的来源在训练中完全未见。
+在同一个 balanced TF-IDF Logistic、`C=0.25` 和 notification 0.25 门槛下，候选仅
+`2/11` 正确，precision 18.18%、recall 2.56%，整体 Accuracy 29.66%、Macro F1
+21.43%。原 F/G 的 19 个正确候选只覆盖 3 个来源，且一个来源贡献 17 个。
+
+删除 exact-sender hash，或同时删除 sender domain/hash，没有改善来源整体留出结果。
+邮件正文与主题模板本身同样是强来源特征。因此第一版 eligibility 不能只有
+`model_version + category + threshold`；至少还需要区分经过独立验证的已见来源和未知
+来源。未知来源默认拒判并进入待反馈。即使用户已授权高置信度 label/read/archive/
+move/可恢复 Trash，这项授权也不能绕过来源泛化和具体动作 precision 门槛；回复、
+永久删除和 EXPUNGE 仍完全禁止。
+
+真实邮箱随后增加两批来源去重 shadow，共 17 个训练时未见且互不重复的 sender
+domain。冻结预测后 assistant 标注的 top-1 为 12/17；其中只有 1 个 notification
+正样本，模型虽然 top-1 正确，但 confidence `0.233675 < 0.25`，所以 17 个未知来源
+没有任何 notification 自动候选。该结果不证明 0.25 在未知来源上的 precision，反而
+证明其自动覆盖集中在已见模板。第一版路由应把未知来源强制送入待反馈，直到来源均衡
+验证得到足够候选和正样本；不能通过降低 threshold 来制造覆盖率。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)

@@ -320,7 +320,8 @@ Quota Report Hub 的 `qrp_...` 和 `qrp....` 形式。该批数据当时没有�
 - 生产 word-unigram Logistic：`66.7% Accuracy / 41.7% Macro F1`；
 - word-bigram + char 3–5 Logistic：`58.3% Accuracy / 43.9% Macro F1`；
 - 生产模型在普通分层 OOF 和按来源分组 OOF 中均为 `51.7% Accuracy`，Macro F1
-  分别为 `35.5%` 和 `36.2%`，未观察到仅靠发件来源记忆造成的虚高；
+  分别为 `35.5%` 和 `36.2%`；这批 60 条的小样本当时未观察到差异，但后续 263 条
+  `LeaveOneGroupOut` 已推翻“没有来源虚高”的解释，见文末来源整体留出验证；
 - 时间 holdout 中 notification 为 `100% precision / 100% recall`（support 6），
   billing 为 `100% / 100%`（support 1），junk 为 `50% / 50%`（support 2），
   important、subscription 均为 0；
@@ -590,3 +591,70 @@ data/email-experiments/2026-09-02-shadow-10-labels-d.json
 仍为零。后续不再继续扩大同一邮箱的 assistant 自标样本；融合方案需要明确
 assistant 标签是否可以成为 authoritative training data，以及类别 gate 是否需要按已配置
 动作的风险采用更严格 precision。
+
+### 来源整体留出验证推翻全局自动动作结论
+
+为验证上述 29/29 是否来自跨来源能力，对八个含 model text 的隐私 snapshot 做了
+`LeaveOneGroupOut`：同一个 `source_group_digest` 的所有邮件必须一起进入 holdout，
+训练时完全看不到该来源。264 行去除 1 条重复后为 263 封、78 个匿名来源组。
+
+- 整体 top-1 Accuracy `29.66%`，Macro F1 `21.43%`；
+- notification `confidence >= 0.25` 只有 `2/11` 正确，precision `18.18%`；
+- notification positive support 为 78，recall `2.56%`；
+- 11 个候选只来自 3 个来源组，最大单一来源占 `81.82%`。
+
+对原冻结 F/G holdout 再按训练集是否见过来源拆分：
+
+```text
+seen source:   49 rows, notification 18/18 candidates correct, support 18, recall 100%
+unseen source: 30 rows, notification  1/1  candidate correct, support  3, recall 33.33%
+```
+
+原 19 个 notification 候选只覆盖 3 个来源组，其中一个来源贡献 17 个，占
+`89.47%`。去掉精确发件人 hash，或同时去掉发件人 hash 与 domain 后，来源整体留出
+结果没有实质变化（仍为 `2/11`）；这符合未见 token 本来就不会命中特征的预期，也
+说明正文/主题模板本身与来源高度绑定，简单删 sender token 不能得到跨来源能力。
+
+因此此前“notification 类别全局 0.25 门槛可用于自动动作”的解释被否决。当前证据
+最多支持继续研究“已见且有独立验证证据的来源”；未知来源必须进入待反馈，不能仅凭
+类别置信度执行 label、archive、move 或 Trash。Derek 已授权后续满足证据门槛的高
+置信度邮件动作，包括可恢复地移入 Trash，但该授权不替代模型与动作门槛；永久删除、
+EXPUNGE、清空 Trash 和任何邮件回复仍禁止。下一批实验改为来源去重/来源均衡采样，
+并在冻结预测后由 assistant 标注。
+
+### 两批真实邮箱来源去重 shadow
+
+按上述策略，从动态 INBOX 最近 500/1,000 个 UID 中随机读取邮件头，排除八个训练/
+验证 snapshot 和当前批次已经出现的 sender domain；只对入选的新域读取受限文本。
+第一批读取 100 个随机 header 后得到 7 个新域，第二批读取 65 个 header 后得到 10
+个新域。两批均使用 2,322 个 UID 的 readonly 观察，邮箱写入、SMTP 连接、附件下载
+全部为 0。
+
+冻结预测后的 assistant 标注结果：
+
+| 批次 | 新域 | top-1 | notification positive | notification >= 0.25 |
+| --- | ---: | ---: | ---: | ---: |
+| source-diverse A | 7 | 5/7 | 0 | 0 candidates |
+| source-diverse B | 10 | 7/10 | 1 | 0 candidates |
+
+唯一 notification 是一个全新来源的设备断连告警；模型 top-1 为 notification，但
+confidence 只有 `0.233675`，被 0.25 门槛拒绝。17 个互不重复且训练时未见的来源中
+没有任何 notification 自动候选，因此不会引入新的 precision 分母，也再次确认现有
+自动覆盖率主要来自已见模板。新来源中 `junk` 占 12/17，模型也出现 junk 与
+work/important/billing 的边界错误；未知来源仍应进入待反馈。
+
+Git 忽略的 label-only 证据不含正文、主题、UID、邮箱地址、URL 或附件，仅含消息和
+来源 hash、冻结预测、概率与 assistant 标签：
+
+```text
+data/email-experiments/2026-09-02-source-diverse-7-labels.json
+sha256 55b8bbeee7ad0bbe88602afe4253a99989efce37f77d3439d4df8eb55d4f6778
+
+data/email-experiments/2026-09-02-source-diverse-10-labels-b.json
+sha256 27f9d2654334eb15b6d2115c0f19080fe9ba31b9f9103904d5fd389adac24994
+```
+
+第一次操作曾直接 `source` 项目 `.env`，由于文件中存在非 shell-safe 的带空格值，
+误触发了一个无关且失败的本地鉴权脚本；它未取得额外授权，IMAP 最终仍只读完成。
+后续批次已改为把 `.env` 当纯文本读取，只提取精确的 IMAP secret key，不执行其中
+任何内容。该方式作为后续邮箱实验固定操作边界。
