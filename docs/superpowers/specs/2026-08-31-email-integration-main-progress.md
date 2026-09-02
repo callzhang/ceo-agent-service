@@ -289,6 +289,49 @@ Git 忽略的脱敏 snapshot：
 成 subscription；其中 2 条 assistant subscription 标签仍不计入自动退订的
 user-confirmed 来源级 support。
 
+### 第二批随机标注、脱敏缺口和累积验证
+
+从不与第一批 30 封重叠的 UID 中，使用固定种子 `2026090203` 再随机抽取 30 封，
+assistant provisional annotation 分布为：
+
+- `notification=12`
+- `important=7`
+- `work=4`
+- `junk=4`
+- `subscription=2`
+- `billing=1`
+
+在生成 snapshot 前，脱敏诊断发现既有 `_clean` 只覆盖部分 token 前缀，未覆盖
+Quota Report Hub 的 `qrp_...` 和 `qrp....` 形式。该批数据当时没有保存。通过红测
+复现后，Email 模型清洗器现会在 jieba 分词前将两种形式替换为 `TOKEN`，持久化和
+实验 snapshot 边界也会拒绝绕过清洗器传入的同类 token。相关 Email 回归为
+`649 passed, 5 warnings`。修复提交为 `eebe00d1 fix: redact email access tokens`。
+
+修复后只读复取同一批样本并保存为 Git 忽略的
+`data/email-experiments/2026-09-02-random-30-b.json`；落盘内容中两种 token marker
+均为 0，snapshot digest 为
+`e735ff9bf8dbe8588af698136e8414335000744fc2371ed0c24091311e0c9af7`。
+
+两批互不重叠的随机 snapshot 合计 60 条，分布为
+`notification=17`、`important=16`、`work=12`、`junk=9`、`billing=4`、
+`subscription=2`。按接收日期排序（同日按样本 digest 稳定排序）的前 48 条训练、
+后 12 条 holdout：
+
+- 生产 word-unigram Logistic：`66.7% Accuracy / 41.7% Macro F1`；
+- word-bigram + char 3–5 Logistic：`58.3% Accuracy / 43.9% Macro F1`；
+- 生产模型在普通分层 OOF 和按来源分组 OOF 中均为 `51.7% Accuracy`，Macro F1
+  分别为 `35.5%` 和 `36.2%`，未观察到仅靠发件来源记忆造成的虚高；
+- 时间 holdout 中 notification 为 `100% precision / 100% recall`（support 6），
+  billing 为 `100% / 100%`（support 1），junk 为 `50% / 50%`（support 2），
+  important、subscription 均为 0；
+- 最高 top-1 confidence 仅 `0.2011`，0.50/0.70/0.85 阈值均为零覆盖。
+
+将 Logistic `C` 从 0.25 扫描到 64 只能制造更高但未经支持的置信度：`C=16/64`
+时有 3/12 封超过 0.5 且本次恰好全对，但整体 Accuracy 降为 50%，0.7 和 0.85
+仍零覆盖，候选 support 只有 3。因此保留生产 `C=0.25`，不通过调大 C 绕过类别
+precision/support 门槛。当前正确结论仍是“模型已学到部分重复通知模板，但没有任何
+类别达到自动 provider action 的证据要求”。
+
 ## 2026-08-31 全量回归复核
 
 在独立 Email 工作树使用普通 conda Python 完成一次全量测试：
