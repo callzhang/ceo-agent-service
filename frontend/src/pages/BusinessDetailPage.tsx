@@ -9,6 +9,16 @@ import { SummaryText } from "../components/data/SummaryText";
 import "../meeting-attempt.css";
 
 type MeetingMetadata = { label: string; value: string };
+type MeetingToolUse = {
+  title?: string;
+  tool?: string;
+  call_id?: string;
+  relevance?: string;
+  source?: string;
+  format?: string;
+  args?: unknown;
+  output?: unknown;
+};
 type MeetingDetail = {
   id: number;
   title: string;
@@ -19,17 +29,67 @@ type MeetingDetail = {
   audit_explanation: { title: string; text: string };
   generated_reply: { title: string; text: string };
   audit_summary: string;
-  tool_uses: unknown[];
+  tool_uses: MeetingToolUse[];
   runtime: Record<string, unknown>;
-  actions: { agent_url: string };
+  actions: { agent_url: string; dingtalk_url?: string };
 };
 
 function MeetingSection({ title, value }: { title: string; value: unknown }) {
   return <section className="meeting-review-block"><h2>{title}</h2><SummaryText value={displayValue(value)} lines={5} /></section>;
 }
 
-function MeetingToolUses({ uses }: { uses: unknown[] }) {
-  return <details className="console-card meeting-tool-card"><summary><strong>Tool uses</strong><span>{uses.length} 条调用记录</span></summary><div className="meeting-tool-list">{uses.length ? uses.map((use, index) => <div className="meeting-tool-item" key={index}>{displayValue(use)}</div>) : <p className="console-card-muted">没有工具调用记录。</p>}</div></details>;
+function traceText(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      return value;
+    }
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return displayValue(value);
+    }
+  }
+  return String(value);
+}
+
+function tracePreview(value: unknown): string {
+  const text = traceText(value).replace(/\s+/g, " ").trim();
+  return text.length > 160 ? `${text.slice(0, 160)}…` : text;
+}
+
+function hasTraceValue(value: unknown): boolean {
+  return value !== null && value !== undefined && value !== "" && !(Array.isArray(value) && value.length === 0) && !(typeof value === "object" && !Array.isArray(value) && Object.keys(value as object).length === 0);
+}
+
+function MeetingToolUseCard({ use, index }: { use: MeetingToolUse; index: number }) {
+  const metadata = [
+    ["relevance", use.relevance],
+    ["source", use.source],
+    ["format", use.format],
+  ].filter(([, value]) => value);
+  return <article className="meeting-tool-event">
+    <header className="meeting-tool-head">
+      <div className="meeting-tool-title">
+        <span className="meeting-tool-index">#{index}</span>
+        <strong>{use.title || "Tool use"}</strong>
+        {use.tool && <span className="meeting-tool-pill">{use.tool}</span>}
+        {use.call_id && <span className="meeting-tool-pill">{use.call_id}</span>}
+      </div>
+    </header>
+    {metadata.length > 0 && <dl className="meeting-tool-meta">{metadata.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
+    {hasTraceValue(use.args) && <div className="meeting-tool-section meeting-tool-args"><div className="meeting-tool-label">args</div><pre className="meeting-tool-pre">{traceText(use.args)}</pre></div>}
+    {hasTraceValue(use.output) && <details className="meeting-tool-output"><summary><span className="meeting-tool-label">output</span><span className="meeting-tool-output-preview">{tracePreview(use.output)}</span></summary><pre className="meeting-tool-output-body">{traceText(use.output)}</pre></details>}
+  </article>;
+}
+
+function MeetingToolUses({ uses }: { uses: MeetingToolUse[] }) {
+  return <details className="console-card meeting-tool-card"><summary><strong>Tool uses</strong><span>{uses.length} 条调用记录</span></summary><div className="meeting-tool-list">{uses.length ? uses.map((use, index) => <MeetingToolUseCard use={use} index={index + 1} key={`${use.call_id || use.tool || "tool"}-${index}`} />) : <p className="console-card-muted">没有工具调用记录。</p>}</div></details>;
 }
 
 export function MeetingAttemptPage({ endpoint }: { endpoint: string }) {
@@ -60,7 +120,10 @@ export function MeetingAttemptPage({ endpoint }: { endpoint: string }) {
     {payload && <>
       <section className="console-card compact-card meeting-conversation-banner">
         <div className="meeting-conversation-main"><div className="meeting-conversation-label">{payload.conversation.label}</div><div className="meeting-conversation-title">{payload.conversation.title}</div>{payload.conversation.subtitle && <div className="meeting-conversation-sub">{payload.conversation.subtitle}</div>}</div>
-        <div className="meeting-banner-actions">{payload.actions.agent_url ? <Link className="agent-log-button" to={payload.actions.agent_url}>agent 执行记录</Link> : <span className="muted">No agent execution record</span>}</div>
+        <div className="meeting-banner-actions">
+          {payload.actions.dingtalk_url && <a className="compact-button open-dingtalk-action" href={payload.actions.dingtalk_url} target="ceo-open-dingtalk" rel="noopener">查看钉钉消息</a>}
+          {payload.actions.agent_url ? <Link className="agent-log-button" to={payload.actions.agent_url}>agent 执行记录</Link> : <span className="muted">No agent execution record</span>}
+        </div>
       </section>
       <section className="console-card meeting-metadata-card"><div className="meeting-metadata-grid">{payload.metadata.map((field) => <div className="meeting-metadata-item" key={field.label}><span>{field.label}</span><strong>{field.value || "未记录"}</strong></div>)}</div></section>
       <section className="console-card meeting-review-card"><div className="meeting-reply-meta"><StatusBadge value={payload.status} /></div><MeetingSection title={payload.trigger.title} value={payload.trigger.text} /><MeetingSection title={payload.audit_explanation.title} value={payload.audit_explanation.text} /><MeetingSection title={payload.generated_reply.title} value={payload.generated_reply.text} /></section>

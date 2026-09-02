@@ -73,9 +73,9 @@ describe("BusinessDetailPage", () => {
         audit_explanation: { title: "Codex reason", text: "会议已完成对齐分析。" },
         generated_reply: { title: "生成回复", text: "今天发布 Beta。" },
         audit_summary: "会议存在未决验收问题。",
-        tool_uses: [{ tool: "document", title: "会议记录" }],
+        tool_uses: [{ title: "读取会议记忆", tool: "memory_recall", call_id: "call-1", relevance: "确认历史判断", source: "memory.md", format: "mcp/json", args: { query: "上线范围" }, output: "{\"summary\":\"风险预算需要确认\"}" }],
         runtime: { run_status: "ready_to_send", job_status: "sent" },
-        actions: { agent_url: "" },
+        actions: { agent_url: "", dingtalk_url: "/open-dingtalk-popup?conversation_id=cid-meeting" },
       },
       meta: { snapshot_at: "2026-08-30T08:00:00Z" },
     });
@@ -89,6 +89,11 @@ describe("BusinessDetailPage", () => {
     expect(screen.getByRole("heading", { name: "生成回复" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Audit summary" })).toBeInTheDocument();
     expect(screen.getByText("Tool uses")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看钉钉消息" })).toHaveAttribute("href", "/open-dingtalk-popup?conversation_id=cid-meeting");
+    expect(screen.getByText("读取会议记忆")).toBeInTheDocument();
+    expect(screen.getByText("relevance")).toBeInTheDocument();
+    expect(screen.getByText("args")).toBeInTheDocument();
+    expect(screen.getByText("output")).toBeInTheDocument();
     expect(screen.queryByText("input")).not.toBeInTheDocument();
   });
 });

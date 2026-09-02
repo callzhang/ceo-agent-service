@@ -10,7 +10,7 @@ import json
 import string
 import subprocess
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -463,6 +463,26 @@ def register_console_routes(
             {"label": "ended at", "value": job.ended_at},
             {"label": "participants", "value": participant_preview},
         ]
+        conversation_id = ""
+        if isinstance(target, dict):
+            conversation_id = str(target.get("conversation_id") or "").strip()
+        if not conversation_id:
+            conversation_id = str(job.target_id or "").strip()
+        dingtalk_url = (
+            f"/open-dingtalk-popup?conversation_id={quote(conversation_id, safe='')}"
+            if conversation_id
+            else ""
+        )
+        try:
+            # Reuse the legacy trace normalizer so the React DTO preserves the
+            # readable title/metadata/args/output structure and call pairing.
+            from app.audit_web import _audit_event_uses_for_attempt
+
+            tool_uses = _audit_event_uses_for_attempt(run)
+        except Exception:
+            # Old or partially persisted runs may not have a readable Codex
+            # transcript. Their stored event payload is still useful evidence.
+            tool_uses = stored_json(run.audit_tool_events_json, [])
         return item_envelope({
             "id": run.id,
             "title": job.title,
@@ -496,7 +516,7 @@ def register_console_routes(
             "audit_explanation": {"title": "Codex reason", "text": run.audit_summary},
             "generated_reply": {"title": "生成回复", "text": job.final_message or "No generated reply recorded."},
             "audit_summary": run.audit_summary,
-            "tool_uses": stored_json(run.audit_tool_events_json, []),
+            "tool_uses": tool_uses,
             "runtime": {
                 "run_status": run.status,
                 "job_status": job.status,
@@ -507,7 +527,10 @@ def register_console_routes(
                 "finished_at": run.finished_at,
                 "updated_at": run.updated_at,
             },
-            "actions": {"agent_url": f"/codex/{run.codex_session_id}" if run.codex_session_id else ""},
+            "actions": {
+                "agent_url": f"/codex/{run.codex_session_id}" if run.codex_session_id else "",
+                "dingtalk_url": dingtalk_url,
+            },
         })
 
     @app.get("/api/console/oa-approvals/{process_instance_id:path}")

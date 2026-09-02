@@ -4,6 +4,9 @@
 .meeting-conversation-title { overflow-wrap: anywhere; font-size: 1.08rem; font-weight: 750; }
 .meeting-conversation-sub { margin-top: 5px; color: var(--ink-soft); font-size: .8rem; }
 .meeting-banner-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.meeting-banner-actions .open-dingtalk-action { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.meeting-banner-actions .open-dingtalk-action:hover { color: white; background: var(--accent); }
+.meeting-banner-actions .agent-log-button { border-color: #a9cdbc; color: var(--accent); }
 .meeting-metadata-card { padding: 16px; }
 .meeting-metadata-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--line); }
 .meeting-metadata-item { min-width: 0; min-height: 64px; padding: 11px 12px; background: var(--surface); }
@@ -24,8 +27,27 @@
 .meeting-tool-card > summary strong, .meeting-runtime-card > summary strong { font-size: 1.05rem; }
 .meeting-tool-card > summary span, .meeting-runtime-card > summary span { color: var(--ink-soft); font-size: .76rem; }
 .meeting-tool-card[open] > summary, .meeting-runtime-card[open] > summary { border-bottom: 1px solid var(--line); }
-.meeting-tool-list { display: grid; gap: 8px; padding: 16px 20px 20px; }
-.meeting-tool-item { padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink-soft); background: var(--surface-muted); font: .76rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
+.meeting-tool-list { display: grid; gap: 10px; padding: 16px 20px 20px; }
+.meeting-tool-event { overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
+.meeting-tool-head { padding: 11px 13px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface)); }
+.meeting-tool-title { display: flex; align-items: center; gap: 7px; min-width: 0; flex-wrap: wrap; }
+.meeting-tool-title strong { min-width: 0; overflow-wrap: anywhere; font-size: .82rem; }
+.meeting-tool-index, .meeting-tool-pill { color: var(--ink-soft); font: .68rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.meeting-tool-index { padding: 3px 5px; border-radius: 5px; color: var(--accent-strong); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.meeting-tool-pill { padding: 3px 6px; border: 1px solid var(--line); border-radius: 999px; overflow-wrap: anywhere; }
+.meeting-tool-meta { display: grid; grid-template-columns: minmax(96px, 120px) minmax(0, 1fr); gap: 0 12px; margin: 0; padding: 10px 13px; border-bottom: 1px solid var(--line); }
+.meeting-tool-meta > div { display: contents; }
+.meeting-tool-meta dt, .meeting-tool-meta dd { margin: 0; padding: 3px 0; overflow-wrap: anywhere; font-size: .73rem; line-height: 1.45; }
+.meeting-tool-meta dt, .meeting-tool-label { color: var(--ink-soft); font-size: .68rem; font-weight: 750; }
+.meeting-tool-meta dd { color: var(--ink); }
+.meeting-tool-section { padding: 11px 13px 13px; }
+.meeting-tool-section + .meeting-tool-section { border-top: 1px solid var(--line); }
+.meeting-tool-pre, .meeting-tool-output-body { max-height: 420px; margin: 6px 0 0; padding: 9px 10px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface); font: .72rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.meeting-tool-output { border-top: 1px solid var(--line); }
+.meeting-tool-output summary { display: flex; align-items: baseline; gap: 12px; min-width: 0; padding: 11px 13px; cursor: pointer; list-style: none; }
+.meeting-tool-output summary::-webkit-details-marker { display: none; }
+.meeting-tool-output-preview { min-width: 0; overflow: hidden; color: var(--ink-soft); font: .72rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.meeting-tool-output-body { margin: 0 13px 13px; }
 .meeting-runtime-card[open] > .technical-details { margin: 0; padding: 16px 20px 20px; }
 
 @media (max-width: 760px) {
@@ -34,6 +56,9 @@
   .meeting-metadata-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .meeting-tool-card > summary, .meeting-runtime-card > summary { padding: 15px 16px; }
   .meeting-tool-list { padding: 14px 16px 16px; }
+  .meeting-tool-meta { grid-template-columns: 96px minmax(0, 1fr); }
+  .meeting-tool-output summary { display: grid; gap: 4px; }
+  .meeting-tool-output-preview { white-space: normal; }
   .meeting-runtime-card[open] > .technical-details { padding: 14px 16px 16px; }
 }
 

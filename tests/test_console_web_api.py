@@ -705,10 +705,25 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
     run_id = store.record_meeting_alignment_run(
         job_id=job_id,
         codex_session_id="internal-session-must-not-leak",
-        decision_json='{"action":"send"}',
+        decision_json='{"action":"send","target":{"conversation_id":"cid-meeting-console","title":"项目评审会"}}',
         audit_summary="上线范围需要确认。",
         status="sent",
         error="",
+        audit_tool_events_json=json.dumps([
+            {
+                "title": "读取会议记忆",
+                "tool": "memory_recall",
+                "call_id": "call-meeting-1",
+                "relevance": "确认历史判断",
+                "path": "memory.md",
+                "args": {"query": "上线范围"},
+            },
+            {
+                "tool": "tool_output",
+                "call_id": "call-meeting-1",
+                "output": '{"summary":"风险预算需要确认"}',
+            }
+        ], ensure_ascii=False),
     )
 
     with _client(tmp_path) as client:
@@ -718,7 +733,18 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
     item = response.json()["item"]
     assert item["id"] == run_id
     assert item["title"] == "项目评审会"
-    assert item["decision"] == {"action": "send"}
+    assert item["decision"]["action"] == "send"
+    assert item["actions"]["dingtalk_url"] == "/open-dingtalk-popup?conversation_id=cid-meeting-console"
+    assert item["tool_uses"] == [{
+        "title": "读取会议记忆",
+        "tool": "memory_recall",
+        "call_id": "call-meeting-1",
+        "relevance": "确认历史判断",
+        "source": "memory.md · memory_recall",
+        "format": "mcp/json",
+        "args": {"query": "上线范围"},
+        "output": '{"summary":"风险预算需要确认"}',
+    }]
     assert item["output"] == "会后对齐：请确认上线范围。"
     assert "codex_session_id" not in json.dumps(item)
 
