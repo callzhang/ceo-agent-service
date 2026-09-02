@@ -193,6 +193,34 @@ model-only provider action 激活。
 5. 在当前批准的 precision/support 门槛之外，是否要为 `important` 增加 recall 下限。
    该项属于新的 safety gate，必须单独确认并单独实现，不能顺手加入现有代码。
 
+### 8.1 建议的 readonly shadow 验证协议（待 Derek 确认）
+
+基于当前 210 封样本暴露出的时间漂移和模板重复问题，建议下一阶段只验证
+“读取、分类、反馈、学习”四个环节，不验证邮箱写动作：
+
+1. 只启用一个已配置邮箱的 readonly IMAP scan；扫描结果进入独立 Email worker，
+   不调用 SMTP，不执行 `STORE`、移动、删除、归档或退订。
+2. 使用当前 CPU 候选模型生成 `category`、`confidence`、备选类别和带版本的
+   `model_id`；无论置信度高低都只作为 Email 页“待反馈”的建议，所有类别
+   `auto_action_eligible=false`。
+3. 用户确认或改类时，只保存 authoritative feedback，不创建 CEO Agent task；
+   feedback 必须同时记录 provider locator、确认时间、原预测、最终类别、
+   model_id 和 config_version，保证后续能按模型版本和时间窗口重建评估集。
+4. 候选模型训练只从用户确认 feedback 产生；评估同时包含消息级时间 holdout
+   和按规范化主题/来源分组的 holdout。任何一组关键类别证据不达标，候选模型
+   只能留在 candidate，不能晋升 active。
+5. 只有当某类别自己的 user-confirmed precision、support、recall/F1 和校准
+   证据达标，且配置 threshold 与评测 threshold 完全一致时，才允许讨论该类别
+   的 direct action；其他类别不受连带影响。`subscription` 仍额外要求
+   precision `>=0.95`、support `>=20`，并由 Consumer 做最终判断。
+6. readonly shadow 的验收证据固定为：Email worker 新进程、读取计数、反馈计数、
+   SQLite integrity、无 provider write、无 Email task，以及学习页的模型版本和
+   样本统计。没有这些 readback，不能把 shadow 视为已启用。
+
+这份协议中的“只读 shadow 是否启用、扫描全部新邮件还是有限样本、是否采用
+随机/定向/不确定性混合采样”仍然等待 Derek 的产品确认；在确认前保持
+`waiting_configuration / missing_model` 和所有 provider action 关闭。
+
 ## 9. 2026-09-02 完成审计矩阵
 
 | 要求 | 当前证据 | 状态 |
