@@ -829,6 +829,13 @@ feedback；正式非 subscription 类别门槛仍要求 30 个 validation positi
 68.35% Accuracy、62.18% Macro F1 和 0.61 ms P95；notification 结果保持 19/19，
 但仍只允许 readonly shadow。
 
+后续另一批 10 条冻结预测后的 assistant 标注中，notification `>=0.25` 为 5/5，
+另一个 top-1 notification 预测因 confidence 只有 0.2007 被门槛挡住，人工标签实际
+为 important。与 F/G 合计为 24/24 自动候选正确、26 个 notification positive
+support。动态邮箱的随机实验必须用完整 `sample_id_digest` 集合标识；seed 不能在
+最近 UID 池变化后复现同一批邮件。该结果仍不改变 user-confirmed 和 30-positive
+正式门槛。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)

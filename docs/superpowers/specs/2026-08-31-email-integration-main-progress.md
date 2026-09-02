@@ -524,4 +524,31 @@ readonly shadow prediction，但当前不能触发 label、move、archive 或 Tr
 完整测试时，shell 通配符还收集到 4 个被 `.gitignore` 的本地旧副本
 `tests/test_email_* 2.py`，其旧 contract 产生 12 个失败。这些文件不属于 Git
 工作树，未修改也未删除。使用 `git ls-files` 选择正式测试后为 `649 passed,
-5 warnings`，新增 shadow 测试另为 `1 passed`；提交后合并计数应为 650。
+5 warnings`，新增 shadow 测试另为 `1 passed`。提交后重新合并执行为
+`650 passed, 5 warnings`。
+
+### 新随机 10 条人工标注
+
+对上述模型加载后的另一批 10 封随机 readonly 邮件输出生产清洗器生成的脱敏文本，
+由 assistant 在模型预测冻结后完成标签。标签为：`notification=5`、`billing=2`、
+`important=1`、`subscription=1`、`work=1`。top-1 预测正确 8/10：
+
+- `notification >=0.25`：5 个候选，5 个正确，precision 100%；
+- notification positive support：5；recall 100%；
+- 另有 1 封模型预测 notification 但 confidence 只有 0.2007，人工标签为
+  `important`，因此没有越过 0.25 自动门槛；
+- 另一个错误是把 LinkedIn 内容摘要预测为 `junk`，人工标签为 `subscription`。
+
+纯摘要标签证据保存在 Git 忽略的
+`data/email-experiments/2026-09-02-shadow-10-labels.json`，只含消息摘要 hash、
+预测类别/概率和人工标签，不含 model text、UID、来源、主题或正文。文件 SHA-256 为
+`2cfe44be5c8f0cc68156d55074c95dec8385441a1815dfbdecbb8d3441ff0923`；重新计算后
+指标匹配且 10 个 `sample_id_digest` 唯一。
+
+该批与此前 F/G 的 notification 结果合计为 24/24 自动候选正确、26 个 positive
+support，但仍全部是 assistant-authorized 标注，且没有达到当前正式 30-positive
+门槛，所以不改变生产 eligibility。
+
+同一 seed 在稍后复跑时邮箱从 2,321 增加到 2,322 个 UID，最近 500 封的滑动池随之
+改变，所得样本也改变。固定随机 seed 不能单独构成动态邮箱的实验身份；后续所有
+可复核实验以完整 `sample_id_digest` 集合为准，seed 和 UID count 只作为采样说明。
