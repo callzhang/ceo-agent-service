@@ -12245,7 +12245,11 @@ def _audit_event_uses_for_attempt(attempt: ReplyAttempt) -> list[dict[str, objec
             "source": _audit_source_text(event),
             "args": args,
             "format": _audit_format_text(event, args),
-            "output": "",
+            # Modern Codex transcripts persist completed MCP calls as one
+            # item_completed event carrying both arguments and result. Keep
+            # that result here; older transcripts still pair a later
+            # tool_output event through the existing branch above.
+            "output": str(event.get("output") or ""),
         }
         calls.append(call)
         if call_id:
