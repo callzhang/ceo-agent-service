@@ -862,6 +862,19 @@ domain。冻结预测后 assistant 标注的 top-1 为 12/17；其中只有 1 �
 证明其自动覆盖集中在已见模板。第一版路由应把未知来源强制送入待反馈，直到来源均衡
 验证得到足够候选和正样本；不能通过降低 threshold 来制造覆盖率。
 
+进一步的单分类器表示比较使用相同五折来源分组。word+char TF-IDF Logistic
+（word 1–2 + char-wb 3–5，`C=0.25`）取得最高的 35.74% Accuracy / 25.61%
+Macro F1，单封 P95 低于 33 ms。小 bucket fastText 即使训练集 Accuracy 达 85.55%，
+未知来源只有 25.48% / 17.24%，notification 各阈值均未接近 95% precision；因此
+fastText 不替换当前 Logistic。
+
+逐类别选择性指标中，只有 junk 在未知来源上出现足够分散的高 precision 候选：
+threshold `>=0.30603` 为 24/24，覆盖 21 个来源，最大来源占 8.33%，recall 41.38%。
+在后续新数据揭晓前，实验阈值冻结为 0.31，模型冻结为
+`email-tfidf-word-char-junk-v1-d0fc0d4b`。该结果是开发集选择，不是最终 holdout；
+模型保持 `auto_action_eligible=false`。只有全新来源 holdout 达到 Trash 的 99.5%
+precision 和样本门槛后，才讨论可恢复 Trash；否则最多进入标签或继续 shadow。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)

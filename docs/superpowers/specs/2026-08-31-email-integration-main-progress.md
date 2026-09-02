@@ -658,3 +658,47 @@ sha256 27f9d2654334eb15b6d2115c0f19080fe9ba31b9f9103904d5fd389adac24994
 误触发了一个无关且失败的本地鉴权脚本；它未取得额外授权，IMAP 最终仍只读完成。
 后续批次已改为把 `.env` 当纯文本读取，只提取精确的 IMAP secret key，不执行其中
 任何内容。该方式作为后续邮箱实验固定操作边界。
+
+### 单分类器表示复核与 junk 候选冻结
+
+在 263 封、78 个来源组上固定使用五折 `StratifiedGroupKFold`，保证每一折的验证来源
+在对应训练折中完全未见。候选仍全部是单个线性分类器：
+
+| 表示/模型 | Accuracy | Macro F1 | notification >= 0.25 | P95 | 大小 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| TF-IDF word unigram Logistic | 30.04% | 21.27% | 2/13 | 1.59 ms | 548 KB |
+| TF-IDF word 1–2 Logistic | 32.70% | 22.92% | 2/12 | 16.35 ms | 2.69 MB |
+| TF-IDF char-wb 3–5 Logistic | 32.70% | 23.23% | 1/11 | 4.88 ms | 1.56 MB |
+| TF-IDF word+char Logistic | 35.74% | 25.61% | 12/23 | 32.55 ms | 4.25 MB |
+| fastText small best | 25.48% | 17.24% | 8/21 | 0.33 ms | 7.34 MB |
+
+fastText 使用已分词中文、`dim=32`、`bucket=50k`，扫描 word n-gram 1/2 与 epoch
+50/100。最佳训练集 Accuracy 达 85.55%，来源分组验证只有 25.48%，所有 notification
+阈值都远低于 95% precision，属于小数据过拟合。默认 200 万 bucket 的 fastText
+模型约 490 MB，也没有更好的验证结果。因此 fastText 不进入当前生产候选；保留更小、
+更稳的 Logistic 路径。
+
+来源历史规则也只作为 eligibility 诊断：按接收日期顺序，来源已有至少 2 封且历史
+标签完全一致时，后续样本为 37/37，但只覆盖 important/junk/subscription，且有效
+来源很少。随后从最近 2,000 UID 随机扫描 800 个 header，试图寻找晚于对应历史的
+同来源新邮件，结果为 0；因此不能把回看一致性冒充前瞻证据。
+
+按类别检查未知来源的高精度区间后，只有 junk 值得继续：word+char Logistic 在
+threshold `>=0.30603` 时为 24/24、recall 41.38%，覆盖 21 个来源，最大单一来源占
+8.33%。为避免浮点边界，冻结实验阈值为 `junk >= 0.31`，并在查看任何后续 holdout
+前生成不可变实验候选：
+
+```text
+model_id: email-tfidf-word-char-junk-v1-d0fc0d4b
+artifact sha256: d0fc0d4b6b8018b993fe1f86aa386beb9813e6a25a6258a46a042cd8ae55e0b4
+training: 263 messages / 78 source groups
+artifact size: 4,460,415 bytes
+measured single-message P95: 7.57 ms
+status: frozen_experiment_candidate
+auto_action_eligible: false
+reason: fresh_source_holdout_pending
+```
+
+该 artifact 与 metadata 位于 Git 忽略的 `data/email-experiments/models/`，没有注册为
+active，也不能驱动 mailbox action。下一步只用全新来源 holdout 验证冻结的 0.31；
+开发/执行 Trash 仍要求独立 holdout 达到 99.5% precision 和足够 positive support。
