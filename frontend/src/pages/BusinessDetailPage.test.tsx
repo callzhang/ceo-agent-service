@@ -93,6 +93,8 @@ describe("BusinessDetailPage", () => {
     expect(screen.getByText("读取会议记忆")).toBeInTheDocument();
     expect(screen.getByText("relevance")).toBeInTheDocument();
     expect(screen.getByText("args")).toBeInTheDocument();
+    expect(screen.getByText("query")).toBeInTheDocument();
+    expect(screen.getByText("上线范围")).toBeInTheDocument();
     expect(screen.getByText("output")).toBeInTheDocument();
     expect(screen.queryByText("input")).not.toBeInTheDocument();
   });

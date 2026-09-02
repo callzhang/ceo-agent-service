@@ -38,33 +38,60 @@ function MeetingSection({ title, value }: { title: string; value: unknown }) {
   return <section className="meeting-review-block"><h2>{title}</h2><SummaryText value={displayValue(value)} lines={5} /></section>;
 }
 
+function parseTraceValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const text = value.trim();
+  if (!text || !["{", "[", '"'].includes(text[0])) return value;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return value;
+  }
+}
+
 function traceText(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "";
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return JSON.stringify(parsed, null, 2);
-    } catch {
-      return value;
-    }
-  }
-  if (typeof value === "object") {
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch {
-      return displayValue(value);
-    }
-  }
-  return String(value);
+  const parsed = parseTraceValue(value);
+  if (parsed === null || parsed === undefined || parsed === "") return "";
+  if (typeof parsed === "string") return parsed;
+  if (typeof parsed === "number" || typeof parsed === "boolean") return String(parsed);
+  if (Array.isArray(parsed)) return `${parsed.length} 项数据`;
+  if (typeof parsed === "object") return `${Object.keys(parsed as object).length} 个字段`;
+  return displayValue(parsed);
 }
 
 function tracePreview(value: unknown): string {
-  const text = traceText(value).replace(/\s+/g, " ").trim();
+  const parsed = parseTraceValue(value);
+  let text = "";
+  if (Array.isArray(parsed)) text = `${parsed.length} 项结构化数据`;
+  else if (parsed && typeof parsed === "object") {
+    text = Object.entries(parsed as Record<string, unknown>)
+      .slice(0, 3)
+      .map(([key, item]) => `${key}: ${traceText(item)}`)
+      .join(" · ");
+  } else text = traceText(parsed);
+  text = text.replace(/\s+/g, " ").trim();
   return text.length > 160 ? `${text.slice(0, 160)}…` : text;
 }
 
 function hasTraceValue(value: unknown): boolean {
   return value !== null && value !== undefined && value !== "" && !(Array.isArray(value) && value.length === 0) && !(typeof value === "object" && !Array.isArray(value) && Object.keys(value as object).length === 0);
+}
+
+function TraceValue({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  const parsed = parseTraceValue(value);
+  if (parsed === null || parsed === undefined || parsed === "") return <span className="meeting-trace-empty">未提供</span>;
+  if (Array.isArray(parsed)) {
+    return <ol className="meeting-trace-array">{parsed.map((item, index) => <li key={index}><span className="meeting-trace-index">{index + 1}</span><TraceValue value={item} depth={depth + 1} /></li>)}</ol>;
+  }
+  if (typeof parsed === "object") {
+    const entries = Object.entries(parsed as Record<string, unknown>);
+    if (depth > 0) {
+      return <details className="meeting-trace-nested"><summary>{entries.length} 个字段</summary><div className="meeting-trace-fields">{entries.map(([key, item]) => <div className="meeting-trace-field" key={key}><span className="meeting-trace-key">{key}</span><span className="meeting-trace-value"><TraceValue value={item} depth={depth + 1} /></span></div>)}</div></details>;
+    }
+    return <div className="meeting-trace-fields">{entries.map(([key, item]) => <div className="meeting-trace-field" key={key}><span className="meeting-trace-key">{key}</span><span className="meeting-trace-value"><TraceValue value={item} depth={depth + 1} /></span></div>)}</div>;
+  }
+  if (typeof parsed === "boolean") return <span className="meeting-trace-scalar meeting-trace-boolean">{parsed ? "是" : "否"}</span>;
+  return <span className="meeting-trace-scalar">{String(parsed)}</span>;
 }
 
 function MeetingToolUseCard({ use, index }: { use: MeetingToolUse; index: number }) {
@@ -83,8 +110,9 @@ function MeetingToolUseCard({ use, index }: { use: MeetingToolUse; index: number
       </div>
     </header>
     {metadata.length > 0 && <dl className="meeting-tool-meta">{metadata.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
-    {hasTraceValue(use.args) && <div className="meeting-tool-section meeting-tool-args"><div className="meeting-tool-label">args</div><pre className="meeting-tool-pre">{traceText(use.args)}</pre></div>}
-    {hasTraceValue(use.output) && <details className="meeting-tool-output"><summary><span className="meeting-tool-label">output</span><span className="meeting-tool-output-preview">{tracePreview(use.output)}</span></summary><pre className="meeting-tool-output-body">{traceText(use.output)}</pre></details>}
+    {hasTraceValue(use.args) && <div className="meeting-tool-section meeting-tool-args"><div className="meeting-tool-label">args</div><div className="meeting-trace-content"><TraceValue value={use.args} /></div></div>}
+    {hasTraceValue(use.output) && <details className="meeting-tool-output"><summary><span className="meeting-tool-label">output</span><span className="meeting-tool-output-preview">{tracePreview(use.output)}</span></summary><div className="meeting-tool-output-body"><TraceValue value={use.output} /></div></details>}
+    {!hasTraceValue(use.args) && !hasTraceValue(use.output) && <div className="meeting-trace-missing">该历史记录未保存参数或输出</div>}
   </article>;
 }
 

@@ -279,6 +279,60 @@ def test_extract_codex_audit_events_from_session_respects_line_range(tmp_path: P
     ]
 
 
+def test_extract_codex_audit_events_from_modern_completed_mcp_call(tmp_path: Path):
+    session_id = "019e2c00-modern-mcp"
+    session_path = (
+        tmp_path
+        / "sessions"
+        / "2026"
+        / "09"
+        / "01"
+        / f"rollout-2026-09-01T22-00-00-{session_id}.jsonl"
+    )
+    session_path.parent.mkdir(parents=True)
+    result = {
+        "content": [{"type": "text", "text": "读取完成"}],
+        "structuredContent": {"items": [{"title": "上线范围"}]},
+        "isError": False,
+    }
+    session_path.write_text(
+        "\n".join(
+            json.dumps(line, ensure_ascii=False)
+            for line in (
+                {"type": "session_meta", "payload": {"id": session_id}},
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "item_completed",
+                        "item": {
+                            "type": "McpToolCall",
+                            "id": "exec-modern-1",
+                            "server": "memory_connector",
+                            "tool": "memory_recall",
+                            "arguments": {"query": "上线范围"},
+                            "result": result,
+                        },
+                    },
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    events = extract_codex_audit_events_from_session(
+        session_id,
+        codex_home=tmp_path,
+    )
+
+    assert events == [{
+        "event_type": "event_msg",
+        "tool": "memory_recall",
+        "call_id": "exec-modern-1",
+        "input": json.dumps({"query": "上线范围"}, ensure_ascii=False, indent=2),
+        "output": json.dumps(result, ensure_ascii=False, indent=2),
+    }]
+
+
 def test_extract_codex_mcp_tool_results_from_session_reads_event_receipt(
     tmp_path: Path,
 ):

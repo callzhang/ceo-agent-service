@@ -430,6 +430,71 @@ def _render_response_item(
 
 
 def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
+    if payload.get("type") == "event_msg":
+        event = payload.get("payload")
+        if not isinstance(event, dict) or event.get("type") != "item_completed":
+            return None
+        item = event.get("item")
+        if not isinstance(item, dict):
+            return None
+        item_type = _string(item.get("type"))
+        if item_type == "McpToolCall":
+            tool = _string(item.get("tool")) or "tool"
+            arguments = _json_argument_text(item.get("arguments"))
+            result = item.get("result")
+            output = _json_value_text(result)
+            audit_event: dict[str, str] = {
+                "event_type": "event_msg",
+                "tool": tool,
+            }
+            call_id = _string(item.get("id"))
+            if call_id:
+                audit_event["call_id"] = call_id
+            if arguments:
+                audit_event["input"] = arguments
+            command = _command_from_json_text(arguments)
+            if command:
+                audit_event["command"] = command
+            path = _first_pathish_token(arguments)
+            if path:
+                audit_event["path"] = path
+            if output:
+                audit_event["output"] = output[:MAX_EVENT_BODY_CHARS]
+                output_path = _first_pathish_token(output)
+                if output_path and "path" not in audit_event:
+                    audit_event["path"] = output_path
+            return audit_event
+        if item_type == "CommandExecution":
+            command = _string(item.get("command"))
+            cwd = _string(item.get("cwd"))
+            output = (
+                _string(item.get("aggregated_output"))
+                or _string(item.get("formatted_output"))
+                or _string(item.get("stdout"))
+            )
+            audit_event = {
+                "event_type": "event_msg",
+                "tool": "command_execution",
+            }
+            call_id = _string(item.get("id"))
+            if call_id:
+                audit_event["call_id"] = call_id
+            arguments = {
+                key: value
+                for key, value in (("command", command), ("cwd", cwd))
+                if value
+            }
+            argument_text = _json_argument_text(arguments)
+            if argument_text:
+                audit_event["input"] = argument_text
+            if command:
+                audit_event["command"] = command
+            if cwd:
+                audit_event["path"] = cwd
+            if output:
+                audit_event["output"] = output[:MAX_EVENT_BODY_CHARS]
+            return audit_event
+        return None
     if payload.get("type") != "response_item":
         return None
     item = payload.get("payload")
@@ -483,6 +548,17 @@ def _audit_event_from_jsonl(payload: dict[str, Any]) -> dict[str, str] | None:
             event["path"] = path
         return event
     return None
+
+
+def _json_value_text(value: Any) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        return _string(value)
 
 
 def _mcp_tool_result_from_event_msg(
