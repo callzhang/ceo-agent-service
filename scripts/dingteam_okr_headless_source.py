@@ -35,7 +35,6 @@ def _get_headless_headers() -> dict[str, str]:
 def _headless_launch_kwargs(playwright) -> dict[str, object]:
     """Use Playwright's isolated browser binary, never the user's Chrome app."""
     return {
-        "user_data_dir": str(browser.PROFILE_DIR),
         "headless": True,
         "executable_path": playwright.chromium.executable_path,
     }
@@ -47,7 +46,10 @@ def _capture_stable_headless_headers() -> dict[str, str]:
     captured: dict[str, str] = {}
     with sync_playwright() as playwright:
         launch_kwargs = _headless_launch_kwargs(playwright)
-        context = playwright.chromium.launch_persistent_context(**launch_kwargs)
+        browser_instance = playwright.chromium.launch(**launch_kwargs)
+        context = browser_instance.new_context(
+            storage_state=str(browser.PROFILE_DIR / "storage_state.json")
+        )
         try:
             def on_request(request):
                 if "/data/okr/" not in request.url or captured:
@@ -87,6 +89,7 @@ def _capture_stable_headless_headers() -> dict[str, str]:
                     raise RuntimeError("okr_website_unavailable: Dingteam OKR website did not render")
         finally:
             context.close()
+            browser_instance.close()
     if "Authorization" not in captured:
         raise RuntimeError("could not capture Dingteam auth token from the browser")
     return captured

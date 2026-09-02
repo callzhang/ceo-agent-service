@@ -74,7 +74,6 @@ def test_headless_launch_uses_playwright_browser_binary():
         chromium = Chromium()
 
     assert module._headless_launch_kwargs(Playwright()) == {
-        "user_data_dir": str(module.browser.PROFILE_DIR),
         "headless": True,
         "executable_path": "/tmp/playwright-chrome",
     }
