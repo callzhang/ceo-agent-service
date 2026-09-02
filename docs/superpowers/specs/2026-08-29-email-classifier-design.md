@@ -902,6 +902,13 @@ v2 的独立来源验证也未通过。首批随机 30 个新来源只有 5 个�
 Logistic 分类器，把本轮 45 个主动学习样本加入训练，专门学习 junk 与有价值战略接洽
 的边界；冻结 v3 后必须再用全新来源 holdout。若 v3 仍失败，停止自动动作实验。
 
+hard-example v3 使用 328 封、143 个来源，仍是单个 word+char Logistic。五折来源
+分组下整体 Accuracy/Macro F1 为 43.60%/34.17%；冻结 `junk >= 0.324` 为 34/35，
+precision 97.14%、recall 36.96%，覆盖 33 个候选来源。模型
+`email-tfidf-word-char-junk-label-v3-eb1dfe4a` 仍为 inactive label-only 候选，并显式
+禁止 mark-read/archive/move/Trash/unsubscribe/auto-reply。最后一次全新来源验证必须在
+该版本和阈值已提交后进行；失败即停止迭代。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)

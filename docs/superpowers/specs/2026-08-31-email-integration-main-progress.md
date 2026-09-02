@@ -835,3 +835,41 @@ v2 rejection lifecycle sha256:
 下一轮只允许做一次保持单分类器的 hard-example v3：重点学习“无价值推销”和“有价值
 战略/投资/研究接洽”的边界，重新做来源分组开发验证，再在冻结后使用全新来源验证。
 若仍达不到 95% label precision，就停止迭代并将自动动作范围收敛为待反馈模式。
+
+### hard-example junk label-only v3 冻结
+
+把上述 45 个新来源标签转入开发训练池后，v3 共有 328 封、143 个来源。继续使用
+同一个 word 1–2 + char-wb 3–5 TF-IDF balanced Logistic，没有增加第二个模型或规则
+分类器。五折来源分组开发验证为：
+
+```text
+Accuracy / Macro F1: 43.60% / 34.17%
+junk >= 0.324: 34/35
+precision: 97.14%
+positive support: 92
+recall: 36.96%
+candidate sources: 33
+maximum source share: 5.71%
+```
+
+相比 v2，hard examples 改善了整体分类和 junk 边界；但开发集中仍将先前的播客采访
+邀请判为 junk。达到 100% precision 时只剩 10 个候选，低于样本门槛。因此 v3 仍
+只能作为 label-only 的最后冻结候选，不能用于移动或 Trash：
+
+```text
+model_id: email-tfidf-word-char-junk-label-v3-eb1dfe4a
+parent: email-tfidf-word-char-junk-label-v2-d94ee93b (rejected)
+artifact sha256: eb1dfe4a62cbcfa71aa900450a4ebd7eeebae541cbd18a3c4b7288ca59ebd3b6
+metadata sha256: 093c10eca9d64b7993b6c24dad4e895939d56a078f8b850a05454fa09d129960
+training: 328 messages / 143 source groups
+single-message P95: 5.98 ms
+runtime: Python 3.12.11 / scikit-learn 1.8.0 / numpy 2.4.3 / scipy 1.17.1
+frozen threshold: 0.324
+intended action: label
+status: frozen_experiment_candidate
+auto_action_eligible: false
+```
+
+v3 artifact 不注册 active。提交此冻结记录后，只允许再做一次全新来源、随机候选流
+precision 验证；不能查看新样本后修改 0.324。通过 95%且满足候选数，才进入 label-only
+生产代码；失败则停止模型迭代并保持待反馈/shadow。
