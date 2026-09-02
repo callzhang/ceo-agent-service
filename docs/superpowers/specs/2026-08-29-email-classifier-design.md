@@ -882,6 +882,14 @@ precision 和样本门槛后，才讨论可恢复 Trash；否则最多进入标�
 保持关闭。查看 holdout 后不能在同一批上重选阈值；20 封可进入 v2 训练，但 v2 必须
 使用新的 source-disjoint holdout。
 
+将该 20 封转入训练后，junk label-only v2 使用 283 封、98 个来源。五折来源分组下，
+`junk >= 0.312` 为 29/30，precision 96.67%，positive support 66，覆盖 28 个来源，
+最大来源占 6.67%。候选 `email-tfidf-word-char-junk-label-v2-d94ee93b` 只允许验证
+增加 Junk 标签，显式禁止 mark-read/archive/move/Trash/unsubscribe/auto-reply。冻结
+运行时为 Python 3.12.11、scikit-learn 1.8.0、numpy 2.4.3、scipy 1.17.1；不同
+scikit-learn 版本不得直接加载该 pickle 后用于验证或生产判断。
+它保持 inactive，等待另一批全新来源 holdout；label 通过不能自动推导出 Trash 通过。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)

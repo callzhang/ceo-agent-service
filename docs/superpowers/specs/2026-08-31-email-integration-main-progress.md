@@ -750,3 +750,41 @@ sha256 3be6598bc9754bfc9a57cff040d5fc292fd9a7d8f8a428ecb2c246dab9f86636
 这 20 封从现在起可以进入下一版训练池，但不能继续作为下一版 holdout。v2 必须重新
 冻结并使用另一批 source-disjoint 邮件验证。当前没有任何类别达到真实写动作门槛，
 所以仍只开发/运行 shadow 学习链路，不开发或启用 Trash。
+
+### junk label-only v2 冻结
+
+把 v1 的 20 个全新来源 holdout 正式转入开发训练池后，v2 共有 283 封、98 个来源。
+它们不再计作验证证据。相同 word+char Logistic 在五折来源分组开发验证中为：
+
+```text
+Accuracy / Macro F1: 36.75% / 26.05%
+junk >= 0.312: 29/30
+precision: 96.67%
+positive support: 66
+recall: 43.94%
+candidate sources: 28
+maximum source share: 6.67%
+```
+
+该结果达到普通 label 的 95%研究门槛，但没有达到 archive/Trash 的风险门槛。冻结
+候选因此只能研究“增加 Junk 标签”，显式禁止 mark-read、archive、move、Trash、
+unsubscribe 和 auto-reply：
+
+```text
+model_id: email-tfidf-word-char-junk-label-v2-d94ee93b
+parent: email-tfidf-word-char-junk-v1-d0fc0d4b (rejected)
+artifact sha256: d94ee93b5ef73e3bda7af4d7d9d9544e72c3ff42cb390be4dd81c28f40d0d6c3
+metadata sha256: 1b1ef381fdaf6dc299e4155f8f70d1920452857b13f904c4ba46edddf3b9c5b0
+training: 283 messages / 98 source groups
+artifact size: 4,718,956 bytes
+single-message P95: 7.96 ms
+runtime: Python 3.12.11 / scikit-learn 1.8.0 / numpy 2.4.3 / scipy 1.17.1
+frozen threshold: 0.312
+intended action: label
+status: frozen_experiment_candidate
+auto_action_eligible: false
+```
+
+v2 仍未注册 active。下一步必须使用另一批与 98 个训练来源、此前 17 个来源去重样本
+均不重叠的新来源 holdout；只有该批也达到 label precision 门槛，才进入 label-only
+生产代码开发。即使通过，也不开放移动或 Trash。
