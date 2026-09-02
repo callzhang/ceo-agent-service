@@ -7987,7 +7987,7 @@ def test_calendar_invite_without_description_asks_for_attendance_reason(
     assert len(agent_runner(worker).calls) == 1
     prompt = assert_calendar_agent_contract(worker, dws)
     assert "dws calendar event list --start" in prompt
-    assert "客户复盘" not in prompt
+    assert "客户复盘" in prompt
     assert final_sent(dws) == []
     assert worker.store.has_seen("msg-1") is False
     attempt = worker.store.get_reply_attempt(1)
@@ -8182,8 +8182,10 @@ def test_calendar_invite_with_description_asks_codex_to_evaluate_conflict(
 
     assert len(agent_runner(worker).calls) == 1
     prompt = assert_calendar_agent_contract(worker, dws)
-    assert "客户升级问题决策" not in prompt
+    assert "客户升级问题决策" in prompt
     assert "dws calendar event list --start" in prompt
+    assert '"kind": "dingtalk_calendar_conflict"' in prompt
+    assert "产品周会" in prompt
     assert final_sent(dws) == []
     assert worker.store.has_seen("msg-1") is False
     attempt = worker.store.get_reply_attempt(1)

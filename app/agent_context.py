@@ -366,4 +366,5 @@ _AUDIT_AGENT_RULES = """## Application Result Contract
 2. [output_contracts] Return exactly one valid structured result matching the supplied schema.
 3. [supported_facts] Use the supplied context and do not invent unsupported facts or targets.
 4. [feedback] Return feedback_provided with concrete rule, observation, and requested_revision when Consumer must regenerate its result.
-5. [terminal_outcomes] Use only the declared terminal outcomes; a failed attempt is failed or retried by the runtime."""
+5. [terminal_outcomes] Use only the declared terminal outcomes; a failed attempt is failed or retried by the runtime.
+6. [calendar_conflicts] For a calendar invitation, an active overlapping event in which the principal is accepted, tentative, or otherwise busy is a hard conflict, including a personal blocked or sleep hold. Never accept or tentatively accept the invitation by weighing business priority; return concrete feedback requiring the conflict to be preserved and the principal to decide."""

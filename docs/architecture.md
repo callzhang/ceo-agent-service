@@ -289,6 +289,11 @@ SQLite 继续保存既有 task/run/attempt/provider result identifier 状态；�
 Skill，CEO Skill 只负责识别需要委派的场景，不复制专业规则：分别加载
 `dingtalk-oa-approval`、`xiaoqing_interview`/现有面试 Skill、`dingtang-okr-review`。
 
+日程邀请在进入 Consumer 和 Audit 前，service 会读取邀请的时间窗并把所有已确认占用的
+重叠日程作为结构化事实传入。`accepted`、`tentative` 或 busy 的重叠日程（包括个人
+`Blocked`/睡眠占位）是硬冲突：Agent 不得以业务优先级自动接受或暂定新邀请，必须保留冲突并
+交由 principal 决定。
+
 ### Settings 中的功能机制开关
 
 `Settings -> Skills` 管理的是功能机制，而不是单个文件的可读性。功能清单保存在

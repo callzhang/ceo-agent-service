@@ -2677,6 +2677,38 @@ class DingTalkAutoReplyWorker:
                 ),
             )
 
+        if self._is_calendar_message(trigger):
+            calendar_context = self._calendar_invite_context(
+                DingTalkConversation(
+                    open_conversation_id=task.conversation_id,
+                    title=task.conversation_title,
+                    single_chat=task.single_chat,
+                    unread_point=1,
+                ),
+                trigger,
+                context_messages=context_messages,
+                direct_invite_only=True,
+            )
+            if calendar_context is not None and calendar_context.conflicts:
+                add(
+                    "dingtalk_calendar_conflict",
+                    json.dumps(
+                        {
+                            "invite": calendar_context.invite.model_dump(
+                                mode="json"
+                            ),
+                            "conflicts": [
+                                event.model_dump(mode="json")
+                                for event in calendar_context.conflicts
+                            ],
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                    trigger.open_message_id,
+                    (),
+                )
+
         for message in (trigger,):
             task_oa_url = (
                 task.oa_url.strip()
@@ -3694,18 +3726,31 @@ class DingTalkAutoReplyWorker:
         context_messages: list[DingTalkMessage] | None = None,
         *,
         include_resolved_invites: bool = False,
+        direct_invite_only: bool = False,
     ) -> CalendarConflictContext | None:
         if not self._is_calendar_message(message):
             return None
         list_calendar_events = getattr(self.dws, "list_calendar_events", None)
         if list_calendar_events is None:
             return None
-        invite = self._calendar_invite_from_message_or_sender(
-            conversation,
-            message,
-            context_messages=context_messages,
-            include_resolved=include_resolved_invites,
-        )
+        if direct_invite_only:
+            calendar_invite_from_message = getattr(
+                self.dws,
+                "calendar_invite_from_message",
+                None,
+            )
+            invite = (
+                calendar_invite_from_message(message)
+                if calendar_invite_from_message is not None
+                else None
+            )
+        else:
+            invite = self._calendar_invite_from_message_or_sender(
+                conversation,
+                message,
+                context_messages=context_messages,
+                include_resolved=include_resolved_invites,
+            )
         if invite is None:
             return None
         events = list_calendar_events(invite.start_time, invite.end_time)
