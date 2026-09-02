@@ -875,6 +875,13 @@ threshold `>=0.30603` 为 24/24，覆盖 21 个来源，最大来源占 8.33%，
 模型保持 `auto_action_eligible=false`。只有全新来源 holdout 达到 Trash 的 99.5%
 precision 和样本门槛后，才讨论可恢复 Trash；否则最多进入标签或继续 shadow。
 
+冻结后的 20 个全新来源 holdout 否决了 junk v1。标签中有 8 个 junk；0.31 门槛
+选出 7 个候选，只有 6 个正确，precision 85.71%。误判是一封具体、个性化的公司
+播客采访邀请：即使形式类似冷邮件，它也可能有品牌价值，不能自动移入 Trash。
+候选 `email-tfidf-word-char-junk-v1-d0fc0d4b` 状态因此变为 rejected，邮箱 effect
+保持关闭。查看 holdout 后不能在同一批上重选阈值；20 封可进入 v2 训练，但 v2 必须
+使用新的 source-disjoint holdout。
+
 ## 研究依据
 
 - TREC Spam Track 使用按时间到达的邮件流、过滤分数、延迟反馈和有限主动查询，支持本方案采用时间顺序评测、拒判和用户反馈闭环。[NIST TREC Spam Track](https://trec.nist.gov/data/spam.html)、[TREC 2007 Spam Track Overview](https://trec.nist.gov/pubs/trec16/papers/SPAM.OVERVIEW16.pdf)

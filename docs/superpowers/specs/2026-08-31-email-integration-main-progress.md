@@ -702,3 +702,51 @@ reason: fresh_source_holdout_pending
 该 artifact 与 metadata 位于 Git 忽略的 `data/email-experiments/models/`，没有注册为
 active，也不能驱动 mailbox action。下一步只用全新来源 holdout 验证冻结的 0.31；
 开发/执行 Trash 仍要求独立 holdout 达到 99.5% precision 和足够 positive support。
+
+### junk v1 全新来源 holdout：拒绝
+
+冻结文档和候选提交后，以 seed `2026090215` 从最近 2,000 个 UID 随机扫描 132 个
+header，取得 20 个与 263 封训练语料以及此前 17 个来源去重样本均不重叠的新 sender
+domain。每个来源只取一封，预测由冻结候选先完成，再按 `ceo-mail-review` 的保守边界
+由 assistant 标注；邮箱写入、SMTP 连接和附件下载仍全部为 0。
+
+标签分布为 `junk=8`、`important=7`、`notification=3`、`work=2`，整体 top-1
+为 9/20。冻结的 `junk >= 0.31` 选出 7 个候选，其中 6 个为 junk；唯一误判是一封
+针对 Stardust 的具体播客采访邀请，属于可能有品牌价值且需要用户关注的机会，不可
+自动丢弃：
+
+```text
+junk candidates: 7
+true junk: 6
+precision: 85.71%
+junk positive support: 8
+recall: 75%
+required Trash precision: 99.5%
+decision: rejected
+mailbox effects enabled: false
+```
+
+因此 `email-tfidf-word-char-junk-v1-d0fc0d4b` 已生成独立 rejection lifecycle，不能
+进入生产 registry 或执行可恢复 Trash。提高 threshold 也不能挽救 v1：误判分数为
+0.360342；阈值超过该值只剩 2 个候选，样本不足，且属于查看 holdout 后调参，不能再
+把同一批当最终证据。
+
+Git 忽略的证据及摘要：
+
+```text
+predictions + local redacted model text
+data/email-experiments/2026-09-02-junk-source-disjoint-holdout-20-predictions.json
+sha256 83ff365f619f120f84c8e60b62d04d73334d60cb9fc711268fbf8fc3af723295
+
+label-only evaluation
+data/email-experiments/2026-09-02-junk-source-disjoint-holdout-20-labels.json
+sha256 3a4beaf6b08b02b2bb68386b98afd99e69f8fc6ed915e7115166befb46f6c153
+
+candidate rejection lifecycle
+data/email-experiments/models/email-tfidf-word-char-junk-v1-d0fc0d4b-rejection.json
+sha256 3be6598bc9754bfc9a57cff040d5fc292fd9a7d8f8a428ecb2c246dab9f86636
+```
+
+这 20 封从现在起可以进入下一版训练池，但不能继续作为下一版 holdout。v2 必须重新
+冻结并使用另一批 source-disjoint 邮件验证。当前没有任何类别达到真实写动作门槛，
+所以仍只开发/运行 shadow 学习链路，不开发或启用 Trash。
