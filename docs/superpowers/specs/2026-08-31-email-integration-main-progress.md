@@ -215,6 +215,80 @@ assistant provisional annotations 做随机 5-fold OOF，得到 `67.50% Accuracy
 - 真实邮箱实验只允许 readonly header/metadata 抽样；生产启用前仍需独立 review、全量回归和用户确认。
 - 外部邮箱回复等写动作仍需现有 Audit Agent 生命周期；unsubscribe 是已批准的唯一 Consumer-direct 例外。
 
+## 2026-09-02 随机只读正文与时间漂移实验
+
+在用户授权后续高置信度确定性动作、同时明确禁止邮件回复后，本轮仍先保持
+provider 零写入，只验证真实数据读取和模型质量。使用固定随机种子
+`20260902` 从当时 2,318 个 INBOX UID 中抽取 80 封邮件头；80/80 均读取成功，
+样本中 `List-Unsubscribe`、`List-Unsubscribe-Post` 和 `Auto-Submitted` 均为 0。
+这只是随机样本证据，不能推断未来邮件不会提供这些头，也不构成退订来源的
+precision/support 证据。
+
+随后在邮箱新增一封邮件、UID 总数变为 2,319 后，使用生产
+`ImapReadonlyAdapter` 对固定随机样本做 BODYSTRUCTURE 和受限正文读取。20/20 封
+邮件均得到非空 `textBody`；正文长度中位数为 862 字符，P95 为 11,122 字符；
+共识别 29 个附件 metadata，单封最多 16 个，没有读取附件字节。初次诊断曾把
+标准化字段 `textBody` 误写成不存在的 `body`，导致错误报告 20/20 正文为空；
+更正探针字段并复跑同一批样本后确认生产适配器没有该问题，因而没有修改实现。
+
+另一组固定随机种子 `2026090201` 的 30 封邮件由 assistant 根据脱敏 header 和
+受限正文做 provisional annotation，分布为：
+
+- `important=9`
+- `work=8`
+- `notification=5`
+- `junk=5`
+- `billing=3`
+- `personal/shopping/subscription=0`
+
+按 UID 时间顺序使用较早 20 封训练、较新 10 封 holdout。训练段只有 1 封
+`notification`，holdout 中有 4 封，主要是训练段未覆盖的登录和安全通知。生产
+word-unigram Logistic，以及 `C=1`、word-bigram、char 3–5 和 word+char 五种
+稀疏 Logistic 候选，均只得到 `10.0% Accuracy / 4.4% Macro F1`；
+`notification` precision/recall 均为 0。单封 `vectorize + predict_proba` P95
+范围为 `0.30–1.89 ms`，仍远低于 100 ms；这段延迟不含已有约 6 ms 的规范化和
+jieba 端到端开销。
+
+这次失败 holdout 是有价值的时间漂移证据：扩大模型或换 char 特征没有弥补新模板
+样本缺失，当前瓶颈仍是有代表性的反馈覆盖。全部 30 条仍是 assistant provisional
+annotations，不进入生产 feedback、model promotion、类别 eligibility 或自动退订
+support。下一轮优先从 header 全量快照中定向抽取 `billing`、`shopping`、
+`subscription` 和其他低覆盖候选，同时保留独立随机漂移样本；在时间顺序验证达到
+类别 precision/support 门槛前，不启用 label、archive、move 或 Trash。
+
+为支持后续累积实验，这 30 条已保存为 Git 忽略目录中的 privacy-bounded snapshot：
+`data/email-experiments/2026-09-02-random-30.json`。snapshot 只保存脱敏
+`model_text`、label、日期、消息/来源 digest，不保存 UID、发件人、主题、原始正文
+或 URL；`label_source=assistant_authorized_manual_annotation`，digest 为
+`518b6b7ee250ba184fedd489eacf606421e53272b7633df88f113da12d5f81b4`。重新加载
+校验通过。该本地文件不进入 Git，也不等同于生产用户 feedback。
+
+### 稀有类别候选发现结果
+
+阿里企业邮箱对单次大 UID range 的 header FETCH 在 90 秒内仍未完成，因此主动
+终止；这条服务端路径不适合在线候选发现或生产扫描。改为固定种子
+`2026090202` 随机抽取 160 个 UID 并逐封读取有限 From/Subject，160/160 成功。
+关键词仅产生 `billing=4`、`shopping=4`、`subscription=2`、`personal=1` 个
+候选，人工复核发现明显语义碰撞：业务订单/交付不是个人 shopping，企业邀请不是
+personal，Google Ads 周报也不自动等于用户不想继续接收的 subscription。因此
+header 关键词只能做 review 排序，不能生成标签或 provider action。
+
+在同一随机源的 60 封受限正文中检测退订/偏好入口措辞，共命中 4 封。人工语义
+复核后，LinkedIn 邀请接受属于 notification，Google Ads 周报更接近
+billing/notification；保险促销和 OpenAI 产品更新是 subscription 候选，候选
+precision 约 50%。邮箱服务端 `SEARCH BODY "unsubscribe"` 与 UID 变体都返回
+`BAD invalid command or parameters`，不能用于低成本全库候选发现。生产方案应继续
+采用小批 readonly 新邮件扫描和 active-learning 排序，不依赖大范围 FETCH 或
+服务端 BODY/HEADER 搜索。
+
+这 4 个候选已按 `notification=1`、`billing=1`、`subscription=2` 保存为另一份
+Git 忽略的脱敏 snapshot：
+`data/email-experiments/2026-09-02-unsubscribe-signal-4.json`，digest 为
+`50f9dee93c838b071033d76958ce6a5c5420aa9da634e8334d3a76a497d7f6b0`。
+将信号候选与最终语义标签分开，避免把正文出现 unsubscribe 的通知或报表直接训练
+成 subscription；其中 2 条 assistant subscription 标签仍不计入自动退订的
+user-confirmed 来源级 support。
+
 ## 2026-08-31 全量回归复核
 
 在独立 Email 工作树使用普通 conda Python 完成一次全量测试：
