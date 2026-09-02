@@ -1,6 +1,6 @@
 # Email 融合 CEO Agent 激活方案
 
-**日期：** 2026-08-31
+**日期：** 2026-09-02
 
 **状态：** Proposed，等待 Derek 反馈
 
@@ -13,7 +13,7 @@ Skills 已启用；由于没有可晋升的 active model，Email worker 仍保�
 
 Email 的代码集成已经覆盖多邮箱 connector、独立 Email worker、分类/反馈/训练、Email Console、确定性 provider action、自动回复的 Consumer → Audit，以及 unsubscribe 的 Consumer-direct 例外。
 
-当前问题不再是“代码能不能跑”，而是“在分类质量不够时，哪些能力可以安全进入 CEO Agent”。最新实验结论是：CPU 延迟充分达标，但分类质量和类别覆盖不足，不能开放任何 model-only 自动动作。
+当前问题不再是“代码能不能跑”，而是“在分类质量不够时，哪些能力可以安全进入 CEO Agent”。截至 2026-09-02，210 封时间顺序验证仍显示 CPU 延迟充分达标，但分类质量受时间分布影响明显，不能开放任何 model-only 自动动作。
 
 因此建议把“代码融合”和“动作激活”分开：先让 CEO Agent 获得只读 Email 能力和反馈闭环，再由真实 user-confirmed 数据逐类别解锁动作。
 
@@ -111,7 +111,7 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 - batch retrain 允许生成 versioned candidate/active model，但 category action eligibility 继续关闭；
 - 不执行标签、归档、trash、回复或退订。
 
-建议采样不是 100% 随机：保留随机样本监测真实分布，同时定向补齐 `billing`、`personal`、`shopping`、`subscription` 和模型最不确定的类别。最新随机 40 条没有任何 personal/shopping/subscription，已经证明纯随机无法快速建立八分类训练集。
+建议采样不是 100% 随机：保留随机样本监测真实分布，同时定向补齐 `billing`、`personal`、`shopping`、`subscription` 和模型最不确定的类别。最新累计 210 封 provisional 样本仍然只有 `shopping=1`、`personal=0`、`subscription=15`；纯随机和时间顺序切分都无法快速建立八分类训练集。
 
 ### 阶段 C：逐类别开启低风险 direct action
 
@@ -147,17 +147,24 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 
 | 项目 | 当前证据 | 决策 |
 | --- | --- | --- |
-| CPU 延迟 | Logistic 端到端 P95 约 6 ms | 通过 100 ms 门槛 |
+| CPU 延迟 | 210 封实验中单封预测 P95 约 0.37–0.58 ms；既有端到端 P95 约 6 ms | 通过 100 ms 门槛 |
 | 模型体积 | Logistic 约 339–404 KB | 可接受 |
 | fastText | 更快但 Macro F1 更低、约 26.4 MB、小样本训练不稳定 | 不替换当前模型 |
-| 新随机 holdout | 40 条时间顺序 holdout：30% Accuracy / 21.43% Macro F1 | 不开放自动分类动作 |
+| 新随机/合并 holdout | 100 封：70.00% Accuracy / 43.11% Macro F1；210 封：160/50 为 60.00% / 34.10%，170/40 为 75.00% / 53.75% | 结果随时间切分波动，不开放自动分类动作 |
 | 反馈学习 | 20 条后 notification 达到 100% precision / 80% recall（固定 10 条 provisional test） | 反馈闭环值得进入 shadow |
-| 合并 113 条 OOF | 54.87% Accuracy / 50.71% Macro F1 | 仅研究证据 |
-| 最大 confidence | 0.3109 | 0.85 threshold 下自动覆盖为 0 |
-| subscription support | 12 条 provisional，0 条新随机样本 | 不满足 20 条 user-confirmed gate |
-| personal/shopping | 0 条 | 不具备训练或评测资格 |
+| 合并 210 条时间顺序 holdout | 160/50：60.00% Accuracy / 34.10% Macro F1；170/40：75.00% / 53.75% | 仅研究证据，不能用 aggregate 指标晋升 |
+| 最大 confidence | C=0.25 为 0.3792；C=1.0 为 0.6626 | 0.85 threshold 下自动覆盖为 0 |
+| threshold 校准 | threshold=0.20 在两个时间切分分别为 86.67% precision、100.00% precision，覆盖率 30% 与 20%，不可复现 | 不降低生产 threshold |
+| subscription support | 15 条 provisional，user-confirmed support 为 0 | 不满足 precision >= 0.95 且 support >= 20 gate |
+| personal/shopping | personal=0、shopping=1 | 不具备完整训练或评测资格 |
 
 这些标签全部是 assistant provisional annotations，不是 production gold feedback。它们只能决定实验方向，不能授权 provider action。
+
+2026-09-02 的 210 封样本进一步证明：增加样本会改善部分时间窗口，但不能消除
+类别漂移；最高置信度仍低于批准的 `0.85` 门槛，且 threshold `0.20` 的 precision
+在相邻时间切分上不稳定。Naive Bayes 和不加权 Logistic 的对照也没有提供可安全
+替代当前候选的模型。因此当前应进入“只读 shadow + 用户反馈”评审，而不是进入
+model-only provider action 激活。
 
 ## 7. 上线前还需要的证据
 
@@ -186,11 +193,11 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 5. 在当前批准的 precision/support 门槛之外，是否要为 `important` 增加 recall 下限。
    该项属于新的 safety gate，必须单独确认并单独实现，不能顺手加入现有代码。
 
-## 9. 2026-08-31 完成审计矩阵
+## 9. 2026-09-02 完成审计矩阵
 
 | 要求 | 当前证据 | 状态 |
 | --- | --- | --- |
-| CPU 分类器满足 100 ms 目标 | 当前 Logistic 端到端 P95 约 6 ms | 已验证 |
+| CPU 分类器满足 100 ms 目标 | 当前 Logistic 单封预测 P95 约 0.37–0.58 ms，既有端到端 P95 约 6 ms | 已验证 |
 | 分类、反馈、训练和模型版本化 | Email worker、Console 四个分区、模型 registry 及相关回归 | 已验证 |
 | 分类确认不创建 task | pipeline/action-plan boundary 测试通过 | 已验证 |
 | `auto_reply` 写操作经过 Audit | `consumer_audit_v1` 路径及测试通过 | 已验证 |
@@ -198,7 +205,7 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 | 退订使用独立 headless 浏览器 profile | 34 个 loopback browser tests 通过 | 已验证 |
 | 退订 terminal result text 可追溯 | receipt、digest、步骤和 Email projection 测试通过 | 已验证 |
 | 低置信度邮件进入待反馈 | 冷启动和 threshold/eligibility fail-closed 测试通过 | 已验证 |
-| subscription 自动门槛达到 precision >= 0.95、support >= 20 | 当前只有 provisional 样本，且 support 不足 | 未满足，保持关闭 |
+| subscription 自动门槛达到 precision >= 0.95、support >= 20 | 210 封 provisional 样本中 support=15；user-confirmed support=0，时间 holdout 不稳定 | 未满足，保持关闭 |
 | user-confirmed 时间顺序 holdout | 当前尚未积累足够 user-confirmed feedback | 待实验 |
 | 主分支合并、launchd 重启和线上 readback | `main` 已包含 Email 集成；launchd 已重启，健康和学习 API 已回读 | 已完成 |
 | 真实邮箱写操作小批量验收 | 尚未获得本阶段单独的外部效果授权 | 等待 Derek 授权 |
