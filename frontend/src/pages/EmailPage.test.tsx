@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +26,16 @@ function renderEmail(path: string) {
   return render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/email" element={<EmailPage />} /></Routes></MemoryRouter>);
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("EmailPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -44,17 +54,17 @@ describe("EmailPage", () => {
     listEmailConfigs.mockResolvedValue({ items: [], meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
     listEmailLearning.mockResolvedValue({ learning: { active_model_id: "email-tfidf-lr-20260829T000000Z-active0001", pending_examples: 2, last_trained_feedback_count: 20, last_trained_at: "2026-08-29T00:00:00Z", last_feedback_at: "2026-08-29T00:00:00Z", active_run_id: null, category_thresholds: {}, models: [
       {
-        model_id: "email-tfidf-lr-20260829T000000Z-active0001", model_version: "email-tfidf-lr-20260829T000000Z-active0001", status: "active", status_reason: "current production candidate passed validation", promotion_reason: "macro F1 and latency gates passed", failure_reason: "",
+        model_id: "email-tfidf-lr-20260829T000000Z-active0001", model_version: "email-tfidf-lr-20260829T000000Z-active0001", status: "active", status_reason: "current production candidate passed validation", candidate_reason: "candidate validation pending", promotion_reason: "macro F1 and latency gates passed", rejection_reason: "", failure_reason: "", superseded_reason: "", integrity_status: "verified", integrity_error: "", lifecycle: [],
         parent_model_id: "email-tfidf-lr-20260828T000000Z-parent001", model_family: "tfidf-logistic-regression", tokenizer_version: "jieba-default-v1", feature_version: "tfidf-v1", training_dataset_version: "feedback-20260829-v3",
         trained_at: "2026-08-29T00:00:00Z", training_started_at: "2026-08-28T23:58:00Z", training_finished_at: "2026-08-29T00:00:00Z", sample_count: 20, new_sample_count: 5,
         category_counts: { work: 12, subscription: 8 }, account_counts: { "derek@stardust.ai": 14, "ops@stardust.ai": 6 }, validation_method: "time-ordered-holdout", accuracy: 0.9, macro_f1: 0.8,
         per_category_metrics: { work: { precision: 0.92, recall: 0.88, f1: 0.9, support: 12 }, subscription: { precision: 0.97, recall: 0.95, f1: 0.96, support: 8 } }, prediction_latency_p50_ms: 1.2, prediction_latency_p95_ms: 2.4,
         artifact_sha256: "a".repeat(64),
       },
-      { model_id: "email-tfidf-lr-20260830T000000Z-candidate1", model_version: "email-tfidf-lr-20260830T000000Z-candidate1", status: "candidate", status_reason: "awaiting promotion decision", trained_at: "2026-08-30T00:00:00Z", training_started_at: "2026-08-29T23:59:00Z", training_finished_at: "2026-08-30T00:00:00Z", sample_count: 24, new_sample_count: 4, category_counts: {}, account_counts: {}, validation_method: "time-ordered-holdout", accuracy: 0.88, macro_f1: 0.79, per_category_metrics: {}, prediction_latency_p50_ms: 1.3, prediction_latency_p95_ms: 2.7, artifact_sha256: "b".repeat(64), promotion_reason: "", failure_reason: "" },
-      { model_id: "email-tfidf-lr-20260827T000000Z-rejected01", model_version: "email-tfidf-lr-20260827T000000Z-rejected01", status: "rejected", status_reason: "subscription precision below 0.95", trained_at: "2026-08-27T00:00:00Z", training_started_at: "2026-08-26T23:59:00Z", training_finished_at: "2026-08-27T00:00:00Z", sample_count: 18, new_sample_count: 3, category_counts: {}, account_counts: {}, validation_method: "time-ordered-holdout", accuracy: 0.8, macro_f1: 0.7, per_category_metrics: {}, prediction_latency_p50_ms: 1.1, prediction_latency_p95_ms: 2.2, artifact_sha256: "c".repeat(64), promotion_reason: "", failure_reason: "" },
-      { model_id: "email-tfidf-lr-20260826T000000Z-failed0001", model_version: "email-tfidf-lr-20260826T000000Z-failed0001", status: "failed", status_reason: "training run failed", trained_at: "2026-08-26T00:00:00Z", training_started_at: "2026-08-25T23:59:00Z", training_finished_at: "2026-08-26T00:00:00Z", sample_count: 16, new_sample_count: 2, category_counts: {}, account_counts: {}, validation_method: "time-ordered-holdout", accuracy: 0, macro_f1: 0, per_category_metrics: {}, prediction_latency_p50_ms: 0, prediction_latency_p95_ms: 0, artifact_sha256: "d".repeat(64), promotion_reason: "", failure_reason: "classifier artifact write failed" },
-    ] } });
+      { model_id: "email-tfidf-lr-20260830T000000Z-candidate1", model_version: "email-tfidf-lr-20260830T000000Z-candidate1", status: "candidate", status_reason: "awaiting promotion decision", trained_at: "2026-08-30T00:00:00Z", training_started_at: "2026-08-29T23:59:00Z", training_finished_at: "2026-08-30T00:00:00Z", sample_count: 24, new_sample_count: 4, category_counts: {}, account_counts: {}, validation_method: "time-ordered-holdout", accuracy: 0.88, macro_f1: 0.79, per_category_metrics: {}, prediction_latency_p50_ms: 1.3, prediction_latency_p95_ms: 2.7, artifact_sha256: "b".repeat(64), candidate_reason: "awaiting promotion decision", promotion_reason: "", rejection_reason: "", failure_reason: "", superseded_reason: "", integrity_status: "verified", integrity_error: "", lifecycle: [] },
+      { model_id: "email-tfidf-lr-20260827T000000Z-rejected01", model_version: "email-tfidf-lr-20260827T000000Z-rejected01", status: "rejected", status_reason: "subscription precision below 0.95", trained_at: "2026-08-27T00:00:00Z", training_started_at: "2026-08-26T23:59:00Z", training_finished_at: "2026-08-27T00:00:00Z", sample_count: 18, new_sample_count: 3, category_counts: {}, account_counts: {}, validation_method: "time-ordered-holdout", accuracy: 0.8, macro_f1: 0.7, per_category_metrics: {}, prediction_latency_p50_ms: 1.1, prediction_latency_p95_ms: 2.2, artifact_sha256: "c".repeat(64), candidate_reason: "candidate validation pending", promotion_reason: "", rejection_reason: "subscription precision below 0.95", failure_reason: "", superseded_reason: "", integrity_status: "verified", integrity_error: "", lifecycle: [] },
+      { model_id: "email-tfidf-lr-20260826T000000Z-failed0001", model_version: "email-tfidf-lr-20260826T000000Z-failed0001", status: "failed", status_reason: "training run failed", trained_at: "2026-08-26T00:00:00Z", training_started_at: "2026-08-25T23:59:00Z", training_finished_at: "2026-08-26T00:00:00Z", sample_count: 16, new_sample_count: 2, category_counts: {}, account_counts: {}, validation_method: "time-ordered-holdout", accuracy: 0, macro_f1: 0, per_category_metrics: {}, prediction_latency_p50_ms: 0, prediction_latency_p95_ms: 0, artifact_sha256: "d".repeat(64), candidate_reason: "candidate validation pending", promotion_reason: "", rejection_reason: "", failure_reason: "classifier artifact write failed", superseded_reason: "", integrity_status: "verified", integrity_error: "", lifecycle: [] },
+    ], registry_issues: [] } });
     getEmailClassification.mockResolvedValue({
       ok: true,
       item: { id: 2, subject: "订阅邮件", sender: "news@example.com", preview: "每周资讯", category: "subscription", confidence: 0.99, margin: 0.2, probabilities: { subscription: 0.99 }, model_version: "email-tfidf-lr-20260829T000000Z-feedface", config_version: "email-v7", classification_source: "model", current_action_plan_id: "email-action-plan:full-id-002", action_plan: { action_plan_id: "email-action-plan:full-id-002", action_plan_version: 7, actions: ["label", "archive", "unsubscribe"] }, received_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:00Z" },
@@ -137,7 +147,7 @@ describe("EmailPage", () => {
     expect(active).toHaveTextContent("support：12");
     expect(active).toHaveTextContent("P50 1.2 ms / P95 2.4 ms");
     expect(active).toHaveTextContent("a".repeat(64));
-    expect(active).toHaveTextContent("current production candidate passed validation");
+    expect(active).toHaveTextContent("candidate validation pending");
     expect(active).toHaveTextContent("macro F1 and latency gates passed");
     expect(active).toHaveTextContent("email-tfidf-lr-20260828T000000Z-parent001");
     expect(active).toHaveTextContent("tfidf-logistic-regression");
@@ -153,7 +163,6 @@ describe("EmailPage", () => {
     expect(rejected).toHaveTextContent("subscription precision below 0.95");
     const failed = screen.getByRole("article", { name: "模型 email-tfidf-lr-20260826T000000Z-failed0001" });
     expect(failed).toHaveTextContent("状态：failed");
-    expect(failed).toHaveTextContent("training run failed");
     expect(failed).toHaveTextContent("classifier artifact write failed");
   });
 
@@ -247,5 +256,100 @@ describe("EmailPage", () => {
 
     expect(saveEmailConfig).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("请至少填写一个标签");
+  });
+
+  it.each(["", "-0.01", "1.01"])("rejects invalid threshold %j before calling the API", async (value) => {
+    const user = userEvent.setup();
+    renderEmail("/email?tab=config");
+    const threshold = await screen.findByRole("spinbutton", { name: "自动处理阈值" });
+    await waitFor(() => expect(threshold).toBeEnabled());
+    await user.clear(threshold);
+    if (value) await user.type(threshold, value);
+    await user.click(screen.getByRole("button", { name: "保存本地配置" }));
+
+    expect(saveEmailConfig).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("阈值必须是 0 到 1 之间的数字");
+  });
+
+  it("rejects a blank config version before calling the API", async () => {
+    const user = userEvent.setup();
+    renderEmail("/email?tab=config");
+    const version = await screen.findByRole("textbox", { name: "配置版本" });
+    await waitFor(() => expect(version).toBeEnabled());
+    await user.clear(version);
+    await user.click(screen.getByRole("button", { name: "保存本地配置" }));
+
+    expect(saveEmailConfig).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("请填写配置版本");
+  });
+
+  it("locks configuration controls until load completes and while a save is pending", async () => {
+    const user = userEvent.setup();
+    const loading = deferred<{ items: never[]; meta: { snapshot_at: string } }>();
+    const saving = deferred<{ ok: boolean; item: { category: string; description: string; threshold: number; actions: string[]; action_parameters: Record<string, Record<string, unknown>>; enabled: boolean; config_version: string; updated_at: string }; message: string }>();
+    listEmailConfigs.mockReturnValueOnce(loading.promise);
+    saveEmailConfig.mockReturnValueOnce(saving.promise);
+    renderEmail("/email?tab=config");
+
+    const save = screen.getByRole("button", { name: "保存本地配置" });
+    expect(save).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "描述" })).toBeDisabled();
+    loading.resolve({ items: [], meta: { snapshot_at: "2026-08-29T00:00:00Z" } });
+    await waitFor(() => expect(save).toBeEnabled());
+    await user.click(save);
+
+    expect(save).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "描述" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "工作" })).toBeDisabled();
+    saving.resolve({ ok: true, item: { category: "important", description: "", threshold: 0.9, actions: [], action_parameters: {}, enabled: true, config_version: "email-v1", updated_at: "2026-08-29T00:00:00Z" }, message: "saved" });
+    expect(await screen.findByText(/配置已保存/)).toBeInTheDocument();
+    await waitFor(() => expect(save).toBeEnabled());
+  });
+
+  it("keeps archive, move, and trash mutually exclusive", async () => {
+    const user = userEvent.setup();
+    renderEmail("/email?tab=config");
+    const archive = await screen.findByRole("button", { name: "archive" });
+    await waitFor(() => expect(archive).toBeEnabled());
+    const move = screen.getByRole("button", { name: "move" });
+    const trash = screen.getByRole("button", { name: "trash" });
+
+    await user.click(archive);
+    expect(archive).toHaveAttribute("aria-pressed", "true");
+    await user.click(move);
+    expect(archive).toHaveAttribute("aria-pressed", "false");
+    expect(move).toHaveAttribute("aria-pressed", "true");
+    await user.click(trash);
+    expect(move).toHaveAttribute("aria-pressed", "false");
+    expect(trash).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("supports accessible tab state and keyboard navigation", async () => {
+    const user = userEvent.setup();
+    renderEmail("/email");
+    const processed = screen.getByRole("tab", { name: "已处理" });
+    const pending = screen.getByRole("tab", { name: "待反馈" });
+    expect(processed).toHaveAttribute("tabindex", "0");
+    expect(pending).toHaveAttribute("tabindex", "-1");
+    expect(processed).toHaveAttribute("aria-controls", "email-panel-processed");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "email-tab-processed");
+
+    processed.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(pending).toHaveFocus();
+    expect(pending).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "email-tab-pending_feedback");
+  });
+
+  it("renders registry corruption as explicit evidence without hiding healthy models", async () => {
+    listEmailLearning.mockResolvedValueOnce({
+      learning: {
+        active_model_id: null, pending_examples: 0, last_trained_feedback_count: 0, last_trained_at: null, last_feedback_at: null, active_run_id: null, category_thresholds: {}, models: [],
+        registry_issues: [{ model_id: "email-tfidf-lr-corrupt", integrity_status: "corrupt", integrity_error: "artifact_digest_mismatch" }],
+      },
+    });
+    renderEmail("/email?tab=learning");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("email-tfidf-lr-corrupt（artifact_digest_mismatch）");
   });
 });

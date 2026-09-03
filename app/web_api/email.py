@@ -581,31 +581,73 @@ def register_email_routes(
         email_store = require_store()
         service = email_learning_factory()
         state = load_retrain_state(service.retrain_state_path)
-        manifests = service.registry.snapshot_manifests()
+        registry_issues: list[dict[str, str]] = []
+        try:
+            active_model_id = service.registry.active_model_id_unverified()
+        except (OSError, ValueError, RuntimeError):
+            active_model_id = None
+            registry_issues.append(
+                {
+                    "model_id": "active-manifest",
+                    "integrity_status": "corrupt",
+                    "integrity_error": "active_manifest_invalid",
+                }
+            )
         models: list[dict[str, Any]] = []
-        for record in service.registry.list_models():
-            metadata = record.metadata.to_dict()
+        for entry in service.registry.list_model_inventory():
+            if entry.integrity_status != "verified":
+                registry_issues.append(
+                    {
+                        "model_id": entry.model_id,
+                        "integrity_status": entry.integrity_status,
+                        "integrity_error": entry.integrity_error,
+                    }
+                )
+            if entry.metadata is None:
+                continue
+            metadata = entry.metadata.to_dict()
+            lifecycle = [event.__dict__ for event in entry.lifecycle]
+
+            def latest_reason(status: str) -> str:
+                return next(
+                    (
+                        event["reason"]
+                        for event in reversed(lifecycle)
+                        if event["status"] == status
+                    ),
+                    "",
+                )
+
             models.append(
                 {
                     **metadata,
                     "model_version": metadata["model_id"],
-                    "status": record.status,
-                    "status_reason": record.status_reason,
+                    "status": entry.status or metadata["status"],
+                    "status_reason": entry.status_reason,
+                    "candidate_reason": latest_reason("candidate")
+                    or metadata["promotion_reason"],
+                    "promotion_reason": latest_reason("active"),
+                    "rejection_reason": latest_reason("rejected"),
+                    "failure_reason": latest_reason("failed")
+                    or metadata["failure_reason"],
+                    "superseded_reason": latest_reason("previous"),
+                    "integrity_status": entry.integrity_status,
+                    "integrity_error": entry.integrity_error,
+                    "lifecycle": lifecycle,
                 }
             )
         pending_examples = len(email_store.list_unincluded_training_examples())
         return {
             "ok": True,
             "learning": {
-                "active_model_id": (
-                    manifests.active.model_id if manifests.active else None
-                ),
+                "active_model_id": active_model_id,
                 "pending_examples": pending_examples,
                 "last_trained_feedback_count": state.last_trained_feedback_count,
                 "last_trained_at": state.last_trained_at,
                 "last_feedback_at": state.last_feedback_at,
                 "active_run_id": state.active_run_id,
                 "models": models,
+                "registry_issues": registry_issues,
                 "category_thresholds": {
                     row["category"]: row["threshold"]
                     for row in email_store.list_configs()

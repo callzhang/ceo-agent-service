@@ -140,6 +140,70 @@ def test_list_models_returns_every_validated_record_newest_first(tmp_path: Path)
     ]
 
 
+def test_list_models_fails_closed_when_artifact_digest_is_corrupt(tmp_path: Path):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    model_id = _stage(registry, tmp_path)
+    registry.get_model(model_id).artifact_path.write_bytes(b"corrupt")
+
+    with pytest.raises(ModelRegistryError, match="artifact digest verification failed"):
+        registry.list_models()
+
+
+def test_model_inventory_keeps_healthy_records_visible_with_corrupt_history(
+    tmp_path: Path,
+):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    healthy = _stage(registry, tmp_path, trained_at=TRAINED_AT)
+    corrupt = _stage(
+        registry,
+        tmp_path,
+        suffix="-corrupt",
+        trained_at=TRAINED_AT + timedelta(seconds=1),
+    )
+    registry.get_model(corrupt).artifact_path.write_bytes(b"corrupt")
+
+    inventory = registry.list_model_inventory()
+
+    assert [entry.model_id for entry in inventory] == [corrupt, healthy]
+    assert inventory[0].integrity_status == "corrupt"
+    assert inventory[0].integrity_error == "artifact_digest_mismatch"
+    assert inventory[0].metadata is not None
+    assert inventory[1].integrity_status == "verified"
+    assert inventory[1].record is not None
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        ("missing_artifact", "artifact_missing"),
+        ("malformed_metadata", "metadata_invalid"),
+        ("malformed_lifecycle", "lifecycle_invalid"),
+    ],
+)
+def test_model_inventory_reports_per_record_integrity_failures(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+):
+    registry = EmailModelRegistry(tmp_path / mutation)
+    model_id = _stage(registry, tmp_path, suffix=f"-{mutation}")
+    record = registry.get_model(model_id)
+    if mutation == "missing_artifact":
+        record.artifact_path.unlink()
+    elif mutation == "malformed_metadata":
+        record.metadata_path.write_text("{not-json", encoding="utf-8")
+    else:
+        lifecycle_path = next(registry.lifecycle.glob(f"{model_id}-*.json"))
+        lifecycle_path.write_text("{not-json", encoding="utf-8")
+
+    inventory = registry.list_model_inventory()
+
+    assert len(inventory) == 1
+    assert inventory[0].model_id == model_id
+    assert inventory[0].integrity_status == "corrupt"
+    assert inventory[0].integrity_error == expected_error
+
+
 def test_model_id_contains_utc_second_and_final_artifact_digest():
     assert (
         build_model_id(

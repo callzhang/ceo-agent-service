@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { displayValue, parseConsoleList } from "./console";
+import { ConsoleApiError, displayValue, parseConsoleList, request } from "./console";
 
 describe("console API helpers", () => {
   it("normalizes arbitrary values before display", () => {
@@ -20,6 +20,22 @@ describe("console API helpers", () => {
       items: [{ id: "1" }],
       meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" },
     });
+  });
+
+  it("surfaces FastAPI detail messages for actionable validation errors", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(
+      JSON.stringify({ detail: "archive, move, and trash are mutually exclusive" }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+    try {
+      await expect(request("/api/console/email/config/junk")).rejects.toMatchObject({
+        status: 400,
+        message: "archive, move, and trash are mutually exclusive",
+      } satisfies Partial<ConsoleApiError>);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("uses server-provided Attention detail URLs instead of assuming every record is an Attempt", async () => {

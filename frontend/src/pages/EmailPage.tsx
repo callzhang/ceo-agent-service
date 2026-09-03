@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import {
@@ -20,6 +20,8 @@ import { SnapshotBadge } from "../components/status/SnapshotBadge";
 
 const categories = ["important", "work", "personal", "notification", "billing", "shopping", "subscription", "junk"];
 const actions = ["label", "mark_read", "archive", "move", "trash", "unsubscribe"];
+const terminalActions = new Set(["archive", "move", "trash"]);
+const emailTabs = [["processed", "已处理"], ["pending_feedback", "待反馈"], ["config", "邮件配置"], ["learning", "学习"]] as const;
 const categoryLabels: Record<string, string> = {
   important: "重要", work: "工作", personal: "个人", notification: "通知",
   billing: "账单", shopping: "购物", subscription: "订阅", junk: "垃圾",
@@ -92,12 +94,6 @@ function metricValue(name: string, value: unknown) {
   return name === "support" ? String(value) : percent(value);
 }
 
-function modelReasonLabel(model: EmailModelEvidence) {
-  if (model.status === "rejected") return "拒绝原因";
-  if (model.status === "failed") return "失败状态原因";
-  return "生命周期原因";
-}
-
 function ModelEvidenceCard({ model }: { model: EmailModelEvidence }) {
   const categoryMetrics = Object.entries(model.per_category_metrics);
   const lineage = [
@@ -108,7 +104,7 @@ function ModelEvidenceCard({ model }: { model: EmailModelEvidence }) {
     ["训练数据版本", model.training_dataset_version],
   ].filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== "");
   return <article className="email-observability-item" aria-label={`模型 ${model.model_id}`}>
-    <div className="card-head"><div><h3>{model.model_id}</h3><p className="muted">状态：{model.status}</p></div></div>
+    <div className="card-head"><div><h3>{model.model_id}</h3><p className="muted">状态：{model.status}；完整性：{model.integrity_status}</p></div></div>
     <dl className="detail-definition-list">
       <div><dt>模型版本</dt><dd>{model.model_version}</dd></div>
       <div><dt>训练时间</dt><dd>{localTime(model.training_started_at)} → {localTime(model.training_finished_at || model.trained_at)}</dd></div>
@@ -121,9 +117,13 @@ function ModelEvidenceCard({ model }: { model: EmailModelEvidence }) {
       <div><dt>预测延迟</dt><dd>P50 {model.prediction_latency_p50_ms.toFixed(1)} ms / P95 {model.prediction_latency_p95_ms.toFixed(1)} ms</dd></div>
       <div><dt>Artifact SHA-256</dt><dd>{model.artifact_sha256 || "未提供"}</dd></div>
       {lineage.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
-      {model.status_reason && <div><dt>{modelReasonLabel(model)}</dt><dd>{model.status_reason}</dd></div>}
-      {model.promotion_reason && <div><dt>晋升原因</dt><dd>{model.promotion_reason}</dd></div>}
-      {model.failure_reason && <div><dt>执行失败原因</dt><dd>{model.failure_reason}</dd></div>}
+      {model.candidate_reason && <div><dt>候选创建原因</dt><dd>{model.candidate_reason}</dd></div>}
+      {model.promotion_reason && <div><dt>激活原因</dt><dd>{model.promotion_reason}</dd></div>}
+      {model.rejection_reason && <div><dt>拒绝原因</dt><dd>{model.rejection_reason}</dd></div>}
+      {model.failure_reason && <div><dt>失败原因</dt><dd>{model.failure_reason}</dd></div>}
+      {model.superseded_reason && <div><dt>被替换原因</dt><dd>{model.superseded_reason}</dd></div>}
+      {model.integrity_error && <div><dt>完整性错误</dt><dd>{model.integrity_error}</dd></div>}
+      {!!model.lifecycle.length && <div><dt>生命周期事件</dt><dd><ol>{model.lifecycle.map((event) => <li key={event.event_id}>{event.status}：{event.reason}（{localTime(event.occurred_at)}）</li>)}</ol></dd></div>}
     </dl>
   </article>;
 }
@@ -164,9 +164,20 @@ function ObservabilityDetails({ events }: { events: EmailObservabilityEvent[] })
 }
 
 function EmailTabs({ tab, setTab }: { tab: string; setTab: (value: string) => void }) {
-  const tabs = [["processed", "已处理"], ["pending_feedback", "待反馈"], ["config", "邮件配置"], ["learning", "学习"]];
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let next = index;
+    if (event.key === "ArrowRight") next = (index + 1) % emailTabs.length;
+    else if (event.key === "ArrowLeft") next = (index - 1 + emailTabs.length) % emailTabs.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = emailTabs.length - 1;
+    else return;
+    event.preventDefault();
+    setTab(emailTabs[next][0]);
+    refs.current[next]?.focus();
+  };
   return <div className="settings-pill-row" role="tablist" aria-label="邮件页面分区">
-    {tabs.map(([value, label]) => <button type="button" role="tab" aria-selected={tab === value} className={tab === value ? "active" : ""} key={value} onClick={() => setTab(value)}>{label}</button>)}
+    {emailTabs.map(([value, label], index) => <button type="button" role="tab" id={`email-tab-${value}`} aria-controls={`email-panel-${value}`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} className={tab === value ? "active" : ""} key={value} ref={(element) => { refs.current[index] = element; }} onKeyDown={(event) => onKeyDown(event, index)} onClick={() => setTab(value)}>{label}</button>)}
   </div>;
 }
 
@@ -180,6 +191,7 @@ function LearningPanel() {
   if (!learning) return <section className="console-card"><div className="page-state" role="status">正在加载学习状态…</div></section>;
   return <section className="console-card"><div className="card-head"><div><h2>分类器学习</h2><p className="muted">仅展示本地模型的可追溯证据；模型不会因为展示而自动获得退订资格。</p></div></div>
     <p>当前模型：<strong>{learning.active_model_id || "尚未晋升模型"}</strong>；待训练样本：{learning.pending_examples}；最近训练反馈数：{learning.last_trained_feedback_count}</p>
+    {!!learning.registry_issues.length && <div className="page-state page-state-error" role="alert">模型 Registry 完整性异常：{learning.registry_issues.map((issue) => `${issue.model_id}（${issue.integrity_error}）`).join("；")}</div>}
     <div className="email-observability-list" aria-label="邮件模型版本">{learning.models.map((model) => <ModelEvidenceCard key={model.model_id} model={model} />)}</div>
   </section>;
 }
@@ -231,10 +243,12 @@ function ConfigPanel() {
   const [version, setVersion] = useState("email-v1");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [saving, setSaving] = useState(false);
 
   const current = useMemo(() => configs.find((config) => config.category === selected), [configs, selected]);
   useEffect(() => {
-    listEmailConfigs().then((result) => setConfigs(result.items)).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "配置加载失败"));
+    listEmailConfigs().then((result) => { setConfigs(result.items); setLoadState("ready"); }).catch((reason: unknown) => { setError(reason instanceof Error ? reason.message : "配置加载失败"); setLoadState("error"); });
   }, []);
   useEffect(() => {
     setDescription(current?.description || "");
@@ -248,15 +262,30 @@ function ConfigPanel() {
     setVersion(current?.config_version || "email-v1");
   }, [current]);
 
+  useEffect(() => { setMessage(""); setError(""); }, [selected]);
+
   const toggleAction = (action: string) => {
     const removing = selectedActions.includes(action);
-    setSelectedActions((previous) => removing ? previous.filter((item) => item !== action) : [...previous, action]);
+    setSelectedActions((previous) => {
+      if (removing) return previous.filter((item) => item !== action);
+      const withoutConflictingTerminal = terminalActions.has(action)
+        ? previous.filter((item) => !terminalActions.has(item))
+        : previous;
+      return [...withoutConflictingTerminal, action];
+    });
     if (removing && action === "label") setLabelNames("");
     if (removing && action === "move") setMoveTargetFolder("");
   };
 
   const save = async () => {
+    if (loadState !== "ready" || saving) return;
     setError(""); setMessage("");
+    const parsedThreshold = Number(threshold);
+    if (threshold.trim() === "" || !Number.isFinite(parsedThreshold) || parsedThreshold < 0 || parsedThreshold > 1) {
+      setError("阈值必须是 0 到 1 之间的数字"); return;
+    }
+    const configVersion = version.trim();
+    if (!configVersion) { setError("请填写配置版本"); return; }
     const actionParameters: Record<string, Record<string, unknown>> = {};
     if (selectedActions.includes("label")) {
       const labels = labelNames.split(",").map((label) => label.trim()).filter(Boolean);
@@ -268,29 +297,36 @@ function ConfigPanel() {
       if (!targetFolder) { setError("请填写目标文件夹"); return; }
       actionParameters.move = { target_folder: targetFolder };
     }
+    const category = selected;
+    setSaving(true);
     try {
-      const result = await saveEmailConfig(selected, { description, threshold: Number(threshold), actions: selectedActions, action_parameters: actionParameters, enabled, config_version: version });
-      setConfigs((previous) => [...previous.filter((config) => config.category !== selected), result.item].sort((a, b) => a.category.localeCompare(b.category)));
+      const result = await saveEmailConfig(category, { description, threshold: parsedThreshold, actions: selectedActions, action_parameters: actionParameters, enabled, config_version: configVersion });
+      setConfigs((previous) => [...previous.filter((config) => config.category !== category), result.item].sort((a, b) => a.category.localeCompare(b.category)));
       setMessage("配置已保存：确定性动作由 Email worker 执行并回读；退订由 Consumer 提案、Audit 审核执行。邮件回复已全局禁用。");
     } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "配置保存失败"); }
+    finally { setSaving(false); }
   };
 
+  const controlsDisabled = loadState !== "ready" || saving;
+
   return <section className="console-card"><div className="card-head"><div><h2>邮件类型配置</h2><p className="muted">类别、描述、置信度阈值和固定动作。这里不直接执行邮箱动作。</p><p className="muted">label、mark_read、archive、move、trash 由 Email worker 直接执行并回读；unsubscribe 由 Consumer 提案、Audit 审核执行；邮件回复保持全局禁用。</p></div></div>
-    <div className="settings-control-group"><span className="settings-control-label">邮件类型</span><div className="settings-pill-row">{categories.map((category) => <button type="button" className={selected === category ? "active" : ""} key={category} onClick={() => setSelected(category)}>{categoryLabels[category]}</button>)}</div></div>
-    <label className="settings-field">描述<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个类别用于什么邮件" /></label>
-    <label className="settings-field">自动处理阈值<input type="number" min="0" max="1" step="0.01" value={threshold} onChange={(event) => setThreshold(event.target.value)} /></label>
-    <label className="settings-field">配置版本<input value={version} onChange={(event) => setVersion(event.target.value)} /></label>
-    <label className="settings-field"><span>启用 <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /></span></label>
-    <div className="settings-control-group"><span className="settings-control-label">固定动作</span><div className="settings-pill-row">{actions.map((action) => <button type="button" className={selectedActions.includes(action) ? "active" : ""} key={action} onClick={() => toggleAction(action)}>{action}</button>)}</div></div>
-    {selectedActions.includes("label") && <label className="settings-field">标签<input aria-label="标签" value={labelNames} onChange={(event) => setLabelNames(event.target.value)} placeholder="多个标签用英文逗号分隔" /></label>}
-    {selectedActions.includes("move") && <label className="settings-field">目标文件夹<input aria-label="目标文件夹" value={moveTargetFolder} onChange={(event) => setMoveTargetFolder(event.target.value)} placeholder="例如 Archive/Billing" /></label>}
-    {error && <div className="page-state page-state-error" role="alert">{error}</div>}{message && <div className="page-state" role="status">{message}</div>}<button type="button" className="primary-button" onClick={() => void save()}>保存本地配置</button>
+    {loadState === "loading" && <div className="page-state" role="status">正在加载邮件配置…</div>}
+    <div className="settings-control-group"><span className="settings-control-label">邮件类型</span><div className="settings-pill-row">{categories.map((category) => <button type="button" aria-pressed={selected === category} disabled={controlsDisabled} className={selected === category ? "active" : ""} key={category} onClick={() => setSelected(category)}>{categoryLabels[category]}</button>)}</div></div>
+    <label className="settings-field">描述<input disabled={controlsDisabled} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个类别用于什么邮件" /></label>
+    <label className="settings-field">自动处理阈值<input disabled={controlsDisabled} type="number" min="0" max="1" step="0.01" value={threshold} onChange={(event) => setThreshold(event.target.value)} /></label>
+    <label className="settings-field">配置版本<input disabled={controlsDisabled} value={version} onChange={(event) => setVersion(event.target.value)} /></label>
+    <label className="settings-field"><span>启用 <input disabled={controlsDisabled} type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /></span></label>
+    <div className="settings-control-group"><span className="settings-control-label">固定动作</span><div className="settings-pill-row">{actions.map((action) => <button type="button" aria-pressed={selectedActions.includes(action)} disabled={controlsDisabled} className={selectedActions.includes(action) ? "active" : ""} key={action} onClick={() => toggleAction(action)}>{action}</button>)}</div></div>
+    {selectedActions.includes("label") && <label className="settings-field">标签<input disabled={controlsDisabled} aria-label="标签" value={labelNames} onChange={(event) => setLabelNames(event.target.value)} placeholder="多个标签用英文逗号分隔" /></label>}
+    {selectedActions.includes("move") && <label className="settings-field">目标文件夹<input disabled={controlsDisabled} aria-label="目标文件夹" value={moveTargetFolder} onChange={(event) => setMoveTargetFolder(event.target.value)} placeholder="例如 Archive/Billing" /></label>}
+    {error && <div className="page-state page-state-error" role="alert">{error}</div>}{message && <div className="page-state" role="status">{message}</div>}<button type="button" disabled={controlsDisabled} className="primary-button" onClick={() => void save()}>{saving ? "正在保存…" : "保存本地配置"}</button>
   </section>;
 }
 
 export function EmailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = searchParams.get("tab") || "processed";
+  const requestedTab = searchParams.get("tab") || "processed";
+  const tab = emailTabs.some(([value]) => value === requestedTab) ? requestedTab : "processed";
   const status = tab === "pending_feedback" ? "pending_feedback" : "processed";
   const [rows, setRows] = useState<EmailClassificationItem[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -320,6 +356,6 @@ export function EmailPage() {
   const setTab = (next: string) => setSearchParams(next === "processed" ? {} : { tab: next });
   return <ConsolePageLayout title="Email" actions={<SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />}>
     <section className="console-card"><EmailTabs tab={tab} setTab={setTab} /><p className="muted">高置信度分类进入已处理；中低置信度保留模型建议，等待人工反馈。Attention 只承接真正异常。</p></section>
-    {tab === "config" ? <ConfigPanel /> : tab === "learning" ? <LearningPanel /> : <section className="console-card">{feedbackMessage && <div className="page-state" role="status">{feedbackMessage}</div>}{error && <div className="page-state page-state-error" role="alert">{error}</div>}{state === "loading" && !rows.length ? <div className="page-state" role="status">正在加载邮件…</div> : <ClassificationTable rows={rows} pending={tab === "pending_feedback"} onConfirm={(row, category) => void confirm(row, category)} />}</section>}
+    <div role="tabpanel" id={`email-panel-${tab}`} aria-labelledby={`email-tab-${tab}`}>{tab === "config" ? <ConfigPanel /> : tab === "learning" ? <LearningPanel /> : <section className="console-card">{feedbackMessage && <div className="page-state" role="status">{feedbackMessage}</div>}{error && <div className="page-state page-state-error" role="alert">{error}</div>}{state === "loading" && !rows.length ? <div className="page-state" role="status">正在加载邮件…</div> : <ClassificationTable rows={rows} pending={tab === "pending_feedback"} onConfirm={(row, category) => void confirm(row, category)} />}</section>}</div>
   </ConsolePageLayout>;
 }

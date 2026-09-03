@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
 import gc
@@ -19,7 +20,8 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     build_versioned_email_action_plan,
 )
-from app.email_model_registry import EmailModelMetadata, EmailModelRegistry, ModelRecord
+from app.email_classifier_model import CpuTfidfLogisticClassifier
+from app.email_model_registry import EmailModelMetadata, EmailModelRegistry, build_model_id
 from app.email_store import (
     EmailStore,
     email_action_identity,
@@ -196,59 +198,114 @@ def test_email_learning_endpoint_exposes_current_state_without_private_paths(
     assert payload["learning"]["models"] == []
 
 
-def test_email_learning_endpoint_exposes_all_immutable_model_evidence(
+def _stage_learning_evidence_model(
+    registry: EmailModelRegistry,
+    tmp_path: Path,
+    *,
+    trained_at: datetime,
+    suffix: str,
+    parent_model_id: str | None = None,
+) -> str:
+    source = tmp_path / f"learning-{suffix}.pkl"
+    classifier = CpuTfidfLogisticClassifier(model_version="candidate").fit(
+        ["work project", "work meeting", "junk offer", "junk promotion"],
+        ["work", "work", "junk", "junk"],
+    )
+    classifier.save(source)
+    digest = sha256(source.read_bytes()).hexdigest()
+    model_id = build_model_id(trained_at=trained_at, artifact_sha256=digest)
+    metrics = {
+        category: {
+            "precision": 0.96,
+            "recall": 0.95,
+            "f1": 0.955,
+            "validation_sample_count": 20,
+            "validation_positive_support": 20,
+            "automatic_candidate_count": 20,
+            "evaluated_threshold": 0.9,
+            "configured_threshold": 0.9,
+            "minimum_precision": 0.95,
+            "minimum_validation_samples": 20,
+            "auto_action_eligible": True,
+            "eligibility_reason": "eligible",
+        }
+        for category in ("work", "junk")
+    }
+    metadata = EmailModelMetadata(
+        model_id=model_id,
+        parent_model_id=parent_model_id,
+        model_family="tfidf-logistic-regression",
+        tokenizer_version="jieba-default-v1",
+        feature_version=CpuTfidfLogisticClassifier.FEATURE_VERSION,
+        training_dataset_version=f"feedback-sha256:{suffix}",
+        trained_at=trained_at.isoformat(),
+        training_started_at=(trained_at - timedelta(seconds=2)).isoformat(),
+        training_finished_at=trained_at.isoformat(),
+        sample_count=40,
+        new_sample_count=4,
+        category_counts={"work": 20, "junk": 20},
+        account_counts={"account-a": 40},
+        validation_method="time-ordered-holdout",
+        accuracy=0.96,
+        macro_f1=0.955,
+        per_category_metrics=metrics,
+        prediction_latency_p50_ms=1.25,
+        prediction_latency_p95_ms=3.5,
+        artifact_sha256=digest,
+        status="candidate",
+        promotion_reason="candidate_validation_pending",
+        failure_reason="",
+    )
+    registry.stage_candidate(
+        source,
+        metadata,
+        parity_texts=("work project", "junk offer"),
+        expected_labels=("work", "junk"),
+    )
+    return model_id
+
+
+def test_email_learning_endpoint_exposes_real_lifecycle_evidence(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "learning-evidence.sqlite3"
     registry = EmailModelRegistry(tmp_path / "models")
-    statuses = ("active", "previous", "candidate", "rejected", "failed")
-    records: list[ModelRecord] = []
-    for index, status in enumerate(statuses, start=1):
-        model_id = f"email-tfidf-lr-20260902T08000{index}Z-{'a' * 8}"
-        metadata = EmailModelMetadata(
-            model_id=model_id,
-            parent_model_id=None if index == 1 else records[-1].metadata.model_id,
-            model_family="tfidf-logistic-regression",
-            tokenizer_version="jieba-default-v1",
-            feature_version="email-features-v1",
-            training_dataset_version=f"feedback-sha256:dataset-{index}",
-            trained_at=f"2026-09-02T08:00:0{index}+00:00",
-            training_started_at=f"2026-09-02T07:59:0{index}+00:00",
-            training_finished_at=f"2026-09-02T08:00:0{index}+00:00",
-            sample_count=100 + index,
-            new_sample_count=index,
-            category_counts={"work": 60, "subscription": 40 + index},
-            account_counts={"account-a": 80, "account-b": 20 + index},
-            validation_method="stratified-five-fold",
-            accuracy=0.91,
-            macro_f1=0.89,
-            per_category_metrics={
-                "work": {"precision": 0.95, "recall": 0.9, "f1": 0.92}
-            },
-            prediction_latency_p50_ms=1.25,
-            prediction_latency_p95_ms=3.5,
-            artifact_sha256=str(index) * 64,
-            status="candidate",
-            promotion_reason=f"promotion-evidence-{index}",
-            failure_reason=f"failure-evidence-{index}" if status == "failed" else "",
-        )
-        records.append(
-            ModelRecord(
-                metadata=metadata,
-                status=status,
-                status_reason=f"effective-{status}-reason",
-                artifact_path=tmp_path / "private" / f"artifact-{index}.pkl",
-                metadata_path=tmp_path / "private" / f"metadata-{index}.json",
-            )
-        )
-    records_by_id = {record.metadata.model_id: record for record in records}
-    manifests = SimpleNamespace(
-        active=SimpleNamespace(model_id=records[0].metadata.model_id),
-        previous=SimpleNamespace(model_id=records[1].metadata.model_id),
+    started = datetime(2026, 9, 2, 8, 0, tzinfo=timezone.utc)
+    previous = _stage_learning_evidence_model(
+        registry, tmp_path, trained_at=started, suffix="previous"
     )
-    registry.snapshot_manifests = lambda: manifests  # type: ignore[method-assign]
-    registry.get_model = lambda model_id: records_by_id[model_id]  # type: ignore[method-assign]
-    registry.list_models = lambda: records  # type: ignore[attr-defined]
+    registry.promote(previous, reason="initial_validation_passed")
+    active = _stage_learning_evidence_model(
+        registry,
+        tmp_path,
+        trained_at=started + timedelta(seconds=1),
+        suffix="active",
+        parent_model_id=previous,
+    )
+    registry.promote(active, reason="macro_f1_and_latency_passed")
+    candidate = _stage_learning_evidence_model(
+        registry,
+        tmp_path,
+        trained_at=started + timedelta(seconds=2),
+        suffix="candidate",
+        parent_model_id=active,
+    )
+    rejected = _stage_learning_evidence_model(
+        registry,
+        tmp_path,
+        trained_at=started + timedelta(seconds=3),
+        suffix="rejected",
+        parent_model_id=active,
+    )
+    registry.reject(rejected, reason="subscription_precision_below_0.95")
+    failed = _stage_learning_evidence_model(
+        registry,
+        tmp_path,
+        trained_at=started + timedelta(seconds=4),
+        suffix="failed",
+        parent_model_id=active,
+    )
+    registry.mark_failed(failed, reason="artifact_reload_failed")
     service = SimpleNamespace(
         registry=registry,
         retrain_state_path=tmp_path / "models" / "retrain-state.json",
@@ -264,17 +321,69 @@ def test_email_learning_endpoint_exposes_all_immutable_model_evidence(
 
     assert response.status_code == 200
     models = response.json()["learning"]["models"]
-    assert [model["status"] for model in models] == list(statuses)
-    assert models[-1] == {
-        **records[-1].metadata.to_dict(),
-        "model_version": records[-1].metadata.model_id,
-        "status": "failed",
-        "status_reason": "effective-failed-reason",
-    }
+    by_id = {model["model_id"]: model for model in models}
+    assert by_id[active]["status"] == "active"
+    assert by_id[active]["candidate_reason"] == "candidate_validation_pending"
+    assert by_id[active]["promotion_reason"] == "macro_f1_and_latency_passed"
+    assert by_id[previous]["status"] == "previous"
+    assert by_id[previous]["promotion_reason"] == "initial_validation_passed"
+    assert by_id[previous]["superseded_reason"] == f"superseded_by:{active}"
+    assert by_id[candidate]["status"] == "candidate"
+    assert by_id[rejected]["rejection_reason"] == "subscription_precision_below_0.95"
+    assert by_id[failed]["failure_reason"] == "artifact_reload_failed"
+    assert [event["status"] for event in by_id[previous]["lifecycle"]] == [
+        "candidate",
+        "active",
+        "previous",
+    ]
+    assert all(model["integrity_status"] == "verified" for model in models)
+    assert response.json()["learning"]["registry_issues"] == []
     serialized = json.dumps(models, sort_keys=True)
     assert "/private/" not in serialized
     assert "artifact_path" not in serialized
     assert "metadata_path" not in serialized
+
+
+def test_email_learning_keeps_healthy_models_visible_when_history_is_corrupt(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "learning-corruption.sqlite3"
+    registry = EmailModelRegistry(tmp_path / "models")
+    started = datetime(2026, 9, 2, 8, 0, tzinfo=timezone.utc)
+    healthy = _stage_learning_evidence_model(
+        registry, tmp_path, trained_at=started, suffix="healthy"
+    )
+    corrupt = _stage_learning_evidence_model(
+        registry,
+        tmp_path,
+        trained_at=started + timedelta(seconds=1),
+        suffix="corrupt",
+    )
+    registry.get_model(corrupt).artifact_path.write_bytes(b"corrupt")
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=tmp_path / "models" / "retrain-state.json",
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(database),
+        email_learning_factory=lambda: service,
+    )
+
+    response = TestClient(app).get("/api/console/email/learning")
+
+    assert response.status_code == 200
+    by_id = {model["model_id"]: model for model in response.json()["learning"]["models"]}
+    assert by_id[healthy]["integrity_status"] == "verified"
+    assert by_id[corrupt]["integrity_status"] == "corrupt"
+    assert response.json()["learning"]["registry_issues"] == [
+        {
+            "model_id": corrupt,
+            "integrity_status": "corrupt",
+            "integrity_error": "artifact_digest_mismatch",
+        }
+    ]
 
 
 def test_email_classification_list_and_detail_expose_only_attachment_metadata(

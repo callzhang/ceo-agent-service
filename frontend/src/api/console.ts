@@ -71,7 +71,12 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const error = isRecord(payload) ? payload : {};
-    throw new ConsoleApiError(response.status, typeof error.code === "string" ? error.code : "request_failed", typeof error.message === "string" ? error.message : "请求失败，请稍后重试");
+    const message = typeof error.message === "string"
+      ? error.message
+      : typeof error.detail === "string"
+        ? error.detail
+        : "请求失败，请稍后重试";
+    throw new ConsoleApiError(response.status, typeof error.code === "string" ? error.code : "request_failed", message);
   }
   return payload as T;
 }
@@ -234,8 +239,14 @@ export interface EmailModelEvidence {
   training_dataset_version?: string;
   status: string;
   status_reason: string;
+  candidate_reason: string;
   promotion_reason: string;
+  rejection_reason: string;
   failure_reason: string;
+  superseded_reason: string;
+  integrity_status: "verified" | "corrupt";
+  integrity_error: string;
+  lifecycle: Array<{ event_id: string; model_id: string; status: string; reason: string; occurred_at: string }>;
   trained_at: string;
   training_started_at: string;
   training_finished_at: string;
@@ -259,6 +270,7 @@ export interface EmailLearningEvidence {
   last_feedback_at: string | null;
   active_run_id: string | null;
   models: EmailModelEvidence[];
+  registry_issues: Array<{ model_id: string; integrity_status: "corrupt"; integrity_error: string }>;
   category_thresholds: Record<string, number>;
 }
 export interface SentTodoItem { id: string; kind: string; kind_label: string; sent_at: string; status: string; owner: string; project_title: string; todo_title: string; description: string; original_text: string; deadline: string; priority: string; target: string; external_id: string; detail_url: string; }
