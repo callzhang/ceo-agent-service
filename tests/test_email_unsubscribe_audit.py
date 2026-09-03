@@ -23,6 +23,7 @@ from app.email_store import (
     EmailStore,
     EmailUnsubscribeClaimConflict,
     email_action_identity,
+    email_unsubscribe_effect_digest,
 )
 from app.email_task_adapter import (
     accepted_email_unsubscribe_effect,
@@ -667,6 +668,105 @@ def test_two_step_terminal_snapshot_rejects_earlier_effect_audit_tamper(
         )
 
     assert second_audit.status == "completed"
+
+
+def test_two_step_terminal_snapshot_rejects_orphan_effect_branch(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    _action, first_audit, second_consumer, _second_audit, _terminal = (
+        _complete_two_step_terminal(fixture)
+    )
+    with sqlite3.connect(fixture.email_store.path) as db:
+        db.row_factory = sqlite3.Row
+        root = db.execute(
+            "select * from email_unsubscribe_effects "
+            "where action_identity=? and audit_agent_run_id=?",
+            (ACTION_IDENTITY, first_audit.id),
+        ).fetchone()
+        assert root is not None
+        root_operations = json.loads(root["operations_json"])
+        branch_operations = root_operations + [
+            {
+                "operation_reference": "unsubscribe-operation:orphan-branch",
+                "kind": "click_confirmation",
+                "target_reference": "unsubscribe-control:orphan-branch",
+            }
+        ]
+        branch_digest = email_unsubscribe_effect_digest(
+            action_identity=ACTION_IDENTITY,
+            action_plan_id=PLAN.action_plan_id,
+            action_plan_version=PLAN.action_plan_version,
+            classification_id=CLASSIFICATION_ID,
+            account_id=ACCOUNT_ID,
+            stable_message_identity=MESSAGE_IDENTITY,
+            thread_identity=THREAD_IDENTITY,
+            entry_reference=ENTRY.reference,
+            operations=branch_operations,
+            previous_effect_digest=root["effect_digest"],
+            network_policy_reference=root["network_policy_reference"],
+            network_policy_origin_references=json.loads(
+                root["network_policy_origins_json"]
+            ),
+        )
+        db.execute(
+            "insert into email_unsubscribe_effects ("
+            "action_identity, effect_digest, previous_effect_digest, "
+            "operations_json, network_policy_reference, "
+            "network_policy_origins_json, audit_agent_run_id, created_at"
+            ") values (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                ACTION_IDENTITY,
+                branch_digest,
+                root["effect_digest"],
+                json.dumps(branch_operations, sort_keys=True),
+                root["network_policy_reference"],
+                root["network_policy_origins_json"],
+                second_consumer.id,
+                "2026-09-02T08:00:03+00:00",
+            ),
+        )
+
+    claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
+    assert claim is not None
+    with pytest.raises(EmailPersistenceCorruption, match="effect lineage"):
+        fixture.email_store.get_email_unsubscribe_terminal_snapshot(
+            ACTION_IDENTITY,
+            claim["effect_digest"],
+            task_id=fixture.task.id,
+            task_execution_generation=fixture.task.execution_generation,
+        )
+
+
+def test_two_step_terminal_snapshot_binds_claim_owner_to_head_audit_run(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    _action, first_audit, _second_consumer, _second_audit, _terminal = (
+        _complete_two_step_terminal(fixture)
+    )
+    with sqlite3.connect(fixture.email_store.path) as db:
+        db.execute(
+            "update email_unsubscribe_claims "
+            "set owner_id=?, owner_generation=?, lease_token=? "
+            "where action_identity=?",
+            (
+                f"email-unsubscribe-audit:{first_audit.id}",
+                999,
+                "unsubscribe-audit-lease:tampered",
+                ACTION_IDENTITY,
+            ),
+        )
+
+    claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
+    assert claim is not None
+    with pytest.raises(EmailPersistenceCorruption, match="owner.*Audit"):
+        fixture.email_store.get_email_unsubscribe_terminal_snapshot(
+            ACTION_IDENTITY,
+            claim["effect_digest"],
+            task_id=fixture.task.id,
+            task_execution_generation=fixture.task.execution_generation,
+        )
 
 
 def test_two_step_terminal_snapshot_accepts_complete_audited_lineage(

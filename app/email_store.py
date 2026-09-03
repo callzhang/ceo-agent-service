@@ -6623,6 +6623,10 @@ class EmailStore:
                 )
             current = previous
         chain.reverse()
+        if len(chain) != len(validated_effects):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal effect lineage contains an orphan branch"
+            )
         chain_by_length = {
             len(effect["operations"]): str(effect["effect_digest"]) for effect in chain
         }
@@ -6743,6 +6747,7 @@ class EmailStore:
                        audit.execution_generation, audit.role as audit_role,
                        audit.status as audit_status,
                        audit.proposal_revision as audit_revision,
+                       audit.turn_attempt as audit_turn_attempt,
                        audit.parent_agent_run_id as audit_parent_id,
                        audit.operation_id as audit_operation_id,
                        consumer.id as consumer_id,
@@ -6808,6 +6813,8 @@ class EmailStore:
                 or row["audit_role"] != "audit"
                 or row["audit_status"] not in allowed_statuses
                 or row["audit_revision"] != expected_revision
+                or not isinstance(row["audit_turn_attempt"], int)
+                or row["audit_turn_attempt"] < 0
                 or not str(row["audit_operation_id"]).strip()
                 or row["consumer_id"] != row["audit_parent_id"]
                 or row["consumer_role"] != "consumer"
@@ -6836,6 +6843,19 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     "unsubscribe terminal effect Audit lineage is invalid"
                 )
+            if depth == len(chain):
+                owner_id = claim.get("owner_id")
+                expected_owner_suffix = f":{audit_agent_run_id}"
+                if (
+                    not isinstance(owner_id, str)
+                    or not owner_id.endswith(expected_owner_suffix)
+                    or len(owner_id) <= len(expected_owner_suffix)
+                    or claim.get("owner_generation")
+                    != max(1, int(row["audit_turn_attempt"]) + 1)
+                ):
+                    raise EmailPersistenceCorruption(
+                        "unsubscribe terminal owner is not bound to its Audit run"
+                    )
             current_task_id = int(row["reply_task_id"])
             current_generation = str(row["execution_generation"])
             if lineage_task_id is None:
