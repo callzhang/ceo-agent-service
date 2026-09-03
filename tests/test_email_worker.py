@@ -2437,6 +2437,104 @@ def test_direct_action_executor_result_completes_the_exact_claim():
     assert completed[0][1]["finished_at"]
 
 
+def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_path):
+    module = _module()
+    database = tmp_path / "direct-action-no-agent.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    plan = build_versioned_email_action_plan(
+        action_plan_version=1,
+        classification_id=901,
+        account_id="account-direct",
+        category=EmailCategory.WORK,
+        classification_source="user",
+        confidence=1.0,
+        model_id="email-model:direct-action-test",
+        config_version="email-config:direct-action-test",
+        actions=(EmailAction.MARK_READ,),
+        action_parameters={},
+        created_at=datetime(2026, 9, 3, 8, 0, tzinfo=timezone.utc),
+    )
+    email_store.create_account(
+        {
+            "account_id": "account-direct",
+            "display_name": "Direct action fixture",
+            "email_address": "direct@example.com",
+            "imap_host": "imap.invalid",
+            "imap_port": 993,
+            "imap_tls": True,
+            "imap_username": "direct@example.com",
+            "imap_secret_reference": "keychain://unused-direct-imap",
+            "smtp_host": "smtp.invalid",
+            "smtp_port": 465,
+            "smtp_tls": True,
+            "smtp_username": "direct@example.com",
+            "smtp_secret_reference": "keychain://unused-direct-smtp",
+            "enabled": True,
+            "scan_folders": ["INBOX"],
+            "scan_interval_seconds": 60,
+        }
+    )
+    email_store.upsert_classification(
+        EmailClassification(
+            classification_id=901,
+            stable_message_identity=(
+                "account-direct:message-id:<direct-901@example.com>"
+            ),
+            provider_locator=EmailProviderLocator(
+                account_id="account-direct",
+                folder="INBOX",
+                uidvalidity=9,
+                uid=901,
+                rfc_message_id="<direct-901@example.com>",
+                thread_id="thread-direct-901",
+            ),
+            category=EmailCategory.WORK,
+            confidence=1.0,
+            margin=1.0,
+            probabilities={EmailCategory.WORK: 1.0},
+            model_id=plan.model_id,
+            config_version=plan.config_version,
+            status=EmailClassificationStatus.PROCESSED,
+            classification_source="user",
+            action_plan=plan,
+        ),
+        sender="sender@example.com",
+        subject="Direct action fixture",
+        model_text="__subject__direct action fixture",
+        received_at="2026-09-03T08:00:00+00:00",
+    )
+
+    assert EmailActionTaskProducer(task_store, email_store).produce(plan, {}) == ()
+
+    result = SimpleNamespace(
+        status="done",
+        provider_operation="STORE \\Seen",
+        provider_target="account-direct:message-id:<direct-901@example.com>",
+        provider_result_id="provider-revision:901",
+        error="",
+    )
+
+    class Executor:
+        def execute(self, action):
+            assert action.action_type is EmailAction.MARK_READ
+            return result
+
+    assert (
+        module._run_next_direct_action(
+            email_store,
+            lambda account_id: (
+                Executor() if account_id == "account-direct" else None
+            ),
+            available_account_ids=("account-direct",),
+        )
+        is result
+    )
+    assert task_store.list_reply_tasks(channel="email") == []
+    with sqlite3.connect(database) as db:
+        assert db.execute("select count(*) from agent_runs").fetchone()[0] == 0
+
+
 def test_direct_action_does_not_claim_an_unavailable_account():
     module = _module()
     calls = []

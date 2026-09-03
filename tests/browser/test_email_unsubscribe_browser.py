@@ -450,6 +450,18 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     evidence="confirmation_mail",
                 )
             )
+        elif path == "/redacted-long-result":
+            private_result = (
+                "https://news.example.com/unsubscribe?token=private-result-token "
+                "/Users/derek/private-result secret=super-secret\n" + "退订结果" * 5_000
+            )
+            self._send(
+                _page(
+                    "done",
+                    "退订成功",
+                    content=f"<pre>{private_result}</pre>",
+                )
+            )
         else:
             self._send(b"not found", status=404)
 
@@ -1836,3 +1848,29 @@ def test_verified_one_click_posts_exact_body_without_cookie(
             "content_type": "application/x-www-form-urlencoded",
         }
     ]
+
+
+def test_terminal_result_text_is_canonically_redacted_and_bounded(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    result, requests = _run(
+        tmp_path,
+        chrome_browser,
+        path="/redacted-long-result",
+        operations=_operations(UnsubscribeOperationKind.OPEN_ENTRY),
+    )
+
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert requests == (("GET", "/redacted-long-result?opaque=private-fixture-token"),)
+    assert len(result.result_text.encode("utf-8")) <= 16 * 1024
+    assert "private-result-token" not in result.result_text
+    assert "super-secret" not in result.result_text
+    assert "/Users/derek/private-result" not in result.result_text
+    assert "[REDACTED_URL]" in result.result_text
+    assert "[REDACTED_PATH]" in result.result_text
+    assert result.observation_digest
+    assert (
+        result.observation_digest
+        != sha256(result.result_text.encode("utf-8")).hexdigest()
+    )

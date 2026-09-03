@@ -1664,6 +1664,7 @@ class PlaywrightUnsubscribeBrowser:
             for marker in (
                 "successfully unsubscribed",
                 "you are unsubscribed",
+                "you have been unsubscribed",
                 "unsubscribe complete",
                 "unsubscribe confirmation complete",
                 "subscription cancelled",
