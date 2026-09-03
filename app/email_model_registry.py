@@ -474,6 +474,19 @@ class EmailModelRegistry:
         )
         return ModelRecord(metadata, status, reason, artifact_path, metadata_path)
 
+    def list_models(self) -> list[ModelRecord]:
+        """Return every immutable model record with its effective lifecycle state."""
+
+        records = [self.get_model(path.stem) for path in self.metadata.glob("*.json")]
+        return sorted(
+            records,
+            key=lambda record: (
+                _timestamp(record.metadata.trained_at),
+                record.metadata.model_id,
+            ),
+            reverse=True,
+        )
+
     def load_classifier(self, model_id: str) -> CpuTfidfLogisticClassifier:
         record = self.get_model(model_id)
         if _sha256_file(record.artifact_path) != record.metadata.artifact_sha256:

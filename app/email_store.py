@@ -4411,6 +4411,31 @@ class EmailStore:
             "updated_at": row["updated_at"],
         }
 
+    @classmethod
+    def _classification_evidence_row(cls, row: sqlite3.Row) -> dict[str, Any]:
+        item = cls._classification_row(row)
+        raw_metadata = row["message_attachment_metadata_json"]
+        if raw_metadata is None:
+            item["attachment_metadata"] = []
+            return item
+        attachments = _json_load(
+            raw_metadata,
+            field="attachment_metadata_json",
+            expected_type=list,
+        )
+        try:
+            item["attachment_metadata"] = [
+                EmailAttachmentMetadata.model_validate(attachment).model_dump(
+                    mode="json"
+                )
+                for attachment in attachments
+            ]
+        except ValueError as exc:
+            raise EmailPersistenceCorruption(
+                f"invalid attachment_metadata_json for classification {row['id']}"
+            ) from exc
+        return item
+
     @staticmethod
     def _stored_action_plan(row: sqlite3.Row) -> EmailActionPlan:
         payload: dict[str, object] = {
@@ -8050,13 +8075,21 @@ class EmailStore:
             )
             rows = db.execute(
                 """
-                select * from email_classifications
-                where status=? order by updated_at desc, id desc
+                select classifications.*,
+                       messages.attachment_metadata_json
+                           as message_attachment_metadata_json
+                from email_classifications as classifications
+                left join email_messages as messages
+                  on messages.account_id=classifications.account_id
+                 and messages.stable_message_identity=
+                     classifications.stable_message_identity
+                where classifications.status=?
+                order by classifications.updated_at desc, classifications.id desc
                 limit ? offset ?
                 """,
                 (status.value, limit, offset),
             ).fetchall()
-        return [self._classification_row(row) for row in rows], total
+        return [self._classification_evidence_row(row) for row in rows], total
 
     @staticmethod
     def _email_context_message_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -8215,10 +8248,20 @@ class EmailStore:
     def get_classification(self, classification_id: int) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_classifications where id=?",
+                """
+                select classifications.*,
+                       messages.attachment_metadata_json
+                           as message_attachment_metadata_json
+                from email_classifications as classifications
+                left join email_messages as messages
+                  on messages.account_id=classifications.account_id
+                 and messages.stable_message_identity=
+                     classifications.stable_message_identity
+                where classifications.id=?
+                """,
                 (classification_id,),
             ).fetchone()
-        return None if row is None else self._classification_row(row)
+        return None if row is None else self._classification_evidence_row(row)
 
     def list_email_classification_observability(
         self, classification_id: int

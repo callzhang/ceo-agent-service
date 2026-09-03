@@ -583,35 +583,14 @@ def register_email_routes(
         state = load_retrain_state(service.retrain_state_path)
         manifests = service.registry.snapshot_manifests()
         models: list[dict[str, Any]] = []
-        for manifest, status in (
-            (manifests.active, "active"),
-            (manifests.previous, "previous"),
-        ):
-            if manifest is None:
-                continue
-            record = service.registry.get_model(manifest.model_id)
+        for record in service.registry.list_models():
             metadata = record.metadata.to_dict()
             models.append(
                 {
-                    "model_id": metadata["model_id"],
+                    **metadata,
                     "model_version": metadata["model_id"],
-                    "status": status,
-                    "trained_at": metadata["trained_at"],
-                    "training_started_at": metadata["training_started_at"],
-                    "training_finished_at": metadata["training_finished_at"],
-                    "sample_count": metadata["sample_count"],
-                    "new_sample_count": metadata["new_sample_count"],
-                    "category_counts": metadata["category_counts"],
-                    "validation_method": metadata["validation_method"],
-                    "accuracy": metadata["accuracy"],
-                    "macro_f1": metadata["macro_f1"],
-                    "per_category_metrics": metadata["per_category_metrics"],
-                    "prediction_latency_p50_ms": metadata[
-                        "prediction_latency_p50_ms"
-                    ],
-                    "prediction_latency_p95_ms": metadata[
-                        "prediction_latency_p95_ms"
-                    ],
+                    "status": record.status,
+                    "status_reason": record.status_reason,
                 }
             )
         pending_examples = len(email_store.list_unincluded_training_examples())

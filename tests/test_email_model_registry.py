@@ -26,7 +26,12 @@ def _classifier(version: str = "candidate") -> CpuTfidfLogisticClassifier:
     )
 
 
-def _metadata(*, digest: str, model_id: str) -> EmailModelMetadata:
+def _metadata(
+    *,
+    digest: str,
+    model_id: str,
+    trained_at: datetime = TRAINED_AT,
+) -> EmailModelMetadata:
     return EmailModelMetadata(
         model_id=model_id,
         parent_model_id=None,
@@ -34,9 +39,9 @@ def _metadata(*, digest: str, model_id: str) -> EmailModelMetadata:
         tokenizer_version="jieba-default-v1",
         feature_version=CpuTfidfLogisticClassifier.FEATURE_VERSION,
         training_dataset_version="feedback-sha256:dataset",
-        trained_at=TRAINED_AT.isoformat(),
-        training_started_at=(TRAINED_AT - timedelta(seconds=2)).isoformat(),
-        training_finished_at=TRAINED_AT.isoformat(),
+        trained_at=trained_at.isoformat(),
+        training_started_at=(trained_at - timedelta(seconds=2)).isoformat(),
+        training_finished_at=trained_at.isoformat(),
         sample_count=4,
         new_sample_count=4,
         category_counts={"work": 2, "junk": 2},
@@ -83,18 +88,56 @@ def _metadata(*, digest: str, model_id: str) -> EmailModelMetadata:
     )
 
 
-def _stage(registry: EmailModelRegistry, tmp_path: Path, *, suffix: str = "") -> str:
+def _stage(
+    registry: EmailModelRegistry,
+    tmp_path: Path,
+    *,
+    suffix: str = "",
+    trained_at: datetime = TRAINED_AT,
+) -> str:
     source = tmp_path / f"candidate{suffix}.pkl"
     _classifier().save(source)
     digest = sha256(source.read_bytes()).hexdigest()
-    model_id = build_model_id(trained_at=TRAINED_AT, artifact_sha256=digest)
+    model_id = build_model_id(trained_at=trained_at, artifact_sha256=digest)
     registry.stage_candidate(
         source,
-        _metadata(digest=digest, model_id=model_id),
+        _metadata(digest=digest, model_id=model_id, trained_at=trained_at),
         parity_texts=("work project", "junk offer"),
         expected_labels=("work", "junk"),
     )
     return model_id
+
+
+def test_list_models_returns_every_validated_record_newest_first(tmp_path: Path):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    rejected = _stage(registry, tmp_path, suffix="-rejected")
+    registry.reject(rejected, reason="macro_f1_regressed")
+    failed = _stage(
+        registry,
+        tmp_path,
+        suffix="-failed",
+        trained_at=TRAINED_AT + timedelta(seconds=1),
+    )
+    registry.mark_failed(failed, reason="artifact_reload_failed")
+    candidate = _stage(
+        registry,
+        tmp_path,
+        suffix="-candidate",
+        trained_at=TRAINED_AT + timedelta(seconds=2),
+    )
+
+    records = registry.list_models()
+
+    assert [record.metadata.model_id for record in records] == [
+        candidate,
+        failed,
+        rejected,
+    ]
+    assert [(record.status, record.status_reason) for record in records] == [
+        ("candidate", "candidate_validation_pending"),
+        ("failed", "artifact_reload_failed"),
+        ("rejected", "macro_f1_regressed"),
+    ]
 
 
 def test_model_id_contains_utc_second_and_final_artifact_digest():

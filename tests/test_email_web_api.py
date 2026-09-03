@@ -13,12 +13,13 @@ import app.email_store as email_store_module
 from app.audit_web import create_audit_app
 from app.email_classifier_contracts import (
     EmailAction,
+    EmailAttachmentMetadata,
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
     build_versioned_email_action_plan,
 )
-from app.email_model_registry import EmailModelRegistry
+from app.email_model_registry import EmailModelMetadata, EmailModelRegistry, ModelRecord
 from app.email_store import (
     EmailStore,
     email_action_identity,
@@ -193,6 +194,160 @@ def test_email_learning_endpoint_exposes_current_state_without_private_paths(
     assert payload["learning"]["active_model_id"] is None
     assert payload["learning"]["pending_examples"] == 0
     assert payload["learning"]["models"] == []
+
+
+def test_email_learning_endpoint_exposes_all_immutable_model_evidence(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "learning-evidence.sqlite3"
+    registry = EmailModelRegistry(tmp_path / "models")
+    statuses = ("active", "previous", "candidate", "rejected", "failed")
+    records: list[ModelRecord] = []
+    for index, status in enumerate(statuses, start=1):
+        model_id = f"email-tfidf-lr-20260902T08000{index}Z-{'a' * 8}"
+        metadata = EmailModelMetadata(
+            model_id=model_id,
+            parent_model_id=None if index == 1 else records[-1].metadata.model_id,
+            model_family="tfidf-logistic-regression",
+            tokenizer_version="jieba-default-v1",
+            feature_version="email-features-v1",
+            training_dataset_version=f"feedback-sha256:dataset-{index}",
+            trained_at=f"2026-09-02T08:00:0{index}+00:00",
+            training_started_at=f"2026-09-02T07:59:0{index}+00:00",
+            training_finished_at=f"2026-09-02T08:00:0{index}+00:00",
+            sample_count=100 + index,
+            new_sample_count=index,
+            category_counts={"work": 60, "subscription": 40 + index},
+            account_counts={"account-a": 80, "account-b": 20 + index},
+            validation_method="stratified-five-fold",
+            accuracy=0.91,
+            macro_f1=0.89,
+            per_category_metrics={
+                "work": {"precision": 0.95, "recall": 0.9, "f1": 0.92}
+            },
+            prediction_latency_p50_ms=1.25,
+            prediction_latency_p95_ms=3.5,
+            artifact_sha256=str(index) * 64,
+            status="candidate",
+            promotion_reason=f"promotion-evidence-{index}",
+            failure_reason=f"failure-evidence-{index}" if status == "failed" else "",
+        )
+        records.append(
+            ModelRecord(
+                metadata=metadata,
+                status=status,
+                status_reason=f"effective-{status}-reason",
+                artifact_path=tmp_path / "private" / f"artifact-{index}.pkl",
+                metadata_path=tmp_path / "private" / f"metadata-{index}.json",
+            )
+        )
+    records_by_id = {record.metadata.model_id: record for record in records}
+    manifests = SimpleNamespace(
+        active=SimpleNamespace(model_id=records[0].metadata.model_id),
+        previous=SimpleNamespace(model_id=records[1].metadata.model_id),
+    )
+    registry.snapshot_manifests = lambda: manifests  # type: ignore[method-assign]
+    registry.get_model = lambda model_id: records_by_id[model_id]  # type: ignore[method-assign]
+    registry.list_models = lambda: records  # type: ignore[attr-defined]
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=tmp_path / "models" / "retrain-state.json",
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(database),
+        email_learning_factory=lambda: service,
+    )
+
+    response = TestClient(app).get("/api/console/email/learning")
+
+    assert response.status_code == 200
+    models = response.json()["learning"]["models"]
+    assert [model["status"] for model in models] == list(statuses)
+    assert models[-1] == {
+        **records[-1].metadata.to_dict(),
+        "model_version": records[-1].metadata.model_id,
+        "status": "failed",
+        "status_reason": "effective-failed-reason",
+    }
+    serialized = json.dumps(models, sort_keys=True)
+    assert "/private/" not in serialized
+    assert "artifact_path" not in serialized
+    assert "metadata_path" not in serialized
+
+
+def test_email_classification_list_and_detail_expose_only_attachment_metadata(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "classification-attachment-metadata.sqlite3"
+    store = EmailStore(database)
+    classification = EmailClassification.model_validate(
+        {
+            "classification_id": 73,
+            "stable_message_identity": "account-1:message-id:<safe@example.com>",
+            "provider_locator": {
+                "account_id": "account-1",
+                "folder": "INBOX",
+                "uidvalidity": 4,
+                "uid": 73,
+                "rfc_message_id": "<safe@example.com>",
+                "thread_id": "thread-73",
+            },
+            "category": EmailCategory.WORK,
+            "confidence": 0.7,
+            "margin": 0.2,
+            "probabilities": {"work": 0.7, "important": 0.3},
+            "model_id": "email-model-v73",
+            "config_version": "email-config-v3",
+            "status": EmailClassificationStatus.PENDING_FEEDBACK,
+            "classification_source": "model",
+            "action_plan": None,
+        }
+    )
+    expected_metadata = [
+        {
+            "filename": "quarterly-brief.pdf",
+            "mime_type": "application/pdf",
+            "size_bytes": 4096,
+            "inline": False,
+        },
+        {
+            "filename": "logo.png",
+            "mime_type": "image/png",
+            "size_bytes": 512,
+            "inline": True,
+        },
+    ]
+    store.persist_scan_result(
+        classification,
+        sender="sender@example.com",
+        recipients=("recipient@example.com",),
+        subject="Quarterly brief",
+        normalized_text="__subject__quarterly brief",
+        preview="Metadata only",
+        attachment_metadata=tuple(
+            EmailAttachmentMetadata.model_validate(item) for item in expected_metadata
+        ),
+        received_at="2026-09-02T08:00:00+00:00",
+        model_text="__subject__quarterly brief",
+    )
+    app = FastAPI()
+    register_email_routes(app, lambda: store)
+    client = TestClient(app)
+
+    listed = client.get("/api/console/email/classifications?status=pending_feedback")
+    detailed = client.get("/api/console/email/classifications/73")
+
+    assert listed.status_code == 200
+    assert detailed.status_code == 200
+    assert listed.json()["items"][0]["attachment_metadata"] == expected_metadata
+    assert detailed.json()["item"]["attachment_metadata"] == expected_metadata
+    for response_item in (listed.json()["items"][0], detailed.json()["item"]):
+        assert all(
+            set(attachment) == {"filename", "mime_type", "size_bytes", "inline"}
+            for attachment in response_item["attachment_metadata"]
+        )
 
 
 def test_email_classification_detail_projects_observability(tmp_path: Path) -> None:
