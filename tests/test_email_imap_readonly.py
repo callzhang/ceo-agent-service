@@ -303,9 +303,7 @@ def test_imap_adapter_retains_html_only_links_as_redacted_ephemeral_state():
         b"Message-ID: <html-unsubscribe@example.com>\r\n\r\n"
     )
     plain = b"Newsletter footer without a link target"
-    html = (
-        '<p>Newsletter</p><a href="' + private_url + '">Unsubscribe</a>'
-    ).encode()
+    html = ('<p>Newsletter</p><a href="' + private_url + '">Unsubscribe</a>').encode()
     session = FakeImapSession(
         headers=raw,
         bodystructure=(
@@ -317,15 +315,19 @@ def test_imap_adapter_retains_html_only_links_as_redacted_ephemeral_state():
         section_payloads={"1": plain, "2": html},
     )
 
-    message = ImapReadonlyAdapter(
-        session,
-        account_id="account-a",
-    ).fetch_uid_batch(
-        "INBOX",
-        cursor_uidvalidity=42,
-        last_seen_uid=0,
-        limit=1,
-    ).messages[0]
+    message = (
+        ImapReadonlyAdapter(
+            session,
+            account_id="account-a",
+        )
+        .fetch_uid_batch(
+            "INBOX",
+            cursor_uidvalidity=42,
+            last_seen_uid=0,
+            limit=1,
+        )
+        .messages[0]
+    )
 
     assert message["textBody"] == plain.decode()
     assert ephemeral_body_html(message) == html.decode()
@@ -753,6 +755,7 @@ def _scan_config() -> EmailScanConfig:
                     if category is EmailCategory.WORK
                     else "insufficient_validation_samples"
                 ),
+                source_model_id="model-test",
                 action_eligibility={
                     EmailAction.LABEL: EmailActionEligibility(
                         action=EmailAction.LABEL,
@@ -762,6 +765,8 @@ def _scan_config() -> EmailScanConfig:
                             if category is EmailCategory.WORK
                             else "action_precision_and_support_gate_not_met"
                         ),
+                        source_model_id="model-test",
+                        evidence_reference=("email-model-eligibility:model-test:label"),
                     )
                 },
             )

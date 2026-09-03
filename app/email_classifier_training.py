@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import json
 import os
 import shutil
 import tempfile
@@ -101,6 +102,8 @@ class EmailActionEligibility:
     action: EmailAction
     auto_action_eligible: bool
     reason: str
+    source_model_id: str | None = None
+    evidence_reference: str = "email-model-eligibility:unavailable"
 
 
 @dataclass(frozen=True)
@@ -111,6 +114,7 @@ class CategoryEligibility:
     validation_sample_count: int
     auto_action_eligible: bool
     reason: str
+    source_model_id: str | None = None
     validated_recall: float | None = None
     validated_f1: float | None = None
     automatic_candidate_count: int = 0
@@ -160,12 +164,17 @@ def assess_email_action_eligibility(
     validated_precision: float | None,
     validation_positive_support: int,
     metadata_auto_action_eligible: bool,
+    source_model_id: str | None = None,
+    config_version: str = "unbound-config",
 ) -> Mapping[EmailAction, EmailActionEligibility]:
     """Evaluate each configured action at the active-model runtime boundary."""
 
     results: dict[EmailAction, EmailActionEligibility] = {}
     for action in actions:
-        if model_status != "active":
+        if source_model_id is None:
+            eligible = False
+            reason = "model_eligibility_unbound"
+        elif model_status != "active":
             eligible = False
             reason = "model_not_active"
         elif validation_method != "time-ordered-holdout":
@@ -207,10 +216,38 @@ def assess_email_action_eligibility(
                     reason = "action_precision_gate_not_met"
                 else:
                     reason = "action_support_gate_not_met"
+        evidence_snapshot = json.dumps(
+            {
+                "action_type": action.value,
+                "category": category.value,
+                "config_version": config_version,
+                "configured_threshold": configured_threshold,
+                "evaluated_threshold": evaluated_threshold,
+                "metadata_auto_action_eligible": metadata_auto_action_eligible,
+                "model_status": model_status,
+                "reason": reason,
+                "source_model_id": source_model_id,
+                "validated_precision": validated_precision,
+                "validation_method": validation_method,
+                "validation_positive_support": validation_positive_support,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        evidence_reference = (
+            "email-model-eligibility:unavailable"
+            if source_model_id is None
+            else "email-model-eligibility:"
+            + source_model_id
+            + ":sha256:"
+            + sha256(evidence_snapshot.encode("utf-8")).hexdigest()
+        )
         results[action] = EmailActionEligibility(
             action=action,
             auto_action_eligible=eligible,
             reason=reason,
+            source_model_id=source_model_id,
+            evidence_reference=evidence_reference,
         )
     return MappingProxyType(results)
 

@@ -220,7 +220,7 @@ def _authorized_adapter(
     )
 
 
-def test_only_agent_actions_create_idempotent_email_reply_tasks(tmp_path: Path):
+def test_only_unsubscribe_creates_task_from_mixed_legacy_action_plan(tmp_path: Path):
     store = _store(tmp_path)
     plan = _plan(
         (
@@ -241,12 +241,9 @@ def test_only_agent_actions_create_idempotent_email_reply_tasks(tmp_path: Path):
     first = adapter.ensure_action_plan_tasks(plan, task_input)
     replay = adapter.ensure_action_plan_tasks(plan, task_input)
 
-    assert [route.action_type for route in first] == [
-        EmailAction.AUTO_REPLY,
-        EmailAction.UNSUBSCRIBE,
-    ]
+    assert [route.action_type for route in first] == [EmailAction.UNSUBSCRIBE]
     assert [route.task.id for route in replay] == [route.task.id for route in first]
-    assert store.count_reply_tasks(channel="email") == 2
+    assert store.count_reply_tasks(channel="email") == 1
     assert {route.task.channel for route in first} == {"email"}
     assert {route.task.status for route in first} == {"pending"}
     assert store.count_sent_replies() == 0
@@ -406,30 +403,34 @@ def test_task_producer_policy_is_exact_deterministic_https_candidate_origin_set(
         assert forbidden not in encoded
 
 
-def test_task_producer_rejects_auto_reply_under_current_email_policy(tmp_path: Path):
+def test_task_producer_does_not_persist_auto_reply_under_current_policy(
+    tmp_path: Path,
+):
     plan = _plan((EmailAction.AUTO_REPLY,))
     task_input = _task_input()
     email_store = _email_store(tmp_path)
     _persist_authorization(email_store, plan, task_input)
     producer = EmailActionTaskProducer(_store(tmp_path), email_store)
 
-    with pytest.raises(ValueError, match="auto_reply is disabled"):
-        producer.produce(
-            plan,
-            {
-                "accountId": plan.account_id,
-                "folder": "INBOX",
-                "uidValidity": 42,
-                "uid": 41,
-                "messageId": "<mail-41@example.com>",
-                "stableMessageIdentity": task_input.stable_message_identity,
-                "threadId": task_input.thread_identity,
-                "from": {"email": task_input.trigger.sender},
-                "subject": task_input.subject,
-                "textBody": task_input.trigger.text,
-                "markdownBody": task_input.trigger.text,
-            },
-        )
+    routes = producer.produce(
+        plan,
+        {
+            "accountId": plan.account_id,
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": 41,
+            "messageId": "<mail-41@example.com>",
+            "stableMessageIdentity": task_input.stable_message_identity,
+            "threadId": task_input.thread_identity,
+            "from": {"email": task_input.trigger.sender},
+            "subject": task_input.subject,
+            "textBody": task_input.trigger.text,
+            "markdownBody": task_input.trigger.text,
+        },
+    )
+
+    assert routes == ()
+    assert _store(tmp_path).count_reply_tasks(channel="email") == 0
 
 
 def test_disabled_mail_review_does_not_create_email_tasks(tmp_path: Path):
@@ -448,7 +449,7 @@ def test_disabled_mail_review_does_not_create_email_tasks(tmp_path: Path):
 
 def test_disabling_mail_review_does_not_change_existing_email_task(tmp_path: Path):
     store = _store(tmp_path)
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = _task_input()
     email_store = _email_store(tmp_path)
     _persist_authorization(email_store, plan, task_input)
@@ -495,10 +496,10 @@ def test_adapter_requires_one_database_for_atomic_email_authorization(
 def test_action_plan_version_and_account_are_part_of_task_identity(tmp_path: Path):
     store = _store(tmp_path)
     email_store = _email_store(tmp_path)
-    first_plan = _plan((EmailAction.AUTO_REPLY,), version=1)
-    second_plan = _plan((EmailAction.AUTO_REPLY,), version=2)
+    first_plan = _plan((EmailAction.UNSUBSCRIBE,), version=1)
+    second_plan = _plan((EmailAction.UNSUBSCRIBE,), version=2)
     other_account_plan = _plan(
-        (EmailAction.AUTO_REPLY,),
+        (EmailAction.UNSUBSCRIBE,),
         version=1,
         classification_id=42,
         account_id="account-secondary",
@@ -552,12 +553,10 @@ def test_persisted_payload_is_traceable_without_message_secrets_or_attachments(
     assert payload["schema"] == "email_agent_action.v1"
     assert payload["account_id"] == "account-primary"
     assert payload["action_plan_version"] == 1
-    assert payload["action_type"] == "auto_reply"
+    assert payload["action_type"] == "unsubscribe"
     assert payload["action_identity"] == route.task.trigger_message_id
     assert payload["model_id"] == "email-model:2026-08-30:sha256:test"
-    assert payload["action_parameters"] == {
-        "instruction": "Reply in Chinese and acknowledge receipt."
-    }
+    assert payload["action_parameters"] == {}
     for forbidden in (
         "private-token",
         "do-not-persist",
@@ -777,7 +776,7 @@ def test_authorized_unsubscribe_is_bound_to_audited_v2_lifecycle(
         "Open https://example.com/unsubscribe?token=private-token",
     ),
 )
-def test_unsafe_action_metadata_is_rejected_before_task_persistence(
+def test_disabled_auto_reply_metadata_is_ignored_before_task_persistence(
     tmp_path: Path,
     unsafe_instruction: str,
 ):
@@ -785,20 +784,20 @@ def test_unsafe_action_metadata_is_rejected_before_task_persistence(
     plan = _plan((EmailAction.AUTO_REPLY,), instruction=unsafe_instruction)
     task_input = _task_input()
 
-    with pytest.raises(EmailAgentTaskMetadataError):
-        _authorized_adapter(
-            tmp_path,
-            plan,
-            task_input,
-            task_store=store,
-        ).ensure_action_plan_tasks(plan, task_input)
+    routes = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+        task_store=store,
+    ).ensure_action_plan_tasks(plan, task_input)
 
+    assert routes == ()
     assert store.count_reply_tasks(channel="email") == 0
 
 
 def test_local_path_in_trace_identity_is_rejected_before_persistence(tmp_path: Path):
     store = _store(tmp_path)
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = replace(
         _task_input(),
         thread_identity="/Users/derek/private/provider-thread.json",
@@ -825,7 +824,7 @@ def test_unsafe_prior_receipt_is_rejected_before_context_or_task_persistence(
         summary="authorization_token=do-not-persist",
         completed=False,
     )
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = replace(_task_input(), prior_receipts=(unsafe_receipt,))
 
     with pytest.raises(EmailAgentTaskMetadataError):
@@ -842,7 +841,7 @@ def test_unsafe_prior_receipt_is_rejected_before_context_or_task_persistence(
 def test_email_context_contains_text_metadata_receipts_and_no_image_inputs(
     tmp_path: Path,
 ):
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = _task_input()
     route = _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
         plan, task_input
@@ -1088,7 +1087,7 @@ def test_task_creation_rejects_wrong_persisted_message_and_historical_plan(
 ):
     task_store = _store(tmp_path)
     email_store = _email_store(tmp_path)
-    current_plan = _plan((EmailAction.AUTO_REPLY,), version=2)
+    current_plan = _plan((EmailAction.UNSUBSCRIBE,), version=2)
     persisted_input = _task_input()
     _persist_authorization(email_store, current_plan, persisted_input)
     adapter = EmailAgentTaskAdapter(task_store, email_store)
@@ -1101,7 +1100,7 @@ def test_task_creation_rejects_wrong_persisted_message_and_historical_plan(
             message_id="account-primary:message-id:<wrong@example.com>",
         ),
     )
-    historical_plan = _plan((EmailAction.AUTO_REPLY,), version=1)
+    historical_plan = _plan((EmailAction.UNSUBSCRIBE,), version=1)
 
     with pytest.raises(EmailAgentTaskConflict):
         adapter.ensure_action_plan_tasks(current_plan, wrong_message)
@@ -1119,8 +1118,8 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
     task_store = _store(tmp_path)
     email_store = _email_store(tmp_path)
     task_input = _task_input()
-    first_plan = _plan((EmailAction.AUTO_REPLY,), version=1)
-    second_plan = _plan((EmailAction.AUTO_REPLY,), version=2)
+    first_plan = _plan((EmailAction.UNSUBSCRIBE,), version=1)
+    second_plan = _plan((EmailAction.UNSUBSCRIBE,), version=2)
     _persist_authorization(email_store, first_plan, task_input)
     adapter = EmailAgentTaskAdapter(task_store, email_store)
     authorization_checked = Event()
@@ -1209,7 +1208,7 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
     )
 
 
-def test_all_agent_payloads_are_validated_before_any_task_is_persisted(
+def test_disabled_auto_reply_payload_cannot_block_unsubscribe_persistence(
     tmp_path: Path,
 ):
     store = _store(tmp_path)
@@ -1219,15 +1218,15 @@ def test_all_agent_payloads_are_validated_before_any_task_is_persisted(
     )
     task_input = _task_input()
 
-    with pytest.raises(EmailAgentTaskMetadataError):
-        _authorized_adapter(
-            tmp_path,
-            plan,
-            task_input,
-            task_store=store,
-        ).ensure_action_plan_tasks(plan, task_input)
+    routes = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+        task_store=store,
+    ).ensure_action_plan_tasks(plan, task_input)
 
-    assert store.count_reply_tasks(channel="email") == 0
+    assert [route.action_type for route in routes] == [EmailAction.UNSUBSCRIBE]
+    assert store.count_reply_tasks(channel="email") == 1
 
 
 def test_agent_action_identity_conflict_rolls_back_the_whole_plan(tmp_path: Path):
@@ -1353,7 +1352,8 @@ def test_safe_public_https_url_is_allowed_in_action_metadata(tmp_path: Path):
         task_input,
     )
 
-    assert len(routes) == 1
+    assert routes == ()
+    assert store.count_reply_tasks(channel="email") == 0
 
 
 @pytest.mark.parametrize(
@@ -1368,7 +1368,7 @@ def test_safe_public_https_url_is_allowed_in_action_metadata(tmp_path: Path):
         "https://example.com/preferences?action=opt-out",
     ),
 )
-def test_sensitive_or_unsubscribe_url_is_rejected_without_echoing_it(
+def test_disabled_auto_reply_sensitive_url_is_not_persisted(
     tmp_path: Path,
     sensitive_url: str,
 ):
@@ -1377,19 +1377,23 @@ def test_sensitive_or_unsubscribe_url_is_rejected_without_echoing_it(
         instruction=f"Reference {sensitive_url}",
     )
     task_input = _task_input()
-    with pytest.raises(EmailAgentTaskMetadataError) as error:
-        _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
-            plan, task_input
-        )
+    store = _store(tmp_path)
+    routes = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+        task_store=store,
+    ).ensure_action_plan_tasks(plan, task_input)
 
-    assert sensitive_url not in str(error.value)
+    assert routes == ()
+    assert store.count_reply_tasks(channel="email") == 0
 
 
 def test_thread_identity_is_normalized_once_for_identity_payload_and_context(
     tmp_path: Path,
 ):
     store = _store(tmp_path)
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     spaced = replace(_task_input(), thread_identity="  thread-customer-41  ")
     adapter = _authorized_adapter(
         tmp_path,

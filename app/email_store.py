@@ -27,12 +27,13 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     EmailProviderLocator,
     build_email_action_plan,
+    build_user_confirmation_authorizations,
     build_versioned_email_action_plan,
 )
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 15
+EMAIL_SCHEMA_VERSION = 16
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -184,6 +185,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "config_version": ("text", True, None),
         "actions_json": ("text", True, None),
         "action_parameters_json": ("text", True, None),
+        "authorization_snapshot_json": ("text", False, None),
         "created_at": ("text", True, None),
     },
     "email_actions": {
@@ -360,6 +362,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "confidence >= 0.0 and confidence <= 1.0",
         "json_valid(actions_json)",
         "json_valid(action_parameters_json)",
+        "authorization_snapshot_json is null or json_valid(authorization_snapshot_json)",
     ),
     "email_actions": (
         "action_type in ('label', 'mark_read', 'archive', 'move', 'trash')",
@@ -982,11 +985,14 @@ def _retry_is_due(next_attempt_at: object, claimed_at: str) -> bool:
     if not next_attempt_at:
         return True
     try:
-        return _required_utc_timestamp(
-            str(next_attempt_at), field="next_attempt_at"
-        ) <= claimed_at
+        return (
+            _required_utc_timestamp(str(next_attempt_at), field="next_attempt_at")
+            <= claimed_at
+        )
     except ValueError as exc:
-        raise EmailPersistenceCorruption("invalid direct action retry timestamp") from exc
+        raise EmailPersistenceCorruption(
+            "invalid direct action retry timestamp"
+        ) from exc
 
 
 def _json_load(raw: str, *, field: str, expected_type: type[Any]) -> Any:
@@ -1685,6 +1691,7 @@ class EmailStore:
             latest_version = self._read_schema_version(db)
             if latest_version == EMAIL_SCHEMA_VERSION:
                 self._ensure_email_context_columns(db)
+                self._ensure_action_authorization_snapshot_column(db)
                 self._validate_durable_state(db)
                 return
             if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
@@ -1709,6 +1716,7 @@ class EmailStore:
                 )
             if latest_version == EMAIL_SCHEMA_VERSION:
                 self._ensure_email_context_columns(db)
+                self._ensure_action_authorization_snapshot_column(db)
                 self._validate_durable_state(db)
                 return
             legacy_reply_claims = False
@@ -1721,6 +1729,7 @@ class EmailStore:
             self._create_durable_tables(db)
             self._ensure_email_context_columns(db)
             self._ensure_direct_action_retry_column(db)
+            self._ensure_action_authorization_snapshot_column(db)
             self._ensure_unsubscribe_claim_columns(db)
             self._ensure_unsubscribe_audit_columns(db)
             self._ensure_unsubscribe_receipt_columns(db)
@@ -1852,9 +1861,7 @@ class EmailStore:
             "when 'done' then 'terminal' else 'prepared' end"
         )
         audit_run_expression = (
-            "audit_agent_run_id"
-            if "audit_agent_run_id" in legacy_columns
-            else "null"
+            "audit_agent_run_id" if "audit_agent_run_id" in legacy_columns else "null"
         )
         db.execute(
             f"""
@@ -2099,6 +2106,21 @@ class EmailStore:
         )
 
     @classmethod
+    def _ensure_action_authorization_snapshot_column(
+        cls,
+        db: sqlite3.Connection,
+    ) -> None:
+        cls._ensure_column(
+            db,
+            table="email_action_plans",
+            column="authorization_snapshot_json",
+            declaration=(
+                "text check(authorization_snapshot_json is null "
+                "or json_valid(authorization_snapshot_json))"
+            ),
+        )
+
+    @classmethod
     def _ensure_unsubscribe_receipt_columns(cls, db: sqlite3.Connection) -> None:
         for column, declaration in (
             ("result_text", "text not null default ''"),
@@ -2297,6 +2319,9 @@ class EmailStore:
                 actions_json text not null check(json_valid(actions_json)),
                 action_parameters_json text not null
                     check(json_valid(action_parameters_json)),
+                authorization_snapshot_json text
+                    check(authorization_snapshot_json is null
+                          or json_valid(authorization_snapshot_json)),
                 created_at text not null,
                 unique(classification_id, action_plan_version),
                 foreign key(classification_id) references email_classifications(id)
@@ -2811,7 +2836,7 @@ class EmailStore:
                     legacy_processed_without_plan=0
                 where id=?
                 """,
-                (plan.model_dump_json(), plan.action_plan_id, row["id"]),
+                (row["action_plan_json"], plan.action_plan_id, row["id"]),
             )
 
     @staticmethod
@@ -3925,33 +3950,41 @@ class EmailStore:
 
     @staticmethod
     def _stored_action_plan(row: sqlite3.Row) -> EmailActionPlan:
-        try:
-            return EmailActionPlan.model_validate_json(
-                _json_dump(
-                    {
-                        "action_plan_id": row["action_plan_id"],
-                        "action_plan_version": row["action_plan_version"],
-                        "classification_id": row["classification_id"],
-                        "account_id": row["account_id"],
-                        "category": row["category"],
-                        "classification_source": row["classification_source"],
-                        "confidence": row["confidence"],
-                        "model_id": row["model_id"],
-                        "config_version": row["config_version"],
-                        "actions": _json_load(
-                            row["actions_json"],
-                            field="actions_json",
-                            expected_type=list,
-                        ),
-                        "action_parameters": _json_load(
-                            row["action_parameters_json"],
-                            field="action_parameters_json",
-                            expected_type=dict,
-                        ),
-                        "created_at": row["created_at"],
-                    }
-                )
+        payload: dict[str, object] = {
+            "action_plan_id": row["action_plan_id"],
+            "action_plan_version": row["action_plan_version"],
+            "classification_id": row["classification_id"],
+            "account_id": row["account_id"],
+            "category": row["category"],
+            "classification_source": row["classification_source"],
+            "confidence": row["confidence"],
+            "model_id": row["model_id"],
+            "config_version": row["config_version"],
+            "actions": _json_load(
+                row["actions_json"],
+                field="actions_json",
+                expected_type=list,
+            ),
+            "action_parameters": _json_load(
+                row["action_parameters_json"],
+                field="action_parameters_json",
+                expected_type=dict,
+            ),
+            "created_at": row["created_at"],
+        }
+        if row["authorization_snapshot_json"] is not None:
+            payload.update(
+                {
+                    "authorization_snapshot_format": "authorization_snapshot_v2",
+                    "action_authorizations": _json_load(
+                        row["authorization_snapshot_json"],
+                        field="authorization_snapshot_json",
+                        expected_type=list,
+                    ),
+                }
             )
+        try:
+            return EmailActionPlan.model_validate_json(_json_dump(payload))
         except ValueError as exc:
             raise EmailPersistenceCorruption(
                 f"invalid immutable ActionPlan {row['action_plan_id']}"
@@ -4116,6 +4149,16 @@ class EmailStore:
                 for action, parameters in plan.action_parameters.items()
             }
         )
+        encoded_authorizations = (
+            None
+            if plan.authorization_snapshot_format == "legacy_unavailable_v1"
+            else _json_dump(
+                [
+                    authorization.model_dump(mode="json")
+                    for authorization in plan.action_authorizations
+                ]
+            )
+        )
         expected = (
             plan.action_plan_version,
             plan.classification_id,
@@ -4127,6 +4170,7 @@ class EmailStore:
             plan.config_version,
             encoded_actions,
             encoded_parameters,
+            encoded_authorizations,
             plan.created_at.isoformat(),
         )
         if existing_by_id is not None:
@@ -4141,6 +4185,7 @@ class EmailStore:
                 existing_by_id["config_version"],
                 existing_by_id["actions_json"],
                 existing_by_id["action_parameters_json"],
+                existing_by_id["authorization_snapshot_json"],
                 existing_by_id["created_at"],
             )
             if actual != expected:
@@ -4177,8 +4222,8 @@ class EmailStore:
                 action_plan_id, action_plan_version, classification_id,
                 account_id, category, classification_source, confidence,
                 model_id, config_version, actions_json, action_parameters_json,
-                created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                authorization_snapshot_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 plan.action_plan_id,
@@ -4192,6 +4237,7 @@ class EmailStore:
                 plan.config_version,
                 encoded_actions,
                 encoded_parameters,
+                encoded_authorizations,
                 plan.created_at.isoformat(),
             ),
         )
@@ -5262,9 +5308,15 @@ class EmailStore:
         if task_id is not None:
             if not isinstance(task_id, int) or task_id <= 0:
                 raise ValueError("task_id must be positive")
-            if not isinstance(task_execution_generation, str) or not task_execution_generation.strip():
+            if (
+                not isinstance(task_execution_generation, str)
+                or not task_execution_generation.strip()
+            ):
                 raise ValueError("task_execution_generation must be non-empty")
-            if not isinstance(task_lifecycle_version, str) or not task_lifecycle_version.strip():
+            if (
+                not isinstance(task_lifecycle_version, str)
+                or not task_lifecycle_version.strip()
+            ):
                 raise ValueError("task_lifecycle_version must be non-empty")
             if task_action_type != EmailAction.UNSUBSCRIBE.value:
                 raise ValueError("task_action_type must be unsubscribe")
@@ -5276,9 +5328,7 @@ class EmailStore:
                 ):
                     raise ValueError("audit_agent_run_id must be positive")
             elif audit_agent_run_id is not None:
-                raise ValueError(
-                    "audit_agent_run_id requires the audited-v2 lifecycle"
-                )
+                raise ValueError("audit_agent_run_id requires the audited-v2 lifecycle")
         elif audit_agent_run_id is not None:
             raise ValueError("audit_agent_run_id requires a task binding")
 
@@ -5767,8 +5817,7 @@ class EmailStore:
             ).fetchall()
             if len(effect_rows) > MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS:
                 raise EmailPersistenceCorruption(
-                    "unsubscribe snapshot exceeds durable continuation "
-                    "operation limit"
+                    "unsubscribe snapshot exceeds durable continuation operation limit"
                 )
             claim = (
                 None
@@ -7575,6 +7624,13 @@ class EmailStore:
                 actions=actions,
                 action_parameters=action_parameters,
                 created_at=plan_created_at,
+                action_authorizations=build_user_confirmation_authorizations(
+                    category=category,
+                    actions=actions,
+                    action_parameters=action_parameters,
+                    model_id=row["model_id"],
+                    config_version=config_version,
+                ),
             )
             applied_at = self._now()
             self._persist_action_plan(db, action_plan, now=applied_at)

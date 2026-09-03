@@ -378,12 +378,19 @@ def _scan_config(email_store: object, model_record: object | None):
     versions = {str(row["config_version"]) for row in rows}
     if len(versions) != 1:
         raise EmailWorkerStartupError("email category config versions are inconsistent")
+    config_version = next(iter(versions))
     by_category = {EmailCategory(str(row["category"])): row for row in rows}
     thresholds = {
         category: float(by_category[category]["threshold"])
         for category in EmailCategory
     }
     metadata = getattr(model_record, "metadata", None)
+    raw_source_model_id = getattr(metadata, "model_id", None)
+    source_model_id = (
+        raw_source_model_id.strip()
+        if isinstance(raw_source_model_id, str) and raw_source_model_id.strip()
+        else None
+    )
     model_status = str(getattr(model_record, "status", ""))
     validation_method = str(getattr(metadata, "validation_method", ""))
     metrics_value = getattr(metadata, "per_category_metrics", {})
@@ -409,6 +416,8 @@ def _scan_config(email_store: object, model_record: object | None):
                 validated_precision=None,
                 validation_positive_support=0,
                 metadata_auto_action_eligible=False,
+                source_model_id=source_model_id,
+                config_version=config_version,
             )
             eligibility[category] = CategoryEligibility(
                 category=category,
@@ -421,6 +430,7 @@ def _scan_config(email_store: object, model_record: object | None):
                     if model_record is not None and model_status != "active"
                     else "model_eligibility_missing"
                 ),
+                source_model_id=source_model_id,
                 action_eligibility=action_eligibility,
             )
             continue
@@ -437,7 +447,8 @@ def _scan_config(email_store: object, model_record: object | None):
             validation_method=validation_method,
             configured_threshold=thresholds[category],
             evaluated_threshold=(
-                evaluated_threshold if trained_threshold == thresholds[category]
+                evaluated_threshold
+                if trained_threshold == thresholds[category]
                 else trained_threshold
             ),
             validated_precision=float(metric["precision"]),
@@ -448,12 +459,15 @@ def _scan_config(email_store: object, model_record: object | None):
                 )
             ),
             metadata_auto_action_eligible=bool(metric["auto_action_eligible"]),
+            source_model_id=source_model_id,
+            config_version=config_version,
         )
         configured_action_eligible = (
             any(item.auto_action_eligible for item in action_eligibility.values())
             if actions[category]
             else (
                 model_status == "active"
+                and source_model_id is not None
                 and validation_method == "time-ordered-holdout"
                 and threshold_matches
                 and bool(metric["auto_action_eligible"])
@@ -477,11 +491,12 @@ def _scan_config(email_store: object, model_record: object | None):
                     "model_eligibility_missing",
                 )
             ),
+            source_model_id=source_model_id,
             evaluated_threshold=evaluated_threshold,
             action_eligibility=action_eligibility,
         )
     return EmailScanConfig(
-        config_version=versions.pop(),
+        config_version=config_version,
         thresholds=thresholds,
         actions=actions,
         category_eligibility=eligibility,
@@ -589,9 +604,7 @@ def _build_agent_orchestrator(settings: object, store: object):
 
 
 def _message_identity(message: Mapping[str, object]) -> str:
-    return str(
-        message.get("stableMessageIdentity") or message.get("id") or ""
-    ).strip()
+    return str(message.get("stableMessageIdentity") or message.get("id") or "").strip()
 
 
 def _message_sender(message: Mapping[str, object]) -> str:
@@ -644,12 +657,12 @@ def _load_email_task_context(
         raise EmailWorkerStartupError("email task action plan is unavailable")
     task_input = _load_email_task_input(email_store, source_factory, task)
     routes = EmailAgentTaskAdapter(task_store, email_store).ensure_action_plan_tasks(
-        EmailActionPlan.model_validate_json(
-            json.dumps(classification["action_plan"])
-        ),
+        EmailActionPlan.model_validate_json(json.dumps(classification["action_plan"])),
         task_input,
     )
-    route = next((candidate for candidate in routes if candidate.task.id == task.id), None)
+    route = next(
+        (candidate for candidate in routes if candidate.task.id == task.id), None
+    )
     if route is None:
         raise EmailWorkerStartupError("email task route is unavailable")
     return route.context
@@ -721,8 +734,11 @@ def build_email_worker_dependencies(
         registry=registry,
         retrain_state_path=model_root / "retrain-state.json",
     )
+
     def load_enabled_accounts():
-        return tuple(account for account in email_store.list_accounts() if account["enabled"])
+        return tuple(
+            account for account in email_store.list_accounts() if account["enabled"]
+        )
 
     def load_active_model():
         return EmailClassifierRuntime(
@@ -896,9 +912,7 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
                 raise ValueError("email unsubscribe source message is unavailable")
             entries = extract_unsubscribe_entries(
                 list_unsubscribe=str(message.get("listUnsubscribe") or ""),
-                list_unsubscribe_post=str(
-                    message.get("listUnsubscribePost") or ""
-                ),
+                list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
                 body_text=str(
                     message.get("textBody") or message.get("markdownBody") or ""
                 ),
@@ -912,9 +926,7 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
                 or policy.origin_references != network_policy_origin_references
             ):
                 raise ValueError("email unsubscribe network policy changed")
-            if not any(
-                entry.reference == expected_reference for entry in entries
-            ):
+            if not any(entry.reference == expected_reference for entry in entries):
                 raise ValueError("email unsubscribe entry changed")
             return entries
         finally:
@@ -940,8 +952,7 @@ def build_audited_email_unsubscribe_operation(settings: object) -> object:
         policy = browser_network_policy_for_entries(entries)
         if (
             policy.reference != effect.network_policy_reference
-            or policy.origin_references
-            != effect.network_policy_origin_references
+            or policy.origin_references != effect.network_policy_origin_references
         ):
             raise ValueError("email unsubscribe network policy changed")
         return execute_unsubscribe_in_dedicated_profile(
@@ -1148,9 +1159,7 @@ def run_email_worker(
     settings: object,
     *,
     dependencies: EmailWorkerDependencies | Any | None = None,
-    dependency_builder: Callable[[object], object] = (
-        build_email_worker_dependencies
-    ),
+    dependency_builder: Callable[[object], object] = (build_email_worker_dependencies),
     thread_factory: Callable[..., Thread] = Thread,
     wait: Callable[[], object] | None = None,
     output: TextIO = sys.stdout,
@@ -1196,17 +1205,11 @@ def run_email_worker(
             final_reconciliation = _fail_nonterminal_legacy_unsubscribe_tasks(
                 dependencies
             )
-        unresolved_legacy_task_ids = set(
-            final_reconciliation.unresolved_task_ids
-        )
+        unresolved_legacy_task_ids = set(final_reconciliation.unresolved_task_ids)
         agent_consumer_allowed = (
-            final_reconciliation.authoritative
-            and not unresolved_legacy_task_ids
+            final_reconciliation.authoritative and not unresolved_legacy_task_ids
         )
-        if (
-            final_reconciliation.authoritative
-            and final_reconciliation.task_count == 0
-        ):
+        if final_reconciliation.authoritative and final_reconciliation.task_count == 0:
             dependencies.record_health(
                 "component:email-legacy-lifecycle",
                 {
@@ -1223,9 +1226,7 @@ def run_email_worker(
         component_names = tuple(
             name
             for name in all_component_names
-            if not (
-                not agent_consumer_allowed and name == "email-agent-consumer"
-            )
+            if not (not agent_consumer_allowed and name == "email-agent-consumer")
         )
         readiness = EmailWorkerReadiness(
             component_names,

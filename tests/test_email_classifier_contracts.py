@@ -96,6 +96,61 @@ def test_action_plan_splits_direct_and_agent_actions_in_configured_order():
     assert plan.agent_actions == (EmailAction.AUTO_REPLY, EmailAction.UNSUBSCRIBE)
 
 
+def test_action_plan_identity_covers_authorization_evidence():
+    base = {
+        "classification_id": 12,
+        "account_id": "account-1",
+        "category": EmailCategory.WORK,
+        "classification_source": "model",
+        "confidence": 0.99,
+        "model_id": "email/logistic/model-1",
+        "config_version": "email-v1",
+        "actions": (EmailAction.LABEL,),
+        "action_parameters": {EmailAction.LABEL: {"labels": ["Work"]}},
+        "created_at": CREATED_AT,
+    }
+    authorization = {
+        "action_type": EmailAction.LABEL,
+        "parameters": {"labels": ["Work"]},
+        "authorization_source": "model_eligibility",
+        "eligibility_evidence_reference": "evidence:model-1:label:v1",
+        "authorized": True,
+        "ineligible_reason": "",
+        "source_model_id": "email/logistic/model-1",
+        "config_version": "email-v1",
+    }
+
+    first = build_email_action_plan(
+        **base,
+        action_authorizations=(authorization,),
+    )
+    second = build_email_action_plan(
+        **base,
+        action_authorizations=(
+            {
+                **authorization,
+                "eligibility_evidence_reference": "evidence:model-1:label:v2",
+            },
+        ),
+    )
+
+    assert first.action_plan_id != second.action_plan_id
+
+
+def test_legacy_action_plan_projects_unavailable_authorization_without_new_evidence():
+    plan = _plan()
+    encoded = plan.model_dump_json(
+        exclude={"authorization_snapshot_format", "action_authorizations"}
+    )
+
+    legacy = EmailActionPlan.model_validate_json(encoded)
+
+    assert legacy.action_plan_id == plan.action_plan_id
+    assert legacy.authorization_snapshot_format == "legacy_unavailable_v1"
+    assert legacy.action_authorizations == ()
+    assert legacy.direct_actions == (EmailAction.MARK_READ, EmailAction.LABEL)
+
+
 def test_pending_feedback_contains_model_suggestion_but_no_action_plan():
     classification = _classification(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
@@ -243,7 +298,10 @@ def test_attachment_metadata_is_immutable_and_cannot_hold_payload_content():
             "target_folder",
         ),
         (
-            {"actions": (EmailAction.ARCHIVE, EmailAction.TRASH), "action_parameters": {}},
+            {
+                "actions": (EmailAction.ARCHIVE, EmailAction.TRASH),
+                "action_parameters": {},
+            },
             "mutually exclusive",
         ),
         (

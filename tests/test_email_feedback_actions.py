@@ -48,6 +48,7 @@ def test_each_configured_action_is_independently_gated():
         validation_sample_count=30,
         auto_action_eligible=True,
         reason="label_gate_met_trash_gate_not_met",
+        source_model_id=_prediction().model_id,
         automatic_candidate_count=30,
         evaluated_threshold=0.95,
         action_eligibility={
@@ -55,11 +56,15 @@ def test_each_configured_action_is_independently_gated():
                 action=EmailAction.LABEL,
                 auto_action_eligible=True,
                 reason="action_precision_and_support_gate_met",
+                source_model_id=_prediction().model_id,
+                evidence_reference="email-model-eligibility:v1:label",
             ),
             EmailAction.TRASH: EmailActionEligibility(
                 action=EmailAction.TRASH,
                 auto_action_eligible=False,
                 reason="action_precision_gate_not_met",
+                source_model_id=_prediction().model_id,
+                evidence_reference="email-model-eligibility:v1:trash",
             ),
         },
     )
@@ -97,6 +102,7 @@ def test_threshold_change_never_expands_an_existing_action_plan():
         validation_sample_count=30,
         auto_action_eligible=True,
         reason="precision_and_sample_gate_met",
+        source_model_id=_prediction().model_id,
         automatic_candidate_count=30,
         evaluated_threshold=0.95,
         action_eligibility={
@@ -104,6 +110,8 @@ def test_threshold_change_never_expands_an_existing_action_plan():
                 action=EmailAction.LABEL,
                 auto_action_eligible=True,
                 reason="action_precision_and_support_gate_met",
+                source_model_id=_prediction().model_id,
+                evidence_reference="email-model-eligibility:v1:label",
             )
         },
     )
@@ -117,6 +125,9 @@ def test_threshold_change_never_expands_an_existing_action_plan():
     )
     assert original.action_plan is not None
     original_plan = original.action_plan
+    original_authorizations = original_plan.model_dump(mode="json")[
+        "action_authorizations"
+    ]
 
     changed_config = EmailCategoryConfig(
         category=EmailCategory.WORK,
@@ -134,6 +145,7 @@ def test_threshold_change_never_expands_an_existing_action_plan():
         validation_sample_count=30,
         auto_action_eligible=False,
         reason="threshold_changed_since_training",
+        source_model_id=_prediction().model_id,
         automatic_candidate_count=30,
         evaluated_threshold=0.95,
     )
@@ -149,6 +161,10 @@ def test_threshold_change_never_expands_an_existing_action_plan():
     assert changed.action_plan is None
     assert original_plan.actions == (EmailAction.LABEL,)
     assert original_plan.config_version == "email-config:v1"
+    assert (
+        original_plan.model_dump(mode="json")["action_authorizations"]
+        == original_authorizations
+    )
 
 
 def test_confirmed_plan_binds_user_model_and_current_config_without_reply(

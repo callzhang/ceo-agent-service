@@ -289,12 +289,16 @@ def test_email_action_eligibility_enforces_approved_action_gates(
         validated_precision=precision,
         validation_positive_support=positive_support,
         metadata_auto_action_eligible=True,
+        source_model_id="email-model:eligibility-test",
+        config_version="email-config:eligibility-test",
     )[action]
 
     assert result.auto_action_eligible is expected
 
 
-@pytest.mark.parametrize("model_status", ["candidate", "rejected", "failed", "previous"])
+@pytest.mark.parametrize(
+    "model_status", ["candidate", "rejected", "failed", "previous"]
+)
 def test_email_action_eligibility_requires_active_model_status(model_status: str):
     module = import_module("app.email_classifier_training")
     assess = getattr(module, "assess_email_action_eligibility", None)
@@ -310,6 +314,8 @@ def test_email_action_eligibility_requires_active_model_status(model_status: str
         validated_precision=1.0,
         validation_positive_support=100,
         metadata_auto_action_eligible=True,
+        source_model_id="email-model:eligibility-test",
+        config_version="email-config:eligibility-test",
     )[EmailAction.LABEL]
 
     assert result.auto_action_eligible is False
@@ -331,6 +337,8 @@ def test_email_action_eligibility_requires_unchanged_evaluated_threshold():
         validated_precision=1.0,
         validation_positive_support=100,
         metadata_auto_action_eligible=True,
+        source_model_id="email-model:eligibility-test",
+        config_version="email-config:eligibility-test",
     )[EmailAction.LABEL]
 
     assert result.auto_action_eligible is False

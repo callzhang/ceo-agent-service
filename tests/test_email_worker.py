@@ -321,9 +321,7 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
     account_id = "account-production"
     stable_identity = "account-production:message-id:<mail-41@example.com>"
     thread_identity = "thread-production-41"
-    private_url = (
-        "https://news.example.com/unsubscribe?token=production-private-secret"
-    )
+    private_url = "https://news.example.com/unsubscribe?token=production-private-secret"
     plan = build_versioned_email_action_plan(
         action_plan_version=1,
         classification_id=41,
@@ -449,6 +447,7 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
 
     def source_factory(_account):
         return Source()
+
     context = module._load_email_task_context(
         email_store,
         task_store,
@@ -486,9 +485,7 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
         owner="audit-owner",
     ).run
     [projected_entry] = payload["unsubscribe_entries"]
-    operation_kind = (
-        "post_one_click" if provider_shape == "one_click" else "open_entry"
-    )
+    operation_kind = "post_one_click" if provider_shape == "one_click" else "open_entry"
     accepted_action = ProposedAction.model_validate(
         {
             "description": "Unsubscribe the current subscription",
@@ -501,9 +498,7 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
                 "thread_identity": thread_identity,
                 "entry_reference": projected_entry["reference"],
                 "network_policy_reference": policy.reference,
-                "network_policy_origin_references": list(
-                    policy.origin_references
-                ),
+                "network_policy_origin_references": list(policy.origin_references),
             },
             "payload": {
                 "operations": [
@@ -517,7 +512,9 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
             "expected_verification": "Read terminal provider evidence",
         }
     ).model_dump(mode="json")
-    monkeypatch.setattr(module, "_build_email_source_factory", lambda _settings: source_factory)
+    monkeypatch.setattr(
+        module, "_build_email_source_factory", lambda _settings: source_factory
+    )
     execution_calls = []
 
     def fake_dedicated_profile(effect, entries, **kwargs):
@@ -706,9 +703,7 @@ def test_pending_legacy_unsubscribe_is_failed_before_configuration_wait(
     )
     dependencies.email_store = email_store
     dependencies.task_store = task_store
-    dependencies.record_health = lambda scope, payload: health.append(
-        (scope, payload)
-    )
+    dependencies.record_health = lambda scope, payload: health.append((scope, payload))
 
     module.run_email_worker(
         SimpleNamespace(),
@@ -949,7 +944,9 @@ def test_email_agent_consumer_does_not_execute_legacy_auto_reply_task():
 
     module.run_email_agent_task_loop(
         Store(),
-        SimpleNamespace(process=lambda *_args, **_kwargs: pytest.fail("reply executed")),
+        SimpleNamespace(
+            process=lambda *_args, **_kwargs: pytest.fail("reply executed")
+        ),
         load_task_context=lambda _task: pytest.fail("reply context loaded"),
         finalize_task=lambda *_args: pytest.fail("reply finalized"),
         sleep=lambda _seconds: None,
@@ -1000,9 +997,7 @@ def test_unsubscribe_task_uses_consumer_audit_orchestrator():
         ],
         "unsubscribe_authentication": None,
         "unsubscribe_network_policy_reference": policy.reference,
-        "unsubscribe_network_policy_origin_references": list(
-            policy.origin_references
-        ),
+        "unsubscribe_network_policy_origin_references": list(policy.origin_references),
     }
     task = SimpleNamespace(
         id=7,
@@ -1210,9 +1205,7 @@ def test_worker_startup_isolates_legacy_before_agent_claim_and_starts_components
         def start(self):
             events.append(("started", self.name))
 
-    dependencies.record_health = lambda scope, payload: health.append(
-        (scope, payload)
-    )
+    dependencies.record_health = lambda scope, payload: health.append((scope, payload))
 
     module.run_email_worker(
         SimpleNamespace(),
@@ -1305,9 +1298,7 @@ def test_unfenced_legacy_blocks_agent_consumer_but_starts_scan_direct_and_traini
             "unfenced legacy task must never reach orchestrator"
         )
     )
-    dependencies.record_health = lambda scope, payload: health.append(
-        (scope, payload)
-    )
+    dependencies.record_health = lambda scope, payload: health.append((scope, payload))
 
     class FakeThread:
         def __init__(self, *, target, name, daemon):
@@ -1398,7 +1389,9 @@ def test_generation_replacement_after_inventory_is_not_failed_and_blocks_agent(
             self.rotated = True
 
         def list_nonterminal_legacy_unsubscribe_task_attempts(self):
-            result = real_email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
+            result = (
+                real_email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
+            )
             self._rotate()
             return result
 
@@ -1426,9 +1419,7 @@ def test_generation_replacement_after_inventory_is_not_failed_and_blocks_agent(
     dependencies = _dependencies(events)
     dependencies.email_store = RotatingInventoryStore()
     dependencies.task_store = RecordingTaskStore()
-    dependencies.record_health = lambda scope, payload: health.append(
-        (scope, payload)
-    )
+    dependencies.record_health = lambda scope, payload: health.append((scope, payload))
 
     class FakeThread:
         def __init__(self, *, target, name, daemon):
@@ -1502,7 +1493,9 @@ def test_processing_replacement_after_pending_inventory_is_unresolved_and_blocks
             return getattr(real_email_store, name)
 
         def list_nonterminal_legacy_unsubscribe_task_attempts(self):
-            attempts = real_email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
+            attempts = (
+                real_email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
+            )
             if not self.advanced:
                 claimed = real_task_store.claim_reply_task(legacy.id)
                 assert claimed is not None
@@ -2320,7 +2313,9 @@ def test_safe_replacement_after_inventory_is_unchanged_and_does_not_block_agent(
             self.replaced = True
 
         def list_nonterminal_legacy_unsubscribe_task_attempts(self):
-            result = real_email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
+            result = (
+                real_email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
+            )
             self._replace()
             return result
 
@@ -2336,9 +2331,7 @@ def test_safe_replacement_after_inventory_is_unchanged_and_does_not_block_agent(
     dependencies.task_store = (
         RaisingTaskStore() if terminalization == "exception" else task_store
     )
-    dependencies.record_health = lambda scope, payload: health.append(
-        (scope, payload)
-    )
+    dependencies.record_health = lambda scope, payload: health.append((scope, payload))
 
     class FakeThread:
         def __init__(self, *, target, name, daemon):
@@ -2453,11 +2446,14 @@ def test_direct_action_does_not_claim_an_unavailable_account():
             calls.append(kwargs)
             pytest.fail("unavailable account must not be claimed")
 
-    assert module._run_next_direct_action(
-        Store(),
-        lambda _account_id: None,
-        available_account_ids=(),
-    ) is None
+    assert (
+        module._run_next_direct_action(
+            Store(),
+            lambda _account_id: None,
+            available_account_ids=(),
+        )
+        is None
+    )
     assert calls == []
 
 
@@ -2474,11 +2470,14 @@ def test_direct_action_loop_recovers_stale_claim_before_claiming_next_action():
             calls.append(("claim", kwargs))
             return None
 
-    assert module._run_next_direct_action(
-        Store(),
-        lambda _account_id: object(),
-        available_account_ids=("account-1",),
-    ) is None
+    assert (
+        module._run_next_direct_action(
+            Store(),
+            lambda _account_id: object(),
+            available_account_ids=("account-1",),
+        )
+        is None
+    )
     assert [name for name, _kwargs in calls] == ["recover", "claim"]
 
 
@@ -2504,10 +2503,13 @@ def test_failed_direct_action_degrades_provider_component_health():
         max_cycles=1,
     )
 
-    assert ("component:email-provider-actions", {
-        "status": "degraded",
-        "error_code": "provider_action_failed",
-    }) in health
+    assert (
+        "component:email-provider-actions",
+        {
+            "status": "degraded",
+            "error_code": "provider_action_failed",
+        },
+    ) in health
 
 
 def test_scan_config_uses_active_model_category_eligibility():
@@ -2531,6 +2533,7 @@ def test_scan_config_uses_active_model_category_eligibility():
     model_record = SimpleNamespace(
         status="active",
         metadata=SimpleNamespace(
+            model_id="email-model:worker-test",
             validation_method="time-ordered-holdout",
             per_category_metrics={
                 category.value: {
@@ -2589,6 +2592,7 @@ def test_scan_config_non_active_model_record_is_never_action_eligible(status: st
     record = SimpleNamespace(
         status=status,
         metadata=SimpleNamespace(
+            model_id="email-model:worker-test",
             validation_method="time-ordered-holdout",
             per_category_metrics={
                 contracts.EmailCategory.WORK.value: {
@@ -2709,7 +2713,7 @@ def test_startup_records_process_heartbeat_only_after_dependencies_are_ready():
         (
             "process:email-worker",
             {"status": "starting", "accounts": 1, "components": 3},
-        )
+        ),
     ]
 
 

@@ -4,10 +4,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.email_classifier_model import CpuTfidfLogisticClassifier
-from app.email_classifier_contracts import EmailCategory
-from app.email_classifier_scan import EmailScanConfig
-from app.email_classifier_training import CategoryEligibility
+from app.email_classifier_model import (
+    CpuTfidfLogisticClassifier,
+    EmailModelPrediction,
+)
+from app.email_classifier_contracts import (
+    EmailAction,
+    EmailCategory,
+    EmailClassificationStatus,
+)
+from app.email_classifier_scan import EmailScanConfig, scan_readonly_batch
+from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
 from app.email_store import EmailStore
 from app.email_classifier_runtime import (
     EmailClassifierRuntime,
@@ -201,9 +208,7 @@ def test_runtime_adopts_promoted_active_model_on_next_tick(tmp_path: Path):
 
         def poll_retrain(self, *, now=None):
             self.registry.active_id = "email-tfidf-lr-20260829T220100Z-22222222"
-            return SimpleNamespace(
-                training_run=SimpleNamespace(status="succeeded")
-            )
+            return SimpleNamespace(training_run=SimpleNamespace(status="succeeded"))
 
     registry = Registry()
     runtime = EmailClassifierRuntime(registry, learning_service=Learning(registry))
@@ -213,9 +218,7 @@ def test_runtime_adopts_promoted_active_model_on_next_tick(tmp_path: Path):
     assert runtime.loaded.classifier.model_id == (
         "email-tfidf-lr-20260829T220100Z-22222222"
     )
-    assert runtime.loaded.path.name == (
-        "email-tfidf-lr-20260829T220100Z-22222222.pkl"
-    )
+    assert runtime.loaded.path.name == ("email-tfidf-lr-20260829T220100Z-22222222.pkl")
     assert registry.loads == [
         "email-tfidf-lr-20260829T220000Z-11111111",
         "email-tfidf-lr-20260829T220100Z-22222222",
@@ -244,15 +247,11 @@ def test_runtime_keeps_loaded_model_when_training_does_not_promote(
             return model
 
         def get_model(self, requested_model_id):
-            return SimpleNamespace(
-                artifact_path=tmp_path / f"{requested_model_id}.pkl"
-            )
+            return SimpleNamespace(artifact_path=tmp_path / f"{requested_model_id}.pkl")
 
     class Learning:
         def poll_retrain(self, *, now=None):
-            return SimpleNamespace(
-                training_run=SimpleNamespace(status=terminal_status)
-            )
+            return SimpleNamespace(training_run=SimpleNamespace(status=terminal_status))
 
     registry = Registry()
     runtime = EmailClassifierRuntime(registry, learning_service=Learning())
@@ -362,6 +361,100 @@ def test_consecutive_prediction_failures_fallback_only_at_threshold():
     ]
 
 
+def test_runtime_fallback_prediction_cannot_reuse_previous_source_eligibility(
+    tmp_path: Path,
+):
+    model_a = "email-model:active-a"
+    model_b = "email-model:fallback-b"
+
+    class BrokenActive:
+        def predict_message(self, _message):
+            raise RuntimeError("active model failed")
+
+    class FallbackModel:
+        def predict_message(self, _message):
+            return EmailModelPrediction(
+                label=EmailCategory.WORK.value,
+                probability=0.999,
+                margin=0.99,
+                probabilities={EmailCategory.WORK.value: 0.999},
+                model_version=model_b,
+            )
+
+    class Registry:
+        def fallback_to_previous(self, **_values):
+            return SimpleNamespace(model_id=model_b)
+
+        def load_classifier(self, model_id):
+            assert model_id == model_b
+            return FallbackModel()
+
+    eligibility = {
+        category: CategoryEligibility(
+            category=category,
+            configured_threshold=0.95,
+            validated_precision=0.99 if category is EmailCategory.WORK else None,
+            validation_sample_count=30 if category is EmailCategory.WORK else 0,
+            auto_action_eligible=category is EmailCategory.WORK,
+            reason=(
+                "precision_and_sample_gate_met"
+                if category is EmailCategory.WORK
+                else "model_eligibility_missing"
+            ),
+            source_model_id=model_a,
+            action_eligibility=(
+                {
+                    EmailAction.LABEL: EmailActionEligibility(
+                        action=EmailAction.LABEL,
+                        auto_action_eligible=True,
+                        reason="action_precision_and_support_gate_met",
+                        source_model_id=model_a,
+                        evidence_reference="email-model-eligibility:model-a:label",
+                    )
+                }
+                if category is EmailCategory.WORK
+                else {}
+            ),
+        )
+        for category in EmailCategory
+    }
+    config = EmailScanConfig(
+        config_version="email-config:fallback-boundary-v1",
+        thresholds={category: 0.95 for category in EmailCategory},
+        actions={EmailCategory.WORK: (EmailAction.LABEL,)},
+        category_eligibility=eligibility,
+        action_parameters={
+            EmailCategory.WORK: {EmailAction.LABEL: {"labels": ["Work"]}}
+        },
+    )
+    classifier = RegistryPredictionClassifier(
+        Registry(),
+        BrokenActive(),
+        model_a,
+        failure_threshold=1,
+    )
+    store = EmailStore(tmp_path / "fallback-boundary.sqlite3")
+
+    result = scan_readonly_batch(
+        FakeReadonlySource(),
+        classifier,
+        store,
+        config,
+        limit=1,
+    )
+
+    assert result.processed_count == 0
+    assert result.pending_feedback_count == 1
+    rows, total = store.list_classifications(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        limit=10,
+        offset=0,
+    )
+    assert total == 1
+    assert rows[0]["model_id"] == model_b
+    assert rows[0]["action_plan"] is None
+
+
 def test_training_subprocess_is_nonblocking_and_durably_polled(tmp_path: Path):
     class FakeProcess:
         pid = 4321
@@ -428,7 +521,9 @@ def test_controller_restart_fails_orphaned_running_record_and_allows_learning_re
     assert failed.reason == "training_subprocess_orphaned"
 
 
-def test_controller_restart_keeps_known_live_pid_running_past_stale_timeout(tmp_path: Path):
+def test_controller_restart_keeps_known_live_pid_running_past_stale_timeout(
+    tmp_path: Path,
+):
     now = datetime(2026, 8, 29, 21, 0, tzinfo=timezone.utc)
     registry = EmailModelRegistry(tmp_path / "registry")
     first = TrainingSubprocessController(

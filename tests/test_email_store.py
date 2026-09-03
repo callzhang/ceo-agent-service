@@ -55,9 +55,11 @@ def _classification(
     rfc_message_id: str | None = None,
     thread_id: str | None = None,
 ) -> EmailClassification:
-    generated_id = int.from_bytes(
-        sha256(message_id.encode("utf-8")).digest()[:8], "big"
-    ) & ((1 << 63) - 1) or 1
+    generated_id = (
+        int.from_bytes(sha256(message_id.encode("utf-8")).digest()[:8], "big")
+        & ((1 << 63) - 1)
+        or 1
+    )
     classification_id = classification_id or generated_id
     uid = uid or classification_id
     if rfc_message_id is None and stable_message_identity is None:
@@ -89,9 +91,7 @@ def _classification(
     return EmailClassification.model_validate(
         {
             "classification_id": classification_id,
-            "stable_message_identity": (
-                stable_message_identity
-            ),
+            "stable_message_identity": (stable_message_identity),
             "provider_locator": {
                 "account_id": "dingtalk-account",
                 "folder": folder,
@@ -214,7 +214,9 @@ def test_persist_scan_result_stores_thread_reference_metadata(tmp_path: Path):
         cursor_last_success_at="2026-08-31T20:00:00+00:00",
     )
 
-    row = _fetchall(database, "select in_reply_to, references_json from email_messages")[0]
+    row = _fetchall(
+        database, "select in_reply_to, references_json from email_messages"
+    )[0]
     assert row["in_reply_to"] == "<parent@example.com>"
     assert json.loads(row["references_json"]) == [
         "<thread@example.com>",
@@ -232,9 +234,7 @@ def _confirm(
     return store.confirm_classification(
         row_id,
         category,
-        feedback_request_id=(
-            request_id or f"test-feedback-{row_id}-{category.value}"
-        ),
+        feedback_request_id=(request_id or f"test-feedback-{row_id}-{category.value}"),
         expected_current_action_plan_id=None,
     )
 
@@ -403,11 +403,14 @@ def test_terminalizes_pending_legacy_unsubscribe_with_exact_generation(tmp_path:
     EmailStore(database)
     task = _create_legacy_terminalization_task(task_store, "pending")
 
-    assert task_store.terminalize_legacy_email_unsubscribe_task(
-        task.id,
-        expected_execution_generation=task.execution_generation,
-        expected_status=task.status,
-    ) is True
+    assert (
+        task_store.terminalize_legacy_email_unsubscribe_task(
+            task.id,
+            expected_execution_generation=task.execution_generation,
+            expected_status=task.status,
+        )
+        is True
+    )
 
     terminal = task_store.get_reply_task(task.id)
     assert terminal is not None
@@ -428,11 +431,14 @@ def test_terminalizes_processing_legacy_unsubscribe_with_exact_generation(
     assert task is not None
     assert task.status == "processing"
 
-    assert task_store.terminalize_legacy_email_unsubscribe_task(
-        task.id,
-        expected_execution_generation=task.execution_generation,
-        expected_status=task.status,
-    ) is True
+    assert (
+        task_store.terminalize_legacy_email_unsubscribe_task(
+            task.id,
+            expected_execution_generation=task.execution_generation,
+            expected_status=task.status,
+        )
+        is True
+    )
 
     terminal = task_store.get_reply_task(task.id)
     assert terminal is not None
@@ -479,11 +485,14 @@ def test_legacy_terminalization_leaves_nonmatching_tasks_unchanged(
         )[0]
     )
 
-    assert task_store.terminalize_legacy_email_unsubscribe_task(
-        task.id,
-        expected_execution_generation=task.execution_generation,
-        expected_status=task.status,
-    ) is False
+    assert (
+        task_store.terminalize_legacy_email_unsubscribe_task(
+            task.id,
+            expected_execution_generation=task.execution_generation,
+            expected_status=task.status,
+        )
+        is False
+    )
 
     after = tuple(
         _fetchall(
@@ -531,11 +540,14 @@ def test_legacy_terminalization_race_fails_closed_without_modifying_replacement(
         )[0]
     )
 
-    assert task_store.terminalize_legacy_email_unsubscribe_task(
-        original.id,
-        expected_execution_generation=original.execution_generation,
-        expected_status=original.status,
-    ) is False
+    assert (
+        task_store.terminalize_legacy_email_unsubscribe_task(
+            original.id,
+            expected_execution_generation=original.execution_generation,
+            expected_status=original.status,
+        )
+        is False
+    )
 
     after = tuple(
         _fetchall(
@@ -569,11 +581,14 @@ def test_pending_legacy_attempt_does_not_terminalize_processing_replacement(
         )[0]
     )
 
-    assert task_store.terminalize_legacy_email_unsubscribe_task(
-        attempt.task_id,
-        expected_execution_generation=attempt.execution_generation,
-        expected_status=attempt.status,
-    ) is False
+    assert (
+        task_store.terminalize_legacy_email_unsubscribe_task(
+            attempt.task_id,
+            expected_execution_generation=attempt.execution_generation,
+            expected_status=attempt.status,
+        )
+        is False
+    )
 
     after = tuple(
         _fetchall(
@@ -668,7 +683,7 @@ def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) ->
         )
         for index, identifier in enumerate(sorted(required_identifiers))
     }
-    quote_styles = (("\"", "\""), ("`", "`"), ("[", "]"))
+    quote_styles = (('"', '"'), ("`", "`"), ("[", "]"))
     sql_replacements = {
         identifier: (
             f"{quote_styles[index % len(quote_styles)][0]}{replacement}"
@@ -946,7 +961,9 @@ def _create_prototype_database(
                 classification.status.value,
                 classification.classification_source,
                 action_plan_json,
-                now if classification.status is EmailClassificationStatus.PROCESSED else "",
+                now
+                if classification.status is EmailClassificationStatus.PROCESSED
+                else "",
                 now,
                 now,
             ),
@@ -1210,7 +1227,9 @@ def _create_action_with_attempts(
             status=status,
             provider_operation=f"operation-{attempt_number}",
             provider_target=f"target-{attempt_number}",
-            provider_result_id=(f"receipt-{attempt_number}" if status == "done" else ""),
+            provider_result_id=(
+                f"receipt-{attempt_number}" if status == "done" else ""
+            ),
             error=(f"error-{attempt_number}" if status == "failed" else ""),
             started_at=f"2026-08-29T16:0{attempt_number}:00+00:00",
             finished_at=f"2026-08-29T16:0{attempt_number}:01+00:00",
@@ -1372,9 +1391,7 @@ def test_concurrent_feedback_allows_one_confirmation_and_one_conflict(
 
     confirmed = [result for result in results if isinstance(result, dict)]
     conflicts = [
-        result
-        for result in results
-        if isinstance(result, EmailClassificationConflict)
+        result for result in results if isinstance(result, EmailClassificationConflict)
     ]
     assert len(confirmed) == 1
     assert len(conflicts) == 1
@@ -1449,16 +1466,18 @@ def test_training_inclusion_marks_exact_confirmed_samples_atomically(tmp_path: P
 
     assert len(snapshots) == 2
     assert all(len(row["sample_digest"]) == 64 for row in snapshots)
-    store.mark_training_examples_included(snapshots, model_id="email-tfidf-lr-x-12345678")
-    store.mark_training_examples_included(snapshots, model_id="email-tfidf-lr-x-12345678")
+    store.mark_training_examples_included(
+        snapshots, model_id="email-tfidf-lr-x-12345678"
+    )
+    store.mark_training_examples_included(
+        snapshots, model_id="email-tfidf-lr-x-12345678"
+    )
 
     assert store.list_unincluded_training_examples() == []
     assert {
         row["included_in_model_id"]
         for row in store.list_training_examples(include_inclusion=True)
-    } == {
-        "email-tfidf-lr-x-12345678"
-    }
+    } == {"email-tfidf-lr-x-12345678"}
 
 
 def test_training_inclusion_conflict_rolls_back_partial_batch(tmp_path: Path):
@@ -1524,7 +1543,9 @@ def test_training_inclusion_digest_cas_rejects_concurrent_correction_and_clears_
         store.mark_training_examples_included([snapshot], model_id="new-model")
 
 
-def test_training_promotion_lease_rejects_changed_snapshot_before_promote(tmp_path: Path):
+def test_training_promotion_lease_rejects_changed_snapshot_before_promote(
+    tmp_path: Path,
+):
     store = EmailStore(tmp_path / "lease-cas.sqlite3")
     row = store.upsert_classification(
         _classification(
@@ -1647,9 +1668,7 @@ def test_email_store_persists_category_configuration(tmp_path: Path):
     )
 
     assert config["actions"] == ["label", "unsubscribe"]
-    assert config["action_parameters"] == {
-        "label": {"labels": ["subscription"]}
-    }
+    assert config["action_parameters"] == {"label": {"labels": ["subscription"]}}
     assert store.list_configs() == [config]
 
 
@@ -1784,9 +1803,10 @@ def test_v10_unsubscribe_claim_migrates_to_v11_effect_prefix_chain(
         ).fetchone()
         assert effect is not None
         assert effect[0] == ""
-        assert db.execute(
-            "select max(version) from email_schema_migrations"
-        ).fetchone()[0] == email_store_module.EMAIL_SCHEMA_VERSION
+        assert (
+            db.execute("select max(version) from email_schema_migrations").fetchone()[0]
+            == email_store_module.EMAIL_SCHEMA_VERSION
+        )
 
 
 def test_exact_v14_unsubscribe_schema_migrates_with_nullable_positive_audit_run(
@@ -2175,10 +2195,13 @@ def test_prototype_migration_rejects_non_text_column_metadata_atomically(
         schema_after = db.execute(
             "select type, name, tbl_name, sql from sqlite_master order by type, name"
         ).fetchall()
-        assert db.execute(
-            "select 1 from sqlite_master "
-            "where type='table' and name='email_schema_migrations'"
-        ).fetchone() is None
+        assert (
+            db.execute(
+                "select 1 from sqlite_master "
+                "where type='table' and name='email_schema_migrations'"
+            ).fetchone()
+            is None
+        )
     assert schema_after == schema_before
 
 
@@ -2325,12 +2348,21 @@ def test_current_schema_accepts_case_insensitive_required_bare_identifiers(
 
     with sqlite3.connect(database) as db:
         assert db.execute("pragma journal_mode").fetchone()[0] == "delete"
-        assert db.execute("pragma schema_version").fetchone()[0] == schema_version_before
+        assert (
+            db.execute("pragma schema_version").fetchone()[0] == schema_version_before
+        )
     normalized = [" ".join(statement.lower().split()) for statement in statements]
     assert "begin immediate" not in normalized
     assert not any(
         statement.startswith(
-            ("create ", "alter ", "insert ", "update ", "delete ", "pragma journal_mode")
+            (
+                "create ",
+                "alter ",
+                "insert ",
+                "update ",
+                "delete ",
+                "pragma journal_mode",
+            )
         )
         for statement in normalized
     )
@@ -2455,12 +2487,13 @@ def test_current_schema_rejects_uppercase_action_status_literals(tmp_path: Path)
             "('label', 'mark_read', 'archive', 'move', 'trash'))"
         ),
         status_declaration=(
-            "text not null check(status in "
-            "('PENDING', 'PROCESSING', 'DONE', 'FAILED'))"
+            "text not null check(status in ('PENDING', 'PROCESSING', 'DONE', 'FAILED'))"
         ),
     )
 
-    with pytest.raises(EmailPersistenceCorruption, match="required check.*email_actions"):
+    with pytest.raises(
+        EmailPersistenceCorruption, match="required check.*email_actions"
+    ):
         EmailStore(database)
 
 
@@ -2746,9 +2779,7 @@ def test_current_schema_rejects_wrong_config_column_type_or_default(
         )
 
     expected_column = (
-        "description"
-        if damaged_declaration.startswith("description")
-        else "threshold"
+        "description" if damaged_declaration.startswith("description") else "threshold"
     )
     with pytest.raises(
         EmailPersistenceCorruption,
@@ -2986,10 +3017,13 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
         }
     ]
     assert store.list_configs()[0]["description"] == "v2 important config"
-    assert _fetchall(
-        database,
-        "select state_json from email_retraining_state",
-    )[0]["state_json"] == '{"last_feedback_count":7}'
+    assert (
+        _fetchall(
+            database,
+            "select state_json from email_retraining_state",
+        )[0]["state_json"]
+        == '{"last_feedback_count":7}'
+    )
     message_before = dict(_fetchall(database, "select * from email_messages")[0])
     assert message_before["sender"] == "message-snapshot-sender"
     assert _fetchall(database, "select * from email_action_plans") == []
@@ -3000,13 +3034,15 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-        ] == [2, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [2, email_store_module.EMAIL_SCHEMA_VERSION]
 
     EmailStore(database)
 
     reopened = _fetchall(database, "select * from email_classifications")[0]
     assert dict(reopened) == dict(classification)
-    assert dict(_fetchall(database, "select * from email_messages")[0]) == message_before
+    assert (
+        dict(_fetchall(database, "select * from email_messages")[0]) == message_before
+    )
     assert _fetchall(database, "select * from email_action_plans") == []
     assert _fetchall(database, "select * from email_actions") == []
 
@@ -3077,22 +3113,36 @@ def test_prototype_plan_migration_backfills_plan_and_direct_actions(tmp_path: Pa
         action_plan_json=classification.action_plan.model_dump_json(),
     )
 
-    EmailStore(database)
+    store = EmailStore(database)
 
     persisted = _fetchall(
         database,
         "select action_plan_json, current_action_plan_id from email_classifications",
     )[0]
     assert persisted["action_plan_json"] == classification.action_plan.model_dump_json()
-    assert persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
+    assert (
+        persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
+    )
     assert len(_fetchall(database, "select * from email_action_plans")) == 1
     actions = _fetchall(
         database,
         "select action_type, status, attempt_count from email_actions",
     )
-    assert [(row["action_type"], row["status"], row["attempt_count"]) for row in actions] == [
-        ("label", "pending", 0)
-    ]
+    assert [
+        (row["action_type"], row["status"], row["attempt_count"]) for row in actions
+    ] == [("label", "pending", 0)]
+    projected = store.get_classification(classification.classification_id)
+    assert projected is not None
+    assert projected["action_plan"]["action_plan_id"] == (
+        classification.action_plan.action_plan_id
+    )
+    assert (
+        projected["action_plan"]["authorization_snapshot_format"]
+        == "legacy_unavailable_v1"
+    )
+    assert projected["action_plan"]["action_authorizations"] == []
+    [stored_plan] = _fetchall(database, "select * from email_action_plans")
+    assert stored_plan["authorization_snapshot_json"] is None
 
 
 def test_migration_failure_rolls_back_and_can_recover(tmp_path: Path):
@@ -3254,9 +3304,7 @@ def test_startup_accepts_canonical_and_empty_locator_metadata_equivalence(
     canonical = _classification(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         message_id="canonical-rfc",
-        stable_message_identity=(
-            "dingtalk-account:message-id:<Canonical@example.com>"
-        ),
+        stable_message_identity=("dingtalk-account:message-id:<Canonical@example.com>"),
         rfc_message_id="<Canonical@EXAMPLE.COM>",
         thread_id="  thread-canonical  ",
     )
@@ -3434,7 +3482,9 @@ def test_startup_rejects_pending_feedback_with_action_plan(tmp_path: Path):
             "update email_classifications set status='pending_feedback', confirmed_category=null"
         )
 
-    with pytest.raises(EmailPersistenceCorruption, match="pending feedback.*ActionPlan"):
+    with pytest.raises(
+        EmailPersistenceCorruption, match="pending feedback.*ActionPlan"
+    ):
         EmailStore(database)
 
 
@@ -3446,9 +3496,7 @@ def test_startup_rejects_pending_feedback_with_user_source(tmp_path: Path):
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_classifications set classification_source='user'"
-        )
+        db.execute("update email_classifications set classification_source='user'")
 
     with pytest.raises(EmailPersistenceCorruption, match="pending feedback.*model"):
         EmailStore(database)
@@ -3462,9 +3510,7 @@ def test_startup_rejects_pending_feedback_with_legacy_marker(tmp_path: Path):
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_classifications set legacy_processed_without_plan=1"
-        )
+        db.execute("update email_classifications set legacy_processed_without_plan=1")
 
     with pytest.raises(EmailPersistenceCorruption, match="pending feedback.*legacy"):
         EmailStore(database)
@@ -3586,7 +3632,9 @@ def test_processed_scan_persists_plan_and_only_direct_action_rows(tmp_path: Path
 
     persisted = _persist_scan(store, classification)
 
-    assert persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
+    assert (
+        persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
+    )
     plans = _fetchall(database, "select * from email_action_plans")
     assert len(plans) == 1
     assert json.loads(plans[0]["actions_json"]) == [
@@ -3663,9 +3711,7 @@ def test_processed_model_rescan_preserves_business_snapshot_plan_and_actions(
         config_version="email-config-changed",
         category=EmailCategory.PERSONAL,
         actions=(EmailAction.MOVE,),
-        action_parameters={
-            EmailAction.MOVE: {"target_folder": "Archive/Personal"}
-        },
+        action_parameters={EmailAction.MOVE: {"target_folder": "Archive/Personal"}},
         classification_id=original.classification_id,
         stable_message_identity=original.stable_message_identity,
         folder="Archive",
@@ -3707,15 +3753,22 @@ def test_processed_model_rescan_preserves_business_snapshot_plan_and_actions(
         "thread_identity": "thread-current",
     }
     for field, value in message_before.items():
-        if field not in {"folder", "uidvalidity", "uid", "thread_identity", "updated_at"}:
+        if field not in {
+            "folder",
+            "uidvalidity",
+            "uid",
+            "thread_identity",
+            "updated_at",
+        }:
             assert message_after[field] == value
     assert rescanned["category"] == classification_before["category"]
     assert rescanned["model_id"] == classification_before["model_id"]
     assert rescanned["confidence"] == classification_before["confidence"]
     assert rescanned["config_version"] == classification_before["config_version"]
-    assert rescanned["current_action_plan_id"] == classification_before[
-        "current_action_plan_id"
-    ]
+    assert (
+        rescanned["current_action_plan_id"]
+        == classification_before["current_action_plan_id"]
+    )
     assert [
         dict(row)
         for row in _fetchall(
@@ -3903,9 +3956,7 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
     ]
     training_before = store.list_training_examples()
     counts_before = {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0][
-            "count"
-        ]
+        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
         for table in (
             "email_messages",
             "email_classifications",
@@ -4005,9 +4056,7 @@ def test_rescan_only_updates_mutable_locator_and_preserves_business_snapshot(
     ] == actions_before
     assert store.list_training_examples() == training_before
     assert {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0][
-            "count"
-        ]
+        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
         for table in counts_before
     } == counts_before
 
@@ -4030,7 +4079,9 @@ def test_classification_id_collision_fails_closed_with_domain_error(tmp_path: Pa
     with pytest.raises(EmailClassificationIdentityCollision, match="12345"):
         _persist_scan(store, second)
 
-    rows = _fetchall(database, "select stable_message_identity from email_classifications")
+    rows = _fetchall(
+        database, "select stable_message_identity from email_classifications"
+    )
     assert [row["stable_message_identity"] for row in rows] == [
         first.stable_message_identity
     ]
@@ -4148,9 +4199,7 @@ def test_same_generation_update_rejects_stale_uidvalidity_expectation_atomically
         expected_cursor_uidvalidity=42,
     )
     counts_before = {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0][
-            "count"
-        ]
+        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
         for table in (
             "email_messages",
             "email_classifications",
@@ -4179,9 +4228,7 @@ def test_same_generation_update_rejects_stale_uidvalidity_expectation_atomically
     assert cursor["uidvalidity"] == 84
     assert cursor["last_seen_uid"] == 2
     assert {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0][
-            "count"
-        ]
+        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
         for table in counts_before
     } == counts_before
     assert not _fetchall(
@@ -4226,9 +4273,7 @@ def test_stale_cursor_generation_commit_rolls_back_all_scan_state(tmp_path: Path
         expected_cursor_uidvalidity=42,
     )
     counts_before = {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0][
-            "count"
-        ]
+        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
         for table in (
             "email_messages",
             "email_classifications",
@@ -4257,9 +4302,7 @@ def test_stale_cursor_generation_commit_rolls_back_all_scan_state(tmp_path: Path
     assert cursor["uidvalidity"] == 84
     assert cursor["last_seen_uid"] == 2
     assert {
-        table: _fetchall(database, f"select count(*) as count from {table}")[0][
-            "count"
-        ]
+        table: _fetchall(database, f"select count(*) as count from {table}")[0]["count"]
         for table in counts_before
     } == counts_before
     assert not _fetchall(
@@ -4311,7 +4354,9 @@ def test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected(
         1,
         2,
     ]
-    current = _fetchall(database, "select * from email_actions where action_id=?", (action_id,))[0]
+    current = _fetchall(
+        database, "select * from email_actions where action_id=?", (action_id,)
+    )[0]
     assert current["status"] == "done"
     assert current["attempt_count"] == 2
 
@@ -4381,9 +4426,7 @@ def test_claim_direct_action_uses_current_immutable_plan_and_stable_locator(
     )
     assert application is not None
 
-    claimed = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:01:00+00:00"
-    )
+    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:01:00+00:00")
 
     assert claimed is not None
     assert claimed.action_plan_id == application.resulting_action_plan_id
@@ -4447,9 +4490,7 @@ def test_historical_processing_blocks_current_plan_until_closed(
         message_id=f"historical-processing-{resolution}",
     )
     _persist_scan(store, original)
-    historical = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:00:00+00:00"
-    )
+    historical = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert historical is not None
     application = _correct_to_move_plan(
         store,
@@ -4457,9 +4498,9 @@ def test_historical_processing_blocks_current_plan_until_closed(
         request_id=f"feedback-historical-processing-{resolution}",
     )
 
-    assert store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:02:00+00:00"
-    ) is None
+    assert (
+        store.claim_next_direct_action(claimed_at="2026-08-30T12:02:00+00:00") is None
+    )
 
     if resolution == "complete":
         store.complete_direct_action_attempt(
@@ -4472,14 +4513,15 @@ def test_historical_processing_blocks_current_plan_until_closed(
             finished_at="2026-08-30T12:03:00+00:00",
         )
     else:
-        assert store.recover_stale_processing_actions(
-            stale_before="2026-08-30T12:00:01+00:00",
-            recovered_at="2026-08-30T12:03:00+00:00",
-        ) == 1
+        assert (
+            store.recover_stale_processing_actions(
+                stale_before="2026-08-30T12:00:01+00:00",
+                recovered_at="2026-08-30T12:03:00+00:00",
+            )
+            == 1
+        )
 
-    current = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:04:00+00:00"
-    )
+    current = store.claim_next_direct_action(claimed_at="2026-08-30T12:04:00+00:00")
     assert current is not None
     assert current.action_plan_id == application.resulting_action_plan_id
     assert current.action_type is EmailAction.MOVE
@@ -4517,9 +4559,7 @@ def test_historical_non_processing_action_does_not_block_current_plan(
         request_id=f"feedback-historical-{historical_status}",
     )
 
-    current = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:02:00+00:00"
-    )
+    current = store.claim_next_direct_action(claimed_at="2026-08-30T12:02:00+00:00")
 
     assert current is not None
     assert current.action_plan_id == application.resulting_action_plan_id
@@ -4538,9 +4578,7 @@ def test_historical_processing_blocks_only_its_own_classification(tmp_path: Path
         message_id="available-current-plan",
     )
     _persist_scan(store, blocked)
-    historical = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:00:00+00:00"
-    )
+    historical = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert historical is not None
     _correct_to_move_plan(
         store,
@@ -4566,9 +4604,7 @@ def test_historical_processing_blocks_only_its_own_classification(tmp_path: Path
             (available.classification_id,),
         )
 
-    claimed = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:02:00+00:00"
-    )
+    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:02:00+00:00")
 
     assert claimed is not None
     assert claimed.classification_id == available.classification_id
@@ -4587,9 +4623,7 @@ def test_concurrent_direct_action_claim_has_one_winner(tmp_path: Path):
 
     def claim(store: EmailStore):
         barrier.wait()
-        return store.claim_next_direct_action(
-            claimed_at="2026-08-30T12:00:00+00:00"
-        )
+        return store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(claim, stores))
@@ -4617,9 +4651,7 @@ def test_processing_action_blocks_concurrent_sibling_claims(tmp_path: Path):
             },
         ),
     )
-    first = seed.claim_next_direct_action(
-        claimed_at="2026-08-30T12:00:00+00:00"
-    )
+    first = seed.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert first is not None
     assert first.action_type is EmailAction.LABEL
     stores = (EmailStore(database), EmailStore(database))
@@ -4627,9 +4659,7 @@ def test_processing_action_blocks_concurrent_sibling_claims(tmp_path: Path):
 
     def claim(store: EmailStore):
         barrier.wait()
-        return store.claim_next_direct_action(
-            claimed_at="2026-08-30T12:01:00+00:00"
-        )
+        return store.claim_next_direct_action(claimed_at="2026-08-30T12:01:00+00:00")
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(claim, stores))
@@ -4666,9 +4696,7 @@ def test_processing_action_blocks_only_its_own_classification(tmp_path: Path):
         },
     )
     _persist_scan(store, first_classification)
-    first = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:00:00+00:00"
-    )
+    first = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert first is not None
     assert first.classification_id == first_classification.classification_id
     _persist_scan(store, second_classification)
@@ -4688,9 +4716,7 @@ def test_processing_action_blocks_only_its_own_classification(tmp_path: Path):
             (second_classification.classification_id,),
         )
 
-    claimed = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:01:00+00:00"
-    )
+    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:01:00+00:00")
 
     assert claimed is not None
     assert claimed.classification_id == second_classification.classification_id
@@ -4730,9 +4756,7 @@ def test_failed_higher_priority_actions_retry_before_destination(
 
     claimed_types: list[EmailAction] = []
 
-    label_one = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:00:00+00:00"
-    )
+    label_one = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert label_one is not None
     claimed_types.append(label_one.action_type)
     store.complete_direct_action_attempt(
@@ -4745,9 +4769,7 @@ def test_failed_higher_priority_actions_retry_before_destination(
         finished_at="2026-08-30T12:00:01+00:00",
     )
 
-    label_two = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:01:00+00:00"
-    )
+    label_two = store.claim_next_direct_action(claimed_at="2026-08-30T12:01:00+00:00")
     assert label_two is not None
     claimed_types.append(label_two.action_type)
     store.complete_direct_action_attempt(
@@ -4760,9 +4782,7 @@ def test_failed_higher_priority_actions_retry_before_destination(
         finished_at="2026-08-30T12:01:01+00:00",
     )
 
-    read_one = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:02:00+00:00"
-    )
+    read_one = store.claim_next_direct_action(claimed_at="2026-08-30T12:02:00+00:00")
     assert read_one is not None
     claimed_types.append(read_one.action_type)
     store.complete_direct_action_attempt(
@@ -4775,9 +4795,7 @@ def test_failed_higher_priority_actions_retry_before_destination(
         finished_at="2026-08-30T12:02:01+00:00",
     )
 
-    read_two = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:03:00+00:00"
-    )
+    read_two = store.claim_next_direct_action(claimed_at="2026-08-30T12:03:00+00:00")
     assert read_two is not None
     claimed_types.append(read_two.action_type)
     store.complete_direct_action_attempt(
@@ -4860,9 +4878,7 @@ def test_complete_direct_action_appends_attempt_and_updates_current_atomically(
         store,
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
-    claimed = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:00:00+00:00"
-    )
+    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert claimed is not None
 
     attempt = store.complete_direct_action_attempt(
@@ -4886,9 +4902,9 @@ def test_complete_direct_action_appends_attempt_and_updates_current_atomically(
     assert current["attempt_count"] == 1
     assert current["provider_result_id"] == "revision-1"
     EmailStore(database)
-    assert store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:02:00+00:00"
-    ) is None
+    assert (
+        store.claim_next_direct_action(claimed_at="2026-08-30T12:02:00+00:00") is None
+    )
 
 
 def test_locator_refresh_does_not_invalidate_stable_claim_identity(tmp_path: Path):
@@ -4898,9 +4914,7 @@ def test_locator_refresh_does_not_invalidate_stable_claim_identity(tmp_path: Pat
         store,
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
-    claimed = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:00:00+00:00"
-    )
+    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert claimed is not None
     with sqlite3.connect(database) as db:
         db.execute(
@@ -4935,9 +4949,7 @@ def test_direct_action_completion_rolls_back_attempt_and_current_state_together(
         store,
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
-    claimed = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:00:00+00:00"
-    )
+    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert claimed is not None
     with sqlite3.connect(database) as db:
         db.execute(
@@ -4981,33 +4993,33 @@ def test_stale_processing_recovery_records_failure_and_makes_action_claimable(
         store,
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
-    claimed = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:00:00+00:00"
-    )
+    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert claimed is not None
 
-    assert store.recover_stale_processing_actions(
-        stale_before="2026-08-30T11:59:59+00:00",
-        recovered_at="2026-08-30T12:01:00+00:00",
-    ) == 0
-    assert store.recover_stale_processing_actions(
-        stale_before="2026-08-30T12:00:01+00:00",
-        recovered_at="2026-08-30T12:02:00+00:00",
-    ) == 1
+    assert (
+        store.recover_stale_processing_actions(
+            stale_before="2026-08-30T11:59:59+00:00",
+            recovered_at="2026-08-30T12:01:00+00:00",
+        )
+        == 0
+    )
+    assert (
+        store.recover_stale_processing_actions(
+            stale_before="2026-08-30T12:00:01+00:00",
+            recovered_at="2026-08-30T12:02:00+00:00",
+        )
+        == 1
+    )
 
     attempts = store.list_action_attempts(claimed.action_id)
     assert [(row["attempt_number"], row["status"]) for row in attempts] == [
         (1, "failed")
     ]
     assert attempts[0]["provider_operation"] == "startup_recovery"
-    assert attempts[0]["provider_target"] == (
-        claimed.locator.stable_message_identity
-    )
+    assert attempts[0]["provider_target"] == (claimed.locator.stable_message_identity)
     assert attempts[0]["error"] == "stale_processing_recovered"
     EmailStore(database)
-    retried = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:03:00+00:00"
-    )
+    retried = store.claim_next_direct_action(claimed_at="2026-08-30T12:03:00+00:00")
     assert retried is not None
     assert retried.action_id == claimed.action_id
     assert retried.attempt_number == 2
@@ -5020,17 +5032,13 @@ def test_stale_claim_cannot_complete_after_recovery_and_retry(tmp_path: Path):
         store,
         _classification(status=EmailClassificationStatus.PROCESSED),
     )
-    stale = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:00:00+00:00"
-    )
+    stale = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
     assert stale is not None
     store.recover_stale_processing_actions(
         stale_before="2026-08-30T12:00:01+00:00",
         recovered_at="2026-08-30T12:01:00+00:00",
     )
-    current = store.claim_next_direct_action(
-        claimed_at="2026-08-30T12:02:00+00:00"
-    )
+    current = store.claim_next_direct_action(claimed_at="2026-08-30T12:02:00+00:00")
     assert current is not None
 
     with pytest.raises(EmailActionAttemptConflict, match="claim changed"):
@@ -5115,7 +5123,9 @@ def test_startup_rejects_terminal_action_without_attempt(tmp_path: Path):
             (action_id,),
         )
 
-    with pytest.raises(EmailPersistenceCorruption, match="terminal action.*no.*attempt"):
+    with pytest.raises(
+        EmailPersistenceCorruption, match="terminal action.*no.*attempt"
+    ):
         EmailStore(database)
 
 
@@ -5176,9 +5186,7 @@ def test_corrupt_stored_json_is_reported_as_domain_corruption(tmp_path: Path):
         _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_classifications set probabilities_json='not-json'"
-        )
+        db.execute("update email_classifications set probabilities_json='not-json'")
 
     with pytest.raises(EmailPersistenceCorruption, match="probabilities_json"):
         EmailStore(database)
@@ -5522,11 +5530,14 @@ def test_uncertain_unsubscribe_claim_cannot_be_reacquired_for_blind_write(
         owner=_UNSUBSCRIBE_OWNER_A,
     )
     assert first is not None and first["acquired"] is True
-    assert store.recover_terminated_email_unsubscribe_claims(
-        owner=_UNSUBSCRIBE_OWNER_A,
-        termination_verifier=lambda owner: owner == _UNSUBSCRIBE_OWNER_A,
-        recovered_at="2026-08-30T10:02:00+00:00",
-    ) == 1
+    assert (
+        store.recover_terminated_email_unsubscribe_claims(
+            owner=_UNSUBSCRIBE_OWNER_A,
+            termination_verifier=lambda owner: owner == _UNSUBSCRIBE_OWNER_A,
+            recovered_at="2026-08-30T10:02:00+00:00",
+        )
+        == 1
+    )
 
     replay = store.claim_email_unsubscribe_write(
         **authorization,
@@ -5610,8 +5621,7 @@ def test_startup_rejects_forged_durable_unsubscribe_action_identity(
     with sqlite3.connect(database) as db:
         db.execute("pragma foreign_keys=off")
         db.execute(
-            "update email_unsubscribe_claims "
-            "set action_identity=?, effect_digest=?",
+            "update email_unsubscribe_claims set action_identity=?, effect_digest=?",
             (forged_identity, forged_digest),
         )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
+import json
 import sqlite3
 import threading
 
@@ -136,7 +137,9 @@ class FakeSmtpSentHarness:
             callback()
         if self.crash_before_acceptance:
             self.crash_before_acceptance = False
-            raise KeyboardInterrupt("simulated process crash before provider acceptance")
+            raise KeyboardInterrupt(
+                "simulated process crash before provider acceptance"
+            )
         if self.raise_unclassified_smtp_error:
             self.raise_unclassified_smtp_error = False
             raise RuntimeError("provider adapter failed without an outcome")
@@ -177,7 +180,9 @@ class FakeSmtpSentHarness:
         *,
         message_id: str = "<existing-equivalent@example.com>",
     ) -> None:
-        query = effect.sent_query(outgoing_message_id(effect.action_identity, "stardust.ai"))
+        query = effect.sent_query(
+            outgoing_message_id(effect.action_identity, "stardust.ai")
+        )
         self.sent.setdefault(effect.account_id, []).append(
             SentReply(
                 message_id=message_id,
@@ -263,6 +268,27 @@ def _persist_authorization(
     )
 
 
+def _legacy_auto_reply_task(database: Path, plan, task_input: EmailAgentTaskInput):
+    """Materialize legacy history without exercising the disabled enqueue path."""
+
+    payload = EmailAgentTaskAdapter._safe_action_metadata(
+        action_plan=plan,
+        task_input=task_input,
+        action_type=EmailAction.AUTO_REPLY,
+    )
+    return AutoReplyStore(database).ensure_reply_task(
+        channel="email",
+        conversation_id="legacy-email-thread",
+        conversation_title="Legacy automatic email reply",
+        single_chat=False,
+        trigger_message_id=str(payload["action_identity"]),
+        trigger_create_time=task_input.trigger.create_time,
+        trigger_sender=task_input.trigger.sender,
+        trigger_text="Legacy immutable ActionPlan authorized auto_reply.",
+        trigger_message_json=json.dumps(payload, sort_keys=True),
+    )
+
+
 def _effect(
     *,
     account_id: str = "account-primary",
@@ -331,10 +357,13 @@ def _claim_status(store: EmailStore, action_identity: str) -> str:
 
 
 def test_outgoing_message_id_is_stable_and_uses_first_32_sha256_hex() -> None:
-    assert outgoing_message_id(
-        "email-action:example",
-        "stardust.ai",
-    ) == "<ceo-email-c2ec94cd412b5ef4991dfb77edecf47b@stardust.ai>"
+    assert (
+        outgoing_message_id(
+            "email-action:example",
+            "stardust.ai",
+        )
+        == "<ceo-email-c2ec94cd412b5ef4991dfb77edecf47b@stardust.ai>"
+    )
 
 
 def test_v7_store_migrates_fenced_reply_dispatch_claims_without_changing_rows(
@@ -352,12 +381,16 @@ def test_v7_store_migrates_fenced_reply_dispatch_claims_without_changing_rows(
 
     assert migrated.get_account("account-primary") == account_before
     with sqlite3.connect(database) as db:
-        assert db.execute(
-            "select version from email_schema_migrations order by version desc limit 1"
-        ).fetchone()[0] == email_store_module.EMAIL_SCHEMA_VERSION
-        assert db.execute(
-            "select count(*) from email_reply_dispatch_claims"
-        ).fetchone()[0] == 0
+        assert (
+            db.execute(
+                "select version from email_schema_migrations order by version desc limit 1"
+            ).fetchone()[0]
+            == email_store_module.EMAIL_SCHEMA_VERSION
+        )
+        assert (
+            db.execute("select count(*) from email_reply_dispatch_claims").fetchone()[0]
+            == 0
+        )
 
 
 def test_v8_store_preserves_existing_claim_as_fenced_history(tmp_path: Path) -> None:
@@ -443,7 +476,9 @@ def test_normal_send_preserves_exact_audit_accepted_fields_and_persists_receipt(
     assert "private" not in str(receipt).casefold()
 
 
-def test_correct_account_selects_matching_smtp_and_sent_connectors(tmp_path: Path) -> None:
+def test_correct_account_selects_matching_smtp_and_sent_connectors(
+    tmp_path: Path,
+) -> None:
     store, harness, primary = _delivery_setup(tmp_path)
     secondary_values = {
         **ACCOUNT_VALUES,
@@ -587,9 +622,10 @@ def test_current_plan_switch_after_sent_precheck_prevents_stale_smtp(
     assert result.error_code == "email_reply_authorization_stale"
     assert harness.acceptance_count == 0
     assert harness.smtp_accounts == []
-    assert store.get_classification(effect.classification_id)[
-        "current_action_plan_id"
-    ] == v2.action_plan_id
+    assert (
+        store.get_classification(effect.classification_id)["current_action_plan_id"]
+        == v2.action_plan_id
+    )
 
 
 @pytest.mark.parametrize("mutation", ("disable", "reconfigure", "thread"))
@@ -720,11 +756,14 @@ def test_terminated_owner_recovery_is_fenced_and_allows_plan_correction(
     with pytest.raises(KeyboardInterrupt, match="simulated process crash"):
         EmailReplyDelivery(store, harness, owner=OWNER_A).deliver(effect)
 
-    assert store.recover_terminated_email_reply_dispatch_claims(
-        owner=OWNER_A,
-        termination_verifier=lambda owner: owner == OWNER_A,
-        recovered_at="2026-08-30T09:00:00+00:00",
-    ) == 1
+    assert (
+        store.recover_terminated_email_reply_dispatch_claims(
+            owner=OWNER_A,
+            termination_verifier=lambda owner: owner == OWNER_A,
+            recovered_at="2026-08-30T09:00:00+00:00",
+        )
+        == 1
+    )
     assert _claim_status(store, effect.action_identity) == "uncertain"
     v2 = _plan(version=2)
     store.append_action_plan_version(
@@ -764,11 +803,14 @@ def test_terminated_owner_after_claim_before_provider_call_remains_reconcile_onl
     )
     assert claim is not None and claim["acquired"] is True
 
-    assert store.recover_terminated_email_reply_dispatch_claims(
-        owner=OWNER_A,
-        termination_verifier=lambda owner: owner == OWNER_A,
-        recovered_at="2026-08-30T09:00:00+00:00",
-    ) == 1
+    assert (
+        store.recover_terminated_email_reply_dispatch_claims(
+            owner=OWNER_A,
+            termination_verifier=lambda owner: owner == OWNER_A,
+            recovered_at="2026-08-30T09:00:00+00:00",
+        )
+        == 1
+    )
     replay = EmailReplyDelivery(store, harness, owner=OWNER_B).deliver(effect)
 
     assert replay.status == "failed"
@@ -859,9 +901,10 @@ def test_dispatch_claim_blocks_plan_correction_until_dispatch_is_reconciled(
 
     assert result.status == "done"
     assert harness.acceptance_count == 1
-    assert store.get_classification(effect.classification_id)[
-        "current_action_plan_id"
-    ] == effect.action_plan_id
+    assert (
+        store.get_classification(effect.classification_id)["current_action_plan_id"]
+        == effect.action_plan_id
+    )
 
 
 def test_historical_timeout_acceptance_reconciles_after_plan_switch_and_restart(
@@ -962,9 +1005,10 @@ def test_equivalent_reply_in_sent_is_persisted_without_smtp(tmp_path: Path) -> N
     assert result.status == "done"
     assert result.operation == "sent_equivalent_readback"
     assert harness.acceptance_count == 0
-    assert store.get_email_reply_receipt(effect.action_identity)[
-        "provider_result_id"
-    ] == "sent-existing"
+    assert (
+        store.get_email_reply_receipt(effect.action_identity)["provider_result_id"]
+        == "sent-existing"
+    )
 
 
 @pytest.mark.parametrize("claim_status", ("dispatching", "uncertain"))
@@ -1097,14 +1141,19 @@ def test_concurrent_reconcilers_share_one_receipt_and_finish_same_claim(
     assert [result.status for result in results] == ["done", "done"]
     assert _claim_status(store, effect.action_identity) == "done"
     with sqlite3.connect(store.path) as db:
-        assert db.execute(
-            "select count(*) from email_reply_receipts where action_identity=?",
-            (effect.action_identity,),
-        ).fetchone()[0] == 1
+        assert (
+            db.execute(
+                "select count(*) from email_reply_receipts where action_identity=?",
+                (effect.action_identity,),
+            ).fetchone()[0]
+            == 1
+        )
     assert harness.acceptance_count == 1
 
 
-def test_provider_read_failure_before_smtp_is_retryable_and_redacted(tmp_path: Path) -> None:
+def test_provider_read_failure_before_smtp_is_retryable_and_redacted(
+    tmp_path: Path,
+) -> None:
     store, harness, effect = _delivery_setup(tmp_path)
     harness.fail_sent_reads = {1}
 
@@ -1161,7 +1210,9 @@ def test_provider_identifiers_are_bounded_opaque_and_never_echoed(
     assert store.get_email_reply_receipt(effect.action_identity) is None
 
 
-def test_persisted_receipt_short_circuits_sent_and_smtp_after_restart(tmp_path: Path) -> None:
+def test_persisted_receipt_short_circuits_sent_and_smtp_after_restart(
+    tmp_path: Path,
+) -> None:
     store, harness, effect = _delivery_setup(tmp_path)
     first = EmailReplyDelivery(store, harness).deliver(effect)
     reads_after_first = harness.sent_read_count
@@ -1174,7 +1225,9 @@ def test_persisted_receipt_short_circuits_sent_and_smtp_after_restart(tmp_path: 
     assert harness.acceptance_count == 1
 
 
-def test_persisted_receipt_does_not_confirm_different_accepted_body(tmp_path: Path) -> None:
+def test_persisted_receipt_does_not_confirm_different_accepted_body(
+    tmp_path: Path,
+) -> None:
     store, harness, effect = _delivery_setup(tmp_path)
     first = EmailReplyDelivery(store, harness).deliver(effect)
     changed = replace(effect, body="A different Audit-accepted body.")
@@ -1201,7 +1254,9 @@ def test_stale_action_plan_is_rejected_before_provider_access(tmp_path: Path) ->
     assert harness.acceptance_count == 0
 
 
-def test_forged_action_identity_is_rejected_before_provider_access(tmp_path: Path) -> None:
+def test_forged_action_identity_is_rejected_before_provider_access(
+    tmp_path: Path,
+) -> None:
     store, harness, effect = _delivery_setup(tmp_path)
     forged = replace(effect, action_identity="email-action:forged")
 
@@ -1220,17 +1275,14 @@ def test_task_adapter_preserves_exact_accepted_proposal_fields(tmp_path: Path) -
     plan = _plan()
     task_input = _task_input()
     _persist_authorization(email_store, plan, task_input)
-    route = EmailAgentTaskAdapter(
-        AutoReplyStore(database),
-        email_store,
-    ).ensure_action_plan_tasks(plan, task_input)[0]
+    task = _legacy_auto_reply_task(database, plan, task_input)
     action = ProposedAction.model_validate(
         {
             "description": "Send the reviewed automatic reply",
             "capability": "email",
             "operation": "reply",
             "target": {
-                "action_identity": route.task.trigger_message_id,
+                "action_identity": task.trigger_message_id,
                 "account_id": plan.account_id,
                 "stable_message_identity": task_input.stable_message_identity,
                 "sender": "derek@stardust.ai",
@@ -1246,9 +1298,9 @@ def test_task_adapter_preserves_exact_accepted_proposal_fields(tmp_path: Path) -
         }
     )
 
-    effect = accepted_email_reply_effect(route.task, action)
+    effect = accepted_email_reply_effect(task, action)
 
-    assert effect.action_identity == route.task.trigger_message_id
+    assert effect.action_identity == task.trigger_message_id
     assert effect.sender == action.target["sender"]
     assert effect.recipient == action.target["recipient"]
     assert effect.thread_identity == action.target["thread_identity"]
@@ -1256,24 +1308,23 @@ def test_task_adapter_preserves_exact_accepted_proposal_fields(tmp_path: Path) -
     assert effect.body == action.payload["body"]
 
 
-def test_task_adapter_rejects_reply_target_that_does_not_match_task(tmp_path: Path) -> None:
+def test_task_adapter_rejects_reply_target_that_does_not_match_task(
+    tmp_path: Path,
+) -> None:
     database = tmp_path / "adapter-mismatch.sqlite3"
     email_store = EmailStore(database)
     email_store.create_account(ACCOUNT_VALUES)
     plan = _plan()
     task_input = _task_input()
     _persist_authorization(email_store, plan, task_input)
-    route = EmailAgentTaskAdapter(
-        AutoReplyStore(database),
-        email_store,
-    ).ensure_action_plan_tasks(plan, task_input)[0]
+    task = _legacy_auto_reply_task(database, plan, task_input)
     action = ProposedAction.model_validate(
         {
             "description": "Send reply",
             "capability": "email",
             "operation": "reply",
             "target": {
-                "action_identity": route.task.trigger_message_id,
+                "action_identity": task.trigger_message_id,
                 "account_id": "wrong-account",
                 "stable_message_identity": task_input.stable_message_identity,
                 "sender": "derek@stardust.ai",
@@ -1290,4 +1341,4 @@ def test_task_adapter_rejects_reply_target_that_does_not_match_task(tmp_path: Pa
     )
 
     with pytest.raises(ValueError, match="accepted reply target"):
-        accepted_email_reply_effect(route.task, action)
+        accepted_email_reply_effect(task, action)

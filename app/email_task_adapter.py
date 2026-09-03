@@ -561,7 +561,10 @@ def validate_unsubscribe_entry_operation_semantics(
         dkim_covers_list_unsubscribe_post=one_click_verified,
         evidence_reference=evidence_reference,
     )
-    if source != "header_one_click_https" or not typed_authentication.one_click_verified:
+    if (
+        source != "header_one_click_https"
+        or not typed_authentication.one_click_verified
+    ):
         raise ValueError("one-click unsubscribe is not authenticated")
 
 
@@ -957,7 +960,12 @@ class EmailAgentTaskAdapter:
         action_plan: EmailActionPlan,
         task_input: EmailAgentTaskInput,
     ) -> tuple[EmailAgentTaskRoute, ...]:
-        if not action_plan.agent_actions:
+        task_actions = tuple(
+            action_type
+            for action_type in action_plan.agent_actions
+            if action_type is EmailAction.UNSUBSCRIBE
+        )
+        if not task_actions:
             return ()
         _assert_safe_email_metadata(
             [
@@ -976,7 +984,7 @@ class EmailAgentTaskAdapter:
             task_input.thread_identity,
         )
         prepared: list[tuple[EmailAction, dict[str, object], ReplyTaskSpec]] = []
-        for action_type in action_plan.agent_actions:
+        for action_type in task_actions:
             payload = self._safe_action_metadata(
                 action_plan=action_plan,
                 task_input=task_input,

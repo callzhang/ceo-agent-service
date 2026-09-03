@@ -45,9 +45,7 @@ class EmailActionTaskProducer:
         action_plan: EmailActionPlan,
         message: Mapping[str, object],
     ) -> tuple[EmailAgentTaskRoute, ...]:
-        if EmailAction.AUTO_REPLY in action_plan.agent_actions:
-            raise ValueError("auto_reply is disabled for email task production")
-        if not action_plan.agent_actions:
+        if EmailAction.UNSUBSCRIBE not in action_plan.agent_actions:
             return ()
         task_input = self._task_input(action_plan, message)
         return self.adapter.ensure_action_plan_tasks(action_plan, task_input)
@@ -107,9 +105,9 @@ class EmailActionTaskProducer:
             for row in rows
             if row.get("stable_message_identity") != stable_identity
         )
-        attachment_values = message.get("attachments") or trigger_row.get(
-            "attachment_metadata"
-        ) or ()
+        attachment_values = (
+            message.get("attachments") or trigger_row.get("attachment_metadata") or ()
+        )
         if not isinstance(attachment_values, Sequence) or isinstance(
             attachment_values, str | bytes
         ):
