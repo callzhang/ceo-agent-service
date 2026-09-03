@@ -44,8 +44,13 @@ function ObservabilityDetails({ events }: { events: EmailObservabilityEvent[] })
     {events.map((event, index) => <article className="email-observability-item" key={`${event.kind}-${event.action_id || event.action_identity || index}`}>
       <div className="card-head"><div><h3>{observabilityLabel(event)}</h3><p className="muted">状态：{event.status}；记录时间：{localTime(event.completed_at || event.finished_at || event.created_at || "")}</p></div></div>
       {event.kind === "unsubscribe" ? <>
+        {event.lifecycle_version === "email_unsubscribe_audited_v2" && <p><strong>Consumer → Audit</strong></p>}
         {event.result_text && <p className="email-observability-result">{event.result_text}</p>}
         <dl className="email-observability-meta">
+          {event.lifecycle_version && <><dt>生命周期</dt><dd>{event.lifecycle_version}</dd></>}
+          {event.task_id && <><dt>Task</dt><dd>Task {event.task_id} · {event.task_status || "未提供"}</dd></>}
+          {!!event.consumer_run_ids?.length && <><dt>Consumer run</dt><dd>Consumer run：{event.consumer_run_ids.join("、")}</dd></>}
+          {!!event.audit_run_ids?.length && <><dt>Audit run</dt><dd>Audit run：{event.audit_run_ids.join("、")}</dd></>}
           {event.evidence && <><dt>最终结果页证据</dt><dd>{event.evidence}</dd></>}
           {event.receipt_id && <><dt>Receipt</dt><dd>{event.receipt_id}</dd></>}
           {event.observation_digest && <><dt>观察摘要</dt><dd>{event.observation_digest}</dd></>}
@@ -143,7 +148,7 @@ function ConfigPanel() {
     try {
       const result = await saveEmailConfig(selected, { description, threshold: Number(threshold), actions: selectedActions, enabled, config_version: version });
       setConfigs((previous) => [...previous.filter((config) => config.category !== selected), result.item].sort((a, b) => a.category.localeCompare(b.category)));
-      setMessage("配置已保存：确定性动作由 Email worker 执行；退订由 Consumer-direct 退订 Agent 处理。邮件回复已全局禁用。");
+      setMessage("配置已保存：确定性动作由 Email worker 执行并回读；退订由 Consumer 提案、Audit 审核执行。邮件回复已全局禁用。");
     } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "配置保存失败"); }
   };
 

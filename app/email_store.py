@@ -7239,16 +7239,87 @@ class EmailStore:
             ).fetchall()
             unsubscribe_rows = db.execute(
                 """
-                select action_identity, action_plan_id, action_plan_version,
-                       entry_reference, outcome, receipt_id, evidence,
-                       result_text, observation_digest, started_at, completed_at,
-                       created_at
+                select action_identity, receipt_id, evidence, result_text,
+                       observation_digest, created_at
                 from email_unsubscribe_receipts
                 where classification_id=?
                 order by created_at, action_identity
                 """,
                 (classification_id,),
             ).fetchall()
+            generic_tables = {
+                str(row["name"])
+                for row in db.execute(
+                    """
+                    select name from sqlite_master
+                    where type='table' and name in ('reply_tasks', 'agent_runs')
+                    """
+                ).fetchall()
+            }
+            task_rows: list[sqlite3.Row] = []
+            run_rows: list[sqlite3.Row] = []
+            if unsubscribe_rows and generic_tables == {"reply_tasks", "agent_runs"}:
+                task_rows = db.execute(
+                    """
+                    select tasks.id, tasks.trigger_message_id, tasks.status,
+                           'email_unsubscribe_audited_v2' as lifecycle_version
+                    from reply_tasks as tasks
+                    join email_unsubscribe_receipts as receipts
+                      on receipts.action_identity=tasks.trigger_message_id
+                    where receipts.classification_id=?
+                      and tasks.channel='email'
+                      and case
+                              when json_valid(tasks.trigger_message_json)
+                              then json_extract(
+                                  tasks.trigger_message_json,
+                                  '$.action_type'
+                              )
+                              else null
+                          end='unsubscribe'
+                      and case
+                              when json_valid(tasks.trigger_message_json)
+                              then json_extract(
+                                  tasks.trigger_message_json,
+                                  '$.lifecycle_version'
+                              )
+                              else null
+                          end='email_unsubscribe_audited_v2'
+                    order by tasks.trigger_message_id, tasks.id
+                    """,
+                    (classification_id,),
+                ).fetchall()
+                if task_rows:
+                    run_rows = db.execute(
+                        """
+                        select runs.reply_task_id, runs.id, runs.role
+                        from agent_runs as runs
+                        join reply_tasks as tasks
+                          on tasks.id=runs.reply_task_id
+                        join email_unsubscribe_receipts as receipts
+                          on receipts.action_identity=tasks.trigger_message_id
+                        where receipts.classification_id=?
+                          and tasks.channel='email'
+                          and runs.role in ('consumer', 'audit')
+                          and case
+                                  when json_valid(tasks.trigger_message_json)
+                                  then json_extract(
+                                      tasks.trigger_message_json,
+                                      '$.action_type'
+                                  )
+                                  else null
+                              end='unsubscribe'
+                          and case
+                                  when json_valid(tasks.trigger_message_json)
+                                  then json_extract(
+                                      tasks.trigger_message_json,
+                                      '$.lifecycle_version'
+                                  )
+                                  else null
+                              end='email_unsubscribe_audited_v2'
+                        order by runs.reply_task_id, runs.id
+                        """,
+                        (classification_id,),
+                    ).fetchall()
             unsubscribe_steps = db.execute(
                 """
                 select steps.action_identity, steps.sequence, steps.operation,
@@ -7316,27 +7387,59 @@ class EmailStore:
                     "reference": row["reference"],
                 }
             )
-        for row in unsubscribe_rows:
-            events.append(
-                {
-                    "kind": "unsubscribe",
-                    "operation": "unsubscribe",
-                    "action_identity": row["action_identity"],
-                    "action_plan_id": row["action_plan_id"],
-                    "action_plan_version": row["action_plan_version"],
-                    "entry_reference": row["entry_reference"],
-                    "status": row["outcome"],
-                    "receipt_id": row["receipt_id"],
-                    "evidence": row["evidence"],
-                    "result_text": row["result_text"],
-                    "observation_digest": row["observation_digest"],
-                    "started_at": row["started_at"],
-                    "completed_at": row["completed_at"],
-                    "created_at": row["created_at"],
-                    "steps": steps_by_action.get(row["action_identity"], []),
-                }
+        tasks_by_action: dict[str, list[sqlite3.Row]] = {}
+        for row in task_rows:
+            tasks_by_action.setdefault(str(row["trigger_message_id"]), []).append(row)
+        runs_by_task: dict[int, dict[str, list[int]]] = {}
+        for row in run_rows:
+            role = str(row["role"])
+            task_runs = runs_by_task.setdefault(
+                int(row["reply_task_id"]),
+                {"consumer": [], "audit": []},
             )
-        events.sort(key=lambda item: (str(item["created_at"]), str(item["kind"])))
+            task_runs[role].append(int(row["id"]))
+        for row in unsubscribe_rows:
+            action_identity = str(row["action_identity"])
+            matching_tasks = tasks_by_action.get(action_identity, [])
+            task = matching_tasks[0] if len(matching_tasks) == 1 else None
+            task_runs = (
+                runs_by_task.get(
+                    int(task["id"]),
+                    {"consumer": [], "audit": []},
+                )
+                if task is not None
+                else {"consumer": [], "audit": []}
+            )
+            event = {
+                "kind": "unsubscribe",
+                "operation": "unsubscribe",
+                "consumer_run_ids": task_runs["consumer"],
+                "audit_run_ids": task_runs["audit"],
+                "status": "done",
+                "receipt_id": row["receipt_id"],
+                "result_text": row["result_text"],
+                "evidence": row["evidence"],
+                "observation_digest": row["observation_digest"],
+                "steps": steps_by_action.get(action_identity, []),
+                "_sort_created_at": row["created_at"],
+            }
+            if task is not None:
+                event.update(
+                    {
+                        "lifecycle_version": task["lifecycle_version"],
+                        "task_id": int(task["id"]),
+                        "task_status": task["status"],
+                    }
+                )
+            events.append(event)
+        events.sort(
+            key=lambda item: (
+                str(item.get("created_at") or item.get("_sort_created_at") or ""),
+                str(item["kind"]),
+            )
+        )
+        for event in events:
+            event.pop("_sort_created_at", None)
         return events
 
     def list_training_examples(

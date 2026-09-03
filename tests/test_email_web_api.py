@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+import json
 from pathlib import Path
 import gc
 import sqlite3
@@ -9,9 +11,21 @@ import pytest
 
 import app.email_store as email_store_module
 from app.audit_web import create_audit_app
+from app.email_classifier_contracts import (
+    EmailAction,
+    EmailCategory,
+    EmailClassification,
+    EmailClassificationStatus,
+    build_versioned_email_action_plan,
+)
 from app.email_model_registry import EmailModelRegistry
-from app.email_store import EmailStore
-from app.store import AutoReplyStore
+from app.email_store import (
+    EmailStore,
+    email_action_identity,
+    email_unsubscribe_effect_digest,
+)
+from app.email_task_adapter import email_conversation_id
+from app.store import AgentRole, AutoReplyStore
 from app.web_api.email import register_email_routes
 
 
@@ -229,6 +243,287 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
     missing = TestClient(app).get("/api/console/email/classifications/42")
     assert missing.status_code == 404
     assert missing.json()["code"] == "not_found"
+
+
+def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "audited-email-detail.sqlite3"
+    email_store = EmailStore(database)
+    task_store = AutoReplyStore(database)
+    account_id = "account-observability"
+    stable_message_identity = (
+        "account-observability:message-id:<newsletter-41@example.com>"
+    )
+    thread_identity = "thread-observability-41"
+    classification_id = 41
+    plan = build_versioned_email_action_plan(
+        action_plan_version=1,
+        classification_id=classification_id,
+        account_id=account_id,
+        category=EmailCategory.SUBSCRIPTION,
+        classification_source="user",
+        confidence=1.0,
+        model_id="email-model:observability-v1",
+        config_version="email-config:observability-v1",
+        actions=(EmailAction.UNSUBSCRIBE,),
+        action_parameters={},
+        created_at=datetime(2026, 9, 2, 8, 0, tzinfo=timezone.utc),
+    )
+    email_store.create_account(
+        {
+            "account_id": account_id,
+            "display_name": "Observability",
+            "email_address": "derek@example.com",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_tls": True,
+            "imap_username": "derek@example.com",
+            "imap_secret_reference": "keychain://imap-observability",
+            "smtp_host": "",
+            "smtp_port": 465,
+            "smtp_tls": True,
+            "smtp_username": "",
+            "smtp_secret_reference": "",
+            "enabled": True,
+            "scan_folders": ["INBOX"],
+            "scan_interval_seconds": 60,
+        }
+    )
+    email_store.upsert_classification(
+        EmailClassification.model_validate(
+            {
+                "classification_id": classification_id,
+                "stable_message_identity": stable_message_identity,
+                "provider_locator": {
+                    "account_id": account_id,
+                    "folder": "INBOX",
+                    "uidvalidity": 42,
+                    "uid": 41,
+                    "rfc_message_id": "<newsletter-41@example.com>",
+                    "thread_id": thread_identity,
+                },
+                "category": EmailCategory.SUBSCRIPTION,
+                "confidence": 1.0,
+                "margin": 1.0,
+                "probabilities": {"subscription": 1.0},
+                "model_id": plan.model_id,
+                "config_version": plan.config_version,
+                "status": EmailClassificationStatus.PROCESSED,
+                "classification_source": "user",
+                "action_plan": plan,
+            }
+        ),
+        sender="newsletter@example.com",
+        subject="Newsletter",
+        preview="Weekly update",
+        model_text="__subject__newsletter",
+        received_at="2026-09-02T08:00:00+00:00",
+    )
+    action_identity = email_action_identity(
+        account_id=account_id,
+        stable_message_identity=stable_message_identity,
+        action_type=EmailAction.UNSUBSCRIBE,
+        action_plan_version=plan.action_plan_version,
+    )
+    private_markers = {
+        "private_url": "https://news.example.com/unsubscribe?token=secret-query",
+        "provider_locator": {"folder": "INBOX", "uid": 41},
+        "browser_profile_path": "/private/email-browser-profile",
+        "cookie": "session=secret-cookie",
+        "credential": "secret-credential",
+        "query_token": "secret-query",
+        "raw_tool_transcript": "private transcript",
+    }
+    task = task_store.ensure_reply_task(
+        channel="email",
+        conversation_id=email_conversation_id(account_id, thread_identity),
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id=action_identity,
+        trigger_create_time="2026-09-02T08:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "lifecycle_version": "email_unsubscribe_audited_v2",
+                "action_type": "unsubscribe",
+                "action_identity": action_identity,
+                **private_markers,
+            },
+            sort_keys=True,
+        ),
+        execution_generation="generation-observability-1",
+    )
+    task = task_store.claim_reply_task(task.id)
+    assert task is not None
+    consumer = task_store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer-observability-owner",
+    ).run
+    consumer = task_store.complete_agent_run(
+        consumer.id,
+        {"outcome": "proposal"},
+        owner="consumer-observability-owner",
+    )
+    audit = task_store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-observability-1",
+        owner="audit-observability-owner",
+    ).run
+    operations = (
+        {
+            "operation_reference": "step-observability-1",
+            "kind": "open_entry",
+            "target_reference": "unsubscribe-entry:observability-1",
+        },
+    )
+    binding = {
+        "action_identity": action_identity,
+        "action_plan_id": plan.action_plan_id,
+        "action_plan_version": plan.action_plan_version,
+        "classification_id": classification_id,
+        "account_id": account_id,
+        "stable_message_identity": stable_message_identity,
+        "thread_identity": thread_identity,
+        "entry_reference": "unsubscribe-entry:observability-1",
+        "operations": operations,
+        "network_policy_reference": "network-policy:observability-1",
+        "network_policy_origin_references": ("network-origin:observability-1",),
+    }
+    effect_digest = email_unsubscribe_effect_digest(**binding)
+    claim_owner = {
+        "owner_id": "email-audit-worker",
+        "generation": 1,
+        "lease_token": "unsubscribe-observability-lease",
+    }
+    claim = email_store.claim_email_unsubscribe_write(
+        **binding,
+        effect_digest=effect_digest,
+        owner=claim_owner,
+        task_id=task.id,
+        task_execution_generation=task.execution_generation,
+        task_lifecycle_version="email_unsubscribe_audited_v2",
+        task_action_type="unsubscribe",
+        audit_agent_run_id=audit.id,
+    )
+    assert claim is not None and claim["acquired"] is True
+    receipt = email_store.persist_email_unsubscribe_terminal(
+        **binding,
+        effect_digest=effect_digest,
+        outcome="done",
+        receipt_id="provider-receipt:observability-41",
+        evidence="terminal-page:unsubscribed",
+        result_text="You have been unsubscribed",
+        started_at="2026-09-02T08:00:01+00:00",
+        completed_at="2026-09-02T08:00:02+00:00",
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "done",
+            "reference": "provider-receipt:observability-41",
+        },
+        claim_owner=claim_owner,
+    )
+    audit = task_store.complete_agent_run(
+        audit.id,
+        {"outcome": "executed"},
+        owner="audit-observability-owner",
+    )
+    task_store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    # A task from another channel may share the same trigger identity; it must
+    # never contribute run lineage to the Email unsubscribe projection.
+    unrelated_task = task_store.ensure_reply_task(
+        channel="dingtalk",
+        conversation_id=email_conversation_id(account_id, thread_identity),
+        conversation_title="Unrelated task",
+        single_chat=False,
+        trigger_message_id=action_identity,
+        trigger_create_time="2026-09-02T08:00:03+00:00",
+        trigger_sender="someone@example.com",
+        trigger_text="Unrelated",
+        trigger_message_json="{}",
+        execution_generation="generation-unrelated-1",
+    )
+    unrelated_task = task_store.claim_reply_task(unrelated_task.id)
+    assert unrelated_task is not None
+    unrelated_run = task_store.claim_agent_run(
+        unrelated_task.id,
+        unrelated_task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="unrelated-owner",
+    ).run
+
+    app = FastAPI()
+    register_email_routes(app, lambda: email_store)
+    response = TestClient(app).get(
+        f"/api/console/email/classifications/{classification_id}"
+    )
+
+    assert response.status_code == 200
+    event = response.json()["observability"][0]
+    assert event == {
+        "kind": "unsubscribe",
+        "operation": "unsubscribe",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "task_id": task.id,
+        "task_status": "done",
+        "consumer_run_ids": [consumer.id],
+        "audit_run_ids": [audit.id],
+        "status": "done",
+        "receipt_id": "provider-receipt:observability-41",
+        "result_text": "You have been unsubscribed",
+        "evidence": "terminal-page:unsubscribed",
+        "observation_digest": receipt["observation_digest"],
+        "steps": [
+            {
+                "sequence": 1,
+                "operation": "open_entry",
+                "state": "done",
+                "reference": "provider-receipt:observability-41",
+            }
+        ],
+    }
+    serialized = json.dumps(event, sort_keys=True)
+    assert unrelated_run.id not in event["consumer_run_ids"]
+    assert all(marker not in serialized for marker in private_markers)
+    assert all(str(value) not in serialized for value in private_markers.values())
+
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update reply_tasks set channel='legacy-email' where id=?",
+            (task.id,),
+        )
+    legacy_event = TestClient(app).get(
+        f"/api/console/email/classifications/{classification_id}"
+    ).json()["observability"][0]
+
+    assert legacy_event["consumer_run_ids"] == []
+    assert legacy_event["audit_run_ids"] == []
+    assert "task_id" not in legacy_event
+    assert "task_status" not in legacy_event
+    assert "lifecycle_version" not in legacy_event
+    assert unrelated_run.id not in legacy_event["consumer_run_ids"]
 
 
 def test_future_email_schema_isolated_from_non_email_routes(tmp_path: Path):

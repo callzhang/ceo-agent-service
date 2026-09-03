@@ -45,7 +45,7 @@ describe("EmailPage", () => {
     getEmailClassification.mockResolvedValue({
       ok: true,
       item: { id: 2, subject: "订阅邮件", sender: "news@example.com", preview: "每周资讯", category: "subscription", confidence: 0.99, margin: 0.2, classification_source: "model", received_at: "2026-08-29T00:00:00Z", updated_at: "2026-08-29T00:00:00Z" },
-      observability: [{ kind: "unsubscribe", operation: "unsubscribe", status: "done", receipt_id: "receipt-2", result_text: "退订成功\n[REDACTED_URL]", evidence: "最终结果页：已成功退订", observation_digest: "digest-2", created_at: "2026-08-29T00:00:00Z", steps: [{ sequence: 1, operation: "open_entry", state: "done", reference: "receipt-2" }] }],
+      observability: [{ kind: "unsubscribe", operation: "unsubscribe", lifecycle_version: "email_unsubscribe_audited_v2", task_id: 42, task_status: "done", consumer_run_ids: [101], audit_run_ids: [102], status: "done", receipt_id: "receipt-2", result_text: "退订成功\n[REDACTED_URL]", evidence: "最终结果页：已成功退订", observation_digest: "digest-2", steps: [{ sequence: 1, operation: "open_entry", state: "done", reference: "receipt-2" }] }],
       meta: { snapshot_at: "2026-08-29T00:00:00Z" },
     });
   });
@@ -82,7 +82,7 @@ describe("EmailPage", () => {
 
     await user.click(await screen.findByRole("button", { name: "保存本地配置" }));
 
-    expect(await screen.findByText("配置已保存：确定性动作由 Email worker 执行；退订由 Consumer-direct 退订 Agent 处理。邮件回复已全局禁用。"))
+    expect(await screen.findByText("配置已保存：确定性动作由 Email worker 执行并回读；退订由 Consumer 提案、Audit 审核执行。邮件回复已全局禁用。"))
       .toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "auto_reply" })).not.toBeInTheDocument();
   });
@@ -109,6 +109,16 @@ describe("EmailPage", () => {
     expect(getEmailClassification).toHaveBeenCalledWith(2);
     expect(await screen.findByText(/退订成功/)).toBeInTheDocument();
     expect(screen.getByText("自动退订")).toBeInTheDocument();
+    expect(screen.getByText("Consumer → Audit")).toBeInTheDocument();
+    expect(screen.getByText("email_unsubscribe_audited_v2")).toBeInTheDocument();
+    expect(screen.getByText(/Task 42.*done/)).toBeInTheDocument();
+    expect(screen.getByText(/Consumer run.*101/)).toBeInTheDocument();
+    expect(screen.getByText(/Audit run.*102/)).toBeInTheDocument();
+    expect(screen.getAllByText(/receipt-2/)).toHaveLength(2);
+    expect(screen.getByText(/digest-2/)).toBeInTheDocument();
+    expect(screen.getByText(/open_entry.*done.*receipt-2/)).toBeInTheDocument();
     expect(screen.getByText(/最终结果页：已成功退订/)).toBeInTheDocument();
+    expect(screen.queryByText(new RegExp(["Consumer", "direct"].join("-"))))
+      .not.toBeInTheDocument();
   });
 });

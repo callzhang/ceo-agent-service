@@ -178,6 +178,11 @@ export interface EmailObservabilityEvent {
   action_identity?: string;
   action_plan_id?: string;
   action_plan_version?: number;
+  lifecycle_version?: string;
+  task_id?: number;
+  task_status?: string;
+  consumer_run_ids?: number[];
+  audit_run_ids?: number[];
   status: string;
   attempt_count?: number;
   provider_operation?: string;
