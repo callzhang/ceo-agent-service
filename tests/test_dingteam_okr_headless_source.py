@@ -92,3 +92,5 @@ def test_headless_browser_uses_process_lock():
 
     assert "_headless_browser_lock" in source
     assert "fcntl.LOCK_EX" in source
+    assert "fcntl.LOCK_NB" in source
+    assert "HEADLESS_LOCK_TIMEOUT_SECONDS" in source

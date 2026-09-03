@@ -20,6 +20,7 @@ from playwright.sync_api import sync_playwright
 
 SCRIPT_DIR = Path("/Users/derek/.agents/skills/dingtang-okr-review/scripts")
 HEADLESS_REFRESH_SECONDS = 40
+HEADLESS_LOCK_TIMEOUT_SECONDS = 10
 _browser_spec = importlib.util.spec_from_file_location(
     "dingteam_okr_browser_source", SCRIPT_DIR / "dingteam_okr_browser_source.py"
 )
@@ -99,7 +100,15 @@ def _headless_cdp_browser(playwright):
 def _headless_browser_lock():
     """Serialize Chrome startup across the service's OKR workers."""
     with open("/private/tmp/ceo-okr-headless.lock", "a", encoding="utf-8") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        deadline = time.monotonic() + HEADLESS_LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("okr_headless_browser_lock_timeout")
+                time.sleep(0.2)
         try:
             yield
         finally:
