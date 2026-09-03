@@ -47,6 +47,7 @@ def _classification(
     category: EmailCategory = EmailCategory.WORK,
     actions: tuple[EmailAction, ...] = (EmailAction.LABEL,),
     action_parameters: dict[EmailAction, dict[str, object]] | None = None,
+    action_authorizations: tuple[dict[str, object], ...] | None = None,
     classification_id: int | None = None,
     stable_message_identity: str | None = None,
     folder: str = "INBOX",
@@ -87,6 +88,7 @@ def _classification(
             actions=actions,
             action_parameters=action_parameters,
             created_at=created_at,
+            action_authorizations=action_authorizations,
         )
     return EmailClassification.model_validate(
         {
@@ -3070,6 +3072,14 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
         db.execute(
             "alter table email_action_plans drop column authorization_snapshot_json"
         )
+        columns = {
+            row[1] for row in db.execute("pragma table_info(email_action_plans)")
+        }
+        if "legacy_serialization_pre_v16" in columns:
+            db.execute(
+                "alter table email_action_plans "
+                "drop column legacy_serialization_pre_v16"
+            )
         db.execute("update email_schema_migrations set version=15")
 
     reopened = EmailStore(database)
@@ -3083,6 +3093,7 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
     [stored_plan] = _fetchall(database, "select * from email_action_plans")
     assert stored_plan["action_plan_id"] == historical_plan_id
     assert stored_plan["authorization_snapshot_json"] is None
+    assert stored_plan["legacy_serialization_pre_v16"] == 1
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
     assert projected["action_plan"]["action_plan_id"] == historical_plan_id
@@ -3113,6 +3124,118 @@ def test_new_v16_action_plan_rejects_legacy_canonical_json_without_provenance(
             "action_plan_json"
         ]
         == stripped_json
+    )
+
+
+def test_upgraded_database_does_not_extend_legacy_permission_to_new_v16_plan(
+    tmp_path: Path,
+):
+    database = tmp_path / "v15-and-v16-action-plans.sqlite3"
+    store = EmailStore(database)
+    legacy = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="legacy-before-v16",
+    )
+    _persist_scan(store, legacy)
+    assert legacy.action_plan is not None
+    legacy_json = legacy.action_plan.model_dump_json(
+        exclude={"authorization_snapshot_format", "action_authorizations"}
+    )
+    legacy_plan_id = legacy.action_plan.action_plan_id
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_classifications set action_plan_json=? where id=?",
+            (legacy_json, legacy.classification_id),
+        )
+        db.execute(
+            "alter table email_action_plans drop column authorization_snapshot_json"
+        )
+        columns = {
+            row[1] for row in db.execute("pragma table_info(email_action_plans)")
+        }
+        if "legacy_serialization_pre_v16" in columns:
+            db.execute(
+                "alter table email_action_plans "
+                "drop column legacy_serialization_pre_v16"
+            )
+        db.execute("update email_schema_migrations set version=15")
+
+    upgraded = EmailStore(database)
+    persisted_legacy = upgraded.get_classification(legacy.classification_id)
+    assert persisted_legacy is not None
+    assert persisted_legacy["action_plan"]["action_plan_id"] == legacy_plan_id
+    assert (
+        _fetchall(
+            database,
+            "select action_plan_json from email_classifications where id=?",
+            (legacy.classification_id,),
+        )[0]["action_plan_json"]
+        == legacy_json
+    )
+
+    current = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        message_id="current-after-v16",
+        action_authorizations=(
+            {
+                "action_type": EmailAction.LABEL,
+                "parameters": {"labels": [EmailCategory.WORK.value]},
+                "authorization_source": "model_eligibility",
+                "eligibility_evidence_reference": "evidence:model-1:label:v16",
+                "authorized": True,
+                "ineligible_reason": "",
+                "source_model_id": "email/logistic/model-1",
+                "config_version": "email-v1",
+            },
+        ),
+    )
+    _persist_scan(upgraded, current)
+    assert current.action_plan is not None
+    stripped_current_json = current.action_plan.model_dump_json(
+        exclude={"authorization_snapshot_format", "action_authorizations"}
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_classifications set action_plan_json=? where id=?",
+            (stripped_current_json, current.classification_id),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="snapshot mismatch"):
+        EmailStore(database)
+
+    persisted_plans = {
+        row["action_plan_id"]: row
+        for row in _fetchall(database, "select * from email_action_plans")
+    }
+    assert persisted_plans[legacy_plan_id]["legacy_serialization_pre_v16"] == 1
+    assert (
+        persisted_plans[current.action_plan.action_plan_id][
+            "legacy_serialization_pre_v16"
+        ]
+        == 0
+    )
+    assert persisted_plans[legacy_plan_id]["authorization_snapshot_json"] is None
+    assert (
+        persisted_plans[current.action_plan.action_plan_id][
+            "authorization_snapshot_json"
+        ]
+        is not None
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_action_plans set legacy_serialization_pre_v16=1 "
+            "where action_plan_id=?",
+            (current.action_plan.action_plan_id,),
+        )
+    with pytest.raises(EmailPersistenceCorruption, match="snapshot mismatch"):
+        EmailStore(database)
+    assert (
+        _fetchall(
+            database,
+            "select action_plan_json from email_classifications where id=?",
+            (legacy.classification_id,),
+        )[0]["action_plan_json"]
+        == legacy_json
     )
 
 
@@ -3150,6 +3273,51 @@ def test_current_v16_missing_authorization_column_fails_without_schema_repair(
         }
     assert schema_after == schema_before
     assert "authorization_snapshot_json" not in columns
+
+
+def test_current_v16_missing_legacy_provenance_column_fails_without_schema_repair(
+    tmp_path: Path,
+):
+    database = tmp_path / "v16-missing-legacy-provenance-column.sqlite3"
+    EmailStore(database)
+    with sqlite3.connect(database) as db:
+        columns = {
+            row[1] for row in db.execute("pragma table_info(email_action_plans)")
+        }
+        if "legacy_serialization_pre_v16" not in columns:
+            db.execute(
+                "alter table email_action_plans add column "
+                "legacy_serialization_pre_v16 integer not null default 0 "
+                "check(legacy_serialization_pre_v16 in (0, 1))"
+            )
+        db.execute(
+            "alter table email_action_plans drop column legacy_serialization_pre_v16"
+        )
+        schema_before = list(
+            db.execute(
+                "select type, name, sql from sqlite_master "
+                "where name not like 'sqlite_%' order by type, name"
+            )
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="email_action_plans.*legacy_serialization_pre_v16",
+    ):
+        EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        schema_after = list(
+            db.execute(
+                "select type, name, sql from sqlite_master "
+                "where name not like 'sqlite_%' order by type, name"
+            )
+        )
+        columns = {
+            row[1] for row in db.execute("pragma table_info(email_action_plans)")
+        }
+    assert schema_after == schema_before
+    assert "legacy_serialization_pre_v16" not in columns
 
 
 def test_v2_upgrade_does_not_reapply_prototype_classification_backfill(

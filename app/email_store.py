@@ -186,6 +186,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "actions_json": ("text", True, None),
         "action_parameters_json": ("text", True, None),
         "authorization_snapshot_json": ("text", False, None),
+        "legacy_serialization_pre_v16": ("integer", True, "0"),
         "created_at": ("text", True, None),
     },
     "email_actions": {
@@ -363,6 +364,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "json_valid(actions_json)",
         "json_valid(action_parameters_json)",
         "authorization_snapshot_json is null or json_valid(authorization_snapshot_json)",
+        "legacy_serialization_pre_v16 in (0, 1)",
     ),
     "email_actions": (
         "action_type in ('label', 'mark_read', 'archive', 'move', 'trash')",
@@ -1726,6 +1728,7 @@ class EmailStore:
             self._ensure_email_context_columns(db)
             self._ensure_direct_action_retry_column(db)
             self._ensure_action_authorization_snapshot_column(db)
+            self._ensure_legacy_action_plan_provenance_column(db)
             self._ensure_unsubscribe_claim_columns(db)
             self._ensure_unsubscribe_audit_columns(db)
             self._ensure_unsubscribe_receipt_columns(db)
@@ -1745,6 +1748,9 @@ class EmailStore:
                     self._backfill_prototype_rows(db)
                 if latest_version in {0, 2}:
                     self._mark_legacy_processed_without_plan(db)
+                db.execute(
+                    "update email_action_plans set legacy_serialization_pre_v16=1"
+                )
                 db.execute(
                     "insert into email_schema_migrations(version, applied_at) values (?, ?)",
                     (EMAIL_SCHEMA_VERSION, self._now()),
@@ -2117,6 +2123,21 @@ class EmailStore:
         )
 
     @classmethod
+    def _ensure_legacy_action_plan_provenance_column(
+        cls,
+        db: sqlite3.Connection,
+    ) -> None:
+        cls._ensure_column(
+            db,
+            table="email_action_plans",
+            column="legacy_serialization_pre_v16",
+            declaration=(
+                "integer not null default 0 "
+                "check(legacy_serialization_pre_v16 in (0, 1))"
+            ),
+        )
+
+    @classmethod
     def _ensure_unsubscribe_receipt_columns(cls, db: sqlite3.Connection) -> None:
         for column, declaration in (
             ("result_text", "text not null default ''"),
@@ -2318,6 +2339,8 @@ class EmailStore:
                 authorization_snapshot_json text
                     check(authorization_snapshot_json is null
                           or json_valid(authorization_snapshot_json)),
+                legacy_serialization_pre_v16 integer not null default 0
+                    check(legacy_serialization_pre_v16 in (0, 1)),
                 created_at text not null,
                 unique(classification_id, action_plan_version),
                 foreign key(classification_id) references email_classifications(id)
@@ -3059,13 +3082,6 @@ class EmailStore:
             ) from exc
 
     def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
-        legacy_action_plan_serialization_allowed = (
-            db.execute(
-                "select 1 from email_schema_migrations where version < ? limit 1",
-                (EMAIL_SCHEMA_VERSION,),
-            ).fetchone()
-            is not None
-        )
         for row in db.execute(
             "select account_id, scan_folders_json from email_accounts"
         ):
@@ -3127,10 +3143,12 @@ class EmailStore:
             messages[row["stable_message_identity"]] = row
 
         plans: dict[str, EmailActionPlan] = {}
+        plan_rows: dict[str, sqlite3.Row] = {}
         plans_by_classification: dict[int, list[EmailActionPlan]] = {}
         for row in db.execute("select * from email_action_plans"):
             plan = self._stored_action_plan(row)
             plans[plan.action_plan_id] = plan
+            plan_rows[plan.action_plan_id] = row
             plans_by_classification.setdefault(plan.classification_id, []).append(plan)
         for classification_id, stored_plans in plans_by_classification.items():
             ordered = sorted(plan.action_plan_version for plan in stored_plans)
@@ -3320,7 +3338,11 @@ class EmailStore:
             }
             present_authorization_fields = authorization_fields & set(raw_action_plan)
             if not present_authorization_fields:
-                if not legacy_action_plan_serialization_allowed:
+                current_plan_row = plan_rows[current_plan.action_plan_id]
+                if (
+                    current_plan_row["legacy_serialization_pre_v16"] != 1
+                    or current_plan_row["authorization_snapshot_json"] is not None
+                ):
                     raise EmailPersistenceCorruption(
                         f"current ActionPlan snapshot mismatch for classification "
                         f"{row['id']}"
@@ -4251,8 +4273,8 @@ class EmailStore:
                 action_plan_id, action_plan_version, classification_id,
                 account_id, category, classification_source, confidence,
                 model_id, config_version, actions_json, action_parameters_json,
-                authorization_snapshot_json, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                authorization_snapshot_json, legacy_serialization_pre_v16, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 plan.action_plan_id,
@@ -4267,6 +4289,7 @@ class EmailStore:
                 encoded_actions,
                 encoded_parameters,
                 encoded_authorizations,
+                0,
                 plan.created_at.isoformat(),
             ),
         )
