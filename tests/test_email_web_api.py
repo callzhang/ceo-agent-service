@@ -245,9 +245,9 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
     assert missing.json()["code"] == "not_found"
 
 
-def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
+def _audited_email_detail_fixture(
     tmp_path: Path,
-) -> None:
+) -> SimpleNamespace:
     database = tmp_path / "audited-email-detail.sqlite3"
     email_store = EmailStore(database)
     task_store = AutoReplyStore(database)
@@ -335,6 +335,19 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
         "query_token": "secret-query",
         "raw_tool_transcript": "private transcript",
     }
+    task_payload = {
+        "schema": "email_agent_action.v1",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "action_type": "unsubscribe",
+        "action_identity": action_identity,
+        "action_plan_id": plan.action_plan_id,
+        "action_plan_version": plan.action_plan_version,
+        "classification_id": classification_id,
+        "account_id": account_id,
+        "stable_message_identity": stable_message_identity,
+        "thread_identity": thread_identity,
+        **private_markers,
+    }
     task = task_store.ensure_reply_task(
         channel="email",
         conversation_id=email_conversation_id(account_id, thread_identity),
@@ -344,16 +357,7 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
         trigger_create_time="2026-09-02T08:00:00+00:00",
         trigger_sender="newsletter@example.com",
         trigger_text="Immutable ActionPlan authorizes unsubscribe.",
-        trigger_message_json=json.dumps(
-            {
-                "schema": "email_agent_action.v1",
-                "lifecycle_version": "email_unsubscribe_audited_v2",
-                "action_type": "unsubscribe",
-                "action_identity": action_identity,
-                **private_markers,
-            },
-            sort_keys=True,
-        ),
+        trigger_message_json=json.dumps(task_payload, sort_keys=True),
         execution_generation="generation-observability-1",
     )
     task = task_store.claim_reply_task(task.id)
@@ -476,25 +480,63 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
 
     app = FastAPI()
     register_email_routes(app, lambda: email_store)
-    response = TestClient(app).get(
-        f"/api/console/email/classifications/{classification_id}"
+    return SimpleNamespace(
+        database=database,
+        store=email_store,
+        task_store=task_store,
+        client=TestClient(app),
+        classification_id=classification_id,
+        account_id=account_id,
+        stable_message_identity=stable_message_identity,
+        thread_identity=thread_identity,
+        plan=plan,
+        action_identity=action_identity,
+        effect_digest=effect_digest,
+        task_payload=task_payload,
+        task=task,
+        consumer=consumer,
+        audit=audit,
+        receipt=receipt,
+        unrelated_run=unrelated_run,
+        private_markers=private_markers,
     )
 
+
+def _audited_observability_event(fixture: SimpleNamespace) -> dict[str, object]:
+    response = fixture.client.get(
+        f"/api/console/email/classifications/{fixture.classification_id}"
+    )
     assert response.status_code == 200
-    event = response.json()["observability"][0]
+    return response.json()["observability"][0]
+
+
+def _assert_no_audited_lineage(event: dict[str, object]) -> None:
+    assert event["consumer_run_ids"] == []
+    assert event["audit_run_ids"] == []
+    assert "task_id" not in event
+    assert "task_status" not in event
+    assert "lifecycle_version" not in event
+
+
+def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    event = _audited_observability_event(fixture)
+
     assert event == {
         "kind": "unsubscribe",
         "operation": "unsubscribe",
         "lifecycle_version": "email_unsubscribe_audited_v2",
-        "task_id": task.id,
+        "task_id": fixture.task.id,
         "task_status": "done",
-        "consumer_run_ids": [consumer.id],
-        "audit_run_ids": [audit.id],
+        "consumer_run_ids": [fixture.consumer.id],
+        "audit_run_ids": [fixture.audit.id],
         "status": "done",
         "receipt_id": "provider-receipt:observability-41",
         "result_text": "You have been unsubscribed",
         "evidence": "terminal-page:unsubscribed",
-        "observation_digest": receipt["observation_digest"],
+        "observation_digest": fixture.receipt["observation_digest"],
         "steps": [
             {
                 "sequence": 1,
@@ -505,25 +547,129 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
         ],
     }
     serialized = json.dumps(event, sort_keys=True)
-    assert unrelated_run.id not in event["consumer_run_ids"]
-    assert all(marker not in serialized for marker in private_markers)
-    assert all(str(value) not in serialized for value in private_markers.values())
+    assert fixture.unrelated_run.id not in event["consumer_run_ids"]
+    assert all(marker not in serialized for marker in fixture.private_markers)
+    assert all(
+        str(value) not in serialized for value in fixture.private_markers.values()
+    )
 
-    with sqlite3.connect(database) as db:
+    with sqlite3.connect(fixture.database) as db:
         db.execute(
             "update reply_tasks set channel='legacy-email' where id=?",
-            (task.id,),
+            (fixture.task.id,),
         )
-    legacy_event = TestClient(app).get(
-        f"/api/console/email/classifications/{classification_id}"
-    ).json()["observability"][0]
+    legacy_event = _audited_observability_event(fixture)
 
-    assert legacy_event["consumer_run_ids"] == []
-    assert legacy_event["audit_run_ids"] == []
-    assert "task_id" not in legacy_event
-    assert "task_status" not in legacy_event
-    assert "lifecycle_version" not in legacy_event
-    assert unrelated_run.id not in legacy_event["consumer_run_ids"]
+    _assert_no_audited_lineage(legacy_event)
+    assert fixture.unrelated_run.id not in legacy_event["consumer_run_ids"]
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    (
+        "account",
+        "conversation",
+        "plan",
+        "classification",
+        "generation",
+        "effect",
+        "audit_run",
+    ),
+)
+def test_email_detail_omits_lineage_when_exact_audited_chain_conflicts(
+    tmp_path: Path,
+    mismatch: str,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    with sqlite3.connect(fixture.database) as db:
+        if mismatch in {"account", "plan", "classification"}:
+            payload = dict(fixture.task_payload)
+            if mismatch == "account":
+                payload["account_id"] = "wrong-account"
+            elif mismatch == "plan":
+                payload["action_plan_id"] = "email-plan:wrong"
+            else:
+                payload["classification_id"] = fixture.classification_id + 1
+            db.execute(
+                "update reply_tasks set trigger_message_json=? where id=?",
+                (json.dumps(payload, sort_keys=True), fixture.task.id),
+            )
+        elif mismatch == "conversation":
+            db.execute(
+                "update reply_tasks set conversation_id='wrong-conversation' where id=?",
+                (fixture.task.id,),
+            )
+        elif mismatch == "generation":
+            db.execute(
+                "update agent_runs set execution_generation='wrong-generation' "
+                "where id=?",
+                (fixture.audit.id,),
+            )
+        elif mismatch == "effect":
+            db.execute(
+                "update email_unsubscribe_receipts set effect_digest=? "
+                "where action_identity=?",
+                ("f" * 64, fixture.action_identity),
+            )
+        else:
+            db.execute(
+                "update email_unsubscribe_effects set audit_agent_run_id=? "
+                "where action_identity=? and effect_digest=?",
+                (
+                    fixture.consumer.id,
+                    fixture.action_identity,
+                    fixture.effect_digest,
+                ),
+            )
+
+    _assert_no_audited_lineage(_audited_observability_event(fixture))
+
+
+def test_email_detail_preserves_all_valid_continuation_rounds_in_lineage(
+    tmp_path: Path,
+) -> None:
+    fixture = _audited_email_detail_fixture(tmp_path)
+    revised_consumer = fixture.task_store.claim_agent_run(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=fixture.audit.id,
+        operation_id="",
+        owner="consumer-observability-revision-owner",
+    ).run
+    revised_consumer = fixture.task_store.complete_agent_run(
+        revised_consumer.id,
+        {"outcome": "revised-proposal"},
+        owner="consumer-observability-revision-owner",
+    )
+    final_audit = fixture.task_store.claim_agent_run(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=revised_consumer.id,
+        operation_id="audit-observability-2",
+        owner="audit-observability-revision-owner",
+    ).run
+    final_audit = fixture.task_store.complete_agent_run(
+        final_audit.id,
+        {"outcome": "executed"},
+        owner="audit-observability-revision-owner",
+    )
+    with sqlite3.connect(fixture.database) as db:
+        db.execute(
+            "update email_unsubscribe_effects set audit_agent_run_id=? "
+            "where action_identity=? and effect_digest=?",
+            (final_audit.id, fixture.action_identity, fixture.effect_digest),
+        )
+
+    event = _audited_observability_event(fixture)
+
+    assert event["consumer_run_ids"] == [fixture.consumer.id, revised_consumer.id]
+    assert event["audit_run_ids"] == [fixture.audit.id, final_audit.id]
 
 
 def test_future_email_schema_isolated_from_non_email_routes(tmp_path: Path):

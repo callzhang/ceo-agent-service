@@ -34,6 +34,7 @@ from app.email_store import (
     email_unsubscribe_effect_digest,
 )
 from app.email_task_adapter import email_action_identity
+from app.email_unsubscribe import normalize_unsubscribe_result_text
 from app.store import AutoReplyStore
 
 
@@ -669,6 +670,35 @@ def _unsubscribe_authorization(store: EmailStore) -> dict[str, object]:
     }
     authorization["effect_digest"] = email_unsubscribe_effect_digest(**authorization)
     return authorization
+
+
+def _persist_unsubscribe_result_fixture(
+    database: Path,
+    *,
+    result_text: str,
+) -> tuple[EmailStore, dict[str, object], dict[str, object]]:
+    store = EmailStore(database)
+    authorization = _unsubscribe_authorization(store)
+    claim = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    assert claim is not None and claim["acquired"] is True
+    receipt = store.persist_email_unsubscribe_terminal(
+        **authorization,
+        outcome="done",
+        receipt_id="unsubscribe-receipt:result-text",
+        evidence="terminal-page",
+        result_text=result_text,
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "done",
+            "reference": "unsubscribe-receipt:result-text",
+        },
+        claim_owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    return store, authorization, receipt
 
 
 def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) -> None:
@@ -2839,6 +2869,55 @@ def test_current_schema_missing_required_structure_is_domain_corruption(
 
     with pytest.raises(EmailPersistenceCorruption, match=match):
         EmailStore(database)
+
+
+def test_current_schema_requires_unsubscribe_receipt_classification_index(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "missing-unsubscribe-receipt-index.sqlite3"
+    EmailStore(database)
+    index_name = "idx_email_unsubscribe_receipts_classification_action"
+    with sqlite3.connect(database) as db:
+        indexes = {
+            row[1]
+            for row in db.execute("pragma index_list(email_unsubscribe_receipts)")
+        }
+        assert index_name in indexes
+        db.execute(f"drop index {index_name}")
+
+    with pytest.raises(EmailPersistenceCorruption, match=index_name):
+        EmailStore(database)
+    with sqlite3.connect(database) as db:
+        assert index_name not in {
+            row[1]
+            for row in db.execute("pragma index_list(email_unsubscribe_receipts)")
+        }
+
+
+def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "unsubscribe-lineage-query-plan.sqlite3"
+    EmailStore(database)
+    AutoReplyStore(database)
+    with sqlite3.connect(database) as db:
+        details = [
+            str(row[3])
+            for row in db.execute(
+                "explain query plan "
+                + email_store_module._AUDITED_UNSUBSCRIBE_LINEAGE_SQL,
+                ("email-action:test", "a" * 64),
+            )
+        ]
+
+    assert any(
+        "SEARCH effects USING INDEX sqlite_autoindex_email_unsubscribe_effects_1"
+        in detail
+        for detail in details
+    )
+    assert any("SEARCH audit_runs USING INTEGER PRIMARY KEY" in detail for detail in details)
+    assert any("SEARCH tasks USING INTEGER PRIMARY KEY" in detail for detail in details)
+    assert not any("SCAN tasks" in detail for detail in details)
 
 
 def test_current_schema_missing_required_foreign_key_is_domain_corruption(
@@ -5557,6 +5636,149 @@ def test_unsubscribe_schema_migrates_and_durable_journal_receipt_survive_restart
             db.execute("select max(version) from email_schema_migrations").fetchone()[0]
             == email_store_module.EMAIL_SCHEMA_VERSION
         )
+
+
+@pytest.mark.parametrize(
+    "unsafe_result_text",
+    (
+        "Open https://news.example.com/unsubscribe?token=private-query",
+        "Credential password=private-password-value",
+        "Browser profile /Users/derek/private-email-profile",
+    ),
+)
+def test_startup_rejects_noncanonical_or_unsafe_unsubscribe_result_text(
+    tmp_path: Path,
+    unsafe_result_text: str,
+) -> None:
+    database = tmp_path / "unsafe-unsubscribe-result.sqlite3"
+    _, authorization, _ = _persist_unsubscribe_result_fixture(
+        database,
+        result_text="Unsubscribed",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_unsubscribe_receipts "
+            "set result_text=?, observation_digest=? where action_identity=?",
+            (
+                unsafe_result_text,
+                sha256(unsafe_result_text.encode("utf-8")).hexdigest(),
+                authorization["action_identity"],
+            ),
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="unsubscribe receipt result text",
+    ):
+        EmailStore(database)
+
+
+def test_startup_rejects_wrong_untruncated_unsubscribe_observation_digest(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "wrong-unsubscribe-result-digest.sqlite3"
+    _, authorization, _ = _persist_unsubscribe_result_fixture(
+        database,
+        result_text="Unsubscribed",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_unsubscribe_receipts set observation_digest=? "
+            "where action_identity=?",
+            ("f" * 64, authorization["action_identity"]),
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="unsubscribe receipt result text",
+    ):
+        EmailStore(database)
+
+
+@pytest.mark.parametrize(
+    ("result_text", "observation_digest"),
+    (
+        ("", "a" * 64),
+        ("Unsubscribed", ""),
+    ),
+)
+def test_startup_rejects_empty_nonempty_unsubscribe_digest_mismatch(
+    tmp_path: Path,
+    result_text: str,
+    observation_digest: str,
+) -> None:
+    database = tmp_path / "unsubscribe-empty-digest-mismatch.sqlite3"
+    _, authorization, _ = _persist_unsubscribe_result_fixture(
+        database,
+        result_text="Unsubscribed",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_unsubscribe_receipts "
+            "set result_text=?, observation_digest=? where action_identity=?",
+            (
+                result_text,
+                observation_digest,
+                authorization["action_identity"],
+            ),
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="unsubscribe receipt result text",
+    ):
+        EmailStore(database)
+
+
+def test_unsubscribe_result_read_fails_closed_after_durable_row_corruption(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "unsubscribe-result-read-corruption.sqlite3"
+    store, authorization, _ = _persist_unsubscribe_result_fixture(
+        database,
+        result_text="Unsubscribed",
+    )
+    unsafe_result_text = "https://news.example.com/unsubscribe?token=private-query"
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_unsubscribe_receipts "
+            "set result_text=?, observation_digest=? where action_identity=?",
+            (
+                unsafe_result_text,
+                sha256(unsafe_result_text.encode("utf-8")).hexdigest(),
+                authorization["action_identity"],
+            ),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption):
+        store.get_email_unsubscribe_receipt(str(authorization["action_identity"]))
+    with pytest.raises(EmailPersistenceCorruption):
+        store.list_email_classification_observability(
+            int(authorization["classification_id"])
+        )
+
+
+def test_valid_16kib_truncated_unsubscribe_result_preserves_full_digest(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "unsubscribe-result-truncated.sqlite3"
+    full_observation = "A" * (16 * 1024 + 777)
+    _, authorization, receipt = _persist_unsubscribe_result_fixture(
+        database,
+        result_text=full_observation,
+    )
+    expected_text, expected_digest = normalize_unsubscribe_result_text(
+        full_observation
+    )
+
+    assert len(expected_text.encode("utf-8")) == 16 * 1024
+    assert receipt["result_text"] == expected_text
+    assert receipt["observation_digest"] == expected_digest
+    assert expected_digest == sha256(full_observation.encode("utf-8")).hexdigest()
+    reopened = EmailStore(database)
+    assert reopened.get_email_unsubscribe_receipt(
+        str(authorization["action_identity"])
+    )["observation_digest"] == expected_digest
 
 
 def _persist_unsubscribe_continuation_fixture(

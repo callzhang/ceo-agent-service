@@ -41,8 +41,10 @@ function observabilityLabel(event: EmailObservabilityEvent) {
 function ObservabilityDetails({ events }: { events: EmailObservabilityEvent[] }) {
   if (!events.length) return <p className="muted">暂无外部处理记录。</p>;
   return <div className="email-observability-list">
-    {events.map((event, index) => <article className="email-observability-item" key={`${event.kind}-${event.action_id || event.action_identity || index}`}>
-      <div className="card-head"><div><h3>{observabilityLabel(event)}</h3><p className="muted">状态：{event.status}；记录时间：{localTime(event.completed_at || event.finished_at || event.created_at || "")}</p></div></div>
+    {events.map((event, index) => {
+      const recordedAt = event.completed_at || event.finished_at || event.created_at || "";
+      return <article className="email-observability-item" key={`${event.kind}-${event.action_id || event.action_identity || index}`}>
+      <div className="card-head"><div><h3>{observabilityLabel(event)}</h3><p className="muted">状态：{event.status}{recordedAt && <>；记录时间：{localTime(recordedAt)}</>}</p></div></div>
       {event.kind === "unsubscribe" ? <>
         {event.lifecycle_version === "email_unsubscribe_audited_v2" && <p><strong>Consumer → Audit</strong></p>}
         {event.result_text && <p className="email-observability-result">{event.result_text}</p>}
@@ -61,7 +63,7 @@ function ObservabilityDetails({ events }: { events: EmailObservabilityEvent[] })
         {event.provider_result_id && <p className="muted">Provider 结果：{event.provider_result_id}</p>}
         {event.error && <p className="page-state page-state-error">{event.error}</p>}
       </>}
-    </article>)}
+    </article>})}
   </div>;
 }
 

@@ -118,6 +118,7 @@ describe("EmailPage", () => {
     expect(screen.getByText(/digest-2/)).toBeInTheDocument();
     expect(screen.getByText(/open_entry.*done.*receipt-2/)).toBeInTheDocument();
     expect(screen.getByText(/最终结果页：已成功退订/)).toBeInTheDocument();
+    expect(screen.queryByText(/记录时间/)).not.toBeInTheDocument();
     expect(screen.queryByText(new RegExp(["Consumer", "direct"].join("-"))))
       .not.toBeInTheDocument();
   });
