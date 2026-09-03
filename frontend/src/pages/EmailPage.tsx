@@ -12,6 +12,7 @@ import {
   type EmailCategoryConfig,
   type EmailClassificationItem,
   type EmailLearningEvidence,
+  type EmailModelEvidence,
   type EmailObservabilityEvent,
 } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
@@ -31,6 +32,101 @@ function localTime(value: string) {
 }
 
 function percent(value: number) { return `${(value * 100).toFixed(1)}%`; }
+
+function byteSize(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Number((value / 1024).toFixed(1))} KB`;
+  return `${Number((value / (1024 * 1024)).toFixed(1))} MB`;
+}
+
+function namedCounts(values: Record<string, number>) {
+  const entries = Object.entries(values);
+  if (!entries.length) return "无记录";
+  return entries.map(([name, count]) => `${categoryLabels[name] ? `${categoryLabels[name]}（${name}）` : name}：${count}`).join("；");
+}
+
+function actionPlanEvidence(row: EmailClassificationItem) {
+  const plan = row.action_plan;
+  const planId = typeof plan.action_plan_id === "string" ? plan.action_plan_id : row.current_action_plan_id;
+  const planVersion = typeof plan.action_plan_version === "number" ? plan.action_plan_version : null;
+  const planActions = Array.isArray(plan.actions)
+    ? plan.actions.filter((action): action is string => typeof action === "string")
+    : [];
+  return { planId, planVersion, planActions };
+}
+
+function PendingClassificationEvidence({ row }: { row: EmailClassificationItem }) {
+  const alternatives = Object.entries(row.probabilities)
+    .filter((entry): entry is [string, number] => typeof entry[1] === "number")
+    .sort((left, right) => right[1] - left[1]);
+  return <section aria-label={`${row.subject || "无主题"} 分类证据`}>
+    <h3>分类证据</h3>
+    <dl className="detail-definition-list">
+      <div><dt>文本预览</dt><dd>{row.preview || "未提供"}</dd></div>
+      <div><dt>置信度</dt><dd>{percent(row.confidence)}</dd></div>
+      <div><dt>Margin</dt><dd>{percent(row.margin)}</dd></div>
+      <div><dt>完整模型 ID</dt><dd>{row.model_version || "未提供"}</dd></div>
+      <div><dt>配置版本</dt><dd>{row.config_version || "未提供"}</dd></div>
+      <div><dt>模型候选</dt><dd>{alternatives.length ? <ol aria-label="模型候选">{alternatives.map(([category, probability]) => <li key={category}>{categoryLabels[category] || category} {percent(probability)}</li>)}</ol> : "无记录"}</dd></div>
+      <div><dt>附件元数据</dt><dd>{row.attachment_metadata.length ? <ul aria-label="附件元数据">{row.attachment_metadata.map((attachment, index) => <li key={`${attachment.filename}-${index}`}>{attachment.filename || "未命名附件"} · {attachment.mime_type || "未知 MIME"} · {byteSize(attachment.size_bytes)} · {attachment.inline ? "内嵌附件" : "非内嵌附件"}</li>)}</ul> : "无附件"}</dd></div>
+    </dl>
+  </section>;
+}
+
+function ProcessedClassificationEvidence({ row }: { row: EmailClassificationItem }) {
+  const plan = actionPlanEvidence(row);
+  return <section aria-label="分类与 ActionPlan 证据">
+    <h3>分类与 ActionPlan</h3>
+    <dl className="detail-definition-list">
+      <div><dt>完整模型 ID</dt><dd>{row.model_version || "未提供"}</dd></div>
+      <div><dt>配置版本</dt><dd>{row.config_version || "未提供"}</dd></div>
+      <div><dt>ActionPlan ID</dt><dd>{plan.planId || "未提供"}</dd></div>
+      <div><dt>ActionPlan 版本</dt><dd>{plan.planVersion === null ? "未提供" : `版本 ${plan.planVersion}`}</dd></div>
+      <div><dt>授权动作</dt><dd>{plan.planActions.length ? plan.planActions.join("、") : "无固定动作"}</dd></div>
+    </dl>
+  </section>;
+}
+
+function metricValue(name: string, value: unknown) {
+  if (typeof value !== "number") return displayValue(value);
+  return name === "support" ? String(value) : percent(value);
+}
+
+function modelReasonLabel(model: EmailModelEvidence) {
+  if (model.status === "rejected") return "拒绝原因";
+  if (model.status === "failed") return "失败状态原因";
+  return "生命周期原因";
+}
+
+function ModelEvidenceCard({ model }: { model: EmailModelEvidence }) {
+  const categoryMetrics = Object.entries(model.per_category_metrics);
+  const lineage = [
+    ["父模型 ID", model.parent_model_id],
+    ["模型家族", model.model_family],
+    ["分词器版本", model.tokenizer_version],
+    ["特征版本", model.feature_version],
+    ["训练数据版本", model.training_dataset_version],
+  ].filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== "");
+  return <article className="email-observability-item" aria-label={`模型 ${model.model_id}`}>
+    <div className="card-head"><div><h3>{model.model_id}</h3><p className="muted">状态：{model.status}</p></div></div>
+    <dl className="detail-definition-list">
+      <div><dt>模型版本</dt><dd>{model.model_version}</dd></div>
+      <div><dt>训练时间</dt><dd>{localTime(model.training_started_at)} → {localTime(model.training_finished_at || model.trained_at)}</dd></div>
+      <div><dt>训练样本</dt><dd>{model.sample_count}（新增 {model.new_sample_count}）</dd></div>
+      <div><dt>类别/来源覆盖</dt><dd>{namedCounts(model.category_counts)}</dd></div>
+      <div><dt>邮箱账户覆盖</dt><dd>{namedCounts(model.account_counts)}</dd></div>
+      <div><dt>验证方法</dt><dd>{model.validation_method || "未提供"}</dd></div>
+      <div><dt>整体指标</dt><dd>准确率 {percent(model.accuracy)} / Macro F1 {percent(model.macro_f1)}</dd></div>
+      <div><dt>分类指标</dt><dd>{categoryMetrics.length ? <ul>{categoryMetrics.map(([category, metrics]) => <li key={category}><strong>{categoryLabels[category] ? `${categoryLabels[category]}（${category}）` : category}</strong>：{Object.entries(metrics).map(([name, value]) => `${name}：${metricValue(name, value)}`).join("；")}</li>)}</ul> : "无记录"}</dd></div>
+      <div><dt>预测延迟</dt><dd>P50 {model.prediction_latency_p50_ms.toFixed(1)} ms / P95 {model.prediction_latency_p95_ms.toFixed(1)} ms</dd></div>
+      <div><dt>Artifact SHA-256</dt><dd>{model.artifact_sha256 || "未提供"}</dd></div>
+      {lineage.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+      {model.status_reason && <div><dt>{modelReasonLabel(model)}</dt><dd>{model.status_reason}</dd></div>}
+      {model.promotion_reason && <div><dt>晋升原因</dt><dd>{model.promotion_reason}</dd></div>}
+      {model.failure_reason && <div><dt>执行失败原因</dt><dd>{model.failure_reason}</dd></div>}
+    </dl>
+  </article>;
+}
 
 function observabilityLabel(event: EmailObservabilityEvent) {
   if (event.kind === "unsubscribe") return "自动退订";
@@ -84,7 +180,7 @@ function LearningPanel() {
   if (!learning) return <section className="console-card"><div className="page-state" role="status">正在加载学习状态…</div></section>;
   return <section className="console-card"><div className="card-head"><div><h2>分类器学习</h2><p className="muted">仅展示本地模型的可追溯证据；模型不会因为展示而自动获得退订资格。</p></div></div>
     <p>当前模型：<strong>{learning.active_model_id || "尚未晋升模型"}</strong>；待训练样本：{learning.pending_examples}；最近训练反馈数：{learning.last_trained_feedback_count}</p>
-    <div className="responsive-table-wrap"><table className="settings-table" aria-label="邮件模型版本"><thead><tr><th>模型版本</th><th>状态</th><th>训练时间</th><th>样本数</th><th>准确率 / Macro F1</th><th>P95 延迟</th></tr></thead><tbody>{learning.models.map((model) => <tr key={model.model_id}><td>{model.model_version}</td><td>{model.status}</td><td>{localTime(model.training_finished_at || model.trained_at)}</td><td>{model.sample_count}（新增 {model.new_sample_count}）</td><td>{percent(model.accuracy)} / {percent(model.macro_f1)}</td><td>{model.prediction_latency_p95_ms.toFixed(1)} ms</td></tr>)}</tbody></table></div>
+    <div className="email-observability-list" aria-label="邮件模型版本">{learning.models.map((model) => <ModelEvidenceCard key={model.model_id} model={model} />)}</div>
   </section>;
 }
 
@@ -116,7 +212,8 @@ function ClassificationTable({ rows, pending, onConfirm }: { rows: EmailClassifi
         <td>{localTime(row.received_at || row.updated_at)}</td>
         {pending && <td><div className="console-page-actions">{categories.map((category) => <button type="button" className="compact-button" key={category} onClick={() => onConfirm(row, category)}>{categoryLabels[category]}</button>)}</div></td>}
       </tr>
-        {!pending && expandedId === row.id && <tr key={`${row.id}-detail`}><td colSpan={5}><section aria-label="邮件处理详情"><h2>邮件处理详情</h2>{detailLoading && <div className="page-state" role="status">正在加载处理详情…</div>}{detailError && <div className="page-state page-state-error" role="alert">{detailError}</div>}{detail && <ObservabilityDetails events={detail.observability || []} />}</section></td></tr>}
+        {pending && <tr key={`${row.id}-evidence`}><td colSpan={6}><PendingClassificationEvidence row={row} /></td></tr>}
+        {!pending && expandedId === row.id && <tr key={`${row.id}-detail`}><td colSpan={5}><section aria-label="邮件处理详情"><h2>邮件处理详情</h2>{detailLoading && <div className="page-state" role="status">正在加载处理详情…</div>}{detailError && <div className="page-state page-state-error" role="alert">{detailError}</div>}{detail && <><ProcessedClassificationEvidence row={detail} /><ObservabilityDetails events={detail.observability || []} /></>}</section></td></tr>}
       </Fragment>)}</tbody>
     </table>
   </div>;
@@ -154,7 +251,7 @@ function ConfigPanel() {
     } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "配置保存失败"); }
   };
 
-  return <section className="console-card"><div className="card-head"><div><h2>邮件类型配置</h2><p className="muted">类别、描述、置信度阈值和固定动作。这里不直接执行邮箱动作。</p></div></div>
+  return <section className="console-card"><div className="card-head"><div><h2>邮件类型配置</h2><p className="muted">类别、描述、置信度阈值和固定动作。这里不直接执行邮箱动作。</p><p className="muted">label、mark_read、archive、move、trash 由 Email worker 直接执行并回读；unsubscribe 由 Consumer 提案、Audit 审核执行；邮件回复保持全局禁用。</p></div></div>
     <div className="settings-control-group"><span className="settings-control-label">邮件类型</span><div className="settings-pill-row">{categories.map((category) => <button type="button" className={selected === category ? "active" : ""} key={category} onClick={() => setSelected(category)}>{categoryLabels[category]}</button>)}</div></div>
     <label className="settings-field">描述<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="这个类别用于什么邮件" /></label>
     <label className="settings-field">自动处理阈值<input type="number" min="0" max="1" step="0.01" value={threshold} onChange={(event) => setThreshold(event.target.value)} /></label>

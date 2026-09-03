@@ -132,6 +132,12 @@ export interface FeedbackItem {
   processing_history?: FeedbackProcessingRound[];
 }
 export interface FeedbackList extends ConsoleList<FeedbackItem> { pending_count?: number; }
+export interface EmailAttachmentMetadata {
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  inline: boolean;
+}
 export interface EmailClassificationItem {
   id: number;
   provider: string;
@@ -152,6 +158,7 @@ export interface EmailClassificationItem {
   classification_source: "model" | "user";
   action_plan: Record<string, unknown>;
   current_action_plan_id: string | null;
+  attachment_metadata: EmailAttachmentMetadata[];
   confirmed_at: string;
   created_at: string;
   updated_at: string;
@@ -220,19 +227,29 @@ export interface EmailCategoryConfig {
 export interface EmailModelEvidence {
   model_id: string;
   model_version: string;
+  parent_model_id?: string | null;
+  model_family?: string;
+  tokenizer_version?: string;
+  feature_version?: string;
+  training_dataset_version?: string;
   status: string;
+  status_reason: string;
+  promotion_reason: string;
+  failure_reason: string;
   trained_at: string;
   training_started_at: string;
   training_finished_at: string;
   sample_count: number;
   new_sample_count: number;
   category_counts: Record<string, number>;
+  account_counts: Record<string, number>;
   validation_method: string;
   accuracy: number;
   macro_f1: number;
   per_category_metrics: Record<string, Record<string, unknown>>;
   prediction_latency_p50_ms: number;
   prediction_latency_p95_ms: number;
+  artifact_sha256: string;
 }
 export interface EmailLearningEvidence {
   active_model_id: string | null;
@@ -271,6 +288,14 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
   const row = asRecord(value);
   const confirmedCategory = emailText(row.confirmed_category);
   const predictedCategory = emailText(row.predicted_category);
+  const attachmentMetadata = Array.isArray(row.attachment_metadata)
+    ? row.attachment_metadata.map(asRecord).map((attachment) => ({
+      filename: emailText(attachment.filename),
+      mime_type: emailText(attachment.mime_type),
+      size_bytes: Number(attachment.size_bytes || 0),
+      inline: attachment.inline === true,
+    }))
+    : [];
   return {
     id: Number(row.id || 0),
     provider: emailText(row.provider),
@@ -293,6 +318,7 @@ function mapEmailClassification(value: unknown): EmailClassificationItem {
     current_action_plan_id: typeof row.current_action_plan_id === "string" && row.current_action_plan_id.trim() !== ""
       ? row.current_action_plan_id
       : null,
+    attachment_metadata: attachmentMetadata,
     confirmed_at: emailText(row.confirmed_at),
     created_at: emailText(row.created_at),
     updated_at: emailText(row.updated_at),
