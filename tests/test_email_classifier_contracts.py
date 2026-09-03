@@ -7,6 +7,7 @@ from app.email_classifier_contracts import (
     AGENT_ACTIONS,
     DIRECT_ACTIONS,
     EmailAction,
+    EmailActionAuthorization,
     EmailActionPlan,
     EmailAttachmentMetadata,
     EmailCategory,
@@ -135,6 +136,92 @@ def test_action_plan_identity_covers_authorization_evidence():
     )
 
     assert first.action_plan_id != second.action_plan_id
+
+
+def _authorization(
+    parameters: object,
+) -> EmailActionAuthorization:
+    return EmailActionAuthorization.model_validate(
+        {
+            "action_type": EmailAction.LABEL,
+            "parameters": parameters,
+            "authorization_source": "model_eligibility",
+            "eligibility_evidence_reference": "evidence:model-1:label:v1",
+            "authorized": True,
+            "ineligible_reason": "",
+            "source_model_id": "email/logistic/model-1",
+            "config_version": "email-v1",
+        }
+    )
+
+
+def test_authorization_parameters_are_deep_copied_frozen_and_digest_stable():
+    source = {
+        "labels": ["Work"],
+        "evidence": {
+            "ordered": ["first", 2, 3.5, True, None],
+        },
+    }
+    authorization = _authorization(source)
+    original_dump = authorization.model_dump(mode="json")
+    source["labels"].append("mutated")
+    source["evidence"]["ordered"][0] = "mutated"
+
+    with pytest.raises(TypeError):
+        authorization.parameters["labels"] = ("mutated",)
+    with pytest.raises(TypeError):
+        dict.__setitem__(authorization.parameters, "labels", ("bypassed",))
+    with pytest.raises(TypeError):
+        authorization.parameters["evidence"]["ordered"][0] = "mutated"
+
+    assert authorization.model_dump(mode="json") == original_dump
+
+
+def test_builder_revalidates_instantiated_authorization_without_aliasing():
+    authorization = _authorization({"labels": ["Work"]})
+    plan = build_email_action_plan(
+        classification_id=12,
+        account_id="account-1",
+        category=EmailCategory.WORK,
+        classification_source="model",
+        confidence=0.99,
+        model_id="email/logistic/model-1",
+        config_version="email-v1",
+        actions=(EmailAction.LABEL,),
+        action_parameters={EmailAction.LABEL: {"labels": ["Work"]}},
+        action_authorizations=(authorization,),
+        created_at=CREATED_AT,
+    )
+    original_dump = plan.model_dump(mode="json")
+    original_digest = plan.action_plan_id
+
+    assert plan.action_authorizations[0] is not authorization
+    with pytest.raises(TypeError):
+        plan.action_authorizations[0].parameters["labels"] = ("mutated",)
+    with pytest.raises(TypeError):
+        plan.action_parameters[EmailAction.LABEL]["labels"] = ("mutated",)
+    assert plan.model_dump(mode="json") == original_dump
+    assert plan.action_plan_id == original_digest
+
+
+class _MutableParameter:
+    pass
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    (
+        {"values": {"unordered", "set"}},
+        {"value": _MutableParameter()},
+        {1: "non-string-key"},
+        {"value": float("nan")},
+        {"value": float("inf")},
+        {"value": float("-inf")},
+    ),
+)
+def test_authorization_parameters_reject_non_json_domain_values(parameters: object):
+    with pytest.raises(ValidationError, match="JSON"):
+        _authorization(parameters)
 
 
 def test_legacy_action_plan_projects_unavailable_authorization_without_new_evidence():

@@ -6,14 +6,17 @@ from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 import json
+import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping as MappingABC, Sequence
+from types import MappingProxyType
 from typing import Literal, Mapping
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_serializer,
     field_validator,
     model_validator,
 )
@@ -63,28 +66,29 @@ class EmailClassificationStatus(StrEnum):
     PROCESSED = "processed"
 
 
-class _FrozenDict(dict):
-    """A JSON-serializable dictionary that rejects mutation after construction."""
-
-    @staticmethod
-    def _immutable(*args: object, **kwargs: object) -> None:
-        raise TypeError("immutable mapping")
-
-    __setitem__ = _immutable
-    __delitem__ = _immutable
-    __ior__ = _immutable
-    clear = _immutable
-    pop = _immutable
-    popitem = _immutable
-    setdefault = _immutable
-    update = _immutable
-
-
-def _freeze(value: object) -> object:
-    if isinstance(value, dict):
-        return _FrozenDict({key: _freeze(item) for key, item in value.items()})
+def _freeze_json_value(value: object) -> object:
+    if value is None or isinstance(value, str | bool | int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("authorization parameters must contain finite JSON values")
+        return value
+    if isinstance(value, MappingABC):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("authorization parameters require JSON string keys")
+        return MappingProxyType(
+            {key: _freeze_json_value(item) for key, item in value.items()}
+        )
     if isinstance(value, list | tuple):
-        return tuple(_freeze(item) for item in value)
+        return tuple(_freeze_json_value(item) for item in value)
+    raise ValueError("authorization parameters must contain only JSON-domain values")
+
+
+def _serialize_json_value(value: object) -> object:
+    if isinstance(value, MappingABC):
+        return {str(key): _serialize_json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_serialize_json_value(item) for item in value]
     return value
 
 
@@ -170,13 +174,24 @@ class EmailActionAuthorization(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
     action_type: EmailAction
-    parameters: dict[str, object] = Field(default_factory=dict)
+    parameters: Mapping[str, object] = Field(default_factory=dict)
     authorization_source: AuthorizationSource
     eligibility_evidence_reference: str = Field(min_length=1)
     authorized: bool
     ineligible_reason: str
     source_model_id: str = Field(min_length=1)
     config_version: str = Field(min_length=1)
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def validate_json_parameters(cls, value: object) -> object:
+        if not isinstance(value, MappingABC):
+            raise ValueError("authorization parameters must be a JSON object")
+        return _freeze_json_value(value)
+
+    @field_serializer("parameters")
+    def serialize_parameters(self, value: object) -> object:
+        return _serialize_json_value(value)
 
     @field_validator(
         "eligibility_evidence_reference",
@@ -200,7 +215,7 @@ class EmailActionAuthorization(BaseModel):
         if self.action_type is EmailAction.AUTO_REPLY and self.authorized:
             raise ValueError("auto_reply authorization is disabled")
         object.__setattr__(self, "ineligible_reason", reason)
-        object.__setattr__(self, "parameters", _freeze(self.parameters))
+        object.__setattr__(self, "parameters", _freeze_json_value(self.parameters))
         return self
 
 
@@ -274,12 +289,28 @@ class EmailActionPlan(BaseModel):
     model_id: str = Field(min_length=1)
     config_version: str = Field(min_length=1)
     actions: tuple[EmailAction, ...] = ()
-    action_parameters: dict[EmailAction, dict[str, object]] = Field(
+    action_parameters: Mapping[EmailAction, Mapping[str, object]] = Field(
         default_factory=dict
     )
     authorization_snapshot_format: AuthorizationSnapshotFormat = "legacy_unavailable_v1"
     action_authorizations: tuple[EmailActionAuthorization, ...] = ()
     created_at: datetime
+
+    @field_validator("action_parameters", mode="before")
+    @classmethod
+    def validate_action_parameters_json(cls, value: object) -> object:
+        if not isinstance(value, MappingABC):
+            raise ValueError("action parameters must be a JSON object")
+        return _freeze_json_value(value)
+
+    @field_serializer("action_parameters")
+    def serialize_action_parameters(self, value: object, info: object) -> object:
+        assert isinstance(value, MappingABC)
+        json_mode = getattr(info, "mode", "python") == "json"
+        return {
+            (str(action) if json_mode else action): _serialize_json_value(parameters)
+            for action, parameters in value.items()
+        }
 
     @field_validator("action_plan_id", "account_id", "model_id", "config_version")
     @classmethod
@@ -342,8 +373,12 @@ class EmailActionPlan(BaseModel):
                     raise ValueError(
                         "action authorization config must match ActionPlan config"
                     )
-                if authorization.authorized and authorization.parameters != _freeze(
-                    self.action_parameters.get(authorization.action_type, {})
+                if (
+                    authorization.authorized
+                    and authorization.parameters
+                    != _freeze_json_value(
+                        self.action_parameters.get(authorization.action_type, {})
+                    )
                 ):
                     raise ValueError(
                         "authorized action parameters must match ActionPlan parameters"
@@ -412,7 +447,11 @@ class EmailActionPlan(BaseModel):
                 "action plan identity does not match its immutable snapshot"
             )
 
-        object.__setattr__(self, "action_parameters", _freeze(self.action_parameters))
+        object.__setattr__(
+            self,
+            "action_parameters",
+            _freeze_json_value(self.action_parameters),
+        )
         return self
 
     @property
@@ -449,9 +488,11 @@ def build_versioned_email_action_plan(
         ()
         if action_authorizations is None
         else tuple(
-            item
-            if isinstance(item, EmailActionAuthorization)
-            else EmailActionAuthorization.model_validate(item)
+            EmailActionAuthorization.model_validate(
+                item.model_dump(mode="python")
+                if isinstance(item, EmailActionAuthorization)
+                else item
+            )
             for item in action_authorizations
         )
     )

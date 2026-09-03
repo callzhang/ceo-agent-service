@@ -1690,8 +1690,6 @@ class EmailStore:
             db.execute("begin")
             latest_version = self._read_schema_version(db)
             if latest_version == EMAIL_SCHEMA_VERSION:
-                self._ensure_email_context_columns(db)
-                self._ensure_action_authorization_snapshot_column(db)
                 self._validate_durable_state(db)
                 return
             if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
@@ -1715,8 +1713,6 @@ class EmailStore:
                     f"this runtime supports {EMAIL_SCHEMA_VERSION}"
                 )
             if latest_version == EMAIL_SCHEMA_VERSION:
-                self._ensure_email_context_columns(db)
-                self._ensure_action_authorization_snapshot_column(db)
                 self._validate_durable_state(db)
                 return
             legacy_reply_claims = False
@@ -3063,6 +3059,13 @@ class EmailStore:
             ) from exc
 
     def _validate_durable_rows(self, db: sqlite3.Connection) -> None:
+        legacy_action_plan_serialization_allowed = (
+            db.execute(
+                "select 1 from email_schema_migrations where version < ? limit 1",
+                (EMAIL_SCHEMA_VERSION,),
+            ).fetchone()
+            is not None
+        )
         for row in db.execute(
             "select account_id, scan_folders_json from email_accounts"
         ):
@@ -3306,7 +3309,33 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     f"current ActionPlan classification fields mismatch for {row['id']}"
                 )
-            if row["action_plan_json"] != current_plan.model_dump_json():
+            raw_action_plan = _json_load(
+                row["action_plan_json"],
+                field="action_plan_json",
+                expected_type=dict,
+            )
+            authorization_fields = {
+                "authorization_snapshot_format",
+                "action_authorizations",
+            }
+            present_authorization_fields = authorization_fields & set(raw_action_plan)
+            if not present_authorization_fields:
+                if not legacy_action_plan_serialization_allowed:
+                    raise EmailPersistenceCorruption(
+                        f"current ActionPlan snapshot mismatch for classification "
+                        f"{row['id']}"
+                    )
+                canonical_action_plan_json = current_plan.model_dump_json(
+                    exclude=authorization_fields
+                )
+            elif present_authorization_fields == authorization_fields:
+                canonical_action_plan_json = current_plan.model_dump_json()
+            else:
+                raise EmailPersistenceCorruption(
+                    f"current ActionPlan snapshot has partial authorization fields "
+                    f"for classification {row['id']}"
+                )
+            if row["action_plan_json"] != canonical_action_plan_json:
                 raise EmailPersistenceCorruption(
                     f"current ActionPlan snapshot mismatch for classification {row['id']}"
                 )

@@ -2912,6 +2912,9 @@ def test_current_schema_missing_required_unique_key_is_domain_corruption(
                 uidvalidity integer not null check(uidvalidity > 0),
                 uid integer not null check(uid > 0),
                 rfc_message_id text not null,
+                in_reply_to text not null default '',
+                references_json text not null default '[]'
+                    check(json_valid(references_json)),
                 thread_identity text not null,
                 sender text not null,
                 recipients_json text not null check(json_valid(recipients_json)),
@@ -3045,6 +3048,108 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
     )
     assert _fetchall(database, "select * from email_action_plans") == []
     assert _fetchall(database, "select * from email_actions") == []
+
+
+def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
+    tmp_path: Path,
+):
+    database = tmp_path / "v15-action-plan.sqlite3"
+    store = EmailStore(database)
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    legacy_json = classification.action_plan.model_dump_json(
+        exclude={"authorization_snapshot_format", "action_authorizations"}
+    )
+    historical_plan_id = classification.action_plan.action_plan_id
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_classifications set action_plan_json=?",
+            (legacy_json,),
+        )
+        db.execute(
+            "alter table email_action_plans drop column authorization_snapshot_json"
+        )
+        db.execute("update email_schema_migrations set version=15")
+
+    reopened = EmailStore(database)
+
+    persisted = _fetchall(
+        database,
+        "select action_plan_json, current_action_plan_id from email_classifications",
+    )[0]
+    assert persisted["action_plan_json"] == legacy_json
+    assert persisted["current_action_plan_id"] == historical_plan_id
+    [stored_plan] = _fetchall(database, "select * from email_action_plans")
+    assert stored_plan["action_plan_id"] == historical_plan_id
+    assert stored_plan["authorization_snapshot_json"] is None
+    projected = reopened.get_classification(classification.classification_id)
+    assert projected is not None
+    assert projected["action_plan"]["action_plan_id"] == historical_plan_id
+
+
+def test_new_v16_action_plan_rejects_legacy_canonical_json_without_provenance(
+    tmp_path: Path,
+):
+    database = tmp_path / "v16-action-plan-missing-fields.sqlite3"
+    store = EmailStore(database)
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    stripped_json = classification.action_plan.model_dump_json(
+        exclude={"authorization_snapshot_format", "action_authorizations"}
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_classifications set action_plan_json=?",
+            (stripped_json,),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="snapshot mismatch"):
+        EmailStore(database)
+
+    assert (
+        _fetchall(database, "select action_plan_json from email_classifications")[0][
+            "action_plan_json"
+        ]
+        == stripped_json
+    )
+
+
+def test_current_v16_missing_authorization_column_fails_without_schema_repair(
+    tmp_path: Path,
+):
+    database = tmp_path / "v16-missing-authorization-column.sqlite3"
+    EmailStore(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "alter table email_action_plans drop column authorization_snapshot_json"
+        )
+        schema_before = list(
+            db.execute(
+                "select type, name, sql from sqlite_master "
+                "where name not like 'sqlite_%' order by type, name"
+            )
+        )
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="email_action_plans.*authorization_snapshot_json",
+    ):
+        EmailStore(database)
+
+    with sqlite3.connect(database) as db:
+        schema_after = list(
+            db.execute(
+                "select type, name, sql from sqlite_master "
+                "where name not like 'sqlite_%' order by type, name"
+            )
+        )
+        columns = {
+            row[1] for row in db.execute("pragma table_info(email_action_plans)")
+        }
+    assert schema_after == schema_before
+    assert "authorization_snapshot_json" not in columns
 
 
 def test_v2_upgrade_does_not_reapply_prototype_classification_backfill(
