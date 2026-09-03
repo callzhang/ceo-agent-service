@@ -3,8 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.agent_context import email_attachment_metadata_materials
 from app.email_context_source import EmailContextSource
 from app.email_imap_readonly import ephemeral_body_html, parse_rfc822_message
+from app.email_task_adapter import EmailAgentTaskAdapter
 from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 
 
@@ -107,6 +109,24 @@ def test_context_source_projects_complete_text_metadata_versions_and_receipts():
         "Earlier thread text"
     ]
     assert task_input.attachments[0].filename == "contract.pdf"
+    attachment_materials = email_attachment_metadata_materials(
+        task_input.attachments,
+        source_message_id=task_input.trigger.message_id,
+    )
+    assert all(
+        material.kind == "attachment_metadata" for material in attachment_materials
+    )
+    assert all(material.read_commands == () for material in attachment_materials)
+    context = EmailAgentTaskAdapter.__new__(EmailAgentTaskAdapter)._build_context(
+        task=SimpleNamespace(
+            id=17,
+            conversation_id="email:context-test",
+            trigger_message_id="email-action:context-test",
+        ),
+        payload={"action_type": "label"},
+        task_input=task_input,
+    )
+    assert context.image_paths == ()
     assert task_input.prior_receipts[0].operation == "sent_readback"
     assert task_input.prior_receipts[1].operation == "unsubscribe_readback"
     assert task_input.list_unsubscribe == ""

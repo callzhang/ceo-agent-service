@@ -31,6 +31,17 @@ item referenced from a DingTalk or Lark interactive mail review and readable
 through the matching operation Skill. An attachment remains attachment metadata
 only under this Email subsystem contract.
 
+## Email Operation Boundaries
+
+| Operation | Boundary |
+| --- | --- |
+| Classification confirmation | Save final category and feedback only; create no generic task. |
+| Deterministic mailbox action | Email worker executes exact configured action and reads provider state back; no Agent run. |
+| Unsubscribe proposal | Consumer proposes exactly one operation bound to the immutable ActionPlan; Consumer has no write capability. |
+| Unsubscribe execution | Audit alone invokes the task/run-bound capability and verifies the external result. |
+| Reply or mailto unsubscribe | Disabled; do not draft, send, or request SMTP capability. |
+| Attachment | Metadata only; never download, open, OCR, parse, summarize, or infer body content. |
+
 ## DingTalk Or Lark Interactive Review
 
 For a DingTalk or Lark interactive mail review:
