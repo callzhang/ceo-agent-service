@@ -356,6 +356,21 @@ def _claim_status(store: EmailStore, action_identity: str) -> str:
     return str(row[0])
 
 
+def _remove_post_v16_unsubscribe_receipt_columns(db: sqlite3.Connection) -> None:
+    """Make a current empty fixture structurally match a pre-v17 database."""
+
+    db.execute(
+        "drop index if exists "
+        "idx_email_unsubscribe_receipts_classification_action"
+    )
+    db.execute(
+        "alter table email_unsubscribe_receipts drop column result_text_digest"
+    )
+    db.execute(
+        "alter table email_unsubscribe_receipts drop column result_text_truncated"
+    )
+
+
 def test_outgoing_message_id_is_stable_and_uses_first_32_sha256_hex() -> None:
     assert (
         outgoing_message_id(
@@ -374,6 +389,7 @@ def test_v7_store_migrates_fenced_reply_dispatch_claims_without_changing_rows(
     store.create_account(ACCOUNT_VALUES)
     account_before = store.get_account("account-primary")
     with sqlite3.connect(database) as db:
+        _remove_post_v16_unsubscribe_receipt_columns(db)
         db.execute("drop table email_reply_dispatch_claims")
         db.execute("update email_schema_migrations set version=7")
 
@@ -439,6 +455,7 @@ def test_v8_store_preserves_existing_claim_as_fenced_history(tmp_path: Path) -> 
                 outgoing_message_id(effect.action_identity, "stardust.ai"),
             ),
         )
+        _remove_post_v16_unsubscribe_receipt_columns(db)
         db.execute("update email_schema_migrations set version=8")
 
     migrated = EmailStore(store.path)
