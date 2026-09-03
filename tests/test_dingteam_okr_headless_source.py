@@ -18,7 +18,7 @@ def test_service_entrypoint_disables_visible_browser_fallback():
     source = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert "_capture_stable_headless_headers" in source
-    assert '"headless": True' in source
+    assert '"--headless=new"' in source
     assert "headless" in source.casefold()
     assert "headful" not in source.casefold()
 
@@ -64,7 +64,7 @@ def test_unmounted_okr_shell_is_checked_only_after_auth_wait():
     assert source.index(wait_marker) < source.index(state_check)
 
 
-def test_headless_launch_uses_playwright_browser_binary():
+def test_headless_cdp_launch_uses_playwright_browser_binary_and_loopback_only():
     module = load_module()
 
     class Chromium:
@@ -73,10 +73,18 @@ def test_headless_launch_uses_playwright_browser_binary():
     class Playwright:
         chromium = Chromium()
 
-    assert module._headless_launch_kwargs(Playwright()) == {
-        "headless": True,
-        "executable_path": "/tmp/playwright-chrome",
-    }
+    assert module._headless_cdp_command(
+        Playwright(), port=9222, profile_dir="/tmp/ceo-okr-profile"
+    ) == [
+        "/tmp/playwright-chrome",
+        "--headless=new",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--remote-debugging-address=127.0.0.1",
+        "--remote-debugging-port=9222",
+        "--user-data-dir=/tmp/ceo-okr-profile",
+        "about:blank",
+    ]
 
 
 def test_headless_browser_uses_process_lock():
