@@ -30,6 +30,7 @@ from app.email_task_adapter import (
 from app.email_unsubscribe import (
     BrowserNetworkPolicy,
     UnsubscribeExecutor,
+    UnsubscribeExecutionResult,
     UnsubscribeObservation,
     UnsubscribeOutcome,
     UnsubscribePageState,
@@ -299,6 +300,214 @@ def _error_code(result: dict[str, object]) -> str:
     error = result.get("error")
     assert isinstance(error, dict)
     return str(error.get("code"))
+
+
+class _TerminalBrowser:
+    def __init__(self, visible_text: str) -> None:
+        self.visible_text = visible_text
+        self.calls: list[str] = []
+
+    def find_confirmation_receipt(self, _effect):
+        self.calls.append("receipt")
+        return None
+
+    def inspect_current_state(self, _effect, _private_url):
+        raise AssertionError("preclaimed Audit execution must not inspect before write")
+
+    def execute_operation(self, effect, _private_url, operation):
+        self.calls.append(operation.operation_reference)
+        return UnsubscribeObservation(
+            state=UnsubscribePageState.DONE,
+            state_reference="state-done",
+            receipt=UnsubscribeTerminalReceipt(
+                receipt_id="provider-receipt:executor-audit-41",
+                evidence="terminal-page",
+                entry_reference=effect.entry_reference,
+                effect_digest=effect.effect_digest,
+            ),
+            visible_text=self.visible_text,
+        )
+
+
+def _execute_with_durable_executor(
+    fixture: AuditFixture,
+    browser: _TerminalBrowser,
+    *,
+    after_persist=None,
+):
+    def execute_effect(
+        effect,
+        entries,
+        *,
+        owner,
+        executed_prefix_length,
+    ):
+        result = UnsubscribeExecutor(
+            fixture.email_store,
+            browser,
+            owner=owner,
+        ).execute(
+            effect,
+            entries,
+            executed_prefix_length=executed_prefix_length,
+        )
+        assert isinstance(result, UnsubscribeExecutionResult)
+        if after_persist is not None:
+            return after_persist(result, owner)
+        return result
+
+    fixture.operation.execute_effect = execute_effect
+    return fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=_accepted_action(),
+    )
+
+
+def _public_terminal_mapping(
+    result: UnsubscribeExecutionResult,
+) -> dict[str, object]:
+    assert result.receipt is not None
+    return {
+        "status": "done",
+        "outcome": result.outcome.value,
+        "receipt_id": result.receipt.receipt_id,
+        "evidence": result.receipt.evidence,
+        "result_text": result.result_text,
+        "observation_digest": result.observation_digest,
+        "started_at": result.started_at,
+        "completed_at": result.completed_at,
+        "summary": result.result_text or result.outcome.value,
+        "final_step": {
+            "sequence": len(result.journal),
+            "operation": result.journal[-1].operation,
+            "state": result.journal[-1].state,
+            "reference": result.journal[-1].reference,
+        },
+    }
+
+
+def test_first_audit_call_reconciles_executor_persisted_long_terminal_result(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    full_text = "Unsubscribed " * 2_000
+    expected_text, expected_full_digest = normalize_unsubscribe_result_text(full_text)
+    browser = _TerminalBrowser(full_text)
+
+    result = _execute_with_durable_executor(fixture, browser)
+
+    assert result["status"] == "done", result
+    assert result["receipt_id"] == "provider-receipt:executor-audit-41"
+    assert result["result_text"] == expected_text
+    assert result["observation_digest"] == expected_full_digest
+    assert browser.calls == ["receipt", "unsubscribe-operation:open-entry"]
+    receipt = fixture.email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+    assert receipt is not None
+    assert receipt["result_text"] == expected_text
+    assert receipt["observation_digest"] == expected_full_digest
+    assert receipt["result_text_digest"] != expected_full_digest
+    assert receipt["result_text_truncated"] is True
+
+
+def test_mapping_result_without_durable_receipt_uses_one_store_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    original_persist = fixture.email_store.persist_email_unsubscribe_terminal
+    persist_calls: list[dict[str, object]] = []
+
+    def counted_persist(**kwargs):
+        persist_calls.append(kwargs)
+        return original_persist(**kwargs)
+
+    monkeypatch.setattr(
+        fixture.email_store,
+        "persist_email_unsubscribe_terminal",
+        counted_persist,
+    )
+
+    result = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=_accepted_action(),
+    )
+
+    assert result["status"] == "done", result
+    assert len(persist_calls) == 1
+    assert (
+        fixture.email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is not None
+    )
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ("receipt_id", "outcome", "observation_digest", "final_step"),
+)
+def test_executor_persisted_receipt_rejects_mismatched_public_result(
+    tmp_path: Path,
+    mismatch: str,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    browser = _TerminalBrowser("Unsubscribed")
+
+    def mismatch_result(result, _owner):
+        public = _public_terminal_mapping(result)
+        if mismatch == "final_step":
+            final_step = public["final_step"]
+            assert isinstance(final_step, dict)
+            final_step["reference"] = "provider-receipt:mismatched-step"
+        else:
+            public[mismatch] = {
+                "receipt_id": "provider-receipt:mismatched",
+                "outcome": "already_unsubscribed",
+                "observation_digest": "f" * 64,
+            }[mismatch]
+        return public
+
+    result = _execute_with_durable_executor(
+        fixture,
+        browser,
+        after_persist=mismatch_result,
+    )
+
+    assert result["status"] == "failed", result
+
+
+@pytest.mark.parametrize("race", ("other_audit", "stale_owner"))
+def test_executor_persisted_receipt_rejects_changed_audit_or_owner_binding(
+    tmp_path: Path,
+    race: str,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    browser = _TerminalBrowser("Unsubscribed")
+
+    def change_binding(result, _owner):
+        with sqlite3.connect(fixture.email_store.path) as db:
+            if race == "other_audit":
+                db.execute(
+                    "update email_unsubscribe_claims set audit_agent_run_id=? "
+                    "where action_identity=?",
+                    (fixture.consumer_run.id, ACTION_IDENTITY),
+                )
+            else:
+                db.execute(
+                    "update email_unsubscribe_claims set lease_token=? "
+                    "where action_identity=?",
+                    ("unsubscribe-audit-lease:stale", ACTION_IDENTITY),
+                )
+        return result
+
+    result = _execute_with_durable_executor(
+        fixture,
+        browser,
+        after_persist=change_binding,
+    )
+
+    assert result["status"] == "failed", result
 
 
 def test_current_running_audit_executes_one_operation_and_persists_exact_run_id(

@@ -137,20 +137,22 @@ class EmailUnsubscribeAuditOperation:
                 action,
                 continuation=continuation,
             )
-            entries = browser_unsubscribe_entries(tuple(
-                _resolve_entries_with_authentication(
-                    self.resolve_entries,
-                    locator,
-                    effect.entry_reference,
-                    _authentication_from_payload(payload),
-                    network_policy_reference=str(
-                        identity["network_policy_reference"]
-                    ),
-                    network_policy_origin_references=tuple(
-                        identity["network_policy_origin_references"]
-                    ),
+            entries = browser_unsubscribe_entries(
+                tuple(
+                    _resolve_entries_with_authentication(
+                        self.resolve_entries,
+                        locator,
+                        effect.entry_reference,
+                        _authentication_from_payload(payload),
+                        network_policy_reference=str(
+                            identity["network_policy_reference"]
+                        ),
+                        network_policy_origin_references=tuple(
+                            identity["network_policy_origin_references"]
+                        ),
+                    )
                 )
-            ))
+            )
             if not entries:
                 return self._failed("unsubscribe_entry_changed")
             current_policy = browser_network_policy_for_entries(entries)
@@ -269,11 +271,25 @@ class EmailUnsubscribeAuditOperation:
             return self._failed("unsubscribe_authorization_rejected")
         if not claim["acquired"]:
             if claim["status"] == "done":
+                durable_claim = self.email_store.get_email_unsubscribe_claim(
+                    effect.action_identity
+                )
                 receipt = self.email_store.get_email_unsubscribe_receipt(
                     effect.action_identity
                 )
-                if receipt is None:
+                durable_effect = self.email_store.get_email_unsubscribe_effect(
+                    effect.action_identity,
+                    effect.effect_digest,
+                )
+                if not _matches_durable_execution_binding(
+                    durable_claim,
+                    durable_effect,
+                    effect,
+                    audit_agent_run_id=audit_run.id,
+                    status="done",
+                ) or not _matches_receipt_effect(receipt, effect):
                     return self._failed("unsubscribe_receipt_missing")
+                assert receipt is not None
                 return {
                     "status": "done",
                     "outcome": receipt["outcome"],
@@ -326,6 +342,44 @@ class EmailUnsubscribeAuditOperation:
             return result.model_dump(mode="json")
         if result.status != "done" or not result.receipt_id.strip():
             raise ValueError("unsubscribe operation result is not terminal")
+        durable_claim = self.email_store.get_email_unsubscribe_claim(
+            effect.action_identity
+        )
+        durable_receipt = self.email_store.get_email_unsubscribe_receipt(
+            effect.action_identity
+        )
+        durable_effect = self.email_store.get_email_unsubscribe_effect(
+            effect.action_identity,
+            effect.effect_digest,
+        )
+        if durable_receipt is not None:
+            durable_steps = self.email_store.list_email_unsubscribe_steps(
+                effect.action_identity
+            )
+            if not _matches_durable_execution_binding(
+                durable_claim,
+                durable_effect,
+                effect,
+                audit_agent_run_id=audit_run.id,
+                owner=owner,
+                status="done",
+            ) or not _matches_terminal_result(
+                durable_receipt,
+                durable_steps,
+                effect,
+                result,
+            ):
+                return self._failed("unsubscribe_persisted_result_mismatch")
+            return result.model_dump(mode="json")
+        if not _matches_durable_execution_binding(
+            durable_claim,
+            durable_effect,
+            effect,
+            audit_agent_run_id=audit_run.id,
+            owner=owner,
+            status="dispatching",
+        ):
+            return self._failed("unsubscribe_claim_changed")
         self.email_store.persist_email_unsubscribe_terminal(
             **_store_arguments(effect),
             outcome=result.outcome or "done",
@@ -338,6 +392,33 @@ class EmailUnsubscribeAuditOperation:
             final_step=result.final_step,
             claim_owner=owner,
         )
+        durable_claim = self.email_store.get_email_unsubscribe_claim(
+            effect.action_identity
+        )
+        durable_receipt = self.email_store.get_email_unsubscribe_receipt(
+            effect.action_identity
+        )
+        durable_effect = self.email_store.get_email_unsubscribe_effect(
+            effect.action_identity,
+            effect.effect_digest,
+        )
+        durable_steps = self.email_store.list_email_unsubscribe_steps(
+            effect.action_identity
+        )
+        if not _matches_durable_execution_binding(
+            durable_claim,
+            durable_effect,
+            effect,
+            audit_agent_run_id=audit_run.id,
+            owner=owner,
+            status="done",
+        ) or not _matches_terminal_result(
+            durable_receipt,
+            durable_steps,
+            effect,
+            result,
+        ):
+            return self._failed("unsubscribe_persisted_result_mismatch")
         return result.model_dump(mode="json")
 
     @staticmethod
@@ -488,8 +569,7 @@ def _continuation_from_store(
         effect_digest=str(value["effect_digest"]),
         previous_effect_digest=str(value["previous_effect_digest"]),
         executed_operations=tuple(
-            UnsubscribeOperation.from_mapping(item)
-            for item in value["operations"]
+            UnsubscribeOperation.from_mapping(item) for item in value["operations"]
         ),
         controls=tuple(
             UnsubscribeDiscoveredControl(**item) for item in value["controls"]
@@ -534,6 +614,107 @@ def _store_arguments(effect: EmailUnsubscribeEffect) -> dict[str, object]:
         "network_policy_reference": effect.network_policy_reference,
         "network_policy_origin_references": effect.network_policy_origin_references,
     }
+
+
+def _matches_durable_execution_binding(
+    claim: Mapping[str, object] | None,
+    durable_effect: Mapping[str, object] | None,
+    effect: EmailUnsubscribeEffect,
+    *,
+    audit_agent_run_id: int,
+    status: str,
+    owner: Mapping[str, object] | None = None,
+) -> bool:
+    if claim is None or durable_effect is None:
+        return False
+    expected_claim = {
+        "action_identity": effect.action_identity,
+        "effect_digest": effect.effect_digest,
+        "action_plan_id": effect.action_plan_id,
+        "action_plan_version": effect.action_plan_version,
+        "classification_id": effect.classification_id,
+        "account_id": effect.account_id,
+        "stable_message_identity": effect.stable_message_identity,
+        "thread_identity": effect.thread_identity,
+        "entry_reference": effect.entry_reference,
+        "operations": list(effect.operation_mappings),
+        "status": status,
+        "audit_agent_run_id": audit_agent_run_id,
+    }
+    if status == "done":
+        expected_claim["phase"] = "terminal"
+    if any(claim.get(key) != value for key, value in expected_claim.items()):
+        return False
+    if owner is not None and any(
+        claim.get(claim_key) != owner.get(owner_key)
+        for claim_key, owner_key in (
+            ("owner_id", "owner_id"),
+            ("owner_generation", "generation"),
+            ("lease_token", "lease_token"),
+        )
+    ):
+        return False
+    expected_effect = {
+        "action_identity": effect.action_identity,
+        "effect_digest": effect.effect_digest,
+        "previous_effect_digest": effect.previous_effect_digest,
+        "operations": list(effect.operation_mappings),
+        "network_policy_reference": effect.network_policy_reference,
+        "network_policy_origin_references": list(
+            effect.network_policy_origin_references
+        ),
+        "audit_agent_run_id": audit_agent_run_id,
+    }
+    return all(
+        durable_effect.get(key) == value for key, value in expected_effect.items()
+    )
+
+
+def _matches_receipt_effect(
+    receipt: Mapping[str, object] | None,
+    effect: EmailUnsubscribeEffect,
+) -> bool:
+    if receipt is None:
+        return False
+    expected = {
+        "action_identity": effect.action_identity,
+        "effect_digest": effect.effect_digest,
+        "action_plan_id": effect.action_plan_id,
+        "action_plan_version": effect.action_plan_version,
+        "classification_id": effect.classification_id,
+        "account_id": effect.account_id,
+        "stable_message_identity": effect.stable_message_identity,
+        "thread_identity": effect.thread_identity,
+        "entry_reference": effect.entry_reference,
+    }
+    return all(receipt.get(key) == value for key, value in expected.items())
+
+
+def _matches_terminal_result(
+    receipt: Mapping[str, object] | None,
+    steps: Sequence[Mapping[str, object]],
+    effect: EmailUnsubscribeEffect,
+    result: EmailUnsubscribeAuditOperationResult,
+) -> bool:
+    if not _matches_receipt_effect(receipt, effect):
+        return False
+    assert receipt is not None
+    expected = {
+        "outcome": result.outcome or "done",
+        "receipt_id": result.receipt_id,
+        "evidence": result.evidence or "terminal-result",
+        "result_text": result.result_text,
+        "observation_digest": result.observation_digest,
+        "started_at": result.started_at,
+        "completed_at": result.completed_at,
+    }
+    if not all(receipt.get(key) == value for key, value in expected.items()):
+        return False
+    if result.final_step is None:
+        return True
+    return bool(steps) and all(
+        steps[-1].get(key) == value for key, value in result.final_step.items()
+    )
 
 
 def _execute_one_effect(
