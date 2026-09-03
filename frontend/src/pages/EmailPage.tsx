@@ -91,7 +91,14 @@ function ProcessedClassificationEvidence({ row }: { row: EmailClassificationItem
 
 function metricValue(name: string, value: unknown) {
   if (typeof value !== "number") return displayValue(value);
-  return name === "support" ? String(value) : percent(value);
+  const countMetrics = new Set([
+    "support",
+    "validation_sample_count",
+    "validation_positive_support",
+    "automatic_candidate_count",
+    "minimum_validation_samples",
+  ]);
+  return countMetrics.has(name) ? String(value) : percent(value);
 }
 
 function ModelEvidenceCard({ model }: { model: EmailModelEvidence }) {

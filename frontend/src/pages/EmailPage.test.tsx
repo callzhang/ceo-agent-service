@@ -58,7 +58,7 @@ describe("EmailPage", () => {
         parent_model_id: "email-tfidf-lr-20260828T000000Z-parent001", model_family: "tfidf-logistic-regression", tokenizer_version: "jieba-default-v1", feature_version: "tfidf-v1", training_dataset_version: "feedback-20260829-v3",
         trained_at: "2026-08-29T00:00:00Z", training_started_at: "2026-08-28T23:58:00Z", training_finished_at: "2026-08-29T00:00:00Z", sample_count: 20, new_sample_count: 5,
         category_counts: { work: 12, subscription: 8 }, account_counts: { "derek@stardust.ai": 14, "ops@stardust.ai": 6 }, validation_method: "time-ordered-holdout", accuracy: 0.9, macro_f1: 0.8,
-        per_category_metrics: { work: { precision: 0.92, recall: 0.88, f1: 0.9, support: 12 }, subscription: { precision: 0.97, recall: 0.95, f1: 0.96, support: 8 } }, prediction_latency_p50_ms: 1.2, prediction_latency_p95_ms: 2.4,
+        per_category_metrics: { work: { precision: 0.92, recall: 0.88, f1: 0.9, support: 12, validation_sample_count: 20, minimum_validation_samples: 20, configured_threshold: 0.9 }, subscription: { precision: 0.97, recall: 0.95, f1: 0.96, support: 8 } }, prediction_latency_p50_ms: 1.2, prediction_latency_p95_ms: 2.4,
         artifact_sha256: "a".repeat(64),
       },
       { model_id: "email-tfidf-lr-20260830T000000Z-candidate1", model_version: "email-tfidf-lr-20260830T000000Z-candidate1", status: "candidate", status_reason: "awaiting promotion decision", trained_at: "2026-08-30T00:00:00Z", training_started_at: "2026-08-29T23:59:00Z", training_finished_at: "2026-08-30T00:00:00Z", sample_count: 24, new_sample_count: 4, category_counts: {}, account_counts: {}, validation_method: "time-ordered-holdout", accuracy: 0.88, macro_f1: 0.79, per_category_metrics: {}, prediction_latency_p50_ms: 1.3, prediction_latency_p95_ms: 2.7, artifact_sha256: "b".repeat(64), candidate_reason: "awaiting promotion decision", promotion_reason: "", rejection_reason: "", failure_reason: "", superseded_reason: "", integrity_status: "verified", integrity_error: "", lifecycle: [] },
@@ -145,6 +145,10 @@ describe("EmailPage", () => {
     expect(active).toHaveTextContent("工作（work）");
     expect(active).toHaveTextContent("precision：92.0%");
     expect(active).toHaveTextContent("support：12");
+    expect(active).toHaveTextContent("validation_sample_count：20");
+    expect(active).toHaveTextContent("minimum_validation_samples：20");
+    expect(active).not.toHaveTextContent("validation_sample_count：2000.0%");
+    expect(active).toHaveTextContent("configured_threshold：90.0%");
     expect(active).toHaveTextContent("P50 1.2 ms / P95 2.4 ms");
     expect(active).toHaveTextContent("a".repeat(64));
     expect(active).toHaveTextContent("candidate validation pending");
