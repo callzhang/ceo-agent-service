@@ -34,6 +34,9 @@ from app.leak_check import assert_no_credentials
 
 EMAIL_SCHEMA_VERSION = 15
 DIRECT_ACTION_MAX_ATTEMPTS = 3
+# Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
+# durable data limit, independent of any Agent process turn budget.
+MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS = 32
 DIRECT_ACTION_RETRY_BASE_SECONDS = 2
 _CLASSIFICATION_STATUSES = frozenset(
     status.value for status in EmailClassificationStatus
@@ -1340,6 +1343,8 @@ def _validate_unsubscribe_operations(
         validated
     ):
         raise ValueError("unsubscribe operations must be non-empty and unique")
+    if len(validated) > MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS:
+        raise ValueError("durable continuation operation limit exceeded")
     return validated
 
 
@@ -5995,6 +6000,75 @@ class EmailStore:
             ).fetchone()
         return None if row is None else self._email_unsubscribe_claim_row(row)
 
+    def get_email_unsubscribe_state_snapshot(
+        self,
+        action_identity: str,
+    ) -> dict[str, Any]:
+        """Read the claim, continuation, and complete bounded lineage once.
+
+        The explicit deferred transaction pins one SQLite read view.  The
+        continuation driver can therefore validate up to the durable maximum
+        without opening one connection per historical effect.
+        This method is read-only and deliberately performs no recovery writes.
+        """
+
+        db = self._connect()
+        try:
+            db.execute("begin")
+            claim_row = db.execute(
+                "select * from email_unsubscribe_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            continuation_row = db.execute(
+                """
+                select continuation.*, effect.previous_effect_digest,
+                       effect.operations_json, effect.network_policy_reference,
+                       effect.network_policy_origins_json
+                from email_unsubscribe_continuations as continuation
+                join email_unsubscribe_effects as effect
+                  on effect.action_identity=continuation.action_identity
+                 and effect.effect_digest=continuation.effect_digest
+                where continuation.action_identity=?
+                """,
+                (action_identity,),
+            ).fetchone()
+            effect_rows = db.execute(
+                "select * from email_unsubscribe_effects "
+                "where action_identity=? limit ?",
+                (
+                    action_identity,
+                    MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS + 1,
+                ),
+            ).fetchall()
+            if len(effect_rows) > MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe snapshot exceeds durable continuation "
+                    "operation limit"
+                )
+            claim = (
+                None
+                if claim_row is None
+                else self._email_unsubscribe_claim_row(claim_row)
+            )
+            continuation = (
+                None
+                if continuation_row is None
+                else self._email_unsubscribe_continuation_row(continuation_row)
+            )
+            effects = tuple(
+                self._email_unsubscribe_effect_row(row) for row in effect_rows
+            )
+            db.rollback()
+            return {
+                "claim": claim,
+                "continuation": continuation,
+                "effects": effects,
+            }
+        finally:
+            if db.in_transaction:
+                db.rollback()
+            db.close()
+
     def get_email_unsubscribe_effect(
         self,
         action_identity: str,
@@ -6010,6 +6084,10 @@ class EmailStore:
             ).fetchone()
         if row is None:
             return None
+        return self._email_unsubscribe_effect_row(row)
+
+    @staticmethod
+    def _email_unsubscribe_effect_row(row: sqlite3.Row) -> dict[str, Any]:
         return {
             "action_identity": row["action_identity"],
             "effect_digest": row["effect_digest"],
@@ -6236,6 +6314,10 @@ class EmailStore:
             ).fetchone()
         if row is None:
             return None
+        return self._email_unsubscribe_continuation_row(row)
+
+    @staticmethod
+    def _email_unsubscribe_continuation_row(row: sqlite3.Row) -> dict[str, Any]:
         return {
             "action_identity": row["action_identity"],
             "effect_digest": row["effect_digest"],

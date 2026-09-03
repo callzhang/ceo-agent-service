@@ -5035,6 +5035,160 @@ def test_unsubscribe_schema_migrates_and_durable_journal_receipt_survive_restart
         )
 
 
+def _persist_unsubscribe_continuation_fixture(
+    store: EmailStore,
+) -> dict[str, object]:
+    authorization = _unsubscribe_authorization(store)
+    claim = store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    assert claim is not None and claim["acquired"] is True
+    store.persist_email_unsubscribe_continuation(
+        **authorization,
+        controls=(
+            {
+                "reference": "unsubscribe-control:" + "c" * 64,
+                "kind": "button",
+                "intent": "confirm",
+            },
+        ),
+        observation_reference="unsubscribe-state:" + "d" * 64,
+        final_step={
+            "sequence": 1,
+            "operation": "open_entry",
+            "state": "action_required",
+            "reference": "unsubscribe-state:" + "d" * 64,
+        },
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )
+    return authorization
+
+
+def test_unsubscribe_state_snapshot_decodes_one_read_consistent_view(
+    tmp_path: Path,
+) -> None:
+    store = EmailStore(tmp_path / "unsubscribe-state-snapshot.sqlite3")
+    authorization = _persist_unsubscribe_continuation_fixture(store)
+
+    snapshot = store.get_email_unsubscribe_state_snapshot(
+        str(authorization["action_identity"])
+    )
+
+    assert snapshot["claim"]["effect_digest"] == authorization["effect_digest"]
+    assert snapshot["continuation"]["effect_digest"] == authorization["effect_digest"]
+    assert [effect["effect_digest"] for effect in snapshot["effects"]] == [
+        authorization["effect_digest"]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    (
+        ("email_unsubscribe_claims", "operations_json"),
+        ("email_unsubscribe_effects", "operations_json"),
+        ("email_unsubscribe_continuations", "controls_json"),
+    ),
+)
+def test_unsubscribe_state_snapshot_reports_malformed_durable_json_as_corruption(
+    tmp_path: Path,
+    table: str,
+    column: str,
+) -> None:
+    store = EmailStore(tmp_path / f"unsubscribe-corrupt-{table}-{column}.sqlite3")
+    authorization = _persist_unsubscribe_continuation_fixture(store)
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            f"update {table} set {column}='{{}}' where action_identity=?",
+            (authorization["action_identity"],),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption):
+        store.get_email_unsubscribe_state_snapshot(
+            str(authorization["action_identity"])
+        )
+
+
+def test_unsubscribe_state_snapshot_surfaces_real_sqlite_busy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = EmailStore(tmp_path / "unsubscribe-state-busy.sqlite3")
+    gc.collect()
+    setup = sqlite3.connect(store.path)
+    try:
+        setup.execute("pragma journal_mode=delete")
+    finally:
+        setup.close()
+    authorization = _persist_unsubscribe_continuation_fixture(store)
+    gc.collect()
+
+    original_connect = store._connect
+
+    def no_wait_connect():
+        db = original_connect()
+        db.execute("pragma busy_timeout=0")
+        return db
+
+    monkeypatch.setattr(store, "_connect", no_wait_connect)
+    blocker = sqlite3.connect(store.path, timeout=0)
+    try:
+        blocker.execute("begin exclusive")
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            store.get_email_unsubscribe_state_snapshot(
+                str(authorization["action_identity"])
+            )
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+
+def test_unsubscribe_state_snapshot_rejects_row_33_before_effect_decoding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = EmailStore(tmp_path / "unsubscribe-state-over-limit.sqlite3")
+    authorization = _persist_unsubscribe_continuation_fixture(store)
+    with sqlite3.connect(store.path) as db:
+        db.executemany(
+            """
+            insert into email_unsubscribe_effects (
+                action_identity, effect_digest, previous_effect_digest,
+                operations_json, network_policy_reference,
+                network_policy_origins_json, audit_agent_run_id, created_at
+            ) values (?, ?, '', '{}', 'network-policy:legacy',
+                      '["network-origin:legacy"]', null, ?)
+            """,
+            (
+                (
+                    authorization["action_identity"],
+                    sha256(f"overflow-effect-{index}".encode()).hexdigest(),
+                    f"2026-09-03T00:00:{index:02d}+00:00",
+                )
+                for index in range(32)
+            ),
+        )
+
+    decoded = 0
+
+    def reject_decode(_row):
+        nonlocal decoded
+        decoded += 1
+        raise AssertionError("effect payload decoded before cardinality gate")
+
+    monkeypatch.setattr(store, "_email_unsubscribe_effect_row", reject_decode)
+    monkeypatch.setattr(store, "_email_unsubscribe_continuation_row", reject_decode)
+
+    with pytest.raises(
+        EmailPersistenceCorruption,
+        match="durable continuation operation limit",
+    ):
+        store.get_email_unsubscribe_state_snapshot(
+            str(authorization["action_identity"])
+        )
+    assert decoded == 0
+
+
 @pytest.mark.parametrize("mutation", ("plan", "status", "account", "message"))
 def test_unsubscribe_claim_fences_current_authorization_during_browser_write(
     tmp_path: Path,

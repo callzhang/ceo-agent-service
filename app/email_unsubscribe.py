@@ -23,6 +23,7 @@ from app.email_store import (
     EmailStore,
     EmailUnsubscribeClaimConflict,
     EmailUnsubscribeReceiptConflict,
+    MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS,
     email_unsubscribe_effect_digest,
 )
 from app.leak_check import assert_no_credentials, redact_credentials
@@ -828,6 +829,8 @@ class EmailUnsubscribeEffect:
             raise ValueError("classification_id must be positive")
         if any(not isinstance(item, UnsubscribeOperation) for item in self.operations):
             raise TypeError("operations must contain UnsubscribeOperation")
+        if len(self.operations) > MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS:
+            raise ValueError("durable continuation operation limit exceeded")
         references = [item.operation_reference for item in self.operations]
         if len(references) != len(set(references)):
             raise ValueError("unsubscribe operation references must be unique")
