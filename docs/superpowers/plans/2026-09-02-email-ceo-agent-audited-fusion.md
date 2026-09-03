@@ -1013,7 +1013,7 @@ Add separate loopback cases for RFC one-click cookie-free exact POST, unapproved
 
 - [ ] **Step 3: Run the new E2E and browser suite**
 
-Run: `/Users/derek/miniforge3/bin/python3 -m pytest -q tests/e2e/test_email_unsubscribe_audited.py tests/browser/test_email_unsubscribe_browser.py`
+Run: `WORKBENCH_BROWSER_TESTS=1 /Users/derek/miniforge3/bin/python3 -m pytest -q tests/e2e/test_email_unsubscribe_audited.py tests/browser/test_email_unsubscribe_browser.py`
 
 Expected: PASS. The test must bind only a loopback server and must not connect to IMAP, SMTP, a real unsubscribe website, Chrome's main profile, or the Internet.
 

@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+import asyncio
+import builtins
 from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import imaplib
 import json
+import os
 from pathlib import Path
+import smtplib
+import socket
+import sqlite3
 from threading import Thread
+from urllib.parse import urlsplit
 
 import pytest
 
+import app.agent_cli as agent_cli
 from app.agent_orchestrator import AgentOrchestrator
 from app.audit_agent import AuditAgentRunner
 from app.consumer_agent import ConsumerAgentRunner
@@ -20,6 +29,7 @@ from app.email_browser_profile import (
 )
 from app.email_classifier_contracts import (
     EmailAction,
+    EmailAttachmentMetadata,
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
@@ -32,6 +42,7 @@ from app.email_task_adapter import (
     EmailThreadMessage,
 )
 from app.email_unsubscribe import (
+    BrowserNetworkPolicy,
     UnsubscribeOperationKind,
     browser_network_policy_for_entries,
     browser_unsubscribe_entries,
@@ -173,21 +184,20 @@ class _AuditedTurnExecutor:
         self,
         *,
         task_store: AutoReplyStore,
-        email_store: EmailStore,
         task_id: int,
         task_payload: Mapping[str, object],
-        audit_operation: EmailUnsubscribeAuditOperation,
+        expected_attachment_metadata: Mapping[str, object],
     ) -> None:
         self.task_store = task_store
-        self.email_store = email_store
         self.task_id = task_id
         self.task_payload = dict(task_payload)
-        self.audit_operation = audit_operation
+        self.expected_attachment_metadata = dict(expected_attachment_metadata)
         self.consumer_proposals: list[dict[str, object]] = []
         self.audit_invocations: list[dict[str, object]] = []
         self.commands: list[list[str]] = []
-        self.smtp_connections: list[object] = []
-        self.attachment_reads: list[object] = []
+        self.consumer_prompts: list[str] = []
+        self.continuation_receipts: list[dict[str, object]] = []
+        self.audit_failures: list[str] = []
 
     def __call__(
         self,
@@ -200,9 +210,14 @@ class _AuditedTurnExecutor:
         self.commands.append(list(command))
         audit_turn = "Candidate revision\n" in prompt
         if audit_turn:
-            output = self._audit_output(prompt)
+            try:
+                output = self._audit_output(prompt)
+            except Exception as exc:
+                self.audit_failures.append(repr(exc))
+                raise
         else:
-            output = self._consumer_output()
+            self.consumer_prompts.append(prompt)
+            output = self._consumer_output(prompt)
         lines = [
             json.dumps(
                 {
@@ -221,23 +236,61 @@ class _AuditedTurnExecutor:
             on_stdout_line(line)
         return ProcessRunResult(0, stdout, "")
 
-    def _consumer_output(self) -> dict[str, object]:
-        continuation = self.email_store.get_email_unsubscribe_continuation(
-            str(self.task_payload["action_identity"])
+    def _consumer_output(self, prompt: str) -> dict[str, object]:
+        trigger = _json_section(prompt, "Original trigger\n")
+        assert isinstance(trigger, dict)
+        task_payload = trigger["raw_payload"]
+        assert task_payload == self.task_payload
+        assert isinstance(task_payload, dict)
+        materials = _json_section(
+            prompt,
+            "Raw material references and exact read commands\n",
         )
-        if continuation is None:
+        assert materials == [
+            {
+                "kind": "attachment_metadata",
+                "reference": json.dumps(
+                    self.expected_attachment_metadata,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "source_message_id": MESSAGE_IDENTITY,
+                "read_commands": [],
+            }
+        ]
+        if not self.consumer_proposals:
+            assert "Safe prior execution receipts\n" not in prompt
             operations = [
                 {
                     "operation_reference": OPEN_OPERATION_REFERENCE,
                     "kind": UnsubscribeOperationKind.OPEN_ENTRY.value,
-                    "target_reference": self.task_payload["unsubscribe_entries"][0][
+                    "target_reference": task_payload["unsubscribe_entries"][0][
                         "reference"
                     ],
                 }
             ]
         else:
-            accepted_prefix = list(continuation["operations"])
+            receipts = _json_section(prompt, "Safe prior execution receipts\n")
+            assert isinstance(receipts, list)
+            [receipt] = [
+                item
+                for item in receipts
+                if isinstance(item, dict)
+                and item.get("operation") == "unsubscribe_continuation"
+            ]
+            assert receipt["completed"] is False
+            assert str(receipt["receipt_id"]).startswith(
+                "email-unsubscribe-continuation:"
+            )
+            continuation = json.loads(str(receipt["summary"]))
+            self.continuation_receipts.append(continuation)
+            accepted_prefix = list(continuation["accepted_operations"])
             [control] = continuation["controls"]
+            assert continuation["instruction"] == (
+                "Audit accepted the durable prefix; propose exactly one next "
+                "operation from the listed opaque controls."
+            )
             operations = accepted_prefix + [
                 {
                     "operation_reference": CONFIRM_OPERATION_REFERENCE,
@@ -250,17 +303,17 @@ class _AuditedTurnExecutor:
             "capability": "email_browser",
             "operation": "unsubscribe",
             "target": {
-                "action_identity": self.task_payload["action_identity"],
-                "account_id": self.task_payload["account_id"],
-                "stable_message_identity": self.task_payload["stable_message_identity"],
-                "thread_identity": self.task_payload["thread_identity"],
-                "entry_reference": self.task_payload["unsubscribe_entries"][0][
+                "action_identity": task_payload["action_identity"],
+                "account_id": task_payload["account_id"],
+                "stable_message_identity": task_payload["stable_message_identity"],
+                "thread_identity": task_payload["thread_identity"],
+                "entry_reference": task_payload["unsubscribe_entries"][0][
                     "reference"
                 ],
-                "network_policy_reference": self.task_payload[
+                "network_policy_reference": task_payload[
                     "unsubscribe_network_policy_reference"
                 ],
-                "network_policy_origin_references": self.task_payload[
+                "network_policy_origin_references": task_payload[
                     "unsubscribe_network_policy_origin_references"
                 ],
             },
@@ -309,15 +362,33 @@ class _AuditedTurnExecutor:
         assert f"audit_agent_run_id={audit_run.id}" in prompt
         task = self.task_store.get_reply_task(self.task_id)
         assert task is not None
-        result = self.audit_operation.execute(
-            task.id,
-            task.execution_generation,
-            audit_agent_run_id=audit_run.id,
-            accepted_action=accepted_action,
+        capability_arguments = json.loads(
+            json.dumps(
+                {
+                    "task_id": task.id,
+                    "execution_generation": task.execution_generation,
+                    "audit_agent_run_id": audit_run.id,
+                    "accepted_action": accepted_action,
+                },
+                sort_keys=True,
+            )
         )
+        mcp_result = asyncio.run(
+            agent_cli.server.call_tool(
+                "execute_audited_email_unsubscribe",
+                capability_arguments,
+            )
+        )
+        assert isinstance(mcp_result, tuple) and len(mcp_result) == 2
+        mcp_content, result = mcp_result
+        assert mcp_content
+        assert isinstance(result, dict)
         self.audit_invocations.append(
             {
                 "run_id": audit_run.id,
+                "capability": "execute_audited_email_unsubscribe",
+                "arguments": capability_arguments,
+                "mcp_content": mcp_content,
                 "accepted_action": accepted_action,
                 "result": result,
             }
@@ -351,6 +422,7 @@ def _persist_confirmed_subscription(
     email_store: EmailStore,
     *,
     origin: str,
+    attachment: EmailAttachmentMetadata,
 ) -> tuple[object, EmailAgentTaskInput]:
     email_store.create_account(
         {
@@ -433,7 +505,7 @@ def _persist_confirmed_subscription(
             text="Manage subscription",
             create_time="2026-09-03T08:00:00+00:00",
         ),
-        attachments=(),
+        attachments=(attachment,),
         list_unsubscribe=f"<{private_url}>",
         body_text="Manage subscription",
         unsubscribe_network_policy_reference=policy.reference,
@@ -443,20 +515,170 @@ def _persist_confirmed_subscription(
     return plan, task_input
 
 
+def _forbidden_entry_point(
+    calls: list[str],
+    name: str,
+):
+    def blocked(*_args: object, **_kwargs: object):
+        calls.append(name)
+        raise AssertionError(f"forbidden E2E entry point invoked: {name}")
+
+    return blocked
+
+
+def _install_external_io_fences(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sentinel_path: Path,
+    allowed_socket_destination: tuple[str, int],
+) -> tuple[list[str], list[tuple[str, int]], list[tuple[str, int]]]:
+    forbidden_calls: list[str] = []
+    allowed_socket_calls: list[tuple[str, int]] = []
+    blocked_socket_calls: list[tuple[str, int]] = []
+
+    monkeypatch.setattr(
+        "app.email_imap_readonly.ImapReadonlyAdapter.connect",
+        _forbidden_entry_point(forbidden_calls, "ImapReadonlyAdapter.connect"),
+    )
+    monkeypatch.setattr(
+        imaplib,
+        "IMAP4",
+        _forbidden_entry_point(forbidden_calls, "imaplib.IMAP4"),
+    )
+    monkeypatch.setattr(
+        imaplib,
+        "IMAP4_SSL",
+        _forbidden_entry_point(forbidden_calls, "imaplib.IMAP4_SSL"),
+    )
+    monkeypatch.setattr(
+        smtplib,
+        "SMTP",
+        _forbidden_entry_point(forbidden_calls, "smtplib.SMTP"),
+    )
+    monkeypatch.setattr(
+        smtplib,
+        "SMTP_SSL",
+        _forbidden_entry_point(forbidden_calls, "smtplib.SMTP_SSL"),
+    )
+
+    resolved_sentinel = sentinel_path.resolve()
+
+    def is_sentinel(value: object) -> bool:
+        if isinstance(value, int):
+            return False
+        try:
+            return Path(value).resolve() == resolved_sentinel
+        except (OSError, TypeError, ValueError):
+            return False
+
+    original_open = builtins.open
+    original_os_open = os.open
+    original_path_open = Path.open
+    original_read_bytes = Path.read_bytes
+    original_read_text = Path.read_text
+
+    def guarded_open(file, *args, **kwargs):
+        if is_sentinel(file):
+            return _forbidden_entry_point(
+                forbidden_calls,
+                "attachment builtins.open",
+            )()
+        return original_open(file, *args, **kwargs)
+
+    def guarded_os_open(path, *args, **kwargs):
+        if is_sentinel(path):
+            return _forbidden_entry_point(
+                forbidden_calls,
+                "attachment os.open",
+            )()
+        return original_os_open(path, *args, **kwargs)
+
+    def guarded_path_open(path: Path, *args, **kwargs):
+        if path.resolve() == resolved_sentinel:
+            return _forbidden_entry_point(
+                forbidden_calls,
+                "attachment Path.open",
+            )()
+        return original_path_open(path, *args, **kwargs)
+
+    def guarded_read_bytes(path: Path) -> bytes:
+        if path.resolve() == resolved_sentinel:
+            return _forbidden_entry_point(
+                forbidden_calls,
+                "attachment Path.read_bytes",
+            )()
+        return original_read_bytes(path)
+
+    def guarded_read_text(path: Path, *args, **kwargs) -> str:
+        if path.resolve() == resolved_sentinel:
+            return _forbidden_entry_point(
+                forbidden_calls,
+                "attachment Path.read_text",
+            )()
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(os, "open", guarded_os_open)
+    monkeypatch.setattr(Path, "open", guarded_path_open)
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    original_connect = socket.socket.connect
+    original_create_connection = socket.create_connection
+
+    def validate_destination(address: object) -> tuple[str, int] | None:
+        if not isinstance(address, tuple) or len(address) < 2:
+            return None
+        destination = (str(address[0]), int(address[1]))
+        if destination != allowed_socket_destination:
+            blocked_socket_calls.append(destination)
+            raise AssertionError(
+                f"non-fixture network egress attempted: {destination!r}"
+            )
+        return destination
+
+    def guarded_connect(sock: socket.socket, address: object):
+        destination = validate_destination(address)
+        if destination is not None:
+            allowed_socket_calls.append(destination)
+        return original_connect(sock, address)
+
+    def guarded_create_connection(address, *args, **kwargs):
+        validate_destination(address)
+        return original_create_connection(address, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket, "create_connection", guarded_create_connection)
+    return forbidden_calls, allowed_socket_calls, blocked_socket_calls
+
+
 def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database = tmp_path / "audited-email-e2e.sqlite3"
+    sentinel_content = b"attachment-content-must-never-cross-email-agent-boundary"
+    sentinel_path = tmp_path / "attachment-content-never-read.bin"
+    sentinel_path.write_bytes(sentinel_content)
+    attachment_metadata = EmailAttachmentMetadata(
+        filename=sentinel_path.name,
+        mime_type="application/octet-stream",
+        size_bytes=len(sentinel_content),
+        inline=False,
+    )
     email_store = EmailStore(database)
     task_store = AutoReplyStore(database)
     browser_launches: list[dict[str, object]] = []
+    browser_requests: list[tuple[str, int]] = []
+    blocked_browser_requests: list[str] = []
+    allowed_browser_destination: tuple[str, int] | None = None
     dedicated_profile = EmailBrowserProfile(tmp_path / "email-browser-runtime")
     main_chrome_profile = (
         Path.home() / "Library/Application Support/Google/Chrome"
     ).resolve()
 
     def launch_for_fixture(playwright, profile, *, headless=True, **kwargs):
+        assert allowed_browser_destination is not None
         browser_launches.append(
             {
                 "headless": headless,
@@ -491,9 +713,48 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     )
 
     with _loopback_unsubscribe_server() as origin:
+        parsed_origin = urlsplit(origin)
+        allowed_browser_destination = (
+            parsed_origin.hostname or "",
+            parsed_origin.port or 80,
+        )
+        (
+            forbidden_io_calls,
+            allowed_socket_calls,
+            blocked_socket_calls,
+        ) = _install_external_io_fences(
+            monkeypatch,
+            sentinel_path=sentinel_path,
+            allowed_socket_destination=allowed_browser_destination,
+        )
+        original_validate_url = BrowserNetworkPolicy.validate_url
+
+        def guarded_validate_url(
+            browser_policy: BrowserNetworkPolicy,
+            value: str,
+        ) -> str:
+            parsed = urlsplit(value)
+            destination = (
+                parsed.hostname or "",
+                parsed.port or (443 if parsed.scheme == "https" else 80),
+            )
+            if destination != allowed_browser_destination:
+                blocked_browser_requests.append(value)
+                raise AssertionError(
+                    f"browser left exact fixture destination: {value}"
+                )
+            browser_requests.append(destination)
+            return original_validate_url(browser_policy, value)
+
+        monkeypatch.setattr(
+            BrowserNetworkPolicy,
+            "validate_url",
+            guarded_validate_url,
+        )
         plan, task_input = _persist_confirmed_subscription(
             email_store,
             origin=origin,
+            attachment=attachment_metadata,
         )
         adapter = EmailAgentTaskAdapter(task_store, email_store)
         [route] = adapter.ensure_action_plan_tasks(plan, task_input)
@@ -532,12 +793,24 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             execute_effect=execute_effect,
             owner_id="audited-email-e2e",
         )
+        operation_builds: list[Path] = []
+
+        def build_fixture_operation(settings):
+            received_path = Path(settings.db_path)
+            operation_builds.append(received_path)
+            assert received_path.resolve() == database.resolve()
+            return audit_operation
+
+        monkeypatch.setattr("app.config.worker_db_path", lambda: database)
+        monkeypatch.setattr(
+            "app.email_worker.build_audited_email_unsubscribe_operation",
+            build_fixture_operation,
+        )
         executor = _AuditedTurnExecutor(
             task_store=task_store,
-            email_store=email_store,
             task_id=route.task.id,
             task_payload=payload,
-            audit_operation=audit_operation,
+            expected_attachment_metadata=attachment_metadata.model_dump(mode="json"),
         )
         orchestrator = AgentOrchestrator(
             store=task_store,
@@ -596,11 +869,43 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             for run in runs
         ],
         executor.audit_invocations,
+        executor.audit_failures,
+        forbidden_io_calls,
+        allowed_socket_calls,
+        blocked_socket_calls,
+        browser_requests,
+        blocked_browser_requests,
+        browser_launches,
+        _UnsubscribeHandler.requests,
     )
     assert [run.role for run in runs].count(AgentRole.CONSUMER) == 2
     assert [run.role for run in runs].count(AgentRole.AUDIT) == 2
     assert all(run.status == "completed" for run in runs)
     assert len(executor.audit_invocations) == 2
+    assert [
+        (run.role.value, run.proposal_revision) for run in runs
+    ] == [
+        ("consumer", 0),
+        ("audit", 0),
+        ("consumer", 1),
+        ("audit", 1),
+    ]
+    first_consumer, first_audit, second_consumer, second_audit = runs
+    assert first_consumer.parent_agent_run_id is None
+    assert first_audit.parent_agent_run_id == first_consumer.id
+    assert second_consumer.parent_agent_run_id == first_audit.id
+    assert second_audit.parent_agent_run_id == second_consumer.id
+    assert all(run.reply_task_id == task.id for run in runs)
+    assert all(run.execution_generation == task.execution_generation for run in runs)
+    assert [invocation["run_id"] for invocation in executor.audit_invocations] == [
+        first_audit.id,
+        second_audit.id,
+    ]
+    assert [invocation["capability"] for invocation in executor.audit_invocations] == [
+        "execute_audited_email_unsubscribe",
+        "execute_audited_email_unsubscribe",
+    ]
+    assert operation_builds == [database, database]
 
     first_operations = executor.consumer_proposals[0]["payload"]["operations"]
     second_operations = executor.consumer_proposals[1]["payload"]["operations"]
@@ -610,16 +915,134 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
         "submit_form",
     ]
     assert second_operations[:-1] == first_operations
+    assert len(executor.continuation_receipts) == 1
     assert [
         len(invocation["accepted_action"]["payload"]["operations"])
         for invocation in executor.audit_invocations
     ] == [1, 2]
+    for index, invocation in enumerate(executor.audit_invocations):
+        arguments = invocation["arguments"]
+        assert arguments == {
+            "task_id": task.id,
+            "execution_generation": task.execution_generation,
+            "audit_agent_run_id": (first_audit.id, second_audit.id)[index],
+            "accepted_action": executor.consumer_proposals[index],
+        }
+        assert invocation["accepted_action"] == executor.consumer_proposals[index]
 
     steps = email_store.list_email_unsubscribe_steps(str(payload["action_identity"]))
     assert [step["operation"] for step in steps] == ["open_entry", "submit_form"]
     receipt = email_store.get_email_unsubscribe_receipt(str(payload["action_identity"]))
     assert receipt is not None
     assert receipt["result_text"] == "You have been unsubscribed"
+    expected_binding = {
+        "action_identity": payload["action_identity"],
+        "action_plan_id": plan.action_plan_id,
+        "action_plan_version": plan.action_plan_version,
+        "classification_id": plan.classification_id,
+        "account_id": ACCOUNT_ID,
+        "stable_message_identity": MESSAGE_IDENTITY,
+        "thread_identity": THREAD_IDENTITY,
+        "entry_reference": payload["unsubscribe_entries"][0]["reference"],
+    }
+    assert payload["action_type"] == EmailAction.UNSUBSCRIBE.value
+    assert all(payload[key] == value for key, value in expected_binding.items())
+    expected_target_binding = {
+        key: expected_binding[key]
+        for key in (
+            "action_identity",
+            "account_id",
+            "stable_message_identity",
+            "thread_identity",
+            "entry_reference",
+        )
+    } | {
+        "network_policy_reference": payload[
+            "unsubscribe_network_policy_reference"
+        ],
+        "network_policy_origin_references": payload[
+            "unsubscribe_network_policy_origin_references"
+        ],
+    }
+    assert all(
+        proposal["target"] == expected_target_binding
+        for proposal in executor.consumer_proposals
+    )
+    claim = email_store.get_email_unsubscribe_claim(str(payload["action_identity"]))
+    assert claim is not None
+    assert all(claim[key] == value for key, value in expected_binding.items())
+    assert claim["audit_agent_run_id"] == second_audit.id
+    assert all(receipt[key] == value for key, value in expected_binding.items())
+
+    with sqlite3.connect(database) as db:
+        db.row_factory = sqlite3.Row
+        action_plan_row = db.execute(
+            "select * from email_action_plans where action_plan_id=?",
+            (plan.action_plan_id,),
+        ).fetchone()
+        account_row = db.execute(
+            "select * from email_accounts where account_id=?",
+            (ACCOUNT_ID,),
+        ).fetchone()
+        message_row = db.execute(
+            "select * from email_messages where stable_message_identity=?",
+            (MESSAGE_IDENTITY,),
+        ).fetchone()
+        effect_rows = db.execute(
+            "select * from email_unsubscribe_effects "
+            "where action_identity=? order by rowid",
+            (payload["action_identity"],),
+        ).fetchall()
+    assert action_plan_row is not None
+    assert account_row is not None
+    assert message_row is not None
+    assert json.loads(action_plan_row["actions_json"]) == [
+        EmailAction.UNSUBSCRIBE.value
+    ]
+    assert action_plan_row["action_plan_version"] == plan.action_plan_version
+    assert action_plan_row["classification_id"] == plan.classification_id
+    assert action_plan_row["account_id"] == ACCOUNT_ID
+    assert account_row["account_id"] == ACCOUNT_ID
+    assert message_row["account_id"] == ACCOUNT_ID
+    assert message_row["stable_message_identity"] == MESSAGE_IDENTITY
+    assert message_row["thread_identity"] == THREAD_IDENTITY
+    assert len(effect_rows) == 2
+    first_effect, second_effect = effect_rows
+    assert [row["action_identity"] for row in effect_rows] == [
+        expected_binding["action_identity"],
+        expected_binding["action_identity"],
+    ]
+    assert [row["audit_agent_run_id"] for row in effect_rows] == [
+        first_audit.id,
+        second_audit.id,
+    ]
+    assert json.loads(first_effect["operations_json"]) == first_operations
+    assert json.loads(second_effect["operations_json"]) == second_operations
+    assert first_effect["previous_effect_digest"] == ""
+    assert second_effect["previous_effect_digest"] == first_effect["effect_digest"]
+    assert receipt["effect_digest"] == second_effect["effect_digest"]
+    assert claim["effect_digest"] == second_effect["effect_digest"]
+    assert executor.continuation_receipts[0]["previous_effect_digest"] == (
+        first_effect["effect_digest"]
+    )
+    assert [step["action_identity"] for step in steps] == [
+        expected_binding["action_identity"],
+        expected_binding["action_identity"],
+    ]
+    assert [step["effect_digest"] for step in steps] == [
+        first_effect["effect_digest"],
+        second_effect["effect_digest"],
+    ]
+    assert all(
+        row["network_policy_reference"]
+        == payload["unsubscribe_network_policy_reference"]
+        for row in effect_rows
+    )
+    assert all(
+        json.loads(row["network_policy_origins_json"])
+        == payload["unsubscribe_network_policy_origin_references"]
+        for row in effect_rows
+    )
     assert _UnsubscribeHandler.requests == [
         {
             "method": "GET",
@@ -641,8 +1064,18 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
         for launch in browser_launches
     )
     assert dedicated_profile.profile_dir != main_chrome_profile
-    assert executor.smtp_connections == []
-    assert executor.attachment_reads == []
+    assert forbidden_io_calls == []
+    assert blocked_socket_calls == []
+    assert set(allowed_socket_calls) <= {allowed_browser_destination}
+    assert blocked_browser_requests == []
+    assert browser_requests
+    assert set(browser_requests) == {allowed_browser_destination}
+    serialized_prompts = "\n".join(executor.consumer_prompts)
+    assert attachment_metadata.filename in serialized_prompts
+    assert attachment_metadata.mime_type in serialized_prompts
+    assert str(attachment_metadata.size_bytes) in serialized_prompts
+    assert str(sentinel_path.resolve()) not in serialized_prompts
+    assert sentinel_content.decode("utf-8") not in serialized_prompts
     assert all(
         "execute_audited_email_unsubscribe" not in json.dumps(command)
         for command in executor.commands[0::2]

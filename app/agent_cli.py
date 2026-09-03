@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import zipfile
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from xml.etree import ElementTree
@@ -826,13 +827,18 @@ def execute_audited_email_unsubscribe_tool(
     from app.config import worker_db_path
     from app.email_worker import run_audited_email_unsubscribe
 
-    return run_audited_email_unsubscribe(
-        worker_db_path(),
-        task_id,
-        execution_generation,
-        audit_agent_run_id=audit_agent_run_id,
-        accepted_action=accepted_action,
-    )
+    with ThreadPoolExecutor(
+        max_workers=1,
+        thread_name_prefix="audited-email-unsubscribe",
+    ) as executor:
+        return executor.submit(
+            run_audited_email_unsubscribe,
+            worker_db_path(),
+            task_id,
+            execution_generation,
+            audit_agent_run_id=audit_agent_run_id,
+            accepted_action=accepted_action,
+        ).result()
 
 
 @server.tool(
