@@ -9510,6 +9510,60 @@ class AutoReplyStore:
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
+    def terminalize_legacy_email_unsubscribe_task(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+        expected_status: str,
+    ) -> bool:
+        """Fail one exact inventoried Consumer-direct Email task attempt."""
+
+        if not isinstance(task_id, int) or isinstance(task_id, bool) or task_id <= 0:
+            raise ValueError("task_id must be positive")
+        if not expected_execution_generation.strip():
+            raise ValueError("expected_execution_generation must be non-empty")
+        if expected_status not in {"pending", "processing"}:
+            raise ValueError("expected_status must be pending or processing")
+        with self._immediate_write_transaction() as db:
+            cursor = db.execute(
+                """
+                update reply_tasks
+                set status='failed',
+                    locked_at=null,
+                    error='legacy_email_unsubscribe_lifecycle',
+                    available_at='',
+                    updated_at=current_timestamp
+                where id=?
+                  and execution_generation=?
+                  and channel='email'
+                  and status=?
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(trigger_message_json, '$.schema')
+                          else null
+                      end='email_agent_action.v1'
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(
+                              trigger_message_json,
+                              '$.action_type'
+                          )
+                          else null
+                      end='unsubscribe'
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(
+                              trigger_message_json,
+                              '$.lifecycle_version'
+                          )
+                          else null
+                      end='email_unsubscribe_consumer_direct_v1'
+                """,
+                (task_id, expected_execution_generation, expected_status),
+            )
+            return cursor.rowcount == 1
+
     def terminalize_exhausted_pending_reply_tasks(
         self,
         *,

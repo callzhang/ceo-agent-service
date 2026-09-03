@@ -555,10 +555,6 @@ def _execute_one_effect(
     if accepts_kwargs or any(parameter.name == "owner" for parameter in parameters):
         kwargs["owner"] = owner
     if accepts_kwargs or any(
-        parameter.name == "automatic" for parameter in parameters
-    ):
-        kwargs["automatic"] = False
-    if accepts_kwargs or any(
         parameter.name == "executed_prefix_length" for parameter in parameters
     ):
         kwargs["executed_prefix_length"] = executed_prefix_length

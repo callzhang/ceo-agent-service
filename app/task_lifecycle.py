@@ -24,14 +24,6 @@ from app.store import ReplyTask
 
 class TaskLifecycle(StrEnum):
     CONSUMER_AUDIT = "consumer_audit"
-    # Deprecated compatibility for app/email_worker.py; Task 5 removes it.
-    # Lifecycle selection must never return this member.
-    EMAIL_UNSUBSCRIBE_CONSUMER_DIRECT = "email_unsubscribe_consumer_direct"
-
-
-EMAIL_UNSUBSCRIBE_CONSUMER_DIRECT_LIFECYCLE_VERSION = (
-    "email_unsubscribe_consumer_direct_v1"
-)
 EMAIL_UNSUBSCRIBE_AUDITED_LIFECYCLE_VERSION = "email_unsubscribe_audited_v2"
 _EMAIL_ACTION_PAYLOAD_SCHEMA = "email_agent_action.v1"
 _AUDITED_UNSUBSCRIBE_PAYLOAD_KEYS = frozenset(

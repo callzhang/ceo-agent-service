@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime, timezone
 from hashlib import sha256
 from importlib import import_module
@@ -25,6 +26,7 @@ from app.email_imap_readonly import (
     parse_rfc822_message,
 )
 from app.email_store import email_action_identity
+from app.email_task_adapter import email_conversation_id
 from app.email_task_producer import EmailActionTaskProducer
 from app.email_unsubscribe import (
     BrowserNetworkPolicy,
@@ -53,6 +55,9 @@ def _dependencies(
         load_active_model=lambda: events.append("model") or model,
         scan_account=lambda account, active_model: None,
         run_direct_actions_once=lambda: None,
+        email_store=SimpleNamespace(
+            list_nonterminal_legacy_unsubscribe_task_attempts=lambda: ()
+        ),
         task_store=SimpleNamespace(claim_reply_tasks=lambda *args, **kwargs: []),
         orchestrator=SimpleNamespace(process=lambda *args, **kwargs: None),
         load_task_context=lambda task: None,
@@ -60,6 +65,16 @@ def _dependencies(
         training_tick=lambda: None,
         record_health=lambda scope, payload: None,
     )
+
+
+def _persist_email_worker_health(task_store):
+    def record_health(scope, payload):
+        task_store.set_service_state(
+            f"email_worker_health:{scope}",
+            json.dumps(dict(payload), sort_keys=True, separators=(",", ":")),
+        )
+
+    return record_health
 
 
 def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
@@ -167,7 +182,6 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
             effect,
             (entry,),
             owner=owner,
-            automatic=False,
             executed_prefix_length=0,
         )
         is sentinel_result
@@ -175,7 +189,7 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     assert execution_calls[0][0:2] == (effect, (entry,))
     assert execution_calls[0][2]["store"] is operation.email_store
     assert execution_calls[0][2]["owner"] is owner
-    assert execution_calls[0][2]["automatic"] is False
+    assert "automatic" not in execution_calls[0][2]
     assert execution_calls[0][2]["executed_prefix_length"] == 0
 
 
@@ -512,7 +526,7 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
         assert kwargs["network_policy"].origin_references == policy.origin_references
         assert effect.network_policy_reference == policy.reference
         assert effect.network_policy_origin_references == policy.origin_references
-        assert kwargs["automatic"] is False
+        assert "automatic" not in kwargs
         return {
             "status": "done",
             "outcome": "done",
@@ -651,6 +665,80 @@ def test_missing_configuration_reports_waiting_configuration_without_starting_th
             {"status": "waiting_configuration", "reason": configuration},
         )
     ]
+
+
+@pytest.mark.parametrize("configuration", ("empty_accounts", "missing_model"))
+def test_pending_legacy_unsubscribe_is_failed_before_configuration_wait(
+    tmp_path,
+    configuration,
+):
+    module = _module()
+    health = []
+    database = tmp_path / f"legacy-before-{configuration}.sqlite3"
+    task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    legacy = task_store.ensure_reply_task(
+        channel="email",
+        conversation_id=f"legacy-before-{configuration}",
+        conversation_title="Legacy unsubscribe",
+        single_chat=False,
+        trigger_message_id=f"legacy-before-{configuration}",
+        trigger_create_time="2026-09-03T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Legacy unsubscribe.",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "action_type": "unsubscribe",
+                "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+            }
+        ),
+        execution_generation=f"legacy-generation-{configuration}",
+    )
+    dependencies = _dependencies(
+        [],
+        accounts=(
+            ()
+            if configuration == "empty_accounts"
+            else ({"account_id": "account-1", "enabled": True},)
+        ),
+        model=None if configuration == "missing_model" else object(),
+    )
+    dependencies.email_store = email_store
+    dependencies.task_store = task_store
+    dependencies.record_health = lambda scope, payload: health.append(
+        (scope, payload)
+    )
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=lambda **_kwargs: pytest.fail("waiting worker must not start"),
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    terminal = task_store.get_reply_task(legacy.id)
+    assert terminal is not None
+    assert terminal.status == "failed"
+    assert terminal.error == "legacy_email_unsubscribe_lifecycle"
+    assert terminal.locked_at is None
+    assert terminal.available_at == ""
+    assert health[0] == (
+        "component:email-legacy-lifecycle",
+        {
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_lifecycle",
+            "task_count": 1,
+            "isolated_count": 1,
+            "superseded_count": 0,
+            "unresolved_count": 0,
+        },
+    )
+    assert health[1] == (
+        "process:email-worker",
+        {"status": "waiting_configuration", "reason": configuration},
+    )
 
 
 def test_email_worker_components_are_three_independent_daemon_threads():
@@ -792,8 +880,14 @@ def test_sanitized_scan_result_error_is_not_reported_as_ready():
     )
 
 
-def test_email_agent_consumer_claims_only_email_channel_without_dingtalk_adapter():
+def test_email_agent_consumer_claims_only_email_channel_without_dingtalk_adapter(
+    monkeypatch,
+):
     module = _module()
+    monkeypatch.setattr(
+        "app.task_lifecycle.validate_audited_email_task",
+        lambda _task, _context: True,
+    )
     task = SimpleNamespace(id=41)
     calls = []
 
@@ -865,37 +959,56 @@ def test_email_agent_consumer_does_not_execute_legacy_auto_reply_task():
     assert failures == [(42, "email_auto_reply_disabled", "generation-1")]
 
 
-def test_unsubscribe_task_uses_direct_consumer_without_orchestrator():
+def test_unsubscribe_task_uses_consumer_audit_orchestrator():
     module = _module()
+    account_id = "account-1"
+    stable_message_identity = "account-1:message-id:<mail@example.com>"
+    thread_identity = "thread-1"
     action_identity = email_action_identity(
-        account_id="account-1",
-        stable_message_identity="account-1:message-id:<mail@example.com>",
+        account_id=account_id,
+        stable_message_identity=stable_message_identity,
         action_type=EmailAction.UNSUBSCRIBE,
         action_plan_version=1,
     )
+    entry = extract_unsubscribe_entries(
+        list_unsubscribe="<https://news.example.com/unsubscribe?token=private>"
+    )[0]
+    policy = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
     payload = {
         "schema": "email_agent_action.v1",
-        "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
         "action_type": "unsubscribe",
         "action_identity": action_identity,
         "action_plan_id": "email-plan:1",
         "action_plan_version": 1,
         "classification_id": 1,
-        "account_id": "account-1",
-        "stable_message_identity": "account-1:message-id:<mail@example.com>",
-        "thread_identity": "thread-1",
+        "account_id": account_id,
+        "stable_message_identity": stable_message_identity,
+        "thread_identity": thread_identity,
         "category": "subscription",
         "classification_source": "user",
         "confidence": 1.0,
         "model_id": "email-model:test",
         "config_version": "email-config:test",
         "action_parameters": {},
+        "unsubscribe_entries": [
+            {
+                "source": entry.source.value,
+                "reference": entry.reference,
+                "priority": entry.priority,
+            }
+        ],
+        "unsubscribe_authentication": None,
+        "unsubscribe_network_policy_reference": policy.reference,
+        "unsubscribe_network_policy_origin_references": list(
+            policy.origin_references
+        ),
     }
     task = SimpleNamespace(
         id=7,
         execution_generation="generation-1",
         channel="email",
-        conversation_id="email-thread:1",
+        conversation_id=email_conversation_id(account_id, thread_identity),
         conversation_title="Email unsubscribe",
         trigger_message_id=action_identity,
         trigger_sender="sender@example.com",
@@ -925,18 +1038,14 @@ def test_unsubscribe_task_uses_direct_consumer_without_orchestrator():
             calls.append(("claim", limit, channel))
             return [task]
 
-    class DirectConsumer:
-        def run(self, claimed, loaded):
-            calls.append(("direct", claimed, loaded))
-            return "direct-result"
+    def process(claimed, loaded, *, refresh_context):
+        calls.append(("process", claimed, loaded, refresh_context()))
+        return "audited-result"
 
-    orchestrator = SimpleNamespace(
-        process=lambda *_args, **_kwargs: pytest.fail("Audit orchestrator was called")
-    )
+    orchestrator = SimpleNamespace(process=process)
     module.run_email_agent_task_loop(
         Store(),
         orchestrator,
-        unsubscribe_consumer=DirectConsumer(),
         load_task_context=lambda claimed: context,
         finalize_task=lambda claimed, result: calls.append(
             ("finalize", claimed, result)
@@ -945,22 +1054,20 @@ def test_unsubscribe_task_uses_direct_consumer_without_orchestrator():
         max_cycles=1,
     )
 
-    assert calls[1] == ("direct", task, context)
-    assert calls[2] == ("finalize", task, "direct-result")
+    assert calls[1] == ("process", task, context, context)
+    assert calls[2] == ("finalize", task, "audited-result")
 
 
-def test_default_dependency_builder_wires_a_real_unsubscribe_consumer(
+def test_default_dependency_builder_has_no_direct_unsubscribe_consumer(
     tmp_path, monkeypatch
 ):
     module = _module()
     sentinel = object()
-    captured = []
 
     monkeypatch.setattr(
         module,
-        "_build_email_unsubscribe_consumer",
-        lambda *args, **kwargs: captured.append((args, kwargs))
-        or (sentinel, object()),
+        "_build_agent_orchestrator",
+        lambda *_args, **_kwargs: sentinel,
     )
     from app.email_model_registry import EmailModelRegistry
 
@@ -998,57 +1105,1296 @@ def test_default_dependency_builder_wires_a_real_unsubscribe_consumer(
         ),
     )
 
-    assert dependencies.unsubscribe_consumer is sentinel
-    assert captured
+    assert dependencies.orchestrator is sentinel
+    assert not hasattr(dependencies, "unsubscribe_consumer")
+    assert not hasattr(module, "_build_email_unsubscribe_consumer")
+    assert not hasattr(module, "build_email_unsubscribe_operation")
+    assert not hasattr(module, "run_email_unsubscribe_task")
 
 
-def test_unsubscribe_result_finalizes_without_agent_or_audit_run():
+def test_agent_orchestrator_is_wired_with_email_continuation_driver(
+    tmp_path, monkeypatch
+):
     module = _module()
-    from app.agent_result import AgentError
-    from app.email_unsubscribe_consumer import EmailUnsubscribeConsumerResult
-
-    task = SimpleNamespace(
-        id=7,
-        execution_generation="generation-1",
-        conversation_id="email-thread:1",
-        conversation_title="Email unsubscribe",
-        trigger_message_id="email-action:unsubscribe-1",
-        trigger_sender="sender@example.com",
-        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    runtime = SimpleNamespace(
+        config=object(),
+        router=object(),
+        codex_adapter=object(),
+        claude_adapter=object(),
+        friday_adapter=object(),
+        refresh_runtime_capabilities=lambda: None,
     )
-    calls = []
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_agent_runtime",
+        lambda **_kwargs: runtime,
+    )
+    monkeypatch.setattr(
+        "app.consumer_agent.ConsumerAgentRunner",
+        lambda **kwargs: SimpleNamespace(kwargs=kwargs),
+    )
+    monkeypatch.setattr(
+        "app.audit_agent.AuditAgentRunner",
+        lambda **kwargs: SimpleNamespace(kwargs=kwargs),
+    )
+    captured = {}
 
-    class Store:
-        def finalize_reply_task_without_run(self, **kwargs):
-            calls.append(kwargs)
+    def build_orchestrator(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(**kwargs)
 
-    result = EmailUnsubscribeConsumerResult(
-        outcome="no_action",
-        summary="Already unsubscribed.",
-        error=AgentError(),
+    monkeypatch.setattr(
+        "app.agent_orchestrator.AgentOrchestrator",
+        build_orchestrator,
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "worker.sqlite3",
+        workspace=tmp_path,
+        dry_run=False,
     )
 
-    module._finalize_email_task(Store(), task, result)
+    result = module._build_agent_orchestrator(
+        settings,
+        AutoReplyStore(settings.db_path),
+    )
 
-    assert calls == [
+    from app.email_unsubscribe_continuation import (
+        EmailUnsubscribeContinuationDriver,
+    )
+
+    assert result.domain_continuation is captured["domain_continuation"]
+    assert isinstance(result.domain_continuation, EmailUnsubscribeContinuationDriver)
+    assert result.domain_continuation.email_store.path == settings.db_path
+
+
+def test_worker_startup_isolates_legacy_before_agent_claim_and_starts_components(
+    tmp_path,
+):
+    module = _module()
+    events = []
+    health = []
+    database = tmp_path / "legacy-worker-startup.sqlite3"
+    task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    legacy = task_store.ensure_reply_task(
+        channel="email",
+        conversation_id="legacy-worker-startup",
+        conversation_title="Legacy unsubscribe",
+        single_chat=False,
+        trigger_message_id="legacy-worker-startup",
+        trigger_create_time="2026-09-03T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Legacy unsubscribe.",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "action_type": "unsubscribe",
+                "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+            }
+        ),
+        execution_generation="legacy-generation-17",
+    )
+    dependencies = _dependencies(events)
+    dependencies.email_store = email_store
+    dependencies.task_store = task_store
+    dependencies.orchestrator = SimpleNamespace(
+        process=lambda *_args, **_kwargs: pytest.fail(
+            "legacy task must never reach orchestrator"
+        )
+    )
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            self.name = name
+            events.append(("thread", name, daemon, target))
+
+        def start(self):
+            events.append(("started", self.name))
+
+    dependencies.record_health = lambda scope, payload: health.append(
+        (scope, payload)
+    )
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    terminal = task_store.get_reply_task(legacy.id)
+    assert terminal is not None
+    assert terminal.status == "failed"
+    assert (
+        "component:email-legacy-lifecycle",
         {
-            "task_id": 7,
-            "expected_execution_generation": "generation-1",
-            "task_status": "done",
-            "task_error": "",
-            "available_at": "",
-            "conversation_id": "email-thread:1",
-            "conversation_title": "Email unsubscribe",
-            "trigger_message_id": "email-action:unsubscribe-1",
-            "trigger_sender": "sender@example.com",
-            "trigger_text": "Immutable ActionPlan authorizes unsubscribe.",
-            "codex_reason": "Already unsubscribed.",
-            "audit_summary": "",
-            "send_status": "skipped",
-            "send_error": "",
-            "channel": "email",
-        }
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_lifecycle",
+            "task_count": 1,
+            "isolated_count": 1,
+            "superseded_count": 0,
+            "unresolved_count": 0,
+        },
+    ) in health
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-agent-consumer",
+        "ceo-agent-email-training",
+    }
+    module.run_email_agent_task_loop(
+        task_store,
+        dependencies.orchestrator,
+        load_task_context=lambda _task: pytest.fail("legacy context loaded"),
+        finalize_task=lambda *_args: pytest.fail("legacy task finalized"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+
+def test_unfenced_legacy_blocks_agent_consumer_but_starts_scan_direct_and_training(
+    tmp_path,
+):
+    module = _module()
+    events = []
+    health = []
+    database = tmp_path / "unfenced-legacy-worker.sqlite3"
+    real_task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    legacy = real_task_store.ensure_reply_task(
+        channel="email",
+        conversation_id="unfenced-legacy-worker",
+        conversation_title="Unfenced legacy unsubscribe",
+        single_chat=False,
+        trigger_message_id="unfenced-legacy-worker",
+        trigger_create_time="2026-09-03T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Legacy unsubscribe.",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "action_type": "unsubscribe",
+                "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+            }
+        ),
+        execution_generation="unfenced-generation",
+    )
+
+    class UnfenceableTaskStore:
+        def __getattr__(self, name):
+            return getattr(real_task_store, name)
+
+        def terminalize_legacy_email_unsubscribe_task(
+            self,
+            task_id,
+            *,
+            expected_execution_generation,
+            expected_status,
+        ):
+            assert (task_id, expected_execution_generation, expected_status) == (
+                legacy.id,
+                legacy.execution_generation,
+                "pending",
+            )
+            return False
+
+    dependencies = _dependencies(events)
+    dependencies.email_store = email_store
+    dependencies.task_store = UnfenceableTaskStore()
+    dependencies.orchestrator = SimpleNamespace(
+        process=lambda *_args, **_kwargs: pytest.fail(
+            "unfenced legacy task must never reach orchestrator"
+        )
+    )
+    dependencies.record_health = lambda scope, payload: health.append(
+        (scope, payload)
+    )
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            self.name = name
+            events.append(("thread", name, daemon, target))
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    unchanged = real_task_store.get_reply_task(legacy.id)
+    assert unchanged is not None
+    assert unchanged.status == "pending"
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-training",
+    }
+    assert (
+        "component:email-legacy-lifecycle",
+        {
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_lifecycle",
+            "task_count": 1,
+            "isolated_count": 0,
+            "superseded_count": 0,
+            "unresolved_count": 1,
+        },
+    ) in health
+    assert (
+        "component:email-agent-consumer",
+        {
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_lifecycle",
+            "unresolved_count": 1,
+        },
+    ) in health
+
+
+def test_generation_replacement_after_inventory_is_not_failed_and_blocks_agent(
+    tmp_path,
+):
+    module = _module()
+    events = []
+    health = []
+    database = tmp_path / "legacy-generation-race.sqlite3"
+    real_task_store = AutoReplyStore(database)
+    real_email_store = EmailStore(database)
+    legacy = real_task_store.ensure_reply_task(
+        channel="email",
+        conversation_id="legacy-generation-race",
+        conversation_title="Legacy generation race",
+        single_chat=False,
+        trigger_message_id="legacy-generation-race",
+        trigger_create_time="2026-09-03T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Legacy unsubscribe.",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "action_type": "unsubscribe",
+                "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+            }
+        ),
+        execution_generation="inventoried-generation",
+    )
+
+    class RotatingInventoryStore:
+        rotated = False
+
+        def __getattr__(self, name):
+            return getattr(real_email_store, name)
+
+        def _rotate(self):
+            if self.rotated:
+                return
+            with sqlite3.connect(database) as db:
+                db.execute(
+                    "update reply_tasks set execution_generation=? where id=?",
+                    ("replacement-generation", legacy.id),
+                )
+            self.rotated = True
+
+        def list_nonterminal_legacy_unsubscribe_task_attempts(self):
+            result = real_email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
+            self._rotate()
+            return result
+
+    terminalization_generations = []
+
+    class RecordingTaskStore:
+        def __getattr__(self, name):
+            return getattr(real_task_store, name)
+
+        def terminalize_legacy_email_unsubscribe_task(
+            self,
+            task_id,
+            *,
+            expected_execution_generation,
+            expected_status,
+        ):
+            assert expected_status == "pending"
+            terminalization_generations.append(expected_execution_generation)
+            return real_task_store.terminalize_legacy_email_unsubscribe_task(
+                task_id,
+                expected_execution_generation=expected_execution_generation,
+                expected_status=expected_status,
+            )
+
+    dependencies = _dependencies(events)
+    dependencies.email_store = RotatingInventoryStore()
+    dependencies.task_store = RecordingTaskStore()
+    dependencies.record_health = lambda scope, payload: health.append(
+        (scope, payload)
+    )
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    replacement = real_task_store.get_reply_task(legacy.id)
+    assert replacement is not None
+    assert replacement.execution_generation == "replacement-generation"
+    assert replacement.status == "pending"
+    assert terminalization_generations == ["inventoried-generation"]
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-training",
+    }
+    assert (
+        "component:email-legacy-lifecycle",
+        {
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_lifecycle",
+            "task_count": 1,
+            "isolated_count": 0,
+            "superseded_count": 0,
+            "unresolved_count": 1,
+        },
+    ) in health
+
+
+def test_processing_replacement_after_pending_inventory_is_unresolved_and_blocks_agent(
+    tmp_path,
+):
+    module = _module()
+    events = []
+    database = tmp_path / "legacy-status-race.sqlite3"
+    real_task_store = AutoReplyStore(database)
+    real_email_store = EmailStore(database)
+    legacy = real_task_store.ensure_reply_task(
+        channel="email",
+        conversation_id="legacy-status-race",
+        conversation_title="Legacy status race",
+        single_chat=False,
+        trigger_message_id="legacy-status-race",
+        trigger_create_time="2026-09-03T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Legacy unsubscribe.",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "action_type": "unsubscribe",
+                "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+            }
+        ),
+        execution_generation="status-race-generation",
+    )
+
+    class AdvancingInventoryStore:
+        advanced = False
+
+        def __getattr__(self, name):
+            return getattr(real_email_store, name)
+
+        def list_nonterminal_legacy_unsubscribe_task_attempts(self):
+            attempts = real_email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
+            if not self.advanced:
+                claimed = real_task_store.claim_reply_task(legacy.id)
+                assert claimed is not None
+                assert claimed.status == "processing"
+                self.advanced = True
+            return attempts
+
+    terminalization_bindings = []
+
+    class RecordingTaskStore:
+        def __getattr__(self, name):
+            return getattr(real_task_store, name)
+
+        def terminalize_legacy_email_unsubscribe_task(
+            self,
+            task_id,
+            *,
+            expected_execution_generation,
+            expected_status,
+        ):
+            terminalization_bindings.append(
+                (task_id, expected_execution_generation, expected_status)
+            )
+            return real_task_store.terminalize_legacy_email_unsubscribe_task(
+                task_id,
+                expected_execution_generation=expected_execution_generation,
+                expected_status=expected_status,
+            )
+
+    dependencies = _dependencies(events)
+    dependencies.email_store = AdvancingInventoryStore()
+    dependencies.task_store = RecordingTaskStore()
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    replacement = real_task_store.get_reply_task(legacy.id)
+    assert replacement is not None
+    assert replacement.execution_generation == legacy.execution_generation
+    assert replacement.status == "processing"
+    assert terminalization_bindings == [
+        (legacy.id, legacy.execution_generation, "pending")
     ]
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-training",
+    }
+
+
+@pytest.mark.parametrize("first_terminalization", ("cas-false", "exception"))
+def test_final_dependency_reconciliation_clears_bootstrap_unresolved_after_isolation(
+    tmp_path,
+    first_terminalization,
+):
+    module = _module()
+    database = tmp_path / f"two-stage-{first_terminalization}.sqlite3"
+    real_task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    legacy = real_task_store.ensure_reply_task(
+        channel="email",
+        conversation_id=f"two-stage-{first_terminalization}",
+        conversation_title="Two-stage legacy reconciliation",
+        single_chat=False,
+        trigger_message_id=f"two-stage-{first_terminalization}",
+        trigger_create_time="2026-09-03T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Legacy unsubscribe.",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "action_type": "unsubscribe",
+                "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+            }
+        ),
+        execution_generation="two-stage-generation",
+    )
+    terminalization_bindings = []
+
+    class FirstPassTaskStore:
+        def __getattr__(self, name):
+            return getattr(real_task_store, name)
+
+        def terminalize_legacy_email_unsubscribe_task(
+            self,
+            task_id,
+            *,
+            expected_execution_generation,
+            expected_status,
+        ):
+            terminalization_bindings.append(
+                (task_id, expected_execution_generation, expected_status)
+            )
+            if first_terminalization == "exception":
+                raise RuntimeError("simulated bootstrap CAS failure")
+            return False
+
+    events = []
+    health = []
+    accounts = ({"account_id": "account-1", "enabled": True},)
+    active_model = object()
+    ready_dependencies = _dependencies(events)
+    ready_dependencies.email_store = email_store
+    ready_dependencies.task_store = real_task_store
+    ready_dependencies.orchestrator = SimpleNamespace(
+        process=lambda *_args, **_kwargs: pytest.fail(
+            "isolated legacy task must never reach orchestrator"
+        )
+    )
+    ready_dependencies.record_health = lambda scope, payload: health.append(
+        (scope, payload)
+    )
+    bootstrap = SimpleNamespace(
+        email_store=email_store,
+        task_store=FirstPassTaskStore(),
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        load_enabled_accounts=lambda: accounts,
+        load_active_model=lambda: active_model,
+        build_dependencies=lambda loaded_accounts, loaded_model: (
+            ready_dependencies
+            if (loaded_accounts, loaded_model) == (accounts, active_model)
+            else pytest.fail("unexpected dependency build input")
+        ),
+    )
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=bootstrap,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    terminal = real_task_store.get_reply_task(legacy.id)
+    assert terminal is not None
+    assert terminal.status == "failed"
+    assert terminal.error == "legacy_email_unsubscribe_lifecycle"
+    assert terminalization_bindings == [
+        (legacy.id, legacy.execution_generation, "pending")
+    ]
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-agent-consumer",
+        "ceo-agent-email-training",
+    }
+    assert not any(
+        scope == "component:email-agent-consumer" for scope, _payload in health
+    )
+    module.run_email_agent_task_loop(
+        real_task_store,
+        ready_dependencies.orchestrator,
+        load_task_context=lambda _task: pytest.fail("legacy context loaded"),
+        finalize_task=lambda *_args: pytest.fail("legacy task finalized"),
+        sleep=lambda _seconds: None,
+        max_cycles=1,
+    )
+
+
+@pytest.mark.parametrize(
+    "final_read_failure",
+    ("missing-inventory", "inventory-exception", "recheck-exception"),
+)
+def test_final_dependencies_without_authoritative_read_preserve_bootstrap_unresolved(
+    tmp_path,
+    final_read_failure,
+):
+    module = _module()
+    database = tmp_path / "two-stage-inventory-unavailable.sqlite3"
+    real_task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    legacy = real_task_store.ensure_reply_task(
+        channel="email",
+        conversation_id="two-stage-inventory-unavailable",
+        conversation_title="Two-stage unavailable inventory",
+        single_chat=False,
+        trigger_message_id="two-stage-inventory-unavailable",
+        trigger_create_time="2026-09-03T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Legacy unsubscribe.",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "action_type": "unsubscribe",
+                "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+            }
+        ),
+        execution_generation="inventory-unavailable-generation",
+    )
+
+    class UnfenceableTaskStore:
+        def __getattr__(self, name):
+            return getattr(real_task_store, name)
+
+        def terminalize_legacy_email_unsubscribe_task(self, *_args, **_kwargs):
+            return False
+
+    class InventoryFailureStore:
+        def list_nonterminal_legacy_unsubscribe_task_attempts(self):
+            raise RuntimeError("simulated final inventory failure")
+
+    class RecheckFailureStore:
+        def list_nonterminal_legacy_unsubscribe_task_attempts(self):
+            return email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
+
+        def get_nonterminal_legacy_unsubscribe_task_attempt(self, _task_id):
+            raise RuntimeError("simulated final recheck failure")
+
+    events = []
+    health = []
+    accounts = ({"account_id": "account-1", "enabled": True},)
+    active_model = object()
+    ready_dependencies = _dependencies(events)
+    ready_dependencies.email_store = {
+        "missing-inventory": SimpleNamespace(),
+        "inventory-exception": InventoryFailureStore(),
+        "recheck-exception": RecheckFailureStore(),
+    }[final_read_failure]
+    ready_dependencies.task_store = (
+        UnfenceableTaskStore()
+        if final_read_failure == "recheck-exception"
+        else real_task_store
+    )
+    ready_dependencies.record_health = lambda scope, payload: health.append(
+        (scope, payload)
+    )
+    bootstrap = SimpleNamespace(
+        email_store=email_store,
+        task_store=UnfenceableTaskStore(),
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        load_enabled_accounts=lambda: accounts,
+        load_active_model=lambda: active_model,
+        build_dependencies=lambda _accounts, _model: ready_dependencies,
+    )
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=bootstrap,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    current = real_task_store.get_reply_task(legacy.id)
+    assert current is not None
+    assert current.status == "pending"
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-training",
+    }
+    assert (
+        "component:email-agent-consumer",
+        {
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_inventory_unavailable",
+        },
+    ) in health
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    (
+        "pending-bootstrap-and-final-error",
+        "bootstrap-isolates-then-final-error",
+        "insert-after-empty-bootstrap-then-final-error",
+        "empty-bootstrap-and-final-error",
+    ),
+)
+def test_final_unknown_legacy_inventory_blocks_only_agent_consumer(
+    tmp_path,
+    scenario,
+):
+    module = _module()
+    database = tmp_path / f"final-unknown-{scenario}.sqlite3"
+    task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    accounts = ({"account_id": "account-1", "enabled": True},)
+    active_model = object()
+    events = []
+    health = []
+    created_tasks = []
+
+    def create_legacy_task(suffix):
+        task = task_store.ensure_reply_task(
+            channel="email",
+            conversation_id=f"final-unknown-{scenario}-{suffix}",
+            conversation_title="Final unknown legacy inventory",
+            single_chat=False,
+            trigger_message_id=f"final-unknown-{scenario}-{suffix}",
+            trigger_create_time="2026-09-03T12:00:00+00:00",
+            trigger_sender="newsletter@example.com",
+            trigger_text="Legacy unsubscribe.",
+            trigger_message_json=json.dumps(
+                {
+                    "schema": "email_agent_action.v1",
+                    "action_type": "unsubscribe",
+                    "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+                }
+            ),
+            execution_generation=f"final-unknown-{scenario}-{suffix}",
+        )
+        created_tasks.append(task)
+        return task
+
+    if scenario in {
+        "pending-bootstrap-and-final-error",
+        "bootstrap-isolates-then-final-error",
+    }:
+        create_legacy_task("initial")
+
+    class InventoryUnavailableStore:
+        def __getattr__(self, name):
+            return getattr(email_store, name)
+
+        def list_nonterminal_legacy_unsubscribe_task_attempts(self):
+            raise RuntimeError("simulated legacy inventory failure")
+
+    ready_dependencies = _dependencies(events)
+    ready_dependencies.email_store = InventoryUnavailableStore()
+    ready_dependencies.task_store = task_store
+    ready_dependencies.orchestrator = SimpleNamespace(
+        process=lambda *_args, **_kwargs: pytest.fail(
+            "unknown legacy inventory must never reach orchestrator"
+        )
+    )
+    ready_dependencies.record_health = lambda scope, payload: health.append(
+        (scope, payload)
+    )
+
+    def build_dependencies(loaded_accounts, loaded_model):
+        assert (loaded_accounts, loaded_model) == (accounts, active_model)
+        if scenario == "insert-after-empty-bootstrap-then-final-error":
+            create_legacy_task("inserted")
+        return ready_dependencies
+
+    bootstrap = SimpleNamespace(
+        email_store=(
+            InventoryUnavailableStore()
+            if scenario
+            in {
+                "pending-bootstrap-and-final-error",
+                "empty-bootstrap-and-final-error",
+            }
+            else email_store
+        ),
+        task_store=task_store,
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        load_enabled_accounts=lambda: accounts,
+        load_active_model=lambda: active_model,
+        build_dependencies=build_dependencies,
+    )
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=bootstrap,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-training",
+    }
+    assert (
+        "component:email-legacy-lifecycle",
+        {
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_inventory_unavailable",
+        },
+    ) in health
+    assert (
+        "component:email-agent-consumer",
+        {
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_inventory_unavailable",
+        },
+    ) in health
+    if scenario == "bootstrap-isolates-then-final-error":
+        assert task_store.get_reply_task(created_tasks[0].id).status == "failed"
+    else:
+        assert all(
+            task_store.get_reply_task(task.id).status == "pending"
+            for task in created_tasks
+        )
+
+
+@pytest.mark.parametrize("final_state", ("isolated", "empty"))
+def test_final_authoritative_reconciliation_allows_agent_after_bootstrap_unknown(
+    tmp_path,
+    final_state,
+):
+    module = _module()
+    database = tmp_path / f"final-authoritative-{final_state}.sqlite3"
+    task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    accounts = ({"account_id": "account-1", "enabled": True},)
+    active_model = object()
+    events = []
+    health = []
+    legacy = None
+    if final_state == "isolated":
+        legacy = task_store.ensure_reply_task(
+            channel="email",
+            conversation_id="final-authoritative-isolated",
+            conversation_title="Final authoritative isolation",
+            single_chat=False,
+            trigger_message_id="final-authoritative-isolated",
+            trigger_create_time="2026-09-03T12:00:00+00:00",
+            trigger_sender="newsletter@example.com",
+            trigger_text="Legacy unsubscribe.",
+            trigger_message_json=json.dumps(
+                {
+                    "schema": "email_agent_action.v1",
+                    "action_type": "unsubscribe",
+                    "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+                }
+            ),
+            execution_generation="final-authoritative-isolated",
+        )
+
+    class InventoryUnavailableStore:
+        def list_nonterminal_legacy_unsubscribe_task_attempts(self):
+            raise RuntimeError("simulated bootstrap inventory failure")
+
+    ready_dependencies = _dependencies(events)
+    ready_dependencies.email_store = email_store
+    ready_dependencies.task_store = task_store
+    ready_dependencies.record_health = lambda scope, payload: health.append(
+        (scope, payload)
+    )
+    bootstrap = SimpleNamespace(
+        email_store=InventoryUnavailableStore(),
+        task_store=task_store,
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        load_enabled_accounts=lambda: accounts,
+        load_active_model=lambda: active_model,
+        build_dependencies=lambda loaded_accounts, loaded_model: (
+            ready_dependencies
+            if (loaded_accounts, loaded_model) == (accounts, active_model)
+            else pytest.fail("unexpected dependency build input")
+        ),
+    )
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=bootstrap,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-agent-consumer",
+        "ceo-agent-email-training",
+    }
+    assert not any(
+        scope == "component:email-agent-consumer" for scope, _payload in health
+    )
+    lifecycle_health = [
+        payload
+        for scope, payload in health
+        if scope == "component:email-legacy-lifecycle"
+    ]
+    if final_state == "empty":
+        assert lifecycle_health[-1] == {
+            "status": "ready",
+            "task_count": 0,
+            "unresolved_count": 0,
+        }
+    else:
+        assert lifecycle_health[-1] == {
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_lifecycle",
+            "task_count": 1,
+            "isolated_count": 1,
+            "superseded_count": 0,
+            "unresolved_count": 0,
+        }
+    if legacy is not None:
+        terminal = task_store.get_reply_task(legacy.id)
+        assert terminal is not None
+        assert terminal.status == "failed"
+        assert terminal.error == "legacy_email_unsubscribe_lifecycle"
+
+
+def test_final_authoritative_empty_overwrites_bootstrap_unknown_health(
+    tmp_path,
+):
+    module = _module()
+    database = tmp_path / "final-empty-overwrites-bootstrap-unknown.sqlite3"
+    task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    record_health = _persist_email_worker_health(task_store)
+    accounts = ({"account_id": "account-1", "enabled": True},)
+    active_model = object()
+    events = []
+
+    class InventoryUnavailableStore:
+        def list_nonterminal_legacy_unsubscribe_task_attempts(self):
+            raise RuntimeError("simulated bootstrap inventory failure")
+
+    ready_dependencies = _dependencies(events)
+    ready_dependencies.email_store = email_store
+    ready_dependencies.task_store = task_store
+    ready_dependencies.record_health = record_health
+    bootstrap = SimpleNamespace(
+        email_store=InventoryUnavailableStore(),
+        task_store=task_store,
+        record_health=record_health,
+        load_enabled_accounts=lambda: accounts,
+        load_active_model=lambda: active_model,
+        build_dependencies=lambda loaded_accounts, loaded_model: (
+            ready_dependencies
+            if (loaded_accounts, loaded_model) == (accounts, active_model)
+            else pytest.fail("unexpected dependency build input")
+        ),
+    )
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=bootstrap,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-agent-consumer",
+        "ceo-agent-email-training",
+    }
+    persisted = task_store.get_service_state(
+        "email_worker_health:component:email-legacy-lifecycle"
+    )
+    assert persisted is not None
+    assert json.loads(persisted) == {
+        "status": "ready",
+        "task_count": 0,
+        "unresolved_count": 0,
+    }
+
+
+def test_authoritative_empty_overwrites_previous_process_degraded_health(
+    tmp_path,
+):
+    module = _module()
+    database = tmp_path / "authoritative-empty-overwrites-stale.sqlite3"
+    task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    health_key = "email_worker_health:component:email-legacy-lifecycle"
+    task_store.set_service_state(
+        health_key,
+        json.dumps(
+            {
+                "status": "degraded",
+                "error_code": "legacy_email_unsubscribe_inventory_unavailable",
+            }
+        ),
+    )
+    events = []
+    dependencies = _dependencies(events)
+    dependencies.email_store = email_store
+    dependencies.task_store = task_store
+    dependencies.record_health = _persist_email_worker_health(task_store)
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-agent-consumer",
+        "ceo-agent-email-training",
+    }
+    persisted = task_store.get_service_state(health_key)
+    assert persisted is not None
+    assert json.loads(persisted) == {
+        "status": "ready",
+        "task_count": 0,
+        "unresolved_count": 0,
+    }
+
+
+def test_final_empty_inventory_clears_bootstrap_unresolved_after_safe_replacement(
+    tmp_path,
+):
+    module = _module()
+    database = tmp_path / "two-stage-safe-replacement.sqlite3"
+    real_task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    legacy = real_task_store.ensure_reply_task(
+        channel="email",
+        conversation_id="two-stage-safe-replacement",
+        conversation_title="Two-stage safe replacement",
+        single_chat=False,
+        trigger_message_id="two-stage-safe-replacement",
+        trigger_create_time="2026-09-03T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Legacy unsubscribe.",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "action_type": "unsubscribe",
+                "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+            }
+        ),
+        execution_generation="safe-replacement-generation",
+    )
+
+    class FirstPassTaskStore:
+        def __getattr__(self, name):
+            return getattr(real_task_store, name)
+
+        def terminalize_legacy_email_unsubscribe_task(self, *_args, **_kwargs):
+            return False
+
+    events = []
+    health = []
+    accounts = ({"account_id": "account-1", "enabled": True},)
+    active_model = object()
+    ready_dependencies = _dependencies(events)
+    ready_dependencies.email_store = email_store
+    ready_dependencies.task_store = real_task_store
+    ready_dependencies.record_health = lambda scope, payload: health.append(
+        (scope, payload)
+    )
+
+    def build_dependencies(_accounts, _model):
+        payload = json.loads(legacy.trigger_message_json)
+        payload["lifecycle_version"] = "email_unsubscribe_audited_v2"
+        with sqlite3.connect(database) as db:
+            db.execute(
+                "update reply_tasks set trigger_message_json=? where id=?",
+                (json.dumps(payload), legacy.id),
+            )
+        return ready_dependencies
+
+    bootstrap = SimpleNamespace(
+        email_store=email_store,
+        task_store=FirstPassTaskStore(),
+        record_health=lambda scope, payload: health.append((scope, payload)),
+        load_enabled_accounts=lambda: accounts,
+        load_active_model=lambda: active_model,
+        build_dependencies=build_dependencies,
+    )
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=bootstrap,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    replacement = real_task_store.get_reply_task(legacy.id)
+    assert replacement is not None
+    assert replacement.status == "pending"
+    assert (
+        json.loads(replacement.trigger_message_json)["lifecycle_version"]
+        == "email_unsubscribe_audited_v2"
+    )
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-agent-consumer",
+        "ceo-agent-email-training",
+    }
+    assert not any(
+        scope == "component:email-agent-consumer" for scope, _payload in health
+    )
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    ("terminal", "audited-v2", "non-email", "malformed", "missing"),
+)
+@pytest.mark.parametrize("terminalization", ("cas-false", "exception"))
+def test_safe_replacement_after_inventory_is_unchanged_and_does_not_block_agent(
+    tmp_path,
+    replacement,
+    terminalization,
+):
+    module = _module()
+    events = []
+    health = []
+    database = tmp_path / f"legacy-{replacement}-race.sqlite3"
+    task_store = AutoReplyStore(database)
+    real_email_store = EmailStore(database)
+    legacy = task_store.ensure_reply_task(
+        channel="email",
+        conversation_id=f"legacy-{replacement}-race",
+        conversation_title="Legacy replacement race",
+        single_chat=False,
+        trigger_message_id=f"legacy-{replacement}-race",
+        trigger_create_time="2026-09-03T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Legacy unsubscribe.",
+        trigger_message_json=json.dumps(
+            {
+                "schema": "email_agent_action.v1",
+                "action_type": "unsubscribe",
+                "lifecycle_version": "email_unsubscribe_consumer_direct_v1",
+            }
+        ),
+        execution_generation="inventoried-generation",
+    )
+
+    class ReplacingInventoryStore:
+        replaced = False
+
+        def __getattr__(self, name):
+            return getattr(real_email_store, name)
+
+        def _replace(self):
+            if self.replaced:
+                return
+            with sqlite3.connect(database) as db:
+                if replacement == "terminal":
+                    db.execute(
+                        "update reply_tasks set status='done' where id=?",
+                        (legacy.id,),
+                    )
+                elif replacement == "audited-v2":
+                    payload = json.loads(legacy.trigger_message_json)
+                    payload["lifecycle_version"] = "email_unsubscribe_audited_v2"
+                    db.execute(
+                        "update reply_tasks set trigger_message_json=? where id=?",
+                        (json.dumps(payload), legacy.id),
+                    )
+                elif replacement == "non-email":
+                    db.execute(
+                        "update reply_tasks set channel='dingtalk' where id=?",
+                        (legacy.id,),
+                    )
+                elif replacement == "malformed":
+                    db.execute(
+                        "update reply_tasks set trigger_message_json='{malformed' "
+                        "where id=?",
+                        (legacy.id,),
+                    )
+                else:
+                    db.execute("delete from reply_tasks where id=?", (legacy.id,))
+            self.replaced = True
+
+        def list_nonterminal_legacy_unsubscribe_task_attempts(self):
+            result = real_email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
+            self._replace()
+            return result
+
+    class RaisingTaskStore:
+        def __getattr__(self, name):
+            return getattr(task_store, name)
+
+        def terminalize_legacy_email_unsubscribe_task(self, *_args, **_kwargs):
+            raise RuntimeError("simulated terminalization failure")
+
+    dependencies = _dependencies(events)
+    dependencies.email_store = ReplacingInventoryStore()
+    dependencies.task_store = (
+        RaisingTaskStore() if terminalization == "exception" else task_store
+    )
+    dependencies.record_health = lambda scope, payload: health.append(
+        (scope, payload)
+    )
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            del target, daemon
+            self.name = name
+
+        def start(self):
+            events.append(("started", self.name))
+
+    module.run_email_worker(
+        SimpleNamespace(),
+        dependencies=dependencies,
+        thread_factory=FakeThread,
+        wait=lambda: None,
+        output=StringIO(),
+    )
+
+    current = task_store.get_reply_task(legacy.id)
+    if replacement == "missing":
+        assert current is None
+    else:
+        assert current is not None
+        assert current.execution_generation == legacy.execution_generation
+    if replacement == "terminal" and current is not None:
+        assert current.status == "done"
+    elif replacement == "audited-v2" and current is not None:
+        assert current.status == "pending"
+        assert (
+            json.loads(current.trigger_message_json)["lifecycle_version"]
+            == "email_unsubscribe_audited_v2"
+        )
+    elif replacement == "non-email" and current is not None:
+        assert current.channel == "dingtalk"
+        assert current.status == "pending"
+    elif replacement == "malformed" and current is not None:
+        assert current.trigger_message_json == "{malformed"
+        assert current.status == "pending"
+    assert {event[1] for event in events if event[0] == "started"} == {
+        "ceo-agent-email-scan-actions",
+        "ceo-agent-email-agent-consumer",
+        "ceo-agent-email-training",
+    }
+    assert (
+        "component:email-legacy-lifecycle",
+        {
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_lifecycle",
+            "task_count": 1,
+            "isolated_count": 0,
+            "superseded_count": 1,
+            "unresolved_count": 0,
+        },
+    ) in health
+    assert not any(
+        scope == "component:email-agent-consumer" for scope, _payload in health
+    )
 
 
 def test_direct_actions_are_not_claimed_without_a_provider_executor_factory():
@@ -1295,6 +2641,10 @@ def test_startup_records_process_heartbeat_only_after_dependencies_are_ready():
 
     assert health == [
         (
+            "component:email-legacy-lifecycle",
+            {"status": "ready", "task_count": 0, "unresolved_count": 0},
+        ),
+        (
             "process:email-worker",
             {"status": "starting", "accounts": 1, "components": 3},
         )
@@ -1470,8 +2820,12 @@ def test_email_task_input_uses_thread_text_attachment_metadata_and_receipts():
     assert task_input.prior_receipts[0].operation == "sent_readback"
 
 
-def test_consumer_task_failure_is_sanitized_isolated_and_heartbeated():
+def test_consumer_task_failure_is_sanitized_isolated_and_heartbeated(monkeypatch):
     module = _module()
+    monkeypatch.setattr(
+        "app.task_lifecycle.validate_audited_email_task",
+        lambda _task, _context: True,
+    )
     first = SimpleNamespace(id=1, execution_generation="gen-1")
     second = SimpleNamespace(id=2, execution_generation="gen-2")
     failures = []

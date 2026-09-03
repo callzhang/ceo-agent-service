@@ -245,7 +245,7 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
         return db.execute(sql, parameters).fetchall()
 
 
-def test_lists_only_nonterminal_legacy_unsubscribe_task_ids_read_only(
+def test_lists_only_nonterminal_legacy_unsubscribe_attempt_bindings_read_only(
     tmp_path: Path,
 ) -> None:
     database = tmp_path / "legacy-unsubscribe-inventory.sqlite3"
@@ -274,6 +274,7 @@ def test_lists_only_nonterminal_legacy_unsubscribe_task_ids_read_only(
             trigger_sender="newsletter@example.com",
             trigger_text="Legacy unsubscribe inventory fixture.",
             trigger_message_json=json.dumps(payload, sort_keys=True),
+            execution_generation=f"generation:{name}",
         ).id
 
     legacy = "email_unsubscribe_consumer_direct_v1"
@@ -322,7 +323,7 @@ def test_lists_only_nonterminal_legacy_unsubscribe_task_ids_read_only(
         )
     ]
 
-    result = email_store.list_nonterminal_legacy_unsubscribe_task_ids()
+    result = email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
 
     after = [
         tuple(row)
@@ -335,14 +336,21 @@ def test_lists_only_nonterminal_legacy_unsubscribe_task_ids_read_only(
             """,
         )
     ]
-    assert result == tuple(sorted((pending_id, processing_id)))
-    assert malformed_id not in result
+    assert tuple(
+        (attempt.task_id, attempt.execution_generation, attempt.status)
+        for attempt in result
+    ) == (
+        (pending_id, "generation:legacy-pending", "pending"),
+        (processing_id, "generation:legacy-processing", "processing"),
+    )
+    inventoried_ids = {attempt.task_id for attempt in result}
+    assert malformed_id not in inventoried_ids
     malformed_before = next(row for row in before if row[0] == malformed_id)
     malformed_after = next(row for row in after if row[0] == malformed_id)
     assert malformed_before == malformed_after
     assert malformed_after[2] == "pending"
     assert malformed_after[3] == malformed_payload
-    assert sent_id not in result
+    assert sent_id not in inventoried_ids
     sent_before = next(row for row in before if row[0] == sent_id)
     sent_after = next(row for row in after if row[0] == sent_id)
     assert sent_before == sent_after
@@ -355,6 +363,224 @@ def test_lists_only_nonterminal_legacy_unsubscribe_task_ids_read_only(
             "name": "legacy-sent",
         },
         sort_keys=True,
+    )
+    assert after == before
+
+
+def _create_legacy_terminalization_task(
+    task_store: AutoReplyStore,
+    name: str,
+    *,
+    lifecycle_version: str = "email_unsubscribe_consumer_direct_v1",
+    channel: str = "email",
+    trigger_message_json: str | None = None,
+):
+    payload = trigger_message_json or json.dumps(
+        {
+            "schema": "email_agent_action.v1",
+            "action_type": "unsubscribe",
+            "lifecycle_version": lifecycle_version,
+        },
+        sort_keys=True,
+    )
+    return task_store.ensure_reply_task(
+        channel=channel,
+        conversation_id=f"legacy-terminalization:{name}",
+        conversation_title=name,
+        single_chat=False,
+        trigger_message_id=f"legacy-terminalization:{name}",
+        trigger_create_time="2026-09-03T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Legacy unsubscribe terminalization fixture.",
+        trigger_message_json=payload,
+        execution_generation=f"generation:{name}",
+    )
+
+
+def test_terminalizes_pending_legacy_unsubscribe_with_exact_generation(tmp_path: Path):
+    database = tmp_path / "pending-legacy-terminalization.sqlite3"
+    task_store = AutoReplyStore(database)
+    EmailStore(database)
+    task = _create_legacy_terminalization_task(task_store, "pending")
+
+    assert task_store.terminalize_legacy_email_unsubscribe_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        expected_status=task.status,
+    ) is True
+
+    terminal = task_store.get_reply_task(task.id)
+    assert terminal is not None
+    assert terminal.status == "failed"
+    assert terminal.error == "legacy_email_unsubscribe_lifecycle"
+    assert terminal.locked_at is None
+    assert terminal.available_at == ""
+
+
+def test_terminalizes_processing_legacy_unsubscribe_with_exact_generation(
+    tmp_path: Path,
+):
+    database = tmp_path / "processing-legacy-terminalization.sqlite3"
+    task_store = AutoReplyStore(database)
+    EmailStore(database)
+    pending = _create_legacy_terminalization_task(task_store, "processing")
+    task = task_store.claim_reply_task(pending.id)
+    assert task is not None
+    assert task.status == "processing"
+
+    assert task_store.terminalize_legacy_email_unsubscribe_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        expected_status=task.status,
+    ) is True
+
+    terminal = task_store.get_reply_task(task.id)
+    assert terminal is not None
+    assert terminal.status == "failed"
+    assert terminal.error == "legacy_email_unsubscribe_lifecycle"
+    assert terminal.locked_at is None
+    assert terminal.available_at == ""
+
+
+@pytest.mark.parametrize(
+    ("name", "task_kwargs", "terminal_status"),
+    (
+        ("terminal", {}, "done"),
+        (
+            "audited",
+            {"lifecycle_version": "email_unsubscribe_audited_v2"},
+            None,
+        ),
+        ("non-email", {"channel": "dingtalk"}, None),
+        ("malformed", {"trigger_message_json": "{malformed"}, None),
+    ),
+)
+def test_legacy_terminalization_leaves_nonmatching_tasks_unchanged(
+    tmp_path: Path,
+    name: str,
+    task_kwargs: dict[str, object],
+    terminal_status: str | None,
+):
+    database = tmp_path / f"nonmatching-{name}.sqlite3"
+    task_store = AutoReplyStore(database)
+    EmailStore(database)
+    task = _create_legacy_terminalization_task(task_store, name, **task_kwargs)
+    if terminal_status is not None:
+        with sqlite3.connect(database) as db:
+            db.execute(
+                "update reply_tasks set status=? where id=?",
+                (terminal_status, task.id),
+            )
+    before = tuple(
+        _fetchall(
+            database,
+            "select * from reply_tasks where id=?",
+            (task.id,),
+        )[0]
+    )
+
+    assert task_store.terminalize_legacy_email_unsubscribe_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+        expected_status=task.status,
+    ) is False
+
+    after = tuple(
+        _fetchall(
+            database,
+            "select * from reply_tasks where id=?",
+            (task.id,),
+        )[0]
+    )
+    assert after == before
+
+
+@pytest.mark.parametrize("race", ("generation", "lifecycle"))
+def test_legacy_terminalization_race_fails_closed_without_modifying_replacement(
+    tmp_path: Path,
+    race: str,
+):
+    database = tmp_path / f"legacy-{race}-race.sqlite3"
+    task_store = AutoReplyStore(database)
+    EmailStore(database)
+    original = _create_legacy_terminalization_task(task_store, race)
+    with sqlite3.connect(database) as db:
+        if race == "generation":
+            db.execute(
+                "update reply_tasks set execution_generation=? where id=?",
+                ("replacement-generation", original.id),
+            )
+        else:
+            replacement_payload = json.dumps(
+                {
+                    "schema": "email_agent_action.v1",
+                    "action_type": "unsubscribe",
+                    "lifecycle_version": "email_unsubscribe_audited_v2",
+                },
+                sort_keys=True,
+            )
+            db.execute(
+                "update reply_tasks set trigger_message_json=? where id=?",
+                (replacement_payload, original.id),
+            )
+    before = tuple(
+        _fetchall(
+            database,
+            "select * from reply_tasks where id=?",
+            (original.id,),
+        )[0]
+    )
+
+    assert task_store.terminalize_legacy_email_unsubscribe_task(
+        original.id,
+        expected_execution_generation=original.execution_generation,
+        expected_status=original.status,
+    ) is False
+
+    after = tuple(
+        _fetchall(
+            database,
+            "select * from reply_tasks where id=?",
+            (original.id,),
+        )[0]
+    )
+    assert after == before
+
+
+def test_pending_legacy_attempt_does_not_terminalize_processing_replacement(
+    tmp_path: Path,
+):
+    database = tmp_path / "legacy-status-race.sqlite3"
+    task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+    pending = _create_legacy_terminalization_task(task_store, "status-race")
+    attempt = email_store.list_nonterminal_legacy_unsubscribe_task_attempts()[0]
+    assert attempt.task_id == pending.id
+    assert attempt.status == "pending"
+
+    processing = task_store.claim_reply_task(pending.id)
+    assert processing is not None
+    assert processing.status == "processing"
+    before = tuple(
+        _fetchall(
+            database,
+            "select * from reply_tasks where id=?",
+            (pending.id,),
+        )[0]
+    )
+
+    assert task_store.terminalize_legacy_email_unsubscribe_task(
+        attempt.task_id,
+        expected_execution_generation=attempt.execution_generation,
+        expected_status=attempt.status,
+    ) is False
+
+    after = tuple(
+        _fetchall(
+            database,
+            "select * from reply_tasks where id=?",
+            (pending.id,),
+        )[0]
     )
     assert after == before
 

@@ -254,8 +254,8 @@ def _make_fixture(tmp_path: Path) -> AuditFixture:
         resolved.append((locator, expected_reference))
         return (ENTRY,)
 
-    def execute_effect(effect, entries, *, owner, automatic):
-        executed.append((effect, entries, owner, automatic))
+    def execute_effect(effect, entries, *, owner):
+        executed.append((effect, entries, owner))
         _text, observation_digest = normalize_unsubscribe_result_text(
             "You have been unsubscribed"
         )
@@ -316,7 +316,6 @@ def test_current_running_audit_executes_one_operation_and_persists_exact_run_id(
     assert result["status"] == "done", result
     assert len(fixture.resolved) == 1
     assert len(fixture.executed) == 1
-    assert fixture.executed[0][3] is False
     claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
     assert claim is not None
     assert claim["audit_agent_run_id"] == fixture.audit_run.id
@@ -336,7 +335,7 @@ def test_dedicated_executor_can_reenter_the_exact_audited_claim_owner(
     terminal_callback = fixture.operation.execute_effect
     reentrant_claims = []
 
-    def execute_effect(effect, entries, *, owner, automatic):
+    def execute_effect(effect, entries, *, owner):
         reentrant_claims.append(
             fixture.email_store.claim_email_unsubscribe_write(
                 **audit_store_arguments(effect),
@@ -359,7 +358,6 @@ def test_dedicated_executor_can_reenter_the_exact_audited_claim_owner(
             effect,
             entries,
             owner=owner,
-            automatic=automatic,
         )
 
     fixture.operation.execute_effect = execute_effect
@@ -464,7 +462,6 @@ def test_audited_continuation_executes_only_appended_operation_from_blank_browse
         entries,
         *,
         owner,
-        automatic,
         executed_prefix_length,
     ):
         return UnsubscribeExecutor(
@@ -474,7 +471,6 @@ def test_audited_continuation_executes_only_appended_operation_from_blank_browse
         ).execute(
             effect,
             entries,
-            automatic=automatic,
             executed_prefix_length=executed_prefix_length,
         )
 
@@ -552,7 +548,6 @@ def test_preclaimed_audit_prefix_or_effect_tamper_fails_before_browser(
     ).execute(
         effect,
         (ENTRY,),
-        automatic=False,
         executed_prefix_length=prefix,
     )
 

@@ -8,7 +8,7 @@ confirmation receipt and the current page/provider state before another write.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from hashlib import sha256
 from html.parser import HTMLParser
@@ -909,26 +909,6 @@ class UnsubscribeDiscoveredControl:
 
     def __post_init__(self) -> None:
         _assert_strict_opaque_reference(self.reference, field_name="control_reference")
-
-
-def automatic_unsubscribe_operation(
-    control: UnsubscribeDiscoveredControl,
-) -> UnsubscribeOperation:
-    """Translate a discovered, explicitly labelled control into one next step."""
-
-    kind = {
-        "form": UnsubscribeOperationKind.SUBMIT_FORM,
-        "link": UnsubscribeOperationKind.CLICK_CONFIRMATION,
-        "button": UnsubscribeOperationKind.CLICK_CONFIRMATION,
-        "confirmation_email": UnsubscribeOperationKind.CONFIRM_EMAIL,
-    }[control.kind]
-    return UnsubscribeOperation(
-        operation_reference="unsubscribe-operation:" + sha256(
-            control.reference.encode("utf-8")
-        ).hexdigest(),
-        kind=kind,
-        target_reference=control.reference,
-    )
 
 
 @dataclass(frozen=True)
@@ -2215,9 +2195,7 @@ def execute_unsubscribe_in_dedicated_profile(
     network_policy: BrowserNetworkPolicy,
     owner: Mapping[str, object],
     timeout_ms: int = 5_000,
-    automatic: bool = False,
     executed_prefix_length: int | None = None,
-    automatic_continuation: Callable[..., Mapping[str, object]] | None = None,
 ) -> UnsubscribeExecutionResult | UnsubscribeContinuationResult:
     """Run one unsubscribe effect only in a locked headless profile.
 
@@ -2354,11 +2332,9 @@ def execute_unsubscribe_in_dedicated_profile(
                     store,
                     browser,
                     owner=owner,
-                    automatic_continuation=automatic_continuation,
                 ).execute(
                     effect,
                     entries,
-                    automatic=automatic,
                     executed_prefix_length=executed_prefix_length,
                 )
                 if isinstance(result, UnsubscribeContinuationResult):
@@ -2615,12 +2591,10 @@ class UnsubscribeExecutor:
         browser: UnsubscribeBrowser,
         *,
         owner: Mapping[str, object],
-        automatic_continuation: Callable[..., Mapping[str, object]] | None = None,
     ) -> None:
         self.store = store
         self.browser = browser
         self.owner = dict(owner)
-        self.automatic_continuation = automatic_continuation
 
     @staticmethod
     def _store_arguments(effect: EmailUnsubscribeEffect) -> dict[str, object]:
@@ -2880,12 +2854,8 @@ class UnsubscribeExecutor:
         effect: EmailUnsubscribeEffect,
         entries: tuple[UnsubscribeEntry, ...],
         *,
-        automatic: bool = False,
         executed_prefix_length: int | None = None,
-        _automatic_depth: int = 0,
     ) -> UnsubscribeExecutionResult | UnsubscribeContinuationResult:
-        if _automatic_depth < 0 or _automatic_depth > 8:
-            raise ValueError("automatic unsubscribe continuation depth exceeded")
         durable = self._durable_result(effect)
         if durable is not None:
             return durable
@@ -3193,57 +3163,6 @@ class UnsubscribeExecutor:
                 )
             if observation.controls:
                 journal.append(operation_step)
-                if automatic:
-                    if self.automatic_continuation is None:
-                        return _result(
-                            UnsubscribeOutcome.FAILED_BROWSER,
-                            journal,
-                            error_code="email_unsubscribe_direct_continuation_unavailable",
-                        )
-                    control = min(
-                        observation.controls,
-                        key=lambda item: (
-                            {"unsubscribe": 0, "confirm": 1, "continue": 2}[item.intent],
-                            item.reference,
-                        ),
-                    )
-                    next_effect = replace(
-                        effect,
-                        operations=effect.operations
-                        + (automatic_unsubscribe_operation(control),),
-                        previous_effect_digest=effect.effect_digest,
-                    )
-                    try:
-                        claim = self.automatic_continuation(
-                            current_effect=self._store_arguments(effect),
-                            next_effect=self._store_arguments(next_effect),
-                            controls=tuple(asdict(item) for item in observation.controls),
-                            final_step={
-                                "sequence": len(effect.operations),
-                                "operation": operation_step.operation,
-                                "state": operation_step.state,
-                                "reference": operation_step.reference,
-                            },
-                            owner=self.owner,
-                        )
-                    except EmailUnsubscribeClaimConflict:
-                        return _result(
-                            UnsubscribeOutcome.FAILED_BROWSER,
-                            journal,
-                            error_code="email_unsubscribe_persistence_conflict",
-                        )
-                    if not claim.get("acquired"):
-                        return _result(
-                            UnsubscribeOutcome.FAILED_BROWSER,
-                            journal,
-                            error_code="email_unsubscribe_authorization_stale",
-                        )
-                    return self.execute(
-                        next_effect,
-                        entries,
-                        automatic=True,
-                        _automatic_depth=_automatic_depth + 1,
-                    )
                 try:
                     self.store.persist_email_unsubscribe_continuation(
                         **self._store_arguments(effect),

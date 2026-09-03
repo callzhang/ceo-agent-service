@@ -603,12 +603,14 @@ def test_dedicated_profile_restores_page_across_audit_invocations_without_reopen
             profile=profile,
             network_policy=policy,
             owner=_BROWSER_OWNER,
-            automatic=False,
             executed_prefix_length=0,
         )
 
         assert isinstance(first, UnsubscribeContinuationResult)
         assert len(first.continuation.controls) == 1
+        assert _FixtureHandler.requests == [
+            ("GET", "/mutable-form?opaque=private-fixture-token")
+        ]
         if remove_accepted_control:
             session = profile.load_audit_session(effect.action_identity)
             assert session is not None
@@ -643,7 +645,6 @@ def test_dedicated_profile_restores_page_across_audit_invocations_without_reopen
             profile=profile,
             network_policy=policy,
             owner=_RESTART_OWNER,
-            automatic=False,
             executed_prefix_length=1,
         )
 
@@ -709,7 +710,6 @@ def test_dedicated_profile_blocks_authentication_controls_before_snapshot(
             profile=profile,
             network_policy=policy,
             owner=_BROWSER_OWNER,
-            automatic=False,
             executed_prefix_length=0,
         )
 
@@ -769,7 +769,6 @@ def test_dedicated_profile_blocks_hostile_authentication_pages_in_isolated_world
             profile=profile,
             network_policy=policy,
             owner=_BROWSER_OWNER,
-            automatic=False,
             executed_prefix_length=0,
         )
 
