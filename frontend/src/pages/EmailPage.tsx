@@ -224,7 +224,9 @@ function ConfigPanel() {
   const [selected, setSelected] = useState("important");
   const [description, setDescription] = useState("");
   const [threshold, setThreshold] = useState("0.90");
-  const [selectedActions, setSelectedActions] = useState<string[]>(["label"]);
+  const [selectedActions, setSelectedActions] = useState<string[]>([]);
+  const [labelNames, setLabelNames] = useState("");
+  const [moveTargetFolder, setMoveTargetFolder] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [version, setVersion] = useState("email-v1");
   const [message, setMessage] = useState("");
@@ -237,15 +239,37 @@ function ConfigPanel() {
   useEffect(() => {
     setDescription(current?.description || "");
     setThreshold(String(current?.threshold ?? 0.90));
-    setSelectedActions(current?.actions || ["label"]);
+    setSelectedActions(current?.actions || []);
+    const parameters = current?.action_parameters || {};
+    const labels = parameters.label?.labels;
+    setLabelNames(Array.isArray(labels) ? labels.filter((label): label is string => typeof label === "string").join(", ") : "");
+    setMoveTargetFolder(typeof parameters.move?.target_folder === "string" ? parameters.move.target_folder : "");
     setEnabled(current?.enabled ?? true);
     setVersion(current?.config_version || "email-v1");
   }, [current]);
 
+  const toggleAction = (action: string) => {
+    const removing = selectedActions.includes(action);
+    setSelectedActions((previous) => removing ? previous.filter((item) => item !== action) : [...previous, action]);
+    if (removing && action === "label") setLabelNames("");
+    if (removing && action === "move") setMoveTargetFolder("");
+  };
+
   const save = async () => {
     setError(""); setMessage("");
+    const actionParameters: Record<string, Record<string, unknown>> = {};
+    if (selectedActions.includes("label")) {
+      const labels = labelNames.split(",").map((label) => label.trim()).filter(Boolean);
+      if (!labels.length) { setError("请至少填写一个标签"); return; }
+      actionParameters.label = { labels };
+    }
+    if (selectedActions.includes("move")) {
+      const targetFolder = moveTargetFolder.trim();
+      if (!targetFolder) { setError("请填写目标文件夹"); return; }
+      actionParameters.move = { target_folder: targetFolder };
+    }
     try {
-      const result = await saveEmailConfig(selected, { description, threshold: Number(threshold), actions: selectedActions, enabled, config_version: version });
+      const result = await saveEmailConfig(selected, { description, threshold: Number(threshold), actions: selectedActions, action_parameters: actionParameters, enabled, config_version: version });
       setConfigs((previous) => [...previous.filter((config) => config.category !== selected), result.item].sort((a, b) => a.category.localeCompare(b.category)));
       setMessage("配置已保存：确定性动作由 Email worker 执行并回读；退订由 Consumer 提案、Audit 审核执行。邮件回复已全局禁用。");
     } catch (reason: unknown) { setError(reason instanceof Error ? reason.message : "配置保存失败"); }
@@ -257,7 +281,9 @@ function ConfigPanel() {
     <label className="settings-field">自动处理阈值<input type="number" min="0" max="1" step="0.01" value={threshold} onChange={(event) => setThreshold(event.target.value)} /></label>
     <label className="settings-field">配置版本<input value={version} onChange={(event) => setVersion(event.target.value)} /></label>
     <label className="settings-field"><span>启用 <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /></span></label>
-    <div className="settings-control-group"><span className="settings-control-label">固定动作</span><div className="settings-pill-row">{actions.map((action) => <button type="button" className={selectedActions.includes(action) ? "active" : ""} key={action} onClick={() => setSelectedActions((previous) => previous.includes(action) ? previous.filter((item) => item !== action) : [...previous, action])}>{action}</button>)}</div></div>
+    <div className="settings-control-group"><span className="settings-control-label">固定动作</span><div className="settings-pill-row">{actions.map((action) => <button type="button" className={selectedActions.includes(action) ? "active" : ""} key={action} onClick={() => toggleAction(action)}>{action}</button>)}</div></div>
+    {selectedActions.includes("label") && <label className="settings-field">标签<input aria-label="标签" value={labelNames} onChange={(event) => setLabelNames(event.target.value)} placeholder="多个标签用英文逗号分隔" /></label>}
+    {selectedActions.includes("move") && <label className="settings-field">目标文件夹<input aria-label="目标文件夹" value={moveTargetFolder} onChange={(event) => setMoveTargetFolder(event.target.value)} placeholder="例如 Archive/Billing" /></label>}
     {error && <div className="page-state page-state-error" role="alert">{error}</div>}{message && <div className="page-state" role="status">{message}</div>}<button type="button" className="primary-button" onClick={() => void save()}>保存本地配置</button>
   </section>;
 }

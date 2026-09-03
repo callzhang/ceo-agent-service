@@ -191,4 +191,61 @@ describe("EmailPage", () => {
     expect(screen.queryByText(new RegExp(["Consumer", "direct"].join("-"))))
       .not.toBeInTheDocument();
   });
+
+  it("preserves and submits required label and move parameters", async () => {
+    const user = userEvent.setup();
+    listEmailConfigs.mockResolvedValueOnce({
+      items: [{
+        category: "important", description: "Priority mail", threshold: 0.95,
+        actions: ["label", "move"],
+        action_parameters: {
+          label: { labels: ["Priority", "CEO"] },
+          move: { target_folder: "Archive/Priority" },
+        },
+        enabled: true, config_version: "email-v4", updated_at: "2026-08-29T00:00:00Z",
+      }],
+      meta: { snapshot_at: "2026-08-29T00:00:00Z" },
+    });
+    saveEmailConfig.mockResolvedValue({
+      ok: true,
+      item: { category: "important", description: "Priority mail", threshold: 0.95, actions: ["label", "move"], action_parameters: { label: { labels: ["Board"] }, move: { target_folder: "Archive/Priority" } }, enabled: true, config_version: "email-v4", updated_at: "2026-08-29T00:00:00Z" },
+      message: "邮件配置已保存",
+    });
+    renderEmail("/email?tab=config");
+
+    const labels = await screen.findByRole("textbox", { name: "标签" });
+    expect(labels).toHaveValue("Priority, CEO");
+    expect(screen.getByRole("textbox", { name: "目标文件夹" })).toHaveValue("Archive/Priority");
+
+    await user.click(screen.getByRole("button", { name: "label" }));
+    expect(screen.queryByRole("textbox", { name: "标签" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "label" }));
+    const clearedLabels = screen.getByRole("textbox", { name: "标签" });
+    expect(clearedLabels).toHaveValue("");
+    await user.type(clearedLabels, "Board");
+    await user.click(screen.getByRole("button", { name: "保存本地配置" }));
+
+    expect(saveEmailConfig).toHaveBeenCalledWith("important", {
+      description: "Priority mail",
+      threshold: 0.95,
+      actions: ["move", "label"],
+      action_parameters: {
+        label: { labels: ["Board"] },
+        move: { target_folder: "Archive/Priority" },
+      },
+      enabled: true,
+      config_version: "email-v4",
+    });
+  });
+
+  it("does not send an invalid label action without labels", async () => {
+    const user = userEvent.setup();
+    renderEmail("/email?tab=config");
+
+    await user.click(await screen.findByRole("button", { name: "label" }));
+    await user.click(screen.getByRole("button", { name: "保存本地配置" }));
+
+    expect(saveEmailConfig).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("请至少填写一个标签");
+  });
 });
