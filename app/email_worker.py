@@ -580,7 +580,9 @@ def _load_email_task_context(
         raise EmailWorkerStartupError("email task action plan is unavailable")
     task_input = _load_email_task_input(email_store, source_factory, task)
     routes = EmailAgentTaskAdapter(task_store, email_store).ensure_action_plan_tasks(
-        EmailActionPlan.model_validate(classification["action_plan"]),
+        EmailActionPlan.model_validate_json(
+            json.dumps(classification["action_plan"])
+        ),
         task_input,
     )
     route = next((candidate for candidate in routes if candidate.task.id == task.id), None)
@@ -829,6 +831,7 @@ def _build_email_unsubscribe_consumer(
     from app.email_unsubscribe_consumer import EmailUnsubscribeConsumerAgentRunner
     from app.email_unsubscribe_operation import EmailUnsubscribeTaskOperation
     from app.email_classifier_contracts import EmailProviderLocator
+    from app.email_imap_readonly import ephemeral_body_html
     from urllib.parse import urlsplit
 
     def resolve_entries(
@@ -864,7 +867,7 @@ def _build_email_unsubscribe_consumer(
                 list_unsubscribe=str(message.get("listUnsubscribe") or ""),
                 list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
                 body_text=str(message.get("textBody") or message.get("markdownBody") or ""),
-                body_html="",
+                body_html=ephemeral_body_html(message),
                 authentication_evidence=authentication,
             )
             return tuple(item for item in entries if item.reference == expected_reference)
@@ -963,6 +966,155 @@ def run_email_unsubscribe_task(
     )
     operation = build_email_unsubscribe_operation(settings)
     return operation.execute(task_id, execution_generation)
+
+
+def build_audited_email_unsubscribe_operation(settings: object) -> object:
+    """Build the Audit-run-bound operation without changing the legacy route."""
+
+    from app.email_browser_profile import EmailBrowserProfile
+    from app.email_classifier_contracts import EmailProviderLocator
+    from app.email_store import EmailStore
+    from app.email_unsubscribe import (
+        EmailUnsubscribeEffect,
+        UnsubscribeAuthenticationEvidence,
+        browser_network_policy_for_entries,
+        browser_unsubscribe_entries,
+        execute_unsubscribe_in_dedicated_profile,
+        extract_unsubscribe_entries,
+    )
+    from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
+    from app.email_imap_readonly import ephemeral_body_html
+    from app.store import AutoReplyStore
+
+    email_store = EmailStore(Path(settings.db_path))
+    task_store = AutoReplyStore(Path(settings.db_path))
+    source_factory = _build_email_source_factory(settings)
+
+    def resolve_entries(
+        locator: EmailProviderLocator,
+        expected_reference: str,
+        authentication: UnsubscribeAuthenticationEvidence | None = None,
+        network_policy_reference: str = "",
+        network_policy_origin_references: tuple[str, ...] = (),
+    ):
+        account = email_store.get_account(locator.account_id)
+        if not isinstance(account, Mapping):
+            raise ValueError("email unsubscribe account is unavailable")
+        source = source_factory(account)
+        try:
+            batch = source.fetch_uid_batch(
+                locator.folder,
+                cursor_uidvalidity=locator.uidvalidity,
+                last_seen_uid=max(0, locator.uid - 1),
+                limit=2,
+            )
+            if batch.uidvalidity != locator.uidvalidity:
+                raise ValueError("email unsubscribe provider generation changed")
+            message = next(
+                (
+                    item
+                    for item in batch.messages
+                    if _message_identity(item) == locator.stable_message_identity
+                    and int(item.get("uid") or 0) == locator.uid
+                ),
+                None,
+            )
+            if not isinstance(message, Mapping):
+                raise ValueError("email unsubscribe source message is unavailable")
+            entries = extract_unsubscribe_entries(
+                list_unsubscribe=str(message.get("listUnsubscribe") or ""),
+                list_unsubscribe_post=str(
+                    message.get("listUnsubscribePost") or ""
+                ),
+                body_text=str(
+                    message.get("textBody") or message.get("markdownBody") or ""
+                ),
+                body_html=ephemeral_body_html(message),
+                authentication_evidence=authentication,
+            )
+            entries = browser_unsubscribe_entries(entries)
+            policy = browser_network_policy_for_entries(entries)
+            if (
+                policy.reference != network_policy_reference
+                or policy.origin_references != network_policy_origin_references
+            ):
+                raise ValueError("email unsubscribe network policy changed")
+            if not any(
+                entry.reference == expected_reference for entry in entries
+            ):
+                raise ValueError("email unsubscribe entry changed")
+            return entries
+        finally:
+            _close_email_source(source)
+
+    def execute_effect(
+        effect: EmailUnsubscribeEffect,
+        entries: tuple[object, ...],
+        *,
+        owner: Mapping[str, object],
+        automatic: bool,
+        executed_prefix_length: int,
+    ):
+        if automatic is not False or not entries:
+            raise ValueError("audited unsubscribe executes exactly one effect")
+        if not any(
+            getattr(entry, "reference", None) == effect.entry_reference
+            for entry in entries
+        ):
+            raise ValueError("email unsubscribe entry changed")
+        profile = EmailBrowserProfile(
+            Path(settings.db_path).parent / "email-browser-runtime"
+        )
+        policy = browser_network_policy_for_entries(entries)
+        if (
+            policy.reference != effect.network_policy_reference
+            or policy.origin_references
+            != effect.network_policy_origin_references
+        ):
+            raise ValueError("email unsubscribe network policy changed")
+        return execute_unsubscribe_in_dedicated_profile(
+            effect,
+            entries,
+            store=email_store,
+            profile=profile,
+            network_policy=policy,
+            owner=owner,
+            automatic=False,
+            executed_prefix_length=executed_prefix_length,
+        )
+
+    return EmailUnsubscribeAuditOperation(
+        task_store=task_store,
+        email_store=email_store,
+        resolve_entries=resolve_entries,
+        execute_effect=execute_effect,
+    )
+
+
+def run_audited_email_unsubscribe(
+    db_path: str | Path,
+    task_id: int,
+    execution_generation: str,
+    *,
+    audit_agent_run_id: int,
+    accepted_action: Mapping[str, object],
+) -> dict[str, object]:
+    """Execute one accepted unsubscribe action through its bound Audit run."""
+
+    from types import SimpleNamespace
+
+    operation = build_audited_email_unsubscribe_operation(
+        SimpleNamespace(
+            db_path=Path(db_path),
+            workspace=Path(db_path).parent,
+        )
+    )
+    return operation.execute(
+        task_id,
+        execution_generation,
+        audit_agent_run_id=audit_agent_run_id,
+        accepted_action=accepted_action,
+    )
 
 
 def _validate_email_worker_dependencies(dependencies: object) -> None:

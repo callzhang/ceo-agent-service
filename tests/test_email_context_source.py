@@ -4,6 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.email_context_source import EmailContextSource
+from app.email_imap_readonly import ephemeral_body_html, parse_rfc822_message
+from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 
 
 def _payload(stable_identity: str) -> dict[str, object]:
@@ -141,3 +143,107 @@ def test_context_source_rejects_action_plan_version_drift():
         EmailContextSource(DriftedStore()).load_task_input(
             SimpleNamespace(trigger_message_json=json.dumps(_payload(stable_identity)))
         )
+
+
+def test_context_source_reloads_ephemeral_html_and_immutable_unsubscribe_bindings():
+    stable_identity = "account-1:message-id:<current@example.com>"
+    private_url = "https://news.example.com/unsubscribe?token=context-private"
+    provider_message = parse_rfc822_message(
+        (
+            b"From: sender@example.com\r\n"
+            b"To: derek@example.com\r\n"
+            b"Subject: HTML only newsletter\r\n"
+            b"Date: Sun, 30 Aug 2026 08:00:00 +0000\r\n"
+            b"Message-ID: <current@example.com>\r\n"
+            b"List-Unsubscribe: <https://news.example.com/one-click>\r\n"
+            b"List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n"
+            b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+            + f'<a href="{private_url}">Unsubscribe</a>'.encode()
+        ),
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=17,
+    )
+    payload = _payload(stable_identity)
+    payload.update(
+        {
+            "unsubscribe_authentication": {
+                "evidence_reference": "dkim-evidence:current-message",
+                "one_click_verified": True,
+            },
+            "unsubscribe_network_policy_reference": "network-policy:immutable",
+            "unsubscribe_network_policy_origin_references": [
+                "network-origin:immutable"
+            ],
+        }
+    )
+
+    class Store:
+        def get_classification(self, _classification_id):
+            return {
+                "account_id": "account-1",
+                "stable_message_identity": stable_identity,
+                "thread_id": "provider-thread-1",
+                "current_action_plan_id": "email-plan:17:v3",
+                "folder": "INBOX",
+                "uidvalidity": 42,
+                "uid": 17,
+                "action_plan": {
+                    "action_plan_id": "email-plan:17:v3",
+                    "action_plan_version": 3,
+                    "model_id": "email-model:2026-08-30:sha256:abc",
+                    "config_version": "email-config:v7",
+                },
+            }
+
+        def list_email_context_thread(self, **_kwargs):
+            return [
+                {
+                    "stable_message_identity": stable_identity,
+                    "thread_identity": "provider-thread-1",
+                    "sender": "sender@example.com",
+                    "subject": "HTML only newsletter",
+                    "normalized_text": "Newsletter",
+                    "attachment_metadata": [],
+                    "received_at": "2026-08-30T08:00:00+00:00",
+                }
+            ]
+
+        def list_email_context_receipts(self, **_kwargs):
+            return []
+
+        def get_account(self, _account_id):
+            return {"account_id": "account-1"}
+
+    class Source:
+        def fetch_uid_batch(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                uidvalidity=42,
+                messages=(provider_message,),
+            )
+
+        def logout(self):
+            return None
+
+    task_input = EmailContextSource(
+        Store(),
+        source_factory=lambda _account: Source(),
+    ).load_task_input(
+        SimpleNamespace(trigger_message_json=json.dumps(payload))
+    )
+
+    assert task_input.body_html == ephemeral_body_html(provider_message)
+    assert private_url in task_input.body_html
+    assert private_url not in repr(task_input)
+    assert task_input.unsubscribe_authentication == UnsubscribeAuthenticationEvidence(
+        dkim_covers_list_unsubscribe=True,
+        dkim_covers_list_unsubscribe_post=True,
+        evidence_reference="dkim-evidence:current-message",
+    )
+    assert task_input.unsubscribe_network_policy_reference == (
+        "network-policy:immutable"
+    )
+    assert task_input.unsubscribe_network_policy_origin_references == (
+        "network-origin:immutable",
+    )

@@ -797,7 +797,7 @@ server = FastMCP(
 
 
 @server.tool(
-    name="execute_email_unsubscribe",
+    name="execute_audited_email_unsubscribe",
     annotations=ToolAnnotations(
         readOnlyHint=False,
         destructiveHint=True,
@@ -805,11 +805,13 @@ server = FastMCP(
         openWorldHint=True,
     ),
 )
-def execute_email_unsubscribe_tool(
+def execute_audited_email_unsubscribe_tool(
     task_id: int,
     execution_generation: str,
+    audit_agent_run_id: int,
+    accepted_action: dict[str, object],
 ) -> dict[str, object]:
-    """Execute only the currently claimed task-bound email unsubscribe."""
+    """Execute an accepted email unsubscribe from its current Audit run."""
 
     if isinstance(task_id, bool) or task_id <= 0:
         raise AgentReadOnlyViolationError("email_unsubscribe_task_id_invalid")
@@ -817,13 +819,19 @@ def execute_email_unsubscribe_tool(
         raise AgentReadOnlyViolationError(
             "email_unsubscribe_execution_generation_invalid"
         )
+    if isinstance(audit_agent_run_id, bool) or audit_agent_run_id <= 0:
+        raise AgentReadOnlyViolationError("email_unsubscribe_audit_run_id_invalid")
+    if not isinstance(accepted_action, dict):
+        raise AgentReadOnlyViolationError("email_unsubscribe_action_invalid")
     from app.config import worker_db_path
-    from app.email_worker import run_email_unsubscribe_task
+    from app.email_worker import run_audited_email_unsubscribe
 
-    return run_email_unsubscribe_task(
+    return run_audited_email_unsubscribe(
         worker_db_path(),
         task_id,
         execution_generation,
+        audit_agent_run_id=audit_agent_run_id,
+        accepted_action=accepted_action,
     )
 
 

@@ -16,7 +16,7 @@ import ipaddress
 import json
 import re
 import socket
-from typing import Callable, Literal, Mapping, Protocol
+from typing import Callable, Literal, Mapping, Protocol, Sequence
 from urllib.parse import unquote, urlencode, urljoin, urlsplit
 
 from app.email_store import (
@@ -46,6 +46,23 @@ _UNRESOLVED_ERROR = "email_unsubscribe_outcome_unresolved"
 _MAX_RESULT_TEXT_BYTES = 16 * 1024
 _PRIVATE_RESULT_URL = re.compile(r"\b(?:https?|file)://[^\s<>'\"]+")
 _PRIVATE_RESULT_PATH = re.compile(r"(?<![A-Za-z0-9_])/(?:Users|home|private|tmp)/[^\s<>'\"]+")
+_AUDIT_SESSION_FIELDS = frozenset(
+    {
+        "version",
+        "action_identity",
+        "effect_digest",
+        "entry_reference",
+        "document_url",
+        "html",
+        "html_digest",
+        "cookies",
+        "cookies_digest",
+        "control_references",
+        "network_policy_reference",
+        "network_policy_origin_references",
+    }
+)
+_MAX_AUDIT_SESSION_HTML_BYTES = 1024 * 1024
 
 
 def normalize_unsubscribe_result_text(value: str) -> tuple[str, str]:
@@ -117,6 +134,294 @@ class UnsubscribePageState(str, Enum):
 
 class UnsubscribeBrowserError(RuntimeError):
     """The browser runtime or its state readback failed technically."""
+
+
+class UnsubscribeAuthenticationControlsError(UnsubscribeBrowserError):
+    """The page exposes authentication or credential controls."""
+
+
+_AUTHENTICATION_CONTROL_PREDICATE_JS = r"""
+const reflectApply = Reflect.apply;
+const elementGetAttribute = Element.prototype.getAttribute;
+const elementClosest = Element.prototype.closest;
+const documentQuerySelectorAll = Document.prototype.querySelectorAll;
+const trustedGetAttribute = (node, name) => (
+  node instanceof Element ? reflectApply(elementGetAttribute, node, [name]) : null
+);
+const trustedClosest = (node, selector) => (
+  node instanceof Element ? reflectApply(elementClosest, node, [selector]) : null
+);
+const trustedDocumentQuery = selector => Array.from(
+  reflectApply(documentQuerySelectorAll, document, [selector])
+);
+const compactAuthenticationText = value => String(value || '').toLowerCase()
+  .replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ').trim();
+const credentialAutocompleteTokens = new Set([
+  'username', 'current-password', 'new-password', 'one-time-code', 'webauthn'
+]);
+const authenticationSemanticMarkers = [
+  'password', 'passwd', 'passcode', 'pwd', 'current password',
+  'new password', 'one time code', 'one time password', 'otp',
+  'verification code', 'verify code', 'auth code',
+  'authentication code', 'security code', 'mfa', '2fa',
+  'captcha', 'recaptcha', 'hcaptcha', '验证码', '动态口令',
+  '扫码', '二维码', 'choose account', 'select account',
+  'account selection', 'continue as', 'sign in with',
+  'log in with', 'login with'
+];
+const autocompleteTokens = node => String(
+  trustedGetAttribute(node, 'autocomplete') || ''
+).toLowerCase().trim().split(/\s+/).filter(Boolean);
+const authenticationMetadata = node => {
+  const values = [
+    node.tagName, trustedGetAttribute(node, 'type'),
+    trustedGetAttribute(node, 'autocomplete'), trustedGetAttribute(node, 'name'),
+    trustedGetAttribute(node, 'id'), trustedGetAttribute(node, 'aria-label'),
+    trustedGetAttribute(node, 'aria-labelledby'),
+    trustedGetAttribute(node, 'placeholder'), trustedGetAttribute(node, 'title'),
+    trustedGetAttribute(node, 'alt'), trustedGetAttribute(node, 'role'),
+    trustedGetAttribute(node, 'class')
+  ];
+  if (node.labels) {
+    for (const label of Array.from(node.labels)) {
+      values.push(label.textContent || '');
+    }
+  }
+  const parent = trustedClosest(node, '[aria-label], [role], [id], [class]');
+  if (parent && parent !== node) {
+    values.push(
+      trustedGetAttribute(parent, 'aria-label'), trustedGetAttribute(parent, 'role'),
+      trustedGetAttribute(parent, 'id'), trustedGetAttribute(parent, 'class'),
+      parent.textContent || ''
+    );
+  }
+  return compactAuthenticationText(values.filter(Boolean).join(' '));
+};
+const isAuthenticationControl = node => {
+  if (!(node instanceof Element)) return false;
+  const type = compactAuthenticationText(trustedGetAttribute(node, 'type'));
+  if (node.tagName.toLowerCase() === 'input' && type === 'password') {
+    return true;
+  }
+  if (autocompleteTokens(node).some(
+    token => credentialAutocompleteTokens.has(token)
+  )) return true;
+  const metadata = authenticationMetadata(node);
+  return authenticationSemanticMarkers.some(marker => metadata.includes(marker));
+};
+"""
+
+
+class _ChromiumIsolatedWorld:
+    """Evaluate bounded functions in a freshly resolved Chromium isolated world."""
+
+    def __init__(self, cdp_session: object | None) -> None:
+        self._cdp_session = cdp_session
+
+    def evaluate(self, function_declaration: str) -> object:
+        """Resolve the current main frame and never retry or fall back to main world."""
+
+        try:
+            if self._cdp_session is None:
+                raise RuntimeError("CDP session unavailable")
+            frame_tree = self._cdp_session.send("Page.getFrameTree")
+            frame_id = frame_tree["frameTree"]["frame"]["id"]
+            world = self._cdp_session.send(
+                "Page.createIsolatedWorld",
+                {
+                    "frameId": frame_id,
+                    "worldName": "ceo-email-unsubscribe-audit",
+                    "grantUniveralAccess": False,
+                },
+            )
+            context_id = world["executionContextId"]
+            response = self._cdp_session.send(
+                "Runtime.callFunctionOn",
+                {
+                    "functionDeclaration": function_declaration,
+                    "executionContextId": context_id,
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                    "userGesture": False,
+                },
+            )
+            if response.get("exceptionDetails"):
+                raise RuntimeError("isolated evaluation rejected")
+            result = response.get("result")
+            if not isinstance(result, Mapping) or "value" not in result:
+                raise RuntimeError("isolated evaluation returned no value")
+            return result["value"]
+        except Exception:
+            raise UnsubscribeBrowserError(
+                "trusted browser execution unavailable"
+            ) from None
+
+
+@dataclass(frozen=True, repr=False)
+class _RestoredAuditSession:
+    document_url: str
+    html: str
+    cookies: tuple[dict[str, object], ...]
+    control_references: tuple[str, ...]
+
+    def __repr__(self) -> str:
+        return "<_RestoredAuditSession redacted>"
+
+
+def _validated_restored_audit_session(
+    payload: Mapping[str, object],
+    effect: "EmailUnsubscribeEffect",
+    *,
+    executed_prefix_length: int,
+) -> _RestoredAuditSession:
+    """Bind one private profile snapshot to the exact append-only effect."""
+
+    invalid = UnsubscribeBrowserError("browser session binding rejected")
+    if set(payload) != _AUDIT_SESSION_FIELDS:
+        raise invalid
+    if (
+        not isinstance(executed_prefix_length, int)
+        or isinstance(executed_prefix_length, bool)
+        or executed_prefix_length <= 0
+        or executed_prefix_length != len(effect.operations) - 1
+        or payload.get("version") != 1
+        or payload.get("action_identity") != effect.action_identity
+        or payload.get("effect_digest") != effect.previous_effect_digest
+        or payload.get("entry_reference") != effect.entry_reference
+        or payload.get("network_policy_reference")
+        != effect.network_policy_reference
+        or payload.get("network_policy_origin_references")
+        != list(effect.network_policy_origin_references)
+    ):
+        raise invalid
+    document_url = payload.get("document_url")
+    html = payload.get("html")
+    html_digest = payload.get("html_digest")
+    cookie_values = payload.get("cookies")
+    cookies_digest = payload.get("cookies_digest")
+    control_values = payload.get("control_references")
+    try:
+        observed_cookies_digest = sha256(
+            json.dumps(
+                cookie_values,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    except (TypeError, ValueError, RecursionError):
+        raise invalid from None
+    if (
+        not isinstance(document_url, str)
+        or not document_url.strip()
+        or not isinstance(html, str)
+        or not html.strip()
+        or len(html.encode("utf-8")) > _MAX_AUDIT_SESSION_HTML_BYTES
+        or not isinstance(html_digest, str)
+        or html_digest != sha256(html.encode("utf-8")).hexdigest()
+        or not isinstance(cookie_values, list)
+        or not isinstance(cookies_digest, str)
+        or cookies_digest != observed_cookies_digest
+        or not isinstance(control_values, list)
+        or not control_values
+        or len(control_values) > 128
+        or any(not isinstance(item, str) for item in control_values)
+    ):
+        raise invalid
+    controls = tuple(control_values)
+    try:
+        for reference in controls:
+            _assert_strict_opaque_reference(
+                reference,
+                field_name="control_reference",
+            )
+    except (TypeError, ValueError):
+        raise invalid from None
+    if len(set(controls)) != len(controls):
+        raise invalid
+    cookies = _validated_audit_session_cookies(
+        cookie_values,
+        document_url=document_url,
+    )
+    appended = effect.operations[executed_prefix_length]
+    if (
+        appended.kind
+        not in {
+            UnsubscribeOperationKind.SUBMIT_FORM,
+            UnsubscribeOperationKind.CLICK_CONFIRMATION,
+        }
+        or appended.target_reference not in controls
+    ):
+        raise invalid
+    return _RestoredAuditSession(
+        document_url=document_url,
+        html=html,
+        cookies=cookies,
+        control_references=controls,
+    )
+
+
+def _validated_audit_session_cookies(
+    values: object,
+    *,
+    document_url: str,
+) -> tuple[dict[str, object], ...]:
+    invalid = UnsubscribeBrowserError("browser session binding rejected")
+    host = (urlsplit(document_url).hostname or "").casefold().rstrip(".")
+    if not host or not isinstance(values, list) or len(values) > 64:
+        raise invalid
+    required = {
+        "name",
+        "value",
+        "domain",
+        "path",
+        "expires",
+        "httpOnly",
+        "secure",
+        "sameSite",
+    }
+    cookies: list[dict[str, object]] = []
+    for value in values:
+        if not isinstance(value, Mapping) or set(value) != required:
+            raise invalid
+        name = value.get("name")
+        content = value.get("value")
+        domain = value.get("domain")
+        path = value.get("path")
+        expires = value.get("expires")
+        http_only = value.get("httpOnly")
+        secure = value.get("secure")
+        same_site = value.get("sameSite")
+        canonical_domain = (
+            domain.lstrip(".").casefold().rstrip(".")
+            if isinstance(domain, str)
+            else ""
+        )
+        if (
+            not isinstance(name, str)
+            or not name
+            or len(name.encode("utf-8")) > 256
+            or any(character in name for character in "\r\n;=")
+            or not isinstance(content, str)
+            or len(content.encode("utf-8")) > 4096
+            or any(character in content for character in "\r\n")
+            or not canonical_domain
+            or not (
+                host == canonical_domain
+                or host.endswith("." + canonical_domain)
+            )
+            or not isinstance(path, str)
+            or not path.startswith("/")
+            or len(path.encode("utf-8")) > 1024
+            or isinstance(expires, bool)
+            or not isinstance(expires, (int, float))
+            or not (expires == -1 or 0 <= expires <= 253_402_300_799)
+            or not isinstance(http_only, bool)
+            or not isinstance(secure, bool)
+            or same_site not in {"Strict", "Lax", "None"}
+        ):
+            raise invalid
+        cookies.append(dict(value))
+    return tuple(cookies)
 
 
 class UnsubscribeProviderAuthError(RuntimeError):
@@ -407,6 +712,48 @@ class UnsubscribeEntry:
             "reference": self.reference,
             "priority": self.priority,
         }
+
+
+def browser_unsubscribe_entries(
+    entries: Sequence[UnsubscribeEntry],
+    *,
+    allow_loopback_for_tests: bool = False,
+) -> tuple[UnsubscribeEntry, ...]:
+    """Return only current HTTPS browser candidates in deterministic order."""
+
+    selected = tuple(
+        entry
+        for entry in entries
+        if _is_private_https_url(entry.private_url)
+        or (
+            allow_loopback_for_tests
+            and _is_loopback_http_url(entry.private_url)
+        )
+    )
+    return tuple(sorted(selected, key=lambda item: (item.priority, item.reference)))
+
+
+def browser_network_policy_for_entries(
+    entries: Sequence[UnsubscribeEntry],
+    *,
+    allow_loopback_for_tests: bool = False,
+) -> BrowserNetworkPolicy:
+    """Derive the minimal exact-origin policy for current browser candidates."""
+
+    browser_entries = browser_unsubscribe_entries(
+        entries,
+        allow_loopback_for_tests=allow_loopback_for_tests,
+    )
+    origins = frozenset(
+        f"{parsed.scheme.casefold()}://{parsed.netloc}"
+        for parsed in (urlsplit(entry.private_url) for entry in browser_entries)
+    )
+    if not origins:
+        raise ValueError("unsubscribe has no HTTPS browser candidate")
+    return BrowserNetworkPolicy(
+        origins,
+        allow_loopback_for_tests=allow_loopback_for_tests,
+    )
 
 
 @dataclass(frozen=True)
@@ -825,6 +1172,7 @@ class PlaywrightUnsubscribeBrowser:
         *,
         timeout_ms: int = 5_000,
         network_policy: BrowserNetworkPolicy | None = None,
+        restored_document_url: str = "",
         confirmation_receipt_resolver: Callable[
             [EmailUnsubscribeEffect], UnsubscribeTerminalReceipt | None
         ]
@@ -848,6 +1196,11 @@ class PlaywrightUnsubscribeBrowser:
         self._blocked_download = False
         self._document_url = ""
         self._context = self.page.context
+        try:
+            cdp_session = self._context.new_cdp_session(self.page)
+        except Exception:
+            cdp_session = None
+        self._trusted_world = _ChromiumIsolatedWorld(cdp_session)
         if getattr(self._context, "service_workers", []):
             raise ValueError("browser network policy requires a clean context")
         self._context.set_default_timeout(timeout_ms)
@@ -885,6 +1238,12 @@ class PlaywrightUnsubscribeBrowser:
             })();
             """
         )
+        if restored_document_url:
+            if str(getattr(self.page, "url")) != "about:blank":
+                raise ValueError("restored browser page must start isolated")
+            self._document_url = self._validate_navigation_target(
+                restored_document_url
+            )
 
     def _guard_request(self, route: object, request: object) -> None:
         try:
@@ -933,6 +1292,25 @@ class PlaywrightUnsubscribeBrowser:
             raise UnsubscribeBrowserError("unsubscribe page has no visible state")
         return text
 
+    def _assert_no_authentication_controls(self) -> None:
+        """Reject auth UI using attributes/labels only, before reading form state."""
+
+        detected = self._trusted_world.evaluate(
+            "function() {"
+            + _AUTHENTICATION_CONTROL_PREDICATE_JS
+            + """
+              const controls = trustedDocumentQuery(
+                'input, textarea, select, button, a, img, canvas, [role]'
+              );
+              return controls.some(node => isAuthenticationControl(node));
+            }
+            """
+        )
+        if detected is not False:
+            raise UnsubscribeAuthenticationControlsError(
+                "authentication controls are not permitted"
+            )
+
     @staticmethod
     def _control_intent(
         label: str,
@@ -950,21 +1328,20 @@ class PlaywrightUnsubscribeBrowser:
         value = self._document_url or str(getattr(self.page, "url"))
         return self._validate_navigation_target(value)
 
-    def _link_binding(self, element: object) -> _AuditedControlBinding | None:
-        if not element.is_visible():
-            return None
-        label = (element.inner_text(timeout=self.timeout_ms) or "").strip()
-        if not label:
-            label = (element.get_attribute("aria-label") or "").strip()
+    def _link_binding(
+        self,
+        snapshot: Mapping[str, object],
+    ) -> _AuditedControlBinding | None:
+        label = str(snapshot.get("label") or "").strip()
         intent = self._control_intent(label)
         if intent is None:
             return None
-        href = element.get_attribute("href") or ""
-        target = (element.get_attribute("target") or "").casefold()
+        href = str(snapshot.get("href") or "")
+        target = str(snapshot.get("target") or "").casefold()
         if (
             not href
             or target not in {"", "_self"}
-            or element.get_attribute("download") is not None
+            or snapshot.get("download") is True
         ):
             return None
         page_identity = self._page_identity()
@@ -1001,101 +1378,10 @@ class PlaywrightUnsubscribeBrowser:
             successful_controls=(),
         )
 
-    def _form_binding(self, submitter: object) -> _AuditedControlBinding | None:
-        if not submitter.is_visible():
-            return None
-        snapshot = submitter.evaluate(
-            """
-            node => {
-              const tag = node.tagName.toLowerCase();
-              const type = (node.getAttribute('type') ||
-                (tag === 'button' ? 'submit' : '')).toLowerCase();
-              const form = node.form;
-              if (!form || type !== 'submit') return null;
-              const submitterLabel = tag === 'input'
-                ? (node.value || node.getAttribute('aria-label') || '')
-                : (node.innerText || node.getAttribute('aria-label') || '');
-              const method = (node.getAttribute('formmethod') ||
-                form.getAttribute('method') || 'get').toLowerCase();
-              const enctype = (node.getAttribute('formenctype') ||
-                form.getAttribute('enctype') ||
-                'application/x-www-form-urlencoded').toLowerCase();
-              const target = (node.getAttribute('formtarget') ||
-                form.getAttribute('target') || '').toLowerCase();
-              const action = node.getAttribute('formaction') ??
-                form.getAttribute('action') ?? '';
-              const acceptCharset = (form.getAttribute('accept-charset') || '')
-                .trim().toLowerCase();
-              const elements = Array.from(form.elements);
-              if (elements.length > 128) return {error: 'bounds'};
-              const fields = [];
-              const supportedInputTypes = new Set([
-                'hidden', 'text', 'search', 'tel', 'url', 'email', 'date',
-                'month', 'week', 'time', 'datetime-local', 'number', 'range',
-                'color', 'checkbox', 'radio'
-              ]);
-              for (const field of elements) {
-                const fieldTag = field.tagName.toLowerCase();
-                const fieldType = (field.getAttribute('type') ||
-                  (fieldTag === 'button' ? 'submit' :
-                    fieldTag === 'input' ? 'text' : fieldTag)).toLowerCase();
-                if (field.hasAttribute('dirname')) return {error: 'unsupported'};
-                if (field.matches(':disabled') || !field.name) continue;
-                if (field === node) {
-                  fields.push({name: field.name, type: fieldType, value: field.value || ''});
-                  continue;
-                }
-                if (fieldTag === 'button' || ['submit', 'button', 'reset', 'image'].includes(fieldType)) {
-                  continue;
-                }
-                if (fieldTag === 'input') {
-                  if (!supportedInputTypes.has(fieldType)) return {error: 'unsupported'};
-                  if (['checkbox', 'radio'].includes(fieldType) && !field.checked) continue;
-                  fields.push({name: field.name, type: fieldType, value: field.value || ''});
-                  continue;
-                }
-                if (fieldTag === 'textarea') {
-                  fields.push({name: field.name, type: 'textarea', value: field.value || ''});
-                  continue;
-                }
-                if (fieldTag === 'select') {
-                  for (const option of Array.from(field.selectedOptions)) {
-                    if (!option.disabled) {
-                      fields.push({name: field.name, type: 'select', value: option.value});
-                    }
-                  }
-                  continue;
-                }
-                return {error: 'unsupported'};
-              }
-              if (fields.length > 128 || fields.some(item =>
-                item.name.length > 512 || item.type.length > 64 || item.value.length > 4096
-              )) return {error: 'bounds'};
-              return {
-                acceptCharset,
-                action,
-                enctype,
-                fields,
-                formAssociation: {
-                  formAttribute: node.getAttribute('form') || '',
-                  formId: form.id || '',
-                  formName: form.getAttribute('name') || '',
-                  formIndex: Array.from(document.forms).indexOf(form)
-                },
-                method,
-                submitter: {
-                  name: node.name || '',
-                  tag,
-                  target,
-                  type,
-                  value: node.value || ''
-                },
-                submitterLabel,
-                target
-              };
-            }
-            """
-        )
+    def _form_binding(
+        self,
+        snapshot: Mapping[str, object],
+    ) -> _AuditedControlBinding | None:
         if not snapshot or snapshot.get("error"):
             return None
         intent = self._control_intent(str(snapshot["submitterLabel"]))
@@ -1149,17 +1435,205 @@ class PlaywrightUnsubscribeBrowser:
         )
 
     def _ordinary_controls(self) -> tuple[_AuditedControlBinding, ...]:
+        snapshot = self._trusted_world.evaluate(
+            "function() {"
+            + _AUTHENTICATION_CONTROL_PREDICATE_JS
+            + r"""
+              const authenticationControls = trustedDocumentQuery(
+                'input, textarea, select, button, a, img, canvas, [role]'
+              );
+              if (authenticationControls.some(node => isAuthenticationControl(node))) {
+                return {blocked: true};
+              }
+
+              // No live value/checked/selected state is read above this line.
+              const elementHasAttribute = Element.prototype.hasAttribute;
+              const elementMatches = Element.prototype.matches;
+              const htmlInnerText = Object.getOwnPropertyDescriptor(
+                HTMLElement.prototype, 'innerText'
+              ).get;
+              const inputValue = Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype, 'value'
+              ).get;
+              const inputChecked = Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype, 'checked'
+              ).get;
+              const textAreaValue = Object.getOwnPropertyDescriptor(
+                HTMLTextAreaElement.prototype, 'value'
+              ).get;
+              const optionValue = Object.getOwnPropertyDescriptor(
+                HTMLOptionElement.prototype, 'value'
+              ).get;
+              const optionSelected = Object.getOwnPropertyDescriptor(
+                HTMLOptionElement.prototype, 'selected'
+              ).get;
+              const buttonValue = Object.getOwnPropertyDescriptor(
+                HTMLButtonElement.prototype, 'value'
+              ).get;
+              const trustedHasAttribute = (node, name) => reflectApply(
+                elementHasAttribute, node, [name]
+              );
+              const trustedMatches = (node, selector) => reflectApply(
+                elementMatches, node, [selector]
+              );
+              const visible = node => {
+                if (trustedHasAttribute(node, 'hidden')) return false;
+                const style = getComputedStyle(node);
+                if (style.display === 'none' || style.visibility === 'hidden') return false;
+                const rect = node.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+              };
+              const readValue = node => {
+                const tag = node.tagName.toLowerCase();
+                if (tag === 'input') return reflectApply(inputValue, node, []);
+                if (tag === 'textarea') return reflectApply(textAreaValue, node, []);
+                if (tag === 'option') return reflectApply(optionValue, node, []);
+                if (tag === 'button') return reflectApply(buttonValue, node, []);
+                return '';
+              };
+              const links = [];
+              for (const node of trustedDocumentQuery('a[href]').slice(0, 64)) {
+                if (!visible(node)) continue;
+                links.push({
+                  download: trustedHasAttribute(node, 'download'),
+                  href: trustedGetAttribute(node, 'href') || '',
+                  label: (reflectApply(htmlInnerText, node, []) ||
+                    trustedGetAttribute(node, 'aria-label') || '').trim(),
+                  target: trustedGetAttribute(node, 'target') || ''
+                });
+              }
+
+              const forms = [];
+              const submitters = trustedDocumentQuery(
+                'button:not([type]), button[type=submit], input[type=submit]'
+              ).slice(0, 64);
+              const documentForms = trustedDocumentQuery('form');
+              const supportedInputTypes = new Set([
+                'hidden', 'text', 'search', 'tel', 'url', 'email', 'date',
+                'month', 'week', 'time', 'datetime-local', 'number', 'range',
+                'color', 'checkbox', 'radio'
+              ]);
+              for (const node of submitters) {
+                if (!visible(node)) continue;
+                const tag = node.tagName.toLowerCase();
+                const type = (trustedGetAttribute(node, 'type') ||
+                  (tag === 'button' ? 'submit' : '')).toLowerCase();
+                const form = node.form;
+                if (!form || type !== 'submit') continue;
+                const elements = Array.from(form.elements);
+                if (elements.length > 128) {
+                  forms.push({error: 'bounds'});
+                  continue;
+                }
+                const fields = [];
+                let error = '';
+                for (const field of elements) {
+                  const fieldTag = field.tagName.toLowerCase();
+                  const fieldType = (trustedGetAttribute(field, 'type') ||
+                    (fieldTag === 'button' ? 'submit' :
+                      fieldTag === 'input' ? 'text' : fieldTag)).toLowerCase();
+                  const name = trustedGetAttribute(field, 'name') || '';
+                  if (trustedHasAttribute(field, 'dirname')) {
+                    error = 'unsupported';
+                    break;
+                  }
+                  if (trustedMatches(field, ':disabled') || !name) continue;
+                  if (field === node) {
+                    fields.push({name, type: fieldType, value: readValue(field) || ''});
+                    continue;
+                  }
+                  if (fieldTag === 'button' ||
+                      ['submit', 'button', 'reset', 'image'].includes(fieldType)) {
+                    continue;
+                  }
+                  if (fieldTag === 'input') {
+                    if (!supportedInputTypes.has(fieldType)) {
+                      error = 'unsupported';
+                      break;
+                    }
+                    if (['checkbox', 'radio'].includes(fieldType) &&
+                        !reflectApply(inputChecked, field, [])) continue;
+                    fields.push({name, type: fieldType, value: readValue(field) || ''});
+                    continue;
+                  }
+                  if (fieldTag === 'textarea') {
+                    fields.push({name, type: 'textarea', value: readValue(field) || ''});
+                    continue;
+                  }
+                  if (fieldTag === 'select') {
+                    for (const option of Array.from(field.options)) {
+                      if (reflectApply(optionSelected, option, []) &&
+                          !trustedMatches(option, ':disabled')) {
+                        fields.push({name, type: 'select', value: readValue(option)});
+                      }
+                    }
+                    continue;
+                  }
+                  error = 'unsupported';
+                  break;
+                }
+                if (!error && (fields.length > 128 || fields.some(item =>
+                  item.name.length > 512 || item.type.length > 64 ||
+                  item.value.length > 4096
+                ))) error = 'bounds';
+                if (error) {
+                  forms.push({error});
+                  continue;
+                }
+                const target = (trustedGetAttribute(node, 'formtarget') ||
+                  trustedGetAttribute(form, 'target') || '').toLowerCase();
+                forms.push({
+                  acceptCharset: (trustedGetAttribute(form, 'accept-charset') || '')
+                    .trim().toLowerCase(),
+                  action: trustedGetAttribute(node, 'formaction') ??
+                    trustedGetAttribute(form, 'action') ?? '',
+                  enctype: (trustedGetAttribute(node, 'formenctype') ||
+                    trustedGetAttribute(form, 'enctype') ||
+                    'application/x-www-form-urlencoded').toLowerCase(),
+                  fields,
+                  formAssociation: {
+                    formAttribute: trustedGetAttribute(node, 'form') || '',
+                    formId: trustedGetAttribute(form, 'id') || '',
+                    formName: trustedGetAttribute(form, 'name') || '',
+                    formIndex: documentForms.indexOf(form)
+                  },
+                  method: (trustedGetAttribute(node, 'formmethod') ||
+                    trustedGetAttribute(form, 'method') || 'get').toLowerCase(),
+                  submitter: {
+                    name: trustedGetAttribute(node, 'name') || '',
+                    tag,
+                    target,
+                    type,
+                    value: readValue(node) || ''
+                  },
+                  submitterLabel: tag === 'input'
+                    ? (readValue(node) || trustedGetAttribute(node, 'aria-label') || '')
+                    : (reflectApply(htmlInnerText, node, []) ||
+                      trustedGetAttribute(node, 'aria-label') || ''),
+                  target
+                });
+              }
+              return {blocked: false, forms, links};
+            }
+            """
+        )
+        if not isinstance(snapshot, Mapping):
+            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+        if snapshot.get("blocked") is not False:
+            raise UnsubscribeAuthenticationControlsError(
+                "authentication controls are not permitted"
+            )
         bindings: list[_AuditedControlBinding] = []
-        links = self.page.locator("a[href]")
-        for index in range(min(links.count(), 64)):
-            binding = self._link_binding(links.nth(index))
+        for item in snapshot.get("links", ()):
+            if not isinstance(item, Mapping):
+                raise UnsubscribeBrowserError("trusted browser execution unavailable")
+            binding = self._link_binding(item)
             if binding is not None:
                 bindings.append(binding)
-        submitters = self.page.locator(
-            "button:not([type]), button[type=submit], input[type=submit]"
-        )
-        for index in range(min(submitters.count(), 64)):
-            binding = self._form_binding(submitters.nth(index))
+        for item in snapshot.get("forms", ()):
+            if not isinstance(item, Mapping):
+                raise UnsubscribeBrowserError("trusted browser execution unavailable")
+            binding = self._form_binding(item)
             if binding is not None:
                 bindings.append(binding)
         unique: dict[str, _AuditedControlBinding] = {}
@@ -1211,9 +1685,12 @@ class PlaywrightUnsubscribeBrowser:
                 controls=(),
             )
         self._validate_navigation_target(current_url)
+        # Credential rejection and all ordinary form-state reads are one
+        # atomic isolated-world evaluation inside _ordinary_controls().
+        bindings = self._ordinary_controls()
         text = self._visible_text()
         state = self._state_from_text(text)
-        controls = tuple(item.control for item in self._ordinary_controls())
+        controls = tuple(item.control for item in bindings)
         if state is None:
             state = UnsubscribePageState.ACTION_REQUIRED
             if (
@@ -1253,6 +1730,210 @@ class PlaywrightUnsubscribeBrowser:
             controls=controls,
         )
 
+    def _sanitized_audit_snapshot(self) -> Mapping[str, object]:
+        """Clone and scrub the page without exposing credential live state."""
+
+        sanitized = self._trusted_world.evaluate(
+            "function() {"
+            + _AUTHENTICATION_CONTROL_PREDICATE_JS
+            + r"""
+              const authenticationControls = trustedDocumentQuery(
+                'input, textarea, select, button, a, img, canvas, [role]'
+              );
+              const blocked = authenticationControls.some(
+                node => isAuthenticationControl(node)
+              );
+
+              // Detection is complete before any live value/checked/selected read.
+              const nodeClone = Node.prototype.cloneNode;
+              const nodeTextContent = Object.getOwnPropertyDescriptor(
+                Node.prototype, 'textContent'
+              );
+              const elementQuerySelectorAll = Element.prototype.querySelectorAll;
+              const elementSetAttribute = Element.prototype.setAttribute;
+              const elementRemoveAttribute = Element.prototype.removeAttribute;
+              const elementRemove = Element.prototype.remove;
+              const elementOuterHTML = Object.getOwnPropertyDescriptor(
+                Element.prototype, 'outerHTML'
+              ).get;
+              const inputValue = Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype, 'value'
+              ).get;
+              const inputChecked = Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype, 'checked'
+              ).get;
+              const textAreaValue = Object.getOwnPropertyDescriptor(
+                HTMLTextAreaElement.prototype, 'value'
+              ).get;
+              const optionSelected = Object.getOwnPropertyDescriptor(
+                HTMLOptionElement.prototype, 'selected'
+              ).get;
+              const trustedElementQuery = (node, selector) => Array.from(
+                reflectApply(elementQuerySelectorAll, node, [selector])
+              );
+              const setAttribute = (node, name, value) => reflectApply(
+                elementSetAttribute, node, [name, value]
+              );
+              const removeAttribute = (node, name) => reflectApply(
+                elementRemoveAttribute, node, [name]
+              );
+              const setTextContent = (node, value) => reflectApply(
+                nodeTextContent.set, node, [value]
+              );
+              const clone = reflectApply(nodeClone, document.documentElement, [true]);
+              const originals = trustedDocumentQuery(
+                'input, textarea, select, option'
+              );
+              const copies = trustedElementQuery(
+                clone, 'input, textarea, select, option'
+              );
+              if (!blocked) {
+                for (let index = 0; index < originals.length; index += 1) {
+                  const source = originals[index];
+                  const target = copies[index];
+                  if (!target) continue;
+                  const tag = source.tagName.toLowerCase();
+                  if (tag === 'input') {
+                    setAttribute(
+                      target, 'value', reflectApply(inputValue, source, []) || ''
+                    );
+                    if (reflectApply(inputChecked, source, [])) {
+                      setAttribute(target, 'checked', '');
+                    } else removeAttribute(target, 'checked');
+                  } else if (tag === 'textarea') {
+                    setTextContent(
+                      target,
+                      reflectApply(textAreaValue, source, []) || ''
+                    );
+                  } else if (tag === 'option') {
+                    if (reflectApply(optionSelected, source, [])) {
+                      setAttribute(target, 'selected', '');
+                    } else removeAttribute(target, 'selected');
+                  }
+                }
+              }
+              trustedElementQuery(
+                clone, 'input, textarea, select, option'
+              ).forEach(node => {
+                const tag = node.tagName.toLowerCase();
+                const sensitiveNode = tag === 'option'
+                  ? isAuthenticationControl(node.parentElement)
+                  : isAuthenticationControl(node);
+                if (!sensitiveNode) return;
+                removeAttribute(node, 'value');
+                removeAttribute(node, 'checked');
+                removeAttribute(node, 'selected');
+                if (tag === 'textarea' || tag === 'option') setTextContent(node, '');
+              });
+              trustedElementQuery(
+                clone,
+                'script, iframe, object, embed, img, source, video, audio, '
+                  + 'link, style, base, meta[http-equiv="refresh"]'
+              ).forEach(node => reflectApply(elementRemove, node, []));
+              trustedElementQuery(clone, '*').forEach(node => {
+                for (const attribute of Array.from(node.attributes)) {
+                  const name = attribute.name.toLowerCase();
+                  if (name.startsWith('on') || [
+                    'src', 'srcset', 'poster', 'background', 'ping', 'style'
+                  ].includes(name)) removeAttribute(node, attribute.name);
+                }
+              });
+              return {
+                blocked,
+                html: '<!doctype html>' + reflectApply(elementOuterHTML, clone, [])
+              };
+            }
+            """
+        )
+        if (
+            not isinstance(sanitized, Mapping)
+            or sanitized.get("blocked") not in {True, False}
+            or not isinstance(sanitized.get("html"), str)
+        ):
+            raise UnsubscribeBrowserError("trusted browser execution unavailable")
+        return sanitized
+
+    def capture_audit_session(
+        self,
+        effect: EmailUnsubscribeEffect,
+    ) -> dict[str, object]:
+        """Capture an inert, owner-only DOM snapshot for the next Audit round."""
+
+        discovery = self.discover_current_page(effect)
+        if (
+            discovery.state is not UnsubscribePageState.ACTION_REQUIRED
+            or not discovery.controls
+        ):
+            raise UnsubscribeBrowserError("browser session capture rejected")
+        sanitized = self._sanitized_audit_snapshot()
+        if sanitized.get("blocked") is not False:
+            raise UnsubscribeAuthenticationControlsError(
+                "authentication controls are not permitted"
+            )
+        html = sanitized.get("html")
+        if (
+            not isinstance(html, str)
+            or not html.strip()
+            or len(html.encode("utf-8")) > _MAX_AUDIT_SESSION_HTML_BYTES
+        ):
+            raise UnsubscribeBrowserError("browser session capture rejected")
+        document_url = self._page_identity()
+        cookies = list(
+            _validated_audit_session_cookies(
+                self._context.cookies([document_url]),
+                document_url=document_url,
+            )
+        )
+        return {
+            "version": 1,
+            "action_identity": effect.action_identity,
+            "effect_digest": effect.effect_digest,
+            "entry_reference": effect.entry_reference,
+            "document_url": document_url,
+            "html": html,
+            "html_digest": sha256(html.encode("utf-8")).hexdigest(),
+            "cookies": cookies,
+            "cookies_digest": sha256(
+                json.dumps(
+                    cookies,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            "control_references": [
+                control.reference for control in discovery.controls
+            ],
+            "network_policy_reference": effect.network_policy_reference,
+            "network_policy_origin_references": list(
+                effect.network_policy_origin_references
+            ),
+        }
+
+    def validate_restored_audit_session(
+        self,
+        effect: EmailUnsubscribeEffect,
+        session: _RestoredAuditSession,
+        *,
+        executed_prefix_length: int,
+    ) -> None:
+        """Re-discover the exact accepted control before any resumed write."""
+
+        discovery = self.discover_current_page(effect)
+        controls = {control.reference: control for control in discovery.controls}
+        if (
+            discovery.state is not UnsubscribePageState.ACTION_REQUIRED
+            or set(controls) != set(session.control_references)
+        ):
+            raise UnsubscribeBrowserError("browser session control changed")
+        appended = effect.operations[executed_prefix_length]
+        expected_kind = {
+            UnsubscribeOperationKind.SUBMIT_FORM: "form",
+            UnsubscribeOperationKind.CLICK_CONFIRMATION: "link",
+        }.get(appended.kind)
+        control = controls.get(appended.target_reference)
+        if control is None or control.kind != expected_kind:
+            raise UnsubscribeBrowserError("browser session control changed")
+
     def _verify_effect_network_policy(self, effect: EmailUnsubscribeEffect) -> None:
         if effect.network_policy_reference != self.network_policy.reference or (
             effect.network_policy_origin_references
@@ -1282,7 +1963,7 @@ class PlaywrightUnsubscribeBrowser:
     ) -> UnsubscribeObservation:
         try:
             self._verify_effect_network_policy(effect)
-            if getattr(self.page, "url") == "about:blank":
+            if not self._document_url and getattr(self.page, "url") == "about:blank":
                 if not effect.operations:
                     raise UnsubscribeBrowserError(
                         "accepted operation sequence is empty"
@@ -1532,6 +2213,7 @@ def execute_unsubscribe_in_dedicated_profile(
     owner: Mapping[str, object],
     timeout_ms: int = 5_000,
     automatic: bool = False,
+    executed_prefix_length: int | None = None,
     automatic_continuation: Callable[..., Mapping[str, object]] | None = None,
 ) -> UnsubscribeExecutionResult | UnsubscribeContinuationResult:
     """Run one unsubscribe effect only in a locked headless profile.
@@ -1541,7 +2223,69 @@ def execute_unsubscribe_in_dedicated_profile(
     ``UnsubscribeEntry`` selected by the task-bound operation.
     """
 
-    from app.email_browser_profile import launch_persistent_email_context
+    from app.email_browser_profile import (
+        EmailBrowserProfileError,
+        launch_persistent_email_context,
+    )
+
+    def session_failure() -> UnsubscribeExecutionResult:
+        journal = [
+            RedactedUnsubscribeStep(
+                operation=step["operation"],
+                state=step["state"],
+                reference=step["reference"],
+            )
+            for step in store.list_email_unsubscribe_steps(
+                effect.action_identity
+            )
+        ]
+        try:
+            store.mark_email_unsubscribe_uncertain(
+                effect.action_identity,
+                owner=owner,
+            )
+        except EmailUnsubscribeClaimConflict:
+            pass
+        return _result(
+            UnsubscribeOutcome.FAILED_BROWSER,
+            journal,
+            error_code="email_unsubscribe_browser_session_unavailable",
+        )
+
+    def clear_session() -> None:
+        try:
+            profile.clear_audit_session(effect.action_identity)
+        except (EmailBrowserProfileError, OSError):
+            pass
+
+    def fresh_isolated_page(context: object) -> object:
+        page = context.new_page()
+        for existing in tuple(getattr(context, "pages", ())):
+            if existing is page:
+                continue
+            existing.close()
+        if str(getattr(page, "url")) != "about:blank":
+            raise UnsubscribeBrowserError("browser session restore rejected")
+        return page
+
+    def restore_inert_page(
+        page: object,
+        session: _RestoredAuditSession,
+    ) -> None:
+        def reject_request(route: object) -> None:
+            route.abort()
+
+        page.route("**/*", reject_request)
+        try:
+            page.set_content(
+                session.html,
+                wait_until="domcontentloaded",
+                timeout=timeout_ms,
+            )
+        finally:
+            page.unroute("**/*", reject_request)
+        if str(getattr(page, "url")) != "about:blank":
+            raise UnsubscribeBrowserError("browser session restore rejected")
 
     with profile.lock():
         try:
@@ -1553,19 +2297,79 @@ def execute_unsubscribe_in_dedicated_profile(
         with sync_playwright() as playwright:
             context = launch_persistent_email_context(playwright, profile)
             try:
-                pages = getattr(context, "pages", ())
-                page = pages[0] if pages else context.new_page()
+                page = fresh_isolated_page(context)
+                restored_session: _RestoredAuditSession | None = None
+                if executed_prefix_length is not None:
+                    if executed_prefix_length > 0:
+                        try:
+                            payload = profile.load_audit_session(
+                                effect.action_identity
+                            )
+                            if payload is None:
+                                return session_failure()
+                            restored_session = _validated_restored_audit_session(
+                                payload,
+                                effect,
+                                executed_prefix_length=executed_prefix_length,
+                            )
+                            network_policy.validate_url(
+                                restored_session.document_url
+                            )
+                            context.add_cookies(
+                                [dict(item) for item in restored_session.cookies]
+                            )
+                            restore_inert_page(page, restored_session)
+                        except Exception:
+                            clear_session()
+                            return session_failure()
+                    else:
+                        try:
+                            profile.clear_audit_session(effect.action_identity)
+                        except (EmailBrowserProfileError, OSError):
+                            return session_failure()
                 browser = PlaywrightUnsubscribeBrowser(
                     page,
                     timeout_ms=timeout_ms,
                     network_policy=network_policy,
+                    restored_document_url=(
+                        ""
+                        if restored_session is None
+                        else restored_session.document_url
+                    ),
                 )
-                return UnsubscribeExecutor(
+                if restored_session is not None:
+                    try:
+                        browser.validate_restored_audit_session(
+                            effect,
+                            restored_session,
+                            executed_prefix_length=executed_prefix_length,
+                        )
+                    except UnsubscribeBrowserError:
+                        clear_session()
+                        return session_failure()
+                result = UnsubscribeExecutor(
                     store,
                     browser,
                     owner=owner,
                     automatic_continuation=automatic_continuation,
-                ).execute(effect, entries, automatic=automatic)
+                ).execute(
+                    effect,
+                    entries,
+                    automatic=automatic,
+                    executed_prefix_length=executed_prefix_length,
+                )
+                if isinstance(result, UnsubscribeContinuationResult):
+                    try:
+                        profile.save_audit_session(
+                            effect.action_identity,
+                            browser.capture_audit_session(effect),
+                        )
+                    except (EmailBrowserProfileError, UnsubscribeBrowserError, OSError):
+                        clear_session()
+                        return session_failure()
+                else:
+                    clear_session()
+                return result
             finally:
                 context.close()
 
@@ -1999,12 +2803,82 @@ class UnsubscribeExecutor:
             return None
         return claim
 
+    def _validated_preclaimed_write(
+        self,
+        effect: EmailUnsubscribeEffect,
+        executed_prefix_length: int,
+    ) -> Mapping[str, object] | None:
+        """Validate the Audit claim's durable continuation prefix fail-closed."""
+
+        if (
+            not isinstance(executed_prefix_length, int)
+            or isinstance(executed_prefix_length, bool)
+            or executed_prefix_length < 0
+            or executed_prefix_length != len(effect.operations) - 1
+        ):
+            return None
+        claim = self.store.get_email_unsubscribe_claim(effect.action_identity)
+        durable_effect = self.store.get_email_unsubscribe_effect(
+            effect.action_identity,
+            effect.effect_digest,
+        )
+        operations = list(effect.operation_mappings)
+        if (
+            claim is None
+            or durable_effect is None
+            or claim.get("status") != "dispatching"
+            or claim.get("effect_digest") != effect.effect_digest
+            or claim.get("operations") != operations
+            or claim.get("owner_id") != self.owner.get("owner_id")
+            or claim.get("owner_generation") != self.owner.get("generation")
+            or claim.get("lease_token") != self.owner.get("lease_token")
+            or durable_effect.get("operations") != operations
+            or durable_effect.get("previous_effect_digest")
+            != effect.previous_effect_digest
+            or durable_effect.get("network_policy_reference")
+            != effect.network_policy_reference
+            or durable_effect.get("network_policy_origin_references")
+            != list(effect.network_policy_origin_references)
+            or durable_effect.get("audit_agent_run_id")
+            != claim.get("audit_agent_run_id")
+        ):
+            return None
+        steps = self.store.list_email_unsubscribe_steps(effect.action_identity)
+        if len(steps) != executed_prefix_length or any(
+            step["sequence"] != index
+            or step["operation"] != effect.operations[index - 1].kind.value
+            for index, step in enumerate(steps, start=1)
+        ):
+            return None
+        if executed_prefix_length == 0:
+            if effect.previous_effect_digest:
+                return None
+        else:
+            previous_effect = self.store.get_email_unsubscribe_effect(
+                effect.action_identity,
+                effect.previous_effect_digest,
+            )
+            if (
+                previous_effect is None
+                or previous_effect.get("effect_digest")
+                != effect.previous_effect_digest
+                or previous_effect.get("operations")
+                != operations[:executed_prefix_length]
+            ):
+                return None
+        return {
+            **claim,
+            "acquired": True,
+            "executed_prefix_length": executed_prefix_length,
+        }
+
     def execute(
         self,
         effect: EmailUnsubscribeEffect,
         entries: tuple[UnsubscribeEntry, ...],
         *,
         automatic: bool = False,
+        executed_prefix_length: int | None = None,
         _automatic_depth: int = 0,
     ) -> UnsubscribeExecutionResult | UnsubscribeContinuationResult:
         if _automatic_depth < 0 or _automatic_depth > 8:
@@ -2062,7 +2936,20 @@ class UnsubscribeExecutor:
                 claim_owned=False,
             )
 
-        extension_claim: Mapping[str, object] | None = None
+        extension_claim = (
+            None
+            if executed_prefix_length is None
+            else self._validated_preclaimed_write(
+                effect,
+                executed_prefix_length,
+            )
+        )
+        if executed_prefix_length is not None and extension_claim is None:
+            return _result(
+                UnsubscribeOutcome.FAILED_BROWSER,
+                journal,
+                error_code="email_unsubscribe_authorization_stale",
+            )
         try:
             receipt = self.browser.find_confirmation_receipt(effect)
         except UnsubscribeProviderAuthError:
@@ -2110,6 +2997,14 @@ class UnsubscribeExecutor:
                     effect,
                     entry.private_url,
                 )
+            except UnsubscribeAuthenticationControlsError:
+                return _result(
+                    UnsubscribeOutcome.FAILED_BROWSER,
+                    journal,
+                    error_code=(
+                        "email_unsubscribe_authentication_controls_blocked"
+                    ),
+                )
             except (UnsubscribeBrowserError, UnsubscribeProviderAuthError):
                 return existing_continuation
             terminal = _terminal_result(effect, observation, journal)
@@ -2144,6 +3039,12 @@ class UnsubscribeExecutor:
                 self.browser.inspect_current_state(effect, entry.private_url)
                 if extension_claim is None
                 else None
+            )
+        except UnsubscribeAuthenticationControlsError:
+            return _result(
+                UnsubscribeOutcome.FAILED_BROWSER,
+                journal,
+                error_code="email_unsubscribe_authentication_controls_blocked",
             )
         except UnsubscribeProviderAuthError:
             return _result(
@@ -2227,6 +3128,18 @@ class UnsubscribeExecutor:
             try:
                 observation = self.browser.execute_operation(
                     effect, entry.private_url, operation
+                )
+            except UnsubscribeAuthenticationControlsError:
+                self.store.mark_email_unsubscribe_uncertain(
+                    effect.action_identity,
+                    owner=self.owner,
+                )
+                return _result(
+                    UnsubscribeOutcome.FAILED_BROWSER,
+                    journal,
+                    error_code=(
+                        "email_unsubscribe_authentication_controls_blocked"
+                    ),
                 )
             except UnsubscribeProviderAuthError:
                 self.store.mark_email_unsubscribe_uncertain(

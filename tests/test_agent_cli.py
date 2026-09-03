@@ -25,11 +25,54 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
         "read_spreadsheet",
         "execute_reviewed_read",
         "execute_reviewed_write",
-        "execute_email_unsubscribe",
+        "execute_audited_email_unsubscribe",
     }
     assert all(description.strip() for description in descriptions.values())
     assert "calendar event" in descriptions["execute_reviewed_read"]
-    assert "email unsubscribe" in descriptions["execute_email_unsubscribe"]
+    assert "email unsubscribe" in descriptions["execute_audited_email_unsubscribe"]
+    assert "execute_email_unsubscribe" not in descriptions
+
+
+def test_audited_email_unsubscribe_tool_reaches_worker_helper(monkeypatch, tmp_path):
+    import app.config as config
+    import app.email_worker as email_worker
+
+    calls = []
+    accepted_action = {"operation": "unsubscribe", "target": {"id": "opaque"}}
+    expected = {"status": "done", "summary": "fake result"}
+    db_path = tmp_path / "worker.sqlite3"
+    monkeypatch.setattr(config, "worker_db_path", lambda: db_path)
+
+    def run_helper(
+        received_db_path,
+        task_id,
+        execution_generation,
+        *,
+        audit_agent_run_id,
+        accepted_action,
+    ):
+        calls.append(
+            (
+                received_db_path,
+                task_id,
+                execution_generation,
+                audit_agent_run_id,
+                accepted_action,
+            )
+        )
+        return expected
+
+    monkeypatch.setattr(email_worker, "run_audited_email_unsubscribe", run_helper)
+
+    result = agent_cli.execute_audited_email_unsubscribe_tool(
+        17,
+        "generation-17",
+        29,
+        accepted_action,
+    )
+
+    assert result is expected
+    assert calls == [(db_path, 17, "generation-17", 29, accepted_action)]
 
 
 def test_registered_reaction_write_is_accepted_when_dws_schema_is_incomplete():

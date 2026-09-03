@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import email.message
 import imaplib
+import json
 from pathlib import Path
 from typing import Mapping
 
@@ -20,6 +21,7 @@ from app.email_classifier_training import CategoryEligibility
 from app.email_imap_readonly import (
     ImapReadonlyAdapter,
     ImapUidBatch,
+    ephemeral_body_html,
     parse_rfc822_message,
 )
 from app.email_store import EmailStore
@@ -251,6 +253,7 @@ def test_imap_adapter_prefers_plain_alternative_and_never_fetches_attachments():
         ("uid", "FETCH", b"1", "(BODYSTRUCTURE)"),
         ("uid", "FETCH", b"1", _HEADER_FETCH),
         ("uid", "FETCH", b"1", "(BODY.PEEK[1.1]<0.65536>)"),
+        ("uid", "FETCH", b"1", "(BODY.PEEK[1.2]<0.65486>)"),
     ]
     assert "SENTINEL-ATTACHMENT-CONTENT" not in repr(batch)
     assert "SENTINEL-INLINE-CONTENT" not in repr(batch)
@@ -289,6 +292,47 @@ def test_imap_adapter_sanitizes_html_when_plain_alternative_is_absent():
         call == ("uid", "FETCH", b"1", "(BODY.PEEK[1]<0.65536>)")
         for call in session.calls
     )
+
+
+def test_imap_adapter_retains_html_only_links_as_redacted_ephemeral_state():
+    private_url = "https://news.example.com/unsubscribe?token=private-html-token"
+    raw = (
+        b"From: sender@example.com\r\n"
+        b"To: derek@example.com\r\n"
+        b"Subject: HTML only unsubscribe\r\n"
+        b"Message-ID: <html-unsubscribe@example.com>\r\n\r\n"
+    )
+    plain = b"Newsletter footer without a link target"
+    html = (
+        '<p>Newsletter</p><a href="' + private_url + '">Unsubscribe</a>'
+    ).encode()
+    session = FakeImapSession(
+        headers=raw,
+        bodystructure=(
+            b'(("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 39 1 '
+            b'NIL NIL NIL NIL)("TEXT" "HTML" ("CHARSET" "UTF-8") NIL NIL '
+            b'"7BIT" 128 1 NIL NIL NIL NIL) "ALTERNATIVE" '
+            b'("BOUNDARY" "alt") NIL NIL NIL)'
+        ),
+        section_payloads={"1": plain, "2": html},
+    )
+
+    message = ImapReadonlyAdapter(
+        session,
+        account_id="account-a",
+    ).fetch_uid_batch(
+        "INBOX",
+        cursor_uidvalidity=42,
+        last_seen_uid=0,
+        limit=1,
+    ).messages[0]
+
+    assert message["textBody"] == plain.decode()
+    assert ephemeral_body_html(message) == html.decode()
+    assert private_url not in repr(message)
+    assert "private-html-token" not in repr(message)
+    with pytest.raises(TypeError):
+        json.dumps(message)
 
 
 def test_rfc822_parser_does_not_return_raw_headers_or_attachment_payload():

@@ -28,6 +28,7 @@ from app.email_unsubscribe import (
     EmailUnsubscribeEffect,
     UnsubscribeAuthenticationEvidence,
     UnsubscribeOperation,
+    browser_unsubscribe_entries,
     extract_unsubscribe_entries,
 )
 from app.leak_check import (
@@ -828,6 +829,16 @@ class EmailAgentTaskAdapter:
                     task_input.unsubscribe_allow_loopback_for_tests
                 ),
             )
+            entries = browser_unsubscribe_entries(
+                entries,
+                allow_loopback_for_tests=(
+                    task_input.unsubscribe_allow_loopback_for_tests
+                ),
+            )
+            if not entries:
+                raise EmailAgentTaskMetadataError(
+                    "email unsubscribe has no HTTPS browser candidate"
+                )
             payload["unsubscribe_entries"] = [entry.redacted for entry in entries]
             evidence = task_input.unsubscribe_authentication
             payload["unsubscribe_authentication"] = (

@@ -1,15 +1,39 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
+from hashlib import sha256
 from importlib import import_module
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.agent_context import AgentTaskContext
-from app.email_classifier_contracts import EmailAction
+from app.agent_contracts import ProposedAction
+from app.email_classifier_contracts import (
+    EmailAction,
+    EmailCategory,
+    EmailClassification,
+    EmailClassificationStatus,
+    EmailProviderLocator,
+    build_versioned_email_action_plan,
+)
+from app.email_imap_readonly import (
+    attach_ephemeral_unsubscribe_authentication,
+    parse_rfc822_message,
+)
 from app.email_store import email_action_identity
+from app.email_task_producer import EmailActionTaskProducer
+from app.email_unsubscribe import (
+    BrowserNetworkPolicy,
+    UnsubscribeAuthenticationEvidence,
+    extract_unsubscribe_entries,
+)
+from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
+from app.store import AgentRole, AutoReplyStore
+from app.email_store import EmailStore
 
 
 def _module():
@@ -36,6 +60,500 @@ def _dependencies(
         training_tick=lambda: None,
         record_health=lambda scope, payload: None,
     )
+
+
+def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
+    tmp_path,
+    monkeypatch,
+):
+    module = _module()
+    private_url = "https://news.example.com/unsubscribe?token=runtime-only"
+    entry = extract_unsubscribe_entries(list_unsubscribe=f"<{private_url}>")[0]
+    source_events = []
+
+    class Source:
+        def fetch_uid_batch(self, folder, *, cursor_uidvalidity, last_seen_uid, limit):
+            source_events.append(
+                ("fetch", folder, cursor_uidvalidity, last_seen_uid, limit)
+            )
+            return SimpleNamespace(
+                uidvalidity=42,
+                messages=(
+                    {
+                        "uid": 7,
+                        "stableMessageIdentity": (
+                            "account-1:message-id:<mail-7@example.com>"
+                        ),
+                        "listUnsubscribe": f"<{private_url}>",
+                        "listUnsubscribePost": "",
+                        "textBody": "metadata-only test body",
+                    },
+                ),
+            )
+
+        def logout(self):
+            source_events.append("logout")
+
+    source = Source()
+    monkeypatch.setattr(
+        module,
+        "_build_email_source_factory",
+        lambda _settings: lambda _account: source,
+    )
+    execution_calls = []
+    sentinel_result = object()
+
+    def fake_execute(effect, entries, **kwargs):
+        execution_calls.append((effect, entries, kwargs))
+        return sentinel_result
+
+    import app.email_unsubscribe as email_unsubscribe
+
+    monkeypatch.setattr(
+        email_unsubscribe,
+        "execute_unsubscribe_in_dedicated_profile",
+        fake_execute,
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "email-worker.sqlite3",
+        workspace=tmp_path,
+    )
+
+    operation = module.build_audited_email_unsubscribe_operation(settings)
+
+    assert isinstance(operation, EmailUnsubscribeAuditOperation)
+    assert isinstance(operation.task_store, AutoReplyStore)
+    assert isinstance(operation.email_store, EmailStore)
+    assert operation.task_store.path == Path(settings.db_path)
+    assert operation.email_store.path == Path(settings.db_path)
+    monkeypatch.setattr(
+        operation.email_store,
+        "get_account",
+        lambda account_id: {"account_id": account_id},
+    )
+    locator = EmailProviderLocator(
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=7,
+        rfc_message_id="<mail-7@example.com>",
+        thread_id="thread-7",
+    )
+    policy = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
+    assert operation.resolve_entries(
+        locator,
+        entry.reference,
+        network_policy_reference=policy.reference,
+        network_policy_origin_references=policy.origin_references,
+    ) == (entry,)
+    assert source_events == [("fetch", "INBOX", 42, 6, 2), "logout"]
+    with pytest.raises(ValueError, match="network policy changed"):
+        operation.resolve_entries(
+            locator,
+            entry.reference,
+            network_policy_reference="network-policy:stale",
+            network_policy_origin_references=("network-origin:stale",),
+        )
+    assert execution_calls == []
+
+    effect = SimpleNamespace(
+        entry_reference=entry.reference,
+        network_policy_reference=policy.reference,
+        network_policy_origin_references=policy.origin_references,
+    )
+    owner = {"owner_id": "audit", "generation": 1, "lease_token": "lease"}
+    assert (
+        operation.execute_effect(
+            effect,
+            (entry,),
+            owner=owner,
+            automatic=False,
+            executed_prefix_length=0,
+        )
+        is sentinel_result
+    )
+    assert execution_calls[0][0:2] == (effect, (entry,))
+    assert execution_calls[0][2]["store"] is operation.email_store
+    assert execution_calls[0][2]["owner"] is owner
+    assert execution_calls[0][2]["automatic"] is False
+    assert execution_calls[0][2]["executed_prefix_length"] == 0
+
+
+def test_audited_unsubscribe_resolves_html_only_provider_entry_in_memory(
+    tmp_path,
+    monkeypatch,
+):
+    module = _module()
+    private_url = "https://news.example.com/unsubscribe?token=html-runtime-only"
+    raw_message = (
+        b"From: sender@example.com\r\n"
+        b"To: derek@example.com\r\n"
+        b"Subject: HTML unsubscribe\r\n"
+        b"Message-ID: <mail-7@example.com>\r\n"
+        b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+        + ('<a href="' + private_url + '">Unsubscribe</a>').encode()
+    )
+    from app.email_imap_readonly import ephemeral_body_html, parse_rfc822_message
+
+    provider_message = parse_rfc822_message(
+        raw_message,
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=7,
+    )
+    entry = extract_unsubscribe_entries(
+        body_html=ephemeral_body_html(provider_message)
+    )[0]
+    policy = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
+
+    class Source:
+        def fetch_uid_batch(self, folder, *, cursor_uidvalidity, last_seen_uid, limit):
+            return SimpleNamespace(uidvalidity=42, messages=(provider_message,))
+
+        def logout(self):
+            return None
+
+    monkeypatch.setattr(
+        module,
+        "_build_email_source_factory",
+        lambda _settings: lambda _account: Source(),
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "email-worker.sqlite3",
+        workspace=tmp_path,
+    )
+    operation = module.build_audited_email_unsubscribe_operation(settings)
+    monkeypatch.setattr(
+        operation.email_store,
+        "get_account",
+        lambda account_id: {"account_id": account_id},
+    )
+    locator = EmailProviderLocator(
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=7,
+        rfc_message_id="<mail-7@example.com>",
+        thread_id="thread-7",
+    )
+
+    assert operation.resolve_entries(
+        locator,
+        entry.reference,
+        network_policy_reference=policy.reference,
+        network_policy_origin_references=policy.origin_references,
+    ) == (entry,)
+    assert private_url not in repr(provider_message)
+
+
+def test_run_audited_email_unsubscribe_forwards_exact_binding(
+    tmp_path,
+    monkeypatch,
+):
+    module = _module()
+    calls = []
+    accepted_action = {"operation": "unsubscribe", "target": {"id": "opaque"}}
+    expected = {"status": "done", "summary": "fake result"}
+
+    class Operation:
+        def execute(
+            self,
+            task_id,
+            execution_generation,
+            *,
+            audit_agent_run_id,
+            accepted_action,
+        ):
+            calls.append(
+                (
+                    task_id,
+                    execution_generation,
+                    audit_agent_run_id,
+                    accepted_action,
+                )
+            )
+            return expected
+
+    monkeypatch.setattr(
+        module,
+        "build_audited_email_unsubscribe_operation",
+        lambda settings: calls.append(("settings", settings)) or Operation(),
+    )
+
+    result = module.run_audited_email_unsubscribe(
+        tmp_path / "email-worker.sqlite3",
+        17,
+        "generation-17",
+        audit_agent_run_id=29,
+        accepted_action=accepted_action,
+    )
+
+    assert result is expected
+    assert calls[0][0] == "settings"
+    assert calls[0][1].db_path == tmp_path / "email-worker.sqlite3"
+    assert calls[0][1].workspace == tmp_path
+    assert calls[1] == (17, "generation-17", 29, accepted_action)
+
+
+@pytest.mark.parametrize("provider_shape", ("html_only", "one_click"))
+def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
+    tmp_path,
+    monkeypatch,
+    provider_shape,
+):
+    module = _module()
+    db_path = tmp_path / f"production-{provider_shape}.sqlite3"
+    account_id = "account-production"
+    stable_identity = "account-production:message-id:<mail-41@example.com>"
+    thread_identity = "thread-production-41"
+    private_url = (
+        "https://news.example.com/unsubscribe?token=production-private-secret"
+    )
+    plan = build_versioned_email_action_plan(
+        action_plan_version=1,
+        classification_id=41,
+        account_id=account_id,
+        category=EmailCategory.SUBSCRIPTION,
+        classification_source="user",
+        confidence=1.0,
+        model_id="email-model:production-path",
+        config_version="email-config:production-path",
+        actions=(EmailAction.UNSUBSCRIBE,),
+        action_parameters={},
+        created_at=datetime(2026, 9, 2, 8, 0, tzinfo=timezone.utc),
+    )
+    if provider_shape == "html_only":
+        unsubscribe_headers = b""
+        body = f'<a href="{private_url}">Unsubscribe</a>'.encode()
+    else:
+        unsubscribe_headers = (
+            f"List-Unsubscribe: <{private_url}>\r\n"
+            "List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n"
+        ).encode()
+        body = b"Subscription message"
+    provider_message = parse_rfc822_message(
+        b"From: sender@example.com\r\n"
+        b"To: derek@example.com\r\n"
+        b"Subject: Production subscription\r\n"
+        b"Date: Wed, 02 Sep 2026 08:00:00 +0000\r\n"
+        b"Message-ID: <mail-41@example.com>\r\n"
+        + unsubscribe_headers
+        + b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+        + body,
+        account_id=account_id,
+        folder="INBOX",
+        uidvalidity=42,
+        uid=41,
+    )
+    provider_message["threadId"] = thread_identity
+    if provider_shape == "one_click":
+        attach_ephemeral_unsubscribe_authentication(
+            provider_message,
+            UnsubscribeAuthenticationEvidence(
+                dkim_covers_list_unsubscribe=True,
+                dkim_covers_list_unsubscribe_post=True,
+                evidence_reference="dkim-evidence:production-message",
+            ),
+        )
+
+    email_store = EmailStore(db_path)
+    email_store.create_account(
+        {
+            "account_id": account_id,
+            "display_name": "Production",
+            "email_address": "derek@example.com",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_tls": True,
+            "imap_username": "derek@example.com",
+            "imap_secret_reference": "keychain://production-imap",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 465,
+            "smtp_tls": True,
+            "smtp_username": "derek@example.com",
+            "smtp_secret_reference": "keychain://production-smtp",
+            "enabled": True,
+            "scan_folders": ["INBOX"],
+            "scan_interval_seconds": 60,
+        }
+    )
+    email_store.upsert_classification(
+        EmailClassification(
+            classification_id=41,
+            stable_message_identity=stable_identity,
+            provider_locator=EmailProviderLocator(
+                account_id=account_id,
+                folder="INBOX",
+                uidvalidity=42,
+                uid=41,
+                rfc_message_id="<mail-41@example.com>",
+                thread_id=thread_identity,
+            ),
+            category=EmailCategory.SUBSCRIPTION,
+            confidence=1.0,
+            margin=1.0,
+            probabilities={EmailCategory.SUBSCRIPTION: 1.0},
+            model_id=plan.model_id,
+            config_version=plan.config_version,
+            status=EmailClassificationStatus.PROCESSED,
+            classification_source="user",
+            action_plan=plan,
+        ),
+        sender="sender@example.com",
+        subject="Production subscription",
+        model_text="__subject__newsletter",
+        received_at="2026-09-02T08:00:00+00:00",
+    )
+    task_store = AutoReplyStore(db_path)
+    [route] = EmailActionTaskProducer(task_store, email_store).produce(
+        plan,
+        provider_message,
+    )
+    payload = json.loads(route.task.trigger_message_json)
+    policy = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
+    assert payload["unsubscribe_network_policy_reference"] == policy.reference
+    assert payload["unsubscribe_network_policy_origin_references"] == list(
+        policy.origin_references
+    )
+    expected_authentication = (
+        None
+        if provider_shape == "html_only"
+        else {
+            "evidence_reference": "dkim-evidence:production-message",
+            "one_click_verified": True,
+        }
+    )
+    assert payload["unsubscribe_authentication"] == expected_authentication
+
+    class Source:
+        def fetch_uid_batch(self, *_args, **_kwargs):
+            return SimpleNamespace(uidvalidity=42, messages=(provider_message,))
+
+        def logout(self):
+            return None
+
+    def source_factory(_account):
+        return Source()
+    context = module._load_email_task_context(
+        email_store,
+        task_store,
+        source_factory,
+        route.task,
+    )
+    assert context.trigger_raw_payload == payload
+    assert private_url not in repr(context)
+
+    task = task_store.claim_reply_task(route.task.id)
+    assert task is not None
+    consumer = task_store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer-owner",
+    ).run
+    consumer = task_store.complete_agent_run(
+        consumer.id,
+        {"outcome": "proposal"},
+        owner="consumer-owner",
+    )
+    audit = task_store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer.id,
+        operation_id="audit-production-path",
+        owner="audit-owner",
+    ).run
+    [projected_entry] = payload["unsubscribe_entries"]
+    operation_kind = (
+        "post_one_click" if provider_shape == "one_click" else "open_entry"
+    )
+    accepted_action = ProposedAction.model_validate(
+        {
+            "description": "Unsubscribe the current subscription",
+            "capability": "email_browser",
+            "operation": "unsubscribe",
+            "target": {
+                "action_identity": payload["action_identity"],
+                "account_id": account_id,
+                "stable_message_identity": stable_identity,
+                "thread_identity": thread_identity,
+                "entry_reference": projected_entry["reference"],
+                "network_policy_reference": policy.reference,
+                "network_policy_origin_references": list(
+                    policy.origin_references
+                ),
+            },
+            "payload": {
+                "operations": [
+                    {
+                        "operation_reference": "operation:production-path",
+                        "kind": operation_kind,
+                        "target_reference": projected_entry["reference"],
+                    }
+                ]
+            },
+            "expected_verification": "Read terminal provider evidence",
+        }
+    ).model_dump(mode="json")
+    monkeypatch.setattr(module, "_build_email_source_factory", lambda _settings: source_factory)
+    execution_calls = []
+
+    def fake_dedicated_profile(effect, entries, **kwargs):
+        execution_calls.append((effect, entries, kwargs))
+        assert kwargs["network_policy"].reference == policy.reference
+        assert kwargs["network_policy"].origin_references == policy.origin_references
+        assert effect.network_policy_reference == policy.reference
+        assert effect.network_policy_origin_references == policy.origin_references
+        assert kwargs["automatic"] is False
+        return {
+            "status": "done",
+            "outcome": "done",
+            "receipt_id": "provider-receipt:production-path",
+            "evidence": "terminal-page",
+            "result_text": "Unsubscribed",
+            "observation_digest": sha256(b"Unsubscribed").hexdigest(),
+            "started_at": "2026-09-02T08:00:01+00:00",
+            "completed_at": "2026-09-02T08:00:02+00:00",
+            "summary": "Unsubscribed",
+            "final_step": {
+                "sequence": 1,
+                "operation": operation_kind,
+                "state": "done",
+                "reference": "provider-receipt:production-path",
+            },
+        }
+
+    import app.email_unsubscribe as email_unsubscribe
+
+    monkeypatch.setattr(
+        email_unsubscribe,
+        "execute_unsubscribe_in_dedicated_profile",
+        fake_dedicated_profile,
+    )
+    operation = module.build_audited_email_unsubscribe_operation(
+        SimpleNamespace(db_path=db_path, workspace=tmp_path)
+    )
+    result = operation.execute(
+        task.id,
+        task.execution_generation,
+        audit_agent_run_id=audit.id,
+        accepted_action=accepted_action,
+    )
+
+    assert result["status"] == "done", result
+    assert len(execution_calls) == 1
+    assert private_url not in route.task.trigger_message_json
+    assert "production-private-secret" not in route.task.trigger_message_json
+    assert private_url.encode() not in db_path.read_bytes()
+    assert b"production-private-secret" not in db_path.read_bytes()
 
 
 def test_startup_loads_enabled_accounts_and_active_model_before_ready_and_threads():

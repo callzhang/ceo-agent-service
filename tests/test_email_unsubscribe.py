@@ -4,6 +4,7 @@ import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from threading import Barrier
 
@@ -57,6 +58,8 @@ from app.email_unsubscribe import (
     normalize_unsubscribe_result_text,
     select_browser_unsubscribe_entry,
     unsubscribe_entry_reference,
+    _ChromiumIsolatedWorld,
+    _validated_restored_audit_session,
 )
 
 
@@ -109,6 +112,52 @@ RESTART_OWNER = {
     "generation": 32,
     "lease_token": "unsubscribe-unit-restart",
 }
+
+
+class _UnavailableIsolatedWorldSession:
+    def __init__(self, *, stale_context: bool = False) -> None:
+        self.calls: list[tuple[str, object | None]] = []
+        self.stale_context = stale_context
+        self.live_value_reads = 0
+        self.persisted_values: list[str] = []
+
+    def send(self, method: str, params: object | None = None) -> object:
+        self.calls.append((method, params))
+        if method == "Page.getFrameTree":
+            return {"frameTree": {"frame": {"id": "main-frame"}}}
+        if method == "Page.createIsolatedWorld":
+            if not self.stale_context:
+                raise RuntimeError("isolated world disabled by runtime")
+            return {"executionContextId": 71}
+        if method == "Runtime.callFunctionOn":
+            raise RuntimeError("Cannot find context with specified id")
+        raise AssertionError(f"unexpected CDP method: {method}")
+
+
+@pytest.mark.parametrize("stale_context", (False, True))
+def test_chromium_isolated_world_unavailable_or_stale_fails_closed_without_fallback(
+    stale_context: bool,
+) -> None:
+    session = _UnavailableIsolatedWorldSession(stale_context=stale_context)
+    world = _ChromiumIsolatedWorld(session)
+
+    with pytest.raises(
+        UnsubscribeBrowserError,
+        match="^trusted browser execution unavailable$",
+    ):
+        world.evaluate("() => { throw new Error('must never run in main world'); }")
+
+    assert [method for method, _ in session.calls] == (
+        [
+            "Page.getFrameTree",
+            "Page.createIsolatedWorld",
+            "Runtime.callFunctionOn",
+        ]
+        if stale_context
+        else ["Page.getFrameTree", "Page.createIsolatedWorld"]
+    )
+    assert session.live_value_reads == 0
+    assert session.persisted_values == []
 
 
 def _operations(*kinds: UnsubscribeOperationKind) -> tuple[UnsubscribeOperation, ...]:
@@ -1983,3 +2032,101 @@ def test_persistent_email_browser_launch_is_always_headless_and_dedicated(tmp_pa
     ]
     with pytest.raises(EmailBrowserProfileError, match="headless"):
         launch_persistent_email_context(Playwright(), profile, headless=False)
+
+
+def test_email_browser_audit_session_is_owner_only_atomic_and_action_scoped(
+    tmp_path: Path,
+) -> None:
+    profile = EmailBrowserProfile(tmp_path / "runtime")
+    private_url = "https://news.example.com/unsubscribe?token=session-private"
+    payload = {
+        "version": 1,
+        "action_identity": ACTION_IDENTITY,
+        "effect_digest": "a" * 64,
+        "entry_reference": unsubscribe_entry_reference(private_url),
+        "document_url": private_url,
+        "html": "<html><body><form><button>Unsubscribe</button></form></body></html>",
+        "cookies": [],
+        "cookies_digest": sha256(b"[]").hexdigest(),
+        "control_references": ["unsubscribe-control:" + "b" * 64],
+        "network_policy_reference": "network-policy:test",
+        "network_policy_origin_references": ["origin:test"],
+    }
+
+    profile.save_audit_session(ACTION_IDENTITY, payload)
+
+    assert profile.load_audit_session(ACTION_IDENTITY) == payload
+    session_files = tuple(profile.profile_dir.glob("audit-sessions/*.json"))
+    assert len(session_files) == 1
+    assert ACTION_IDENTITY not in session_files[0].name
+    assert session_files[0].stat().st_mode & 0o777 == 0o600
+    assert session_files[0].parent.stat().st_mode & 0o777 == 0o700
+    assert private_url.encode() not in profile.lock_path.read_bytes()
+    assert not tuple(profile.runtime_root.glob("*.json"))
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "effect_digest",
+        "entry_reference",
+        "control_reference",
+        "html_digest",
+        "cookies_digest",
+        "network_policy",
+    ),
+)
+def test_restored_audit_session_is_bound_to_exact_effect_and_appended_control(
+    tamper: str,
+) -> None:
+    initial = _effect()
+    control_reference = "unsubscribe-control:" + "b" * 64
+    extension = _effect(
+        initial.operations
+        + (
+            UnsubscribeOperation(
+                operation_reference="step-2",
+                kind=UnsubscribeOperationKind.SUBMIT_FORM,
+                target_reference=control_reference,
+            ),
+        ),
+        previous_effect_digest=initial.effect_digest,
+    )
+    html = "<html><body><form><button>Unsubscribe</button></form></body></html>"
+    payload = {
+        "version": 1,
+        "action_identity": extension.action_identity,
+        "effect_digest": initial.effect_digest,
+        "entry_reference": extension.entry_reference,
+        "document_url": TOKEN_URL,
+        "html": html,
+        "html_digest": sha256(html.encode()).hexdigest(),
+        "cookies": [],
+        "cookies_digest": sha256(b"[]").hexdigest(),
+        "control_references": [control_reference],
+        "network_policy_reference": extension.network_policy_reference,
+        "network_policy_origin_references": list(
+            extension.network_policy_origin_references
+        ),
+    }
+    if tamper == "effect_digest":
+        payload["effect_digest"] = "0" * 64
+    elif tamper == "entry_reference":
+        payload["entry_reference"] = "unsubscribe-entry:wrong"
+    elif tamper == "control_reference":
+        payload["control_references"] = ["unsubscribe-control:" + "c" * 64]
+    elif tamper == "html_digest":
+        payload["html_digest"] = "0" * 64
+    elif tamper == "cookies_digest":
+        payload["cookies_digest"] = "0" * 64
+    else:
+        payload["network_policy_reference"] = "network-policy:wrong"
+
+    with pytest.raises(UnsubscribeBrowserError, match="browser session") as error:
+        _validated_restored_audit_session(
+            payload,
+            extension,
+            executed_prefix_length=1,
+        )
+
+    assert "private-token" not in str(error.value)

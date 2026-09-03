@@ -1546,6 +1546,137 @@ def test_v10_unsubscribe_claim_migrates_to_v11_effect_prefix_chain(
         ).fetchone()[0] == email_store_module.EMAIL_SCHEMA_VERSION
 
 
+def test_exact_v14_unsubscribe_schema_migrates_with_nullable_positive_audit_run(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v14-unsubscribe-audit-migration.sqlite3"
+    store = EmailStore(database)
+    authorization = _unsubscribe_authorization(store)
+    assert store.claim_email_unsubscribe_write(
+        **authorization,
+        owner=_UNSUBSCRIBE_OWNER_A,
+    )["acquired"]
+
+    with sqlite3.connect(database) as db:
+        db.execute("pragma foreign_keys=off")
+        db.executescript(
+            """
+            drop trigger trg_email_unsubscribe_blocks_plan_switch;
+            drop trigger trg_email_unsubscribe_blocks_account_update;
+            drop trigger trg_email_unsubscribe_blocks_account_delete;
+            drop trigger trg_email_unsubscribe_blocks_message_update;
+            drop trigger trg_email_unsubscribe_blocks_message_delete;
+
+            create table email_unsubscribe_claims_v14 (
+                action_identity text primary key
+                    check(trim(action_identity) != ''),
+                effect_digest text not null check(trim(effect_digest) != ''),
+                action_plan_id text not null,
+                action_plan_version integer not null
+                    check(action_plan_version > 0),
+                classification_id integer not null,
+                account_id text not null,
+                stable_message_identity text not null,
+                thread_identity text not null check(trim(thread_identity) != ''),
+                entry_reference text not null check(trim(entry_reference) != ''),
+                operations_json text not null check(json_valid(operations_json)),
+                owner_id text not null check(trim(owner_id) != ''),
+                owner_generation integer not null check(owner_generation > 0),
+                lease_token text not null check(trim(lease_token) != ''),
+                account_updated_at text not null
+                    check(trim(account_updated_at) != ''),
+                status text not null
+                    check(status in (
+                        'dispatching', 'awaiting_audit', 'uncertain', 'done'
+                    )),
+                phase text not null default 'prepared'
+                    check(phase in (
+                        'prepared', 'navigating', 'effect_uncertain', 'terminal'
+                    )),
+                claimed_at text not null check(trim(claimed_at) != ''),
+                updated_at text not null check(trim(updated_at) != ''),
+                foreign key(action_plan_id)
+                    references email_action_plans(action_plan_id)
+                    on delete restrict,
+                foreign key(classification_id)
+                    references email_classifications(id)
+                    on delete restrict
+            );
+            insert into email_unsubscribe_claims_v14 (
+                action_identity, effect_digest, action_plan_id,
+                action_plan_version, classification_id, account_id,
+                stable_message_identity, thread_identity, entry_reference,
+                operations_json, owner_id, owner_generation, lease_token,
+                account_updated_at, status, phase, claimed_at, updated_at
+            )
+            select action_identity, effect_digest, action_plan_id,
+                   action_plan_version, classification_id, account_id,
+                   stable_message_identity, thread_identity, entry_reference,
+                   operations_json, owner_id, owner_generation, lease_token,
+                   account_updated_at, status, phase, claimed_at, updated_at
+            from email_unsubscribe_claims;
+
+            create table email_unsubscribe_effects_v14 (
+                action_identity text not null check(trim(action_identity) != ''),
+                effect_digest text not null check(trim(effect_digest) != ''),
+                previous_effect_digest text not null default ''
+                    check(previous_effect_digest = '' or length(previous_effect_digest) = 64),
+                operations_json text not null check(json_valid(operations_json)),
+                network_policy_reference text not null
+                    check(trim(network_policy_reference) != ''),
+                network_policy_origins_json text not null
+                    check(json_valid(network_policy_origins_json)),
+                created_at text not null check(trim(created_at) != ''),
+                primary key(action_identity, effect_digest),
+                foreign key(action_identity)
+                    references email_unsubscribe_claims_v14(action_identity)
+                    on delete restrict
+            );
+            insert into email_unsubscribe_effects_v14 (
+                action_identity, effect_digest, previous_effect_digest,
+                operations_json, network_policy_reference,
+                network_policy_origins_json, created_at
+            )
+            select action_identity, effect_digest, previous_effect_digest,
+                   operations_json, network_policy_reference,
+                   network_policy_origins_json, created_at
+            from email_unsubscribe_effects;
+
+            drop table email_unsubscribe_effects;
+            drop table email_unsubscribe_claims;
+            alter table email_unsubscribe_claims_v14
+                rename to email_unsubscribe_claims;
+            alter table email_unsubscribe_effects_v14
+                rename to email_unsubscribe_effects;
+            update email_schema_migrations set version=14;
+            """
+        )
+
+    migrated = EmailStore(database)
+    claim = migrated.get_email_unsubscribe_claim(authorization["action_identity"])
+    assert claim is not None
+    assert claim["audit_agent_run_id"] is None
+    with sqlite3.connect(database) as db:
+        effect_audit_run_id = db.execute(
+            "select audit_agent_run_id from email_unsubscribe_effects "
+            "where action_identity=?",
+            (authorization["action_identity"],),
+        ).fetchone()[0]
+        assert effect_audit_run_id is None
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                "update email_unsubscribe_claims set audit_agent_run_id=0 "
+                "where action_identity=?",
+                (authorization["action_identity"],),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                "update email_unsubscribe_effects set audit_agent_run_id=-1 "
+                "where action_identity=?",
+                (authorization["action_identity"],),
+            )
+
+
 def test_v9_store_atomically_adds_unsubscribe_durability_without_data_loss(
     tmp_path: Path,
 ) -> None:

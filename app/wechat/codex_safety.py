@@ -267,11 +267,13 @@ def make_audit_agent_command(
     *,
     controlled_cli: ControlledCliConfig,
     allow_write: bool = True,
+    additional_agent_cli_tools: tuple[str, ...] = (),
 ) -> None:
     make_role_agent_command(
         command,
         controlled_cli=controlled_cli,
         allow_write=allow_write,
+        additional_agent_cli_tools=additional_agent_cli_tools,
     )
 
 

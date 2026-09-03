@@ -20,6 +20,7 @@ from app.email_classifier_contracts import (
     build_versioned_email_action_plan,
 )
 from app.email_store import EmailStore
+from app.email_imap_readonly import parse_rfc822_message
 from app.email_task_adapter import (
     EmailAgentTaskAdapter,
     EmailAgentTaskConflict,
@@ -32,7 +33,10 @@ from app.email_task_adapter import (
     email_conversation_id,
 )
 from app.email_task_producer import EmailActionTaskProducer
-from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
+from app.email_unsubscribe import (
+    BrowserNetworkPolicy,
+    UnsubscribeAuthenticationEvidence,
+)
 from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
 from app.task_lifecycle import (
@@ -84,6 +88,12 @@ def _task_input(
     account_id: str = "account-primary",
 ) -> EmailAgentTaskInput:
     stable_identity = f"{account_id}:message-id:<mail-41@example.com>"
+    body_text = (
+        "请确认合同。退订入口 "
+        "https://example.com/unsubscribe?token=private-token "
+        "以及 password=do-not-persist /Users/derek/private/attachment.bin"
+    )
+    policy = BrowserNetworkPolicy(frozenset({"https://example.com"}))
     return EmailAgentTaskInput(
         stable_message_identity=stable_identity,
         thread_identity="thread-customer-41",
@@ -91,10 +101,7 @@ def _task_input(
         trigger=EmailThreadMessage(
             message_id=stable_identity,
             sender="customer@example.com",
-            text=(
-                "请确认合同。退订入口 https://example.com/unsubscribe?token=private-token "
-                "以及 password=do-not-persist /Users/derek/private/attachment.bin"
-            ),
+            text=body_text,
             create_time="2026-08-30T08:00:00+00:00",
         ),
         thread_messages=(
@@ -121,6 +128,9 @@ def _task_input(
                 completed=True,
             ),
         ),
+        body_text=body_text,
+        unsubscribe_network_policy_reference=policy.reference,
+        unsubscribe_network_policy_origin_references=policy.origin_references,
     )
 
 
@@ -289,6 +299,113 @@ def test_task_producer_builds_email_task_from_persisted_message_context(
     assert routes[0].action_type is EmailAction.UNSUBSCRIBE
     assert routes[0].task.channel == "email"
     assert task_store.count_reply_tasks(channel="email") == 1
+
+
+def test_task_producer_projects_html_only_unsubscribe_as_opaque_reference(
+    tmp_path: Path,
+):
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    _persist_authorization(email_store, plan, task_input)
+    private_url = "https://news.example.com/unsubscribe?token=html-only-private"
+    message = parse_rfc822_message(
+        (
+            b"From: customer@example.com\r\n"
+            b"To: derek@example.com\r\n"
+            b"Subject: Newsletter\r\n"
+            b"Date: Sun, 30 Aug 2026 08:00:00 +0000\r\n"
+            b"Message-ID: <mail-41@example.com>\r\n"
+            b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+            + (
+                '<p>Newsletter</p><a href="'
+                + private_url
+                + '">Unsubscribe</a>'
+            ).encode()
+        ),
+        account_id=plan.account_id,
+        folder="INBOX",
+        uidvalidity=42,
+        uid=41,
+    )
+
+    [route] = EmailActionTaskProducer(
+        _store(tmp_path),
+        email_store,
+    ).produce(plan, message)
+    payload = json.loads(route.task.trigger_message_json)
+
+    assert payload["unsubscribe_entries"] == [
+        {
+            "priority": 30,
+            "reference": payload["unsubscribe_entries"][0]["reference"],
+            "source": "body_html_https",
+        }
+    ]
+    assert payload["unsubscribe_entries"][0]["reference"].startswith(
+        "unsubscribe-entry:"
+    )
+    policy = BrowserNetworkPolicy(
+        frozenset({"https://news.example.com"})
+    )
+    assert payload["unsubscribe_network_policy_reference"] == policy.reference
+    assert payload["unsubscribe_network_policy_origin_references"] == list(
+        policy.origin_references
+    )
+    assert private_url not in route.task.trigger_message_json
+    assert "html-only-private" not in route.task.trigger_message_json
+    assert private_url not in repr(route.context)
+    assert private_url.encode() not in (tmp_path / "email-agent.sqlite3").read_bytes()
+
+
+def test_task_producer_policy_is_exact_deterministic_https_candidate_origin_set(
+    tmp_path: Path,
+) -> None:
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    _persist_authorization(email_store, plan, task_input)
+    first = "https://news.example.com/unsubscribe?token=first-private"
+    second = "https://preferences.example.net/opt-out?token=second-private"
+    message = parse_rfc822_message(
+        (
+            b"From: customer@example.com\r\n"
+            b"To: derek@example.com\r\n"
+            b"Subject: Newsletter\r\n"
+            b"Date: Sun, 30 Aug 2026 08:00:00 +0000\r\n"
+            b"Message-ID: <mail-41@example.com>\r\n"
+            + f"List-Unsubscribe: <{first}>, <mailto:list@example.com>\r\n".encode()
+            + b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+            + f'<a href="{second}">Unsubscribe</a>'.encode()
+        ),
+        account_id=plan.account_id,
+        folder="INBOX",
+        uidvalidity=42,
+        uid=41,
+    )
+
+    [route] = EmailActionTaskProducer(
+        _store(tmp_path),
+        email_store,
+    ).produce(plan, message)
+    payload = json.loads(route.task.trigger_message_json)
+    policy = BrowserNetworkPolicy(
+        frozenset(
+            {
+                "https://news.example.com",
+                "https://preferences.example.net",
+            }
+        )
+    )
+
+    assert payload["unsubscribe_network_policy_reference"] == policy.reference
+    assert payload["unsubscribe_network_policy_origin_references"] == list(
+        policy.origin_references
+    )
+    assert len(payload["unsubscribe_entries"]) == 2
+    encoded = route.task.trigger_message_json
+    for forbidden in (first, second, "first-private", "second-private", "mailto:"):
+        assert forbidden not in encoded
 
 
 def test_task_producer_rejects_auto_reply_under_current_email_policy(tmp_path: Path):
@@ -460,11 +577,18 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
         _task_input(),
         list_unsubscribe=f"<{private_url}>",
         list_unsubscribe_post="List-Unsubscribe=One-Click",
+        body_text="",
         unsubscribe_authentication=UnsubscribeAuthenticationEvidence(
             dkim_covers_list_unsubscribe=True,
             dkim_covers_list_unsubscribe_post=True,
             evidence_reference="dkim-evidence:mail-41",
         ),
+        unsubscribe_network_policy_reference=BrowserNetworkPolicy(
+            frozenset({"https://news.example.com"})
+        ).reference,
+        unsubscribe_network_policy_origin_references=BrowserNetworkPolicy(
+            frozenset({"https://news.example.com"})
+        ).origin_references,
     )
 
     route = _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
@@ -535,11 +659,18 @@ def test_authorized_unsubscribe_is_bound_to_audited_v2_lifecycle(
         _task_input(),
         list_unsubscribe=f"<{private_url}>",
         list_unsubscribe_post="List-Unsubscribe=One-Click",
+        body_text="",
         unsubscribe_authentication=UnsubscribeAuthenticationEvidence(
             dkim_covers_list_unsubscribe=True,
             dkim_covers_list_unsubscribe_post=True,
             evidence_reference="dkim-evidence:mail-41",
         ),
+        unsubscribe_network_policy_reference=BrowserNetworkPolicy(
+            frozenset({"https://news.example.com"})
+        ).reference,
+        unsubscribe_network_policy_origin_references=BrowserNetworkPolicy(
+            frozenset({"https://news.example.com"})
+        ).origin_references,
     )
 
     [route] = _authorized_adapter(
