@@ -1,7 +1,8 @@
 # CEO Agent Service Architecture
 
-本文档描述当前 Consumer Agent A / Audit Agent B 运行架构。历史方案保留在
-`docs/superpowers/` 中，仅用于追溯，不代表当前运行方式。
+本文档默认描述当前 Consumer Agent A / Audit Agent B 运行架构；明确标注为“已批准的
+生命周期政策”的段落描述后续实现必须达到的目标，不表示对应代码已经切换、部署或在生产
+启用。历史方案保留在 `docs/superpowers/` 中，仅用于追溯，不代表当前目标运行方式。
 
 ## 当前任务运行机制
 
@@ -97,11 +98,18 @@ Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 A
 
 ### Email Agent task 映射
 
-Email 分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。如果当前计划没有
-Agent 动作，就不会创建 `reply_task`。确定性的 `label`、`mark_read`、`archive`、
-`move` 和 `trash` 也不进入 Agent 队列；当前部署只有计划明确授权且通过订阅级门槛的
-`unsubscribe` 才映射为 `channel=email` 的 `pending` 任务。`auto_reply` 在 Email 配置、
-worker runtime 和当前 skill 中全局禁用，不创建任务、不连接 SMTP。
+> **政策与当前代码必须区分：** 以下 Email audited-v2 内容是已批准的生命周期政策，后续实现提交必须满足。当前分支尚未将运行时路由从 `email_unsubscribe_consumer_direct_v1` 切换到 `email_unsubscribe_audited_v2`；Consumer-direct v1 只是正在被替换的当前代码事实，不是目标政策。Email/audited-v2 尚未部署，也未在生产启用。
+
+Email 分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
+`label`、`mark_read`、`archive`、`move`、`trash`；它们属于 Email 子系统，由独立
+Email worker 领取、执行并通过 provider readback 验证结果。这些确定性动作
+不创建 CEO Agent task，也不创建 Consumer/Audit run。`trash` 只允许可恢复的 move-to-Trash；
+永久删除、IMAP `EXPUNGE` 和清空 Trash 在所有配置与执行入口都不可达。
+
+只有不可变 `ActionPlan` 明确授权的 `unsubscribe` 会创建 `channel=email` 的
+`pending` task；其生命周期固定为 `email_unsubscribe_audited_v2`。分类确认、零动作计划
+和其他 Email 动作都不会创建 task。`auto_reply`、SMTP 和 `mailto` 发送全部禁用：配置、
+分类结果、人工确认和 Agent 都不能生成或发送邮件回复或退订邮件。
 
 Email task 继续使用现有唯一键 `(channel, conversation_id, trigger_message_id)`：
 
@@ -119,17 +127,22 @@ generation 或运行历史。新的计划版本获得新的动作身份，因此
 形成与动作类型匹配的新生命周期。
 
 任务的 `trigger_message_json` 只保存可追溯的动作身份、账户/邮件/thread 身份、
-ActionPlan、分类、模型和配置版本，以及经过凭证、URL 和本地路径检查的当前动作参数。
-它不复制邮箱凭证、附件字节、本地附件路径、邮件正文或完整退订 URL。
+ActionPlan、分类、模型和配置版本，以及 opaque unsubscribe entry 和网络策略 reference。
+它不复制邮箱凭证、附件字节、本地附件路径、邮件正文、完整私密 URL 或 query token。
 
-运行时 `AgentTaskContext` 从 Email 数据源读取当前邮件和 thread 的纯文本；附件只投影
-为文件名、MIME、字节大小和 inline 标记，material 没有读取命令，并固定
-`image_paths=()`。上下文可以携带已有的 sent/unsubscribe state receipt。当前不可变
-ActionPlan 是唯一动作授权；Adapter 只排队，不发送、不打开退订页面。
-邮件回复当前不执行、不连接 SMTP。未来若单独重新开放，必须重新确认 Consumer → Audit 和
-effect reconciliation 策略。`unsubscribe` 使用 Consumer-direct：不创建 Audit run 或 Audit
-对当前邮件和 thread 做最终判断后执行已冻结的退订计划，并保存步骤、terminal result
-text、receipt 和 observation digest。
+运行时 `AgentTaskContext` 从 Email 数据源提供当前邮件和 thread 的纯文本正文。附件是
+metadata-only，没有 image/content material；只投影文件名、MIME、字节大小、数量和 inline
+标记，并固定 `image_paths=()`。任何组件都不得
+下载、打开、OCR、解析、总结或推断附件正文。不可变 ActionPlan 是唯一动作授权；Adapter
+只排队，不发送、不打开退订页面。
+
+在 `email_unsubscribe_audited_v2` 中，Consumer A 是只读判断角色，每个 revision 只提出
+一个与 task 和 ActionPlan 绑定的精确下一步 operation。Audit Agent B 是唯一拥有 task-bound
+unsubscribe 写能力的角色；它校验 task、plan、账户、邮件和 thread 身份，已接受 operation
+prefix、previous effect digest、exact-origin network policy 以及页面/provider readback。
+多步骤页面每轮只追加一个新 operation，Audit 只执行该新 operation，不重放已接受的
+operation prefix。需要下一步页面操作时保存 `awaiting_audit` continuation；`awaiting_audit` 是退订
+effect/claim 的领域状态，不是顶层 task 状态。
 
 ### Repository Upgrade
 

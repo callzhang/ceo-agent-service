@@ -1,6 +1,9 @@
 # Current Runtime Mechanism
 
-本文档是 CEO Agent Service 当前运行机制的唯一总览入口。`docs/superpowers/` 下的 spec/plan 文件仅用于追溯，不代表当前规则。
+本文档是 CEO Agent Service 当前运行机制与已批准生命周期政策的总览入口。除明确标注为
+“已批准的生命周期政策”的段落外，正文描述当前代码事实；政策段落是后续实现约束，不表示
+对应代码已经切换、部署或在生产启用。`docs/superpowers/` 下被新设计取代的历史 spec/plan
+仅用于追溯，不代表当前目标规则。
 
 ## 运行角色
 
@@ -115,9 +118,19 @@ turn、attempt/run、commit 和测试/重启/健康证据都归属该轮次。�
 
 ### Email task 的运行边界
 
-Email 的分类确认不是 Agent 运行。确认后生成的不可变 `ActionPlan` 只有包含当前部署允许的
-`unsubscribe` 时，才创建 `channel=email` 的 `reply_task`；零 Agent 动作和所有确定性邮箱
-动作都不会创建任务。`auto_reply` 当前全局禁用，不会由配置、分类结果或人工确认生成。
+> **政策与当前代码必须区分：** 以下 Email audited-v2 内容是已批准的生命周期政策，后续实现提交必须满足。当前分支尚未将运行时路由从 `email_unsubscribe_consumer_direct_v1` 切换到 `email_unsubscribe_audited_v2`；Consumer-direct v1 只是正在被替换的当前代码事实，不是目标政策。Email/audited-v2 尚未部署，也未在生产启用。
+
+Email 的分类确认不是 Agent 运行。确定性 Email 动作清单是
+`label`、`mark_read`、`archive`、`move`、`trash`；独立 Email worker 领取并执行这些动作，
+随后读取 provider 状态确认结果。这些确定性动作
+不创建 CEO Agent task，也不创建 Consumer/Audit run。`trash` 只能执行可恢复的 move-to-Trash；
+永久删除、IMAP `EXPUNGE`
+和清空 Trash 不存在可调用路径。
+
+只有确认后不可变 `ActionPlan` 中授权的 `unsubscribe` 创建 `channel=email` 的
+`reply_task`，生命周期固定为 `email_unsubscribe_audited_v2`；其他动作和零动作计划不创建
+task。`auto_reply`、SMTP 和 `mailto` 发送全部禁用，不能由配置、分类结果、人工确认或 Agent
+生成，也不能作为退订 fallback。
 
 Email action task 的去重身份由以下四项确定：
 
@@ -130,13 +143,19 @@ account_id + stable_message_identity + action_type + action_plan_version
 唯一约束。幂等重放返回已有任务，不重置其状态或 execution generation。
 
 Adapter 只创建 `pending` task 和受限上下文，不直接发送邮件、打开网页或写入新的任务
-状态。邮件正文和 thread 纯文本在运行时上下文中提供；附件只有 metadata material，
-没有读取命令和 image path。持久 trigger payload 不包含凭证、附件内容、本地路径或
-完整退订 URL。邮件回复当前不执行、不连接 SMTP。未来若单独重新开放，必须重新确认
-Consumer → Audit 和 effect reconciliation 策略。`unsubscribe` 使用 Consumer-direct，不创建 Audit run 或 Audit
-revision；Consumer 对当前邮件和 thread 做最终判断，只执行被冻结的退订计划，并保存
-步骤、terminal result text、receipt 和 observation digest。两条路径的旧 run、session、
-receipt 和失败事实都保持不可变。
+状态。邮件正文和 thread 纯文本在运行时上下文中可用；附件是 metadata-only，没有
+image/content material，只包含文件名、MIME、字节大小、数量和 inline 标记，没有读取命令
+或 image path。任何组件都不得下载、打开、OCR、解析、总结或推断附件正文。持久 trigger payload 不包含凭证、附件内容、本地路径、
+完整私密 URL 或 query token。
+
+Consumer A 是只读判断角色；它读取当前邮件、thread、安全 prior receipt 和 ActionPlan，每个
+revision 只提出一个与当前 task/ActionPlan 绑定的新 operation，不执行浏览器 effect。
+Audit Agent B 是唯一拥有 task-bound unsubscribe 写能力的角色；它校验 task、plan、账户、
+邮件、thread 身份，已接受 operation prefix、previous effect digest、exact-origin network
+policy 和当前 readback。多步骤页面每轮在已接受 prefix 后只追加一个 operation，Audit 只执行
+新 operation，不重放已接受的 operation prefix。仍需继续页面流程时持久化 `awaiting_audit`
+continuation；`awaiting_audit` 是 effect/claim 的领域状态，
+不是顶层 task 状态。历史 run、session、step、receipt 和失败事实保持不可变。
 
 ## 统一禁止事项
 

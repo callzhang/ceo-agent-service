@@ -14,9 +14,10 @@
 
 2026-09-02 Derek 进一步确认 CEO Agent 融合采用方案 A：确定性动作继续由独立 Email
 worker 直接执行并回读；`unsubscribe` 从当前 Consumer-direct 目标改为
-Consumer A 提案、Audit Agent B 审核与执行、外部结果回读。新的 future-state 权威设计是
+Consumer A 提案、Audit Agent B 审核与执行、外部结果回读。当前和后续实施权威是已批准的
 [`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md)。
-当前代码仍为 Consumer-direct，尚未按新设计修改；本条只记录已批准的目标，不表示已经实现。
+其目标 lifecycle 是 `email_unsubscribe_audited_v2`。当前代码仍为 Consumer-direct，尚未按
+新设计修改；本条只记录已批准并进入实施计划的目标，不表示已经实现、部署或在生产启用。
 
 ## 已移植能力
 
