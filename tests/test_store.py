@@ -3770,6 +3770,31 @@ def test_agent_run_lease_renewal_requires_current_owner(tmp_path: Path):
         )
 
 
+def test_agent_run_lease_renewal_treats_terminal_run_as_lost(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    claim = _claim_audit_run(
+        store,
+        task_id,
+        "initial",
+        owner="worker-1",
+        now="2026-07-29 00:00:00",
+    )
+    store.fail_agent_run(
+        claim.run.id,
+        {"code": "stale_agent_turn_recovery"},
+        owner="worker-1",
+        now="2026-07-29 00:01:00",
+    )
+
+    with pytest.raises(AgentRunLeaseLostError, match="agent run lease lost"):
+        store.renew_agent_run_lease(
+            claim.run.id,
+            owner="worker-1",
+            now="2026-07-29 00:02:00",
+        )
+
+
 def test_agent_run_lease_renewal_retries_transient_database_lock(
     tmp_path: Path, monkeypatch
 ):

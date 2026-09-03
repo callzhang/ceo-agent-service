@@ -7151,9 +7151,7 @@ class AutoReplyStore:
         if row["execution_generation"] != row["task_execution_generation"]:
             raise AgentRunLeaseLostError(f"agent run superseded: {run_id}")
         if row["status"] != expected_status:
-            raise ValueError(
-                status_error or f"agent run write requires {expected_status} status"
-            )
+            raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
         if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
             raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
         return row
@@ -7434,9 +7432,7 @@ class AutoReplyStore:
                 if row is None:
                     raise ValueError("agent run does not exist")
                 if row["status"] != expected_status:
-                    raise ValueError(
-                        f"agent run lease requires {expected_status} status"
-                    )
+                    raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
                 raise AgentRunLeaseLostError(f"agent run lease lost: {run_id}")
             updated = db.execute(
                 "select * from agent_runs where id=?",
