@@ -1541,8 +1541,7 @@ def _audited_unsubscribe_lineage(
         return None
     integer_payload_fields = ("action_plan_version", "classification_id")
     if any(
-        not isinstance(payload.get(field), int)
-        or isinstance(payload.get(field), bool)
+        not isinstance(payload.get(field), int) or isinstance(payload.get(field), bool)
         for field in integer_payload_fields
     ):
         return None
@@ -2475,8 +2474,8 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     "schema v16 unsubscribe result exceeds its durable bound"
                 )
-            canonical_text, result_text_digest = (
-                normalize_unsubscribe_result_text(result_text)
+            canonical_text, result_text_digest = normalize_unsubscribe_result_text(
+                result_text
             )
             if canonical_text != result_text:
                 raise EmailPersistenceCorruption(
@@ -6256,6 +6255,360 @@ class EmailStore:
             if db.in_transaction:
                 db.rollback()
             db.close()
+
+    def get_email_unsubscribe_terminal_snapshot(
+        self,
+        action_identity: str,
+        effect_digest: str,
+        *,
+        task_id: int | None = None,
+        task_execution_generation: str | None = None,
+        expected_audit_agent_run_id: int | None = None,
+        expected_owner: Mapping[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        """Atomically validate and project one durable terminal readback."""
+
+        action_identity = _validate_unsubscribe_opaque(
+            action_identity,
+            field="action_identity",
+        )
+        if (
+            not isinstance(effect_digest, str)
+            or _SHA256_HEX.fullmatch(effect_digest) is None
+        ):
+            raise ValueError("effect_digest must be canonical sha256 hex")
+        if (task_id is None) != (task_execution_generation is None):
+            raise ValueError(
+                "task_id and task_execution_generation must be supplied together"
+            )
+        if task_id is not None and (
+            not isinstance(task_id, int)
+            or isinstance(task_id, bool)
+            or task_id <= 0
+            or not isinstance(task_execution_generation, str)
+            or not task_execution_generation.strip()
+        ):
+            raise ValueError("terminal snapshot task binding is invalid")
+        if expected_audit_agent_run_id is not None and (
+            not isinstance(expected_audit_agent_run_id, int)
+            or isinstance(expected_audit_agent_run_id, bool)
+            or expected_audit_agent_run_id <= 0
+        ):
+            raise ValueError("expected_audit_agent_run_id must be positive")
+        owner = (
+            None
+            if expected_owner is None
+            else _validate_email_unsubscribe_owner(expected_owner)
+        )
+        if (expected_audit_agent_run_id is None) != (owner is None):
+            raise ValueError("expected Audit run and owner must be supplied together")
+
+        db = self._connect()
+        try:
+            db.execute("begin")
+            claim_row = db.execute(
+                "select * from email_unsubscribe_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            claim = (
+                None
+                if claim_row is None
+                else self._email_unsubscribe_claim_row(claim_row)
+            )
+            receipt_row = db.execute(
+                "select * from email_unsubscribe_receipts where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            if receipt_row is None:
+                if claim is not None and claim["status"] == "done":
+                    raise EmailPersistenceCorruption(
+                        "done unsubscribe claim has no durable terminal receipt"
+                    )
+                db.rollback()
+                return None
+            if claim is None:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal receipt has no durable claim"
+                )
+            receipt = self._email_unsubscribe_receipt_row(receipt_row)
+            effect_rows = db.execute(
+                "select * from email_unsubscribe_effects "
+                "where action_identity=? limit ?",
+                (
+                    action_identity,
+                    MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS + 1,
+                ),
+            ).fetchall()
+            if len(effect_rows) > MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect lineage exceeds its durable limit"
+                )
+            effects = {
+                str(row["effect_digest"]): self._email_unsubscribe_effect_row(row)
+                for row in effect_rows
+            }
+            steps = db.execute(
+                "select * from email_unsubscribe_steps "
+                "where action_identity=? order by sequence",
+                (action_identity,),
+            ).fetchall()
+            self._validate_email_unsubscribe_terminal_snapshot(
+                db,
+                claim=claim,
+                receipt=receipt,
+                effects=effects,
+                steps=steps,
+                effect_digest=effect_digest,
+                task_id=task_id,
+                task_execution_generation=task_execution_generation,
+                expected_audit_agent_run_id=expected_audit_agent_run_id,
+                expected_owner=owner,
+            )
+            projected_steps = [
+                {
+                    key: row[key]
+                    for key in ("sequence", "operation", "state", "reference")
+                }
+                for row in steps
+            ]
+            safe_receipt = {
+                key: receipt[key]
+                for key in (
+                    "outcome",
+                    "receipt_id",
+                    "evidence",
+                    "result_text",
+                    "observation_digest",
+                    "started_at",
+                    "completed_at",
+                )
+            }
+            db.rollback()
+            return {
+                "receipt": safe_receipt,
+                "steps": projected_steps,
+            }
+        finally:
+            if db.in_transaction:
+                db.rollback()
+            db.close()
+
+    def _validate_email_unsubscribe_terminal_snapshot(
+        self,
+        db: sqlite3.Connection,
+        *,
+        claim: Mapping[str, object],
+        receipt: Mapping[str, object],
+        effects: Mapping[str, Mapping[str, object]],
+        steps: Sequence[sqlite3.Row],
+        effect_digest: str,
+        task_id: int | None,
+        task_execution_generation: str | None,
+        expected_audit_agent_run_id: int | None,
+        expected_owner: Mapping[str, object] | None,
+    ) -> None:
+        if (
+            claim.get("status") != "done"
+            or claim.get("phase") != "terminal"
+            or claim.get("action_identity") != receipt.get("action_identity")
+            or claim.get("effect_digest") != effect_digest
+            or receipt.get("effect_digest") != effect_digest
+            or receipt.get("outcome") not in _EMAIL_UNSUBSCRIBE_OUTCOMES
+            or any(
+                receipt.get(key) != claim.get(key)
+                for key in (
+                    "action_plan_id",
+                    "action_plan_version",
+                    "classification_id",
+                    "account_id",
+                    "stable_message_identity",
+                    "thread_identity",
+                    "entry_reference",
+                )
+            )
+        ):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal receipt identity is invalid"
+            )
+        try:
+            _validate_email_unsubscribe_owner(
+                {
+                    "owner_id": claim["owner_id"],
+                    "generation": claim["owner_generation"],
+                    "lease_token": claim["lease_token"],
+                }
+            )
+            _validate_unsubscribe_opaque(
+                receipt["receipt_id"],
+                field="receipt_id",
+            )
+            _validate_unsubscribe_opaque(receipt["evidence"], field="evidence")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal snapshot contains unsafe durable state"
+            ) from exc
+        if expected_owner is not None and any(
+            claim.get(claim_key) != expected_owner.get(owner_key)
+            for claim_key, owner_key in (
+                ("owner_id", "owner_id"),
+                ("owner_generation", "generation"),
+                ("lease_token", "lease_token"),
+            )
+        ):
+            raise EmailPersistenceCorruption("unsubscribe terminal owner fence changed")
+
+        validated_effects: dict[str, dict[str, object]] = {}
+        for digest, effect in effects.items():
+            try:
+                operations = _validate_unsubscribe_operations(effect["operations"])
+                origins = tuple(
+                    _validate_unsubscribe_opaque(
+                        value,
+                        field="network_policy_origin_reference",
+                    )
+                    for value in effect["network_policy_origin_references"]
+                )
+                expected_digest = email_unsubscribe_effect_digest(
+                    action_identity=str(claim["action_identity"]),
+                    action_plan_id=str(claim["action_plan_id"]),
+                    action_plan_version=int(claim["action_plan_version"]),
+                    classification_id=int(claim["classification_id"]),
+                    account_id=str(claim["account_id"]),
+                    stable_message_identity=str(claim["stable_message_identity"]),
+                    thread_identity=str(claim["thread_identity"]),
+                    entry_reference=str(claim["entry_reference"]),
+                    operations=operations,
+                    previous_effect_digest=str(effect["previous_effect_digest"]),
+                    network_policy_reference=str(effect["network_policy_reference"]),
+                    network_policy_origin_references=origins,
+                )
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect contains invalid durable state"
+                ) from exc
+            if digest != expected_digest or effect.get("effect_digest") != digest:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect digest is invalid"
+                )
+            validated_effects[digest] = {
+                **effect,
+                "operations": operations,
+                "network_policy_origin_references": list(origins),
+            }
+        head = validated_effects.get(effect_digest)
+        if head is None or head["operations"] != claim.get("operations"):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal head effect does not match its claim"
+            )
+        chain: list[dict[str, object]] = []
+        current = head
+        seen: set[str] = set()
+        while True:
+            digest = str(current["effect_digest"])
+            if digest in seen:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect lineage contains a cycle"
+                )
+            seen.add(digest)
+            chain.append(current)
+            previous_digest = str(current["previous_effect_digest"])
+            if not previous_digest:
+                break
+            previous = validated_effects.get(previous_digest)
+            if (
+                previous is None
+                or current["operations"][:-1] != previous["operations"]
+                or len(current["operations"]) != len(previous["operations"]) + 1
+                or current["network_policy_reference"]
+                != previous["network_policy_reference"]
+                or current["network_policy_origin_references"]
+                != previous["network_policy_origin_references"]
+            ):
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect lineage is not append-only"
+                )
+            current = previous
+        chain.reverse()
+        chain_by_length = {
+            len(effect["operations"]): str(effect["effect_digest"]) for effect in chain
+        }
+        if len(steps) != len(head["operations"]):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal journal is not contiguous or effect-bound"
+            )
+        for sequence, step in enumerate(steps, start=1):
+            try:
+                for field in ("operation", "state", "reference"):
+                    _validate_unsubscribe_opaque(step[field], field=field)
+            except (TypeError, ValueError) as exc:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal journal contains unsafe durable state"
+                ) from exc
+            if (
+                step["sequence"] != sequence
+                or chain_by_length.get(sequence) != step["effect_digest"]
+            ):
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal journal is not contiguous or effect-bound"
+                )
+
+        original_audit_run_id = claim.get("audit_agent_run_id")
+        if head.get("audit_agent_run_id") != original_audit_run_id:
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal Audit binding is inconsistent"
+            )
+        if original_audit_run_id is None:
+            if task_id is not None or expected_audit_agent_run_id is not None:
+                raise EmailPersistenceCorruption(
+                    "audited unsubscribe terminal is missing its original Audit run"
+                )
+            return
+        classification = db.execute(
+            """
+            select classifications.id, classifications.account_id,
+                   classifications.stable_message_identity,
+                   classifications.current_action_plan_id,
+                   messages.thread_identity as message_thread_identity
+            from email_classifications as classifications
+            join email_messages as messages
+              on messages.account_id=classifications.account_id
+             and messages.stable_message_identity=
+                 classifications.stable_message_identity
+            where classifications.id=?
+            """,
+            (claim["classification_id"],),
+        ).fetchone()
+        lineage = (
+            None
+            if classification is None
+            else _audited_unsubscribe_lineage(
+                db,
+                receipt=db.execute(
+                    "select * from email_unsubscribe_receipts where action_identity=?",
+                    (claim["action_identity"],),
+                ).fetchone(),
+                classification=classification,
+            )
+        )
+        if (
+            lineage is None
+            or (task_id is not None and lineage["task_id"] != task_id)
+            or (
+                task_execution_generation is not None
+                and db.execute(
+                    "select execution_generation from reply_tasks where id=?",
+                    (lineage["task_id"],),
+                ).fetchone()[0]
+                != task_execution_generation
+            )
+            or (
+                expected_audit_agent_run_id is not None
+                and original_audit_run_id != expected_audit_agent_run_id
+            )
+        ):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal historical Audit lineage is invalid"
+            )
 
     def get_email_unsubscribe_effect(
         self,

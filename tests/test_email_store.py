@@ -717,8 +717,7 @@ def _downgrade_email_database_to_v16(database: Path) -> None:
 
     with sqlite3.connect(database) as db:
         db.execute(
-            "drop index if exists "
-            "idx_email_unsubscribe_receipts_classification_action"
+            "drop index if exists idx_email_unsubscribe_receipts_classification_action"
         )
         receipt_columns = {
             row[1]
@@ -3017,7 +3016,9 @@ def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
         in detail
         for detail in details
     )
-    assert any("SEARCH audit_runs USING INTEGER PRIMARY KEY" in detail for detail in details)
+    assert any(
+        "SEARCH audit_runs USING INTEGER PRIMARY KEY" in detail for detail in details
+    )
     assert any("SEARCH tasks USING INTEGER PRIMARY KEY" in detail for detail in details)
     assert not any("SCAN tasks" in detail for detail in details)
 
@@ -5907,23 +5908,25 @@ def test_valid_16kib_truncated_unsubscribe_result_preserves_full_digest(
         database,
         result_text=full_observation,
     )
-    expected_text, expected_digest = normalize_unsubscribe_result_text(
-        full_observation
-    )
+    expected_text, expected_digest = normalize_unsubscribe_result_text(full_observation)
 
     assert len(expected_text.encode("utf-8")) == 16 * 1024
     assert receipt["result_text"] == expected_text
     assert receipt["observation_digest"] == expected_digest
     assert receipt["result_text_truncated"] is True
-    assert receipt["result_text_digest"] == sha256(
-        expected_text.encode("utf-8")
-    ).hexdigest()
+    assert (
+        receipt["result_text_digest"]
+        == sha256(expected_text.encode("utf-8")).hexdigest()
+    )
     assert receipt["result_text_digest"] != expected_digest
     assert expected_digest == sha256(full_observation.encode("utf-8")).hexdigest()
     reopened = EmailStore(database)
-    assert reopened.get_email_unsubscribe_receipt(
-        str(authorization["action_identity"])
-    )["result_text_digest"] == receipt["result_text_digest"]
+    assert (
+        reopened.get_email_unsubscribe_receipt(str(authorization["action_identity"]))[
+            "result_text_digest"
+        ]
+        == receipt["result_text_digest"]
+    )
 
 
 def test_exact_16kib_untruncated_result_requires_matching_observation_digest(
@@ -6017,7 +6020,12 @@ def test_explicit_exact_16kib_result_rejects_mismatched_observation_digest(
     [
         ("A" * (16 * 1024), "e" * 64, "f" * 64, True),
         ("A" * (16 * 1024), "e" * 64, sha256(b"A" * (16 * 1024)).hexdigest(), False),
-        ("Unsubscribed", sha256(b"Unsubscribed").hexdigest(), sha256(b"Unsubscribed").hexdigest(), True),
+        (
+            "Unsubscribed",
+            sha256(b"Unsubscribed").hexdigest(),
+            sha256(b"Unsubscribed").hexdigest(),
+            True,
+        ),
     ],
 )
 def test_explicit_unsubscribe_result_rejects_inconsistent_caller_metadata(
@@ -6077,9 +6085,10 @@ def test_v16_migration_preserves_legacy_full_observation_digest_for_truncation(
     assert migrated is not None
     assert migrated["result_text_truncated"] is True
     assert migrated["observation_digest"] == expected_observation_digest
-    assert migrated["result_text_digest"] == sha256(
-        migrated["result_text"].encode("utf-8")
-    ).hexdigest()
+    assert (
+        migrated["result_text_digest"]
+        == sha256(migrated["result_text"].encode("utf-8")).hexdigest()
+    )
     assert migrated["result_text_digest"] != migrated["observation_digest"]
 
 
@@ -6152,6 +6161,70 @@ def test_unsubscribe_state_snapshot_decodes_one_read_consistent_view(
     assert [effect["effect_digest"] for effect in snapshot["effects"]] == [
         authorization["effect_digest"]
     ]
+
+
+def test_unsubscribe_terminal_snapshot_rejects_step_effect_digest_tamper(
+    tmp_path: Path,
+) -> None:
+    store, authorization, _ = _persist_unsubscribe_result_fixture(
+        tmp_path / "unsubscribe-terminal-step-effect.sqlite3",
+        result_text="Unsubscribed",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update email_unsubscribe_steps set effect_digest=? "
+            "where action_identity=?",
+            ("f" * 64, authorization["action_identity"]),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="effect-bound"):
+        store.get_email_unsubscribe_terminal_snapshot(
+            str(authorization["action_identity"]),
+            str(authorization["effect_digest"]),
+        )
+
+
+def test_unsubscribe_terminal_snapshot_uses_one_sqlite_read_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, authorization, receipt = _persist_unsubscribe_result_fixture(
+        tmp_path / "unsubscribe-terminal-atomic-read.sqlite3",
+        result_text="Unsubscribed",
+    )
+    original_decode = store._email_unsubscribe_claim_row
+    raced = False
+
+    def mutate_after_first_read(row):
+        nonlocal raced
+        if not raced:
+            raced = True
+            with sqlite3.connect(store.path) as writer:
+                writer.execute(
+                    "update email_unsubscribe_steps set effect_digest=? "
+                    "where action_identity=?",
+                    ("f" * 64, authorization["action_identity"]),
+                )
+        return original_decode(row)
+
+    monkeypatch.setattr(store, "_email_unsubscribe_claim_row", mutate_after_first_read)
+
+    snapshot = store.get_email_unsubscribe_terminal_snapshot(
+        str(authorization["action_identity"]),
+        str(authorization["effect_digest"]),
+    )
+
+    assert snapshot is not None
+    assert snapshot["receipt"]["receipt_id"] == receipt["receipt_id"]
+    assert "result_text_digest" not in snapshot["receipt"]
+    assert "result_text_truncated" not in snapshot["receipt"]
+    assert raced is True
+    monkeypatch.setattr(store, "_email_unsubscribe_claim_row", original_decode)
+    with pytest.raises(EmailPersistenceCorruption, match="effect-bound"):
+        store.get_email_unsubscribe_terminal_snapshot(
+            str(authorization["action_identity"]),
+            str(authorization["effect_digest"]),
+        )
 
 
 @pytest.mark.parametrize(

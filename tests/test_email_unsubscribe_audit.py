@@ -411,6 +411,46 @@ def test_first_audit_call_reconciles_executor_persisted_long_terminal_result(
     assert receipt["result_text_truncated"] is True
 
 
+def test_terminal_receipt_recovers_in_new_audit_run_without_callback(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    first_result = _execute_with_durable_executor(
+        fixture,
+        _TerminalBrowser("Unsubscribed"),
+    )
+    assert first_result["status"] == "done", first_result
+    fixture.task_store.fail_agent_run(
+        fixture.audit_run.id,
+        {"code": "restart", "retryable": True},
+        owner="audit-owner",
+    )
+    recovery_audit = fixture.task_store.claim_agent_run(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=1,
+        parent_agent_run_id=fixture.consumer_run.id,
+        operation_id="audit-operation-recovery",
+        owner="audit-recovery-owner",
+    ).run
+
+    def forbidden_callback(*_args, **_kwargs):
+        raise AssertionError("terminal recovery must not replay the browser callback")
+
+    fixture.operation.execute_effect = forbidden_callback
+    recovered = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=recovery_audit.id,
+        accepted_action=_accepted_action(),
+    )
+
+    assert recovered["status"] == "done", recovered
+    assert recovered["receipt_id"] == first_result["receipt_id"]
+
+
 def test_mapping_result_without_durable_receipt_uses_one_store_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -445,7 +485,13 @@ def test_mapping_result_without_durable_receipt_uses_one_store_fallback(
 
 @pytest.mark.parametrize(
     "mismatch",
-    ("receipt_id", "outcome", "observation_digest", "final_step"),
+    (
+        "receipt_id",
+        "outcome",
+        "observation_digest",
+        "final_step",
+        "partial_final_step",
+    ),
 )
 def test_executor_persisted_receipt_rejects_mismatched_public_result(
     tmp_path: Path,
@@ -456,10 +502,13 @@ def test_executor_persisted_receipt_rejects_mismatched_public_result(
 
     def mismatch_result(result, _owner):
         public = _public_terminal_mapping(result)
-        if mismatch == "final_step":
+        if mismatch in {"final_step", "partial_final_step"}:
             final_step = public["final_step"]
             assert isinstance(final_step, dict)
-            final_step["reference"] = "provider-receipt:mismatched-step"
+            if mismatch == "final_step":
+                final_step["reference"] = "provider-receipt:mismatched-step"
+            else:
+                final_step.pop("reference")
         else:
             public[mismatch] = {
                 "receipt_id": "provider-receipt:mismatched",
@@ -505,6 +554,29 @@ def test_executor_persisted_receipt_rejects_changed_audit_or_owner_binding(
         fixture,
         browser,
         after_persist=change_binding,
+    )
+
+    assert result["status"] == "failed", result
+
+
+def test_executor_persisted_receipt_rejects_step_effect_digest_tamper(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+
+    def tamper_step(result, _owner):
+        with sqlite3.connect(fixture.email_store.path) as db:
+            db.execute(
+                "update email_unsubscribe_steps set effect_digest=? "
+                "where action_identity=?",
+                ("f" * 64, ACTION_IDENTITY),
+            )
+        return result
+
+    result = _execute_with_durable_executor(
+        fixture,
+        _TerminalBrowser("Unsubscribed"),
+        after_persist=tamper_step,
     )
 
     assert result["status"] == "failed", result
