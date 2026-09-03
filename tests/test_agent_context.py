@@ -315,7 +315,7 @@ def test_email_attachment_materials_expose_metadata_without_read_capability():
     )
 
     assert len(materials) == 2
-    assert all(material.kind == "email_attachment_metadata" for material in materials)
+    assert all(material.kind == "attachment_metadata" for material in materials)
     assert all(material.read_commands == () for material in materials)
     decoded = [json.loads(material.reference) for material in materials]
     assert decoded == [

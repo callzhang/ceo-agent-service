@@ -1653,6 +1653,23 @@ def test_email_store_persists_category_configuration(tmp_path: Path):
     assert store.list_configs() == [config]
 
 
+def test_email_store_rejects_auto_reply_category_configuration(tmp_path: Path):
+    store = EmailStore(tmp_path / "worker.sqlite3")
+
+    with pytest.raises(ValueError, match="auto_reply is disabled"):
+        store.upsert_config(
+            category=EmailCategory.WORK,
+            description="Work",
+            threshold=0.95,
+            actions=(EmailAction.AUTO_REPLY,),
+            action_parameters={
+                EmailAction.AUTO_REPLY: {"instruction": "Reply automatically"}
+            },
+            enabled=True,
+            config_version="email-config:auto-reply-rejected",
+        )
+
+
 def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
     database = tmp_path / "fresh.sqlite3"
 

@@ -43,7 +43,7 @@ def email_attachment_metadata_materials(
         raise TypeError("attachments must contain EmailAttachmentMetadata")
     return tuple(
         MaterialReference(
-            kind="email_attachment_metadata",
+            kind="attachment_metadata",
             reference=json.dumps(
                 attachment.model_dump(mode="json"),
                 ensure_ascii=False,

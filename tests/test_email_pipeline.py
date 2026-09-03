@@ -16,7 +16,7 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     EmailProviderLocator,
 )
-from app.email_classifier_training import CategoryEligibility
+from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
 from app.email_pipeline import (
     EmailCategoryConfig,
     EmailModelPrediction,
@@ -72,6 +72,13 @@ def _eligibility(*, eligible: bool = True) -> CategoryEligibility:
         validation_sample_count=30,
         auto_action_eligible=eligible,
         reason="eligible" if eligible else "precision_gate_not_met",
+        action_eligibility={
+            EmailAction.LABEL: EmailActionEligibility(
+                action=EmailAction.LABEL,
+                auto_action_eligible=eligible,
+                reason="eligible" if eligible else "action_precision_gate_not_met",
+            )
+        },
     )
 
 
@@ -162,21 +169,19 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     store = EmailStore(tmp_path / "email.sqlite3")
     pending = _persist_decision(store, _decision(confidence=0.79))
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
-        description="important",
+        category=EmailCategory.SUBSCRIPTION,
+        description="subscription",
         threshold=0.97,
-        actions=(EmailAction.AUTO_REPLY, EmailAction.UNSUBSCRIBE),
-        action_parameters={
-            EmailAction.AUTO_REPLY: {"instruction": "reply briefly"},
-        },
+        actions=(EmailAction.UNSUBSCRIBE,),
+        action_parameters={},
         enabled=True,
-        config_version="important-v3",
+        config_version="subscription-v3",
     )
 
     application = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.SUBSCRIPTION,
         feedback_request_id="feedback-pending-confirmation",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -186,11 +191,12 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     confirmed = application.confirmed
     assert confirmed["status"] == "processed"
     assert confirmed["classification_source"] == "user"
-    assert confirmed["action_plan"]["category"] == "important"
-    assert confirmed["action_plan"]["config_version"] == "important-v3"
+    assert confirmed["action_plan"]["category"] == "subscription"
+    assert confirmed["action_plan"]["config_version"] == "subscription-v3"
     assert confirmed["action_plan"]["model_id"] == MODEL_ID
-    assert confirmed["action_plan"]["actions"] == ["auto_reply", "unsubscribe"]
-    assert store.list_training_examples()[0]["label"] == "important"
+    assert confirmed["action_plan"]["actions"] == ["unsubscribe"]
+    assert EmailAction.AUTO_REPLY.value not in confirmed["action_plan"]["actions"]
+    assert store.list_training_examples()[0]["label"] == "subscription"
     with sqlite3.connect(store.path) as db:
         table_names = {
             row[0]

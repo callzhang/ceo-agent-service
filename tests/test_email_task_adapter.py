@@ -858,7 +858,7 @@ def test_email_context_contains_text_metadata_receipts_and_no_image_inputs(
         _task_input().trigger.text,
     ]
     assert len(context.materials) == 1
-    assert context.materials[0].kind == "email_attachment_metadata"
+    assert context.materials[0].kind == "attachment_metadata"
     assert context.materials[0].read_commands == ()
     assert "contract.pdf" in context.materials[0].reference
     assert "application/pdf" in context.materials[0].reference

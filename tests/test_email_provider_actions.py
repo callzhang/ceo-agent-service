@@ -127,22 +127,22 @@ def test_label_reads_before_write_and_requires_matching_readback() -> None:
 def test_mark_read_archive_move_and_trash_use_verified_provider_state() -> None:
     module = import_module("app.email_provider_actions")
     cases = (
-        (EmailAction.MARK_READ, {}, "STORE \\Seen"),
-        (EmailAction.ARCHIVE, {}, "MOVE ARCHIVE"),
-        (EmailAction.MOVE, {"target_folder": "Projects"}, "MOVE"),
-        (EmailAction.TRASH, {}, "MOVE TRASH"),
+        (EmailAction.MARK_READ, {}, "STORE \\Seen", "STORE \\Seen"),
+        (EmailAction.ARCHIVE, {}, "MOVE ARCHIVE", "MOVE ARCHIVE"),
+        (EmailAction.MOVE, {"target_folder": "Projects"}, "MOVE", "MOVE"),
+        (EmailAction.TRASH, {}, "move_to_trash", "MOVE TRASH"),
     )
 
-    for action_type, parameters, operation in cases:
+    for action_type, parameters, receipt_operation, provider_command in cases:
         provider = StatefulFakeImapProvider()
         action = _action(action_type, parameters)
 
         result = module.DeterministicEmailActionExecutor(provider).execute(action)
 
         assert result.status == "done"
-        assert result.provider_operation == operation
+        assert result.provider_operation == receipt_operation
         assert result.provider_result_id == "revision-1"
-        assert provider.command_log == ["READ", operation, "READ"]
+        assert provider.command_log == ["READ", provider_command, "READ"]
 
 
 def test_already_satisfied_actions_are_readback_noops() -> None:
@@ -262,12 +262,13 @@ def test_readback_failure_is_reconciled_by_retry_without_duplicate_write() -> No
 def test_trash_never_uses_expunge_or_permanent_delete() -> None:
     module = import_module("app.email_provider_actions")
     provider = StatefulFakeImapProvider()
+    provider_executor = module.DeterministicEmailActionExecutor(provider)
 
-    result = module.DeterministicEmailActionExecutor(provider).execute(
-        _action(EmailAction.TRASH, {})
-    )
+    result = provider_executor.execute(_action(EmailAction.TRASH, {}))
 
     assert result.status == "done"
+    assert result.provider_operation == "move_to_trash"
+    assert "EXPUNGE" not in provider_executor.supported_operations
     command_text = " ".join(provider.command_log).upper()
     assert "EXPUNGE" not in command_text
     assert "PERMANENT" not in command_text

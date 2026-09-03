@@ -1,12 +1,14 @@
 from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from importlib import import_module
 from pathlib import Path
 import sqlite3
 
 import pytest
 
 from app.email_classifier_contracts import (
+    EmailAction,
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
@@ -246,6 +248,93 @@ def test_category_eligibility_accepts_exact_precision_and_sample_boundaries():
     result = assessment.categories[EmailCategory.IMPORTANT]
     assert result.auto_action_eligible is True
     assert result.reason == "precision_and_sample_gate_met"
+
+
+@pytest.mark.parametrize(
+    ("category", "action", "precision", "positive_support", "expected"),
+    [
+        (EmailCategory.WORK, EmailAction.LABEL, 0.95, 30, True),
+        (EmailCategory.WORK, EmailAction.MARK_READ, 0.95, 30, True),
+        (EmailCategory.WORK, EmailAction.ARCHIVE, 0.97, 30, True),
+        (EmailCategory.WORK, EmailAction.MOVE, 0.97, 30, True),
+        (EmailCategory.WORK, EmailAction.TRASH, 0.995, 30, True),
+        (EmailCategory.SUBSCRIPTION, EmailAction.UNSUBSCRIBE, 0.95, 20, True),
+        (EmailCategory.WORK, EmailAction.LABEL, 0.949, 30, False),
+        (EmailCategory.WORK, EmailAction.ARCHIVE, 0.969, 30, False),
+        (EmailCategory.WORK, EmailAction.TRASH, 0.994, 30, False),
+        (EmailCategory.WORK, EmailAction.TRASH, 0.999, 29, False),
+        (EmailCategory.SUBSCRIPTION, EmailAction.UNSUBSCRIBE, 0.99, 19, False),
+        (EmailCategory.WORK, EmailAction.UNSUBSCRIBE, 0.99, 30, False),
+        (EmailCategory.WORK, EmailAction.AUTO_REPLY, 1.0, 100, False),
+    ],
+)
+def test_email_action_eligibility_enforces_approved_action_gates(
+    category: EmailCategory,
+    action: EmailAction,
+    precision: float,
+    positive_support: int,
+    expected: bool,
+):
+    module = import_module("app.email_classifier_training")
+    assess = getattr(module, "assess_email_action_eligibility", None)
+    assert callable(assess)
+
+    result = assess(
+        category=category,
+        actions=(action,),
+        model_status="active",
+        validation_method="time-ordered-holdout",
+        configured_threshold=0.85,
+        evaluated_threshold=0.85,
+        validated_precision=precision,
+        validation_positive_support=positive_support,
+        metadata_auto_action_eligible=True,
+    )[action]
+
+    assert result.auto_action_eligible is expected
+
+
+@pytest.mark.parametrize("model_status", ["candidate", "rejected", "failed", "previous"])
+def test_email_action_eligibility_requires_active_model_status(model_status: str):
+    module = import_module("app.email_classifier_training")
+    assess = getattr(module, "assess_email_action_eligibility", None)
+    assert callable(assess)
+
+    result = assess(
+        category=EmailCategory.WORK,
+        actions=(EmailAction.LABEL,),
+        model_status=model_status,
+        validation_method="time-ordered-holdout",
+        configured_threshold=0.85,
+        evaluated_threshold=0.85,
+        validated_precision=1.0,
+        validation_positive_support=100,
+        metadata_auto_action_eligible=True,
+    )[EmailAction.LABEL]
+
+    assert result.auto_action_eligible is False
+    assert result.reason == "model_not_active"
+
+
+def test_email_action_eligibility_requires_unchanged_evaluated_threshold():
+    module = import_module("app.email_classifier_training")
+    assess = getattr(module, "assess_email_action_eligibility", None)
+    assert callable(assess)
+
+    result = assess(
+        category=EmailCategory.WORK,
+        actions=(EmailAction.LABEL,),
+        model_status="active",
+        validation_method="time-ordered-holdout",
+        configured_threshold=0.90,
+        evaluated_threshold=0.85,
+        validated_precision=1.0,
+        validation_positive_support=100,
+        metadata_auto_action_eligible=True,
+    )[EmailAction.LABEL]
+
+    assert result.auto_action_eligible is False
+    assert result.reason == "threshold_changed_since_training"
 
 
 def test_missing_category_metrics_fail_closed():

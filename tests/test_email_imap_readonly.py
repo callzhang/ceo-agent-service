@@ -17,7 +17,7 @@ from app.email_classifier_scan import (
     scan_imap_accounts,
     scan_readonly_batch,
 )
-from app.email_classifier_training import CategoryEligibility
+from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
 from app.email_imap_readonly import (
     ImapReadonlyAdapter,
     ImapUidBatch,
@@ -753,6 +753,17 @@ def _scan_config() -> EmailScanConfig:
                     if category is EmailCategory.WORK
                     else "insufficient_validation_samples"
                 ),
+                action_eligibility={
+                    EmailAction.LABEL: EmailActionEligibility(
+                        action=EmailAction.LABEL,
+                        auto_action_eligible=category is EmailCategory.WORK,
+                        reason=(
+                            "action_precision_and_support_gate_met"
+                            if category is EmailCategory.WORK
+                            else "action_precision_and_support_gate_not_met"
+                        ),
+                    )
+                },
             )
             for category in EmailCategory
         },

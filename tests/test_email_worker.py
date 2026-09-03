@@ -2528,32 +2528,94 @@ def test_scan_config_uses_active_model_category_eligibility():
         }
         for category in categories
     ]
-    metadata = SimpleNamespace(
-        per_category_metrics={
-            category.value: {
-                "precision": 0.99,
-                "validation_sample_count": 35,
-                "configured_threshold": 0.8,
-                "auto_action_eligible": category is contracts.EmailCategory.WORK,
-                "eligibility_reason": (
-                    "precision_and_sample_gate_met"
-                    if category is contracts.EmailCategory.WORK
-                    else "precision_gate_not_met"
-                ),
-            }
-            for category in categories
-        }
+    model_record = SimpleNamespace(
+        status="active",
+        metadata=SimpleNamespace(
+            validation_method="time-ordered-holdout",
+            per_category_metrics={
+                category.value: {
+                    "precision": 0.99,
+                    "validation_sample_count": 35,
+                    "validation_positive_support": 35,
+                    "configured_threshold": 0.8,
+                    "evaluated_threshold": 0.8,
+                    "auto_action_eligible": category is contracts.EmailCategory.WORK,
+                    "eligibility_reason": (
+                        "precision_and_sample_gate_met"
+                        if category is contracts.EmailCategory.WORK
+                        else "precision_gate_not_met"
+                    ),
+                }
+                for category in categories
+            },
+        ),
     )
 
     config = module._scan_config(
         SimpleNamespace(list_configs=lambda: rows),
-        metadata,
+        model_record,
     )
 
     work = config.category_eligibility[contracts.EmailCategory.WORK]
     assert work.auto_action_eligible is True
+    assert (
+        work.action_eligibility[contracts.EmailAction.MARK_READ].auto_action_eligible
+        is True
+    )
     assert work.validated_precision == 0.99
     assert work.validation_sample_count == 35
+
+
+@pytest.mark.parametrize("status", ["candidate", "rejected", "failed", "previous"])
+def test_scan_config_non_active_model_record_is_never_action_eligible(status: str):
+    module = _module()
+    contracts = import_module("app.email_classifier_contracts")
+    rows = [
+        {
+            "category": category.value,
+            "description": category.value,
+            "enabled": True,
+            "threshold": 0.85,
+            "actions": ["label"] if category is contracts.EmailCategory.WORK else [],
+            "action_parameters": (
+                {"label": {"labels": ["Work"]}}
+                if category is contracts.EmailCategory.WORK
+                else {}
+            ),
+            "config_version": "config-status-v1",
+        }
+        for category in contracts.EmailCategory
+    ]
+    record = SimpleNamespace(
+        status=status,
+        metadata=SimpleNamespace(
+            validation_method="time-ordered-holdout",
+            per_category_metrics={
+                contracts.EmailCategory.WORK.value: {
+                    "precision": 1.0,
+                    "validation_sample_count": 100,
+                    "validation_positive_support": 100,
+                    "configured_threshold": 0.85,
+                    "evaluated_threshold": 0.85,
+                    "auto_action_eligible": True,
+                    "eligibility_reason": "precision_and_sample_gate_met",
+                }
+            },
+        ),
+    )
+
+    config = module._scan_config(SimpleNamespace(list_configs=lambda: rows), record)
+    work = config.category_eligibility[contracts.EmailCategory.WORK]
+
+    assert work.auto_action_eligible is False
+    assert (
+        work.action_eligibility[contracts.EmailAction.LABEL].auto_action_eligible
+        is False
+    )
+    assert (
+        work.action_eligibility[contracts.EmailAction.LABEL].reason
+        == "model_not_active"
+    )
 
 
 def test_scan_config_without_model_eligibility_stays_pending_feedback():

@@ -8326,6 +8326,8 @@ def _validate_config(
     action_parameters: Mapping[EmailAction, Mapping[str, object]],
     config_version: str,
 ) -> None:
+    if EmailAction.AUTO_REPLY in actions:
+        raise ValueError("auto_reply is disabled")
     build_email_action_plan(
         classification_id=1,
         account_id="configuration-validation",

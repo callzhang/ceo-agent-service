@@ -95,10 +95,22 @@ def decide_classification(
     if eligibility.configured_threshold != category_config.threshold:
         raise ValueError("eligibility threshold must match category configuration")
 
+    eligible_actions = tuple(
+        action
+        for action in category_config.actions
+        if (
+            action in eligibility.action_eligibility
+            and eligibility.action_eligibility[action].auto_action_eligible
+        )
+    )
+    configured_actions_are_eligible = (
+        not category_config.actions or bool(eligible_actions)
+    )
     automatic = (
         category_config.enabled
         and eligibility.auto_action_eligible
         and prediction.confidence >= category_config.threshold
+        and configured_actions_are_eligible
     )
     status = (
         EmailClassificationStatus.PROCESSED
@@ -115,8 +127,11 @@ def decide_classification(
             confidence=prediction.confidence,
             model_id=prediction.model_id,
             config_version=category_config.config_version,
-            actions=category_config.actions,
-            action_parameters=category_config.action_parameters,
+            actions=eligible_actions,
+            action_parameters={
+                action: category_config.action_parameters.get(action, {})
+                for action in eligible_actions
+            },
             created_at=created_at,
         )
     return EmailClassificationDecision(

@@ -364,10 +364,13 @@ def email_worker_components(
     )
 
 
-def _scan_config(email_store: object, model_metadata: object | None):
+def _scan_config(email_store: object, model_record: object | None):
     from app.email_classifier_contracts import EmailAction, EmailCategory
     from app.email_classifier_scan import EmailScanConfig
-    from app.email_classifier_training import CategoryEligibility
+    from app.email_classifier_training import (
+        CategoryEligibility,
+        assess_email_action_eligibility,
+    )
 
     rows = email_store.list_configs()
     if len(rows) != len(EmailCategory):
@@ -380,47 +383,107 @@ def _scan_config(email_store: object, model_metadata: object | None):
         category: float(by_category[category]["threshold"])
         for category in EmailCategory
     }
-    metrics_value = getattr(model_metadata, "per_category_metrics", {})
+    metadata = getattr(model_record, "metadata", None)
+    model_status = str(getattr(model_record, "status", ""))
+    validation_method = str(getattr(metadata, "validation_method", ""))
+    metrics_value = getattr(metadata, "per_category_metrics", {})
     metrics = metrics_value if isinstance(metrics_value, Mapping) else {}
+    actions = {
+        category: tuple(
+            EmailAction(value) for value in by_category[category]["actions"]
+        )
+        for category in EmailCategory
+    }
     eligibility: dict[EmailCategory, CategoryEligibility] = {}
     for category in EmailCategory:
         metric_value = metrics.get(category.value)
         metric = metric_value if isinstance(metric_value, Mapping) else None
         if metric is None:
+            action_eligibility = assess_email_action_eligibility(
+                category=category,
+                actions=actions[category],
+                model_status=model_status,
+                validation_method=validation_method,
+                configured_threshold=thresholds[category],
+                evaluated_threshold=None,
+                validated_precision=None,
+                validation_positive_support=0,
+                metadata_auto_action_eligible=False,
+            )
             eligibility[category] = CategoryEligibility(
                 category=category,
                 configured_threshold=thresholds[category],
                 validated_precision=None,
                 validation_sample_count=0,
                 auto_action_eligible=False,
-                reason="model_eligibility_missing",
+                reason=(
+                    "model_not_active"
+                    if model_record is not None and model_status != "active"
+                    else "model_eligibility_missing"
+                ),
+                action_eligibility=action_eligibility,
             )
             continue
         trained_threshold = float(metric["configured_threshold"])
-        threshold_matches = trained_threshold == thresholds[category]
+        evaluated_threshold = float(metric["evaluated_threshold"])
+        threshold_matches = (
+            trained_threshold == thresholds[category]
+            and evaluated_threshold == thresholds[category]
+        )
+        action_eligibility = assess_email_action_eligibility(
+            category=category,
+            actions=actions[category],
+            model_status=model_status,
+            validation_method=validation_method,
+            configured_threshold=thresholds[category],
+            evaluated_threshold=(
+                evaluated_threshold if trained_threshold == thresholds[category]
+                else trained_threshold
+            ),
+            validated_precision=float(metric["precision"]),
+            validation_positive_support=int(
+                metric.get(
+                    "validation_positive_support",
+                    metric["validation_sample_count"],
+                )
+            ),
+            metadata_auto_action_eligible=bool(metric["auto_action_eligible"]),
+        )
+        configured_action_eligible = (
+            any(item.auto_action_eligible for item in action_eligibility.values())
+            if actions[category]
+            else (
+                model_status == "active"
+                and validation_method == "time-ordered-holdout"
+                and threshold_matches
+                and bool(metric["auto_action_eligible"])
+            )
+        )
         eligibility[category] = CategoryEligibility(
             category=category,
             configured_threshold=thresholds[category],
             validated_precision=float(metric["precision"]),
             validation_sample_count=int(metric["validation_sample_count"]),
-            auto_action_eligible=(
-                threshold_matches and bool(metric["auto_action_eligible"])
-            ),
+            auto_action_eligible=configured_action_eligible,
             reason=(
                 str(metric["eligibility_reason"])
-                if threshold_matches
-                else "threshold_changed_since_training"
+                if configured_action_eligible
+                else next(
+                    (
+                        item.reason
+                        for item in action_eligibility.values()
+                        if not item.auto_action_eligible
+                    ),
+                    "model_eligibility_missing",
+                )
             ),
+            evaluated_threshold=evaluated_threshold,
+            action_eligibility=action_eligibility,
         )
     return EmailScanConfig(
         config_version=versions.pop(),
         thresholds=thresholds,
-        actions={
-            category: tuple(
-                EmailAction(value) for value in by_category[category]["actions"]
-            )
-            for category in EmailCategory
-        },
+        actions=actions,
         category_eligibility=eligibility,
         action_parameters={
             category: {
@@ -674,9 +737,9 @@ def build_email_worker_dependencies(
         )
 
     def load_scan_config(active_model: object):
-        metadata = registry.get_model(active_model.loaded.model_id).metadata
-        config = _scan_config(email_store, metadata)
-        metrics = metadata.per_category_metrics
+        model_record = registry.get_model(active_model.loaded.model_id)
+        config = _scan_config(email_store, model_record)
+        metrics = model_record.metadata.per_category_metrics
         missing_config = config.config_version == "email-config-missing-v1"
         stale_threshold = any(
             item.reason == "threshold_changed_since_training"

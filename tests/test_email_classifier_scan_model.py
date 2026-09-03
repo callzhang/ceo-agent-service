@@ -15,9 +15,10 @@ from app.email_classifier_scan import (
     scan_imap_accounts,
     scan_readonly_batch,
 )
-from app.email_classifier_training import CategoryEligibility
+from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
 from app.email_imap_readonly import ImapUidBatch
 from app.email_store import EmailStore
+from app.email_worker import _scan_config
 
 
 class FakeSource:
@@ -88,6 +89,19 @@ def _category_eligibility(
                 if category in eligible
                 else "insufficient_validation_samples"
             ),
+            action_eligibility={
+                action: EmailActionEligibility(
+                    action=action,
+                    auto_action_eligible=category in eligible,
+                    reason=(
+                        "action_precision_and_support_gate_met"
+                        if category in eligible
+                        else "action_precision_and_support_gate_not_met"
+                    ),
+                )
+                for action in EmailAction
+                if action is not EmailAction.AUTO_REPLY
+            },
         )
         for category in EmailCategory
     }
@@ -191,9 +205,9 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
     config = EmailScanConfig(
         config_version="scan-task-production-v1",
         thresholds={category: 0.0 for category in EmailCategory},
-        actions={EmailCategory.WORK: (EmailAction.UNSUBSCRIBE,)},
+        actions={EmailCategory.SUBSCRIPTION: (EmailAction.UNSUBSCRIBE,)},
         category_eligibility=_category_eligibility(
-            eligible=(EmailCategory.WORK,),
+            eligible=(EmailCategory.SUBSCRIPTION,),
             threshold=0.0,
         ),
     )
@@ -201,7 +215,7 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
 
     result = scan_readonly_batch(
         source,
-        StaticClassifier(StaticPrediction("work", 0.99)),
+        StaticClassifier(StaticPrediction("subscription", 0.99)),
         store,
         config,
         task_producer=lambda classification, raw_message: callbacks.append(
@@ -521,6 +535,74 @@ def test_high_confidence_eligible_category_creates_action_plan(tmp_path: Path):
     )
     assert total == 1
     assert rows[0]["action_plan"]["actions"] == ["label"]
+
+
+def test_model_action_plan_contains_only_independently_eligible_actions(
+    tmp_path: Path,
+):
+    rows = [
+        {
+            "category": category.value,
+            "description": category.value,
+            "enabled": True,
+            "threshold": 0.85,
+            "actions": (
+                [EmailAction.LABEL.value, EmailAction.TRASH.value]
+                if category is EmailCategory.WORK
+                else []
+            ),
+            "action_parameters": (
+                {EmailAction.LABEL.value: {"labels": ["Work"]}}
+                if category is EmailCategory.WORK
+                else {}
+            ),
+            "config_version": "per-action-v1",
+        }
+        for category in EmailCategory
+    ]
+    record = type(
+        "ActiveModelRecord",
+        (),
+        {
+            "status": "active",
+            "metadata": type(
+                "Metadata",
+                (),
+                {
+                    "validation_method": "time-ordered-holdout",
+                    "per_category_metrics": {
+                        EmailCategory.WORK.value: {
+                            "precision": 0.96,
+                            "validation_sample_count": 30,
+                            "validation_positive_support": 30,
+                            "configured_threshold": 0.85,
+                            "evaluated_threshold": 0.85,
+                            "auto_action_eligible": True,
+                            "eligibility_reason": "precision_and_sample_gate_met",
+                        }
+                    },
+                },
+            )(),
+        },
+    )()
+    config = _scan_config(type("Store", (), {"list_configs": lambda self: rows})(), record)
+    store = EmailStore(tmp_path / "email.sqlite3")
+
+    result = scan_readonly_batch(
+        FakeSource([_message()]),
+        StaticClassifier(StaticPrediction("work", 0.99)),
+        store,
+        config,
+    )
+
+    assert result.processed_count == 1
+    classifications, total = store.list_classifications(
+        status=EmailClassificationStatus.PROCESSED,
+        limit=10,
+        offset=0,
+    )
+    assert total == 1
+    assert classifications[0]["action_plan"]["actions"] == ["label"]
 
 
 def test_processed_model_rescan_preserves_original_authorization_snapshot(
