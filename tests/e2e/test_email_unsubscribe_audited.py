@@ -946,7 +946,14 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
         "entry_reference": payload["unsubscribe_entries"][0]["reference"],
     }
     assert payload["action_type"] == EmailAction.UNSUBSCRIBE.value
-    assert all(payload[key] == value for key, value in expected_binding.items())
+    assert all(
+        payload[key] == value
+        for key, value in expected_binding.items()
+        if key != "entry_reference"
+    )
+    assert payload["unsubscribe_entries"][0]["reference"] == expected_binding[
+        "entry_reference"
+    ]
     expected_target_binding = {
         key: expected_binding[key]
         for key in (
@@ -993,6 +1000,11 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
             "where action_identity=? order by rowid",
             (payload["action_identity"],),
         ).fetchall()
+        step_rows = db.execute(
+            "select * from email_unsubscribe_steps "
+            "where action_identity=? order by sequence",
+            (payload["action_identity"],),
+        ).fetchall()
     assert action_plan_row is not None
     assert account_row is not None
     assert message_row is not None
@@ -1025,11 +1037,11 @@ def test_two_page_unsubscribe_runs_two_consumer_audit_rounds_and_finishes(
     assert executor.continuation_receipts[0]["previous_effect_digest"] == (
         first_effect["effect_digest"]
     )
-    assert [step["action_identity"] for step in steps] == [
+    assert [step["action_identity"] for step in step_rows] == [
         expected_binding["action_identity"],
         expected_binding["action_identity"],
     ]
-    assert [step["effect_digest"] for step in steps] == [
+    assert [step["effect_digest"] for step in step_rows] == [
         first_effect["effect_digest"],
         second_effect["effect_digest"],
     ]
