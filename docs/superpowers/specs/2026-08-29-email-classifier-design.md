@@ -7,8 +7,10 @@
 动作边界，不包含 CEO Agent 运行时实现计划。已确认：`label`、`mark_read`、
 `archive`、`move`、`trash` 是直接动作，不创建 Agent/Audit 任务；
 当前 Email 部署禁用 `auto_reply`：它不能从配置、分类结果或人工确认生成 task，也不连接
-SMTP。历史 contract 仍保留用于兼容读取。`unsubscribe` 使用 Consumer-direct，创建
-`channel=email` task，并遵循独立的 effect/readback 契约。
+SMTP。历史 contract 仍保留用于兼容读取。本文中的 Consumer-direct 退订描述只记录
+当前实现历史：`unsubscribe` 使用 Consumer-direct。future-state 已由
+[`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md)
+取代，`unsubscribe` 目标生命周期为 Consumer 提案、Audit 审核执行和 readback。
 
 ## 背景与目标
 

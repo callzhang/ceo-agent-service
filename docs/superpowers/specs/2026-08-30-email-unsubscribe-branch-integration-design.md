@@ -2,8 +2,12 @@
 
 **Date:** 2026-08-30
 
-**Status:** Approved design; written review complete; implementation remains
-production-disabled
+**Status:** Historical Consumer-direct design; its written review complete
+state describes the then-approved version. It is superseded for future implementation by
+[`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md).
+The current branch still implements this Consumer-direct lifecycle until the
+replacement design is reviewed and implemented, so this document remains useful
+as current-code history but is no longer implementation authority.
 
 **Repository:** `/Users/derek/Documents/Projects/ceo-agent-service`
 

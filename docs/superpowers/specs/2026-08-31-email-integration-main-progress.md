@@ -12,6 +12,12 @@
 
 2026-09-02 Derek 已明确授权高置信度类别的确定性邮件处理，包括 label、mark_read、archive、move 和 trash；trash 仅进入可恢复 Trash，禁止永久删除。当前明确禁止所有 Email 回复：配置 API、worker runtime 和 `ceo-mail-review` skill 均不得生成或发送 `auto_reply`，SMTP 不启用。该授权不绕过模型/类别 eligibility，也不改变 unsubscribe 的订阅级 precision/support 门槛。
 
+2026-09-02 Derek 进一步确认 CEO Agent 融合采用方案 A：确定性动作继续由独立 Email
+worker 直接执行并回读；`unsubscribe` 从当前 Consumer-direct 目标改为
+Consumer A 提案、Audit Agent B 审核与执行、外部结果回读。新的 future-state 权威设计是
+[`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md)。
+当前代码仍为 Consumer-direct，尚未按新设计修改；本条只记录已批准的目标，不表示已经实现。
+
 ## 已移植能力
 
 1. Email classifier 的只读扫描、模型 registry、训练/反馈和模型版本化核心。
@@ -213,7 +219,8 @@ assistant provisional annotations 做随机 5-fold OOF，得到 `67.50% Accuracy
 - 当前 DingTalk 企业邮箱配置仍保持 disabled；没有把实验标注当作用户 gold feedback，也没有自动启用模型或动作。
 - unsubscribe 仍遵守订阅来源级门槛：precision >= 0.95 且 support >= 20；冷启动仅允许用户确认后的订阅来源进入自动化候选。
 - 真实邮箱实验只允许 readonly header/metadata 抽样；生产启用前仍需独立 review、全量回归和用户确认。
-- 外部邮箱回复等写动作仍需现有 Audit Agent 生命周期；unsubscribe 是已批准的唯一 Consumer-direct 例外。
+- 本段实验发生时 unsubscribe 还是当时批准的 Consumer-direct 例外；该目标已经被
+  2026-09-02 的 audited fusion 方案取代。邮件回复继续关闭。
 
 ## 2026-09-02 随机只读正文与时间漂移实验
 
