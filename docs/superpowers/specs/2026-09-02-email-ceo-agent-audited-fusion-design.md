@@ -2,7 +2,7 @@
 
 日期：2026-09-02
 
-状态：书面规范已批准，已进入实施计划
+状态：实现完成并通过开发/loopback 验证；production-disabled，等待分阶段受控验收
 
 适用分支：`codex/email-integration-main`
 
@@ -45,9 +45,9 @@
 
 用户对高置信度邮件动作的授权与模型准入是两个独立条件。授权已经存在，但当前实验不满足准入，不能据此执行真实邮箱写操作。
 
-### 2.2 当前代码事实
+### 2.2 设计批准时的代码事实
 
-当前分支已经包含：
+本设计批准时，分支已经包含：
 
 - 多账户 Email connector、readonly IMAP 扫描、分类器 registry、反馈训练和四个 Email 页面分区；
 - 独立 Email worker；
@@ -55,7 +55,7 @@
 - Consumer-direct 退订、headless browser、专用持久 profile、步骤记录和 terminal result text；
 - 更早的 audited unsubscribe Store、effect digest、append-only continuation 和 `awaiting_audit` 基础设施。
 
-当前代码尚未部署；真实邮箱实验均为 readonly，邮箱写操作、SMTP 连接和真实退订均为零。本设计不把已有代码或测试结果误报为生产激活。
+该基线当时尚未部署；真实邮箱实验均为 readonly，邮箱写操作、SMTP 连接和真实退订均为零。后续实现已将 Consumer-direct 收敛为 audited v2，但仍保持 production-disabled；开发测试和 loopback 结果不等于生产激活。
 
 ## 3. 产品边界
 

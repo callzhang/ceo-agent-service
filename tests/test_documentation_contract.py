@@ -208,7 +208,9 @@ def test_email_design_and_historical_docs_point_to_approved_audited_v2() -> None
     )
 
     status_lines = [line for line in approved_design.splitlines() if line.startswith("状态：")]
-    assert status_lines == ["状态：书面规范已批准，已进入实施计划"]
+    assert status_lines == [
+        "状态：实现完成并通过开发/loopback 验证；production-disabled，等待分阶段受控验收"
+    ]
     assert "`email_unsubscribe_audited_v2`" in approved_design
     assert "move-to-Trash" in approved_design
 

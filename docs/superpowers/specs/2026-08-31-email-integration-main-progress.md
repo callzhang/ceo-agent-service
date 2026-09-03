@@ -16,8 +16,8 @@
 worker 直接执行并回读；`unsubscribe` 从当前 Consumer-direct 目标改为
 Consumer A 提案、Audit Agent B 审核与执行、外部结果回读。当前和后续实施权威是已批准的
 [`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md)。
-其目标 lifecycle 是 `email_unsubscribe_audited_v2`。当前代码仍为 Consumer-direct，尚未按
-新设计修改；本条只记录已批准并进入实施计划的目标，不表示已经实现、部署或在生产启用。
+其目标 lifecycle 是 `email_unsubscribe_audited_v2`。当前开发分支已经完成该生命周期、
+continuation/effect、UI/observability 和 loopback E2E 实现；功能仍未合并或部署，生产未启用。
 
 ## 已移植能力
 
@@ -27,9 +27,9 @@ Consumer A 提案、Audit Agent B 审核与执行、外部结果回读。当前�
 4. 独立 Email worker：扫描与确定性 provider action、Email Agent/Audit consumer、训练 scheduler 为三个独立组件。
 5. 所有 Email Agent task payload 带显式 `lifecycle_version`：
    - `auto_reply` 历史 contract 保留用于兼容读取，但当前 runtime/API/skill 全局禁用，不创建任务、不连接 SMTP；
-   - `unsubscribe` → `email_unsubscribe_consumer_direct_v1`，由独立 unsubscribe Consumer 执行并记录 observability，不创建 Agent/Audit run。
-6. `unsubscribe` 的生命周期选择 fail-closed：只有任务、上下文、原始 payload、分类、action identity 全部一致且为当前版本时才允许直通；其他任何不一致都走普通 Consumer → Audit。
-7. 直接 provider action 具备 claim、租约恢复、有限重试和退订 terminal result / observation digest 持久化。
+   - `unsubscribe` → `email_unsubscribe_audited_v2`，Consumer 只生成有界提案，Audit 是唯一允许执行 browser effect 的角色。
+6. `unsubscribe` 生命周期 fail-closed：任务、上下文、原始 payload、分类、ActionPlan identity、Consumer/Audit lineage 或 effect binding 任一不一致都不得执行；旧 Consumer-direct 仅可迁移为安全终止状态，不再可执行。
+7. 直接 provider action 与 audited unsubscribe 分别具备 claim、租约恢复、有限重试、effect reconciliation、terminal result / observation digest 持久化和回读。
 
 ## 验证证据
 
@@ -917,3 +917,58 @@ c3fa46827f16a97f92f428551f7a94fb68e0ce408368716b2b6254d4082570a3
 训练集，却不能证明未来新来源泛化。下一阶段只保留 readonly shadow、待反馈、版本记录和
 用户确认后的学习；所有 model-only 邮箱写动作保持关闭。生产代码和 CEO Agent 融合必须
 以这一失败结论为输入，不得把开发集 97.14%冒充上线证据。
+
+## 2026-09-03 audited v2 实施收口与开发验收
+
+audited Email unsubscribe 已在独立分支完成实现，但尚未合并或部署。核心事实为：
+
+- 确定性 `label`、`mark_read`、`archive`、`move`、`trash` 仍由 Email worker 直接执行，零 Agent/Audit run；
+- `unsubscribe` 只允许 `email_unsubscribe_audited_v2`，Consumer 生成有界操作提案，Audit 是唯一 browser-effect 执行者；
+- 旧 Consumer-direct task 只做安全迁移和终止，不再拥有可执行路径；
+- browser effect 使用独立 persistent profile；HTTP、WebSocket、redirect、popup、download、private-network 及认证/MFA/CAPTCHA/payment 边界均 fail-closed；
+- Email 回复、SMTP、附件正文读取、永久删除和 `EXPUNGE` 仍不可达；
+- model-only mailbox action 仍因真实来源验证未达门槛而关闭。
+
+主要收口提交包括：
+
+```text
+092b8296 fix: bind terminal unsubscribe lineage
+e4e7a9d0 test: cover audited email unsubscribe end to end
+30e08a36 test: close audited unsubscribe acceptance gaps
+b48b96c0 test: correct audited unsubscribe lineage assertions
+6fc8f78a feat(email): expose classifier evidence
+9393ab12 feat(email-ui): expose classifier and action evidence
+4a5715e3 fix(email): close websocket and mcp concurrency gaps
+92db276d docs: mark audited email lifecycle implemented
+209c2ad0 fix(email-ui): preserve action parameters
+b2806325 test(email): build faithful legacy migration fixtures
+4627a3ad fix(email): harden model evidence and config state
+55e5cd17 fix(email): render model count metrics faithfully
+```
+
+开发验证证据：
+
+- Email focused 后端矩阵：`901 passed, 5 warnings`；warning 均为既有 path-based model promotion deprecation；
+- 真实 Chromium browser + audited E2E：`61 passed in 68.43s`；
+- 前端完整 Vitest：`29 files, 283 passed`；
+- TypeScript `tsc --noEmit` 和 Vite production build 通过，构建 `2667 modules`；
+- model registry/learning API 使用真实 `stage -> promote/reject/fail` 生命周期验证，候选创建、激活、被替换、拒绝和失败理由分开投影；artifact digest mismatch、缺失 artifact、损坏 metadata/lifecycle 均输出逐记录 integrity evidence，不因一个坏历史记录隐藏健康模型；
+- 配置 UI 在加载和保存期间锁定编辑，拒绝空/非有限/越界阈值和空 config version，`archive`/`move`/`trash` 互斥，并保留 `label`/`move` 参数；
+- 可访问性补齐 tab/tabpanel、roving focus、方向键和 toggle state。
+
+隔离 UI 验收使用 `/private/tmp/ceo-email-ui-audit-b2806325` 中的 disposable SQLite、fixture model registry 和 loopback `127.0.0.1:8877`；没有读取生产 DB、邮箱 secret 或真实邮箱。可见浏览器逐项确认：
+
+- `已处理` 展示完整 model/config/ActionPlan ID、Consumer/Audit run、audited v2、receipt、observation digest 和最终结果页文字；
+- `待反馈` 展示 61%/4% margin、排序候选、文本预览及 `filename/mime_type/size/inline` 四项附件 metadata，不含附件正文和路径；
+- `邮件配置` 恢复 label/move 参数，终止动作互斥，清空阈值后本地显示错误且没有发出保存；
+- `学习` 展示 active/previous/candidate/rejected/failed、artifact digest 和 append-only lifecycle；浏览器发现并修复了 count metric 被误显示为百分比的问题，重构建后 `validation_sample_count=20` 等计数按整数显示。
+
+完整后端 suite 在文档状态契约更新前的实际执行结果是：
+
+```text
+10 failed, 5858 passed, 116 skipped, 40 deselected, 5 warnings
+```
+
+其中 1 项是本批次主动更新设计状态后尚未同步的 documentation contract；同步后 `tests/test_documentation_contract.py` 为 `11 passed`。剩余 9 项已用精确 node id 再次复现，全部属于分支基线中的非 Email 失败：4 项旧 Attention work-input 投影、2 项 Console Attention count、2 项 meeting signature、1 项 Settings/Attention 页面。Email focused、browser/E2E 和前端完整测试均没有失败。
+
+生产边界仍为：主 launchd 从主 checkout 运行，当前 feature branch 未部署；真实 mailbox write、SMTP 和真实 unsubscribe 均未因本次实施执行。首次真实动作仍必须另行按设计中的分阶段受控验收推进。
