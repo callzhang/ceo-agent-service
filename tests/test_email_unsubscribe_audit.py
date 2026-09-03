@@ -19,6 +19,7 @@ from app.email_classifier_contracts import (
     build_versioned_email_action_plan,
 )
 from app.email_store import (
+    EmailPersistenceCorruption,
     EmailStore,
     EmailUnsubscribeClaimConflict,
     email_action_identity,
@@ -388,6 +389,307 @@ def _public_terminal_mapping(
     }
 
 
+def _two_step_action() -> dict[str, object]:
+    action = _accepted_action()
+    operations = action["payload"]["operations"]
+    assert isinstance(operations, list)
+    operations.append(
+        {
+            "operation_reference": "unsubscribe-operation:submit-form",
+            "kind": "submit_form",
+            "target_reference": "unsubscribe-control:form",
+        }
+    )
+    return action
+
+
+def _start_second_audit_round(fixture: AuditFixture):
+    def persist_first_continuation(effect, _entries, *, owner, **_kwargs):
+        continuation = fixture.email_store.persist_email_unsubscribe_continuation(
+            **audit_store_arguments(effect),
+            controls=(
+                {
+                    "reference": "unsubscribe-control:form",
+                    "kind": "form",
+                    "intent": "unsubscribe",
+                },
+            ),
+            observation_reference="unsubscribe-state:form",
+            final_step={
+                "sequence": 1,
+                "operation": "open_entry",
+                "state": "action_required",
+                "reference": "unsubscribe-state:form",
+            },
+            owner=owner,
+        )
+        return {
+            "status": "awaiting_audit",
+            "summary": "One further audited operation is required.",
+            "continuation": continuation,
+        }
+
+    fixture.operation.execute_effect = persist_first_continuation
+    first = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=fixture.audit_run.id,
+        accepted_action=_accepted_action(),
+    )
+    assert first["status"] == "awaiting_audit", first
+    first_audit = fixture.task_store.complete_agent_run(
+        fixture.audit_run.id,
+        {"outcome": "executed", "proposal_revision": 0},
+        owner="audit-owner",
+    )
+    second_consumer = fixture.task_store.claim_agent_run(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=first_audit.id,
+        operation_id="",
+        owner="consumer-second-owner",
+    ).run
+    second_consumer = fixture.task_store.complete_agent_run(
+        second_consumer.id,
+        {"outcome": "proposal"},
+        owner="consumer-second-owner",
+    )
+    second_audit = fixture.task_store.claim_agent_run(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=second_consumer.id,
+        operation_id="audit-operation-1",
+        owner="audit-second-owner",
+    ).run
+    return first_audit, second_consumer, second_audit
+
+
+def _complete_two_step_terminal(fixture: AuditFixture):
+    first_audit, second_consumer, second_audit = _start_second_audit_round(fixture)
+
+    def persist_terminal(_effect, _entries, **_kwargs):
+        result_text = "You have been unsubscribed"
+        _, observation_digest = normalize_unsubscribe_result_text(result_text)
+        return {
+            "status": "done",
+            "outcome": "done",
+            "receipt_id": "provider-receipt:two-step",
+            "evidence": "terminal-page",
+            "result_text": result_text,
+            "observation_digest": observation_digest,
+            "started_at": "2026-09-02T08:00:01+00:00",
+            "completed_at": "2026-09-02T08:00:02+00:00",
+            "summary": "Unsubscribe completed",
+            "final_step": {
+                "sequence": 2,
+                "operation": "submit_form",
+                "state": "done",
+                "reference": "provider-receipt:two-step",
+            },
+        }
+
+    fixture.operation.execute_effect = persist_terminal
+    action = _two_step_action()
+    second = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=second_audit.id,
+        accepted_action=action,
+    )
+    assert second["status"] == "done", second
+    second_audit = fixture.task_store.complete_agent_run(
+        second_audit.id,
+        {"outcome": "executed", "proposal_revision": 1},
+        owner="audit-second-owner",
+    )
+    return action, first_audit, second_consumer, second_audit, second
+
+
+def _claim_recovery_audit(
+    fixture: AuditFixture,
+    *,
+    parent_consumer_id: int,
+):
+    return fixture.task_store.claim_agent_run(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=1,
+        turn_attempt=1,
+        parent_agent_run_id=parent_consumer_id,
+        operation_id="audit-operation-recovery",
+        owner="audit-recovery-owner",
+    ).run
+
+
+def test_two_step_terminal_recovers_in_new_audit_run_without_callback(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    action, _first_audit, second_consumer, _second_audit, terminal = (
+        _complete_two_step_terminal(fixture)
+    )
+    recovery_audit = _claim_recovery_audit(
+        fixture,
+        parent_consumer_id=second_consumer.id,
+    )
+
+    def forbidden_callback(*_args, **_kwargs):
+        raise AssertionError("terminal recovery must not replay the browser callback")
+
+    fixture.operation.execute_effect = forbidden_callback
+    recovered = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=recovery_audit.id,
+        accepted_action=action,
+    )
+
+    assert recovered["status"] == "done", recovered
+    assert recovered["receipt_id"] == terminal["receipt_id"]
+
+
+@pytest.mark.parametrize("mutation", ("prefix", "target", "operation"))
+def test_two_step_terminal_recovery_rejects_changed_accepted_action(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    action, _first_audit, second_consumer, _second_audit, _terminal = (
+        _complete_two_step_terminal(fixture)
+    )
+    recovery_audit = _claim_recovery_audit(
+        fixture,
+        parent_consumer_id=second_consumer.id,
+    )
+    if mutation == "target":
+        target = action["target"]
+        assert isinstance(target, dict)
+        target["account_id"] = "account-changed"
+    else:
+        operations = action["payload"]["operations"]
+        assert isinstance(operations, list)
+        operation = operations[0] if mutation == "prefix" else operations[-1]
+        assert isinstance(operation, dict)
+        if mutation == "prefix":
+            operation["operation_reference"] = "unsubscribe-operation:prefix-changed"
+        else:
+            operation["kind"] = "click_confirmation"
+
+    def forbidden_callback(*_args, **_kwargs):
+        raise AssertionError("changed terminal action must not reach the browser")
+
+    fixture.operation.execute_effect = forbidden_callback
+    recovered = fixture.operation.execute(
+        fixture.task.id,
+        fixture.task.execution_generation,
+        audit_agent_run_id=recovery_audit.id,
+        accepted_action=action,
+    )
+
+    assert recovered["status"] == "failed", recovered
+
+
+@pytest.mark.parametrize("tamper", ("consumer", "other_task_audit"))
+def test_two_step_terminal_snapshot_rejects_earlier_effect_audit_tamper(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    _action, first_audit, second_consumer, second_audit, _terminal = (
+        _complete_two_step_terminal(fixture)
+    )
+    replacement_run_id = second_consumer.id
+    if tamper == "other_task_audit":
+        other = fixture.task_store.ensure_reply_task(
+            channel="dingtalk",
+            conversation_id="other-conversation",
+            conversation_title="Other",
+            single_chat=True,
+            trigger_message_id="other-message",
+            trigger_create_time="2026-09-02T08:00:00+00:00",
+            trigger_sender="other",
+            trigger_text="other",
+            execution_generation="other-generation",
+        )
+        other_consumer = fixture.task_store.claim_agent_run(
+            other.id,
+            other.execution_generation,
+            role=AgentRole.CONSUMER,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=None,
+            operation_id="",
+            owner="other-consumer-owner",
+        ).run
+        other_consumer = fixture.task_store.complete_agent_run(
+            other_consumer.id,
+            {"outcome": "proposal"},
+            owner="other-consumer-owner",
+        )
+        other_audit = fixture.task_store.claim_agent_run(
+            other.id,
+            other.execution_generation,
+            role=AgentRole.AUDIT,
+            proposal_revision=0,
+            turn_attempt=0,
+            parent_agent_run_id=other_consumer.id,
+            operation_id="other-audit-operation",
+            owner="other-audit-owner",
+        ).run
+        other_audit = fixture.task_store.complete_agent_run(
+            other_audit.id,
+            {"outcome": "executed"},
+            owner="other-audit-owner",
+        )
+        replacement_run_id = other_audit.id
+    with sqlite3.connect(fixture.email_store.path) as db:
+        db.execute(
+            "update email_unsubscribe_effects set audit_agent_run_id=? "
+            "where action_identity=? and audit_agent_run_id=?",
+            (replacement_run_id, ACTION_IDENTITY, first_audit.id),
+        )
+
+    claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
+    assert claim is not None
+    with pytest.raises(EmailPersistenceCorruption):
+        fixture.email_store.get_email_unsubscribe_terminal_snapshot(
+            ACTION_IDENTITY,
+            claim["effect_digest"],
+            task_id=fixture.task.id,
+            task_execution_generation=fixture.task.execution_generation,
+        )
+
+    assert second_audit.status == "completed"
+
+
+def test_two_step_terminal_snapshot_accepts_complete_audited_lineage(
+    tmp_path: Path,
+) -> None:
+    fixture = _make_fixture(tmp_path)
+    _action, _first_audit, _second_consumer, _second_audit, terminal = (
+        _complete_two_step_terminal(fixture)
+    )
+    claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
+    assert claim is not None
+
+    snapshot = fixture.email_store.get_email_unsubscribe_terminal_snapshot(
+        ACTION_IDENTITY,
+        claim["effect_digest"],
+        task_id=fixture.task.id,
+        task_execution_generation=fixture.task.execution_generation,
+    )
+
+    assert snapshot is not None
+    assert snapshot["receipt"]["receipt_id"] == terminal["receipt_id"]
+
+
 def test_first_audit_call_reconciles_executor_persisted_long_terminal_result(
     tmp_path: Path,
 ) -> None:
@@ -661,49 +963,15 @@ def test_audited_continuation_executes_only_appended_operation_from_blank_browse
     tmp_path: Path,
 ) -> None:
     fixture = _make_fixture(tmp_path)
-    initial_action = ProposedAction.model_validate(_accepted_action())
-    initial_effect = accepted_email_unsubscribe_effect(
-        fixture.task,
-        initial_action,
+    first_audit, _second_consumer, second_audit = _start_second_audit_round(fixture)
+    initial_effect = fixture.email_store.get_email_unsubscribe_effect(
+        ACTION_IDENTITY,
+        fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)[
+            "effect_digest"
+        ],
     )
-    prior_owner = {
-        "owner_id": "prior-audit",
-        "generation": 1,
-        "lease_token": "prior-audit-lease",
-    }
-    prior_claim = fixture.email_store.claim_email_unsubscribe_write(
-        **audit_store_arguments(initial_effect),
-        owner=prior_owner,
-    )
-    assert prior_claim is not None and prior_claim["acquired"] is True
-    fixture.email_store.persist_email_unsubscribe_continuation(
-        **audit_store_arguments(initial_effect),
-        controls=(
-            {
-                "reference": "control-form",
-                "kind": "form",
-                "intent": "unsubscribe",
-            },
-        ),
-        observation_reference="state-form",
-        final_step={
-            "sequence": 1,
-            "operation": "open_entry",
-            "state": "action_required",
-            "reference": "state-form",
-        },
-        owner=prior_owner,
-    )
-    extension_action = _accepted_action()
-    operations = extension_action["payload"]["operations"]
-    assert isinstance(operations, list)
-    operations.append(
-        {
-            "operation_reference": "step-2",
-            "kind": "submit_form",
-            "target_reference": "control-form",
-        }
-    )
+    assert initial_effect is not None
+    extension_action = _two_step_action()
 
     class BlankBrowser:
         def __init__(self):
@@ -723,7 +991,7 @@ def test_audited_continuation_executes_only_appended_operation_from_blank_browse
 
         def execute_operation(self, effect, _private_url, operation):
             self.calls.append(operation.operation_reference)
-            assert operation.operation_reference == "step-2"
+            assert operation.operation_reference == "unsubscribe-operation:submit-form"
             return UnsubscribeObservation(
                 state=UnsubscribePageState.DONE,
                 state_reference="state-done",
@@ -760,13 +1028,13 @@ def test_audited_continuation_executes_only_appended_operation_from_blank_browse
     result = fixture.operation.execute(
         fixture.task.id,
         fixture.task.execution_generation,
-        audit_agent_run_id=fixture.audit_run.id,
+        audit_agent_run_id=second_audit.id,
         accepted_action=extension_action,
     )
 
     assert result["status"] == "done", result
     assert result["outcome"] == UnsubscribeOutcome.DONE.value
-    assert browser.calls == ["receipt", "step-2"]
+    assert browser.calls == ["receipt", "unsubscribe-operation:submit-form"]
     with sqlite3.connect(fixture.email_store.path) as db:
         durable_steps = db.execute(
             "select sequence, effect_digest, operation from "
@@ -777,11 +1045,12 @@ def test_audited_continuation_executes_only_appended_operation_from_blank_browse
         (1, "open_entry"),
         (2, "submit_form"),
     ]
-    assert durable_steps[0][1] == initial_effect.effect_digest
-    assert durable_steps[1][1] != initial_effect.effect_digest
+    assert durable_steps[0][1] == initial_effect["effect_digest"]
+    assert durable_steps[1][1] != initial_effect["effect_digest"]
     claim = fixture.email_store.get_email_unsubscribe_claim(ACTION_IDENTITY)
     assert claim is not None
     assert durable_steps[1][1] == claim["effect_digest"]
+    assert first_audit.status == "completed"
 
 
 @pytest.mark.parametrize("tamper", ("prefix", "effect_audit_run"))

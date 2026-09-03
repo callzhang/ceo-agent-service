@@ -116,6 +116,24 @@ class EmailUnsubscribeAuditOperation:
                 return self._failed("unsubscribe_classification_missing")
             plan = _current_action_plan(classification)
             _validate_current_plan(identity, classification, plan)
+            action = ProposedAction.model_validate(accepted_action)
+            terminal_effect = _terminal_expected_effect(task, action)
+            terminal_operations = terminal_effect["operations"]
+            if (
+                not isinstance(terminal_operations, list)
+                or audit_run.proposal_revision != len(terminal_operations) - 1
+            ):
+                raise ValueError("accepted unsubscribe proposal revision is invalid")
+            terminal_snapshot = (
+                self.email_store.get_email_unsubscribe_terminal_snapshot(
+                    task.trigger_message_id,
+                    task_id=task.id,
+                    task_execution_generation=task.execution_generation,
+                    expected_effect=terminal_effect,
+                )
+            )
+            if terminal_snapshot is not None:
+                return _terminal_snapshot_result(terminal_snapshot)
             locator = _locator_from_classification(classification, identity)
             continuation_value = self.email_store.get_email_unsubscribe_continuation(
                 task.trigger_message_id
@@ -131,7 +149,6 @@ class EmailUnsubscribeAuditOperation:
                     ),
                 )
             )
-            action = ProposedAction.model_validate(accepted_action)
             effect = accepted_email_unsubscribe_effect(
                 task,
                 action,
@@ -389,6 +406,79 @@ def _task_payload(task: ReplyTask) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError("email task metadata must be an object")
     return payload
+
+
+def _terminal_expected_effect(
+    task: ReplyTask,
+    accepted_action: ProposedAction,
+) -> dict[str, object]:
+    """Validate a terminal proposal without rebuilding deleted continuation state."""
+
+    payload = accepted_action.payload
+    if set(payload) != {"operations"}:
+        raise ValueError("accepted unsubscribe payload must contain exact operations")
+    operations_value = payload.get("operations")
+    if (
+        not isinstance(operations_value, Sequence)
+        or isinstance(operations_value, str | bytes | bytearray)
+        or not operations_value
+        or any(not isinstance(item, Mapping) for item in operations_value)
+    ):
+        raise ValueError("accepted unsubscribe operations must be a non-empty list")
+    typed_operations = tuple(
+        UnsubscribeOperation.from_mapping(item)
+        for item in operations_value
+        if isinstance(item, Mapping)
+    )
+    operation_mappings = [
+        {
+            "operation_reference": operation.operation_reference,
+            "kind": operation.kind.value,
+            "target_reference": operation.target_reference,
+        }
+        for operation in typed_operations
+    ]
+    initial = accepted_action.model_dump(mode="json")
+    initial["payload"] = {"operations": [operation_mappings[0]]}
+    initial_effect = accepted_email_unsubscribe_effect(
+        task,
+        ProposedAction.model_validate(initial),
+    )
+    return {
+        "action_identity": initial_effect.action_identity,
+        "action_plan_id": initial_effect.action_plan_id,
+        "action_plan_version": initial_effect.action_plan_version,
+        "classification_id": initial_effect.classification_id,
+        "account_id": initial_effect.account_id,
+        "stable_message_identity": initial_effect.stable_message_identity,
+        "thread_identity": initial_effect.thread_identity,
+        "entry_reference": initial_effect.entry_reference,
+        "operations": operation_mappings,
+        "network_policy_reference": initial_effect.network_policy_reference,
+        "network_policy_origin_references": list(
+            initial_effect.network_policy_origin_references
+        ),
+    }
+
+
+def _terminal_snapshot_result(
+    snapshot: Mapping[str, object],
+) -> dict[str, object]:
+    receipt = snapshot.get("receipt")
+    if not isinstance(receipt, Mapping):
+        raise ValueError("unsubscribe terminal receipt is unavailable")
+    return {
+        "status": "done",
+        "outcome": receipt["outcome"],
+        "receipt_id": receipt["receipt_id"],
+        "evidence": receipt["evidence"],
+        "result_text": receipt["result_text"],
+        "observation_digest": receipt["observation_digest"],
+        "started_at": receipt["started_at"],
+        "completed_at": receipt["completed_at"],
+        "summary": "Unsubscribe already completed.",
+        "error": AgentError().model_dump(mode="json"),
+    }
 
 
 def _validate_task_identity(
