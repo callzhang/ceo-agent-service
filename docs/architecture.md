@@ -98,7 +98,7 @@ Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 A
 
 ### Email Agent task 映射
 
-> **政策与当前代码必须区分：** 以下 Email audited-v2 内容是已批准的生命周期政策，后续实现提交必须满足。当前分支尚未将运行时路由从 `email_unsubscribe_consumer_direct_v1` 切换到 `email_unsubscribe_audited_v2`；Consumer-direct v1 只是正在被替换的当前代码事实，不是目标政策。Email/audited-v2 尚未部署，也未在生产启用。
+> **实现与部署状态：** Email audited-v2 lifecycle 已在本分支实现并通过开发/loopback 验证；实际 launchd 仍运行 main checkout，因此尚未部署，也未在生产启用。
 
 Email 分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
 `label`、`mark_read`、`archive`、`move`、`trash`；它们属于 Email 子系统，由独立

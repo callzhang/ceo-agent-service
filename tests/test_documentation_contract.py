@@ -156,15 +156,13 @@ def test_current_email_docs_describe_audited_v2_boundary() -> None:
     for section in email_sections:
         semantic_section = "".join(section.split())
 
-        assert "以下 Email audited-v2 内容是已批准的生命周期政策" in section
-        assert "后续实现提交必须满足" in section
-        assert "当前分支尚未将运行时路由" in section
-        assert "`email_unsubscribe_consumer_direct_v1`" in section
-        assert "切换到 `email_unsubscribe_audited_v2`" in section
-        assert "Consumer-direct v1" in section
-        assert "不是目标政策" in section
+        assert "Email audited-v2 lifecycle 已在本分支实现" in section
+        assert "通过开发/loopback 验证" in section
+        assert "实际 launchd 仍运行 main checkout" in section
         assert "尚未部署" in section
         assert "未在生产启用" in section
+        assert "email_unsubscribe_consumer_direct_v1" not in section
+        assert "Consumer-direct" not in section
 
         assert "`label`、`mark_read`、`archive`、`move`、`trash`" in section
         assert "不创建 CEO Agent task，也不创建 Consumer/Audit run" in section
