@@ -48,7 +48,7 @@ from app.skill_features import FeatureRegistry
 _PAYLOAD_SCHEMA = "email_agent_action.v1"
 _ACTION_LIFECYCLE_VERSIONS = {
     EmailAction.AUTO_REPLY: "consumer_audit_v1",
-    EmailAction.UNSUBSCRIBE: "email_unsubscribe_consumer_direct_v1",
+    EmailAction.UNSUBSCRIBE: "email_unsubscribe_audited_v2",
 }
 _MAX_METADATA_TEXT_LENGTH = 64 * 1024
 _MAX_METADATA_JSON_LENGTH = 256 * 1024
@@ -243,11 +243,53 @@ def _assert_safe_email_metadata(value: object) -> None:
             raise ValueError("email action metadata is too large")
         canonical = _canonicalize_metadata(value)
         assert_no_credentials(canonical)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError, OverflowError) as exc:
         raise EmailAgentTaskMetadataError(
             "email action metadata is not safe for persistence"
         ) from exc
     if _contains_forbidden_metadata(canonical):
+        raise EmailAgentTaskMetadataError(
+            "email action metadata is not safe for persistence"
+        )
+
+
+def _contains_raw_url_or_query_metadata(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return any(
+            _contains_raw_url_or_query_metadata(key)
+            or _contains_raw_url_or_query_metadata(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, Sequence) and not isinstance(value, str):
+        return isinstance(value, bytes | bytearray) or any(
+            _contains_raw_url_or_query_metadata(item) for item in value
+        )
+    if not isinstance(value, str):
+        return False
+    for token in value.split():
+        candidate = token.strip("'\"()[]{}<>,.;")
+        parsed = urlsplit(candidate)
+        if (
+            parsed.scheme.casefold() in {"http", "https", "file", "mailto"}
+            or (parsed.scheme and "://" in candidate)
+            or parsed.query
+            or parsed.fragment
+        ):
+            return True
+    return False
+
+
+def assert_safe_email_unsubscribe_metadata(value: object) -> None:
+    """Reject private material from durable unsubscribe task metadata."""
+
+    _assert_safe_email_metadata(value)
+    try:
+        canonical = _canonicalize_metadata(value)
+    except (TypeError, ValueError, RecursionError, OverflowError) as exc:
+        raise EmailAgentTaskMetadataError(
+            "email action metadata is not safe for persistence"
+        ) from exc
+    if _contains_raw_url_or_query_metadata(canonical):
         raise EmailAgentTaskMetadataError(
             "email action metadata is not safe for persistence"
         )
@@ -802,7 +844,10 @@ class EmailAgentTaskAdapter:
             payload["unsubscribe_network_policy_origin_references"] = list(
                 task_input.unsubscribe_network_policy_origin_references
             )
-        _assert_safe_email_metadata(payload)
+        if action_type is EmailAction.UNSUBSCRIBE:
+            assert_safe_email_unsubscribe_metadata(payload)
+        else:
+            _assert_safe_email_metadata(payload)
         return payload
 
     @staticmethod

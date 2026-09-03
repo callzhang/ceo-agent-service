@@ -34,6 +34,7 @@ from app.email_store import (
     email_unsubscribe_effect_digest,
 )
 from app.email_task_adapter import email_action_identity
+from app.store import AutoReplyStore
 
 
 def _classification(
@@ -242,6 +243,120 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         return db.execute(sql, parameters).fetchall()
+
+
+def test_lists_only_nonterminal_legacy_unsubscribe_task_ids_read_only(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "legacy-unsubscribe-inventory.sqlite3"
+    task_store = AutoReplyStore(database)
+    email_store = EmailStore(database)
+
+    def create_task(
+        name: str,
+        *,
+        lifecycle_version: str,
+        channel: str = "email",
+    ) -> int:
+        payload = {
+            "schema": "email_agent_action.v1",
+            "action_type": "unsubscribe",
+            "lifecycle_version": lifecycle_version,
+            "name": name,
+        }
+        return task_store.ensure_reply_task(
+            channel=channel,
+            conversation_id=f"conversation:{name}",
+            conversation_title=name,
+            single_chat=False,
+            trigger_message_id=f"trigger:{name}",
+            trigger_create_time="2026-09-02T12:00:00+00:00",
+            trigger_sender="newsletter@example.com",
+            trigger_text="Legacy unsubscribe inventory fixture.",
+            trigger_message_json=json.dumps(payload, sort_keys=True),
+        ).id
+
+    legacy = "email_unsubscribe_consumer_direct_v1"
+    pending_id = create_task("legacy-pending", lifecycle_version=legacy)
+    malformed_payload = "{malformed"
+    malformed_id = task_store.ensure_reply_task(
+        channel="email",
+        conversation_id="conversation:malformed-pending",
+        conversation_title="malformed-pending",
+        single_chat=False,
+        trigger_message_id="trigger:malformed-pending",
+        trigger_create_time="2026-09-02T12:00:00+00:00",
+        trigger_sender="newsletter@example.com",
+        trigger_text="Malformed durable Email task fixture.",
+        trigger_message_json=malformed_payload,
+    ).id
+    create_task(
+        "audited-v2",
+        lifecycle_version="email_unsubscribe_audited_v2",
+    )
+    processing_id = create_task("legacy-processing", lifecycle_version=legacy)
+    done_id = create_task("legacy-done", lifecycle_version=legacy)
+    failed_id = create_task("legacy-failed", lifecycle_version=legacy)
+    sent_id = create_task("legacy-sent", lifecycle_version=legacy)
+    create_task("non-email", lifecycle_version=legacy, channel="dingtalk")
+    with sqlite3.connect(database) as db:
+        db.executemany(
+            "update reply_tasks set status=? where id=?",
+            (
+                ("processing", processing_id),
+                ("done", done_id),
+                ("failed", failed_id),
+                ("sent", sent_id),
+            ),
+        )
+
+    before = [
+        tuple(row)
+        for row in _fetchall(
+            database,
+            """
+            select id, channel, status, trigger_message_json
+            from reply_tasks
+            order by id
+            """,
+        )
+    ]
+
+    result = email_store.list_nonterminal_legacy_unsubscribe_task_ids()
+
+    after = [
+        tuple(row)
+        for row in _fetchall(
+            database,
+            """
+            select id, channel, status, trigger_message_json
+            from reply_tasks
+            order by id
+            """,
+        )
+    ]
+    assert result == tuple(sorted((pending_id, processing_id)))
+    assert malformed_id not in result
+    malformed_before = next(row for row in before if row[0] == malformed_id)
+    malformed_after = next(row for row in after if row[0] == malformed_id)
+    assert malformed_before == malformed_after
+    assert malformed_after[2] == "pending"
+    assert malformed_after[3] == malformed_payload
+    assert sent_id not in result
+    sent_before = next(row for row in before if row[0] == sent_id)
+    sent_after = next(row for row in after if row[0] == sent_id)
+    assert sent_before == sent_after
+    assert sent_after[2] == "sent"
+    assert sent_after[3] == json.dumps(
+        {
+            "schema": "email_agent_action.v1",
+            "action_type": "unsubscribe",
+            "lifecycle_version": legacy,
+            "name": "legacy-sent",
+        },
+        sort_keys=True,
+    )
+    assert after == before
 
 
 _UNSUBSCRIBE_OWNER_A = {

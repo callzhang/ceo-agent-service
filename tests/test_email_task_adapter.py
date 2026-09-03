@@ -35,6 +35,11 @@ from app.email_task_producer import EmailActionTaskProducer
 from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
+from app.task_lifecycle import (
+    TaskLifecycle,
+    select_task_lifecycle,
+    validate_audited_email_task,
+)
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -49,6 +54,7 @@ def _plan(
     account_id: str = "account-primary",
     instruction: str = "Reply in Chinese and acknowledge receipt.",
     classification_source: str = "model",
+    category: EmailCategory = EmailCategory.WORK,
 ):
     parameters = {}
     for action in actions:
@@ -62,7 +68,7 @@ def _plan(
         action_plan_version=version,
         classification_id=classification_id,
         account_id=account_id,
-        category=EmailCategory.WORK,
+        category=category,
         classification_source=classification_source,
         confidence=0.98,
         model_id="email-model:2026-08-30:sha256:test",
@@ -515,6 +521,67 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
 
     effect = accepted_email_unsubscribe_effect(route.task, accepted)
     assert effect.entry_reference == entries[0]["reference"]
+
+
+def test_authorized_unsubscribe_is_bound_to_audited_v2_lifecycle(
+    tmp_path: Path,
+) -> None:
+    plan = _plan(
+        (EmailAction.UNSUBSCRIBE,),
+        category=EmailCategory.SUBSCRIPTION,
+    )
+    private_url = "https://news.example.com/unsubscribe?token=private-token"
+    task_input = replace(
+        _task_input(),
+        list_unsubscribe=f"<{private_url}>",
+        list_unsubscribe_post="List-Unsubscribe=One-Click",
+        unsubscribe_authentication=UnsubscribeAuthenticationEvidence(
+            dkim_covers_list_unsubscribe=True,
+            dkim_covers_list_unsubscribe_post=True,
+            evidence_reference="dkim-evidence:mail-41",
+        ),
+    )
+
+    [route] = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+    ).ensure_action_plan_tasks(plan, task_input)
+    payload = json.loads(route.task.trigger_message_json)
+
+    assert payload["lifecycle_version"] == "email_unsubscribe_audited_v2"
+    assert route.task.channel == route.context.channel == "email"
+    assert route.action_type is EmailAction.UNSUBSCRIBE
+    assert payload["action_type"] == "unsubscribe"
+    assert payload["action_identity"] == route.task.trigger_message_id
+    assert route.context.trigger_message_id == route.task.trigger_message_id
+    assert route.context.trigger_raw_payload == payload
+    assert payload["account_id"] == plan.account_id
+    assert payload["stable_message_identity"] == task_input.stable_message_identity
+    assert payload["thread_identity"] == task_input.thread_identity
+    assert payload["action_plan_id"] == plan.action_plan_id
+    assert payload["action_plan_version"] == plan.action_plan_version
+    assert payload["classification_id"] == plan.classification_id
+    assert payload["model_id"] == plan.model_id
+    assert payload["config_version"] == plan.config_version
+    assert payload["unsubscribe_entries"][0]["reference"].startswith(
+        "unsubscribe-entry:"
+    )
+    for forbidden in (
+        private_url,
+        "private-token",
+        "do-not-persist",
+        "/Users/derek/private",
+        "attachment.bin",
+        "contract.pdf",
+        "application/pdf",
+    ):
+        assert forbidden not in route.task.trigger_message_json
+    assert (
+        select_task_lifecycle(route.task, route.context)
+        is TaskLifecycle.CONSUMER_AUDIT
+    )
+    assert validate_audited_email_task(route.task, route.context) is True
 
 
 @pytest.mark.parametrize(

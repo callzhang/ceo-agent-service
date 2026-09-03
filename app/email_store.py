@@ -1287,6 +1287,16 @@ def _validate_unsubscribe_opaque(value: object, *, field: str) -> str:
     return value
 
 
+def is_valid_unsubscribe_opaque_reference(value: object) -> bool:
+    """Return whether a durable unsubscribe reference is bounded and opaque."""
+
+    try:
+        _validate_unsubscribe_opaque(value, field="unsubscribe_reference")
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
 def _validate_unsubscribe_operations(
     operations: Sequence[Mapping[str, object]],
 ) -> list[dict[str, str]]:
@@ -1563,6 +1573,39 @@ class EmailStore:
         db.execute("pragma foreign_keys = on")
         db.row_factory = sqlite3.Row
         return db
+
+    def list_nonterminal_legacy_unsubscribe_task_ids(self) -> tuple[int, ...]:
+        """Inventory nonterminal legacy unsubscribe tasks without changing them."""
+
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select id
+                from reply_tasks
+                where channel='email'
+                  and status in ('pending', 'processing')
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(trigger_message_json, '$.schema')
+                          else null
+                      end='email_agent_action.v1'
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(trigger_message_json, '$.action_type')
+                          else null
+                      end='unsubscribe'
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(
+                              trigger_message_json,
+                              '$.lifecycle_version'
+                          )
+                          else null
+                      end='email_unsubscribe_consumer_direct_v1'
+                order by id
+                """
+            ).fetchall()
+        return tuple(int(row["id"]) for row in rows)
 
     def _initialize(self) -> None:
         with self._connect() as db:
