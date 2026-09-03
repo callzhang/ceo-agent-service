@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from urllib.parse import urlsplit
 
 import pytest
@@ -40,6 +40,7 @@ from app.email_unsubscribe import (
     UnsubscribeEntrySource,
     UnsubscribeContinuationResult,
     UnsubscribeDiscoveredControl,
+    UnsubscribeBrowserError,
     UnsubscribeExecutor,
     UnsubscribeOperation,
     UnsubscribeOperationKind,
@@ -514,12 +515,14 @@ class _FixtureHandler(BaseHTTPRequestHandler):
 
 class _BlockedHandler(BaseHTTPRequestHandler):
     requests: list[tuple[str, str]] = []
+    request_received = Event()
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
 
     def _record(self, method: str) -> None:
         type(self).requests.append((method, self.path))
+        type(self).request_received.set()
         self.send_response(204)
         self.end_headers()
 
@@ -559,6 +562,7 @@ def _loopback_server_pair():
     _FixtureHandler.requests = []
     _FixtureHandler.request_details = []
     _BlockedHandler.requests = []
+    _BlockedHandler.request_received.clear()
     blocked = _LoopbackHTTPServer(("127.0.0.1", 0), _BlockedHandler)
     blocked_thread = Thread(target=blocked.serve_forever, daemon=True)
     blocked_thread.start()
@@ -1767,6 +1771,48 @@ def test_unapproved_redirect_and_subresources_are_blocked_before_request(
             context.close()
 
     assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+    assert _BlockedHandler.requests == []
+
+
+def test_unapproved_websocket_is_blocked_before_chromium_handshake(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    with _loopback_server_pair() as (allowed_origin, blocked_origin):
+        private_url = f"{allowed_origin}/direct"
+        store, effect, _entry = _setup(
+            tmp_path,
+            private_url,
+            _operations(UnsubscribeOperationKind.OPEN_ENTRY),
+        )
+        del store
+        context = chrome_browser.new_context()
+        browser = PlaywrightUnsubscribeBrowser(
+            context.new_page(),
+            timeout_ms=2_000,
+            network_policy=BrowserNetworkPolicy(
+                allowed_origins=frozenset({allowed_origin}),
+                allow_loopback_for_tests=True,
+            ),
+        )
+        try:
+            browser.page.goto(private_url, wait_until="domcontentloaded")
+            websocket_url = blocked_origin.replace("http://", "ws://", 1)
+            browser.page.evaluate(
+                "url => { window.__blockedSocket = new WebSocket(url); }",
+                f"{websocket_url}/socket",
+            )
+            browser.page.wait_for_timeout(500)
+
+            assert _BlockedHandler.request_received.is_set() is False
+            with pytest.raises(
+                UnsubscribeBrowserError,
+                match="browser network request rejected",
+            ):
+                browser.discover_current_page(effect)
+        finally:
+            context.close()
+
     assert _BlockedHandler.requests == []
 
 

@@ -1209,6 +1209,7 @@ class PlaywrightUnsubscribeBrowser:
             raise ValueError("browser network policy requires a clean context")
         self._context.set_default_timeout(timeout_ms)
         self._context.set_default_navigation_timeout(timeout_ms)
+        self._context.route_web_socket("**/*", self._reject_websocket)
         self._context.route("**/*", self._guard_request)
         self.page.route("**/*", self._guard_request)
         self._context.on("page", self._reject_new_page)
@@ -1262,6 +1263,16 @@ class PlaywrightUnsubscribeBrowser:
             route.abort()
             return
         route.fulfill(response=response)
+
+    def _reject_websocket(self, websocket_route: object) -> None:
+        """Reject every WebSocket before Chromium connects to its server."""
+
+        # Returning without connect_to_server() keeps Playwright's route fully
+        # local: the page side is opened virtually, but no server handshake is
+        # made. WebSocketRoute.close() cannot be called synchronously from this
+        # callback because it waits on the same Playwright event dispatcher.
+        self._blocked_request = True
+        del websocket_route
 
     def _reject_new_page(self, page: object) -> None:
         if page is self.page:

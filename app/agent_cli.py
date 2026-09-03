@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import errno
 import json
@@ -10,7 +11,6 @@ import subprocess
 import tempfile
 import zipfile
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from xml.etree import ElementTree
@@ -806,7 +806,7 @@ server = FastMCP(
         openWorldHint=True,
     ),
 )
-def execute_audited_email_unsubscribe_tool(
+async def execute_audited_email_unsubscribe_tool(
     task_id: int,
     execution_generation: str,
     audit_agent_run_id: int,
@@ -827,18 +827,14 @@ def execute_audited_email_unsubscribe_tool(
     from app.config import worker_db_path
     from app.email_worker import run_audited_email_unsubscribe
 
-    with ThreadPoolExecutor(
-        max_workers=1,
-        thread_name_prefix="audited-email-unsubscribe",
-    ) as executor:
-        return executor.submit(
-            run_audited_email_unsubscribe,
-            worker_db_path(),
-            task_id,
-            execution_generation,
-            audit_agent_run_id=audit_agent_run_id,
-            accepted_action=accepted_action,
-        ).result()
+    return await asyncio.to_thread(
+        run_audited_email_unsubscribe,
+        worker_db_path(),
+        task_id,
+        execution_generation,
+        audit_agent_run_id=audit_agent_run_id,
+        accepted_action=accepted_action,
+    )
 
 
 @server.tool(
