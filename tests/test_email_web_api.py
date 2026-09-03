@@ -546,6 +546,8 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
             }
         ],
     }
+    assert "result_text_truncated" not in event
+    assert "result_text_digest" not in event
     serialized = json.dumps(event, sort_keys=True)
     assert fixture.unrelated_run.id not in event["consumer_run_ids"]
     assert all(marker not in serialized for marker in fixture.private_markers)

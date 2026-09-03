@@ -701,6 +701,30 @@ def _persist_unsubscribe_result_fixture(
     return store, authorization, receipt
 
 
+def _downgrade_email_database_to_v16(database: Path) -> None:
+    """Recreate the exact parent-v16 receipt shape from a current fixture."""
+
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "drop index if exists "
+            "idx_email_unsubscribe_receipts_classification_action"
+        )
+        receipt_columns = {
+            row[1]
+            for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
+        }
+        for column in ("result_text_digest", "result_text_truncated"):
+            if column in receipt_columns:
+                db.execute(
+                    f"alter table email_unsubscribe_receipts drop column {column}"
+                )
+        db.execute("delete from email_schema_migrations")
+        db.execute(
+            "insert into email_schema_migrations(version, applied_at) values (16, ?)",
+            ("2026-09-03T00:00:00+00:00",),
+        )
+
+
 def _rewrite_required_identifier_case(database: Path, *, quote: bool = False) -> None:
     required_identifiers = set(email_store_module._REQUIRED_TABLE_COLUMNS)
     for columns in email_store_module._REQUIRED_TABLE_COLUMNS.values():
@@ -1818,6 +1842,7 @@ def test_v10_unsubscribe_claim_migrates_to_v11_effect_prefix_chain(
         **authorization,
         owner=_UNSUBSCRIBE_OWNER_A,
     )["acquired"]
+    _downgrade_email_database_to_v16(database)
     with sqlite3.connect(database) as db:
         db.execute("drop table email_unsubscribe_continuations")
         db.execute("drop table email_unsubscribe_effects")
@@ -1851,6 +1876,8 @@ def test_exact_v14_unsubscribe_schema_migrates_with_nullable_positive_audit_run(
         **authorization,
         owner=_UNSUBSCRIBE_OWNER_A,
     )["acquired"]
+
+    _downgrade_email_database_to_v16(database)
 
     with sqlite3.connect(database) as db:
         db.execute("pragma foreign_keys=off")
@@ -2294,6 +2321,10 @@ def test_email_store_migration_is_idempotent(tmp_path: Path):
     assert len(_fetchall(database, "select * from email_classifications")) == 1
     assert len(_fetchall(database, "select * from email_action_plans")) == 1
     assert len(_fetchall(database, "select * from email_actions")) == 1
+
+
+def test_email_schema_version_is_17() -> None:
+    assert email_store_module.EMAIL_SCHEMA_VERSION == 17
 
 
 def test_current_schema_initialization_preserves_delete_journal_mode(
@@ -2894,6 +2925,66 @@ def test_current_schema_requires_unsubscribe_receipt_classification_index(
         }
 
 
+@pytest.mark.parametrize(
+    "missing_column",
+    ("result_text_truncated", "result_text_digest"),
+)
+def test_current_v17_schema_missing_result_integrity_column_fails_without_repair(
+    tmp_path: Path,
+    missing_column: str,
+) -> None:
+    database = tmp_path / f"missing-{missing_column}.sqlite3"
+    EmailStore(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            f"alter table email_unsubscribe_receipts drop column {missing_column}"
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match=missing_column):
+        EmailStore(database)
+    with sqlite3.connect(database) as db:
+        assert missing_column not in {
+            row[1]
+            for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
+        }
+
+
+def test_legitimate_v16_upgrades_to_v17_with_receipt_integrity_metadata(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v16-to-v17.sqlite3"
+    _, authorization, receipt = _persist_unsubscribe_result_fixture(
+        database,
+        result_text="Unsubscribed",
+    )
+    _downgrade_email_database_to_v16(database)
+
+    reopened = EmailStore(database)
+
+    migrated = reopened.get_email_unsubscribe_receipt(
+        str(authorization["action_identity"])
+    )
+    assert migrated is not None
+    bounded_digest = sha256(receipt["result_text"].encode("utf-8")).hexdigest()
+    assert migrated["result_text_truncated"] is False
+    assert migrated["result_text_digest"] == bounded_digest
+    with sqlite3.connect(database) as db:
+        assert [
+            row[0]
+            for row in db.execute(
+                "select version from email_schema_migrations order by version"
+            )
+        ] == [16, 17]
+        assert {
+            row[1]
+            for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
+        } >= {"result_text_truncated", "result_text_digest"}
+        assert "idx_email_unsubscribe_receipts_classification_action" in {
+            row[1]
+            for row in db.execute("pragma index_list(email_unsubscribe_receipts)")
+        }
+
+
 def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
     tmp_path: Path,
 ) -> None:
@@ -3118,7 +3209,7 @@ def test_v2_processed_without_plan_upgrades_to_explicit_legacy_once(
             database,
             "select version from email_schema_migrations order by version",
         )
-    ] == [2, email_store_module.EMAIL_SCHEMA_VERSION]
+    ] == [2, 16, email_store_module.EMAIL_SCHEMA_VERSION]
 
     EmailStore(database)
 
@@ -3159,6 +3250,8 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
                 "alter table email_action_plans "
                 "drop column legacy_serialization_pre_v16"
             )
+    _downgrade_email_database_to_v16(database)
+    with sqlite3.connect(database) as db:
         db.execute("update email_schema_migrations set version=15")
 
     reopened = EmailStore(database)
@@ -3173,6 +3266,13 @@ def test_exact_v15_legacy_action_plan_upgrades_without_rewriting_history(
     assert stored_plan["action_plan_id"] == historical_plan_id
     assert stored_plan["authorization_snapshot_json"] is None
     assert stored_plan["legacy_serialization_pre_v16"] == 1
+    assert [
+        row["version"]
+        for row in _fetchall(
+            database,
+            "select version from email_schema_migrations order by version",
+        )
+    ] == [15, 16, 17]
     projected = reopened.get_classification(classification.classification_id)
     assert projected is not None
     assert projected["action_plan"]["action_plan_id"] == historical_plan_id
@@ -3237,6 +3337,8 @@ def test_upgraded_database_does_not_extend_legacy_permission_to_new_v16_plan(
                 "alter table email_action_plans "
                 "drop column legacy_serialization_pre_v16"
             )
+    _downgrade_email_database_to_v16(database)
+    with sqlite3.connect(database) as db:
         db.execute("update email_schema_migrations set version=15")
 
     upgraded = EmailStore(database)
@@ -3551,6 +3653,31 @@ def test_concurrent_first_initialization_is_transactionally_idempotent(
     assert EmailStore(database).list_training_examples() == []
 
 
+def test_concurrent_v16_to_v17_migration_is_transactionally_idempotent(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "concurrent-v16-v17.sqlite3"
+    EmailStore(database)
+    _downgrade_email_database_to_v16(database)
+    ready = Barrier(2)
+
+    def initialize(_: int) -> EmailStore:
+        ready.wait()
+        return EmailStore(database)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        stores = list(executor.map(initialize, range(2)))
+
+    assert len(stores) == 2
+    assert [
+        row["version"]
+        for row in _fetchall(
+            database,
+            "select version from email_schema_migrations order by version",
+        )
+    ] == [16, 17]
+
+
 @pytest.mark.parametrize("missing_table", ["email_messages", "email_actions"])
 def test_normal_startup_does_not_repair_missing_durable_rows(
     tmp_path: Path,
@@ -3580,6 +3707,8 @@ def test_versioned_task3_upgrade_does_not_run_prototype_backfill(tmp_path: Path)
     )
     with sqlite3.connect(database) as db:
         db.execute("delete from email_actions")
+    _downgrade_email_database_to_v16(database)
+    with sqlite3.connect(database) as db:
         db.execute("update email_schema_migrations set version=2")
 
     with pytest.raises(EmailPersistenceCorruption, match="direct action row set"):
@@ -5668,7 +5797,7 @@ def test_startup_rejects_noncanonical_or_unsafe_unsubscribe_result_text(
 
     with pytest.raises(
         EmailPersistenceCorruption,
-        match="unsubscribe receipt result text",
+        match="unsubscribe receipt",
     ):
         EmailStore(database)
 
@@ -5690,7 +5819,7 @@ def test_startup_rejects_wrong_untruncated_unsubscribe_observation_digest(
 
     with pytest.raises(
         EmailPersistenceCorruption,
-        match="unsubscribe receipt result text",
+        match="unsubscribe receipt",
     ):
         EmailStore(database)
 
@@ -5725,7 +5854,7 @@ def test_startup_rejects_empty_nonempty_unsubscribe_digest_mismatch(
 
     with pytest.raises(
         EmailPersistenceCorruption,
-        match="unsubscribe receipt result text",
+        match="unsubscribe receipt",
     ):
         EmailStore(database)
 
@@ -5774,11 +5903,113 @@ def test_valid_16kib_truncated_unsubscribe_result_preserves_full_digest(
     assert len(expected_text.encode("utf-8")) == 16 * 1024
     assert receipt["result_text"] == expected_text
     assert receipt["observation_digest"] == expected_digest
+    assert receipt["result_text_truncated"] is True
+    assert receipt["result_text_digest"] == sha256(
+        expected_text.encode("utf-8")
+    ).hexdigest()
+    assert receipt["result_text_digest"] != expected_digest
     assert expected_digest == sha256(full_observation.encode("utf-8")).hexdigest()
     reopened = EmailStore(database)
     assert reopened.get_email_unsubscribe_receipt(
         str(authorization["action_identity"])
-    )["observation_digest"] == expected_digest
+    )["result_text_digest"] == receipt["result_text_digest"]
+
+
+def test_exact_16kib_untruncated_result_requires_matching_observation_digest(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "unsubscribe-exact-16kib-untruncated.sqlite3"
+    _, authorization, receipt = _persist_unsubscribe_result_fixture(
+        database,
+        result_text="A" * (16 * 1024),
+    )
+    assert receipt["result_text_truncated"] is False
+    assert receipt["observation_digest"] == receipt["result_text_digest"]
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_unsubscribe_receipts set observation_digest=? "
+            "where action_identity=?",
+            ("f" * 64, authorization["action_identity"]),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="observation digest"):
+        EmailStore(database)
+
+
+def test_stored_bounded_result_digest_is_always_verified(tmp_path: Path) -> None:
+    database = tmp_path / "unsubscribe-bounded-digest.sqlite3"
+    _, authorization, _ = _persist_unsubscribe_result_fixture(
+        database,
+        result_text="Unsubscribed",
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_unsubscribe_receipts set result_text_digest=? "
+            "where action_identity=?",
+            ("f" * 64, authorization["action_identity"]),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="bounded result digest"):
+        EmailStore(database)
+
+
+def test_empty_result_persists_empty_integrity_metadata(tmp_path: Path) -> None:
+    database = tmp_path / "unsubscribe-empty-integrity.sqlite3"
+    _, _, receipt = _persist_unsubscribe_result_fixture(database, result_text="")
+
+    assert receipt["result_text"] == ""
+    assert receipt["observation_digest"] == ""
+    assert receipt["result_text_digest"] == ""
+    assert receipt["result_text_truncated"] is False
+
+
+def test_v16_migration_preserves_legacy_full_observation_digest_for_truncation(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v16-legacy-truncated.sqlite3"
+    full_observation = "A" * (16 * 1024 + 777)
+    _, authorization, receipt = _persist_unsubscribe_result_fixture(
+        database,
+        result_text=full_observation,
+    )
+    expected_observation_digest = receipt["observation_digest"]
+    _downgrade_email_database_to_v16(database)
+
+    migrated = EmailStore(database).get_email_unsubscribe_receipt(
+        str(authorization["action_identity"])
+    )
+
+    assert migrated is not None
+    assert migrated["result_text_truncated"] is True
+    assert migrated["observation_digest"] == expected_observation_digest
+    assert migrated["result_text_digest"] == sha256(
+        migrated["result_text"].encode("utf-8")
+    ).hexdigest()
+    assert migrated["result_text_digest"] != migrated["observation_digest"]
+
+
+def test_v16_migration_rejects_corrupt_untruncated_observation_digest(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "v16-corrupt-untruncated.sqlite3"
+    _, authorization, _ = _persist_unsubscribe_result_fixture(
+        database,
+        result_text="Unsubscribed",
+    )
+    _downgrade_email_database_to_v16(database)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "update email_unsubscribe_receipts set observation_digest=? "
+            "where action_identity=?",
+            ("f" * 64, authorization["action_identity"]),
+        )
+
+    with pytest.raises(EmailPersistenceCorruption, match="observation digest"):
+        EmailStore(database)
+    assert [
+        row["version"]
+        for row in _fetchall(database, "select version from email_schema_migrations")
+    ] == [16]
 
 
 def _persist_unsubscribe_continuation_fixture(

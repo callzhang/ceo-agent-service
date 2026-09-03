@@ -33,7 +33,7 @@ from app.email_classifier_contracts import (
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 16
+EMAIL_SCHEMA_VERSION = 17
 DIRECT_ACTION_MAX_ATTEMPTS = 3
 # Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
 # durable data limit, independent of any Agent process turn budget.
@@ -353,6 +353,8 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "observation_digest": ("text", True, "''"),
         "started_at": ("text", True, "''"),
         "completed_at": ("text", True, "''"),
+        "result_text_truncated": ("integer", True, "0"),
+        "result_text_digest": ("text", True, "''"),
         "created_at": ("text", True, None),
     },
 }
@@ -485,6 +487,8 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(evidence) != ''",
         "length(result_text) <= 16384",
         "observation_digest = '' or length(observation_digest) = 64",
+        "result_text_truncated in (0, 1)",
+        "result_text_digest = '' or length(result_text_digest) = 64",
         "trim(created_at) != ''",
     ),
 }
@@ -1352,12 +1356,20 @@ def is_valid_unsubscribe_opaque_reference(value: object) -> bool:
 def _validate_durable_unsubscribe_result_text(
     result_text: object,
     observation_digest: object,
+    result_text_truncated: object,
+    result_text_digest: object,
 ) -> None:
     """Require the stored display text to already be canonical and redacted."""
 
-    if not isinstance(result_text, str) or not isinstance(observation_digest, str):
+    if (
+        not isinstance(result_text, str)
+        or not isinstance(observation_digest, str)
+        or not isinstance(result_text_digest, str)
+        or not isinstance(result_text_truncated, int)
+        or result_text_truncated not in {0, 1}
+    ):
         raise EmailPersistenceCorruption(
-            "unsubscribe receipt result text or digest is not text"
+            "unsubscribe receipt result integrity metadata is invalid"
         )
     encoded_length = len(result_text.encode("utf-8"))
     if encoded_length > _MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES:
@@ -1366,27 +1378,35 @@ def _validate_durable_unsubscribe_result_text(
         )
     from app.email_unsubscribe import normalize_unsubscribe_result_text
 
-    canonical_text, recomputed_digest = normalize_unsubscribe_result_text(result_text)
+    canonical_text, bounded_digest = normalize_unsubscribe_result_text(result_text)
     if canonical_text != result_text:
         raise EmailPersistenceCorruption(
             "unsubscribe receipt result text is not canonical and redacted"
         )
     if not result_text:
-        if observation_digest:
+        if observation_digest or result_text_digest or result_text_truncated:
             raise EmailPersistenceCorruption(
-                "unsubscribe receipt result text has a non-empty digest"
+                "unsubscribe receipt empty result has non-empty integrity metadata"
             )
         return
-    if _SHA256_HEX.fullmatch(observation_digest) is None:
-        raise EmailPersistenceCorruption(
-            "unsubscribe receipt result text has an invalid digest"
-        )
     if (
-        encoded_length < _MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES
-        and observation_digest != recomputed_digest
+        _SHA256_HEX.fullmatch(result_text_digest) is None
+        or result_text_digest != bounded_digest
     ):
         raise EmailPersistenceCorruption(
-            "unsubscribe receipt result text digest does not match"
+            "unsubscribe receipt bounded result digest does not match"
+        )
+    if _SHA256_HEX.fullmatch(observation_digest) is None:
+        raise EmailPersistenceCorruption(
+            "unsubscribe receipt observation digest is invalid"
+        )
+    if not result_text_truncated and observation_digest != result_text_digest:
+        raise EmailPersistenceCorruption(
+            "unsubscribe receipt untruncated observation digest does not match"
+        )
+    if result_text_truncated and observation_digest == result_text_digest:
+        raise EmailPersistenceCorruption(
+            "unsubscribe receipt truncated observation digest is not distinct"
         )
 
 
@@ -1988,7 +2008,7 @@ class EmailStore:
             if legacy_unsubscribe_claims:
                 self._finish_v10_unsubscribe_migration(db)
             self._create_indexes_and_triggers(db)
-            if latest_version < EMAIL_SCHEMA_VERSION:
+            if latest_version < 16:
                 is_prototype = latest_version == 0
                 if latest_version < 2:
                     self._migrate_prototype_schema(db)
@@ -2002,10 +2022,15 @@ class EmailStore:
                 db.execute(
                     "update email_action_plans set legacy_serialization_pre_v16=1"
                 )
-                db.execute(
-                    "insert into email_schema_migrations(version, applied_at) values (?, ?)",
-                    (EMAIL_SCHEMA_VERSION, self._now()),
-                )
+                if not is_prototype:
+                    db.execute(
+                        "insert into email_schema_migrations(version, applied_at) "
+                        "values (16, ?)",
+                        (self._now(),),
+                    )
+                latest_version = 16
+            if latest_version == 16:
+                self._migrate_v16_to_v17(db)
             self._validate_durable_state(db)
 
     @classmethod
@@ -2409,6 +2434,92 @@ class EmailStore:
         db.execute(
             "update email_unsubscribe_receipts set completed_at=created_at "
             "where trim(completed_at) = ''"
+        )
+
+    def _migrate_v16_to_v17(self, db: sqlite3.Connection) -> None:
+        """Add explicit bounded-result integrity metadata and its lookup index."""
+
+        columns = self._table_columns(db, "email_unsubscribe_receipts")
+        unexpected = {"result_text_truncated", "result_text_digest"} & columns
+        if unexpected:
+            raise EmailPersistenceCorruption(
+                "schema v16 contains unexpected unsubscribe result metadata: "
+                + ", ".join(sorted(unexpected))
+            )
+        db.execute(
+            "alter table email_unsubscribe_receipts add column "
+            "result_text_truncated integer not null default 0 "
+            "check(result_text_truncated in (0, 1))"
+        )
+        db.execute(
+            "alter table email_unsubscribe_receipts add column "
+            "result_text_digest text not null default '' "
+            "check(result_text_digest = '' or length(result_text_digest) = 64)"
+        )
+        from app.email_unsubscribe import normalize_unsubscribe_result_text
+
+        for row in db.execute(
+            "select action_identity, result_text, observation_digest "
+            "from email_unsubscribe_receipts order by action_identity"
+        ).fetchall():
+            result_text = row["result_text"]
+            observation_digest = row["observation_digest"]
+            if not isinstance(result_text, str) or not isinstance(
+                observation_digest, str
+            ):
+                raise EmailPersistenceCorruption(
+                    "schema v16 unsubscribe result integrity metadata is invalid"
+                )
+            encoded_length = len(result_text.encode("utf-8"))
+            if encoded_length > _MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES:
+                raise EmailPersistenceCorruption(
+                    "schema v16 unsubscribe result exceeds its durable bound"
+                )
+            canonical_text, result_text_digest = (
+                normalize_unsubscribe_result_text(result_text)
+            )
+            if canonical_text != result_text:
+                raise EmailPersistenceCorruption(
+                    "schema v16 unsubscribe result text is not canonical and redacted"
+                )
+            if not result_text:
+                if observation_digest:
+                    raise EmailPersistenceCorruption(
+                        "schema v16 empty result has a non-empty observation digest"
+                    )
+                result_text_digest = ""
+                result_text_truncated = 0
+            else:
+                if _SHA256_HEX.fullmatch(observation_digest) is None:
+                    raise EmailPersistenceCorruption(
+                        "schema v16 unsubscribe observation digest is invalid"
+                    )
+                if observation_digest == result_text_digest:
+                    result_text_truncated = 0
+                elif encoded_length == _MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES:
+                    result_text_truncated = 1
+                else:
+                    raise EmailPersistenceCorruption(
+                        "schema v16 untruncated observation digest does not match"
+                    )
+            db.execute(
+                "update email_unsubscribe_receipts "
+                "set result_text_truncated=?, result_text_digest=? "
+                "where action_identity=?",
+                (
+                    result_text_truncated,
+                    result_text_digest,
+                    row["action_identity"],
+                ),
+            )
+        db.execute(
+            "create index if not exists "
+            "idx_email_unsubscribe_receipts_classification_action "
+            "on email_unsubscribe_receipts(classification_id, action_identity)"
+        )
+        db.execute(
+            "insert into email_schema_migrations(version, applied_at) values (17, ?)",
+            (self._now(),),
         )
 
     @classmethod
@@ -2895,11 +3006,6 @@ class EmailStore:
             """
             create index if not exists idx_email_unsubscribe_claims_status
             on email_unsubscribe_claims(status, updated_at, action_identity)
-            """,
-            """
-            create index if not exists
-                idx_email_unsubscribe_receipts_classification_action
-            on email_unsubscribe_receipts(classification_id, action_identity)
             """,
             """
             create trigger if not exists trg_email_classification_status_insert
@@ -6718,7 +6824,16 @@ class EmailStore:
             raise EmailUnsubscribeReceiptConflict(
                 "unsubscribe observation digest does not match result text"
             )
-        observation_digest = expected_observation_digest if result_text else ""
+        if normalized_result_text:
+            observation_digest = expected_observation_digest
+            result_text_digest = sha256(
+                normalized_result_text.encode("utf-8")
+            ).hexdigest()
+            result_text_truncated = observation_digest != result_text_digest
+        else:
+            observation_digest = ""
+            result_text_digest = ""
+            result_text_truncated = False
         created_at = self._now()
         started_at = started_at or created_at
         completed_at = completed_at or created_at
@@ -6882,6 +6997,8 @@ class EmailStore:
                 "evidence": evidence,
                 "result_text": normalized_result_text,
                 "observation_digest": observation_digest,
+                "result_text_truncated": result_text_truncated,
+                "result_text_digest": result_text_digest,
                 "started_at": started_at,
                 "completed_at": completed_at,
             }
@@ -6893,8 +7010,9 @@ class EmailStore:
                         action_plan_version, classification_id, account_id,
                         stable_message_identity, thread_identity, entry_reference,
                         outcome, receipt_id, evidence, result_text,
-                        observation_digest, started_at, completed_at, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        observation_digest, result_text_truncated,
+                        result_text_digest, started_at, completed_at, created_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         action_identity,
@@ -6911,6 +7029,8 @@ class EmailStore:
                         evidence,
                         normalized_result_text,
                         observation_digest,
+                        int(result_text_truncated),
+                        result_text_digest,
                         started_at,
                         completed_at,
                         created_at,
@@ -7007,6 +7127,8 @@ class EmailStore:
         _validate_durable_unsubscribe_result_text(
             row["result_text"],
             row["observation_digest"],
+            row["result_text_truncated"],
+            row["result_text_digest"],
         )
         return {
             "action_identity": row["action_identity"],
@@ -7023,6 +7145,8 @@ class EmailStore:
             "evidence": row["evidence"],
             "result_text": row["result_text"],
             "observation_digest": row["observation_digest"],
+            "result_text_truncated": bool(row["result_text_truncated"]),
+            "result_text_digest": row["result_text_digest"],
             "started_at": row["started_at"],
             "completed_at": row["completed_at"],
             "created_at": row["created_at"],
@@ -7513,7 +7637,8 @@ class EmailStore:
                 select action_identity, effect_digest, action_plan_id,
                        action_plan_version, classification_id, account_id,
                        stable_message_identity, thread_identity, receipt_id,
-                       evidence, result_text, observation_digest, created_at
+                       evidence, result_text, observation_digest,
+                       result_text_truncated, result_text_digest, created_at
                 from email_unsubscribe_receipts
                 where classification_id=?
                 order by created_at, action_identity
@@ -7535,6 +7660,8 @@ class EmailStore:
                     _validate_durable_unsubscribe_result_text(
                         row["result_text"],
                         row["observation_digest"],
+                        row["result_text_truncated"],
+                        row["result_text_digest"],
                     )
                     lineage = _audited_unsubscribe_lineage(
                         db,
@@ -7548,6 +7675,8 @@ class EmailStore:
                     _validate_durable_unsubscribe_result_text(
                         row["result_text"],
                         row["observation_digest"],
+                        row["result_text_truncated"],
+                        row["result_text_digest"],
                     )
             unsubscribe_steps = db.execute(
                 """
