@@ -968,6 +968,8 @@ class UnsubscribeExecutionResult:
     error_code: str = ""
     result_text: str = ""
     observation_digest: str = ""
+    result_text_digest: str = ""
+    result_text_truncated: bool = False
     started_at: str = ""
     completed_at: str = ""
 
@@ -982,6 +984,25 @@ class UnsubscribeExecutionResult:
             r"[0-9a-f]{64}", self.observation_digest
         ) is None:
             raise ValueError("observation_digest must be canonical sha256 hex")
+        if type(self.result_text_truncated) is not bool:
+            raise TypeError("result_text_truncated must be bool")
+        if not self.result_text:
+            if (
+                self.observation_digest
+                or self.result_text_digest
+                or self.result_text_truncated
+            ):
+                raise ValueError("empty result text has inconsistent integrity metadata")
+        else:
+            expected_result_text_digest = sha256(
+                self.result_text.encode("utf-8")
+            ).hexdigest()
+            if self.result_text_digest != expected_result_text_digest:
+                raise ValueError("result_text_digest does not match result text")
+            if self.result_text_truncated == (
+                self.observation_digest == self.result_text_digest
+            ):
+                raise ValueError("result text truncation metadata is inconsistent")
 
     @property
     def redacted(self) -> dict[str, object]:
@@ -2525,6 +2546,8 @@ def _result(
     error_code: str = "",
     result_text: str = "",
     observation_digest: str = "",
+    result_text_digest: str = "",
+    result_text_truncated: bool = False,
     started_at: str = "",
     completed_at: str = "",
 ) -> UnsubscribeExecutionResult:
@@ -2536,6 +2559,8 @@ def _result(
         error_code=error_code,
         result_text=result_text,
         observation_digest=observation_digest,
+        result_text_digest=result_text_digest,
+        result_text_truncated=result_text_truncated,
         started_at=started_at,
         completed_at=completed_at,
     )
@@ -2573,12 +2598,19 @@ def _terminal_result(
     result_text, observation_digest = normalize_unsubscribe_result_text(
         observation.visible_text
     )
+    result_text_digest = (
+        sha256(result_text.encode("utf-8")).hexdigest() if result_text else ""
+    )
     return _result(
         outcome,
         journal,
         receipt=observation.receipt,
         result_text=result_text,
         observation_digest=observation_digest if observation.visible_text else "",
+        result_text_digest=result_text_digest,
+        result_text_truncated=(
+            bool(result_text) and observation_digest != result_text_digest
+        ),
     )
 
 
@@ -2683,6 +2715,8 @@ class UnsubscribeExecutor:
             receipt=terminal_receipt,
             result_text=receipt["result_text"],
             observation_digest=receipt["observation_digest"],
+            result_text_digest=receipt["result_text_digest"],
+            result_text_truncated=receipt["result_text_truncated"],
             started_at=receipt["started_at"],
             completed_at=receipt["completed_at"],
         )
@@ -2698,6 +2732,8 @@ class UnsubscribeExecutor:
         claim_owned: bool,
         result_text: str = "",
         observation_digest: str = "",
+        result_text_digest: str | None = None,
+        result_text_truncated: bool | None = None,
     ) -> UnsubscribeExecutionResult:
         if receipt.effect_digest != effect.effect_digest:
             return _result(
@@ -2724,6 +2760,8 @@ class UnsubscribeExecutor:
                 evidence=receipt.evidence,
                 result_text=result_text,
                 observation_digest=observation_digest,
+                result_text_digest=result_text_digest,
+                result_text_truncated=result_text_truncated,
                 final_step=final_mapping,
                 claim_owner=self.owner if claim_owned else None,
             )
@@ -2741,6 +2779,8 @@ class UnsubscribeExecutor:
             receipt=receipt,
             result_text=persisted["result_text"],
             observation_digest=persisted["observation_digest"],
+            result_text_digest=persisted["result_text_digest"],
+            result_text_truncated=persisted["result_text_truncated"],
             started_at=persisted["started_at"],
             completed_at=persisted["completed_at"],
         )
@@ -2995,6 +3035,8 @@ class UnsubscribeExecutor:
                     claim_owned=False,
                     result_text=terminal.result_text,
                     observation_digest=terminal.observation_digest,
+                    result_text_digest=terminal.result_text_digest,
+                    result_text_truncated=terminal.result_text_truncated,
                 )
             return existing_continuation
 
@@ -3057,6 +3099,8 @@ class UnsubscribeExecutor:
                 claim_owned=False,
                 result_text=terminal.result_text,
                 observation_digest=terminal.observation_digest,
+                result_text_digest=terminal.result_text_digest,
+                result_text_truncated=terminal.result_text_truncated,
             )
 
         if reconciliation_only:
@@ -3160,6 +3204,8 @@ class UnsubscribeExecutor:
                     claim_owned=True,
                     result_text=terminal.result_text,
                     observation_digest=terminal.observation_digest,
+                    result_text_digest=terminal.result_text_digest,
+                    result_text_truncated=terminal.result_text_truncated,
                 )
             if observation.controls:
                 journal.append(operation_step)

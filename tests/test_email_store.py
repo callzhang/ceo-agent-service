@@ -676,6 +676,9 @@ def _persist_unsubscribe_result_fixture(
     database: Path,
     *,
     result_text: str,
+    observation_digest: str | None = None,
+    result_text_digest: str | None = None,
+    result_text_truncated: bool | None = None,
 ) -> tuple[EmailStore, dict[str, object], dict[str, object]]:
     store = EmailStore(database)
     authorization = _unsubscribe_authorization(store)
@@ -684,12 +687,20 @@ def _persist_unsubscribe_result_fixture(
         owner=_UNSUBSCRIBE_OWNER_A,
     )
     assert claim is not None and claim["acquired"] is True
+    result_metadata: dict[str, object] = {}
+    if observation_digest is not None:
+        result_metadata["observation_digest"] = observation_digest
+    if result_text_digest is not None:
+        result_metadata["result_text_digest"] = result_text_digest
+    if result_text_truncated is not None:
+        result_metadata["result_text_truncated"] = result_text_truncated
     receipt = store.persist_email_unsubscribe_terminal(
         **authorization,
         outcome="done",
         receipt_id="unsubscribe-receipt:result-text",
         evidence="terminal-page",
         result_text=result_text,
+        **result_metadata,
         final_step={
             "sequence": 1,
             "operation": "open_entry",
@@ -5960,6 +5971,90 @@ def test_empty_result_persists_empty_integrity_metadata(tmp_path: Path) -> None:
     assert receipt["result_text"] == ""
     assert receipt["observation_digest"] == ""
     assert receipt["result_text_digest"] == ""
+    assert receipt["result_text_truncated"] is False
+
+
+def test_explicit_bounded_unsubscribe_result_preserves_full_observation_digest(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "unsubscribe-explicit-bounded-result.sqlite3"
+    full_observation = "A" * (16 * 1024 + 777)
+    bounded_text, full_digest = normalize_unsubscribe_result_text(full_observation)
+    bounded_digest = sha256(bounded_text.encode("utf-8")).hexdigest()
+
+    _, _, receipt = _persist_unsubscribe_result_fixture(
+        database,
+        result_text=bounded_text,
+        observation_digest=full_digest,
+        result_text_digest=bounded_digest,
+        result_text_truncated=True,
+    )
+
+    assert receipt["result_text"] == bounded_text
+    assert receipt["result_text_digest"] == bounded_digest
+    assert receipt["observation_digest"] == full_digest
+    assert receipt["result_text_truncated"] is True
+
+
+def test_explicit_exact_16kib_result_rejects_mismatched_observation_digest(
+    tmp_path: Path,
+) -> None:
+    result_text = "A" * (16 * 1024)
+    bounded_digest = sha256(result_text.encode("utf-8")).hexdigest()
+
+    with pytest.raises(EmailUnsubscribeReceiptConflict, match="integrity"):
+        _persist_unsubscribe_result_fixture(
+            tmp_path / "unsubscribe-explicit-exact-bound.sqlite3",
+            result_text=result_text,
+            observation_digest="f" * 64,
+            result_text_digest=bounded_digest,
+            result_text_truncated=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("result_text", "observation_digest", "result_text_digest", "truncated"),
+    [
+        ("A" * (16 * 1024), "e" * 64, "f" * 64, True),
+        ("A" * (16 * 1024), "e" * 64, sha256(b"A" * (16 * 1024)).hexdigest(), False),
+        ("Unsubscribed", sha256(b"Unsubscribed").hexdigest(), sha256(b"Unsubscribed").hexdigest(), True),
+    ],
+)
+def test_explicit_unsubscribe_result_rejects_inconsistent_caller_metadata(
+    tmp_path: Path,
+    result_text: str,
+    observation_digest: str,
+    result_text_digest: str,
+    truncated: bool,
+) -> None:
+    with pytest.raises(EmailUnsubscribeReceiptConflict, match="integrity"):
+        _persist_unsubscribe_result_fixture(
+            tmp_path / f"unsubscribe-explicit-mismatch-{truncated}.sqlite3",
+            result_text=result_text,
+            observation_digest=observation_digest,
+            result_text_digest=result_text_digest,
+            result_text_truncated=truncated,
+        )
+
+
+@pytest.mark.parametrize("result_text", ("", "Unsubscribed"))
+def test_explicit_empty_and_short_unsubscribe_results_remain_unchanged(
+    tmp_path: Path,
+    result_text: str,
+) -> None:
+    digest = sha256(result_text.encode("utf-8")).hexdigest() if result_text else ""
+
+    _, _, receipt = _persist_unsubscribe_result_fixture(
+        tmp_path / f"unsubscribe-explicit-short-{len(result_text)}.sqlite3",
+        result_text=result_text,
+        observation_digest=digest,
+        result_text_digest=digest,
+        result_text_truncated=False,
+    )
+
+    assert receipt["result_text"] == result_text
+    assert receipt["observation_digest"] == digest
+    assert receipt["result_text_digest"] == digest
     assert receipt["result_text_truncated"] is False
 
 

@@ -6781,6 +6781,8 @@ class EmailStore:
         evidence: str,
         result_text: str = "",
         observation_digest: str = "",
+        result_text_digest: str | None = None,
+        result_text_truncated: bool | None = None,
         started_at: str = "",
         completed_at: str = "",
         final_step: Mapping[str, object] | None = None,
@@ -6817,23 +6819,48 @@ class EmailStore:
             raise ValueError("unsubscribe result_text must be text")
         from app.email_unsubscribe import normalize_unsubscribe_result_text
 
+        explicit_integrity_metadata = (
+            result_text_digest is not None or result_text_truncated is not None
+        )
         normalized_result_text, expected_observation_digest = (
             normalize_unsubscribe_result_text(result_text)
         )
-        if observation_digest and observation_digest != expected_observation_digest:
-            raise EmailUnsubscribeReceiptConflict(
-                "unsubscribe observation digest does not match result text"
-            )
-        if normalized_result_text:
-            observation_digest = expected_observation_digest
-            result_text_digest = sha256(
-                normalized_result_text.encode("utf-8")
-            ).hexdigest()
-            result_text_truncated = observation_digest != result_text_digest
+        if explicit_integrity_metadata:
+            if (
+                result_text_digest is None
+                or result_text_truncated is None
+                or type(result_text_truncated) is not bool
+                or normalized_result_text != result_text
+            ):
+                raise EmailUnsubscribeReceiptConflict(
+                    "unsubscribe result integrity metadata is inconsistent"
+                )
+            try:
+                _validate_durable_unsubscribe_result_text(
+                    normalized_result_text,
+                    observation_digest,
+                    int(result_text_truncated),
+                    result_text_digest,
+                )
+            except EmailPersistenceCorruption as exc:
+                raise EmailUnsubscribeReceiptConflict(
+                    "unsubscribe result integrity metadata is inconsistent"
+                ) from exc
         else:
-            observation_digest = ""
-            result_text_digest = ""
-            result_text_truncated = False
+            if observation_digest and observation_digest != expected_observation_digest:
+                raise EmailUnsubscribeReceiptConflict(
+                    "unsubscribe observation digest does not match result text"
+                )
+            if normalized_result_text:
+                observation_digest = expected_observation_digest
+                result_text_digest = sha256(
+                    normalized_result_text.encode("utf-8")
+                ).hexdigest()
+                result_text_truncated = observation_digest != result_text_digest
+            else:
+                observation_digest = ""
+                result_text_digest = ""
+                result_text_truncated = False
         created_at = self._now()
         started_at = started_at or created_at
         completed_at = completed_at or created_at

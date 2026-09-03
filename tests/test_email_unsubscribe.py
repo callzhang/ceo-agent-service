@@ -53,6 +53,7 @@ from app.email_unsubscribe import (
     select_browser_unsubscribe_entry,
     unsubscribe_entry_reference,
     _ChromiumIsolatedWorld,
+    _terminal_result,
     _validated_restored_audit_session,
 )
 
@@ -698,6 +699,42 @@ def _terminal_receipt(
         entry_reference=unsubscribe_entry_reference(TOKEN_URL),
         effect_digest=effect.effect_digest,
     )
+
+
+@pytest.mark.parametrize(
+    ("visible_text", "truncated"),
+    [
+        ("", False),
+        ("Unsubscribed", False),
+        ("A" * (16 * 1024 + 777), True),
+    ],
+)
+def test_terminal_result_carries_private_bounded_integrity_metadata(
+    visible_text: str,
+    truncated: bool,
+) -> None:
+    effect = _effect()
+    result = _terminal_result(
+        effect,
+        UnsubscribeObservation(
+            state=UnsubscribePageState.DONE,
+            state_reference="state-done",
+            receipt=_terminal_receipt(effect),
+            visible_text=visible_text,
+        ),
+        [],
+    )
+
+    assert result is not None
+    expected_digest = (
+        sha256(result.result_text.encode("utf-8")).hexdigest()
+        if result.result_text
+        else ""
+    )
+    assert result.result_text_digest == expected_digest
+    assert result.result_text_truncated is truncated
+    assert "result_text_digest" not in result.redacted
+    assert "result_text_truncated" not in result.redacted
 
 
 def test_restart_reconciles_receipt_before_page_and_never_replays_operations(
