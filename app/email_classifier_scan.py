@@ -117,6 +117,11 @@ class EmailScanConfig:
         unexpected_categories = set(self.action_parameters) - set(self.actions)
         if unexpected_categories:
             raise ValueError("action parameters contain a category with no actions")
+        if any(
+            EmailAction.AUTO_REPLY in category_actions
+            for category_actions in self.actions.values()
+        ):
+            raise ValueError("auto_reply is disabled for email scanning")
         category_enabled = dict(self.category_enabled)
         if not category_enabled:
             category_enabled = {category: True for category in EmailCategory}

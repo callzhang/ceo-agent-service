@@ -50,7 +50,11 @@ from app.native_cli_metadata import (
 from app.process_runner import ProcessRunResult
 from app.runtime_environment import central_python
 from app.store import AgentExecutionReceipt, AgentRole, AutoReplyStore
-from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_command
+from app.wechat.codex_safety import (
+    ControlledCliConfig,
+    make_audit_agent_command,
+    make_consumer_agent_command,
+)
 from tests.prompt_structure import validate_prompt_structure
 
 
@@ -758,17 +762,102 @@ def _seed_crashed_memory_write(setup):
 
 def test_audit_uses_typed_result_without_application_receipt_validation(setup):
     store, task, audit_context, parent = setup
+    executor = CapturingExecutor(
+        _audit_jsonl("operation-1", session="session-audit")
+    )
     result = AuditAgentRunner(
         store=store,
         workspace=Path("/workspace"),
-        executor=CapturingExecutor(
-            _audit_jsonl("operation-1", session="session-audit")
-        ),
+        executor=executor,
     ).run(task, audit_context, turn_attempt=0, parent_agent_run_id=parent.id)
 
     persisted = store.get_agent_run(result.run_id)
     assert result.result.outcome is AuditOutcome.EXECUTED
     assert persisted is not None and persisted.status == "completed"
+    assert "execute_audited_email_unsubscribe" not in json.dumps(executor.commands)
+
+
+def test_audited_email_turn_receives_bound_write_tool_and_prompt_identity(setup):
+    store, task, audit_context, parent = setup
+    store.complete_agent_run(
+        parent.id,
+        {"outcome": "proposal"},
+        owner="parent",
+    )
+    payload = {
+        "schema": "email_agent_action.v1",
+        "action_type": "unsubscribe",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+    }
+    email_task = task.model_copy(
+        update={
+            "channel": "email",
+            "trigger_message_json": json.dumps(payload),
+        }
+    )
+    email_context = replace(
+        audit_context,
+        task=replace(
+            audit_context.task,
+            channel="email",
+            trigger_raw_payload=payload,
+        ),
+    )
+    executor = CapturingExecutor(
+        _audit_jsonl("operation-1", session="session-email-audit")
+    )
+
+    result = AuditAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+    ).run(
+        email_task,
+        email_context,
+        turn_attempt=0,
+        parent_agent_run_id=parent.id,
+    )
+
+    rendered_command = json.dumps(executor.commands)
+    rendered_prompt = "\n".join(executor.prompts)
+    assert "execute_audited_email_unsubscribe" in rendered_command
+    assert "execute_email_unsubscribe" not in rendered_command
+    assert f"task_id={task.id}" in rendered_prompt
+    assert f"execution_generation={task.execution_generation}" in rendered_prompt
+    assert f"audit_agent_run_id={result.run_id}" in rendered_prompt
+
+
+def test_consumer_command_does_not_expose_audited_unsubscribe_write() -> None:
+    command = ["codex", "exec", "--json"]
+
+    make_consumer_agent_command(
+        command,
+        controlled_cli=ControlledCliConfig(
+            command="python",
+            args=("-m", "app.agent_cli"),
+            cwd="/workspace",
+        ),
+    )
+
+    assert "execute_audited_email_unsubscribe" not in json.dumps(command)
+
+
+def test_audit_command_can_expose_only_the_task_bound_unsubscribe_write() -> None:
+    command = ["codex", "exec", "--json"]
+
+    make_audit_agent_command(
+        command,
+        controlled_cli=ControlledCliConfig(
+            command="python",
+            args=("-m", "app.agent_cli"),
+            cwd="/workspace",
+        ),
+        additional_agent_cli_tools=("execute_audited_email_unsubscribe",),
+    )
+
+    rendered = json.dumps(command)
+    assert "execute_audited_email_unsubscribe" in rendered
+    assert "execute_email_unsubscribe" not in rendered
 
 
 def test_audit_process_failure_is_a_regular_failed_run(setup):

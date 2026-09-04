@@ -2,7 +2,10 @@
 
 日期：2026-08-29
 
-状态：已完成交互设计确认，等待书面规范复核
+状态：历史设计；future-state 已由
+[`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md)
+取代。本文中的实验背景和既有产品讨论继续用于追溯，但 `auto_reply`、SMTP 和
+unsubscribe 生命周期不再是实施权威。
 
 关联基础设计：[Email 分类器 MVP 设计](./2026-08-29-email-classifier-design.md)
 

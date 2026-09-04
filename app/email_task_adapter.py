@@ -21,13 +21,17 @@ from app.email_classifier_contracts import (
     EmailActionPlan,
     EmailAttachmentMetadata,
 )
-from app.email_store import EmailStore
+from app.email_store import EmailStore, is_valid_unsubscribe_opaque_reference
 from app.email_reply_delivery import EmailReplyEffect, email_action_identity
 from app.email_unsubscribe import (
     EmailUnsubscribeContinuation,
     EmailUnsubscribeEffect,
     UnsubscribeAuthenticationEvidence,
+    UnsubscribeDiscoveredControl,
+    UnsubscribeEntrySource,
     UnsubscribeOperation,
+    UnsubscribeOperationKind,
+    browser_unsubscribe_entries,
     extract_unsubscribe_entries,
 )
 from app.leak_check import (
@@ -48,11 +52,33 @@ from app.skill_features import FeatureRegistry
 _PAYLOAD_SCHEMA = "email_agent_action.v1"
 _ACTION_LIFECYCLE_VERSIONS = {
     EmailAction.AUTO_REPLY: "consumer_audit_v1",
-    EmailAction.UNSUBSCRIBE: "email_unsubscribe_consumer_direct_v1",
+    EmailAction.UNSUBSCRIBE: "email_unsubscribe_audited_v2",
 }
 _MAX_METADATA_TEXT_LENGTH = 64 * 1024
 _MAX_METADATA_JSON_LENGTH = 256 * 1024
 _MAX_METADATA_DECODE_ROUNDS = 8
+_UNSUBSCRIBE_CONTROL_KINDS = frozenset({"form", "link", "button", "confirmation_email"})
+_UNSUBSCRIBE_CONTROL_INTENTS = frozenset({"continue", "unsubscribe", "confirm"})
+_UNSUBSCRIBE_ENTRY_PRIORITIES = {
+    "header_one_click_https": 0,
+    "header_https": 10,
+    "header_mailto": 20,
+    "body_html_https": 30,
+    "body_text_https": 40,
+}
+_UNSUBSCRIBE_ENTRY_OPERATION_SOURCES = {
+    UnsubscribeOperationKind.POST_ONE_CLICK: frozenset(
+        {UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS.value}
+    ),
+    UnsubscribeOperationKind.OPEN_ENTRY: frozenset(
+        {
+            UnsubscribeEntrySource.HEADER_ONE_CLICK_HTTPS.value,
+            UnsubscribeEntrySource.HEADER_HTTPS.value,
+            UnsubscribeEntrySource.BODY_HTML_HTTPS.value,
+            UnsubscribeEntrySource.BODY_TEXT_HTTPS.value,
+        }
+    ),
+}
 
 
 class EmailAgentTaskConflict(RuntimeError):
@@ -61,6 +87,44 @@ class EmailAgentTaskConflict(RuntimeError):
 
 class EmailAgentTaskMetadataError(ValueError):
     """Action metadata is unsafe for the durable task and Agent context."""
+
+
+def _validated_unsubscribe_controls(
+    value: object,
+) -> tuple[UnsubscribeDiscoveredControl, ...]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("unsubscribe continuation controls are incomplete")
+    controls: list[UnsubscribeDiscoveredControl] = []
+    references: set[str] = set()
+    for item in value:
+        if not isinstance(item, Mapping) or set(item) != {
+            "reference",
+            "kind",
+            "intent",
+        }:
+            raise ValueError("unsubscribe continuation control fields are invalid")
+        reference = item["reference"]
+        kind = item["kind"]
+        intent = item["intent"]
+        if (
+            not isinstance(reference, str)
+            or not isinstance(kind, str)
+            or not isinstance(intent, str)
+            or not is_valid_unsubscribe_opaque_reference(reference)
+            or kind not in _UNSUBSCRIBE_CONTROL_KINDS
+            or intent not in _UNSUBSCRIBE_CONTROL_INTENTS
+            or reference in references
+        ):
+            raise ValueError("unsubscribe continuation control is invalid")
+        references.add(reference)
+        controls.append(
+            UnsubscribeDiscoveredControl(
+                reference=reference,
+                kind=kind,
+                intent=intent,
+            )
+        )
+    return tuple(controls)
 
 
 def _decode_metadata_token(value: str) -> str:
@@ -86,9 +150,7 @@ def _canonicalize_metadata(value: object) -> object:
         return tuple(
             {
                 (
-                    _decode_metadata_token(key)
-                    if isinstance(key, str)
-                    else key
+                    _decode_metadata_token(key) if isinstance(key, str) else key
                 ): _canonicalize_metadata(item)
             }
             for key, item in value.items()
@@ -135,7 +197,8 @@ def _url_component_is_sensitive(name: str) -> bool:
         is_sensitive_field_name(name)
         or normalized in {"auth", "key", "sig"}
         or "signed" in normalized
-        or normalized.startswith("xamz") and "signature" in normalized
+        or normalized.startswith("xamz")
+        and "signature" in normalized
     )
 
 
@@ -153,9 +216,7 @@ def _is_unsubscribe_target(value: str) -> bool:
 
 def _contains_forbidden_url(text: str) -> bool:
     for token in text.split():
-        candidate = _decode_metadata_token(
-            token.strip("'\"()[]{}<>,.;")
-        )
+        candidate = _decode_metadata_token(token.strip("'\"()[]{}<>,.;"))
         parsed = urlsplit(candidate)
         scheme = parsed.scheme.casefold()
         if scheme == "file":
@@ -243,11 +304,53 @@ def _assert_safe_email_metadata(value: object) -> None:
             raise ValueError("email action metadata is too large")
         canonical = _canonicalize_metadata(value)
         assert_no_credentials(canonical)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError, OverflowError) as exc:
         raise EmailAgentTaskMetadataError(
             "email action metadata is not safe for persistence"
         ) from exc
     if _contains_forbidden_metadata(canonical):
+        raise EmailAgentTaskMetadataError(
+            "email action metadata is not safe for persistence"
+        )
+
+
+def _contains_raw_url_or_query_metadata(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return any(
+            _contains_raw_url_or_query_metadata(key)
+            or _contains_raw_url_or_query_metadata(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, Sequence) and not isinstance(value, str):
+        return isinstance(value, bytes | bytearray) or any(
+            _contains_raw_url_or_query_metadata(item) for item in value
+        )
+    if not isinstance(value, str):
+        return False
+    for token in value.split():
+        candidate = token.strip("'\"()[]{}<>,.;")
+        parsed = urlsplit(candidate)
+        if (
+            parsed.scheme.casefold() in {"http", "https", "file", "mailto"}
+            or (parsed.scheme and "://" in candidate)
+            or parsed.query
+            or parsed.fragment
+        ):
+            return True
+    return False
+
+
+def assert_safe_email_unsubscribe_metadata(value: object) -> None:
+    """Reject private material from durable unsubscribe task metadata."""
+
+    _assert_safe_email_metadata(value)
+    try:
+        canonical = _canonicalize_metadata(value)
+    except (TypeError, ValueError, RecursionError, OverflowError) as exc:
+        raise EmailAgentTaskMetadataError(
+            "email action metadata is not safe for persistence"
+        ) from exc
+    if _contains_raw_url_or_query_metadata(canonical):
         raise EmailAgentTaskMetadataError(
             "email action metadata is not safe for persistence"
         )
@@ -294,11 +397,12 @@ class EmailAgentTaskInput:
         object.__setattr__(self, "thread_identity", self.thread_identity.strip())
         if self.trigger.message_id != self.stable_message_identity:
             raise ValueError("trigger message must match stable_message_identity")
-        if any(not isinstance(item, EmailThreadMessage) for item in self.thread_messages):
+        if any(
+            not isinstance(item, EmailThreadMessage) for item in self.thread_messages
+        ):
             raise TypeError("thread_messages must contain EmailThreadMessage")
         if any(
-            not isinstance(item, EmailAttachmentMetadata)
-            for item in self.attachments
+            not isinstance(item, EmailAttachmentMetadata) for item in self.attachments
         ):
             raise TypeError("attachments must contain EmailAttachmentMetadata")
         if any(not isinstance(item, PriorReceipt) for item in self.prior_receipts):
@@ -405,6 +509,65 @@ def accepted_email_reply_effect(
     )
 
 
+def validate_unsubscribe_entry_operation_semantics(
+    metadata: Mapping[str, object],
+    *,
+    entry_reference: str,
+    operation: UnsubscribeOperation,
+) -> None:
+    """Validate the exact redacted entry semantics behind one root operation."""
+
+    entries = metadata.get("unsubscribe_entries")
+    if not isinstance(entries, list):
+        raise ValueError("unsubscribe entries are invalid")
+    entry = next(
+        (
+            item
+            for item in entries
+            if type(item) is dict
+            and set(item) == {"source", "reference", "priority"}
+            and item.get("reference") == entry_reference
+        ),
+        None,
+    )
+    if entry is None or operation.target_reference != entry_reference:
+        raise ValueError("unsubscribe entry operation is invalid")
+    source = entry.get("source")
+    priority = entry.get("priority")
+    if (
+        not isinstance(source, str)
+        or source not in _UNSUBSCRIBE_ENTRY_PRIORITIES
+        or type(priority) is not int
+        or priority != _UNSUBSCRIBE_ENTRY_PRIORITIES[source]
+    ):
+        raise ValueError("unsubscribe entry semantics are invalid")
+    allowed_sources = _UNSUBSCRIBE_ENTRY_OPERATION_SOURCES.get(operation.kind)
+    if allowed_sources is None or source not in allowed_sources:
+        raise ValueError("unsubscribe entry operation is not executable")
+    if operation.kind is not UnsubscribeOperationKind.POST_ONE_CLICK:
+        return
+    authentication = metadata.get("unsubscribe_authentication")
+    if (
+        type(authentication) is not dict
+        or set(authentication) != {"evidence_reference", "one_click_verified"}
+        or type(authentication.get("one_click_verified")) is not bool
+        or not isinstance(authentication.get("evidence_reference"), str)
+    ):
+        raise ValueError("one-click unsubscribe authentication is invalid")
+    one_click_verified = authentication["one_click_verified"]
+    evidence_reference = authentication["evidence_reference"]
+    typed_authentication = UnsubscribeAuthenticationEvidence(
+        dkim_covers_list_unsubscribe=one_click_verified,
+        dkim_covers_list_unsubscribe_post=one_click_verified,
+        evidence_reference=evidence_reference,
+    )
+    if (
+        source != "header_one_click_https"
+        or not typed_authentication.one_click_verified
+    ):
+        raise ValueError("one-click unsubscribe is not authenticated")
+
+
 def accepted_email_unsubscribe_effect(
     task: ReplyTask,
     accepted_action: ProposedAction,
@@ -459,20 +622,7 @@ def accepted_email_unsubscribe_effect(
         raise ValueError("accepted unsubscribe target does not match its email task")
 
     entry_reference = accepted_action.target.get("entry_reference")
-    projected_entries = metadata.get("unsubscribe_entries")
-    if not isinstance(projected_entries, list):
-        raise ValueError("accepted unsubscribe proposal is invalid")
-    projected_entry = next(
-        (
-            item
-            for item in projected_entries
-            if isinstance(item, Mapping)
-            and set(item) == {"source", "reference", "priority"}
-            and item.get("reference") == entry_reference
-        ),
-        None,
-    )
-    if projected_entry is None:
+    if not isinstance(entry_reference, str):
         raise ValueError("accepted unsubscribe proposal is invalid")
 
     def required_text(source: Mapping[str, object], name: str) -> str:
@@ -497,23 +647,13 @@ def accepted_email_unsubscribe_effect(
             for item in operations_value
             if isinstance(item, Mapping)
         )
-        if any(
-            operation.kind.value in {"open_entry", "post_one_click"}
-            and operation.target_reference != entry_reference
-            for operation in operations
-        ):
-            raise ValueError("accepted unsubscribe entry operation is invalid")
-        if any(
-            operation.kind.value == "post_one_click"
-            for operation in operations
-        ):
-            authentication = metadata.get("unsubscribe_authentication")
-            if (
-                projected_entry.get("source") != "header_one_click_https"
-                or not isinstance(authentication, Mapping)
-                or authentication.get("one_click_verified") is not True
-            ):
-                raise ValueError("accepted one-click unsubscribe is not authenticated")
+        for operation in operations:
+            if operation.kind.value in {"open_entry", "post_one_click"}:
+                validate_unsubscribe_entry_operation_semantics(
+                    metadata,
+                    entry_reference=entry_reference,
+                    operation=operation,
+                )
         if continuation is None:
             if len(operations) != 1 or operations[0].kind.value not in {
                 "open_entry",
@@ -550,12 +690,16 @@ def accepted_email_unsubscribe_effect(
                     "network_policy_reference"
                 ),
             }
-            if any(
-                candidate_values[field_name] != getattr(continuation, field_name)
-                for field_name in identity_fields
-            ) or tuple(
-                accepted_action.target.get("network_policy_origin_references", ())
-            ) != continuation.network_policy_origin_references:
+            if (
+                any(
+                    candidate_values[field_name] != getattr(continuation, field_name)
+                    for field_name in identity_fields
+                )
+                or tuple(
+                    accepted_action.target.get("network_policy_origin_references", ())
+                )
+                != continuation.network_policy_origin_references
+            ):
                 raise ValueError("unsubscribe continuation identity changed")
             if (
                 operations[:-1] != continuation.executed_operations
@@ -577,7 +721,10 @@ def accepted_email_unsubscribe_effect(
                 "button": {"click_confirmation"},
                 "confirmation_email": {"confirm_email"},
             }
-            if control is None or next_operation.kind.value not in allowed[control.kind]:
+            if (
+                control is None
+                or next_operation.kind.value not in allowed[control.kind]
+            ):
                 raise ValueError("unsubscribe continuation control is invalid")
             previous_effect_digest = continuation.effect_digest
         return EmailUnsubscribeEffect(
@@ -606,13 +753,188 @@ def accepted_email_unsubscribe_effect(
             ),
             network_policy_origin_references=tuple(
                 str(item)
-                for item in accepted_action.target[
-                    "network_policy_origin_references"
-                ]
+                for item in accepted_action.target["network_policy_origin_references"]
             ),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("accepted unsubscribe proposal is invalid") from exc
+
+
+def validated_email_unsubscribe_continuation(
+    payload: Mapping[str, object],
+    claim: Mapping[str, object],
+    continuation: Mapping[str, object],
+) -> EmailUnsubscribeContinuation:
+    """Validate one durable continuation without exposing private browser state."""
+
+    identity_fields = (
+        "action_identity",
+        "action_plan_id",
+        "action_plan_version",
+        "classification_id",
+        "account_id",
+        "stable_message_identity",
+        "thread_identity",
+    )
+    try:
+        if (
+            payload.get("schema") != _PAYLOAD_SCHEMA
+            or payload.get("lifecycle_version")
+            != _ACTION_LIFECYCLE_VERSIONS[EmailAction.UNSUBSCRIBE]
+            or payload.get("action_type") != EmailAction.UNSUBSCRIBE.value
+            or claim.get("status") != "awaiting_audit"
+            or any(claim.get(name) != payload.get(name) for name in identity_fields)
+            or continuation.get("action_identity") != payload.get("action_identity")
+            or continuation.get("effect_digest") != claim.get("effect_digest")
+            or continuation.get("operations") != claim.get("operations")
+        ):
+            raise ValueError("unsubscribe continuation identity changed")
+        entries = payload.get("unsubscribe_entries")
+        entry_reference = claim.get("entry_reference")
+        if (
+            not isinstance(entries, list)
+            or not isinstance(entry_reference, str)
+            or not any(
+                isinstance(item, Mapping) and item.get("reference") == entry_reference
+                for item in entries
+            )
+        ):
+            raise ValueError("unsubscribe continuation entry changed")
+        operations_value = continuation.get("operations")
+        controls_value = continuation.get("controls")
+        origins_value = continuation.get("network_policy_origin_references")
+        if (
+            not isinstance(operations_value, list)
+            or not operations_value
+            or not isinstance(controls_value, list)
+            or not controls_value
+            or not isinstance(origins_value, list)
+            or not origins_value
+        ):
+            raise ValueError("unsubscribe continuation evidence is incomplete")
+        operations = tuple(
+            UnsubscribeOperation.from_mapping(item)
+            for item in operations_value
+            if isinstance(item, Mapping)
+        )
+        controls = _validated_unsubscribe_controls(controls_value)
+        if len(operations) != len(operations_value) or len(controls) != len(
+            controls_value
+        ):
+            raise ValueError("unsubscribe continuation evidence is malformed")
+        observation_reference = continuation.get("observation_reference")
+        if not is_valid_unsubscribe_opaque_reference(observation_reference):
+            raise ValueError("unsubscribe continuation observation is invalid")
+        typed = EmailUnsubscribeContinuation(
+            action_identity=str(payload["action_identity"]),
+            action_plan_id=str(payload["action_plan_id"]),
+            action_plan_version=int(payload["action_plan_version"]),
+            classification_id=int(payload["classification_id"]),
+            account_id=str(payload["account_id"]),
+            stable_message_identity=str(payload["stable_message_identity"]),
+            thread_identity=str(payload["thread_identity"]),
+            entry_reference=entry_reference,
+            effect_digest=str(continuation["effect_digest"]),
+            previous_effect_digest=str(
+                continuation.get("previous_effect_digest") or ""
+            ),
+            executed_operations=operations,
+            controls=controls,
+            network_policy_reference=str(continuation["network_policy_reference"]),
+            network_policy_origin_references=tuple(str(item) for item in origins_value),
+        )
+        if typed.network_policy_reference != payload.get(
+            "unsubscribe_network_policy_reference"
+        ) or list(typed.network_policy_origin_references) != payload.get(
+            "unsubscribe_network_policy_origin_references"
+        ):
+            raise ValueError("unsubscribe continuation network policy changed")
+        effect = EmailUnsubscribeEffect(
+            action_identity=typed.action_identity,
+            action_plan_id=typed.action_plan_id,
+            action_plan_version=typed.action_plan_version,
+            classification_id=typed.classification_id,
+            account_id=typed.account_id,
+            stable_message_identity=typed.stable_message_identity,
+            thread_identity=typed.thread_identity,
+            entry_reference=typed.entry_reference,
+            operations=typed.executed_operations,
+            previous_effect_digest=typed.previous_effect_digest,
+            network_policy_reference=typed.network_policy_reference,
+            network_policy_origin_references=typed.network_policy_origin_references,
+        )
+        if effect.effect_digest != typed.effect_digest:
+            raise ValueError("unsubscribe continuation digest changed")
+        return typed
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EmailAgentTaskMetadataError(
+            "email unsubscribe continuation is invalid"
+        ) from exc
+
+
+def email_unsubscribe_continuation_receipt(
+    continuation: EmailUnsubscribeContinuation,
+) -> PriorReceipt:
+    """Project one redacted durable continuation into Consumer context."""
+
+    try:
+        controls = _validated_unsubscribe_controls(
+            [
+                {
+                    "reference": item.reference,
+                    "kind": item.kind,
+                    "intent": item.intent,
+                }
+                for item in continuation.controls
+            ]
+        )
+    except (TypeError, ValueError) as exc:
+        raise EmailAgentTaskMetadataError(
+            "email unsubscribe continuation is invalid"
+        ) from exc
+    summary = json.dumps(
+        {
+            "accepted_operations": [
+                {
+                    "operation_reference": item.operation_reference,
+                    "kind": item.kind.value,
+                    "target_reference": item.target_reference,
+                }
+                for item in continuation.executed_operations
+            ],
+            "controls": [
+                {
+                    "reference": item.reference,
+                    "kind": item.kind,
+                    "intent": item.intent,
+                }
+                for item in controls
+            ],
+            "instruction": (
+                "Audit accepted the durable prefix; propose exactly one next "
+                "operation from the listed opaque controls."
+            ),
+            "previous_effect_digest": continuation.effect_digest,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    receipt = PriorReceipt(
+        receipt_id=("email-unsubscribe-continuation:" + continuation.effect_digest),
+        operation="unsubscribe_continuation",
+        summary=summary,
+        completed=False,
+    )
+    _assert_safe_email_metadata(
+        {
+            "receipt_id": receipt.receipt_id,
+            "operation": receipt.operation,
+            "summary": receipt.summary,
+            "completed": receipt.completed,
+        }
+    )
+    return receipt
 
 
 class EmailAgentTaskAdapter:
@@ -628,8 +950,9 @@ class EmailAgentTaskAdapter:
         if store.path.resolve() != email_store.path.resolve():
             raise ValueError(
                 "email task and classification stores must share one database"
-        )
+            )
         self.store = store
+        self.email_store = email_store
         self.feature_registry = feature_registry or FeatureRegistry()
 
     def ensure_action_plan_tasks(
@@ -637,7 +960,12 @@ class EmailAgentTaskAdapter:
         action_plan: EmailActionPlan,
         task_input: EmailAgentTaskInput,
     ) -> tuple[EmailAgentTaskRoute, ...]:
-        if not action_plan.agent_actions:
+        task_actions = tuple(
+            action_type
+            for action_type in action_plan.agent_actions
+            if action_type is EmailAction.UNSUBSCRIBE
+        )
+        if not task_actions:
             return ()
         _assert_safe_email_metadata(
             [
@@ -656,7 +984,7 @@ class EmailAgentTaskAdapter:
             task_input.thread_identity,
         )
         prepared: list[tuple[EmailAction, dict[str, object], ReplyTaskSpec]] = []
-        for action_type in action_plan.agent_actions:
+        for action_type in task_actions:
             payload = self._safe_action_metadata(
                 action_plan=action_plan,
                 task_input=task_input,
@@ -786,6 +1114,16 @@ class EmailAgentTaskAdapter:
                     task_input.unsubscribe_allow_loopback_for_tests
                 ),
             )
+            entries = browser_unsubscribe_entries(
+                entries,
+                allow_loopback_for_tests=(
+                    task_input.unsubscribe_allow_loopback_for_tests
+                ),
+            )
+            if not entries:
+                raise EmailAgentTaskMetadataError(
+                    "email unsubscribe has no HTTPS browser candidate"
+                )
             payload["unsubscribe_entries"] = [entry.redacted for entry in entries]
             evidence = task_input.unsubscribe_authentication
             payload["unsubscribe_authentication"] = (
@@ -802,11 +1140,14 @@ class EmailAgentTaskAdapter:
             payload["unsubscribe_network_policy_origin_references"] = list(
                 task_input.unsubscribe_network_policy_origin_references
             )
-        _assert_safe_email_metadata(payload)
+        if action_type is EmailAction.UNSUBSCRIBE:
+            assert_safe_email_unsubscribe_metadata(payload)
+        else:
+            _assert_safe_email_metadata(payload)
         return payload
 
-    @staticmethod
     def _build_context(
+        self,
         *,
         task: ReplyTask,
         payload: dict[str, object],
@@ -821,6 +1162,35 @@ class EmailAgentTaskAdapter:
             )
             for message in (*task_input.thread_messages, task_input.trigger)
         )
+        prior_receipts = task_input.prior_receipts
+        if payload.get("action_type") == EmailAction.UNSUBSCRIBE.value:
+            claim = self.email_store.get_email_unsubscribe_claim(
+                task.trigger_message_id
+            )
+            continuation_value = self.email_store.get_email_unsubscribe_continuation(
+                task.trigger_message_id
+            )
+            awaiting_audit = (
+                claim is not None and claim.get("status") == "awaiting_audit"
+            )
+            if awaiting_audit != (continuation_value is not None):
+                raise EmailAgentTaskMetadataError(
+                    "email unsubscribe continuation is incomplete"
+                )
+            if awaiting_audit and claim is not None and continuation_value is not None:
+                continuation = validated_email_unsubscribe_continuation(
+                    payload,
+                    claim,
+                    continuation_value,
+                )
+                continuation_receipt = email_unsubscribe_continuation_receipt(
+                    continuation
+                )
+                prior_receipts = tuple(
+                    receipt
+                    for receipt in prior_receipts
+                    if receipt.operation != "unsubscribe_continuation"
+                ) + (continuation_receipt,)
         return AgentTaskContext(
             task_id=task.id,
             channel="email",
@@ -836,7 +1206,7 @@ class EmailAgentTaskAdapter:
                 task_input.attachments,
                 source_message_id=task_input.stable_message_identity,
             ),
-            prior_receipts=task_input.prior_receipts,
+            prior_receipts=prior_receipts,
             trigger_raw_payload=payload,
             image_paths=(),
             image_sha256s=(),

@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
+from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from urllib.parse import urlsplit
 
 import pytest
 
 from app.agent_contracts import ProposedAction
+from app.email_browser_profile import EmailBrowserProfile
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -32,14 +35,20 @@ from app.email_unsubscribe import (
     ConfirmationNavigationTarget,
     EmailUnsubscribeEffect,
     PlaywrightUnsubscribeBrowser,
+    UnsubscribeAuthenticationControlsError,
     UnsubscribeEntry,
     UnsubscribeEntrySource,
     UnsubscribeContinuationResult,
+    UnsubscribeDiscoveredControl,
+    UnsubscribeBrowserError,
     UnsubscribeExecutor,
     UnsubscribeOperation,
     UnsubscribeOperationKind,
     UnsubscribeOutcome,
+    UnsubscribePageDiscovery,
+    UnsubscribePageState,
     confirmation_target_reference,
+    execute_unsubscribe_in_dedicated_profile,
     unsubscribe_entry_reference,
 )
 from app.store import AutoReplyStore
@@ -89,10 +98,18 @@ class _FixtureHandler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *_args: object) -> None:
         return
 
-    def _send(self, body: bytes, *, status: int = 200) -> None:
+    def _send(
+        self,
+        body: bytes,
+        *,
+        status: int = 200,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -229,6 +246,109 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                         '<button type="submit" name="decision" value="unsubscribe">'
                         "Unsubscribe</button></form>"
                     ),
+                ),
+                headers={
+                    "Set-Cookie": (
+                        "audit_session=persistent-profile; Path=/; SameSite=Strict"
+                    )
+                },
+            )
+        elif path.startswith("/auth-control-"):
+            secret = "profile-secret-never-persist"
+            controls = {
+                "/auth-control-password": (
+                    f'<input type="password" value="{secret}">'
+                ),
+                "/auth-control-hidden-otp": (
+                    f'<input type="text" autocomplete="one-time-code" '
+                    f'value="{secret}" hidden>'
+                ),
+                "/auth-control-semantic": (
+                    '<label for="challenge">Verification code</label>'
+                    f'<input id="challenge" name="challenge_answer" type="text" '
+                    f'value="{secret}" style="display:none">'
+                ),
+                "/auth-control-qr-account": (
+                    '<div aria-label="Scan QR code to choose account">'
+                    f'<input type="hidden" name="account_selection" value="{secret}">'
+                    "</div>"
+                ),
+                "/auth-control-username": (
+                    f'<input type="text" autocomplete="username" value="{secret}">'
+                ),
+                "/auth-control-webauthn": (
+                    f'<input type="text" autocomplete="webauthn" value="{secret}">'
+                ),
+                "/auth-control-compound": (
+                    '<input type="text" autocomplete="  section-login   username '
+                    f'WEBAUTHN  " value="{secret}">'
+                ),
+            }
+            self._send(
+                _page(
+                    "action_required",
+                    "Confirm unsubscribe",
+                    content=(
+                        controls[path]
+                        + '<form method="post" action="/safe-form-terminal">'
+                        '<button type="submit">Unsubscribe</button></form>'
+                    ),
+                )
+            )
+        elif path.startswith("/hostile-auth-"):
+            secret = "profile-secret-never-persist"
+            hostile_scripts = {
+                "/hostile-auth-get-attribute": """
+                    <script>
+                    const nativeGetAttribute = Element.prototype.getAttribute;
+                    Element.prototype.getAttribute = function(name) {
+                      if (String(name).toLowerCase() === 'autocomplete') return '';
+                      return nativeGetAttribute.call(this, name);
+                    };
+                    </script>
+                """,
+                "/hostile-auth-query-selector": """
+                    <script>
+                    const nativeQuerySelectorAll = Document.prototype.querySelectorAll;
+                    Document.prototype.querySelectorAll = function(selector) {
+                      if (String(selector).includes('input')) return [];
+                      return nativeQuerySelectorAll.call(this, selector);
+                    };
+                    </script>
+                """,
+                "/hostile-auth-value-mutation": f"""
+                    <script>
+                    const nativeGetAttribute = Element.prototype.getAttribute;
+                    Element.prototype.getAttribute = function(name) {{
+                      if (String(name).toLowerCase() === 'autocomplete') return '';
+                      return nativeGetAttribute.call(this, name);
+                    }};
+                    const nativeValue = Object.getOwnPropertyDescriptor(
+                      HTMLInputElement.prototype, 'value'
+                    );
+                    Object.defineProperty(HTMLInputElement.prototype, 'value', {{
+                      configurable: true,
+                      get() {{
+                        this.setAttribute('autocomplete', 'username');
+                        this.setAttribute('data-hostile-value-read', '1');
+                        this.removeAttribute('autocomplete');
+                        return '{secret}';
+                      }},
+                      set(value) {{ nativeValue.set.call(this, value); }}
+                    }});
+                    </script>
+                """,
+            }
+            self._send(
+                _page(
+                    "action_required",
+                    "Confirm unsubscribe",
+                    content=(
+                        '<form method="post" action="/safe-form-terminal">'
+                        f'<input name="identity" autocomplete="username" value="{secret}">'
+                        '<button type="submit">Unsubscribe</button></form>'
+                        + hostile_scripts[path]
+                    ),
                 )
             )
         elif path == "/implicit-button-omitted":
@@ -331,6 +451,18 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     evidence="confirmation_mail",
                 )
             )
+        elif path == "/redacted-long-result":
+            private_result = (
+                "https://news.example.com/unsubscribe?token=private-result-token "
+                "/Users/derek/private-result secret=super-secret\n" + "退订结果" * 5_000
+            )
+            self._send(
+                _page(
+                    "done",
+                    "退订成功",
+                    content=f"<pre>{private_result}</pre>",
+                )
+            )
         else:
             self._send(b"not found", status=404)
 
@@ -367,6 +499,10 @@ class _FixtureHandler(BaseHTTPRequestHandler):
                     receipt="receipt-two-step",
                 )
             )
+        elif path == "/safe-form-terminal" and self.headers.get(
+            "Cookie"
+        ) != "audit_session=persistent-profile":
+            self._send(b"browser session missing", status=403)
         elif path in {"/safe-form-terminal", "/implicit-terminal"}:
             self._send(_page("done", "You are unsubscribed"))
         elif path == "/delete-profile":
@@ -379,12 +515,14 @@ class _FixtureHandler(BaseHTTPRequestHandler):
 
 class _BlockedHandler(BaseHTTPRequestHandler):
     requests: list[tuple[str, str]] = []
+    request_received = Event()
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
 
     def _record(self, method: str) -> None:
         type(self).requests.append((method, self.path))
+        type(self).request_received.set()
         self.send_response(204)
         self.end_headers()
 
@@ -424,6 +562,7 @@ def _loopback_server_pair():
     _FixtureHandler.requests = []
     _FixtureHandler.request_details = []
     _BlockedHandler.requests = []
+    _BlockedHandler.request_received.clear()
     blocked = _LoopbackHTTPServer(("127.0.0.1", 0), _BlockedHandler)
     blocked_thread = Thread(target=blocked.serve_forever, daemon=True)
     blocked_thread.start()
@@ -446,6 +585,225 @@ def _loopback_server_pair():
             thread.join(timeout=5)
             assert not shutdown.is_alive()
             assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("remove_accepted_control", (False, True))
+def test_dedicated_profile_restores_page_across_audit_invocations_without_reopen(
+    tmp_path: Path,
+    remove_accepted_control: bool,
+) -> None:
+    with _loopback_server() as origin:
+        private_url = f"{origin}/mutable-form?opaque=private-fixture-token"
+        initial_operation = _operations(UnsubscribeOperationKind.OPEN_ENTRY)[0]
+        store, effect, entry = _setup(
+            tmp_path,
+            private_url,
+            (initial_operation,),
+        )
+        policy = BrowserNetworkPolicy(
+            allowed_origins=frozenset({origin}),
+            allow_loopback_for_tests=True,
+        )
+        profile = EmailBrowserProfile(tmp_path / "dedicated-browser-runtime")
+        initial_claim = store.claim_email_unsubscribe_write(
+            **UnsubscribeExecutor._store_arguments(effect),
+            owner=_BROWSER_OWNER,
+        )
+        assert initial_claim is not None
+        assert initial_claim["executed_prefix_length"] == 0
+
+        first = execute_unsubscribe_in_dedicated_profile(
+            effect,
+            (entry,),
+            store=store,
+            profile=profile,
+            network_policy=policy,
+            owner=_BROWSER_OWNER,
+            executed_prefix_length=0,
+        )
+
+        assert isinstance(first, UnsubscribeContinuationResult)
+        assert len(first.continuation.controls) == 1
+        assert _FixtureHandler.requests == [
+            ("GET", "/mutable-form?opaque=private-fixture-token")
+        ]
+        if remove_accepted_control:
+            session = profile.load_audit_session(effect.action_identity)
+            assert session is not None
+            session["html"] = "<!doctype html><html><body>Preferences</body></html>"
+            session["html_digest"] = sha256(
+                str(session["html"]).encode()
+            ).hexdigest()
+            profile.save_audit_session(effect.action_identity, session)
+        extension = replace(
+            effect,
+            operations=effect.operations
+            + (
+                UnsubscribeOperation(
+                    operation_reference="step-2",
+                    kind=UnsubscribeOperationKind.SUBMIT_FORM,
+                    target_reference=first.continuation.controls[0].reference,
+                ),
+            ),
+            previous_effect_digest=effect.effect_digest,
+        )
+        extension_claim = store.claim_email_unsubscribe_write(
+            **UnsubscribeExecutor._store_arguments(extension),
+            owner=_RESTART_OWNER,
+        )
+        assert extension_claim is not None
+        assert extension_claim["executed_prefix_length"] == 1
+
+        second = execute_unsubscribe_in_dedicated_profile(
+            extension,
+            (entry,),
+            store=store,
+            profile=profile,
+            network_policy=policy,
+            owner=_RESTART_OWNER,
+            executed_prefix_length=1,
+        )
+
+        if remove_accepted_control:
+            assert second.outcome is UnsubscribeOutcome.FAILED_BROWSER
+            assert second.error_code == (
+                "email_unsubscribe_browser_session_unavailable"
+            )
+            assert _FixtureHandler.requests == [
+                ("GET", "/mutable-form?opaque=private-fixture-token")
+            ]
+        else:
+            assert second.outcome is UnsubscribeOutcome.DONE
+            assert _FixtureHandler.requests == [
+                ("GET", "/mutable-form?opaque=private-fixture-token"),
+                ("POST", "/safe-form-terminal"),
+            ]
+            assert _FixtureHandler.request_details[-1]["cookie"] == (
+                "audit_session=persistent-profile"
+            )
+        assert private_url.encode() not in store.path.read_bytes()
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/auth-control-password",
+        "/auth-control-hidden-otp",
+        "/auth-control-semantic",
+        "/auth-control-qr-account",
+        "/auth-control-username",
+        "/auth-control-webauthn",
+        "/auth-control-compound",
+    ),
+)
+def test_dedicated_profile_blocks_authentication_controls_before_snapshot(
+    tmp_path: Path,
+    path: str,
+) -> None:
+    secret = b"profile-secret-never-persist"
+    with _loopback_server() as origin:
+        private_url = f"{origin}{path}?opaque=private-fixture-token"
+        store, effect, entry = _setup(
+            tmp_path,
+            private_url,
+            (_operations(UnsubscribeOperationKind.OPEN_ENTRY)[0],),
+        )
+        policy = BrowserNetworkPolicy(
+            allowed_origins=frozenset({origin}),
+            allow_loopback_for_tests=True,
+        )
+        profile = EmailBrowserProfile(tmp_path / f"runtime-{path.rsplit('-', 1)[-1]}")
+        claim = store.claim_email_unsubscribe_write(
+            **UnsubscribeExecutor._store_arguments(effect),
+            owner=_BROWSER_OWNER,
+        )
+        assert claim is not None
+
+        result = execute_unsubscribe_in_dedicated_profile(
+            effect,
+            (entry,),
+            store=store,
+            profile=profile,
+            network_policy=policy,
+            owner=_BROWSER_OWNER,
+            executed_prefix_length=0,
+        )
+
+        assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+        assert result.error_code == (
+            "email_unsubscribe_authentication_controls_blocked"
+        )
+        assert not isinstance(result, UnsubscribeContinuationResult)
+        assert _FixtureHandler.requests == [
+            ("GET", f"{path}?opaque=private-fixture-token")
+        ]
+        assert not tuple(profile.profile_dir.glob("audit-sessions/*.json"))
+        assert secret not in store.path.read_bytes()
+        assert secret.decode() not in repr(result)
+        assert secret.decode() not in json.dumps(result.redacted, sort_keys=True)
+        assert secret.decode() not in result.error_code
+        for candidate in profile.profile_dir.rglob("*"):
+            if candidate.is_file():
+                assert secret not in candidate.read_bytes()
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/hostile-auth-get-attribute",
+        "/hostile-auth-query-selector",
+        "/hostile-auth-value-mutation",
+    ),
+)
+def test_dedicated_profile_blocks_hostile_authentication_pages_in_isolated_world(
+    tmp_path: Path,
+    path: str,
+) -> None:
+    secret = b"profile-secret-never-persist"
+    with _loopback_server() as origin:
+        private_url = f"{origin}{path}?opaque=private-fixture-token"
+        store, effect, entry = _setup(
+            tmp_path,
+            private_url,
+            (_operations(UnsubscribeOperationKind.OPEN_ENTRY)[0],),
+        )
+        policy = BrowserNetworkPolicy(
+            allowed_origins=frozenset({origin}),
+            allow_loopback_for_tests=True,
+        )
+        profile = EmailBrowserProfile(tmp_path / f"runtime-{path.rsplit('-', 1)[-1]}")
+        claim = store.claim_email_unsubscribe_write(
+            **UnsubscribeExecutor._store_arguments(effect),
+            owner=_BROWSER_OWNER,
+        )
+        assert claim is not None
+
+        result = execute_unsubscribe_in_dedicated_profile(
+            effect,
+            (entry,),
+            store=store,
+            profile=profile,
+            network_policy=policy,
+            owner=_BROWSER_OWNER,
+            executed_prefix_length=0,
+        )
+
+        assert result.outcome is UnsubscribeOutcome.FAILED_BROWSER
+        assert result.error_code == (
+            "email_unsubscribe_authentication_controls_blocked"
+        )
+        assert not isinstance(result, UnsubscribeContinuationResult)
+        assert _FixtureHandler.requests == [
+            ("GET", f"{path}?opaque=private-fixture-token")
+        ]
+        assert not tuple(profile.profile_dir.glob("audit-sessions/*.json"))
+        assert secret not in store.path.read_bytes()
+        assert secret.decode() not in repr(result)
+        assert secret.decode() not in json.dumps(result.redacted, sort_keys=True)
+        assert secret.decode() not in result.error_code
+        for candidate in profile.profile_dir.rglob("*"):
+            if candidate.is_file():
+                assert secret not in candidate.read_bytes()
 
 
 @pytest.fixture(scope="module")
@@ -1144,6 +1502,108 @@ def test_read_only_discovery_returns_only_ordinary_opaque_controls(
     assert origin not in serialized
 
 
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/auth-control-password",
+        "/auth-control-username",
+        "/auth-control-webauthn",
+        "/auth-control-compound",
+    ),
+)
+def test_snapshot_sanitizer_rechecks_authentication_before_any_state_read(
+    tmp_path: Path,
+    chrome_browser,
+    monkeypatch,
+    path: str,
+) -> None:
+    secret = "profile-secret-never-persist"
+    with _loopback_server() as origin:
+        private_url = f"{origin}{path}"
+        _, effect, _ = _setup(
+            tmp_path,
+            private_url,
+            _operations(UnsubscribeOperationKind.OPEN_ENTRY),
+        )
+        context = chrome_browser.new_context()
+        browser = PlaywrightUnsubscribeBrowser(
+            context.new_page(),
+            timeout_ms=2_000,
+            network_policy=BrowserNetworkPolicy(
+                allowed_origins=frozenset({origin}),
+                allow_loopback_for_tests=True,
+            ),
+        )
+        monkeypatch.setattr(
+            browser,
+            "discover_current_page",
+            lambda _effect: UnsubscribePageDiscovery(
+                state=UnsubscribePageState.ACTION_REQUIRED,
+                state_reference="state:detector-regression",
+                controls=(
+                    UnsubscribeDiscoveredControl(
+                        reference="unsubscribe-control:detector-regression",
+                        kind="form",
+                        intent="unsubscribe",
+                    ),
+                ),
+            ),
+        )
+        try:
+            browser.page.goto(private_url, wait_until="domcontentloaded")
+            sanitized = browser._sanitized_audit_snapshot()
+            assert sanitized["blocked"] is True
+            assert secret not in sanitized["html"]
+            assert f'value="{secret}"' not in sanitized["html"]
+            with pytest.raises(
+                UnsubscribeAuthenticationControlsError,
+                match="authentication controls are not permitted",
+            ) as error:
+                browser.capture_audit_session(effect)
+        finally:
+            context.close()
+
+    assert secret not in str(error.value)
+    assert secret not in repr(error.value)
+
+
+@pytest.mark.parametrize(
+    "autocomplete",
+    (
+        "username",
+        "webauthn",
+        "section-login username webauthn",
+        "  SECTION-LOGIN   SHIPPING   USERNAME  ",
+        "billing webauthn",
+        "section-auth one-time-code",
+        "section-auth current-password",
+        "section-auth new-password",
+    ),
+)
+def test_authentication_predicate_parses_credential_autocomplete_token_lists(
+    chrome_browser,
+    autocomplete: str,
+) -> None:
+    context = chrome_browser.new_context()
+    browser = PlaywrightUnsubscribeBrowser(
+        context.new_page(),
+        timeout_ms=2_000,
+        network_policy=BrowserNetworkPolicy(
+            allowed_origins=frozenset({"https://example.com"}),
+        ),
+    )
+    try:
+        browser.page.set_content(
+            '<input type="text" autocomplete="'
+            + autocomplete
+            + '" value="profile-secret-never-persist">'
+        )
+        with pytest.raises(UnsubscribeAuthenticationControlsError):
+            browser._assert_no_authentication_controls()
+    finally:
+        context.close()
+
+
 def test_unknown_ordinary_page_fails_closed(
     tmp_path: Path,
     chrome_browser,
@@ -1314,6 +1774,48 @@ def test_unapproved_redirect_and_subresources_are_blocked_before_request(
     assert _BlockedHandler.requests == []
 
 
+def test_unapproved_websocket_is_blocked_before_chromium_handshake(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    with _loopback_server_pair() as (allowed_origin, blocked_origin):
+        private_url = f"{allowed_origin}/direct"
+        store, effect, _entry = _setup(
+            tmp_path,
+            private_url,
+            _operations(UnsubscribeOperationKind.OPEN_ENTRY),
+        )
+        del store
+        context = chrome_browser.new_context()
+        browser = PlaywrightUnsubscribeBrowser(
+            context.new_page(),
+            timeout_ms=2_000,
+            network_policy=BrowserNetworkPolicy(
+                allowed_origins=frozenset({allowed_origin}),
+                allow_loopback_for_tests=True,
+            ),
+        )
+        try:
+            browser.page.goto(private_url, wait_until="domcontentloaded")
+            websocket_url = blocked_origin.replace("http://", "ws://", 1)
+            browser.page.evaluate(
+                "url => { window.__blockedSocket = new WebSocket(url); }",
+                f"{websocket_url}/socket",
+            )
+            browser.page.wait_for_timeout(500)
+
+            assert _BlockedHandler.request_received.is_set() is False
+            with pytest.raises(
+                UnsubscribeBrowserError,
+                match="browser network request rejected",
+            ):
+                browser.discover_current_page(effect)
+        finally:
+            context.close()
+
+    assert _BlockedHandler.requests == []
+
+
 @pytest.mark.parametrize(
     "path",
     ("/malicious-form", "/malicious-popup", "/malicious-download"),
@@ -1392,3 +1894,29 @@ def test_verified_one_click_posts_exact_body_without_cookie(
             "content_type": "application/x-www-form-urlencoded",
         }
     ]
+
+
+def test_terminal_result_text_is_canonically_redacted_and_bounded(
+    tmp_path: Path,
+    chrome_browser,
+) -> None:
+    result, requests = _run(
+        tmp_path,
+        chrome_browser,
+        path="/redacted-long-result",
+        operations=_operations(UnsubscribeOperationKind.OPEN_ENTRY),
+    )
+
+    assert result.outcome is UnsubscribeOutcome.DONE
+    assert requests == (("GET", "/redacted-long-result?opaque=private-fixture-token"),)
+    assert len(result.result_text.encode("utf-8")) <= 16 * 1024
+    assert "private-result-token" not in result.result_text
+    assert "super-secret" not in result.result_text
+    assert "/Users/derek/private-result" not in result.result_text
+    assert "[REDACTED_URL]" in result.result_text
+    assert "[REDACTED_PATH]" in result.result_text
+    assert result.observation_digest
+    assert (
+        result.observation_digest
+        != sha256(result.result_text.encode("utf-8")).hexdigest()
+    )

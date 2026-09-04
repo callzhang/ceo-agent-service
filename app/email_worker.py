@@ -37,7 +37,7 @@ class EmailWorkerDependencies:
     finalize_task: Callable[[object, object], object]
     training_tick: Callable[[], object]
     record_health: Callable[[str, Mapping[str, object]], object]
-    unsubscribe_consumer: object | None = None
+    email_store: object | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,15 @@ class EmailWorkerBootstrap:
         [Sequence[Mapping[str, object]], object], EmailWorkerDependencies
     ]
     record_health: Callable[[str, Mapping[str, object]], object] | None = None
+    task_store: object | None = None
+    email_store: object | None = None
+
+
+@dataclass(frozen=True)
+class LegacyReconciliationResult:
+    authoritative: bool
+    unresolved_task_ids: tuple[int, ...] = ()
+    task_count: int = 0
 
 
 def _account_id(account: Mapping[str, object]) -> str:
@@ -68,6 +77,16 @@ def _health_error_code(value: object, *, fallback: str) -> str:
     if not candidate or not candidate.replace("_", "").isalnum():
         return fallback
     return candidate[:MAX_HEALTH_TEXT_LENGTH]
+
+
+def _is_disabled_email_auto_reply_task(task: object) -> bool:
+    """Recognize persisted reply tasks that the current Email policy forbids."""
+
+    try:
+        payload = json.loads(str(getattr(task, "trigger_message_json", "")))
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and payload.get("action_type") == "auto_reply"
 
 
 def _scan_result_error_code(result: object) -> str:
@@ -200,7 +219,6 @@ def run_email_agent_task_loop(
     finalize_task: Callable[[object, object], object],
     record_health: Callable[[str, Mapping[str, object]], object] = _ignore_health,
     component_ready: Callable[[str], object] | None = None,
-    unsubscribe_consumer: object | None = None,
     sleep: Callable[[float], None] = time.sleep,
     max_cycles: int | None = None,
 ) -> None:
@@ -215,30 +233,28 @@ def run_email_agent_task_loop(
             failures += 1
             last_error_type = type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH]
         for task in tasks:
+            if _is_disabled_email_auto_reply_task(task):
+                try:
+                    task_store.fail_reply_task(
+                        task.id,
+                        "email_auto_reply_disabled",
+                        expected_execution_generation=task.execution_generation,
+                    )
+                except Exception as exc:  # noqa: BLE001 - keep the component alive
+                    failures += 1
+                    last_error_type = type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH]
+                continue
             try:
                 context = load_task_context(task)
-                from app.task_lifecycle import (
-                    TaskLifecycle,
-                    select_task_lifecycle,
-                )
+                from app.task_lifecycle import validate_audited_email_task
 
-                lifecycle = TaskLifecycle.CONSUMER_AUDIT
-                try:
-                    lifecycle = select_task_lifecycle(task, context)
-                except (AttributeError, TypeError, ValueError):
-                    pass
-                if lifecycle is TaskLifecycle.EMAIL_UNSUBSCRIBE_CONSUMER_DIRECT:
-                    if unsubscribe_consumer is None or not callable(
-                        getattr(unsubscribe_consumer, "run", None)
-                    ):
-                        raise RuntimeError("email unsubscribe Consumer is unavailable")
-                    result = unsubscribe_consumer.run(task, context)
-                else:
-                    result = orchestrator.process(
-                        task,
-                        context,
-                        refresh_context=lambda task=task: load_task_context(task),
-                    )
+                if not validate_audited_email_task(task, context):
+                    raise RuntimeError("legacy_email_unsubscribe_lifecycle")
+                result = orchestrator.process(
+                    task,
+                    context,
+                    refresh_context=lambda task=task: load_task_context(task),
+                )
                 finalize_task(task, result)
             except Exception as exc:  # noqa: BLE001 - isolate one Email task
                 failures += 1
@@ -334,7 +350,6 @@ def email_worker_components(
                 finalize_task=dependencies.finalize_task,
                 record_health=dependencies.record_health,
                 component_ready=component_ready,
-                unsubscribe_consumer=getattr(dependencies, "unsubscribe_consumer", None),
             ),
         ),
         (
@@ -349,10 +364,13 @@ def email_worker_components(
     )
 
 
-def _scan_config(email_store: object, model_metadata: object | None):
+def _scan_config(email_store: object, model_record: object | None):
     from app.email_classifier_contracts import EmailAction, EmailCategory
     from app.email_classifier_scan import EmailScanConfig
-    from app.email_classifier_training import CategoryEligibility
+    from app.email_classifier_training import (
+        CategoryEligibility,
+        assess_email_action_eligibility,
+    )
 
     rows = email_store.list_configs()
     if len(rows) != len(EmailCategory):
@@ -360,52 +378,127 @@ def _scan_config(email_store: object, model_metadata: object | None):
     versions = {str(row["config_version"]) for row in rows}
     if len(versions) != 1:
         raise EmailWorkerStartupError("email category config versions are inconsistent")
+    config_version = next(iter(versions))
     by_category = {EmailCategory(str(row["category"])): row for row in rows}
     thresholds = {
         category: float(by_category[category]["threshold"])
         for category in EmailCategory
     }
-    metrics_value = getattr(model_metadata, "per_category_metrics", {})
+    metadata = getattr(model_record, "metadata", None)
+    raw_source_model_id = getattr(metadata, "model_id", None)
+    source_model_id = (
+        raw_source_model_id.strip()
+        if isinstance(raw_source_model_id, str) and raw_source_model_id.strip()
+        else None
+    )
+    model_status = str(getattr(model_record, "status", ""))
+    validation_method = str(getattr(metadata, "validation_method", ""))
+    metrics_value = getattr(metadata, "per_category_metrics", {})
     metrics = metrics_value if isinstance(metrics_value, Mapping) else {}
+    actions = {
+        category: tuple(
+            EmailAction(value) for value in by_category[category]["actions"]
+        )
+        for category in EmailCategory
+    }
     eligibility: dict[EmailCategory, CategoryEligibility] = {}
     for category in EmailCategory:
         metric_value = metrics.get(category.value)
         metric = metric_value if isinstance(metric_value, Mapping) else None
         if metric is None:
+            action_eligibility = assess_email_action_eligibility(
+                category=category,
+                actions=actions[category],
+                model_status=model_status,
+                validation_method=validation_method,
+                configured_threshold=thresholds[category],
+                evaluated_threshold=None,
+                validated_precision=None,
+                validation_positive_support=0,
+                metadata_auto_action_eligible=False,
+                source_model_id=source_model_id,
+                config_version=config_version,
+            )
             eligibility[category] = CategoryEligibility(
                 category=category,
                 configured_threshold=thresholds[category],
                 validated_precision=None,
                 validation_sample_count=0,
                 auto_action_eligible=False,
-                reason="model_eligibility_missing",
+                reason=(
+                    "model_not_active"
+                    if model_record is not None and model_status != "active"
+                    else "model_eligibility_missing"
+                ),
+                source_model_id=source_model_id,
+                action_eligibility=action_eligibility,
             )
             continue
         trained_threshold = float(metric["configured_threshold"])
-        threshold_matches = trained_threshold == thresholds[category]
+        evaluated_threshold = float(metric["evaluated_threshold"])
+        threshold_matches = (
+            trained_threshold == thresholds[category]
+            and evaluated_threshold == thresholds[category]
+        )
+        action_eligibility = assess_email_action_eligibility(
+            category=category,
+            actions=actions[category],
+            model_status=model_status,
+            validation_method=validation_method,
+            configured_threshold=thresholds[category],
+            evaluated_threshold=(
+                evaluated_threshold
+                if trained_threshold == thresholds[category]
+                else trained_threshold
+            ),
+            validated_precision=float(metric["precision"]),
+            validation_positive_support=int(
+                metric.get(
+                    "validation_positive_support",
+                    metric["validation_sample_count"],
+                )
+            ),
+            metadata_auto_action_eligible=bool(metric["auto_action_eligible"]),
+            source_model_id=source_model_id,
+            config_version=config_version,
+        )
+        configured_action_eligible = (
+            any(item.auto_action_eligible for item in action_eligibility.values())
+            if actions[category]
+            else (
+                model_status == "active"
+                and source_model_id is not None
+                and validation_method == "time-ordered-holdout"
+                and threshold_matches
+                and bool(metric["auto_action_eligible"])
+            )
+        )
         eligibility[category] = CategoryEligibility(
             category=category,
             configured_threshold=thresholds[category],
             validated_precision=float(metric["precision"]),
             validation_sample_count=int(metric["validation_sample_count"]),
-            auto_action_eligible=(
-                threshold_matches and bool(metric["auto_action_eligible"])
-            ),
+            auto_action_eligible=configured_action_eligible,
             reason=(
                 str(metric["eligibility_reason"])
-                if threshold_matches
-                else "threshold_changed_since_training"
+                if configured_action_eligible
+                else next(
+                    (
+                        item.reason
+                        for item in action_eligibility.values()
+                        if not item.auto_action_eligible
+                    ),
+                    "model_eligibility_missing",
+                )
             ),
+            source_model_id=source_model_id,
+            evaluated_threshold=evaluated_threshold,
+            action_eligibility=action_eligibility,
         )
     return EmailScanConfig(
-        config_version=versions.pop(),
+        config_version=config_version,
         thresholds=thresholds,
-        actions={
-            category: tuple(
-                EmailAction(value) for value in by_category[category]["actions"]
-            )
-            for category in EmailCategory
-        },
+        actions=actions,
         category_eligibility=eligibility,
         action_parameters={
             category: {
@@ -483,6 +576,10 @@ def _build_agent_orchestrator(settings: object, store: object):
     from app.agent_runtime_production import build_production_agent_runtime
     from app.audit_agent import AuditAgentRunner
     from app.consumer_agent import ConsumerAgentRunner
+    from app.email_store import EmailStore
+    from app.email_unsubscribe_continuation import (
+        EmailUnsubscribeContinuationDriver,
+    )
 
     workspace = Path(settings.workspace)
     runtime = build_production_agent_runtime(store=store, workspace=workspace)
@@ -500,13 +597,14 @@ def _build_agent_orchestrator(settings: object, store: object):
         store=store,
         consumer=ConsumerAgentRunner(**shared),
         audit=AuditAgentRunner(**shared, dry_run=bool(settings.dry_run)),
+        domain_continuation=EmailUnsubscribeContinuationDriver(
+            EmailStore(Path(settings.db_path))
+        ),
     )
 
 
 def _message_identity(message: Mapping[str, object]) -> str:
-    return str(
-        message.get("stableMessageIdentity") or message.get("id") or ""
-    ).strip()
+    return str(message.get("stableMessageIdentity") or message.get("id") or "").strip()
 
 
 def _message_sender(message: Mapping[str, object]) -> str:
@@ -559,49 +657,18 @@ def _load_email_task_context(
         raise EmailWorkerStartupError("email task action plan is unavailable")
     task_input = _load_email_task_input(email_store, source_factory, task)
     routes = EmailAgentTaskAdapter(task_store, email_store).ensure_action_plan_tasks(
-        EmailActionPlan.model_validate(classification["action_plan"]),
+        EmailActionPlan.model_validate_json(json.dumps(classification["action_plan"])),
         task_input,
     )
-    route = next((candidate for candidate in routes if candidate.task.id == task.id), None)
+    route = next(
+        (candidate for candidate in routes if candidate.task.id == task.id), None
+    )
     if route is None:
         raise EmailWorkerStartupError("email task route is unavailable")
     return route.context
 
 
 def _finalize_email_task(store: object, task: object, result: object) -> None:
-    from app.email_unsubscribe_consumer import EmailUnsubscribeConsumerResult
-
-    if isinstance(result, EmailUnsubscribeConsumerResult):
-        outcome = str(getattr(result, "outcome", ""))
-        error = getattr(result, "error", None)
-        error_code = str(getattr(error, "code", "") or "")
-        retryable = bool(getattr(error, "retryable", False))
-        if outcome == "no_action":
-            task_status, send_status = "done", "skipped"
-        elif outcome == "executed":
-            task_status, send_status = "done", "completed"
-        elif outcome == "failed" and retryable:
-            task_status, send_status = "pending", "failed"
-        else:
-            task_status, send_status = "failed", "failed"
-        store.finalize_reply_task_without_run(
-            task_id=task.id,
-            expected_execution_generation=task.execution_generation,
-            task_status=task_status,
-            task_error=error_code,
-            available_at="",
-            conversation_id=task.conversation_id,
-            conversation_title=task.conversation_title,
-            trigger_message_id=task.trigger_message_id,
-            trigger_sender=task.trigger_sender,
-            trigger_text=task.trigger_text,
-            codex_reason=str(getattr(result, "summary", "")),
-            audit_summary="",
-            send_status=send_status,
-            send_error=error_code,
-            channel="email",
-        )
-        return
     status_map = {
         "executed": ("done", "completed"),
         "no_action": ("done", "skipped"),
@@ -667,8 +734,11 @@ def build_email_worker_dependencies(
         registry=registry,
         retrain_state_path=model_root / "retrain-state.json",
     )
+
     def load_enabled_accounts():
-        return tuple(account for account in email_store.list_accounts() if account["enabled"])
+        return tuple(
+            account for account in email_store.list_accounts() if account["enabled"]
+        )
 
     def load_active_model():
         return EmailClassifierRuntime(
@@ -683,9 +753,9 @@ def build_email_worker_dependencies(
         )
 
     def load_scan_config(active_model: object):
-        metadata = registry.get_model(active_model.loaded.model_id).metadata
-        config = _scan_config(email_store, metadata)
-        metrics = metadata.per_category_metrics
+        model_record = registry.get_model(active_model.loaded.model_id)
+        config = _scan_config(email_store, model_record)
+        metrics = model_record.metadata.per_category_metrics
         missing_config = config.config_version == "email-config-missing-v1"
         stale_threshold = any(
             item.reason == "threshold_changed_since_training"
@@ -753,12 +823,7 @@ def build_email_worker_dependencies(
             finalize_task=partial(_finalize_email_task, task_store),
             training_tick=active_model.tick,
             record_health=record_health,
-            unsubscribe_consumer=_build_email_unsubscribe_consumer(
-                settings,
-                task_store=task_store,
-                email_store=email_store,
-                source_factory=source_factory,
-            )[0],
+            email_store=email_store,
         )
 
     return EmailWorkerBootstrap(
@@ -766,6 +831,8 @@ def build_email_worker_dependencies(
         load_active_model=load_active_model,
         build_dependencies=build_dependencies,
         record_health=record_health,
+        task_store=task_store,
+        email_store=email_store,
     )
 
 
@@ -790,30 +857,34 @@ def _build_email_source_factory(settings: object):
     return source_factory
 
 
-def _build_email_unsubscribe_consumer(
-    settings: object,
-    *,
-    task_store: object,
-    email_store: object,
-    source_factory: Callable[[Mapping[str, object]], object],
-) -> object:
+def build_audited_email_unsubscribe_operation(settings: object) -> object:
+    """Build the only executable Email unsubscribe operation."""
+
+    from app.email_browser_profile import EmailBrowserProfile
+    from app.email_classifier_contracts import EmailProviderLocator
+    from app.email_store import EmailStore
     from app.email_unsubscribe import (
-        BrowserNetworkPolicy,
         EmailUnsubscribeEffect,
         UnsubscribeAuthenticationEvidence,
+        browser_network_policy_for_entries,
+        browser_unsubscribe_entries,
         execute_unsubscribe_in_dedicated_profile,
         extract_unsubscribe_entries,
     )
-    from app.email_browser_profile import EmailBrowserProfile
-    from app.email_unsubscribe_consumer import EmailUnsubscribeConsumerAgentRunner
-    from app.email_unsubscribe_operation import EmailUnsubscribeTaskOperation
-    from app.email_classifier_contracts import EmailProviderLocator
-    from urllib.parse import urlsplit
+    from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
+    from app.email_imap_readonly import ephemeral_body_html
+    from app.store import AutoReplyStore
+
+    email_store = EmailStore(Path(settings.db_path))
+    task_store = AutoReplyStore(Path(settings.db_path))
+    source_factory = _build_email_source_factory(settings)
 
     def resolve_entries(
         locator: EmailProviderLocator,
         expected_reference: str,
         authentication: UnsubscribeAuthenticationEvidence | None = None,
+        network_policy_reference: str = "",
+        network_policy_origin_references: tuple[str, ...] = (),
     ):
         account = email_store.get_account(locator.account_id)
         if not isinstance(account, Mapping):
@@ -842,106 +913,90 @@ def _build_email_unsubscribe_consumer(
             entries = extract_unsubscribe_entries(
                 list_unsubscribe=str(message.get("listUnsubscribe") or ""),
                 list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
-                body_text=str(message.get("textBody") or message.get("markdownBody") or ""),
-                body_html="",
+                body_text=str(
+                    message.get("textBody") or message.get("markdownBody") or ""
+                ),
+                body_html=ephemeral_body_html(message),
                 authentication_evidence=authentication,
             )
-            return tuple(item for item in entries if item.reference == expected_reference)
+            entries = browser_unsubscribe_entries(entries)
+            policy = browser_network_policy_for_entries(entries)
+            if (
+                policy.reference != network_policy_reference
+                or policy.origin_references != network_policy_origin_references
+            ):
+                raise ValueError("email unsubscribe network policy changed")
+            if not any(entry.reference == expected_reference for entry in entries):
+                raise ValueError("email unsubscribe entry changed")
+            return entries
         finally:
             _close_email_source(source)
 
     def execute_effect(
         effect: EmailUnsubscribeEffect,
-        entry: object,
+        entries: tuple[object, ...],
         *,
         owner: Mapping[str, object],
-        automatic_continuation: Callable[..., Mapping[str, object]],
+        executed_prefix_length: int,
     ):
-        parsed = urlsplit(str(getattr(entry, "private_url", "")))
-        if parsed.scheme.casefold() != "https" or not parsed.hostname:
-            raise ValueError("email unsubscribe entry origin is invalid")
-        origin = f"https://{parsed.netloc}"
+        if not entries:
+            raise ValueError("audited unsubscribe executes exactly one effect")
+        if not any(
+            getattr(entry, "reference", None) == effect.entry_reference
+            for entry in entries
+        ):
+            raise ValueError("email unsubscribe entry changed")
         profile = EmailBrowserProfile(
             Path(settings.db_path).parent / "email-browser-runtime"
         )
-        policy = BrowserNetworkPolicy(frozenset({origin}))
-        result = execute_unsubscribe_in_dedicated_profile(
-            effect, (entry,), store=email_store, profile=profile,
-            network_policy=policy, owner=owner, automatic=True,
-            automatic_continuation=automatic_continuation,
+        policy = browser_network_policy_for_entries(entries)
+        if (
+            policy.reference != effect.network_policy_reference
+            or policy.origin_references != effect.network_policy_origin_references
+        ):
+            raise ValueError("email unsubscribe network policy changed")
+        return execute_unsubscribe_in_dedicated_profile(
+            effect,
+            entries,
+            store=email_store,
+            profile=profile,
+            network_policy=policy,
+            owner=owner,
+            executed_prefix_length=executed_prefix_length,
         )
-        receipt = result.receipt
-        return {
-            "status": "done" if result.disposition.task_status == "done" else "failed",
-            "outcome": result.outcome.value,
-            "receipt_id": receipt.receipt_id if receipt is not None else "",
-            "evidence": receipt.evidence if receipt is not None else "",
-            "result_text": result.result_text,
-            "observation_digest": result.observation_digest,
-            "started_at": result.started_at,
-            "completed_at": result.completed_at,
-            "summary": result.result_text or result.outcome.value,
-            "error": {
-                "code": result.error_code,
-                "retryable": result.disposition.retryable,
-                "authorization_required": False,
-            },
-            "final_step": (
-                None
-                if not result.journal
-                else {
-                    "sequence": len(result.journal),
-                    "operation": result.journal[-1].operation,
-                    "state": result.journal[-1].state,
-                    "reference": result.journal[-1].reference,
-                }
-            ),
-        }
 
-    operation = EmailUnsubscribeTaskOperation(
+    return EmailUnsubscribeAuditOperation(
         task_store=task_store,
         email_store=email_store,
         resolve_entries=resolve_entries,
         execute_effect=execute_effect,
     )
-    return EmailUnsubscribeConsumerAgentRunner(
-        store=task_store,
-        workspace=Path(settings.workspace),
-        receipt_loader=email_store.get_email_unsubscribe_receipt,
-    ), operation
 
 
-def build_email_unsubscribe_operation(settings: object) -> object:
-    """Build the task-bound operation for the Agent CLI and explicit CLI entry."""
-
-    from app.email_store import EmailStore
-    from app.store import AutoReplyStore
-
-    email_store = EmailStore(Path(settings.db_path))
-    task_store = AutoReplyStore(Path(settings.db_path))
-    return _build_email_unsubscribe_consumer(
-        settings,
-        task_store=task_store,
-        email_store=email_store,
-        source_factory=_build_email_source_factory(settings),
-    )[1]
-
-
-def run_email_unsubscribe_task(
+def run_audited_email_unsubscribe(
     db_path: str | Path,
     task_id: int,
     execution_generation: str,
+    *,
+    audit_agent_run_id: int,
+    accepted_action: Mapping[str, object],
 ) -> dict[str, object]:
-    """Execute one already-claimed unsubscribe task using service settings."""
+    """Execute one accepted unsubscribe action through its bound Audit run."""
 
     from types import SimpleNamespace
 
-    settings = SimpleNamespace(
-        db_path=Path(db_path),
-        workspace=Path(db_path).parent,
+    operation = build_audited_email_unsubscribe_operation(
+        SimpleNamespace(
+            db_path=Path(db_path),
+            workspace=Path(db_path).parent,
+        )
     )
-    operation = build_email_unsubscribe_operation(settings)
-    return operation.execute(task_id, execution_generation)
+    return operation.execute(
+        task_id,
+        execution_generation,
+        audit_agent_run_id=audit_agent_run_id,
+        accepted_action=accepted_action,
+    )
 
 
 def _validate_email_worker_dependencies(dependencies: object) -> None:
@@ -999,19 +1054,119 @@ def _wait_for_configuration(wait: Callable[[], object] | None) -> None:
     Event().wait()
 
 
+def _legacy_inventory_unavailable(
+    dependencies: object,
+    *,
+    unresolved_task_ids: Sequence[int] = (),
+) -> LegacyReconciliationResult:
+    record_health = getattr(dependencies, "record_health", None)
+    if callable(record_health):
+        record_health(
+            "component:email-legacy-lifecycle",
+            {
+                "status": "degraded",
+                "error_code": "legacy_email_unsubscribe_inventory_unavailable",
+            },
+        )
+    return LegacyReconciliationResult(
+        authoritative=False,
+        unresolved_task_ids=tuple(unresolved_task_ids),
+    )
+
+
+def _fail_nonterminal_legacy_unsubscribe_tasks(
+    dependencies: object,
+) -> LegacyReconciliationResult:
+    """Fence inventoried legacy attempts and preserve inventory authority."""
+
+    email_store = getattr(dependencies, "email_store", None)
+    inventory = getattr(
+        email_store,
+        "list_nonterminal_legacy_unsubscribe_task_attempts",
+        None,
+    )
+    if not callable(inventory):
+        return _legacy_inventory_unavailable(dependencies)
+    try:
+        attempts = tuple(inventory())
+    except Exception:  # noqa: BLE001 - preserve prior conservative fencing
+        return _legacy_inventory_unavailable(dependencies)
+    if not attempts:
+        return LegacyReconciliationResult(authoritative=True)
+    isolated: list[int] = []
+    superseded: list[int] = []
+    unresolved: list[int] = []
+    terminalize = getattr(
+        dependencies.task_store,
+        "terminalize_legacy_email_unsubscribe_task",
+        None,
+    )
+    read_current = getattr(
+        email_store,
+        "get_nonterminal_legacy_unsubscribe_task_attempt",
+        None,
+    )
+    for index, attempt in enumerate(attempts):
+        task_id = attempt.task_id
+        try:
+            fenced = bool(
+                callable(terminalize)
+                and terminalize(
+                    task_id,
+                    expected_execution_generation=attempt.execution_generation,
+                    expected_status=attempt.status,
+                )
+            )
+        except Exception:  # noqa: BLE001 - isolate each unsafe legacy attempt
+            fenced = False
+        if fenced:
+            isolated.append(task_id)
+            continue
+        if not callable(read_current):
+            remaining_ids = tuple(item.task_id for item in attempts[index + 1 :])
+            return _legacy_inventory_unavailable(
+                dependencies,
+                unresolved_task_ids=(*unresolved, task_id, *remaining_ids),
+            )
+        try:
+            current = read_current(task_id)
+        except Exception:  # noqa: BLE001 - an unreadable replacement is unsafe
+            remaining_ids = tuple(item.task_id for item in attempts[index + 1 :])
+            return _legacy_inventory_unavailable(
+                dependencies,
+                unresolved_task_ids=(*unresolved, task_id, *remaining_ids),
+            )
+        (unresolved if current is not None else superseded).append(task_id)
+    dependencies.record_health(
+        "component:email-legacy-lifecycle",
+        {
+            "status": "degraded",
+            "error_code": "legacy_email_unsubscribe_lifecycle",
+            "task_count": len(attempts),
+            "isolated_count": len(isolated),
+            "superseded_count": len(superseded),
+            "unresolved_count": len(unresolved),
+        },
+    )
+    return LegacyReconciliationResult(
+        authoritative=True,
+        unresolved_task_ids=tuple(unresolved),
+        task_count=len(attempts),
+    )
+
+
 def run_email_worker(
     settings: object,
     *,
     dependencies: EmailWorkerDependencies | Any | None = None,
-    dependency_builder: Callable[[object], object] = (
-        build_email_worker_dependencies
-    ),
+    dependency_builder: Callable[[object], object] = (build_email_worker_dependencies),
     thread_factory: Callable[..., Thread] = Thread,
     wait: Callable[[], object] | None = None,
     output: TextIO = sys.stdout,
 ) -> None:
     try:
         bootstrap = dependencies or dependency_builder(settings)
+        final_reconciliation = _fail_nonterminal_legacy_unsubscribe_tasks(bootstrap)
         accounts = tuple(bootstrap.load_enabled_accounts())
         if not accounts:
             _report_waiting_configuration(
@@ -1046,10 +1201,32 @@ def run_email_worker(
             else bootstrap
         )
         _validate_email_worker_dependencies(dependencies)
-        component_names = (
+        if dependencies is not bootstrap:
+            final_reconciliation = _fail_nonterminal_legacy_unsubscribe_tasks(
+                dependencies
+            )
+        unresolved_legacy_task_ids = set(final_reconciliation.unresolved_task_ids)
+        agent_consumer_allowed = (
+            final_reconciliation.authoritative and not unresolved_legacy_task_ids
+        )
+        if final_reconciliation.authoritative and final_reconciliation.task_count == 0:
+            dependencies.record_health(
+                "component:email-legacy-lifecycle",
+                {
+                    "status": "ready",
+                    "task_count": 0,
+                    "unresolved_count": 0,
+                },
+            )
+        all_component_names = (
             "email-scan-actions",
             "email-agent-consumer",
             "email-training",
+        )
+        component_names = tuple(
+            name
+            for name in all_component_names
+            if not (not agent_consumer_allowed and name == "email-agent-consumer")
         )
         readiness = EmailWorkerReadiness(
             component_names,
@@ -1062,6 +1239,31 @@ def run_email_worker(
             active_model=active_model,
             component_ready=readiness.mark_ready,
         )
+        if not agent_consumer_allowed:
+            components = tuple(
+                component
+                for component in components
+                if component[0] != "email-agent-consumer"
+            )
+            if final_reconciliation.authoritative:
+                dependencies.record_health(
+                    "component:email-agent-consumer",
+                    {
+                        "status": "degraded",
+                        "error_code": "legacy_email_unsubscribe_lifecycle",
+                        "unresolved_count": len(unresolved_legacy_task_ids),
+                    },
+                )
+            else:
+                dependencies.record_health(
+                    "component:email-agent-consumer",
+                    {
+                        "status": "degraded",
+                        "error_code": (
+                            "legacy_email_unsubscribe_inventory_unavailable"
+                        ),
+                    },
+                )
     except EmailWorkerStartupError:
         raise
     except Exception as exc:

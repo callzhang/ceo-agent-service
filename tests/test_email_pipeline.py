@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+import json
 import sqlite3
 from threading import Barrier, Event, Thread
 
@@ -16,7 +17,7 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     EmailProviderLocator,
 )
-from app.email_classifier_training import CategoryEligibility
+from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
 from app.email_pipeline import (
     EmailCategoryConfig,
     EmailModelPrediction,
@@ -72,6 +73,16 @@ def _eligibility(*, eligible: bool = True) -> CategoryEligibility:
         validation_sample_count=30,
         auto_action_eligible=eligible,
         reason="eligible" if eligible else "precision_gate_not_met",
+        source_model_id=MODEL_ID,
+        action_eligibility={
+            EmailAction.LABEL: EmailActionEligibility(
+                action=EmailAction.LABEL,
+                auto_action_eligible=eligible,
+                reason="eligible" if eligible else "action_precision_gate_not_met",
+                source_model_id=MODEL_ID,
+                evidence_reference="email-model-eligibility:model-1:label",
+            )
+        },
     )
 
 
@@ -156,27 +167,125 @@ def test_below_threshold_is_pending_without_plan():
     assert decision.action_plan is None
 
 
+def test_model_action_plan_freezes_authorized_and_ineligible_action_evidence(
+    tmp_path: Path,
+):
+    config = EmailCategoryConfig(
+        category=EmailCategory.WORK,
+        description="work",
+        threshold=0.8,
+        actions=(EmailAction.LABEL, EmailAction.TRASH),
+        action_parameters={EmailAction.LABEL: {"labels": ["Work"]}},
+        enabled=True,
+        config_version="email-config:authorization-v1",
+    )
+    eligibility = CategoryEligibility(
+        category=EmailCategory.WORK,
+        configured_threshold=0.8,
+        validated_precision=0.96,
+        validation_sample_count=30,
+        auto_action_eligible=True,
+        reason="label_only",
+        source_model_id=MODEL_ID,
+        action_eligibility={
+            EmailAction.LABEL: EmailActionEligibility(
+                action=EmailAction.LABEL,
+                auto_action_eligible=True,
+                reason="action_precision_and_support_gate_met",
+                source_model_id=MODEL_ID,
+                evidence_reference="email-model-eligibility:model-1:label",
+            ),
+            EmailAction.TRASH: EmailActionEligibility(
+                action=EmailAction.TRASH,
+                auto_action_eligible=False,
+                reason="action_precision_gate_not_met",
+                source_model_id=MODEL_ID,
+                evidence_reference="email-model-eligibility:model-1:trash",
+            ),
+        },
+    )
+
+    decision = decide_classification(
+        _prediction(),
+        config,
+        eligibility,
+        classification_id=102,
+        account_id="account-a",
+        created_at=NOW,
+    )
+
+    assert decision.action_plan is not None
+    assert decision.action_plan.actions == (EmailAction.LABEL,)
+    records = {
+        record.action_type: record
+        for record in decision.action_plan.action_authorizations
+    }
+    assert records[EmailAction.LABEL].authorized is True
+    assert records[EmailAction.LABEL].authorization_source == "model_eligibility"
+    assert records[EmailAction.TRASH].authorized is False
+    assert (
+        records[EmailAction.TRASH].ineligible_reason == "action_precision_gate_not_met"
+    )
+    assert records[EmailAction.TRASH].parameters == {}
+    store = EmailStore(tmp_path / "authorization-roundtrip.sqlite3")
+    persisted = _persist_decision(store, decision, classification_id=102)
+    assert (
+        persisted["action_plan"]["action_authorizations"]
+        == (decision.action_plan.model_dump(mode="json")["action_authorizations"])
+    )
+    with sqlite3.connect(store.path) as db:
+        encoded_snapshot = db.execute(
+            "select authorization_snapshot_json from email_action_plans"
+        ).fetchone()[0]
+    assert encoded_snapshot is not None
+    assert (
+        json.loads(encoded_snapshot)
+        == persisted["action_plan"]["action_authorizations"]
+    )
+
+
+def test_prediction_and_eligibility_model_mismatch_fails_closed():
+    eligibility = _eligibility()
+    prediction = EmailModelPrediction(
+        category=EmailCategory.WORK,
+        confidence=0.99,
+        margin=0.90,
+        probabilities={"work": 0.99},
+        model_id="email-model:different-active-model",
+    )
+
+    decision = decide_classification(
+        prediction,
+        _config(),
+        eligibility,
+        classification_id=103,
+        account_id="account-a",
+        created_at=NOW,
+    )
+
+    assert decision.status is EmailClassificationStatus.PENDING_FEEDBACK
+    assert decision.action_plan is None
+
+
 def test_pending_confirmation_records_feedback_then_current_config_plan_without_task(
     tmp_path: Path,
 ):
     store = EmailStore(tmp_path / "email.sqlite3")
     pending = _persist_decision(store, _decision(confidence=0.79))
     store.upsert_config(
-        category=EmailCategory.IMPORTANT,
-        description="important",
+        category=EmailCategory.SUBSCRIPTION,
+        description="subscription",
         threshold=0.97,
-        actions=(EmailAction.AUTO_REPLY, EmailAction.UNSUBSCRIBE),
-        action_parameters={
-            EmailAction.AUTO_REPLY: {"instruction": "reply briefly"},
-        },
+        actions=(EmailAction.UNSUBSCRIBE,),
+        action_parameters={},
         enabled=True,
-        config_version="important-v3",
+        config_version="subscription-v3",
     )
 
     application = apply_human_confirmation(
         store,
         pending["id"],
-        EmailCategory.IMPORTANT,
+        EmailCategory.SUBSCRIPTION,
         feedback_request_id="feedback-pending-confirmation",
         expected_current_action_plan_id=None,
         now=NOW,
@@ -186,17 +295,22 @@ def test_pending_confirmation_records_feedback_then_current_config_plan_without_
     confirmed = application.confirmed
     assert confirmed["status"] == "processed"
     assert confirmed["classification_source"] == "user"
-    assert confirmed["action_plan"]["category"] == "important"
-    assert confirmed["action_plan"]["config_version"] == "important-v3"
+    assert confirmed["action_plan"]["category"] == "subscription"
+    assert confirmed["action_plan"]["config_version"] == "subscription-v3"
     assert confirmed["action_plan"]["model_id"] == MODEL_ID
-    assert confirmed["action_plan"]["actions"] == ["auto_reply", "unsubscribe"]
-    assert store.list_training_examples()[0]["label"] == "important"
+    assert confirmed["action_plan"]["actions"] == ["unsubscribe"]
+    assert EmailAction.AUTO_REPLY.value not in confirmed["action_plan"]["actions"]
+    [authorization] = confirmed["action_plan"]["action_authorizations"]
+    assert authorization["action_type"] == "unsubscribe"
+    assert authorization["authorized"] is True
+    assert authorization["authorization_source"] == "user_confirmation"
+    assert authorization["source_model_id"] == MODEL_ID
+    assert authorization["config_version"] == "subscription-v3"
+    assert store.list_training_examples()[0]["label"] == "subscription"
     with sqlite3.connect(store.path) as db:
         table_names = {
             row[0]
-            for row in db.execute(
-                "select name from sqlite_master where type='table'"
-            )
+            for row in db.execute("select name from sqlite_master where type='table'")
         }
         assert db.execute("select count(*) from email_actions").fetchone()[0] == 0
     assert "reply_tasks" not in table_names
@@ -209,9 +323,7 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
     store = EmailStore(tmp_path / "email.sqlite3")
     processed = _persist_decision(store, _decision())
     with sqlite3.connect(store.path) as db:
-        old_action = db.execute(
-            "select action_id from email_actions"
-        ).fetchone()[0]
+        old_action = db.execute("select action_id from email_actions").fetchone()[0]
     store.append_action_attempt(
         action_id=old_action,
         attempt_number=1,
@@ -272,15 +384,15 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
         (2, MODEL_ID, "important-v4"),
     ]
     assert {row["action_type"] for row in actions} == {"label", "archive"}
-    assert next(row for row in actions if row["action_id"] == old_action)[
-        "status"
-    ] == "done"
+    assert (
+        next(row for row in actions if row["action_id"] == old_action)["status"]
+        == "done"
+    )
     assert [(row["action_id"], row["provider_result_id"]) for row in attempts] == [
         (old_action, "provider-receipt-1")
     ]
     assert all(
-        row["config_version"] in {"email-config-v1", "important-v4"}
-        for row in actions
+        row["config_version"] in {"email-config-v1", "important-v4"} for row in actions
     )
 
 
@@ -370,9 +482,7 @@ def test_processed_correction_reads_config_after_acquiring_write_lease(
                     processed["id"],
                     EmailCategory.IMPORTANT,
                     feedback_request_id="feedback-config-lease",
-                    expected_current_action_plan_id=processed[
-                        "current_action_plan_id"
-                    ],
+                    expected_current_action_plan_id=processed["current_action_plan_id"],
                     now=NOW,
                 )
             )
@@ -448,7 +558,10 @@ def test_exact_feedback_replay_returns_original_result_without_new_history(
     assert replay.feedback_request_id == "feedback-first-1"
     assert replay.confirmed == first.confirmed
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from email_feedback_requests").fetchone()[0] == 1
+        assert (
+            db.execute("select count(*) from email_feedback_requests").fetchone()[0]
+            == 1
+        )
         assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 1
         assert db.execute("select count(*) from email_actions").fetchone()[0] == 0
 
@@ -610,5 +723,8 @@ def test_concurrent_different_requests_from_same_plan_pointer_allow_one_correcti
     assert applied[0] is not None and applied[0].applied is True
     assert len(conflicts) == 1
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from email_feedback_requests").fetchone()[0] == 2
+        assert (
+            db.execute("select count(*) from email_feedback_requests").fetchone()[0]
+            == 2
+        )
         assert db.execute("select count(*) from email_action_plans").fetchone()[0] == 2

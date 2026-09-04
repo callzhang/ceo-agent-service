@@ -20,18 +20,18 @@ from app.jieba_loader import jieba_lcut
 
 
 EMAIL_CATEGORIES = tuple(category.value for category in EmailCategory)
+_SECRET_TOKEN = re.compile(
+    r"\b(?:sub|ch|pi|sk|tok|token|sess|session|order|invoice|qrp)"
+    r"[_.-]?[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]{6,})*\b",
+    flags=re.IGNORECASE,
+)
 
 
 def _clean(value: object) -> str:
     text = str(value or "")
     text = re.sub(r"https?://\S+", " URL ", text, flags=re.IGNORECASE)
     text = re.sub(r"\b[\w.+-]+@[\w.-]+\b", " EMAIL ", text)
-    text = re.sub(
-        r"\b(?:sub|ch|pi|sk|tok|token|sess|session|order|invoice)[_-]?[A-Za-z0-9_-]{6,}\b",
-        " TOKEN ",
-        text,
-        flags=re.IGNORECASE,
-    )
+    text = _SECRET_TOKEN.sub(" TOKEN ", text)
     text = re.sub(r"(?<!\d)\d{4,}(?!\d)", " NUMBER ", text)
     return re.sub(r"\s+", " ", text).strip()
 

@@ -5,16 +5,25 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from app.email_classifier_contracts import (
+    EmailAction,
     EmailActionPlan,
     EmailAttachmentMetadata,
     EmailProviderLocator,
 )
 from app.email_store import EmailStore
+from app.email_imap_readonly import (
+    ephemeral_body_html,
+    ephemeral_unsubscribe_authentication,
+)
 from app.email_task_adapter import (
     EmailAgentTaskInput,
     EmailAgentTaskRoute,
     EmailAgentTaskAdapter,
     EmailThreadMessage,
+)
+from app.email_unsubscribe import (
+    browser_network_policy_for_entries,
+    extract_unsubscribe_entries,
 )
 from app.store import AutoReplyStore
 
@@ -36,7 +45,7 @@ class EmailActionTaskProducer:
         action_plan: EmailActionPlan,
         message: Mapping[str, object],
     ) -> tuple[EmailAgentTaskRoute, ...]:
-        if not action_plan.agent_actions:
+        if EmailAction.UNSUBSCRIBE not in action_plan.agent_actions:
             return ()
         task_input = self._task_input(action_plan, message)
         return self.adapter.ensure_action_plan_tasks(action_plan, task_input)
@@ -96,9 +105,9 @@ class EmailActionTaskProducer:
             for row in rows
             if row.get("stable_message_identity") != stable_identity
         )
-        attachment_values = message.get("attachments") or trigger_row.get(
-            "attachment_metadata"
-        ) or ()
+        attachment_values = (
+            message.get("attachments") or trigger_row.get("attachment_metadata") or ()
+        )
         if not isinstance(attachment_values, Sequence) or isinstance(
             attachment_values, str | bytes
         ):
@@ -106,6 +115,17 @@ class EmailActionTaskProducer:
         attachments = tuple(
             EmailAttachmentMetadata.model_validate(item) for item in attachment_values
         )
+        body_text = str(message.get("markdownBody") or message.get("textBody") or "")
+        body_html = ephemeral_body_html(message)
+        authentication = ephemeral_unsubscribe_authentication(message)
+        entries = extract_unsubscribe_entries(
+            list_unsubscribe=str(message.get("listUnsubscribe") or ""),
+            list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
+            body_text=body_text,
+            body_html=body_html,
+            authentication_evidence=authentication,
+        )
+        policy = browser_network_policy_for_entries(entries)
         return EmailAgentTaskInput(
             stable_message_identity=stable_identity,
             thread_identity=thread_identity,
@@ -115,7 +135,11 @@ class EmailActionTaskProducer:
             attachments=attachments,
             list_unsubscribe=str(message.get("listUnsubscribe") or ""),
             list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
-            body_text=str(message.get("markdownBody") or message.get("textBody") or ""),
+            body_text=body_text,
+            body_html=body_html,
+            unsubscribe_authentication=authentication,
+            unsubscribe_network_policy_reference=policy.reference,
+            unsubscribe_network_policy_origin_references=policy.origin_references,
         )
 
     @staticmethod

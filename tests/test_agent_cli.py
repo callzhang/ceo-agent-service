@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import subprocess
+import threading
+import time
 import zipfile
 from pathlib import Path
 
@@ -25,11 +27,107 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
         "read_spreadsheet",
         "execute_reviewed_read",
         "execute_reviewed_write",
-        "execute_email_unsubscribe",
+        "execute_audited_email_unsubscribe",
     }
     assert all(description.strip() for description in descriptions.values())
     assert "calendar event" in descriptions["execute_reviewed_read"]
-    assert "email unsubscribe" in descriptions["execute_email_unsubscribe"]
+    assert "email unsubscribe" in descriptions["execute_audited_email_unsubscribe"]
+    assert "execute_email_unsubscribe" not in descriptions
+
+
+def test_audited_email_unsubscribe_tool_reaches_worker_helper(monkeypatch, tmp_path):
+    import app.config as config
+    import app.email_worker as email_worker
+
+    calls = []
+    accepted_action = {"operation": "unsubscribe", "target": {"id": "opaque"}}
+    expected = {"status": "done", "summary": "fake result"}
+    db_path = tmp_path / "worker.sqlite3"
+    monkeypatch.setattr(config, "worker_db_path", lambda: db_path)
+
+    def run_helper(
+        received_db_path,
+        task_id,
+        execution_generation,
+        *,
+        audit_agent_run_id,
+        accepted_action,
+    ):
+        calls.append(
+            (
+                received_db_path,
+                task_id,
+                execution_generation,
+                audit_agent_run_id,
+                accepted_action,
+            )
+        )
+        return expected
+
+    monkeypatch.setattr(email_worker, "run_audited_email_unsubscribe", run_helper)
+
+    result = asyncio.run(
+        agent_cli.execute_audited_email_unsubscribe_tool(
+            17,
+            "generation-17",
+            29,
+            accepted_action,
+        )
+    )
+
+    assert result is expected
+    assert calls == [(db_path, 17, "generation-17", 29, accepted_action)]
+
+
+def test_registered_audited_unsubscribe_does_not_block_mcp_event_loop(
+    monkeypatch,
+    tmp_path,
+):
+    import app.config as config
+    import app.email_worker as email_worker
+
+    release = threading.Event()
+    db_path = tmp_path / "worker.sqlite3"
+    monkeypatch.setattr(config, "worker_db_path", lambda: db_path)
+
+    def run_helper(*_args, **_kwargs):
+        assert release.wait(timeout=2)
+        return {"status": "done", "summary": "fake result"}
+
+    monkeypatch.setattr(email_worker, "run_audited_email_unsubscribe", run_helper)
+
+    async def exercise():
+        started = time.monotonic()
+        timer = threading.Timer(0.3, release.set)
+        timer.start()
+        try:
+            call = asyncio.create_task(
+                agent_cli.server.call_tool(
+                    "execute_audited_email_unsubscribe",
+                    {
+                        "task_id": 17,
+                        "execution_generation": "generation-17",
+                        "audit_agent_run_id": 29,
+                        "accepted_action": {
+                            "operation": "unsubscribe",
+                            "target": {"id": "opaque"},
+                        },
+                    },
+                )
+            )
+            await asyncio.sleep(0.05)
+            responsive_after = time.monotonic() - started
+            result = await call
+        finally:
+            release.set()
+            timer.join(timeout=1)
+        return responsive_after, result
+
+    responsive_after, result = asyncio.run(exercise())
+
+    assert responsive_after < 0.15
+    assert isinstance(result, tuple)
+    assert result[1] == {"status": "done", "summary": "fake result"}
 
 
 def test_registered_reaction_write_is_accepted_when_dws_schema_is_incomplete():

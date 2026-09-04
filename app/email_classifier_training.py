@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import json
 import os
 import shutil
 import tempfile
@@ -10,7 +11,7 @@ import time
 import warnings
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -18,7 +19,7 @@ from types import MappingProxyType
 
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
-from app.email_classifier_contracts import EmailCategory
+from app.email_classifier_contracts import EmailAction, EmailCategory
 from app.email_classifier_model import CpuTfidfLogisticClassifier, EmailModelPrediction
 from app.email_model_registry import (
     MODEL_FAMILY,
@@ -97,6 +98,15 @@ class EligibilityRequirement:
 
 
 @dataclass(frozen=True)
+class EmailActionEligibility:
+    action: EmailAction
+    auto_action_eligible: bool
+    reason: str
+    source_model_id: str | None = None
+    evidence_reference: str = "email-model-eligibility:unavailable"
+
+
+@dataclass(frozen=True)
 class CategoryEligibility:
     category: EmailCategory
     configured_threshold: float
@@ -104,14 +114,142 @@ class CategoryEligibility:
     validation_sample_count: int
     auto_action_eligible: bool
     reason: str
+    source_model_id: str | None = None
     validated_recall: float | None = None
     validated_f1: float | None = None
     automatic_candidate_count: int = 0
     evaluated_threshold: float | None = None
+    action_eligibility: Mapping[EmailAction, EmailActionEligibility] = field(
+        default_factory=dict
+    )
+
+    def __post_init__(self) -> None:
+        action_eligibility = dict(self.action_eligibility)
+        if any(
+            action is not eligibility.action
+            for action, eligibility in action_eligibility.items()
+        ):
+            raise ValueError("action eligibility keys must match values")
+        object.__setattr__(
+            self,
+            "action_eligibility",
+            MappingProxyType(action_eligibility),
+        )
 
     @property
     def validation_positive_support(self) -> int:
         return self.validation_sample_count
+
+
+_ACTION_REQUIREMENTS: Mapping[EmailAction, tuple[float, int]] = MappingProxyType(
+    {
+        EmailAction.LABEL: (0.95, 30),
+        EmailAction.MARK_READ: (0.95, 30),
+        EmailAction.ARCHIVE: (0.97, 30),
+        EmailAction.MOVE: (0.97, 30),
+        EmailAction.TRASH: (0.995, 30),
+        EmailAction.UNSUBSCRIBE: (0.95, 20),
+    }
+)
+
+
+def assess_email_action_eligibility(
+    *,
+    category: EmailCategory,
+    actions: Sequence[EmailAction],
+    model_status: str,
+    validation_method: str,
+    configured_threshold: float,
+    evaluated_threshold: float | None,
+    validated_precision: float | None,
+    validation_positive_support: int,
+    metadata_auto_action_eligible: bool,
+    source_model_id: str | None = None,
+    config_version: str = "unbound-config",
+) -> Mapping[EmailAction, EmailActionEligibility]:
+    """Evaluate each configured action at the active-model runtime boundary."""
+
+    results: dict[EmailAction, EmailActionEligibility] = {}
+    for action in actions:
+        if source_model_id is None:
+            eligible = False
+            reason = "model_eligibility_unbound"
+        elif model_status != "active":
+            eligible = False
+            reason = "model_not_active"
+        elif validation_method != "time-ordered-holdout":
+            eligible = False
+            reason = "time_ordered_validation_required"
+        elif evaluated_threshold != configured_threshold:
+            eligible = False
+            reason = "threshold_changed_since_training"
+        elif not metadata_auto_action_eligible:
+            eligible = False
+            reason = "model_eligibility_missing"
+        elif action is EmailAction.AUTO_REPLY:
+            eligible = False
+            reason = "auto_reply_disabled"
+        elif (
+            action is EmailAction.UNSUBSCRIBE
+            and category is not EmailCategory.SUBSCRIPTION
+        ):
+            eligible = False
+            reason = "subscription_category_required"
+        else:
+            requirement = _ACTION_REQUIREMENTS.get(action)
+            if requirement is None:
+                eligible = False
+                reason = "action_not_eligible"
+            else:
+                minimum_precision, minimum_support = requirement
+                precision_met = (
+                    validated_precision is not None
+                    and validated_precision >= minimum_precision
+                )
+                support_met = validation_positive_support >= minimum_support
+                eligible = precision_met and support_met
+                if eligible:
+                    reason = "action_precision_and_support_gate_met"
+                elif not precision_met and not support_met:
+                    reason = "action_precision_and_support_gate_not_met"
+                elif not precision_met:
+                    reason = "action_precision_gate_not_met"
+                else:
+                    reason = "action_support_gate_not_met"
+        evidence_snapshot = json.dumps(
+            {
+                "action_type": action.value,
+                "category": category.value,
+                "config_version": config_version,
+                "configured_threshold": configured_threshold,
+                "evaluated_threshold": evaluated_threshold,
+                "metadata_auto_action_eligible": metadata_auto_action_eligible,
+                "model_status": model_status,
+                "reason": reason,
+                "source_model_id": source_model_id,
+                "validated_precision": validated_precision,
+                "validation_method": validation_method,
+                "validation_positive_support": validation_positive_support,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        evidence_reference = (
+            "email-model-eligibility:unavailable"
+            if source_model_id is None
+            else "email-model-eligibility:"
+            + source_model_id
+            + ":sha256:"
+            + sha256(evidence_snapshot.encode("utf-8")).hexdigest()
+        )
+        results[action] = EmailActionEligibility(
+            action=action,
+            auto_action_eligible=eligible,
+            reason=reason,
+            source_model_id=source_model_id,
+            evidence_reference=evidence_reference,
+        )
+    return MappingProxyType(results)
 
 
 @dataclass(frozen=True)

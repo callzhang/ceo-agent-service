@@ -1,9 +1,18 @@
 # Consumer-Direct Email Unsubscribe Integration Design
 
+> **历史实现记录（已被取代）**：本文忠实保留 2026-08-30 Consumer-direct 分支实现及
+> 当时的评审结论。新任务的已批准实施权威是
+> [`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md)
+> 中的 `email_unsubscribe_audited_v2`；本文不是新任务的可执行目标，也不表示 audited-v2
+> 已经部署或在生产启用。
+
 **Date:** 2026-08-30
 
-**Status:** Approved design; written review complete; implementation remains
-production-disabled
+**Status:** Historical Consumer-direct implementation record; its written review complete
+state describes the then-approved version. It is superseded for new implementation by the approved
+[`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md).
+The branch facts below remain useful implementation history, but this document is
+no longer implementation authority and makes no audited-v2 deployment claim.
 
 **Repository:** `/Users/derek/Documents/Projects/ceo-agent-service`
 
@@ -30,10 +39,10 @@ other external action.
 
 The design replaces the earlier step-by-step audited unsubscribe proposal in
 this document. Existing audited implementation history remains preserved in
-Git and existing durable rows remain readable, but the production path defined
-here is Consumer-direct.
+Git and existing durable rows remain readable, but the then-defined production
+target was Consumer-direct.
 
-## 2. Current Truth
+## 2. Implementation Truth as of 2026-08-30
 
 The branch contains the Consumer-direct unsubscribe execution core, browser
 tests, mail-review boundaries, and an independently supervised Email worker.

@@ -8,6 +8,7 @@ from typing import Mapping
 
 from app.email_classifier_contracts import (
     EmailAction,
+    EmailActionAuthorization,
     EmailActionPlan,
     EmailCategory,
     EmailClassificationStatus,
@@ -89,16 +90,70 @@ def decide_classification(
     created_at: datetime,
 ) -> EmailClassificationDecision:
     if prediction.category is not category_config.category:
-        raise ValueError("prediction and category config must identify the same category")
+        raise ValueError(
+            "prediction and category config must identify the same category"
+        )
     if eligibility.category is not prediction.category:
         raise ValueError("prediction and eligibility must identify the same category")
     if eligibility.configured_threshold != category_config.threshold:
         raise ValueError("eligibility threshold must match category configuration")
 
+    model_binding_matches = eligibility.source_model_id == prediction.model_id
+    action_authorizations: list[EmailActionAuthorization] = []
+    for action in category_config.actions:
+        action_eligibility = eligibility.action_eligibility.get(action)
+        action_model_matches = (
+            action_eligibility is not None
+            and action_eligibility.source_model_id == prediction.model_id
+        )
+        authorized = bool(
+            model_binding_matches
+            and action_model_matches
+            and action_eligibility is not None
+            and action_eligibility.auto_action_eligible
+        )
+        if action_eligibility is None:
+            ineligible_reason = "action_eligibility_missing"
+            evidence_reference = "email-model-eligibility:unavailable"
+            evidence_model_id = eligibility.source_model_id or prediction.model_id
+        elif not action_model_matches:
+            ineligible_reason = "action_eligibility_model_mismatch"
+            evidence_reference = action_eligibility.evidence_reference
+            evidence_model_id = (
+                action_eligibility.source_model_id or prediction.model_id
+            )
+        else:
+            ineligible_reason = "" if authorized else action_eligibility.reason
+            evidence_reference = action_eligibility.evidence_reference
+            evidence_model_id = (
+                action_eligibility.source_model_id or prediction.model_id
+            )
+        action_authorizations.append(
+            EmailActionAuthorization(
+                action_type=action,
+                parameters=dict(category_config.action_parameters.get(action, {})),
+                authorization_source="model_eligibility",
+                eligibility_evidence_reference=evidence_reference,
+                authorized=authorized,
+                ineligible_reason=ineligible_reason,
+                source_model_id=evidence_model_id,
+                config_version=category_config.config_version,
+            )
+        )
+    eligible_actions = tuple(
+        authorization.action_type
+        for authorization in action_authorizations
+        if authorization.authorized
+    )
+    configured_actions_are_eligible = not category_config.actions or bool(
+        eligible_actions
+    )
     automatic = (
         category_config.enabled
+        and model_binding_matches
         and eligibility.auto_action_eligible
         and prediction.confidence >= category_config.threshold
+        and configured_actions_are_eligible
     )
     status = (
         EmailClassificationStatus.PROCESSED
@@ -115,9 +170,13 @@ def decide_classification(
             confidence=prediction.confidence,
             model_id=prediction.model_id,
             config_version=category_config.config_version,
-            actions=category_config.actions,
-            action_parameters=category_config.action_parameters,
+            actions=eligible_actions,
+            action_parameters={
+                action: category_config.action_parameters.get(action, {})
+                for action in eligible_actions
+            },
             created_at=created_at,
+            action_authorizations=tuple(action_authorizations),
         )
     return EmailClassificationDecision(
         category=prediction.category,

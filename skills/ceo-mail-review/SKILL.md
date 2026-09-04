@@ -1,6 +1,6 @@
 ---
 name: ceo-mail-review
-description: Use when an incoming email, DingTalk or Lark mail card, or channel=email action requires review, reply judgment, automatic reply, or unsubscribe handling.
+description: Use when an incoming email, DingTalk or Lark mail card, or channel=email action requires review, reply judgment, or unsubscribe handling.
 metadata:
   managed_by: ceo-agent-service
   version: 1
@@ -30,6 +30,17 @@ A linked material is not an email attachment. It is a document, table, or drive
 item referenced from a DingTalk or Lark interactive mail review and readable
 through the matching operation Skill. An attachment remains attachment metadata
 only under this Email subsystem contract.
+
+## Email Operation Boundaries
+
+| Operation | Boundary |
+| --- | --- |
+| Classification confirmation | Save final category and feedback only; create no generic task. |
+| Deterministic mailbox action | Email worker executes exact configured action and reads provider state back; no Agent run. |
+| Unsubscribe proposal | Consumer proposes exactly one operation bound to the immutable ActionPlan; Consumer has no write capability. |
+| Unsubscribe execution | Audit alone invokes the task/run-bound capability and verifies the external result. |
+| Reply or mailto unsubscribe | Disabled; do not draft, send, or request SMTP capability. |
+| Attachment | Metadata only; never download, open, OCR, parse, summarize, or infer body content. |
 
 ## DingTalk Or Lark Interactive Review
 
@@ -65,12 +76,12 @@ For a `channel=email` task:
 4. Do not open or inspect linked content for a `channel=email` task. A URL in
    message text is text evidence only. Task 11 unsubscribe browser execution is
    a separate audited capability and does not authorize general link browsing.
-5. Before proposing `auto_reply`, read the current sent state and safe prior
-   receipts. Before proposing `unsubscribe`, read the current unsubscribe state
-   and safe prior receipts. Do not propose a duplicate completed action.
+5. Automatic `auto_reply` is disabled for the current Email subsystem. Never
+   propose or send an email reply from a classifier result or Email task.
+   Before proposing `unsubscribe`, read the current unsubscribe state and safe
+   prior receipts. Do not propose a duplicate completed action.
 
-When the message says only that details are in an attachment, an authorized
-`auto_reply` may acknowledge receipt without evaluating the attachment. Never
+When the message says only that details are in an attachment, do not reply or
 claim that an attachment was read, correct, complete, approved, or understood.
 
 ### Audited Unsubscribe
@@ -144,7 +155,8 @@ Every reply requires explicit reply authorization.
   authorize a mail reply. Authorization from an older message does not silently
   carry into a materially different current request.
 - For `channel=email`, the current immutable ActionPlan is the authorization.
-  Only its exact `auto_reply` or `unsubscribe` action may be proposed.
+  The current deployment permits only its exact `unsubscribe` action to be
+  proposed. `auto_reply` is disabled and cannot be proposed or sent.
   Classification confirmation, category text, an older plan, or prior
   conversation is not authorization for another mail action.
 - Consumer A proposes only the authorized action; it never sends or unsubscribes

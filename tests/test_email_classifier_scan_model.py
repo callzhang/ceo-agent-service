@@ -15,9 +15,10 @@ from app.email_classifier_scan import (
     scan_imap_accounts,
     scan_readonly_batch,
 )
-from app.email_classifier_training import CategoryEligibility
+from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
 from app.email_imap_readonly import ImapUidBatch
 from app.email_store import EmailStore
+from app.email_worker import _scan_config
 
 
 class FakeSource:
@@ -75,6 +76,7 @@ def _category_eligibility(
     *,
     eligible: tuple[EmailCategory, ...] = (),
     threshold: float = 0.8,
+    model_id: str = "static-model-v1",
 ) -> dict[EmailCategory, CategoryEligibility]:
     return {
         category: CategoryEligibility(
@@ -88,6 +90,24 @@ def _category_eligibility(
                 if category in eligible
                 else "insufficient_validation_samples"
             ),
+            source_model_id=model_id,
+            action_eligibility={
+                action: EmailActionEligibility(
+                    action=action,
+                    auto_action_eligible=category in eligible,
+                    reason=(
+                        "action_precision_and_support_gate_met"
+                        if category in eligible
+                        else "action_precision_and_support_gate_not_met"
+                    ),
+                    source_model_id=model_id,
+                    evidence_reference=(
+                        f"email-model-eligibility:{model_id}:{action.value}"
+                    ),
+                )
+                for action in EmailAction
+                if action is not EmailAction.AUTO_REPLY
+            },
         )
         for category in EmailCategory
     }
@@ -109,12 +129,36 @@ def _message() -> dict[str, object]:
 def _training_messages() -> tuple[list[dict[str, object]], list[str]]:
     return (
         [
-            {"from": {"email": "billing@example.com"}, "subject": "发票 invoice", "textBody": "付款记录"},
-            {"from": {"email": "team@stardust.ai"}, "subject": "项目 project", "textBody": "本周工作安排"},
-            {"from": {"email": "ads@example.com"}, "subject": "marketing promotion", "textBody": "special offer"},
-            {"from": {"email": "finance@example.com"}, "subject": "receipt receipt", "textBody": "payment invoice"},
-            {"from": {"email": "engineering@stardust.ai"}, "subject": "work sprint", "textBody": "project deadline"},
-            {"from": {"email": "news@example.com"}, "subject": "newsletter", "textBody": "promotion offer"},
+            {
+                "from": {"email": "billing@example.com"},
+                "subject": "发票 invoice",
+                "textBody": "付款记录",
+            },
+            {
+                "from": {"email": "team@stardust.ai"},
+                "subject": "项目 project",
+                "textBody": "本周工作安排",
+            },
+            {
+                "from": {"email": "ads@example.com"},
+                "subject": "marketing promotion",
+                "textBody": "special offer",
+            },
+            {
+                "from": {"email": "finance@example.com"},
+                "subject": "receipt receipt",
+                "textBody": "payment invoice",
+            },
+            {
+                "from": {"email": "engineering@stardust.ai"},
+                "subject": "work sprint",
+                "textBody": "project deadline",
+            },
+            {
+                "from": {"email": "news@example.com"},
+                "subject": "newsletter",
+                "textBody": "promotion offer",
+            },
         ],
         ["billing", "work", "junk", "billing", "work", "junk"],
     )
@@ -156,6 +200,7 @@ def test_cpu_model_feeds_readonly_scan_and_persists_only_classification(tmp_path
         category_eligibility=_category_eligibility(
             eligible=tuple(EmailCategory),
             threshold=0.0,
+            model_id="model-integration-test",
         ),
     )
 
@@ -191,14 +236,9 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
     config = EmailScanConfig(
         config_version="scan-task-production-v1",
         thresholds={category: 0.0 for category in EmailCategory},
-        actions={EmailCategory.WORK: (EmailAction.AUTO_REPLY,)},
-        action_parameters={
-            EmailCategory.WORK: {
-                EmailAction.AUTO_REPLY: {"instruction": "Acknowledge the email."}
-            }
-        },
+        actions={EmailCategory.SUBSCRIPTION: (EmailAction.UNSUBSCRIBE,)},
         category_eligibility=_category_eligibility(
-            eligible=(EmailCategory.WORK,),
+            eligible=(EmailCategory.SUBSCRIPTION,),
             threshold=0.0,
         ),
     )
@@ -206,7 +246,7 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
 
     result = scan_readonly_batch(
         source,
-        StaticClassifier(StaticPrediction("work", 0.99)),
+        StaticClassifier(StaticPrediction("subscription", 0.99)),
         store,
         config,
         task_producer=lambda classification, raw_message: callbacks.append(
@@ -218,11 +258,27 @@ def test_scan_produces_agent_actions_only_after_plan_is_persisted(tmp_path: Path
     assert len(callbacks) == 1
     classification, callback_message = callbacks[0]
     assert classification.action_plan is not None
-    assert classification.action_plan.agent_actions == (EmailAction.AUTO_REPLY,)
+    assert classification.action_plan.agent_actions == (EmailAction.UNSUBSCRIBE,)
     assert callback_message["messageId"] == message["messageId"]
     persisted = store.get_classification(classification.classification_id)
     assert persisted is not None
-    assert persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
+    assert (
+        persisted["current_action_plan_id"] == classification.action_plan.action_plan_id
+    )
+
+
+def test_scan_config_rejects_auto_reply_when_outbound_reply_is_disabled():
+    with pytest.raises(ValueError, match="auto_reply is disabled"):
+        EmailScanConfig(
+            config_version="scan-no-reply-v1",
+            thresholds={category: 0.95 for category in EmailCategory},
+            actions={EmailCategory.WORK: (EmailAction.AUTO_REPLY,)},
+            action_parameters={
+                EmailCategory.WORK: {
+                    EmailAction.AUTO_REPLY: {"instruction": "Acknowledge the email."}
+                }
+            },
+        )
 
 
 def test_repeated_readonly_scan_is_idempotent_and_preserves_feedback(tmp_path: Path):
@@ -313,7 +369,9 @@ def test_classification_failure_does_not_persist_message_or_advance_cursor(
     assert store.get_scan_cursor("dingtalk-account", "INBOX") is None
     with sqlite3.connect(tmp_path / "email.sqlite3") as db:
         assert db.execute("select count(*) from email_messages").fetchone()[0] == 0
-        assert db.execute("select count(*) from email_classifications").fetchone()[0] == 0
+        assert (
+            db.execute("select count(*) from email_classifications").fetchone()[0] == 0
+        )
 
 
 @pytest.mark.parametrize(
@@ -379,7 +437,11 @@ def test_multi_account_scan_isolates_ordinary_folder_failures(
     store = FolderStore(tmp_path / "isolated.sqlite3")
     result = scan_imap_accounts(
         [
-            {"account_id": "account-a", "enabled": True, "scan_folders": ("bad", "good")},
+            {
+                "account_id": "account-a",
+                "enabled": True,
+                "scan_folders": ("bad", "good"),
+            },
             {"account_id": "account-b", "enabled": True, "scan_folders": ("good",)},
         ],
         lambda account: FolderSource(str(account["account_id"])),
@@ -389,7 +451,10 @@ def test_multi_account_scan_isolates_ordinary_folder_failures(
     )
 
     assert [
-        (account.account_id, [(folder.folder, folder.error_code) for folder in account.folders])
+        (
+            account.account_id,
+            [(folder.folder, folder.error_code) for folder in account.folders],
+        )
         for account in result.accounts
     ] == [
         ("account-a", [("bad", "scan_failed"), ("good", "")]),
@@ -449,17 +514,14 @@ def test_high_confidence_is_pending_when_category_is_disabled(tmp_path: Path):
         config_version="disabled-category-v1",
         thresholds={category: 0.8 for category in EmailCategory},
         actions={EmailCategory.WORK: (EmailAction.LABEL,)},
-        category_eligibility=_category_eligibility(
-            eligible=(EmailCategory.WORK,)
-        ),
+        category_eligibility=_category_eligibility(eligible=(EmailCategory.WORK,)),
         action_parameters={
             EmailCategory.WORK: {
                 EmailAction.LABEL: {"labels": ["work"]},
             }
         },
         category_enabled={
-            category: category is not EmailCategory.WORK
-            for category in EmailCategory
+            category: category is not EmailCategory.WORK for category in EmailCategory
         },
     )
     store = EmailStore(tmp_path / "email.sqlite3")
@@ -514,6 +576,77 @@ def test_high_confidence_eligible_category_creates_action_plan(tmp_path: Path):
     assert rows[0]["action_plan"]["actions"] == ["label"]
 
 
+def test_model_action_plan_contains_only_independently_eligible_actions(
+    tmp_path: Path,
+):
+    rows = [
+        {
+            "category": category.value,
+            "description": category.value,
+            "enabled": True,
+            "threshold": 0.85,
+            "actions": (
+                [EmailAction.LABEL.value, EmailAction.TRASH.value]
+                if category is EmailCategory.WORK
+                else []
+            ),
+            "action_parameters": (
+                {EmailAction.LABEL.value: {"labels": ["Work"]}}
+                if category is EmailCategory.WORK
+                else {}
+            ),
+            "config_version": "per-action-v1",
+        }
+        for category in EmailCategory
+    ]
+    record = type(
+        "ActiveModelRecord",
+        (),
+        {
+            "status": "active",
+            "metadata": type(
+                "Metadata",
+                (),
+                {
+                    "model_id": "static-model-v1",
+                    "validation_method": "time-ordered-holdout",
+                    "per_category_metrics": {
+                        EmailCategory.WORK.value: {
+                            "precision": 0.96,
+                            "validation_sample_count": 30,
+                            "validation_positive_support": 30,
+                            "configured_threshold": 0.85,
+                            "evaluated_threshold": 0.85,
+                            "auto_action_eligible": True,
+                            "eligibility_reason": "precision_and_sample_gate_met",
+                        }
+                    },
+                },
+            )(),
+        },
+    )()
+    config = _scan_config(
+        type("Store", (), {"list_configs": lambda self: rows})(), record
+    )
+    store = EmailStore(tmp_path / "email.sqlite3")
+
+    result = scan_readonly_batch(
+        FakeSource([_message()]),
+        StaticClassifier(StaticPrediction("work", 0.99)),
+        store,
+        config,
+    )
+
+    assert result.processed_count == 1
+    classifications, total = store.list_classifications(
+        status=EmailClassificationStatus.PROCESSED,
+        limit=10,
+        offset=0,
+    )
+    assert total == 1
+    assert classifications[0]["action_plan"]["actions"] == ["label"]
+
+
 def test_processed_model_rescan_preserves_original_authorization_snapshot(
     tmp_path: Path,
 ):
@@ -524,9 +657,7 @@ def test_processed_model_rescan_preserves_original_authorization_snapshot(
         config_version="plan-identity-v1",
         thresholds={category: 0.8 for category in EmailCategory},
         actions={EmailCategory.WORK: (EmailAction.LABEL,)},
-        category_eligibility=_category_eligibility(
-            eligible=(EmailCategory.WORK,)
-        ),
+        category_eligibility=_category_eligibility(eligible=(EmailCategory.WORK,)),
         action_parameters={
             EmailCategory.WORK: {
                 EmailAction.LABEL: {"labels": ["work"]},

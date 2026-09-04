@@ -75,6 +75,28 @@ def test_mail_review_skill_separates_linked_materials_from_email_attachments():
     assert "Task 11 unsubscribe browser execution" in text
 
 
+def test_mail_review_skill_disables_email_replies():
+    text = _skill_prose()
+
+    assert "Automatic `auto_reply` is disabled for the current Email subsystem" in text
+    assert "Never propose or send an email reply from a classifier result or Email task" in text
+    assert "The current deployment permits only its exact `unsubscribe` action" in text
+
+
+def test_mail_review_skill_defines_exact_email_operation_boundaries():
+    text = _skill_text()
+
+    for row in (
+        "| Classification confirmation | Save final category and feedback only; create no generic task. |",
+        "| Deterministic mailbox action | Email worker executes exact configured action and reads provider state back; no Agent run. |",
+        "| Unsubscribe proposal | Consumer proposes exactly one operation bound to the immutable ActionPlan; Consumer has no write capability. |",
+        "| Unsubscribe execution | Audit alone invokes the task/run-bound capability and verifies the external result. |",
+        "| Reply or mailto unsubscribe | Disabled; do not draft, send, or request SMTP capability. |",
+        "| Attachment | Metadata only; never download, open, OCR, parse, summarize, or infer body content. |",
+    ):
+        assert row in text
+
+
 def test_canonical_prompt_delegates_mail_policy_to_skill():
     text = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
 

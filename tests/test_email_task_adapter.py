@@ -20,6 +20,7 @@ from app.email_classifier_contracts import (
     build_versioned_email_action_plan,
 )
 from app.email_store import EmailStore
+from app.email_imap_readonly import parse_rfc822_message
 from app.email_task_adapter import (
     EmailAgentTaskAdapter,
     EmailAgentTaskConflict,
@@ -32,9 +33,19 @@ from app.email_task_adapter import (
     email_conversation_id,
 )
 from app.email_task_producer import EmailActionTaskProducer
-from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
+from app.email_unsubscribe import (
+    BrowserNetworkPolicy,
+    EmailUnsubscribeEffect,
+    UnsubscribeAuthenticationEvidence,
+    UnsubscribeOperation,
+)
 from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
+from app.task_lifecycle import (
+    TaskLifecycle,
+    select_task_lifecycle,
+    validate_audited_email_task,
+)
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -49,6 +60,7 @@ def _plan(
     account_id: str = "account-primary",
     instruction: str = "Reply in Chinese and acknowledge receipt.",
     classification_source: str = "model",
+    category: EmailCategory = EmailCategory.WORK,
 ):
     parameters = {}
     for action in actions:
@@ -62,7 +74,7 @@ def _plan(
         action_plan_version=version,
         classification_id=classification_id,
         account_id=account_id,
-        category=EmailCategory.WORK,
+        category=category,
         classification_source=classification_source,
         confidence=0.98,
         model_id="email-model:2026-08-30:sha256:test",
@@ -78,6 +90,12 @@ def _task_input(
     account_id: str = "account-primary",
 ) -> EmailAgentTaskInput:
     stable_identity = f"{account_id}:message-id:<mail-41@example.com>"
+    body_text = (
+        "请确认合同。退订入口 "
+        "https://example.com/unsubscribe?token=private-token "
+        "以及 password=do-not-persist /Users/derek/private/attachment.bin"
+    )
+    policy = BrowserNetworkPolicy(frozenset({"https://example.com"}))
     return EmailAgentTaskInput(
         stable_message_identity=stable_identity,
         thread_identity="thread-customer-41",
@@ -85,10 +103,7 @@ def _task_input(
         trigger=EmailThreadMessage(
             message_id=stable_identity,
             sender="customer@example.com",
-            text=(
-                "请确认合同。退订入口 https://example.com/unsubscribe?token=private-token "
-                "以及 password=do-not-persist /Users/derek/private/attachment.bin"
-            ),
+            text=body_text,
             create_time="2026-08-30T08:00:00+00:00",
         ),
         thread_messages=(
@@ -115,6 +130,9 @@ def _task_input(
                 completed=True,
             ),
         ),
+        body_text=body_text,
+        unsubscribe_network_policy_reference=policy.reference,
+        unsubscribe_network_policy_origin_references=policy.origin_references,
     )
 
 
@@ -202,7 +220,7 @@ def _authorized_adapter(
     )
 
 
-def test_only_agent_actions_create_idempotent_email_reply_tasks(tmp_path: Path):
+def test_only_unsubscribe_creates_task_from_mixed_legacy_action_plan(tmp_path: Path):
     store = _store(tmp_path)
     plan = _plan(
         (
@@ -223,12 +241,9 @@ def test_only_agent_actions_create_idempotent_email_reply_tasks(tmp_path: Path):
     first = adapter.ensure_action_plan_tasks(plan, task_input)
     replay = adapter.ensure_action_plan_tasks(plan, task_input)
 
-    assert [route.action_type for route in first] == [
-        EmailAction.AUTO_REPLY,
-        EmailAction.UNSUBSCRIBE,
-    ]
+    assert [route.action_type for route in first] == [EmailAction.UNSUBSCRIBE]
     assert [route.task.id for route in replay] == [route.task.id for route in first]
-    assert store.count_reply_tasks(channel="email") == 2
+    assert store.count_reply_tasks(channel="email") == 1
     assert {route.task.channel for route in first} == {"email"}
     assert {route.task.status for route in first} == {"pending"}
     assert store.count_sent_replies() == 0
@@ -255,7 +270,7 @@ def test_only_agent_actions_create_idempotent_email_reply_tasks(tmp_path: Path):
 def test_task_producer_builds_email_task_from_persisted_message_context(
     tmp_path: Path,
 ):
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = _task_input()
     email_store = _email_store(tmp_path)
     _persist_authorization(email_store, plan, task_input)
@@ -280,9 +295,142 @@ def test_task_producer_builds_email_task_from_persisted_message_context(
     )
 
     assert len(routes) == 1
-    assert routes[0].action_type is EmailAction.AUTO_REPLY
+    assert routes[0].action_type is EmailAction.UNSUBSCRIBE
     assert routes[0].task.channel == "email"
     assert task_store.count_reply_tasks(channel="email") == 1
+
+
+def test_task_producer_projects_html_only_unsubscribe_as_opaque_reference(
+    tmp_path: Path,
+):
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    _persist_authorization(email_store, plan, task_input)
+    private_url = "https://news.example.com/unsubscribe?token=html-only-private"
+    message = parse_rfc822_message(
+        (
+            b"From: customer@example.com\r\n"
+            b"To: derek@example.com\r\n"
+            b"Subject: Newsletter\r\n"
+            b"Date: Sun, 30 Aug 2026 08:00:00 +0000\r\n"
+            b"Message-ID: <mail-41@example.com>\r\n"
+            b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+            + (
+                '<p>Newsletter</p><a href="' + private_url + '">Unsubscribe</a>'
+            ).encode()
+        ),
+        account_id=plan.account_id,
+        folder="INBOX",
+        uidvalidity=42,
+        uid=41,
+    )
+
+    [route] = EmailActionTaskProducer(
+        _store(tmp_path),
+        email_store,
+    ).produce(plan, message)
+    payload = json.loads(route.task.trigger_message_json)
+
+    assert payload["unsubscribe_entries"] == [
+        {
+            "priority": 30,
+            "reference": payload["unsubscribe_entries"][0]["reference"],
+            "source": "body_html_https",
+        }
+    ]
+    assert payload["unsubscribe_entries"][0]["reference"].startswith(
+        "unsubscribe-entry:"
+    )
+    policy = BrowserNetworkPolicy(frozenset({"https://news.example.com"}))
+    assert payload["unsubscribe_network_policy_reference"] == policy.reference
+    assert payload["unsubscribe_network_policy_origin_references"] == list(
+        policy.origin_references
+    )
+    assert private_url not in route.task.trigger_message_json
+    assert "html-only-private" not in route.task.trigger_message_json
+    assert private_url not in repr(route.context)
+    assert private_url.encode() not in (tmp_path / "email-agent.sqlite3").read_bytes()
+
+
+def test_task_producer_policy_is_exact_deterministic_https_candidate_origin_set(
+    tmp_path: Path,
+) -> None:
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    _persist_authorization(email_store, plan, task_input)
+    first = "https://news.example.com/unsubscribe?token=first-private"
+    second = "https://preferences.example.net/opt-out?token=second-private"
+    message = parse_rfc822_message(
+        (
+            b"From: customer@example.com\r\n"
+            b"To: derek@example.com\r\n"
+            b"Subject: Newsletter\r\n"
+            b"Date: Sun, 30 Aug 2026 08:00:00 +0000\r\n"
+            b"Message-ID: <mail-41@example.com>\r\n"
+            + f"List-Unsubscribe: <{first}>, <mailto:list@example.com>\r\n".encode()
+            + b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+            + f'<a href="{second}">Unsubscribe</a>'.encode()
+        ),
+        account_id=plan.account_id,
+        folder="INBOX",
+        uidvalidity=42,
+        uid=41,
+    )
+
+    [route] = EmailActionTaskProducer(
+        _store(tmp_path),
+        email_store,
+    ).produce(plan, message)
+    payload = json.loads(route.task.trigger_message_json)
+    policy = BrowserNetworkPolicy(
+        frozenset(
+            {
+                "https://news.example.com",
+                "https://preferences.example.net",
+            }
+        )
+    )
+
+    assert payload["unsubscribe_network_policy_reference"] == policy.reference
+    assert payload["unsubscribe_network_policy_origin_references"] == list(
+        policy.origin_references
+    )
+    assert len(payload["unsubscribe_entries"]) == 2
+    encoded = route.task.trigger_message_json
+    for forbidden in (first, second, "first-private", "second-private", "mailto:"):
+        assert forbidden not in encoded
+
+
+def test_task_producer_does_not_persist_auto_reply_under_current_policy(
+    tmp_path: Path,
+):
+    plan = _plan((EmailAction.AUTO_REPLY,))
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    _persist_authorization(email_store, plan, task_input)
+    producer = EmailActionTaskProducer(_store(tmp_path), email_store)
+
+    routes = producer.produce(
+        plan,
+        {
+            "accountId": plan.account_id,
+            "folder": "INBOX",
+            "uidValidity": 42,
+            "uid": 41,
+            "messageId": "<mail-41@example.com>",
+            "stableMessageIdentity": task_input.stable_message_identity,
+            "threadId": task_input.thread_identity,
+            "from": {"email": task_input.trigger.sender},
+            "subject": task_input.subject,
+            "textBody": task_input.trigger.text,
+            "markdownBody": task_input.trigger.text,
+        },
+    )
+
+    assert routes == ()
+    assert _store(tmp_path).count_reply_tasks(channel="email") == 0
 
 
 def test_disabled_mail_review_does_not_create_email_tasks(tmp_path: Path):
@@ -291,9 +439,7 @@ def test_disabled_mail_review_does_not_create_email_tasks(tmp_path: Path):
     task_input = _task_input()
     email_store = _email_store(tmp_path)
     _persist_authorization(email_store, plan, task_input)
-    registry = FeatureRegistry(
-        state_path=tmp_path / "skill-state.json"
-    )
+    registry = FeatureRegistry(state_path=tmp_path / "skill-state.json")
     registry.set_enabled("mail_review", False)
 
     adapter = EmailAgentTaskAdapter(store, email_store, feature_registry=registry)
@@ -303,7 +449,7 @@ def test_disabled_mail_review_does_not_create_email_tasks(tmp_path: Path):
 
 def test_disabling_mail_review_does_not_change_existing_email_task(tmp_path: Path):
     store = _store(tmp_path)
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = _task_input()
     email_store = _email_store(tmp_path)
     _persist_authorization(email_store, plan, task_input)
@@ -326,7 +472,9 @@ def test_classification_with_zero_agent_actions_creates_no_reply_task(tmp_path: 
         classification_source="user",
     )
 
-    routes = EmailAgentTaskAdapter(store, _email_store(tmp_path)).ensure_action_plan_tasks(
+    routes = EmailAgentTaskAdapter(
+        store, _email_store(tmp_path)
+    ).ensure_action_plan_tasks(
         plan,
         _task_input(),
     )
@@ -348,10 +496,10 @@ def test_adapter_requires_one_database_for_atomic_email_authorization(
 def test_action_plan_version_and_account_are_part_of_task_identity(tmp_path: Path):
     store = _store(tmp_path)
     email_store = _email_store(tmp_path)
-    first_plan = _plan((EmailAction.AUTO_REPLY,), version=1)
-    second_plan = _plan((EmailAction.AUTO_REPLY,), version=2)
+    first_plan = _plan((EmailAction.UNSUBSCRIBE,), version=1)
+    second_plan = _plan((EmailAction.UNSUBSCRIBE,), version=2)
     other_account_plan = _plan(
-        (EmailAction.AUTO_REPLY,),
+        (EmailAction.UNSUBSCRIBE,),
         version=1,
         classification_id=42,
         account_id="account-secondary",
@@ -378,13 +526,16 @@ def test_action_plan_version_and_account_are_part_of_task_identity(tmp_path: Pat
     )[0]
 
     assert len({first.task.id, second.task.id, other.task.id}) == 3
-    assert len(
-        {
-            first.task.trigger_message_id,
-            second.task.trigger_message_id,
-            other.task.trigger_message_id,
-        }
-    ) == 3
+    assert (
+        len(
+            {
+                first.task.trigger_message_id,
+                second.task.trigger_message_id,
+                other.task.trigger_message_id,
+            }
+        )
+        == 3
+    )
 
 
 def test_persisted_payload_is_traceable_without_message_secrets_or_attachments(
@@ -402,12 +553,10 @@ def test_persisted_payload_is_traceable_without_message_secrets_or_attachments(
     assert payload["schema"] == "email_agent_action.v1"
     assert payload["account_id"] == "account-primary"
     assert payload["action_plan_version"] == 1
-    assert payload["action_type"] == "auto_reply"
+    assert payload["action_type"] == "unsubscribe"
     assert payload["action_identity"] == route.task.trigger_message_id
     assert payload["model_id"] == "email-model:2026-08-30:sha256:test"
-    assert payload["action_parameters"] == {
-        "instruction": "Reply in Chinese and acknowledge receipt."
-    }
+    assert payload["action_parameters"] == {}
     for forbidden in (
         "private-token",
         "do-not-persist",
@@ -428,11 +577,18 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
         _task_input(),
         list_unsubscribe=f"<{private_url}>",
         list_unsubscribe_post="List-Unsubscribe=One-Click",
+        body_text="",
         unsubscribe_authentication=UnsubscribeAuthenticationEvidence(
             dkim_covers_list_unsubscribe=True,
             dkim_covers_list_unsubscribe_post=True,
             evidence_reference="dkim-evidence:mail-41",
         ),
+        unsubscribe_network_policy_reference=BrowserNetworkPolicy(
+            frozenset({"https://news.example.com"})
+        ).reference,
+        unsubscribe_network_policy_origin_references=BrowserNetworkPolicy(
+            frozenset({"https://news.example.com"})
+        ).origin_references,
     )
 
     route = _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
@@ -491,6 +647,127 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
     assert effect.entry_reference == entries[0]["reference"]
 
 
+def test_accepted_unsubscribe_rejects_opening_mailto_entry(tmp_path: Path) -> None:
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
+    task_input = replace(
+        _task_input(),
+        list_unsubscribe="<https://example.com/unsubscribe?token=private-token>",
+        body_text="",
+    )
+    route = _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
+        plan, task_input
+    )[0]
+    payload = json.loads(route.task.trigger_message_json)
+    [entry] = payload["unsubscribe_entries"]
+    entry.update({"source": "header_mailto", "priority": 20})
+    persisted_task = route.task.model_copy(
+        update={"trigger_message_json": json.dumps(payload, sort_keys=True)}
+    )
+    accepted = ProposedAction.model_validate(
+        {
+            "description": "Open the projected unsubscribe entry",
+            "capability": "email_browser",
+            "operation": "unsubscribe",
+            "target": {
+                "action_identity": payload["action_identity"],
+                "account_id": payload["account_id"],
+                "stable_message_identity": payload["stable_message_identity"],
+                "thread_identity": payload["thread_identity"],
+                "entry_reference": entry["reference"],
+                "network_policy_reference": payload[
+                    "unsubscribe_network_policy_reference"
+                ],
+                "network_policy_origin_references": payload[
+                    "unsubscribe_network_policy_origin_references"
+                ],
+            },
+            "payload": {
+                "operations": [
+                    {
+                        "operation_reference": "step-mailto",
+                        "kind": "open_entry",
+                        "target_reference": entry["reference"],
+                    }
+                ]
+            },
+            "expected_verification": "Read terminal provider evidence.",
+        }
+    )
+
+    effect = accepted_email_unsubscribe_effect(route.task, accepted)
+    assert effect.operations[0].kind.value == "open_entry"
+
+    with pytest.raises(ValueError, match="accepted unsubscribe proposal is invalid"):
+        accepted_email_unsubscribe_effect(persisted_task, accepted)
+
+
+def test_authorized_unsubscribe_is_bound_to_audited_v2_lifecycle(
+    tmp_path: Path,
+) -> None:
+    plan = _plan(
+        (EmailAction.UNSUBSCRIBE,),
+        category=EmailCategory.SUBSCRIPTION,
+    )
+    private_url = "https://news.example.com/unsubscribe?token=private-token"
+    task_input = replace(
+        _task_input(),
+        list_unsubscribe=f"<{private_url}>",
+        list_unsubscribe_post="List-Unsubscribe=One-Click",
+        body_text="",
+        unsubscribe_authentication=UnsubscribeAuthenticationEvidence(
+            dkim_covers_list_unsubscribe=True,
+            dkim_covers_list_unsubscribe_post=True,
+            evidence_reference="dkim-evidence:mail-41",
+        ),
+        unsubscribe_network_policy_reference=BrowserNetworkPolicy(
+            frozenset({"https://news.example.com"})
+        ).reference,
+        unsubscribe_network_policy_origin_references=BrowserNetworkPolicy(
+            frozenset({"https://news.example.com"})
+        ).origin_references,
+    )
+
+    [route] = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+    ).ensure_action_plan_tasks(plan, task_input)
+    payload = json.loads(route.task.trigger_message_json)
+
+    assert payload["lifecycle_version"] == "email_unsubscribe_audited_v2"
+    assert route.task.channel == route.context.channel == "email"
+    assert route.action_type is EmailAction.UNSUBSCRIBE
+    assert payload["action_type"] == "unsubscribe"
+    assert payload["action_identity"] == route.task.trigger_message_id
+    assert route.context.trigger_message_id == route.task.trigger_message_id
+    assert route.context.trigger_raw_payload == payload
+    assert payload["account_id"] == plan.account_id
+    assert payload["stable_message_identity"] == task_input.stable_message_identity
+    assert payload["thread_identity"] == task_input.thread_identity
+    assert payload["action_plan_id"] == plan.action_plan_id
+    assert payload["action_plan_version"] == plan.action_plan_version
+    assert payload["classification_id"] == plan.classification_id
+    assert payload["model_id"] == plan.model_id
+    assert payload["config_version"] == plan.config_version
+    assert payload["unsubscribe_entries"][0]["reference"].startswith(
+        "unsubscribe-entry:"
+    )
+    for forbidden in (
+        private_url,
+        "private-token",
+        "do-not-persist",
+        "/Users/derek/private",
+        "attachment.bin",
+        "contract.pdf",
+        "application/pdf",
+    ):
+        assert forbidden not in route.task.trigger_message_json
+    assert (
+        select_task_lifecycle(route.task, route.context) is TaskLifecycle.CONSUMER_AUDIT
+    )
+    assert validate_audited_email_task(route.task, route.context) is True
+
+
 @pytest.mark.parametrize(
     "unsafe_instruction",
     (
@@ -499,7 +776,7 @@ def test_unsubscribe_task_projects_only_redacted_real_entry_references(
         "Open https://example.com/unsubscribe?token=private-token",
     ),
 )
-def test_unsafe_action_metadata_is_rejected_before_task_persistence(
+def test_disabled_auto_reply_metadata_is_ignored_before_task_persistence(
     tmp_path: Path,
     unsafe_instruction: str,
 ):
@@ -507,20 +784,20 @@ def test_unsafe_action_metadata_is_rejected_before_task_persistence(
     plan = _plan((EmailAction.AUTO_REPLY,), instruction=unsafe_instruction)
     task_input = _task_input()
 
-    with pytest.raises(EmailAgentTaskMetadataError):
-        _authorized_adapter(
-            tmp_path,
-            plan,
-            task_input,
-            task_store=store,
-        ).ensure_action_plan_tasks(plan, task_input)
+    routes = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+        task_store=store,
+    ).ensure_action_plan_tasks(plan, task_input)
 
+    assert routes == ()
     assert store.count_reply_tasks(channel="email") == 0
 
 
 def test_local_path_in_trace_identity_is_rejected_before_persistence(tmp_path: Path):
     store = _store(tmp_path)
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = replace(
         _task_input(),
         thread_identity="/Users/derek/private/provider-thread.json",
@@ -547,7 +824,7 @@ def test_unsafe_prior_receipt_is_rejected_before_context_or_task_persistence(
         summary="authorization_token=do-not-persist",
         completed=False,
     )
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = replace(_task_input(), prior_receipts=(unsafe_receipt,))
 
     with pytest.raises(EmailAgentTaskMetadataError):
@@ -564,15 +841,13 @@ def test_unsafe_prior_receipt_is_rejected_before_context_or_task_persistence(
 def test_email_context_contains_text_metadata_receipts_and_no_image_inputs(
     tmp_path: Path,
 ):
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = _task_input()
     route = _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
         plan, task_input
     )[0]
     context = route.context
-    rendered = context.render_business_context(
-        current_time="2026-08-30T09:00:00+00:00"
-    )
+    rendered = context.render_business_context(current_time="2026-08-30T09:00:00+00:00")
 
     assert context.channel == "email"
     assert context.image_paths == ()
@@ -582,7 +857,7 @@ def test_email_context_contains_text_metadata_receipts_and_no_image_inputs(
         _task_input().trigger.text,
     ]
     assert len(context.materials) == 1
-    assert context.materials[0].kind == "email_attachment_metadata"
+    assert context.materials[0].kind == "attachment_metadata"
     assert context.materials[0].read_commands == ()
     assert "contract.pdf" in context.materials[0].reference
     assert "application/pdf" in context.materials[0].reference
@@ -593,12 +868,226 @@ def test_email_context_contains_text_metadata_receipts_and_no_image_inputs(
     assert "read attachment" not in rendered.casefold()
 
 
+def test_refreshed_email_context_contains_one_opaque_continuation_receipt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plan = _plan(
+        (EmailAction.UNSUBSCRIBE,),
+        classification_source="user",
+        category=EmailCategory.SUBSCRIPTION,
+    )
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    adapter = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+        email_store=email_store,
+    )
+    first = adapter.ensure_action_plan_tasks(plan, task_input)[0]
+    payload = json.loads(first.task.trigger_message_json)
+    entry_reference = payload["unsubscribe_entries"][0]["reference"]
+    operation_reference = "unsubscribe-operation:" + "a" * 64
+    control_reference = "unsubscribe-control:" + "b" * 64
+    operations = [
+        {
+            "operation_reference": operation_reference,
+            "kind": "open_entry",
+            "target_reference": entry_reference,
+        }
+    ]
+    effect_digest = EmailUnsubscribeEffect(
+        action_identity=payload["action_identity"],
+        action_plan_id=payload["action_plan_id"],
+        action_plan_version=payload["action_plan_version"],
+        classification_id=payload["classification_id"],
+        account_id=payload["account_id"],
+        stable_message_identity=payload["stable_message_identity"],
+        thread_identity=payload["thread_identity"],
+        entry_reference=entry_reference,
+        operations=(UnsubscribeOperation.from_mapping(operations[0]),),
+        network_policy_reference=payload["unsubscribe_network_policy_reference"],
+        network_policy_origin_references=tuple(
+            payload["unsubscribe_network_policy_origin_references"]
+        ),
+    ).effect_digest
+    claim = {
+        "action_identity": payload["action_identity"],
+        "effect_digest": effect_digest,
+        "action_plan_id": payload["action_plan_id"],
+        "action_plan_version": payload["action_plan_version"],
+        "classification_id": payload["classification_id"],
+        "account_id": payload["account_id"],
+        "stable_message_identity": payload["stable_message_identity"],
+        "thread_identity": payload["thread_identity"],
+        "entry_reference": entry_reference,
+        "operations": operations,
+        "status": "awaiting_audit",
+        "audit_agent_run_id": 101,
+    }
+    continuation = {
+        "action_identity": payload["action_identity"],
+        "effect_digest": effect_digest,
+        "previous_effect_digest": "",
+        "operations": operations,
+        "controls": [
+            {
+                "reference": control_reference,
+                "kind": "button",
+                "intent": "confirm",
+            }
+        ],
+        "observation_reference": "unsubscribe-state:" + "d" * 64,
+        "network_policy_reference": payload["unsubscribe_network_policy_reference"],
+        "network_policy_origin_references": payload[
+            "unsubscribe_network_policy_origin_references"
+        ],
+    }
+    monkeypatch.setattr(
+        email_store,
+        "get_email_unsubscribe_claim",
+        lambda _identity: claim,
+    )
+    monkeypatch.setattr(
+        email_store,
+        "get_email_unsubscribe_continuation",
+        lambda _identity: continuation,
+    )
+
+    refreshed = adapter.ensure_action_plan_tasks(plan, task_input)[0].context
+
+    continuation_receipts = [
+        receipt
+        for receipt in refreshed.prior_receipts
+        if receipt.operation == "unsubscribe_continuation"
+    ]
+    assert len(continuation_receipts) == 1
+    receipt_payload = json.loads(continuation_receipts[0].summary)
+    assert receipt_payload == {
+        "accepted_operations": operations,
+        "controls": continuation["controls"],
+        "instruction": (
+            "Audit accepted the durable prefix; propose exactly one next "
+            "operation from the listed opaque controls."
+        ),
+        "previous_effect_digest": effect_digest,
+    }
+    assert "private-token" not in continuation_receipts[0].summary
+    assert "https://" not in continuation_receipts[0].summary
+    assert "/Users/" not in continuation_receipts[0].summary
+
+
+def test_refreshed_email_context_rejects_private_continuation_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plan = _plan(
+        (EmailAction.UNSUBSCRIBE,),
+        classification_source="user",
+        category=EmailCategory.SUBSCRIPTION,
+    )
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    adapter = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+        email_store=email_store,
+    )
+    first = adapter.ensure_action_plan_tasks(plan, task_input)[0]
+    payload = json.loads(first.task.trigger_message_json)
+    claim = {
+        "action_identity": payload["action_identity"],
+        "effect_digest": "c" * 64,
+        "action_plan_id": payload["action_plan_id"],
+        "action_plan_version": payload["action_plan_version"],
+        "classification_id": payload["classification_id"],
+        "account_id": payload["account_id"],
+        "stable_message_identity": payload["stable_message_identity"],
+        "thread_identity": payload["thread_identity"],
+        "entry_reference": payload["unsubscribe_entries"][0]["reference"],
+        "operations": [],
+        "status": "awaiting_audit",
+        "audit_agent_run_id": 101,
+    }
+    continuation = {
+        "action_identity": payload["action_identity"],
+        "effect_digest": "c" * 64,
+        "previous_effect_digest": "",
+        "operations": [],
+        "controls": [
+            {
+                "reference": "https://example.com/unsubscribe?token=private",
+                "kind": "button",
+                "intent": "confirm",
+            }
+        ],
+        "observation_reference": "unsubscribe-state:" + "d" * 64,
+        "network_policy_reference": payload["unsubscribe_network_policy_reference"],
+        "network_policy_origin_references": payload[
+            "unsubscribe_network_policy_origin_references"
+        ],
+    }
+    monkeypatch.setattr(
+        email_store,
+        "get_email_unsubscribe_claim",
+        lambda _identity: claim,
+    )
+    monkeypatch.setattr(
+        email_store,
+        "get_email_unsubscribe_continuation",
+        lambda _identity: continuation,
+    )
+
+    with pytest.raises(EmailAgentTaskMetadataError):
+        adapter.ensure_action_plan_tasks(plan, task_input)
+
+
+def test_terminal_unsubscribe_claim_without_continuation_adds_no_receipt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plan = _plan(
+        (EmailAction.UNSUBSCRIBE,),
+        classification_source="user",
+        category=EmailCategory.SUBSCRIPTION,
+    )
+    task_input = _task_input()
+    email_store = _email_store(tmp_path)
+    adapter = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+        email_store=email_store,
+    )
+    adapter.ensure_action_plan_tasks(plan, task_input)
+    monkeypatch.setattr(
+        email_store,
+        "get_email_unsubscribe_claim",
+        lambda _identity: {"status": "done"},
+    )
+    monkeypatch.setattr(
+        email_store,
+        "get_email_unsubscribe_continuation",
+        lambda _identity: None,
+    )
+
+    refreshed = adapter.ensure_action_plan_tasks(plan, task_input)[0].context
+
+    assert [
+        receipt
+        for receipt in refreshed.prior_receipts
+        if receipt.operation == "unsubscribe_continuation"
+    ] == []
+
+
 def test_task_creation_rejects_wrong_persisted_message_and_historical_plan(
     tmp_path: Path,
 ):
     task_store = _store(tmp_path)
     email_store = _email_store(tmp_path)
-    current_plan = _plan((EmailAction.AUTO_REPLY,), version=2)
+    current_plan = _plan((EmailAction.UNSUBSCRIBE,), version=2)
     persisted_input = _task_input()
     _persist_authorization(email_store, current_plan, persisted_input)
     adapter = EmailAgentTaskAdapter(task_store, email_store)
@@ -611,7 +1100,7 @@ def test_task_creation_rejects_wrong_persisted_message_and_historical_plan(
             message_id="account-primary:message-id:<wrong@example.com>",
         ),
     )
-    historical_plan = _plan((EmailAction.AUTO_REPLY,), version=1)
+    historical_plan = _plan((EmailAction.UNSUBSCRIBE,), version=1)
 
     with pytest.raises(EmailAgentTaskConflict):
         adapter.ensure_action_plan_tasks(current_plan, wrong_message)
@@ -629,8 +1118,8 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
     task_store = _store(tmp_path)
     email_store = _email_store(tmp_path)
     task_input = _task_input()
-    first_plan = _plan((EmailAction.AUTO_REPLY,), version=1)
-    second_plan = _plan((EmailAction.AUTO_REPLY,), version=2)
+    first_plan = _plan((EmailAction.UNSUBSCRIBE,), version=1)
+    second_plan = _plan((EmailAction.UNSUBSCRIBE,), version=2)
     _persist_authorization(email_store, first_plan, task_input)
     adapter = EmailAgentTaskAdapter(task_store, email_store)
     authorization_checked = Event()
@@ -711,12 +1200,15 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
     assert json.loads(route.task.trigger_message_json)["action_plan_id"] == (
         first_plan.action_plan_id
     )
-    assert email_store.get_classification(first_plan.classification_id)[
-        "current_action_plan_id"
-    ] == second_plan.action_plan_id
+    assert (
+        email_store.get_classification(first_plan.classification_id)[
+            "current_action_plan_id"
+        ]
+        == second_plan.action_plan_id
+    )
 
 
-def test_all_agent_payloads_are_validated_before_any_task_is_persisted(
+def test_disabled_auto_reply_payload_cannot_block_unsubscribe_persistence(
     tmp_path: Path,
 ):
     store = _store(tmp_path)
@@ -726,15 +1218,15 @@ def test_all_agent_payloads_are_validated_before_any_task_is_persisted(
     )
     task_input = _task_input()
 
-    with pytest.raises(EmailAgentTaskMetadataError):
-        _authorized_adapter(
-            tmp_path,
-            plan,
-            task_input,
-            task_store=store,
-        ).ensure_action_plan_tasks(plan, task_input)
+    routes = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+        task_store=store,
+    ).ensure_action_plan_tasks(plan, task_input)
 
-    assert store.count_reply_tasks(channel="email") == 0
+    assert [route.action_type for route in routes] == [EmailAction.UNSUBSCRIBE]
+    assert store.count_reply_tasks(channel="email") == 1
 
 
 def test_agent_action_identity_conflict_rolls_back_the_whole_plan(tmp_path: Path):
@@ -860,7 +1352,8 @@ def test_safe_public_https_url_is_allowed_in_action_metadata(tmp_path: Path):
         task_input,
     )
 
-    assert len(routes) == 1
+    assert routes == ()
+    assert store.count_reply_tasks(channel="email") == 0
 
 
 @pytest.mark.parametrize(
@@ -875,7 +1368,7 @@ def test_safe_public_https_url_is_allowed_in_action_metadata(tmp_path: Path):
         "https://example.com/preferences?action=opt-out",
     ),
 )
-def test_sensitive_or_unsubscribe_url_is_rejected_without_echoing_it(
+def test_disabled_auto_reply_sensitive_url_is_not_persisted(
     tmp_path: Path,
     sensitive_url: str,
 ):
@@ -884,19 +1377,23 @@ def test_sensitive_or_unsubscribe_url_is_rejected_without_echoing_it(
         instruction=f"Reference {sensitive_url}",
     )
     task_input = _task_input()
-    with pytest.raises(EmailAgentTaskMetadataError) as error:
-        _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
-            plan, task_input
-        )
+    store = _store(tmp_path)
+    routes = _authorized_adapter(
+        tmp_path,
+        plan,
+        task_input,
+        task_store=store,
+    ).ensure_action_plan_tasks(plan, task_input)
 
-    assert sensitive_url not in str(error.value)
+    assert routes == ()
+    assert store.count_reply_tasks(channel="email") == 0
 
 
 def test_thread_identity_is_normalized_once_for_identity_payload_and_context(
     tmp_path: Path,
 ):
     store = _store(tmp_path)
-    plan = _plan((EmailAction.AUTO_REPLY,))
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
     spaced = replace(_task_input(), thread_identity="  thread-customer-41  ")
     adapter = _authorized_adapter(
         tmp_path,

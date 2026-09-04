@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import fcntl
+from hashlib import sha256
+import json
 import os
 from pathlib import Path
+import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 
 
 class EmailBrowserProfileError(ValueError):
@@ -75,6 +78,94 @@ class EmailBrowserProfile:
             self.lock_path.touch(mode=0o600, exist_ok=False)
         os.chmod(self.lock_path, 0o600)
         return self.profile_dir
+
+    def _audit_session_path(self, action_identity: str) -> Path:
+        if not isinstance(action_identity, str) or not action_identity.strip():
+            raise EmailBrowserProfileError(
+                "browser audit session identity is invalid"
+            )
+        self.prepare()
+        session_dir = self.profile_dir / "audit-sessions"
+        if session_dir.exists() and session_dir.is_symlink():
+            raise EmailBrowserProfileError(
+                "browser audit session directory must not be a symlink"
+            )
+        session_dir.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(session_dir, 0o700)
+        filename = sha256(action_identity.encode("utf-8")).hexdigest() + ".json"
+        target = session_dir / filename
+        if target.exists() and target.is_symlink():
+            raise EmailBrowserProfileError(
+                "browser audit session must not be a symlink"
+            )
+        return target
+
+    def save_audit_session(
+        self,
+        action_identity: str,
+        payload: Mapping[str, object],
+    ) -> None:
+        """Atomically retain private browser state only inside this profile."""
+
+        try:
+            encoded = json.dumps(
+                dict(payload),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise EmailBrowserProfileError(
+                "browser audit session is invalid"
+            ) from exc
+        if len(encoded) > 2 * 1024 * 1024:
+            raise EmailBrowserProfileError("browser audit session is too large")
+        target = self._audit_session_path(action_identity)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".audit-session-",
+            dir=target.parent,
+        )
+        temporary = Path(temporary_name)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                descriptor = -1
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, target)
+            os.chmod(target, 0o600)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            if temporary.exists():
+                temporary.unlink()
+
+    def load_audit_session(
+        self,
+        action_identity: str,
+    ) -> dict[str, object] | None:
+        target = self._audit_session_path(action_identity)
+        if not target.exists():
+            return None
+        try:
+            if target.stat().st_size > 2 * 1024 * 1024:
+                raise EmailBrowserProfileError(
+                    "browser audit session is too large"
+                )
+            value = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise EmailBrowserProfileError(
+                "browser audit session is invalid"
+            ) from exc
+        if not isinstance(value, dict):
+            raise EmailBrowserProfileError("browser audit session is invalid")
+        return value
+
+    def clear_audit_session(self, action_identity: str) -> None:
+        target = self._audit_session_path(action_identity)
+        if target.exists():
+            target.unlink()
 
     @contextmanager
     def lock(self, *, timeout_seconds: float = 30.0) -> Iterator[Path]:

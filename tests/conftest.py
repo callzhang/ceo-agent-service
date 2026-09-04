@@ -5,6 +5,11 @@ import sys
 import pytest
 
 
+# Finder/iCloud conflict copies are local recovery artifacts, not test modules.
+# Keep them untouched while preventing pytest from collecting stale duplicates.
+collect_ignore_glob = ["* 2.py"]
+
+
 os.environ["CEO_ENV_FILE"] = "/private/tmp/ceo-agent-service-test.env.missing"
 os.environ["CEO_PRINCIPAL_NAME"] = "Alex"
 os.environ["USER_ALIAS"] = "明哥"

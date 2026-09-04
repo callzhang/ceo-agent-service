@@ -26,7 +26,12 @@ def _classifier(version: str = "candidate") -> CpuTfidfLogisticClassifier:
     )
 
 
-def _metadata(*, digest: str, model_id: str) -> EmailModelMetadata:
+def _metadata(
+    *,
+    digest: str,
+    model_id: str,
+    trained_at: datetime = TRAINED_AT,
+) -> EmailModelMetadata:
     return EmailModelMetadata(
         model_id=model_id,
         parent_model_id=None,
@@ -34,9 +39,9 @@ def _metadata(*, digest: str, model_id: str) -> EmailModelMetadata:
         tokenizer_version="jieba-default-v1",
         feature_version=CpuTfidfLogisticClassifier.FEATURE_VERSION,
         training_dataset_version="feedback-sha256:dataset",
-        trained_at=TRAINED_AT.isoformat(),
-        training_started_at=(TRAINED_AT - timedelta(seconds=2)).isoformat(),
-        training_finished_at=TRAINED_AT.isoformat(),
+        trained_at=trained_at.isoformat(),
+        training_started_at=(trained_at - timedelta(seconds=2)).isoformat(),
+        training_finished_at=trained_at.isoformat(),
         sample_count=4,
         new_sample_count=4,
         category_counts={"work": 2, "junk": 2},
@@ -83,18 +88,146 @@ def _metadata(*, digest: str, model_id: str) -> EmailModelMetadata:
     )
 
 
-def _stage(registry: EmailModelRegistry, tmp_path: Path, *, suffix: str = "") -> str:
+def _stage(
+    registry: EmailModelRegistry,
+    tmp_path: Path,
+    *,
+    suffix: str = "",
+    trained_at: datetime = TRAINED_AT,
+) -> str:
     source = tmp_path / f"candidate{suffix}.pkl"
     _classifier().save(source)
     digest = sha256(source.read_bytes()).hexdigest()
-    model_id = build_model_id(trained_at=TRAINED_AT, artifact_sha256=digest)
+    model_id = build_model_id(trained_at=trained_at, artifact_sha256=digest)
     registry.stage_candidate(
         source,
-        _metadata(digest=digest, model_id=model_id),
+        _metadata(digest=digest, model_id=model_id, trained_at=trained_at),
         parity_texts=("work project", "junk offer"),
         expected_labels=("work", "junk"),
     )
     return model_id
+
+
+def test_list_models_returns_every_validated_record_newest_first(tmp_path: Path):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    rejected = _stage(registry, tmp_path, suffix="-rejected")
+    registry.reject(rejected, reason="macro_f1_regressed")
+    failed = _stage(
+        registry,
+        tmp_path,
+        suffix="-failed",
+        trained_at=TRAINED_AT + timedelta(seconds=1),
+    )
+    registry.mark_failed(failed, reason="artifact_reload_failed")
+    candidate = _stage(
+        registry,
+        tmp_path,
+        suffix="-candidate",
+        trained_at=TRAINED_AT + timedelta(seconds=2),
+    )
+
+    records = registry.list_models()
+
+    assert [record.metadata.model_id for record in records] == [
+        candidate,
+        failed,
+        rejected,
+    ]
+    assert [(record.status, record.status_reason) for record in records] == [
+        ("candidate", "candidate_validation_pending"),
+        ("failed", "artifact_reload_failed"),
+        ("rejected", "macro_f1_regressed"),
+    ]
+
+
+def test_list_models_fails_closed_when_artifact_digest_is_corrupt(tmp_path: Path):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    model_id = _stage(registry, tmp_path)
+    registry.get_model(model_id).artifact_path.write_bytes(b"corrupt")
+
+    with pytest.raises(ModelRegistryError, match="artifact digest verification failed"):
+        registry.list_models()
+
+
+def test_model_inventory_keeps_healthy_records_visible_with_corrupt_history(
+    tmp_path: Path,
+):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    healthy = _stage(registry, tmp_path, trained_at=TRAINED_AT)
+    corrupt = _stage(
+        registry,
+        tmp_path,
+        suffix="-corrupt",
+        trained_at=TRAINED_AT + timedelta(seconds=1),
+    )
+    registry.get_model(corrupt).artifact_path.write_bytes(b"corrupt")
+
+    inventory = registry.list_model_inventory()
+
+    assert [entry.model_id for entry in inventory] == [corrupt, healthy]
+    assert inventory[0].integrity_status == "corrupt"
+    assert inventory[0].integrity_error == "artifact_digest_mismatch"
+    assert inventory[0].metadata is not None
+    assert inventory[1].integrity_status == "verified"
+    assert inventory[1].record is not None
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        ("missing_artifact", "artifact_missing"),
+        ("malformed_metadata", "metadata_invalid"),
+        ("malformed_lifecycle", "lifecycle_invalid"),
+    ],
+)
+def test_model_inventory_reports_per_record_integrity_failures(
+    tmp_path: Path,
+    mutation: str,
+    expected_error: str,
+):
+    registry = EmailModelRegistry(tmp_path / mutation)
+    model_id = _stage(registry, tmp_path, suffix=f"-{mutation}")
+    record = registry.get_model(model_id)
+    if mutation == "missing_artifact":
+        record.artifact_path.unlink()
+    elif mutation == "malformed_metadata":
+        record.metadata_path.write_text("{not-json", encoding="utf-8")
+    else:
+        lifecycle_path = next(registry.lifecycle.glob(f"{model_id}-*.json"))
+        lifecycle_path.write_text("{not-json", encoding="utf-8")
+
+    inventory = registry.list_model_inventory()
+
+    assert len(inventory) == 1
+    assert inventory[0].model_id == model_id
+    assert inventory[0].integrity_status == "corrupt"
+    assert inventory[0].integrity_error == expected_error
+
+
+def test_model_inventory_does_not_project_metadata_with_wrong_identity(
+    tmp_path: Path,
+):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    first = _stage(registry, tmp_path, trained_at=TRAINED_AT)
+    second = _stage(
+        registry,
+        tmp_path,
+        suffix="-second",
+        trained_at=TRAINED_AT + timedelta(seconds=1),
+    )
+    first_record = registry.get_model(first)
+    second_record = registry.get_model(second)
+    first_record.metadata_path.write_bytes(second_record.metadata_path.read_bytes())
+
+    inventory = registry.list_model_inventory()
+    by_id = {entry.model_id: entry for entry in inventory}
+
+    assert by_id[first].integrity_status == "corrupt"
+    assert by_id[first].integrity_error == "metadata_invalid"
+    assert by_id[first].metadata is None
+    assert by_id[first].record is None
+    assert by_id[second].integrity_status == "verified"
+    assert by_id[second].metadata is not None
 
 
 def test_model_id_contains_utc_second_and_final_artifact_digest():

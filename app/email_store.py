@@ -27,13 +27,17 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     EmailProviderLocator,
     build_email_action_plan,
+    build_user_confirmation_authorizations,
     build_versioned_email_action_plan,
 )
 from app.leak_check import assert_no_credentials
 
 
-EMAIL_SCHEMA_VERSION = 15
+EMAIL_SCHEMA_VERSION = 17
 DIRECT_ACTION_MAX_ATTEMPTS = 3
+# Cross-restart bound for one accepted unsubscribe effect lineage.  This is a
+# durable data limit, independent of any Agent process turn budget.
+MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS = 32
 DIRECT_ACTION_RETRY_BASE_SECONDS = 2
 _CLASSIFICATION_STATUSES = frozenset(
     status.value for status in EmailClassificationStatus
@@ -62,11 +66,40 @@ _EMAIL_UNSUBSCRIBE_OUTCOMES = frozenset(
 )
 _OPAQUE_PROVIDER_ID = re.compile(r"[A-Za-z0-9._:@<>\[\]{}/+=,!#$%&'*?^-]+")
 _UNSUBSCRIBE_OPAQUE_ID = re.compile(r"[A-Za-z0-9:_-]+")
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _MAX_PROVIDER_IDENTIFIER_BYTES = 256
+_MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES = 16 * 1024
+_AUDITED_UNSUBSCRIBE_LINEAGE_SQL = """
+    select effects.action_identity as effect_action_identity,
+           effects.effect_digest as effect_digest,
+           effects.audit_agent_run_id,
+           audit_runs.id as audit_run_id,
+           audit_runs.reply_task_id,
+           audit_runs.execution_generation as audit_execution_generation,
+           audit_runs.role as audit_role,
+           tasks.id as task_id,
+           tasks.channel as task_channel,
+           tasks.conversation_id as task_conversation_id,
+           tasks.trigger_message_id,
+           tasks.trigger_message_json,
+           tasks.execution_generation as task_execution_generation,
+           tasks.status as task_status
+    from email_unsubscribe_effects as effects
+    join agent_runs as audit_runs
+      on audit_runs.id=effects.audit_agent_run_id
+    join reply_tasks as tasks
+      on tasks.id=audit_runs.reply_task_id
+    where effects.action_identity=? and effects.effect_digest=?
+"""
 _DIRECT_ACTION_PRIORITY = {
     action.value: priority for priority, action in enumerate(DIRECT_ACTIONS)
 }
 _UNREDACTED_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
+_UNREDACTED_SECRET_TOKEN = re.compile(
+    r"\b(?:sub|ch|pi|sk|tok|token|sess|session|order|invoice|qrp)"
+    r"[_.-]?[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]{6,})*\b",
+    flags=re.IGNORECASE,
+)
 _ColumnContract = tuple[str, bool, str | None]
 _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
     "email_schema_migrations": {
@@ -176,6 +209,8 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "config_version": ("text", True, None),
         "actions_json": ("text", True, None),
         "action_parameters_json": ("text", True, None),
+        "authorization_snapshot_json": ("text", False, None),
+        "legacy_serialization_pre_v16": ("integer", True, "0"),
         "created_at": ("text", True, None),
     },
     "email_actions": {
@@ -269,6 +304,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "account_updated_at": ("text", True, None),
         "status": ("text", True, None),
         "phase": ("text", True, "'prepared'"),
+        "audit_agent_run_id": ("integer", False, None),
         "claimed_at": ("text", True, None),
         "updated_at": ("text", True, None),
     },
@@ -279,6 +315,7 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "operations_json": ("text", True, None),
         "network_policy_reference": ("text", True, None),
         "network_policy_origins_json": ("text", True, None),
+        "audit_agent_run_id": ("integer", False, None),
         "created_at": ("text", True, None),
     },
     "email_unsubscribe_continuations": {
@@ -316,6 +353,8 @@ _REQUIRED_COLUMN_CONTRACTS: Mapping[str, Mapping[str, _ColumnContract]] = {
         "observation_digest": ("text", True, "''"),
         "started_at": ("text", True, "''"),
         "completed_at": ("text", True, "''"),
+        "result_text_truncated": ("integer", True, "0"),
+        "result_text_digest": ("text", True, "''"),
         "created_at": ("text", True, None),
     },
 }
@@ -350,6 +389,8 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "confidence >= 0.0 and confidence <= 1.0",
         "json_valid(actions_json)",
         "json_valid(action_parameters_json)",
+        "authorization_snapshot_json is null or json_valid(authorization_snapshot_json)",
+        "legacy_serialization_pre_v16 in (0, 1)",
     ),
     "email_actions": (
         "action_type in ('label', 'mark_read', 'archive', 'move', 'trash')",
@@ -404,6 +445,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(account_updated_at) != ''",
         "status in ('dispatching', 'awaiting_audit', 'uncertain', 'done')",
         "phase in ('prepared', 'navigating', 'effect_uncertain', 'terminal')",
+        "audit_agent_run_id is null or audit_agent_run_id > 0",
         "trim(claimed_at) != ''",
         "trim(updated_at) != ''",
     ),
@@ -414,6 +456,7 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "json_valid(operations_json)",
         "trim(network_policy_reference) != ''",
         "json_valid(network_policy_origins_json)",
+        "audit_agent_run_id is null or audit_agent_run_id > 0",
         "trim(created_at) != ''",
     ),
     "email_unsubscribe_continuations": (
@@ -444,6 +487,8 @@ _REQUIRED_TABLE_CHECKS: Mapping[str, tuple[str, ...]] = {
         "trim(evidence) != ''",
         "length(result_text) <= 16384",
         "observation_digest = '' or length(observation_digest) = 64",
+        "result_text_truncated in (0, 1)",
+        "result_text_digest = '' or length(result_text_digest) = 64",
         "trim(created_at) != ''",
     ),
 }
@@ -564,6 +609,10 @@ _REQUIRED_INDEXES: Mapping[str, tuple[str, tuple[str, ...]]] = {
     "idx_email_unsubscribe_claims_status": (
         "email_unsubscribe_claims",
         ("status", "updated_at", "action_identity"),
+    ),
+    "idx_email_unsubscribe_receipts_classification_action": (
+        "email_unsubscribe_receipts",
+        ("classification_id", "action_identity"),
     ),
 }
 _REQUIRED_TRIGGER_SQL: Mapping[str, str] = {
@@ -821,6 +870,15 @@ class EmailUnsubscribeClaimConflict(RuntimeError):
 
 
 @dataclass(frozen=True)
+class LegacyEmailUnsubscribeTaskAttempt:
+    """Immutable queue attempt observed by the startup legacy inventory."""
+
+    task_id: int
+    execution_generation: str
+    status: str
+
+
+@dataclass(frozen=True)
 class StoredEmailLocator:
     """Provider coordinates plus the durable message identity used for receipts."""
 
@@ -872,6 +930,7 @@ def _validate_model_text(model_text: str) -> None:
     lowered = model_text.lower()
     if (
         _UNREDACTED_EMAIL.search(model_text)
+        or _UNREDACTED_SECRET_TOKEN.search(model_text)
         or "http://" in lowered
         or "https://" in lowered
     ):
@@ -960,11 +1019,14 @@ def _retry_is_due(next_attempt_at: object, claimed_at: str) -> bool:
     if not next_attempt_at:
         return True
     try:
-        return _required_utc_timestamp(
-            str(next_attempt_at), field="next_attempt_at"
-        ) <= claimed_at
+        return (
+            _required_utc_timestamp(str(next_attempt_at), field="next_attempt_at")
+            <= claimed_at
+        )
     except ValueError as exc:
-        raise EmailPersistenceCorruption("invalid direct action retry timestamp") from exc
+        raise EmailPersistenceCorruption(
+            "invalid direct action retry timestamp"
+        ) from exc
 
 
 def _json_load(raw: str, *, field: str, expected_type: type[Any]) -> Any:
@@ -1281,6 +1343,254 @@ def _validate_unsubscribe_opaque(value: object, *, field: str) -> str:
     return value
 
 
+def is_valid_unsubscribe_opaque_reference(value: object) -> bool:
+    """Return whether a durable unsubscribe reference is bounded and opaque."""
+
+    try:
+        _validate_unsubscribe_opaque(value, field="unsubscribe_reference")
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
+def _validate_durable_unsubscribe_result_text(
+    result_text: object,
+    observation_digest: object,
+    result_text_truncated: object,
+    result_text_digest: object,
+) -> None:
+    """Require the stored display text to already be canonical and redacted."""
+
+    if (
+        not isinstance(result_text, str)
+        or not isinstance(observation_digest, str)
+        or not isinstance(result_text_digest, str)
+        or not isinstance(result_text_truncated, int)
+        or result_text_truncated not in {0, 1}
+    ):
+        raise EmailPersistenceCorruption(
+            "unsubscribe receipt result integrity metadata is invalid"
+        )
+    encoded_length = len(result_text.encode("utf-8"))
+    if encoded_length > _MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES:
+        raise EmailPersistenceCorruption(
+            "unsubscribe receipt result text exceeds its durable bound"
+        )
+    from app.email_unsubscribe import normalize_unsubscribe_result_text
+
+    canonical_text, bounded_digest = normalize_unsubscribe_result_text(result_text)
+    if canonical_text != result_text:
+        raise EmailPersistenceCorruption(
+            "unsubscribe receipt result text is not canonical and redacted"
+        )
+    if not result_text:
+        if observation_digest or result_text_digest or result_text_truncated:
+            raise EmailPersistenceCorruption(
+                "unsubscribe receipt empty result has non-empty integrity metadata"
+            )
+        return
+    if (
+        _SHA256_HEX.fullmatch(result_text_digest) is None
+        or result_text_digest != bounded_digest
+    ):
+        raise EmailPersistenceCorruption(
+            "unsubscribe receipt bounded result digest does not match"
+        )
+    if _SHA256_HEX.fullmatch(observation_digest) is None:
+        raise EmailPersistenceCorruption(
+            "unsubscribe receipt observation digest is invalid"
+        )
+    if not result_text_truncated and observation_digest != result_text_digest:
+        raise EmailPersistenceCorruption(
+            "unsubscribe receipt untruncated observation digest does not match"
+        )
+    if result_text_truncated and observation_digest == result_text_digest:
+        raise EmailPersistenceCorruption(
+            "unsubscribe receipt truncated observation digest is not distinct"
+        )
+
+
+def _audited_unsubscribe_run_chain(
+    db: sqlite3.Connection,
+    *,
+    task_id: int,
+    execution_generation: str,
+    final_audit_run_id: int,
+) -> tuple[list[int], list[int]] | None:
+    rows = db.execute(
+        """
+        select id, role, proposal_revision, turn_attempt,
+               parent_agent_run_id, operation_id
+        from agent_runs
+        where reply_task_id=? and execution_generation=?
+        """,
+        (task_id, execution_generation),
+    ).fetchall()
+    by_id = {int(row["id"]): row for row in rows}
+    current = by_id.get(final_audit_run_id)
+    if current is None or current["role"] != "audit":
+        return None
+    chain: list[sqlite3.Row] = []
+    seen: set[int] = set()
+    while current is not None:
+        run_id = int(current["id"])
+        if run_id in seen:
+            return None
+        seen.add(run_id)
+        chain.append(current)
+        role = str(current["role"])
+        revision = int(current["proposal_revision"])
+        parent_id = current["parent_agent_run_id"]
+        operation_id = str(current["operation_id"])
+        if role == "audit":
+            if not operation_id or not isinstance(parent_id, int):
+                return None
+            parent = by_id.get(parent_id)
+            if (
+                parent is None
+                or parent["role"] != "consumer"
+                or int(parent["proposal_revision"]) != revision
+            ):
+                return None
+            current = parent
+            continue
+        if role != "consumer" or operation_id:
+            return None
+        if revision == 0:
+            if parent_id is not None:
+                return None
+            current = None
+            continue
+        if not isinstance(parent_id, int):
+            return None
+        parent = by_id.get(parent_id)
+        if (
+            parent is None
+            or parent["role"] != "audit"
+            or int(parent["proposal_revision"]) != revision - 1
+        ):
+            return None
+        current = parent
+
+    chain.reverse()
+    return (
+        [int(row["id"]) for row in chain if row["role"] == "consumer"],
+        [int(row["id"]) for row in chain if row["role"] == "audit"],
+    )
+
+
+def _audited_unsubscribe_lineage(
+    db: sqlite3.Connection,
+    *,
+    receipt: sqlite3.Row,
+    classification: sqlite3.Row,
+) -> dict[str, object] | None:
+    lineage = db.execute(
+        _AUDITED_UNSUBSCRIBE_LINEAGE_SQL,
+        (receipt["action_identity"], receipt["effect_digest"]),
+    ).fetchone()
+    if lineage is None or lineage["audit_agent_run_id"] is None:
+        return None
+    current_plan = db.execute(
+        """
+        select action_plan_id, action_plan_version, classification_id,
+               account_id, actions_json
+        from email_action_plans
+        where action_plan_id=?
+        """,
+        (classification["current_action_plan_id"],),
+    ).fetchone()
+    if current_plan is None:
+        return None
+    try:
+        payload = json.loads(lineage["trigger_message_json"])
+        plan_actions = _json_load(
+            current_plan["actions_json"],
+            field="actions_json",
+            expected_type=list,
+        )
+        from app.email_task_adapter import email_conversation_id
+
+        expected_conversation_id = email_conversation_id(
+            str(receipt["account_id"]),
+            str(receipt["thread_identity"]),
+        )
+        expected_action_identity = email_action_identity(
+            account_id=str(receipt["account_id"]),
+            stable_message_identity=str(receipt["stable_message_identity"]),
+            action_type=EmailAction.UNSUBSCRIBE,
+            action_plan_version=int(receipt["action_plan_version"]),
+        )
+    except (TypeError, ValueError, RecursionError, KeyError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    expected_payload = {
+        "schema": "email_agent_action.v1",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "action_type": EmailAction.UNSUBSCRIBE.value,
+        "action_identity": receipt["action_identity"],
+        "action_plan_id": receipt["action_plan_id"],
+        "action_plan_version": receipt["action_plan_version"],
+        "classification_id": receipt["classification_id"],
+        "account_id": receipt["account_id"],
+        "stable_message_identity": receipt["stable_message_identity"],
+        "thread_identity": receipt["thread_identity"],
+    }
+    if any(payload.get(key) != value for key, value in expected_payload.items()):
+        return None
+    integer_payload_fields = ("action_plan_version", "classification_id")
+    if any(
+        not isinstance(payload.get(field), int) or isinstance(payload.get(field), bool)
+        for field in integer_payload_fields
+    ):
+        return None
+    task_id = int(lineage["task_id"])
+    audit_run_id = int(lineage["audit_agent_run_id"])
+    task_generation = str(lineage["task_execution_generation"])
+    if (
+        receipt["action_identity"] != expected_action_identity
+        or lineage["effect_action_identity"] != receipt["action_identity"]
+        or lineage["effect_digest"] != receipt["effect_digest"]
+        or lineage["audit_run_id"] != audit_run_id
+        or lineage["audit_role"] != "audit"
+        or lineage["reply_task_id"] != task_id
+        or lineage["audit_execution_generation"] != task_generation
+        or not task_generation
+        or lineage["task_channel"] != "email"
+        or lineage["task_conversation_id"] != expected_conversation_id
+        or lineage["trigger_message_id"] != receipt["action_identity"]
+        or classification["id"] != receipt["classification_id"]
+        or classification["account_id"] != receipt["account_id"]
+        or classification["stable_message_identity"]
+        != receipt["stable_message_identity"]
+        or classification["message_thread_identity"] != receipt["thread_identity"]
+        or classification["current_action_plan_id"] != receipt["action_plan_id"]
+        or current_plan["action_plan_id"] != receipt["action_plan_id"]
+        or current_plan["action_plan_version"] != receipt["action_plan_version"]
+        or current_plan["classification_id"] != receipt["classification_id"]
+        or current_plan["account_id"] != receipt["account_id"]
+        or EmailAction.UNSUBSCRIBE.value not in plan_actions
+    ):
+        return None
+    run_chain = _audited_unsubscribe_run_chain(
+        db,
+        task_id=task_id,
+        execution_generation=task_generation,
+        final_audit_run_id=audit_run_id,
+    )
+    if run_chain is None:
+        return None
+    consumer_run_ids, audit_run_ids = run_chain
+    return {
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "task_id": task_id,
+        "task_status": str(lineage["task_status"]),
+        "consumer_run_ids": consumer_run_ids,
+        "audit_run_ids": audit_run_ids,
+    }
+
+
 def _validate_unsubscribe_operations(
     operations: Sequence[Mapping[str, object]],
 ) -> list[dict[str, str]]:
@@ -1320,7 +1630,60 @@ def _validate_unsubscribe_operations(
         validated
     ):
         raise ValueError("unsubscribe operations must be non-empty and unique")
+    if len(validated) > MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS:
+        raise ValueError("durable continuation operation limit exceeded")
     return validated
+
+
+def _validate_terminal_expected_effect(
+    value: Mapping[str, object],
+) -> dict[str, object]:
+    required = {
+        "action_identity",
+        "action_plan_id",
+        "action_plan_version",
+        "classification_id",
+        "account_id",
+        "stable_message_identity",
+        "thread_identity",
+        "entry_reference",
+        "operations",
+        "network_policy_reference",
+        "network_policy_origin_references",
+    }
+    if not isinstance(value, Mapping) or set(value) != required:
+        raise ValueError("expected terminal effect fields are invalid")
+    binding = _validate_unsubscribe_binding(
+        action_identity=value["action_identity"],
+        effect_digest="0" * 64,
+        action_plan_id=value["action_plan_id"],
+        action_plan_version=value["action_plan_version"],
+        classification_id=value["classification_id"],
+        account_id=value["account_id"],
+        stable_message_identity=value["stable_message_identity"],
+        thread_identity=value["thread_identity"],
+        entry_reference=value["entry_reference"],
+    )
+    operations = _validate_unsubscribe_operations(value["operations"])
+    network_policy_reference = _validate_unsubscribe_opaque(
+        value["network_policy_reference"],
+        field="network_policy_reference",
+    )
+    origins = [
+        _validate_unsubscribe_opaque(
+            origin,
+            field="network_policy_origin_reference",
+        )
+        for origin in value["network_policy_origin_references"]
+    ]
+    if not origins:
+        raise ValueError("expected terminal effect needs network policy origins")
+    return {
+        **{key: binding[key] for key in binding if key != "effect_digest"},
+        "operations": operations,
+        "network_policy_reference": network_policy_reference,
+        "network_policy_origin_references": origins,
+    }
 
 
 def _validate_unsubscribe_controls(
@@ -1558,12 +1921,98 @@ class EmailStore:
         db.row_factory = sqlite3.Row
         return db
 
+    def list_nonterminal_legacy_unsubscribe_task_attempts(
+        self,
+    ) -> tuple[LegacyEmailUnsubscribeTaskAttempt, ...]:
+        """Inventory immutable nonterminal legacy unsubscribe attempts."""
+
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select id, execution_generation, status
+                from reply_tasks
+                where channel='email'
+                  and status in ('pending', 'processing')
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(trigger_message_json, '$.schema')
+                          else null
+                      end='email_agent_action.v1'
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(trigger_message_json, '$.action_type')
+                          else null
+                      end='unsubscribe'
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(
+                              trigger_message_json,
+                              '$.lifecycle_version'
+                          )
+                          else null
+                      end='email_unsubscribe_consumer_direct_v1'
+                order by id
+                """
+            ).fetchall()
+        return tuple(
+            LegacyEmailUnsubscribeTaskAttempt(
+                task_id=int(row["id"]),
+                execution_generation=str(row["execution_generation"]),
+                status=str(row["status"]),
+            )
+            for row in rows
+        )
+
+    def get_nonterminal_legacy_unsubscribe_task_attempt(
+        self,
+        task_id: int,
+    ) -> LegacyEmailUnsubscribeTaskAttempt | None:
+        """Read the current exact legacy attempt for one task, if still unsafe."""
+
+        if not isinstance(task_id, int) or isinstance(task_id, bool) or task_id <= 0:
+            raise ValueError("task_id must be positive")
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select id, execution_generation, status
+                from reply_tasks
+                where id=?
+                  and channel='email'
+                  and status in ('pending', 'processing')
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(trigger_message_json, '$.schema')
+                          else null
+                      end='email_agent_action.v1'
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(trigger_message_json, '$.action_type')
+                          else null
+                      end='unsubscribe'
+                  and case
+                          when json_valid(trigger_message_json)
+                          then json_extract(
+                              trigger_message_json,
+                              '$.lifecycle_version'
+                          )
+                          else null
+                      end='email_unsubscribe_consumer_direct_v1'
+                """,
+                (task_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return LegacyEmailUnsubscribeTaskAttempt(
+            task_id=int(row["id"]),
+            execution_generation=str(row["execution_generation"]),
+            status=str(row["status"]),
+        )
+
     def _initialize(self) -> None:
         with self._connect() as db:
             db.execute("begin")
             latest_version = self._read_schema_version(db)
             if latest_version == EMAIL_SCHEMA_VERSION:
-                self._ensure_email_context_columns(db)
                 self._validate_durable_state(db)
                 return
             if latest_version is not None and latest_version > EMAIL_SCHEMA_VERSION:
@@ -1587,7 +2036,6 @@ class EmailStore:
                     f"this runtime supports {EMAIL_SCHEMA_VERSION}"
                 )
             if latest_version == EMAIL_SCHEMA_VERSION:
-                self._ensure_email_context_columns(db)
                 self._validate_durable_state(db)
                 return
             legacy_reply_claims = False
@@ -1603,7 +2051,10 @@ class EmailStore:
             self._create_durable_tables(db)
             self._ensure_email_context_columns(db)
             self._ensure_direct_action_retry_column(db)
+            self._ensure_action_authorization_snapshot_column(db)
+            self._ensure_legacy_action_plan_provenance_column(db)
             self._ensure_unsubscribe_claim_columns(db)
+            self._ensure_unsubscribe_audit_columns(db)
             self._ensure_unsubscribe_receipt_columns(db)
             if legacy_reply_claims:
                 self._finish_v8_reply_claim_migration(db)
@@ -1612,7 +2063,7 @@ class EmailStore:
             if legacy_unsubscribe_schema:
                 self._finish_unsubscribe_schema_migration(db)
             self._create_indexes_and_triggers(db)
-            if latest_version < EMAIL_SCHEMA_VERSION:
+            if latest_version < 16:
                 is_prototype = latest_version == 0
                 if latest_version < 2:
                     self._migrate_prototype_schema(db)
@@ -1624,9 +2075,17 @@ class EmailStore:
                 if latest_version in {0, 2}:
                     self._mark_legacy_processed_without_plan(db)
                 db.execute(
-                    "insert into email_schema_migrations(version, applied_at) values (?, ?)",
-                    (EMAIL_SCHEMA_VERSION, self._now()),
+                    "update email_action_plans set legacy_serialization_pre_v16=1"
                 )
+                if not is_prototype:
+                    db.execute(
+                        "insert into email_schema_migrations(version, applied_at) "
+                        "values (16, ?)",
+                        (self._now(),),
+                    )
+                latest_version = 16
+            if latest_version == 16:
+                self._migrate_v16_to_v17(db)
             self._validate_durable_state(db)
 
     @classmethod
@@ -1727,10 +2186,33 @@ class EmailStore:
 
     @classmethod
     def _finish_v10_unsubscribe_migration(cls, db: sqlite3.Connection) -> None:
+        legacy_columns = cls._table_columns(db, "email_unsubscribe_claims_v10")
+        phase_expression = (
+            "phase"
+            if "phase" in legacy_columns
+            else "case status when 'uncertain' then 'effect_uncertain' "
+            "when 'done' then 'terminal' else 'prepared' end"
+        )
+        audit_run_expression = (
+            "audit_agent_run_id" if "audit_agent_run_id" in legacy_columns else "null"
+        )
         db.execute(
-            """
-            insert into email_unsubscribe_claims
-            select * from email_unsubscribe_claims_v10
+            f"""
+            insert into email_unsubscribe_claims (
+                action_identity, effect_digest, action_plan_id,
+                action_plan_version, classification_id, account_id,
+                stable_message_identity, thread_identity, entry_reference,
+                operations_json, owner_id, owner_generation, lease_token,
+                account_updated_at, status, phase, audit_agent_run_id,
+                claimed_at, updated_at
+            )
+            select action_identity, effect_digest, action_plan_id,
+                   action_plan_version, classification_id, account_id,
+                   stable_message_identity, thread_identity, entry_reference,
+                   operations_json, owner_id, owner_generation, lease_token,
+                   account_updated_at, status, {phase_expression},
+                   {audit_run_expression}, claimed_at, updated_at
+            from email_unsubscribe_claims_v10
             """
         )
         db.execute(
@@ -1738,12 +2220,13 @@ class EmailStore:
             insert into email_unsubscribe_effects (
                 action_identity, effect_digest, previous_effect_digest,
                 operations_json, network_policy_reference,
-                network_policy_origins_json, created_at
+                network_policy_origins_json, audit_agent_run_id, created_at
             )
             select action_identity, effect_digest, '', operations_json,
-                   'network-policy:legacy', '["network-origin:legacy"]', claimed_at
+                   'network-policy:legacy', '["network-origin:legacy"]',
+                   {audit_run_expression}, claimed_at
             from email_unsubscribe_claims_v10
-            """
+            """.format(audit_run_expression=audit_run_expression)
         )
         tables = {
             row["name"]
@@ -2104,6 +2587,36 @@ class EmailStore:
         )
 
     @classmethod
+    def _ensure_action_authorization_snapshot_column(
+        cls,
+        db: sqlite3.Connection,
+    ) -> None:
+        cls._ensure_column(
+            db,
+            table="email_action_plans",
+            column="authorization_snapshot_json",
+            declaration=(
+                "text check(authorization_snapshot_json is null "
+                "or json_valid(authorization_snapshot_json))"
+            ),
+        )
+
+    @classmethod
+    def _ensure_legacy_action_plan_provenance_column(
+        cls,
+        db: sqlite3.Connection,
+    ) -> None:
+        cls._ensure_column(
+            db,
+            table="email_action_plans",
+            column="legacy_serialization_pre_v16",
+            declaration=(
+                "integer not null default 0 "
+                "check(legacy_serialization_pre_v16 in (0, 1))"
+            ),
+        )
+
+    @classmethod
     def _ensure_unsubscribe_receipt_columns(cls, db: sqlite3.Connection) -> None:
         for column, declaration in (
             ("result_text", "text not null default ''"),
@@ -2126,6 +2639,92 @@ class EmailStore:
             "where trim(completed_at) = ''"
         )
 
+    def _migrate_v16_to_v17(self, db: sqlite3.Connection) -> None:
+        """Add explicit bounded-result integrity metadata and its lookup index."""
+
+        columns = self._table_columns(db, "email_unsubscribe_receipts")
+        unexpected = {"result_text_truncated", "result_text_digest"} & columns
+        if unexpected:
+            raise EmailPersistenceCorruption(
+                "schema v16 contains unexpected unsubscribe result metadata: "
+                + ", ".join(sorted(unexpected))
+            )
+        db.execute(
+            "alter table email_unsubscribe_receipts add column "
+            "result_text_truncated integer not null default 0 "
+            "check(result_text_truncated in (0, 1))"
+        )
+        db.execute(
+            "alter table email_unsubscribe_receipts add column "
+            "result_text_digest text not null default '' "
+            "check(result_text_digest = '' or length(result_text_digest) = 64)"
+        )
+        from app.email_unsubscribe import normalize_unsubscribe_result_text
+
+        for row in db.execute(
+            "select action_identity, result_text, observation_digest "
+            "from email_unsubscribe_receipts order by action_identity"
+        ).fetchall():
+            result_text = row["result_text"]
+            observation_digest = row["observation_digest"]
+            if not isinstance(result_text, str) or not isinstance(
+                observation_digest, str
+            ):
+                raise EmailPersistenceCorruption(
+                    "schema v16 unsubscribe result integrity metadata is invalid"
+                )
+            encoded_length = len(result_text.encode("utf-8"))
+            if encoded_length > _MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES:
+                raise EmailPersistenceCorruption(
+                    "schema v16 unsubscribe result exceeds its durable bound"
+                )
+            canonical_text, result_text_digest = normalize_unsubscribe_result_text(
+                result_text
+            )
+            if canonical_text != result_text:
+                raise EmailPersistenceCorruption(
+                    "schema v16 unsubscribe result text is not canonical and redacted"
+                )
+            if not result_text:
+                if observation_digest:
+                    raise EmailPersistenceCorruption(
+                        "schema v16 empty result has a non-empty observation digest"
+                    )
+                result_text_digest = ""
+                result_text_truncated = 0
+            else:
+                if _SHA256_HEX.fullmatch(observation_digest) is None:
+                    raise EmailPersistenceCorruption(
+                        "schema v16 unsubscribe observation digest is invalid"
+                    )
+                if observation_digest == result_text_digest:
+                    result_text_truncated = 0
+                elif encoded_length == _MAX_UNSUBSCRIBE_RESULT_TEXT_BYTES:
+                    result_text_truncated = 1
+                else:
+                    raise EmailPersistenceCorruption(
+                        "schema v16 untruncated observation digest does not match"
+                    )
+            db.execute(
+                "update email_unsubscribe_receipts "
+                "set result_text_truncated=?, result_text_digest=? "
+                "where action_identity=?",
+                (
+                    result_text_truncated,
+                    result_text_digest,
+                    row["action_identity"],
+                ),
+            )
+        db.execute(
+            "create index if not exists "
+            "idx_email_unsubscribe_receipts_classification_action "
+            "on email_unsubscribe_receipts(classification_id, action_identity)"
+        )
+        db.execute(
+            "insert into email_schema_migrations(version, applied_at) values (17, ?)",
+            (self._now(),),
+        )
+
     @classmethod
     def _ensure_unsubscribe_claim_columns(cls, db: sqlite3.Connection) -> None:
         had_phase = "phase" in cls._table_columns(db, "email_unsubscribe_claims")
@@ -2145,6 +2744,21 @@ class EmailStore:
             db.execute(
                 "update email_unsubscribe_claims set phase='prepared' "
                 "where trim(phase) = '' or phase is null"
+            )
+
+    @classmethod
+    def _ensure_unsubscribe_audit_columns(cls, db: sqlite3.Connection) -> None:
+        """Add nullable Audit ownership without rewriting historical rows."""
+
+        for table in ("email_unsubscribe_claims", "email_unsubscribe_effects"):
+            cls._ensure_column(
+                db,
+                table=table,
+                column="audit_agent_run_id",
+                declaration=(
+                    "integer check(audit_agent_run_id is null "
+                    "or audit_agent_run_id > 0)"
+                ),
             )
 
     @classmethod
@@ -2287,6 +2901,11 @@ class EmailStore:
                 actions_json text not null check(json_valid(actions_json)),
                 action_parameters_json text not null
                     check(json_valid(action_parameters_json)),
+                authorization_snapshot_json text
+                    check(authorization_snapshot_json is null
+                          or json_valid(authorization_snapshot_json)),
+                legacy_serialization_pre_v16 integer not null default 0
+                    check(legacy_serialization_pre_v16 in (0, 1)),
                 created_at text not null,
                 unique(classification_id, action_plan_version),
                 foreign key(classification_id) references email_classifications(id)
@@ -2462,6 +3081,8 @@ class EmailStore:
                     check(phase in (
                         'prepared', 'navigating', 'effect_uncertain', 'terminal'
                     )),
+                audit_agent_run_id integer
+                    check(audit_agent_run_id is null or audit_agent_run_id > 0),
                 claimed_at text not null check(trim(claimed_at) != ''),
                 updated_at text not null check(trim(updated_at) != ''),
                 foreign key(action_plan_id)
@@ -2483,6 +3104,8 @@ class EmailStore:
                     check(trim(network_policy_reference) != ''),
                 network_policy_origins_json text not null
                     check(json_valid(network_policy_origins_json)),
+                audit_agent_run_id integer
+                    check(audit_agent_run_id is null or audit_agent_run_id > 0),
                 created_at text not null check(trim(created_at) != ''),
                 primary key(action_identity, effect_digest),
                 foreign key(action_identity)
@@ -2797,7 +3420,7 @@ class EmailStore:
                     legacy_processed_without_plan=0
                 where id=?
                 """,
-                (plan.model_dump_json(), plan.action_plan_id, row["id"]),
+                (row["action_plan_json"], plan.action_plan_id, row["id"]),
             )
 
     @staticmethod
@@ -3085,10 +3708,12 @@ class EmailStore:
             messages[row["stable_message_identity"]] = row
 
         plans: dict[str, EmailActionPlan] = {}
+        plan_rows: dict[str, sqlite3.Row] = {}
         plans_by_classification: dict[int, list[EmailActionPlan]] = {}
         for row in db.execute("select * from email_action_plans"):
             plan = self._stored_action_plan(row)
             plans[plan.action_plan_id] = plan
+            plan_rows[plan.action_plan_id] = row
             plans_by_classification.setdefault(plan.classification_id, []).append(plan)
         for classification_id, stored_plans in plans_by_classification.items():
             ordered = sorted(plan.action_plan_version for plan in stored_plans)
@@ -3267,7 +3892,37 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     f"current ActionPlan classification fields mismatch for {row['id']}"
                 )
-            if row["action_plan_json"] != current_plan.model_dump_json():
+            raw_action_plan = _json_load(
+                row["action_plan_json"],
+                field="action_plan_json",
+                expected_type=dict,
+            )
+            authorization_fields = {
+                "authorization_snapshot_format",
+                "action_authorizations",
+            }
+            present_authorization_fields = authorization_fields & set(raw_action_plan)
+            if not present_authorization_fields:
+                current_plan_row = plan_rows[current_plan.action_plan_id]
+                if (
+                    current_plan_row["legacy_serialization_pre_v16"] != 1
+                    or current_plan_row["authorization_snapshot_json"] is not None
+                ):
+                    raise EmailPersistenceCorruption(
+                        f"current ActionPlan snapshot mismatch for classification "
+                        f"{row['id']}"
+                    )
+                canonical_action_plan_json = current_plan.model_dump_json(
+                    exclude=authorization_fields
+                )
+            elif present_authorization_fields == authorization_fields:
+                canonical_action_plan_json = current_plan.model_dump_json()
+            else:
+                raise EmailPersistenceCorruption(
+                    f"current ActionPlan snapshot has partial authorization fields "
+                    f"for classification {row['id']}"
+                )
+            if row["action_plan_json"] != canonical_action_plan_json:
                 raise EmailPersistenceCorruption(
                     f"current ActionPlan snapshot mismatch for classification {row['id']}"
                 )
@@ -3909,35 +4564,68 @@ class EmailStore:
             "updated_at": row["updated_at"],
         }
 
+    @classmethod
+    def _classification_evidence_row(cls, row: sqlite3.Row) -> dict[str, Any]:
+        item = cls._classification_row(row)
+        raw_metadata = row["message_attachment_metadata_json"]
+        if raw_metadata is None:
+            item["attachment_metadata"] = []
+            return item
+        attachments = _json_load(
+            raw_metadata,
+            field="attachment_metadata_json",
+            expected_type=list,
+        )
+        try:
+            item["attachment_metadata"] = [
+                EmailAttachmentMetadata.model_validate(attachment).model_dump(
+                    mode="json"
+                )
+                for attachment in attachments
+            ]
+        except ValueError as exc:
+            raise EmailPersistenceCorruption(
+                f"invalid attachment_metadata_json for classification {row['id']}"
+            ) from exc
+        return item
+
     @staticmethod
     def _stored_action_plan(row: sqlite3.Row) -> EmailActionPlan:
-        try:
-            return EmailActionPlan.model_validate_json(
-                _json_dump(
-                    {
-                        "action_plan_id": row["action_plan_id"],
-                        "action_plan_version": row["action_plan_version"],
-                        "classification_id": row["classification_id"],
-                        "account_id": row["account_id"],
-                        "category": row["category"],
-                        "classification_source": row["classification_source"],
-                        "confidence": row["confidence"],
-                        "model_id": row["model_id"],
-                        "config_version": row["config_version"],
-                        "actions": _json_load(
-                            row["actions_json"],
-                            field="actions_json",
-                            expected_type=list,
-                        ),
-                        "action_parameters": _json_load(
-                            row["action_parameters_json"],
-                            field="action_parameters_json",
-                            expected_type=dict,
-                        ),
-                        "created_at": row["created_at"],
-                    }
-                )
+        payload: dict[str, object] = {
+            "action_plan_id": row["action_plan_id"],
+            "action_plan_version": row["action_plan_version"],
+            "classification_id": row["classification_id"],
+            "account_id": row["account_id"],
+            "category": row["category"],
+            "classification_source": row["classification_source"],
+            "confidence": row["confidence"],
+            "model_id": row["model_id"],
+            "config_version": row["config_version"],
+            "actions": _json_load(
+                row["actions_json"],
+                field="actions_json",
+                expected_type=list,
+            ),
+            "action_parameters": _json_load(
+                row["action_parameters_json"],
+                field="action_parameters_json",
+                expected_type=dict,
+            ),
+            "created_at": row["created_at"],
+        }
+        if row["authorization_snapshot_json"] is not None:
+            payload.update(
+                {
+                    "authorization_snapshot_format": "authorization_snapshot_v2",
+                    "action_authorizations": _json_load(
+                        row["authorization_snapshot_json"],
+                        field="authorization_snapshot_json",
+                        expected_type=list,
+                    ),
+                }
             )
+        try:
+            return EmailActionPlan.model_validate_json(_json_dump(payload))
         except ValueError as exc:
             raise EmailPersistenceCorruption(
                 f"invalid immutable ActionPlan {row['action_plan_id']}"
@@ -4102,6 +4790,16 @@ class EmailStore:
                 for action, parameters in plan.action_parameters.items()
             }
         )
+        encoded_authorizations = (
+            None
+            if plan.authorization_snapshot_format == "legacy_unavailable_v1"
+            else _json_dump(
+                [
+                    authorization.model_dump(mode="json")
+                    for authorization in plan.action_authorizations
+                ]
+            )
+        )
         expected = (
             plan.action_plan_version,
             plan.classification_id,
@@ -4113,6 +4811,7 @@ class EmailStore:
             plan.config_version,
             encoded_actions,
             encoded_parameters,
+            encoded_authorizations,
             plan.created_at.isoformat(),
         )
         if existing_by_id is not None:
@@ -4127,6 +4826,7 @@ class EmailStore:
                 existing_by_id["config_version"],
                 existing_by_id["actions_json"],
                 existing_by_id["action_parameters_json"],
+                existing_by_id["authorization_snapshot_json"],
                 existing_by_id["created_at"],
             )
             if actual != expected:
@@ -4163,8 +4863,8 @@ class EmailStore:
                 action_plan_id, action_plan_version, classification_id,
                 account_id, category, classification_source, confidence,
                 model_id, config_version, actions_json, action_parameters_json,
-                created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                authorization_snapshot_json, legacy_serialization_pre_v16, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 plan.action_plan_id,
@@ -4178,6 +4878,8 @@ class EmailStore:
                 plan.config_version,
                 encoded_actions,
                 encoded_parameters,
+                encoded_authorizations,
+                0,
                 plan.created_at.isoformat(),
             ),
         )
@@ -5237,6 +5939,7 @@ class EmailStore:
         task_execution_generation: str | None = None,
         task_lifecycle_version: str | None = None,
         task_action_type: str | None = None,
+        audit_agent_run_id: int | None = None,
     ) -> dict[str, Any] | None:
         """Atomically verify current authorization and fence one browser write."""
 
@@ -5247,12 +5950,29 @@ class EmailStore:
         if task_id is not None:
             if not isinstance(task_id, int) or task_id <= 0:
                 raise ValueError("task_id must be positive")
-            if not isinstance(task_execution_generation, str) or not task_execution_generation.strip():
+            if (
+                not isinstance(task_execution_generation, str)
+                or not task_execution_generation.strip()
+            ):
                 raise ValueError("task_execution_generation must be non-empty")
-            if not isinstance(task_lifecycle_version, str) or not task_lifecycle_version.strip():
+            if (
+                not isinstance(task_lifecycle_version, str)
+                or not task_lifecycle_version.strip()
+            ):
                 raise ValueError("task_lifecycle_version must be non-empty")
             if task_action_type != EmailAction.UNSUBSCRIBE.value:
                 raise ValueError("task_action_type must be unsubscribe")
+            if task_lifecycle_version == "email_unsubscribe_audited_v2":
+                if (
+                    not isinstance(audit_agent_run_id, int)
+                    or isinstance(audit_agent_run_id, bool)
+                    or audit_agent_run_id <= 0
+                ):
+                    raise ValueError("audit_agent_run_id must be positive")
+            elif audit_agent_run_id is not None:
+                raise ValueError("audit_agent_run_id requires the audited-v2 lifecycle")
+        elif audit_agent_run_id is not None:
+            raise ValueError("audit_agent_run_id requires a task binding")
 
         binding = _validate_unsubscribe_binding(
             action_identity=action_identity,
@@ -5303,6 +6023,52 @@ class EmailStore:
                   and json_extract(tasks.trigger_message_json, '$.action_type')=?
                   and json_extract(tasks.trigger_message_json, '$.lifecycle_version')=?
                 """
+                if audit_agent_run_id is not None:
+                    task_join += """
+                      join agent_runs as audit_runs on audit_runs.id=?
+                      join agent_runs as consumer_runs
+                        on consumer_runs.id=audit_runs.parent_agent_run_id
+                    """
+                    task_predicates += """
+                  and audit_runs.reply_task_id=tasks.id
+                  and audit_runs.execution_generation=tasks.execution_generation
+                  and audit_runs.role='audit'
+                  and audit_runs.status='running'
+                  and trim(audit_runs.operation_id)<>''
+                  and consumer_runs.reply_task_id=tasks.id
+                  and consumer_runs.execution_generation=tasks.execution_generation
+                  and consumer_runs.role='consumer'
+                  and consumer_runs.status='completed'
+                  and consumer_runs.proposal_revision=audit_runs.proposal_revision
+                  and consumer_runs.id=(
+                      select current_consumer.id
+                      from agent_runs as current_consumer
+                      where current_consumer.reply_task_id=tasks.id
+                        and current_consumer.execution_generation=
+                            tasks.execution_generation
+                        and current_consumer.role='consumer'
+                        and current_consumer.status='completed'
+                        and current_consumer.proposal_revision=
+                            audit_runs.proposal_revision
+                      order by current_consumer.turn_attempt desc,
+                               current_consumer.id desc
+                      limit 1
+                  )
+                  and audit_runs.id=(
+                      select current_audit.id
+                      from agent_runs as current_audit
+                      where current_audit.reply_task_id=tasks.id
+                        and current_audit.execution_generation=
+                            tasks.execution_generation
+                        and current_audit.role='audit'
+                        and current_audit.status='running'
+                        and current_audit.proposal_revision=
+                            audit_runs.proposal_revision
+                      order by current_audit.turn_attempt desc,
+                               current_audit.id desc
+                      limit 1
+                  )
+                    """
                 task_args = (
                     task_execution_generation,
                     action_identity,
@@ -5335,7 +6101,16 @@ class EmailStore:
                 """,
                 tuple(
                     [action_plan_id, stable_message_identity, account_id]
-                    + ([task_id] if task_id is not None else [])
+                    + (
+                        [task_id]
+                        + (
+                            [audit_agent_run_id]
+                            if audit_agent_run_id is not None
+                            else []
+                        )
+                        if task_id is not None
+                        else []
+                    )
                     + [classification_id]
                     + list(task_args)
                 ),
@@ -5386,6 +6161,8 @@ class EmailStore:
                 **binding,
                 "operations": validated_operations,
             }
+            if audit_agent_run_id is not None:
+                expected_claim["audit_agent_run_id"] = audit_agent_run_id
             if claim is not None:
                 persisted = self._email_unsubscribe_claim_row(claim)
                 if persisted["status"] == "awaiting_audit":
@@ -5487,6 +6264,7 @@ class EmailStore:
                         update email_unsubscribe_claims
                         set effect_digest=?, operations_json=?, owner_id=?,
                             owner_generation=?, lease_token=?, account_updated_at=?,
+                            audit_agent_run_id=?,
                             status='dispatching', phase='prepared',
                             claimed_at=?, updated_at=?
                         where action_identity=? and status='awaiting_audit'
@@ -5498,6 +6276,7 @@ class EmailStore:
                             owner["generation"],
                             owner["lease_token"],
                             live["account_updated_at"],
+                            audit_agent_run_id,
                             claimed_at,
                             claimed_at,
                             action_identity,
@@ -5508,8 +6287,8 @@ class EmailStore:
                         insert into email_unsubscribe_effects (
                             action_identity, effect_digest, previous_effect_digest,
                             operations_json, network_policy_reference,
-                            network_policy_origins_json, created_at
-                        ) values (?, ?, ?, ?, ?, ?, ?)
+                            network_policy_origins_json, audit_agent_run_id, created_at
+                        ) values (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             action_identity,
@@ -5518,6 +6297,7 @@ class EmailStore:
                             operations_json,
                             network_policy_reference,
                             _json_dump(list(network_policy_origin_references)),
+                            audit_agent_run_id,
                             claimed_at,
                         ),
                     )
@@ -5535,6 +6315,18 @@ class EmailStore:
                         "acquired": True,
                         "executed_prefix_length": len(prior_operations),
                     }
+                if (
+                    audit_agent_run_id is None
+                    and persisted["audit_agent_run_id"] is not None
+                    and (
+                        persisted["owner_id"] != owner["owner_id"]
+                        or persisted["owner_generation"] != owner["generation"]
+                        or persisted["lease_token"] != owner["lease_token"]
+                    )
+                ):
+                    raise EmailUnsubscribeClaimConflict(
+                        "audited unsubscribe claim requires its exact owner fence"
+                    )
                 if any(
                     persisted[key] != value for key, value in expected_claim.items()
                 ):
@@ -5560,9 +6352,10 @@ class EmailStore:
                         action_plan_version, classification_id, account_id,
                         stable_message_identity, thread_identity, entry_reference,
                         operations_json, owner_id, owner_generation, lease_token,
-                        account_updated_at, status, phase, claimed_at, updated_at
+                        account_updated_at, status, phase, audit_agent_run_id,
+                        claimed_at, updated_at
                     ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                              'dispatching', 'prepared', ?, ?)
+                              'dispatching', 'prepared', ?, ?, ?)
                     """,
                     (
                         action_identity,
@@ -5579,6 +6372,7 @@ class EmailStore:
                         owner["generation"],
                         owner["lease_token"],
                         live["account_updated_at"],
+                        audit_agent_run_id,
                         claimed_at,
                         claimed_at,
                     ),
@@ -5588,8 +6382,8 @@ class EmailStore:
                     insert into email_unsubscribe_effects (
                         action_identity, effect_digest, previous_effect_digest,
                         operations_json, network_policy_reference,
-                        network_policy_origins_json, created_at
-                    ) values (?, ?, '', ?, ?, ?, ?)
+                        network_policy_origins_json, audit_agent_run_id, created_at
+                    ) values (?, ?, '', ?, ?, ?, ?, ?)
                     """,
                     (
                         action_identity,
@@ -5597,6 +6391,7 @@ class EmailStore:
                         operations_json,
                         network_policy_reference,
                         _json_dump(list(network_policy_origin_references)),
+                        audit_agent_run_id,
                         claimed_at,
                     ),
                 )
@@ -5611,344 +6406,6 @@ class EmailStore:
                 "executed_prefix_length": 0,
             }
 
-    def continue_email_unsubscribe_consumer_direct(
-        self,
-        *,
-        current_effect: Mapping[str, object],
-        next_effect: Mapping[str, object],
-        controls: Sequence[Mapping[str, object]],
-        final_step: Mapping[str, object],
-        owner: Mapping[str, object],
-        task_id: int,
-        task_execution_generation: str,
-        task_lifecycle_version: str,
-        task_action_type: str,
-    ) -> dict[str, Any]:
-        """Atomically advance one Consumer-direct unsubscribe browser step.
-
-        This is deliberately separate from ``claim_email_unsubscribe_write``.
-        A normal audited continuation changes owner fences while waiting for an
-        Audit decision.  A Consumer-direct continuation stays on the same
-        task-bound lease, records the completed step, and binds the next
-        operation only after rechecking the live task and ActionPlan.
-        """
-
-        if not isinstance(task_id, int) or isinstance(task_id, bool) or task_id <= 0:
-            raise ValueError("task_id must be positive")
-        if not isinstance(task_execution_generation, str) or not task_execution_generation.strip():
-            raise ValueError("task_execution_generation must be non-empty")
-        if not isinstance(task_lifecycle_version, str) or not task_lifecycle_version.strip():
-            raise ValueError("task_lifecycle_version must be non-empty")
-        if task_action_type != EmailAction.UNSUBSCRIBE.value:
-            raise ValueError("task_action_type must be unsubscribe")
-        owner = _validate_email_unsubscribe_owner(owner)
-
-        def validate_effect(value: Mapping[str, object]) -> tuple[dict[str, object], list[dict[str, str]]]:
-            binding = _validate_unsubscribe_binding(
-                action_identity=value.get("action_identity"),
-                effect_digest=value.get("effect_digest"),
-                action_plan_id=value.get("action_plan_id"),
-                action_plan_version=value.get("action_plan_version"),
-                classification_id=value.get("classification_id"),
-                account_id=value.get("account_id"),
-                stable_message_identity=value.get("stable_message_identity"),
-                thread_identity=value.get("thread_identity"),
-                entry_reference=value.get("entry_reference"),
-            )
-            operations = _validate_unsubscribe_operations(value.get("operations", ()))
-            previous_effect_digest = value.get("previous_effect_digest", "")
-            if not isinstance(previous_effect_digest, str) or (
-                previous_effect_digest
-                and not re.fullmatch(r"[0-9a-f]{64}", previous_effect_digest)
-            ):
-                raise ValueError("previous_effect_digest must be canonical sha256 hex")
-            network_policy_reference = _validate_unsubscribe_opaque(
-                value.get("network_policy_reference"),
-                field="network_policy_reference",
-            )
-            origins = tuple(
-                _validate_unsubscribe_opaque(item, field="network_policy_origin_reference")
-                for item in value.get("network_policy_origin_references", ())
-            )
-            if not origins:
-                raise ValueError("network policy origins must be non-empty")
-            expected_digest = email_unsubscribe_effect_digest(
-                **{key: binding[key] for key in binding if key != "effect_digest"},
-                operations=operations,
-                previous_effect_digest=previous_effect_digest,
-                network_policy_reference=network_policy_reference,
-                network_policy_origin_references=origins,
-            )
-            if binding["effect_digest"] != expected_digest:
-                raise EmailUnsubscribeClaimConflict(
-                    "unsubscribe effect digest does not match accepted operations"
-                )
-            return (
-                {
-                    **binding,
-                    "previous_effect_digest": previous_effect_digest,
-                    "network_policy_reference": network_policy_reference,
-                    "network_policy_origin_references": origins,
-                },
-                operations,
-            )
-
-        current, current_operations = validate_effect(current_effect)
-        next_value, next_operations = validate_effect(next_effect)
-        if next_value["previous_effect_digest"] != current["effect_digest"]:
-            raise EmailUnsubscribeClaimConflict(
-                "consumer-direct continuation prefix digest changed"
-            )
-        if (
-            next_operations[:-1] != current_operations
-            or len(next_operations) != len(current_operations) + 1
-        ):
-            raise EmailUnsubscribeClaimConflict(
-                "consumer-direct continuation prefix is not append-only"
-            )
-        validated_controls = _validate_unsubscribe_controls(controls)
-        if set(final_step) != {"sequence", "operation", "state", "reference"}:
-            raise ValueError("unsubscribe continuation step fields are invalid")
-        sequence = final_step["sequence"]
-        _require_positive_int(sequence, field="sequence")
-        validated_step = {
-            "sequence": sequence,
-            "operation": _validate_unsubscribe_opaque(
-                final_step["operation"], field="operation"
-            ),
-            "state": _validate_unsubscribe_opaque(
-                final_step["state"], field="state"
-            ),
-            "reference": _validate_unsubscribe_opaque(
-                final_step["reference"], field="reference"
-            ),
-        }
-        if sequence != len(current_operations):
-            raise EmailUnsubscribeClaimConflict(
-                "consumer-direct continuation journal sequence is invalid"
-            )
-        next_operation = next_operations[-1]
-        control = next(
-            (
-                item
-                for item in validated_controls
-                if item["reference"] == next_operation["target_reference"]
-            ),
-            None,
-        )
-        allowed_kinds = {
-            "form": {"submit_form"},
-            "link": {"click_confirmation"},
-            "button": {"click_confirmation"},
-            "confirmation_email": {"confirm_email"},
-        }
-        if control is None or next_operation["kind"] not in allowed_kinds[control["kind"]]:
-            raise EmailUnsubscribeClaimConflict(
-                "consumer-direct continuation control is invalid"
-            )
-        if current["action_identity"] != next_value["action_identity"]:
-            raise EmailUnsubscribeClaimConflict(
-                "consumer-direct continuation action identity changed"
-            )
-        immutable_keys = (
-            "action_plan_id",
-            "action_plan_version",
-            "classification_id",
-            "account_id",
-            "stable_message_identity",
-            "thread_identity",
-            "entry_reference",
-            "network_policy_reference",
-            "network_policy_origin_references",
-        )
-        if any(current[key] != next_value[key] for key in immutable_keys):
-            raise EmailUnsubscribeClaimConflict(
-                "consumer-direct continuation binding changed"
-            )
-
-        now = self._now()
-        with self._connect() as db:
-            db.execute("begin immediate")
-            task = db.execute(
-                """
-                select tasks.id
-                from reply_tasks as tasks
-                where tasks.id=? and tasks.status='processing'
-                  and tasks.channel='email'
-                  and tasks.execution_generation=?
-                  and tasks.trigger_message_id=?
-                  and json_extract(tasks.trigger_message_json, '$.schema')=?
-                  and json_extract(tasks.trigger_message_json, '$.action_type')=?
-                  and json_extract(tasks.trigger_message_json, '$.lifecycle_version')=?
-                """,
-                (
-                    task_id,
-                    task_execution_generation,
-                    current["action_identity"],
-                    "email_agent_action.v1",
-                    task_action_type,
-                    task_lifecycle_version,
-                ),
-            ).fetchone()
-            live = db.execute(
-                """
-                select classifications.status as classification_status,
-                       classifications.current_action_plan_id,
-                       plans.action_plan_version, plans.account_id as plan_account_id,
-                       plans.actions_json, messages.account_id as message_account_id,
-                       messages.thread_identity, accounts.enabled,
-                       accounts.updated_at as account_updated_at
-                from email_classifications as classifications
-                join email_action_plans as plans
-                  on plans.action_plan_id=? and plans.classification_id=classifications.id
-                join email_messages as messages
-                  on messages.stable_message_identity=?
-                join email_accounts as accounts on accounts.account_id=?
-                where classifications.id=?
-                """,
-                (
-                    current["action_plan_id"],
-                    current["stable_message_identity"],
-                    current["account_id"],
-                    current["classification_id"],
-                ),
-            ).fetchone()
-            claim_row = db.execute(
-                "select * from email_unsubscribe_claims where action_identity=?",
-                (current["action_identity"],),
-            ).fetchone()
-            effect_row = db.execute(
-                """
-                select * from email_unsubscribe_effects
-                where action_identity=? and effect_digest=?
-                """,
-                (current["action_identity"], current["effect_digest"]),
-            ).fetchone()
-            authorized = (
-                task is not None
-                and live is not None
-                and live["classification_status"] == "processed"
-                and live["current_action_plan_id"] == current["action_plan_id"]
-                and live["action_plan_version"] == current["action_plan_version"]
-                and live["plan_account_id"] == current["account_id"]
-                and EmailAction.UNSUBSCRIBE.value in _json_load(
-                    live["actions_json"], field="actions_json", expected_type=list
-                )
-                and live["message_account_id"] == current["account_id"]
-                and live["thread_identity"] == current["thread_identity"]
-                and bool(live["enabled"])
-            )
-            if not authorized or claim_row is None or effect_row is None:
-                raise EmailUnsubscribeClaimConflict(
-                    "consumer-direct continuation authorization is stale"
-                )
-            claim = self._email_unsubscribe_claim_row(claim_row)
-            if (
-                claim["status"] != "dispatching"
-                or claim["effect_digest"] != current["effect_digest"]
-                or claim["owner_id"] != owner["owner_id"]
-                or claim["owner_generation"] != owner["generation"]
-                or claim["lease_token"] != owner["lease_token"]
-                or any(claim[key] != current[key] for key in immutable_keys if key in claim)
-            ):
-                raise EmailUnsubscribeClaimConflict(
-                    "consumer-direct continuation owner fence changed"
-                )
-            if (
-                _json_load(effect_row["operations_json"], field="operations_json", expected_type=list)
-                != current_operations
-                or effect_row["previous_effect_digest"] != current["previous_effect_digest"]
-                or effect_row["network_policy_reference"] != current["network_policy_reference"]
-                or _json_load(
-                    effect_row["network_policy_origins_json"],
-                    field="network_policy_origins_json",
-                    expected_type=list,
-                ) != list(current["network_policy_origin_references"])
-            ):
-                raise EmailUnsubscribeClaimConflict(
-                    "consumer-direct continuation effect binding changed"
-                )
-            existing_step = db.execute(
-                """
-                select * from email_unsubscribe_steps
-                where action_identity=? and sequence=?
-                """,
-                (current["action_identity"], sequence),
-            ).fetchone()
-            if existing_step is None:
-                db.execute(
-                    """
-                    insert into email_unsubscribe_steps (
-                        action_identity, effect_digest, sequence, operation,
-                        state, reference, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        current["action_identity"],
-                        current["effect_digest"],
-                        sequence,
-                        validated_step["operation"],
-                        validated_step["state"],
-                        validated_step["reference"],
-                        now,
-                    ),
-                )
-            elif (
-                existing_step["effect_digest"] != current["effect_digest"]
-                or any(existing_step[key] != validated_step[key] for key in ("operation", "state", "reference"))
-            ):
-                raise EmailUnsubscribeClaimConflict(
-                    "consumer-direct continuation journal is bound differently"
-                )
-            next_operations_json = _json_dump(next_operations)
-            db.execute(
-                """
-                insert into email_unsubscribe_effects (
-                    action_identity, effect_digest, previous_effect_digest,
-                    operations_json, network_policy_reference,
-                    network_policy_origins_json, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    next_value["action_identity"],
-                    next_value["effect_digest"],
-                    next_value["previous_effect_digest"],
-                    next_operations_json,
-                    next_value["network_policy_reference"],
-                    _json_dump(list(next_value["network_policy_origin_references"])),
-                    now,
-                ),
-            )
-            db.execute(
-                """
-                update email_unsubscribe_claims
-                set effect_digest=?, operations_json=?, account_updated_at=?,
-                    phase='prepared', claimed_at=?, updated_at=?
-                where action_identity=? and status='dispatching'
-                  and effect_digest=? and owner_id=? and owner_generation=?
-                  and lease_token=?
-                """,
-                (
-                    next_value["effect_digest"],
-                    next_operations_json,
-                    live["account_updated_at"],
-                    now,
-                    now,
-                    current["action_identity"],
-                    current["effect_digest"],
-                    owner["owner_id"],
-                    owner["generation"],
-                    owner["lease_token"],
-                ),
-            )
-            updated = db.execute("select * from email_unsubscribe_claims where action_identity=?", (current["action_identity"],)).fetchone()
-            assert updated is not None
-            return {
-                **self._email_unsubscribe_claim_row(updated),
-                "acquired": True,
-                "executed_prefix_length": len(current_operations),
-            }
-
     def get_email_unsubscribe_claim(
         self,
         action_identity: str,
@@ -5959,6 +6416,687 @@ class EmailStore:
                 (action_identity,),
             ).fetchone()
         return None if row is None else self._email_unsubscribe_claim_row(row)
+
+    def get_email_unsubscribe_state_snapshot(
+        self,
+        action_identity: str,
+    ) -> dict[str, Any]:
+        """Read the claim, continuation, and complete bounded lineage once.
+
+        The explicit deferred transaction pins one SQLite read view.  The
+        continuation driver can therefore validate up to the durable maximum
+        without opening one connection per historical effect.
+        This method is read-only and deliberately performs no recovery writes.
+        """
+
+        db = self._connect()
+        try:
+            db.execute("begin")
+            claim_row = db.execute(
+                "select * from email_unsubscribe_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            continuation_row = db.execute(
+                """
+                select continuation.*, effect.previous_effect_digest,
+                       effect.operations_json, effect.network_policy_reference,
+                       effect.network_policy_origins_json
+                from email_unsubscribe_continuations as continuation
+                join email_unsubscribe_effects as effect
+                  on effect.action_identity=continuation.action_identity
+                 and effect.effect_digest=continuation.effect_digest
+                where continuation.action_identity=?
+                """,
+                (action_identity,),
+            ).fetchone()
+            effect_rows = db.execute(
+                "select * from email_unsubscribe_effects "
+                "where action_identity=? limit ?",
+                (
+                    action_identity,
+                    MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS + 1,
+                ),
+            ).fetchall()
+            if len(effect_rows) > MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe snapshot exceeds durable continuation operation limit"
+                )
+            claim = (
+                None
+                if claim_row is None
+                else self._email_unsubscribe_claim_row(claim_row)
+            )
+            continuation = (
+                None
+                if continuation_row is None
+                else self._email_unsubscribe_continuation_row(continuation_row)
+            )
+            effects = tuple(
+                self._email_unsubscribe_effect_row(row) for row in effect_rows
+            )
+            db.rollback()
+            return {
+                "claim": claim,
+                "continuation": continuation,
+                "effects": effects,
+            }
+        finally:
+            if db.in_transaction:
+                db.rollback()
+            db.close()
+
+    def get_email_unsubscribe_terminal_snapshot(
+        self,
+        action_identity: str,
+        effect_digest: str | None = None,
+        *,
+        task_id: int | None = None,
+        task_execution_generation: str | None = None,
+        expected_audit_agent_run_id: int | None = None,
+        expected_owner: Mapping[str, object] | None = None,
+        expected_effect: Mapping[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        """Atomically validate and project one durable terminal readback."""
+
+        action_identity = _validate_unsubscribe_opaque(
+            action_identity,
+            field="action_identity",
+        )
+        if effect_digest is not None and (
+            not isinstance(effect_digest, str)
+            or _SHA256_HEX.fullmatch(effect_digest) is None
+        ):
+            raise ValueError("effect_digest must be canonical sha256 hex")
+        if (task_id is None) != (task_execution_generation is None):
+            raise ValueError(
+                "task_id and task_execution_generation must be supplied together"
+            )
+        if task_id is not None and (
+            not isinstance(task_id, int)
+            or isinstance(task_id, bool)
+            or task_id <= 0
+            or not isinstance(task_execution_generation, str)
+            or not task_execution_generation.strip()
+        ):
+            raise ValueError("terminal snapshot task binding is invalid")
+        if expected_audit_agent_run_id is not None and (
+            not isinstance(expected_audit_agent_run_id, int)
+            or isinstance(expected_audit_agent_run_id, bool)
+            or expected_audit_agent_run_id <= 0
+        ):
+            raise ValueError("expected_audit_agent_run_id must be positive")
+        owner = (
+            None
+            if expected_owner is None
+            else _validate_email_unsubscribe_owner(expected_owner)
+        )
+        if (expected_audit_agent_run_id is None) != (owner is None):
+            raise ValueError("expected Audit run and owner must be supplied together")
+        validated_expected_effect = (
+            None
+            if expected_effect is None
+            else _validate_terminal_expected_effect(expected_effect)
+        )
+        if (
+            validated_expected_effect is not None
+            and validated_expected_effect["action_identity"] != action_identity
+        ):
+            raise ValueError("expected terminal effect identity changed")
+
+        db = self._connect()
+        try:
+            db.execute("begin")
+            claim_row = db.execute(
+                "select * from email_unsubscribe_claims where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            claim = (
+                None
+                if claim_row is None
+                else self._email_unsubscribe_claim_row(claim_row)
+            )
+            receipt_row = db.execute(
+                "select * from email_unsubscribe_receipts where action_identity=?",
+                (action_identity,),
+            ).fetchone()
+            if receipt_row is None:
+                if claim is not None and claim["status"] == "done":
+                    raise EmailPersistenceCorruption(
+                        "done unsubscribe claim has no durable terminal receipt"
+                    )
+                db.rollback()
+                return None
+            if claim is None:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal receipt has no durable claim"
+                )
+            durable_effect_digest = str(claim["effect_digest"])
+            if effect_digest is None:
+                effect_digest = durable_effect_digest
+            elif effect_digest != durable_effect_digest:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect digest changed"
+                )
+            receipt = self._email_unsubscribe_receipt_row(receipt_row)
+            effect_rows = db.execute(
+                "select * from email_unsubscribe_effects "
+                "where action_identity=? limit ?",
+                (
+                    action_identity,
+                    MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS + 1,
+                ),
+            ).fetchall()
+            if len(effect_rows) > MAX_EMAIL_UNSUBSCRIBE_CONTINUATION_OPERATIONS:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect lineage exceeds its durable limit"
+                )
+            effects = {
+                str(row["effect_digest"]): self._email_unsubscribe_effect_row(row)
+                for row in effect_rows
+            }
+            steps = db.execute(
+                "select * from email_unsubscribe_steps "
+                "where action_identity=? order by sequence",
+                (action_identity,),
+            ).fetchall()
+            self._validate_email_unsubscribe_terminal_snapshot(
+                db,
+                claim=claim,
+                receipt=receipt,
+                effects=effects,
+                steps=steps,
+                effect_digest=effect_digest,
+                task_id=task_id,
+                task_execution_generation=task_execution_generation,
+                expected_audit_agent_run_id=expected_audit_agent_run_id,
+                expected_owner=owner,
+                expected_effect=validated_expected_effect,
+            )
+            projected_steps = [
+                {
+                    key: row[key]
+                    for key in ("sequence", "operation", "state", "reference")
+                }
+                for row in steps
+            ]
+            safe_receipt = {
+                key: receipt[key]
+                for key in (
+                    "outcome",
+                    "receipt_id",
+                    "evidence",
+                    "result_text",
+                    "observation_digest",
+                    "started_at",
+                    "completed_at",
+                )
+            }
+            db.rollback()
+            return {
+                "receipt": safe_receipt,
+                "steps": projected_steps,
+            }
+        finally:
+            if db.in_transaction:
+                db.rollback()
+            db.close()
+
+    def _validate_email_unsubscribe_terminal_snapshot(
+        self,
+        db: sqlite3.Connection,
+        *,
+        claim: Mapping[str, object],
+        receipt: Mapping[str, object],
+        effects: Mapping[str, Mapping[str, object]],
+        steps: Sequence[sqlite3.Row],
+        effect_digest: str,
+        task_id: int | None,
+        task_execution_generation: str | None,
+        expected_audit_agent_run_id: int | None,
+        expected_owner: Mapping[str, object] | None,
+        expected_effect: Mapping[str, object] | None,
+    ) -> None:
+        if (
+            claim.get("status") != "done"
+            or claim.get("phase") != "terminal"
+            or claim.get("action_identity") != receipt.get("action_identity")
+            or claim.get("effect_digest") != effect_digest
+            or receipt.get("effect_digest") != effect_digest
+            or receipt.get("outcome") not in _EMAIL_UNSUBSCRIBE_OUTCOMES
+            or any(
+                receipt.get(key) != claim.get(key)
+                for key in (
+                    "action_plan_id",
+                    "action_plan_version",
+                    "classification_id",
+                    "account_id",
+                    "stable_message_identity",
+                    "thread_identity",
+                    "entry_reference",
+                )
+            )
+        ):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal receipt identity is invalid"
+            )
+        try:
+            _validate_email_unsubscribe_owner(
+                {
+                    "owner_id": claim["owner_id"],
+                    "generation": claim["owner_generation"],
+                    "lease_token": claim["lease_token"],
+                }
+            )
+            _validate_unsubscribe_opaque(
+                receipt["receipt_id"],
+                field="receipt_id",
+            )
+            _validate_unsubscribe_opaque(receipt["evidence"], field="evidence")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal snapshot contains unsafe durable state"
+            ) from exc
+        if expected_owner is not None and any(
+            claim.get(claim_key) != expected_owner.get(owner_key)
+            for claim_key, owner_key in (
+                ("owner_id", "owner_id"),
+                ("owner_generation", "generation"),
+                ("lease_token", "lease_token"),
+            )
+        ):
+            raise EmailPersistenceCorruption("unsubscribe terminal owner fence changed")
+
+        validated_effects: dict[str, dict[str, object]] = {}
+        for digest, effect in effects.items():
+            try:
+                operations = _validate_unsubscribe_operations(effect["operations"])
+                origins = tuple(
+                    _validate_unsubscribe_opaque(
+                        value,
+                        field="network_policy_origin_reference",
+                    )
+                    for value in effect["network_policy_origin_references"]
+                )
+                expected_digest = email_unsubscribe_effect_digest(
+                    action_identity=str(claim["action_identity"]),
+                    action_plan_id=str(claim["action_plan_id"]),
+                    action_plan_version=int(claim["action_plan_version"]),
+                    classification_id=int(claim["classification_id"]),
+                    account_id=str(claim["account_id"]),
+                    stable_message_identity=str(claim["stable_message_identity"]),
+                    thread_identity=str(claim["thread_identity"]),
+                    entry_reference=str(claim["entry_reference"]),
+                    operations=operations,
+                    previous_effect_digest=str(effect["previous_effect_digest"]),
+                    network_policy_reference=str(effect["network_policy_reference"]),
+                    network_policy_origin_references=origins,
+                )
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect contains invalid durable state"
+                ) from exc
+            if digest != expected_digest or effect.get("effect_digest") != digest:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect digest is invalid"
+                )
+            validated_effects[digest] = {
+                **effect,
+                "operations": operations,
+                "network_policy_origin_references": list(origins),
+            }
+        head = validated_effects.get(effect_digest)
+        if head is None or head["operations"] != claim.get("operations"):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal head effect does not match its claim"
+            )
+        if expected_effect is not None and (
+            any(
+                claim.get(field) != expected_effect.get(field)
+                for field in (
+                    "action_identity",
+                    "action_plan_id",
+                    "action_plan_version",
+                    "classification_id",
+                    "account_id",
+                    "stable_message_identity",
+                    "thread_identity",
+                    "entry_reference",
+                )
+            )
+            or head["operations"] != expected_effect.get("operations")
+            or head["network_policy_reference"]
+            != expected_effect.get("network_policy_reference")
+            or head["network_policy_origin_references"]
+            != expected_effect.get("network_policy_origin_references")
+        ):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal effect does not match accepted action"
+            )
+        chain: list[dict[str, object]] = []
+        current = head
+        seen: set[str] = set()
+        while True:
+            digest = str(current["effect_digest"])
+            if digest in seen:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect lineage contains a cycle"
+                )
+            seen.add(digest)
+            chain.append(current)
+            previous_digest = str(current["previous_effect_digest"])
+            if not previous_digest:
+                break
+            previous = validated_effects.get(previous_digest)
+            if (
+                previous is None
+                or current["operations"][:-1] != previous["operations"]
+                or len(current["operations"]) != len(previous["operations"]) + 1
+                or current["network_policy_reference"]
+                != previous["network_policy_reference"]
+                or current["network_policy_origin_references"]
+                != previous["network_policy_origin_references"]
+            ):
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect lineage is not append-only"
+                )
+            current = previous
+        chain.reverse()
+        if len(chain) != len(validated_effects):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal effect lineage contains an orphan branch"
+            )
+        chain_by_length = {
+            len(effect["operations"]): str(effect["effect_digest"]) for effect in chain
+        }
+        if len(steps) != len(head["operations"]):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal journal is not contiguous or effect-bound"
+            )
+        for sequence, step in enumerate(steps, start=1):
+            try:
+                for field in ("operation", "state", "reference"):
+                    _validate_unsubscribe_opaque(step[field], field=field)
+            except (TypeError, ValueError) as exc:
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal journal contains unsafe durable state"
+                ) from exc
+            if (
+                step["sequence"] != sequence
+                or chain_by_length.get(sequence) != step["effect_digest"]
+            ):
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal journal is not contiguous or effect-bound"
+                )
+
+        original_audit_run_id = claim.get("audit_agent_run_id")
+        if head.get("audit_agent_run_id") != original_audit_run_id:
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal Audit binding is inconsistent"
+            )
+        if original_audit_run_id is None:
+            if task_id is not None or expected_audit_agent_run_id is not None:
+                raise EmailPersistenceCorruption(
+                    "audited unsubscribe terminal is missing its original Audit run"
+                )
+            return
+        self._validate_email_unsubscribe_effect_audit_lineage(
+            db,
+            chain=chain,
+            claim=claim,
+            task_id=task_id,
+            task_execution_generation=task_execution_generation,
+            expected_audit_agent_run_id=expected_audit_agent_run_id,
+        )
+        classification = db.execute(
+            """
+            select classifications.id, classifications.account_id,
+                   classifications.stable_message_identity,
+                   classifications.current_action_plan_id,
+                   messages.thread_identity as message_thread_identity
+            from email_classifications as classifications
+            join email_messages as messages
+              on messages.account_id=classifications.account_id
+             and messages.stable_message_identity=
+                 classifications.stable_message_identity
+            where classifications.id=?
+            """,
+            (claim["classification_id"],),
+        ).fetchone()
+        lineage = (
+            None
+            if classification is None
+            else _audited_unsubscribe_lineage(
+                db,
+                receipt=db.execute(
+                    "select * from email_unsubscribe_receipts where action_identity=?",
+                    (claim["action_identity"],),
+                ).fetchone(),
+                classification=classification,
+            )
+        )
+        if (
+            lineage is None
+            or (task_id is not None and lineage["task_id"] != task_id)
+            or (
+                task_execution_generation is not None
+                and db.execute(
+                    "select execution_generation from reply_tasks where id=?",
+                    (lineage["task_id"],),
+                ).fetchone()[0]
+                != task_execution_generation
+            )
+            or (
+                expected_audit_agent_run_id is not None
+                and original_audit_run_id != expected_audit_agent_run_id
+            )
+        ):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal historical Audit lineage is invalid"
+            )
+
+    def _validate_email_unsubscribe_effect_audit_lineage(
+        self,
+        db: sqlite3.Connection,
+        *,
+        chain: Sequence[Mapping[str, object]],
+        claim: Mapping[str, object],
+        task_id: int | None,
+        task_execution_generation: str | None,
+        expected_audit_agent_run_id: int | None,
+    ) -> None:
+        """Bind every accepted effect prefix to its exact Consumer/Audit round."""
+
+        previous_audit_run_id: int | None = None
+        lineage_task_id: int | None = None
+        lineage_generation: str | None = None
+        for depth, effect in enumerate(chain, start=1):
+            audit_agent_run_id = effect.get("audit_agent_run_id")
+            if (
+                not isinstance(audit_agent_run_id, int)
+                or isinstance(audit_agent_run_id, bool)
+                or audit_agent_run_id <= 0
+            ):
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect is missing its Audit run"
+                )
+            row = db.execute(
+                """
+                select audit.id as audit_id, audit.reply_task_id,
+                       audit.execution_generation, audit.role as audit_role,
+                       audit.status as audit_status,
+                       audit.proposal_revision as audit_revision,
+                       audit.turn_attempt as audit_turn_attempt,
+                       audit.parent_agent_run_id as audit_parent_id,
+                       audit.operation_id as audit_operation_id,
+                       consumer.id as consumer_id,
+                       consumer.reply_task_id as consumer_task_id,
+                       consumer.execution_generation as consumer_generation,
+                       consumer.role as consumer_role,
+                       consumer.status as consumer_status,
+                       consumer.proposal_revision as consumer_revision,
+                       consumer.parent_agent_run_id as consumer_parent_id,
+                       consumer.operation_id as consumer_operation_id,
+                       tasks.channel as task_channel,
+                       tasks.trigger_message_id,
+                       tasks.trigger_message_json,
+                       tasks.execution_generation as task_generation
+                from agent_runs as audit
+                join agent_runs as consumer
+                  on consumer.id=audit.parent_agent_run_id
+                join reply_tasks as tasks on tasks.id=audit.reply_task_id
+                where audit.id=?
+                """,
+                (audit_agent_run_id,),
+            ).fetchone()
+            expected_revision = depth - 1
+            is_current_head = (
+                depth == len(chain)
+                and expected_audit_agent_run_id == audit_agent_run_id
+            )
+            allowed_statuses = {"completed"}
+            if depth == len(chain):
+                allowed_statuses.add("failed")
+            if is_current_head:
+                allowed_statuses.add("running")
+            task_payload = None
+            payload_entries = None
+            if row is not None:
+                try:
+                    task_payload = json.loads(str(row["trigger_message_json"]))
+                    payload_entries = task_payload.get("unsubscribe_entries")
+                except (AttributeError, TypeError, ValueError, RecursionError):
+                    task_payload = None
+                    payload_entries = None
+            expected_payload = {
+                "schema": "email_agent_action.v1",
+                "lifecycle_version": "email_unsubscribe_audited_v2",
+                "action_type": EmailAction.UNSUBSCRIBE.value,
+                "action_identity": claim["action_identity"],
+                "action_plan_id": claim["action_plan_id"],
+                "action_plan_version": claim["action_plan_version"],
+                "classification_id": claim["classification_id"],
+                "account_id": claim["account_id"],
+                "stable_message_identity": claim["stable_message_identity"],
+                "thread_identity": claim["thread_identity"],
+                "unsubscribe_network_policy_reference": effect[
+                    "network_policy_reference"
+                ],
+                "unsubscribe_network_policy_origin_references": effect[
+                    "network_policy_origin_references"
+                ],
+            }
+            if (
+                row is None
+                or row["audit_id"] != audit_agent_run_id
+                or row["audit_role"] != "audit"
+                or row["audit_status"] not in allowed_statuses
+                or row["audit_revision"] != expected_revision
+                or not isinstance(row["audit_turn_attempt"], int)
+                or row["audit_turn_attempt"] < 0
+                or not str(row["audit_operation_id"]).strip()
+                or row["consumer_id"] != row["audit_parent_id"]
+                or row["consumer_role"] != "consumer"
+                or row["consumer_status"] != "completed"
+                or row["consumer_revision"] != expected_revision
+                or str(row["consumer_operation_id"])
+                or row["consumer_task_id"] != row["reply_task_id"]
+                or row["consumer_generation"] != row["execution_generation"]
+                or row["task_channel"] != "email"
+                or row["trigger_message_id"] != claim["action_identity"]
+                or row["task_generation"] != row["execution_generation"]
+                or not isinstance(task_payload, dict)
+                or any(
+                    task_payload.get(field) != expected
+                    for field, expected in expected_payload.items()
+                )
+                or not isinstance(payload_entries, list)
+                or not any(
+                    isinstance(entry, dict)
+                    and entry.get("reference") == claim["entry_reference"]
+                    for entry in payload_entries
+                )
+                or (depth == 1 and row["consumer_parent_id"] is not None)
+                or (depth > 1 and row["consumer_parent_id"] != previous_audit_run_id)
+            ):
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect Audit lineage is invalid"
+                )
+            if depth == len(chain):
+                owner_id = claim.get("owner_id")
+                expected_owner_suffix = f":{audit_agent_run_id}"
+                if (
+                    not isinstance(owner_id, str)
+                    or not owner_id.endswith(expected_owner_suffix)
+                    or len(owner_id) <= len(expected_owner_suffix)
+                    or claim.get("owner_generation")
+                    != max(1, int(row["audit_turn_attempt"]) + 1)
+                ):
+                    raise EmailPersistenceCorruption(
+                        "unsubscribe terminal owner is not bound to its Audit run"
+                    )
+            current_task_id = int(row["reply_task_id"])
+            current_generation = str(row["execution_generation"])
+            if lineage_task_id is None:
+                lineage_task_id = current_task_id
+                lineage_generation = current_generation
+            elif (
+                current_task_id != lineage_task_id
+                or current_generation != lineage_generation
+            ):
+                raise EmailPersistenceCorruption(
+                    "unsubscribe terminal effect Audit lineage changed task"
+                )
+            previous_audit_run_id = audit_agent_run_id
+
+        if (
+            lineage_task_id is None
+            or (task_id is not None and lineage_task_id != task_id)
+            or (
+                task_execution_generation is not None
+                and lineage_generation != task_execution_generation
+            )
+        ):
+            raise EmailPersistenceCorruption(
+                "unsubscribe terminal effect Audit task binding is invalid"
+            )
+
+    def get_email_unsubscribe_effect(
+        self,
+        action_identity: str,
+        effect_digest: str,
+    ) -> dict[str, Any] | None:
+        """Return one redacted durable effect without exposing provider URLs."""
+
+        with self._connect() as db:
+            row = db.execute(
+                "select * from email_unsubscribe_effects "
+                "where action_identity=? and effect_digest=?",
+                (action_identity, effect_digest),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._email_unsubscribe_effect_row(row)
+
+    @staticmethod
+    def _email_unsubscribe_effect_row(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "action_identity": row["action_identity"],
+            "effect_digest": row["effect_digest"],
+            "previous_effect_digest": row["previous_effect_digest"],
+            "operations": _json_load(
+                row["operations_json"],
+                field="operations_json",
+                expected_type=list,
+            ),
+            "network_policy_reference": row["network_policy_reference"],
+            "network_policy_origin_references": _json_load(
+                row["network_policy_origins_json"],
+                field="network_policy_origins_json",
+                expected_type=list,
+            ),
+            "audit_agent_run_id": row["audit_agent_run_id"],
+            "created_at": row["created_at"],
+        }
 
     @staticmethod
     def _email_unsubscribe_claim_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -5983,6 +7121,7 @@ class EmailStore:
             "account_updated_at": row["account_updated_at"],
             "status": row["status"],
             "phase": row["phase"],
+            "audit_agent_run_id": row["audit_agent_run_id"],
             "claimed_at": row["claimed_at"],
             "updated_at": row["updated_at"],
         }
@@ -6166,6 +7305,10 @@ class EmailStore:
             ).fetchone()
         if row is None:
             return None
+        return self._email_unsubscribe_continuation_row(row)
+
+    @staticmethod
+    def _email_unsubscribe_continuation_row(row: sqlite3.Row) -> dict[str, Any]:
         return {
             "action_identity": row["action_identity"],
             "effect_digest": row["effect_digest"],
@@ -6441,6 +7584,8 @@ class EmailStore:
         evidence: str,
         result_text: str = "",
         observation_digest: str = "",
+        result_text_digest: str | None = None,
+        result_text_truncated: bool | None = None,
         started_at: str = "",
         completed_at: str = "",
         final_step: Mapping[str, object] | None = None,
@@ -6477,14 +7622,48 @@ class EmailStore:
             raise ValueError("unsubscribe result_text must be text")
         from app.email_unsubscribe import normalize_unsubscribe_result_text
 
+        explicit_integrity_metadata = (
+            result_text_digest is not None or result_text_truncated is not None
+        )
         normalized_result_text, expected_observation_digest = (
             normalize_unsubscribe_result_text(result_text)
         )
-        if observation_digest and observation_digest != expected_observation_digest:
-            raise EmailUnsubscribeReceiptConflict(
-                "unsubscribe observation digest does not match result text"
-            )
-        observation_digest = expected_observation_digest if result_text else ""
+        if explicit_integrity_metadata:
+            if (
+                result_text_digest is None
+                or result_text_truncated is None
+                or type(result_text_truncated) is not bool
+                or normalized_result_text != result_text
+            ):
+                raise EmailUnsubscribeReceiptConflict(
+                    "unsubscribe result integrity metadata is inconsistent"
+                )
+            try:
+                _validate_durable_unsubscribe_result_text(
+                    normalized_result_text,
+                    observation_digest,
+                    int(result_text_truncated),
+                    result_text_digest,
+                )
+            except EmailPersistenceCorruption as exc:
+                raise EmailUnsubscribeReceiptConflict(
+                    "unsubscribe result integrity metadata is inconsistent"
+                ) from exc
+        else:
+            if observation_digest and observation_digest != expected_observation_digest:
+                raise EmailUnsubscribeReceiptConflict(
+                    "unsubscribe observation digest does not match result text"
+                )
+            if normalized_result_text:
+                observation_digest = expected_observation_digest
+                result_text_digest = sha256(
+                    normalized_result_text.encode("utf-8")
+                ).hexdigest()
+                result_text_truncated = observation_digest != result_text_digest
+            else:
+                observation_digest = ""
+                result_text_digest = ""
+                result_text_truncated = False
         created_at = self._now()
         started_at = started_at or created_at
         completed_at = completed_at or created_at
@@ -6648,6 +7827,8 @@ class EmailStore:
                 "evidence": evidence,
                 "result_text": normalized_result_text,
                 "observation_digest": observation_digest,
+                "result_text_truncated": result_text_truncated,
+                "result_text_digest": result_text_digest,
                 "started_at": started_at,
                 "completed_at": completed_at,
             }
@@ -6659,8 +7840,9 @@ class EmailStore:
                         action_plan_version, classification_id, account_id,
                         stable_message_identity, thread_identity, entry_reference,
                         outcome, receipt_id, evidence, result_text,
-                        observation_digest, started_at, completed_at, created_at
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        observation_digest, result_text_truncated,
+                        result_text_digest, started_at, completed_at, created_at
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         action_identity,
@@ -6677,6 +7859,8 @@ class EmailStore:
                         evidence,
                         normalized_result_text,
                         observation_digest,
+                        int(result_text_truncated),
+                        result_text_digest,
                         started_at,
                         completed_at,
                         created_at,
@@ -6770,6 +7954,12 @@ class EmailStore:
 
     @staticmethod
     def _email_unsubscribe_receipt_row(row: sqlite3.Row) -> dict[str, Any]:
+        _validate_durable_unsubscribe_result_text(
+            row["result_text"],
+            row["observation_digest"],
+            row["result_text_truncated"],
+            row["result_text_digest"],
+        )
         return {
             "action_identity": row["action_identity"],
             "effect_digest": row["effect_digest"],
@@ -6785,6 +7975,8 @@ class EmailStore:
             "evidence": row["evidence"],
             "result_text": row["result_text"],
             "observation_digest": row["observation_digest"],
+            "result_text_truncated": bool(row["result_text_truncated"]),
+            "result_text_digest": row["result_text_digest"],
             "started_at": row["started_at"],
             "completed_at": row["completed_at"],
             "created_at": row["created_at"],
@@ -7036,13 +8228,21 @@ class EmailStore:
             )
             rows = db.execute(
                 """
-                select * from email_classifications
-                where status=? order by updated_at desc, id desc
+                select classifications.*,
+                       messages.attachment_metadata_json
+                           as message_attachment_metadata_json
+                from email_classifications as classifications
+                left join email_messages as messages
+                  on messages.account_id=classifications.account_id
+                 and messages.stable_message_identity=
+                     classifications.stable_message_identity
+                where classifications.status=?
+                order by classifications.updated_at desc, classifications.id desc
                 limit ? offset ?
                 """,
                 (status.value, limit, offset),
             ).fetchall()
-        return [self._classification_row(row) for row in rows], total
+        return [self._classification_evidence_row(row) for row in rows], total
 
     @staticmethod
     def _email_context_message_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -7201,10 +8401,20 @@ class EmailStore:
     def get_classification(self, classification_id: int) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "select * from email_classifications where id=?",
+                """
+                select classifications.*,
+                       messages.attachment_metadata_json
+                           as message_attachment_metadata_json
+                from email_classifications as classifications
+                left join email_messages as messages
+                  on messages.account_id=classifications.account_id
+                 and messages.stable_message_identity=
+                     classifications.stable_message_identity
+                where classifications.id=?
+                """,
                 (classification_id,),
             ).fetchone()
-        return None if row is None else self._classification_row(row)
+        return None if row is None else self._classification_evidence_row(row)
 
     def list_email_classification_observability(
         self, classification_id: int
@@ -7219,7 +8429,18 @@ class EmailStore:
         _require_positive_int(classification_id, field="classification_id")
         with self._connect() as db:
             classification = db.execute(
-                "select id from email_classifications where id=?",
+                """
+                select classifications.id, classifications.account_id,
+                       classifications.stable_message_identity,
+                       classifications.current_action_plan_id,
+                       messages.thread_identity as message_thread_identity
+                from email_classifications as classifications
+                join email_messages as messages
+                  on messages.account_id=classifications.account_id
+                 and messages.stable_message_identity=
+                     classifications.stable_message_identity
+                where classifications.id=?
+                """,
                 (classification_id,),
             ).fetchone()
             if classification is None:
@@ -7261,16 +8482,50 @@ class EmailStore:
             ).fetchall()
             unsubscribe_rows = db.execute(
                 """
-                select action_identity, action_plan_id, action_plan_version,
-                       entry_reference, outcome, receipt_id, evidence,
-                       result_text, observation_digest, started_at, completed_at,
-                       created_at
+                select action_identity, effect_digest, action_plan_id,
+                       action_plan_version, classification_id, account_id,
+                       stable_message_identity, thread_identity, receipt_id,
+                       evidence, result_text, observation_digest,
+                       result_text_truncated, result_text_digest, created_at
                 from email_unsubscribe_receipts
                 where classification_id=?
                 order by created_at, action_identity
                 """,
                 (classification_id,),
             ).fetchall()
+            generic_tables = {
+                str(row["name"])
+                for row in db.execute(
+                    """
+                    select name from sqlite_master
+                    where type='table' and name in ('reply_tasks', 'agent_runs')
+                    """
+                ).fetchall()
+            }
+            lineage_by_action: dict[str, dict[str, object]] = {}
+            if unsubscribe_rows and generic_tables == {"reply_tasks", "agent_runs"}:
+                for row in unsubscribe_rows:
+                    _validate_durable_unsubscribe_result_text(
+                        row["result_text"],
+                        row["observation_digest"],
+                        row["result_text_truncated"],
+                        row["result_text_digest"],
+                    )
+                    lineage = _audited_unsubscribe_lineage(
+                        db,
+                        receipt=row,
+                        classification=classification,
+                    )
+                    if lineage is not None:
+                        lineage_by_action[str(row["action_identity"])] = lineage
+            else:
+                for row in unsubscribe_rows:
+                    _validate_durable_unsubscribe_result_text(
+                        row["result_text"],
+                        row["observation_digest"],
+                        row["result_text_truncated"],
+                        row["result_text_digest"],
+                    )
             unsubscribe_steps = db.execute(
                 """
                 select steps.action_identity, steps.sequence, steps.operation,
@@ -7339,26 +8594,36 @@ class EmailStore:
                 }
             )
         for row in unsubscribe_rows:
-            events.append(
-                {
-                    "kind": "unsubscribe",
-                    "operation": "unsubscribe",
-                    "action_identity": row["action_identity"],
-                    "action_plan_id": row["action_plan_id"],
-                    "action_plan_version": row["action_plan_version"],
-                    "entry_reference": row["entry_reference"],
-                    "status": row["outcome"],
-                    "receipt_id": row["receipt_id"],
-                    "evidence": row["evidence"],
-                    "result_text": row["result_text"],
-                    "observation_digest": row["observation_digest"],
-                    "started_at": row["started_at"],
-                    "completed_at": row["completed_at"],
-                    "created_at": row["created_at"],
-                    "steps": steps_by_action.get(row["action_identity"], []),
-                }
+            action_identity = str(row["action_identity"])
+            lineage = lineage_by_action.get(action_identity)
+            event = {
+                "kind": "unsubscribe",
+                "operation": "unsubscribe",
+                "consumer_run_ids": (
+                    lineage["consumer_run_ids"] if lineage is not None else []
+                ),
+                "audit_run_ids": (
+                    lineage["audit_run_ids"] if lineage is not None else []
+                ),
+                "status": "done",
+                "receipt_id": row["receipt_id"],
+                "result_text": row["result_text"],
+                "evidence": row["evidence"],
+                "observation_digest": row["observation_digest"],
+                "steps": steps_by_action.get(action_identity, []),
+                "_sort_created_at": row["created_at"],
+            }
+            if lineage is not None:
+                event.update(lineage)
+            events.append(event)
+        events.sort(
+            key=lambda item: (
+                str(item.get("created_at") or item.get("_sort_created_at") or ""),
+                str(item["kind"]),
             )
-        events.sort(key=lambda item: (str(item["created_at"]), str(item["kind"])))
+        )
+        for event in events:
+            event.pop("_sort_created_at", None)
         return events
 
     def list_training_examples(
@@ -7698,6 +8963,13 @@ class EmailStore:
                 actions=actions,
                 action_parameters=action_parameters,
                 created_at=plan_created_at,
+                action_authorizations=build_user_confirmation_authorizations(
+                    category=category,
+                    actions=actions,
+                    action_parameters=action_parameters,
+                    model_id=row["model_id"],
+                    config_version=config_version,
+                ),
             )
             applied_at = self._now()
             self._persist_action_plan(db, action_plan, now=applied_at)
@@ -8449,6 +9721,8 @@ def _validate_config(
     action_parameters: Mapping[EmailAction, Mapping[str, object]],
     config_version: str,
 ) -> None:
+    if EmailAction.AUTO_REPLY in actions:
+        raise ValueError("auto_reply is disabled")
     build_email_action_plan(
         classification_id=1,
         account_id="configuration-validation",

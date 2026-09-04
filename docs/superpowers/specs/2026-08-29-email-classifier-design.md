@@ -6,8 +6,12 @@
 修正后的真实邮箱实验更新。本文只定义 MVP 的分类、反馈学习和固定
 动作边界，不包含 CEO Agent 运行时实现计划。已确认：`label`、`mark_read`、
 `archive`、`move`、`trash` 是直接动作，不创建 Agent/Audit 任务；
-`auto_reply` 继续使用 Consumer → Audit，`unsubscribe` 使用 Consumer-direct。两者都创建
-`channel=email` task，并遵循各自的 effect/readback 契约。
+当前分支的配置和 runtime 禁用 `auto_reply`：它不能从配置、分类结果或人工确认生成 task，
+也不连接 SMTP；Email 尚未部署，也未在生产启用。历史 contract 仍保留用于兼容读取。本文中的 Consumer-direct 退订描述只记录
+当时的实现历史：`unsubscribe` 使用 Consumer-direct。当前和后续实施权威已由获批设计
+[`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md)
+取代，`unsubscribe` 目标生命周期为 `email_unsubscribe_audited_v2`：Consumer A 提案、
+Audit Agent B 审核执行和外部 readback；这项指向不表示已经部署或在生产启用。
 
 ## 背景与目标
 
@@ -22,7 +26,7 @@
 - 类别确定后，后续动作由配置固定决定；
 - 模型无法高置信度判断时，把邮件暴露给用户；
 - 用户选择的类别自动进入训练集；
-- 支持标签、描述、自动回复、自动归档、自动退订和 Trash 等配置；
+- 支持标签、描述、自动归档、自动退订和 Trash 等配置；Email 回复当前不在可配置动作中；
 - 本地分类路径的目标是 p95 小于 100ms；
 - MVP 先在当前开发环境跑通，不做跨平台安装包和完整发布矩阵。
 
@@ -103,16 +107,16 @@ IMAP 只读连接器
 
 - `label`、`mark_read`、`archive`、`move`、`trash` 由邮件执行层按稳定 locator
   直接执行，不创建 Agent/Audit 任务；
-- `auto_reply` 和 `unsubscribe` 是 Email task 动作，只有这两个动作创建
-  `channel=email` task；前者使用 Consumer → Audit，后者使用 Consumer-direct，
-  并分别完成 provider effect/readback。
+- `auto_reply` 是保留的历史 Email task contract，但当前 Email 配置和 runtime 禁止它；
+  它不创建 task、不连接 SMTP。`unsubscribe` 是当前唯一的 Email Agent task 动作，使用
+  Consumer-direct 并完成 provider effect/readback。
 
 因此第一版采用以下边界：
 
 1. 分类器负责毫秒级分类、拒判和生成不可变的 `ActionPlan`；
 2. 邮件执行层只消费 `direct_actions`，不得扩大或改写计划中的动作和参数；
-3. 后续 Agent 路由只消费 `agent_actions`：`auto_reply` 应用 Consumer → Audit，
-   `unsubscribe` 应用 Consumer-direct；
+3. 后续 Agent 路由只消费当前允许的 `agent_actions`：`unsubscribe` 应用
+   Consumer-direct；`auto_reply` 当前禁用；
 4. 只有消息置信度达到类别阈值且该类别 `auto_action_eligible=true` 才形成计划，
    但不能授权计划之外的动作。
 
@@ -124,11 +128,11 @@ IMAP 只读连接器
 | B. 决策 | 用户在 Email“待反馈”中选择八类之一；反馈回 classifier store | 不写邮箱 |
 | C. Dry-run | 生成直接动作和 Agent 动作的拟执行计划，展示目标与原因 | 不执行 |
 | D. 直接动作 | 按类别配置逐项开启 label/mark_read/archive/move/trash | 不创建 Agent/Audit 任务，记录 provider 结果 |
-| E. Email task 动作 | 单独开启 auto_reply 或 unsubscribe，并分别设阈值和停用条件 | 分别创建 Consumer → Audit 或 Consumer-direct 工作并完成 readback |
+| E. Email task 动作 | 当前只允许按门槛开启 unsubscribe；auto_reply 关闭 | 仅创建 Consumer-direct 工作并完成 readback；不连接 SMTP |
 
 本节是集成边界设计，不代表直接动作执行器或 Agent 动作路由已经上线。
-直接动作不经过 Audit B；`auto_reply` 进入现有 A/B 生命周期，`unsubscribe` 进入
-Consumer-direct 生命周期，并分别执行 provider readback。
+直接动作不经过 Audit B；`unsubscribe` 进入 Consumer-direct 生命周期并执行 provider
+readback。`auto_reply` 当前不进入任何 Email runtime 生命周期。
 
 ### CEO Agent Email Adapter Contract（第一版待实现）
 
@@ -156,8 +160,8 @@ trigger_message_id  = "<provider-stable-message-id>"
 `conversation_id` 和 `trigger_message_id` 必须由 provider locator 原样生成，
 不能由主题、发件人或正文推导；同一三元组
 `(channel, conversation_id, trigger_message_id)` 只允许一个业务队列任务。
-仅 `auto_reply`、`unsubscribe` 的 Consumer 尝试产生独立 `agent_run`；只有
-`auto_reply` 还会产生 Audit run。当前业务结果继续由对应的 `reply_attempt` 投影，
+仅当前允许的 `unsubscribe` Consumer 尝试产生独立 `agent_run`；`auto_reply` 当前禁用。
+当前业务结果继续由对应的 `reply_attempt` 投影，
 不能把 classifier queue 的 `pending/resolved`
 状态写进 CEO Agent 的 `running/done/failed/needs_human` 状态列。
 
@@ -169,16 +173,17 @@ adapter 给 `AgentTaskContext` 的最小字段应为：
   `ceo-mail-review` 和 `dingtalk-mail` 按 locator 重新读取；
 - `materials` 中声明准确的邮件读取入口，不把原始密码、应用密码或完整认证配置放入
   `trigger_raw_payload`；
-- `required_reviewed_skills` 至少指向 `ceo-mail-review`；`auto_reply` 的 Audit B
-  读取相应邮件操作 Skill，`unsubscribe` 则由 Consumer 读取并执行退订 Skill。
+- `required_reviewed_skills` 至少指向 `ceo-mail-review`；`unsubscribe` 由 Consumer
+  读取并执行退订 Skill；`auto_reply` 当前没有执行路径。
 
 直接动作不进入 Consumer A；邮件执行层只能执行计划中的 `direct_actions`。Consumer A
-只处理 `auto_reply`、`unsubscribe`，不能重新分类或扩大动作。`auto_reply` 的候选交给
-Audit B；`unsubscribe` 由 Consumer 对邮件和 thread 做最终判断后直接执行已冻结计划。
+只处理当前允许的 `unsubscribe`，不能重新分类或扩大动作；它由 Consumer 对邮件和 thread
+做最终判断后直接执行已冻结计划。`auto_reply` 当前禁用。
 用户确认类别时，系统应直接写 classifier feedback，不要求 Consumer A 再次猜类别。
 
-Audit B 只接收 `auto_reply` 的 Consumer A 候选和配置版本，而不是重新分类的输入。
-B 按现有生命周期审核、执行并保存 provider 返回的最小
+当前没有 Email reply 的 Audit B 输入。若未来重新开放 `auto_reply`，必须另行确认
+Consumer → Audit 策略。`unsubscribe` 不创建 Audit run 或 revision，但同样必须保存完整步骤、
+terminal result text、receipt 和 observation digest。当前业务按既有 lifecycle 保存 provider 返回的最小
 `operation`、`target` 和稳定 result identifier；若配置仍是 dry-run，则返回
 `dry_run`，不能伪造 `executed`。分类概率、动作阈值和 dry-run 结果不能替代外部执行后的
 provider readback。`unsubscribe` 不创建 Audit run 或 revision，但同样必须保存完整步骤、
@@ -234,8 +239,7 @@ HashingVectorizer + SGD Logistic 保留为在线学习对照；当前实验显�
 runtime 仍未实现。自动动作的
 开放仍等待更多人工确认数据及时间 holdout；直接动作与 Agent 动作的边界已经确认：
 `label`、`mark_read`、`archive`、`move`、`trash` 不创建 Agent/Audit 任务；
-`auto_reply` 进入 Consumer → Audit，`unsubscribe` 进入 Consumer-direct，并分别执行
-provider readback。
+`auto_reply` 当前禁用；`unsubscribe` 进入 Consumer-direct，并执行 provider readback。
 
 ## 类别体系
 
@@ -533,11 +537,11 @@ classifier。它尚未连接邮箱或 CEO Agent，也不执行任何邮件动作
 
 分类器 workspace 还实现了 `email_classifier_decision.py` 作为生产侧可复用
 的纯数据契约：`ClassifierConfig` 校验八个类别的描述、标签、独立阈值、
-动作开关和自动回复模板；`build_decision` 将一次 `Prediction` 转成带
+动作开关；`build_decision` 将一次 `Prediction` 转成带
 provider locator、模型/配置版本的 `EmailDecision`。低置信度决策进入
 Email“待反馈”，状态为 `pending_feedback` 且 `action_plan=None`；已处理分类
-持有不可变 `ActionPlan`。直接动作由邮件执行层消费；`auto_reply` 进入
-Consumer → Audit，`unsubscribe` 进入 Consumer-direct 生命周期。
+持有不可变 `ActionPlan`。直接动作由邮件执行层消费；`auto_reply` 当前禁用，`unsubscribe`
+进入 Consumer-direct 生命周期。
 
 在此契约之上，`email_classifier_pipeline.py` 提供了一个无连接器的批量
 编排入口：逐封调用分类器，将低于类别阈值或类别不具备自动动作资格的决策交给本地
@@ -593,13 +597,13 @@ required_skills      = [ceo-mail-review]
 
 它只携带分类元数据、版本、provider locator 和用户明确请求，不携带原始
 邮件正文，也不创建 `reply_task`、调用 CEO Agent 或执行邮箱动作。未来的
-CEO Agent adapter 应遵循已确认的动作边界，只将 `auto_reply`、`unsubscribe`
-映射为现有生命周期中的任务提案；在此之前不修改 runtime、schema、worker gate、
+CEO Agent adapter 应遵循已确认的动作边界，只将当前允许的 `unsubscribe`
+映射为现有生命周期中的任务提案；`auto_reply` 当前不创建任务；在此之前不修改 runtime、schema、worker gate、
 Attention 页面或 launchd 配置。
 
 配置支持 JSON round-trip；`email_config.example.json` 是一个完整但非激活
 的八类示例，`scan --config <path>` 可以加载用户自己的描述、标签、阈值、
-动作开关和自动回复模板。示例阈值是冷启动参数，不是校准后的概率，也不
+动作开关。示例阈值是冷启动参数，不是校准后的概率，也不
 单独构成外部动作授权。
 
 反馈重训由 `email_classifier_training.py` 负责 readiness 和模型晋级：至少
@@ -785,7 +789,7 @@ Trash：precision >= 99.5%，否则关闭
 - 预测类别不在配置中：视为不可自动处理，进入用户决策；
 - 类别样本不足：允许观察预测，不开放对应高风险动作；
 - 找不到退订入口：不猜 URL，记录原因；
-- 自动回复未配置模板：不发送回复；
+- Email 回复策略关闭：不发送回复、不连接 SMTP；
 - 用户反馈重复提交：按 `message_id + selected_category` 去重。
 
 ## MVP 非目标
@@ -804,6 +808,119 @@ Trash：precision >= 99.5%，否则关闭
 - 完整管理后台。
 
 Trash 只作为可恢复状态，不执行永久清空。
+
+## 2026-09-02 notification 影子候选证据
+
+在固定门槛后使用未见时间批次 F/G 验证，去除 1 条与训练集重复的 `junk` 邮件，
+最终 holdout 为 79 条，其中 notification positive support 为 21。balanced
+TF-IDF Logistic（`C=0.25`）在 notification confidence `>=0.25` 时选出 19 条，
+19 条全部正确，precision 100%、recall 90.48%；整体为 63.29% Accuracy、
+54.55% Macro F1。`0.20` 门槛的 precision 只有 76%，`0.30` 虽保持 100%
+precision 但 recall 降到 80.95%。SGD、Naive Bayes、取消 balanced class weight、
+subject-only 和额外 margin 均未通过跨切分或跨批稳定性验证，不进入生产方案。
+
+这批标签全部来自 `assistant_authorized_manual_annotation`，不是 user-confirmed
+feedback；正式非 subscription 类别门槛仍要求 30 个 validation positive samples。
+因此 notification 只进入“版本化候选模型 + readonly shadow”开发，不直接获得
+生产自动动作资格。用户已授权门槛满足后的 label、mark-read、archive、move 和
+可恢复 Trash，但明确禁止 Email 回复；SMTP 保持关闭，Trash 永不 EXPUNGE。
+
+实现上，实验 snapshot 只能进入不可变 `candidate` 记录：不切换 active manifest，
+不标记生产 feedback 已纳入模型，并把所有类别写为
+`auto_action_eligible=false / non_authoritative_validation_labels`。第一版候选
+`email-tfidf-lr-20260902T192218Z-6d8a1ca9` 使用 144 条训练、79 条去重验证，得到
+68.35% Accuracy、62.18% Macro F1 和 0.61 ms P95；notification 结果保持 19/19，
+但仍只允许 readonly shadow。
+
+后续另一批 10 条冻结预测后的 assistant 标注中，notification `>=0.25` 为 5/5，
+另一个 top-1 notification 预测因 confidence 只有 0.2007 被门槛挡住，人工标签实际
+为 important。与 F/G 合计为 24/24 自动候选正确、26 个 notification positive
+support。动态邮箱的随机实验必须用完整 `sample_id_digest` 集合标识；seed 不能在
+最近 UID 池变化后复现同一批邮件。该结果仍不改变 user-confirmed 和 30-positive
+正式门槛。
+
+再增加两个不重叠随机批次后，四批 label-only shadow 共 37 条。与 F/G 合并，
+notification 0.25 门槛为 29/29 自动候选正确、32 个 positive support、recall
+90.63%。但新增 10 个自动候选全部来自同一登录/安全通知来源；跨来源的 Flight Watch
+通知仍被预测为 subscription。该结果跨过研究样本数，不证明跨来源泛化，也不改变
+assistant 标签的非权威状态。不能仅因累计 support 超过 30 就切换 active 或执行动作。
+
+来源整体留出验证进一步证明类别级指标会产生误导。八个 snapshot 去重后共有 263
+封邮件和 78 个匿名来源组；`LeaveOneGroupOut` 保证每一折的来源在训练中完全未见。
+在同一个 balanced TF-IDF Logistic、`C=0.25` 和 notification 0.25 门槛下，候选仅
+`2/11` 正确，precision 18.18%、recall 2.56%，整体 Accuracy 29.66%、Macro F1
+21.43%。原 F/G 的 19 个正确候选只覆盖 3 个来源，且一个来源贡献 17 个。
+
+删除 exact-sender hash，或同时删除 sender domain/hash，没有改善来源整体留出结果。
+邮件正文与主题模板本身同样是强来源特征。因此第一版 eligibility 不能只有
+`model_version + category + threshold`；至少还需要区分经过独立验证的已见来源和未知
+来源。未知来源默认拒判并进入待反馈。即使用户已授权高置信度 label/read/archive/
+move/可恢复 Trash，这项授权也不能绕过来源泛化和具体动作 precision 门槛；回复、
+永久删除和 EXPUNGE 仍完全禁止。
+
+真实邮箱随后增加两批来源去重 shadow，共 17 个训练时未见且互不重复的 sender
+domain。冻结预测后 assistant 标注的 top-1 为 12/17；其中只有 1 个 notification
+正样本，模型虽然 top-1 正确，但 confidence `0.233675 < 0.25`，所以 17 个未知来源
+没有任何 notification 自动候选。该结果不证明 0.25 在未知来源上的 precision，反而
+证明其自动覆盖集中在已见模板。第一版路由应把未知来源强制送入待反馈，直到来源均衡
+验证得到足够候选和正样本；不能通过降低 threshold 来制造覆盖率。
+
+进一步的单分类器表示比较使用相同五折来源分组。word+char TF-IDF Logistic
+（word 1–2 + char-wb 3–5，`C=0.25`）取得最高的 35.74% Accuracy / 25.61%
+Macro F1，单封 P95 低于 33 ms。小 bucket fastText 即使训练集 Accuracy 达 85.55%，
+未知来源只有 25.48% / 17.24%，notification 各阈值均未接近 95% precision；因此
+fastText 不替换当前 Logistic。
+
+逐类别选择性指标中，只有 junk 在未知来源上出现足够分散的高 precision 候选：
+threshold `>=0.30603` 为 24/24，覆盖 21 个来源，最大来源占 8.33%，recall 41.38%。
+在后续新数据揭晓前，实验阈值冻结为 0.31，模型冻结为
+`email-tfidf-word-char-junk-v1-d0fc0d4b`。该结果是开发集选择，不是最终 holdout；
+模型保持 `auto_action_eligible=false`。只有全新来源 holdout 达到 Trash 的 99.5%
+precision 和样本门槛后，才讨论可恢复 Trash；否则最多进入标签或继续 shadow。
+
+冻结后的 20 个全新来源 holdout 否决了 junk v1。标签中有 8 个 junk；0.31 门槛
+选出 7 个候选，只有 6 个正确，precision 85.71%。误判是一封具体、个性化的公司
+播客采访邀请：即使形式类似冷邮件，它也可能有品牌价值，不能自动移入 Trash。
+候选 `email-tfidf-word-char-junk-v1-d0fc0d4b` 状态因此变为 rejected，邮箱 effect
+保持关闭。查看 holdout 后不能在同一批上重选阈值；20 封可进入 v2 训练，但 v2 必须
+使用新的 source-disjoint holdout。
+
+将该 20 封转入训练后，junk label-only v2 使用 283 封、98 个来源。五折来源分组下，
+`junk >= 0.312` 为 29/30，precision 96.67%，positive support 66，覆盖 28 个来源，
+最大来源占 6.67%。候选 `email-tfidf-word-char-junk-label-v2-d94ee93b` 只允许验证
+增加 Junk 标签，显式禁止 mark-read/archive/move/Trash/unsubscribe/auto-reply。冻结
+运行时为 Python 3.12.11、scikit-learn 1.8.0、numpy 2.4.3、scipy 1.17.1；不同
+scikit-learn 版本不得直接加载该 pickle 后用于验证或生产判断。
+它保持 inactive，等待另一批全新来源 holdout；label 通过不能自动推导出 Trash 通过。
+
+v2 的独立来源验证也未通过。首批随机 30 个新来源只有 5 个阈值候选，虽为 5/5，
+但证据量不足；随后从随机未知来源流收集 15 个额外候选，其中只有 12 个为 junk。
+两批合计 17/20，precision 85%，低于 label-only 的 95%要求。三个错误都是不能忽略的
+潜在商业机会：收购/M&A 接洽、研究合作和机构投资接洽。因此 v2 状态变为 rejected，
+不得注册 active，也不得把“只加标签”扩大为移动或 Trash。
+
+用户已授权高置信度标签、归档、移动和可恢复 move-to-Trash，但永久删除、EXPUNGE、
+清空垃圾箱和邮件回复仍禁止。授权与模型准入是两个独立条件：只有某一类别、某一动作
+通过冻结版本的来源独立验证，才允许该动作执行。下一版只能继续使用同一个 word+char
+Logistic 分类器，把本轮 45 个主动学习样本加入训练，专门学习 junk 与有价值战略接洽
+的边界；冻结 v3 后必须再用全新来源 holdout。若 v3 仍失败，停止自动动作实验。
+
+hard-example v3 使用 328 封、143 个来源，仍是单个 word+char Logistic。五折来源
+分组下整体 Accuracy/Macro F1 为 43.60%/34.17%；冻结 `junk >= 0.324` 为 34/35，
+precision 97.14%、recall 36.96%，覆盖 33 个候选来源。模型
+`email-tfidf-word-char-junk-label-v3-eb1dfe4a` 仍为 inactive label-only 候选，并显式
+禁止 mark-read/archive/move/Trash/unsubscribe/auto-reply。最后一次全新来源验证必须在
+该版本和阈值已提交后进行；失败即停止迭代。
+
+v3 最终全新来源 precision 验证仍失败。随机遍历 87 个新来源后取得 20 个 0.324 阈值
+候选，其中 `junk=16`、`important=3`、`work=1`，precision 80%。误判继续集中于媒体
+报道、政府合同合作、相关产品合作和 CEO 活动等可能有价值的陌生接洽。这证明单封文本
+可以很好识别典型推销模板，但当前 assistant 标签规模不足以稳定学习“陌生商业邮件的
+用户价值”。`email-tfidf-word-char-junk-label-v3-eb1dfe4a` 因此 rejected。
+
+当前模型结论收敛为：保留一个 CPU 单分类器提供建议和排序，所有类别默认进入待反馈；
+只有未来真实用户反馈形成新的来源独立验证并达到对应动作门槛，才允许开启 model-only
+动作。现阶段不开发或启用自动标签、移动、Trash；用户授权仍保留，但不替代质量门槛。
 
 ## 研究依据
 

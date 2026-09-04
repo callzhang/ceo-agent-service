@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Mapping, Protocol
 
-from app.email_classifier_contracts import EmailAction
+from app.email_classifier_contracts import DIRECT_ACTIONS, EmailAction
 from app.email_store import StoredEmailAction, StoredEmailLocator
 
 
@@ -52,7 +52,7 @@ def _provider_operation(action_type: EmailAction) -> str:
         EmailAction.MARK_READ: "STORE \\Seen",
         EmailAction.ARCHIVE: "MOVE ARCHIVE",
         EmailAction.MOVE: "MOVE",
-        EmailAction.TRASH: "MOVE TRASH",
+        EmailAction.TRASH: "move_to_trash",
     }
     try:
         return operations[action_type]
@@ -74,6 +74,10 @@ class DeterministicEmailProvider(Protocol):
 
 
 class DeterministicEmailActionExecutor:
+    supported_operations = frozenset(
+        _provider_operation(action) for action in DIRECT_ACTIONS
+    )
+
     def __init__(self, provider: DeterministicEmailProvider):
         self.provider = provider
 

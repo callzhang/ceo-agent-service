@@ -1,6 +1,6 @@
 # Email integration main 工作树进展记录
 
-更新时间：2026-08-31
+更新时间：2026-09-02
 
 ## 当前边界
 
@@ -8,7 +8,16 @@
 
 `/Users/derek/Documents/Projects/ceo-agent-service/.worktrees/email-integration-main`
 
-分支从 `main` 的 `aaac3fe5bef2b70af4dcd894c551e55097277d4f` 建立。所有改动只在该工作树中验证；没有修改主工作树、没有重启生产 launchd、没有启用真实邮箱扫描，也没有执行真实邮箱写操作。
+分支当前为 `codex/email-integration-main`。所有改动只在该工作树中验证；没有修改主工作树、没有重启生产 launchd、没有启用真实邮箱扫描，也没有执行真实邮箱写操作。
+
+2026-09-02 Derek 已明确授权高置信度类别的确定性邮件处理，包括 label、mark_read、archive、move 和 trash；trash 仅进入可恢复 Trash，禁止永久删除。当前明确禁止所有 Email 回复：配置 API、worker runtime 和 `ceo-mail-review` skill 均不得生成或发送 `auto_reply`，SMTP 不启用。该授权不绕过模型/类别 eligibility，也不改变 unsubscribe 的订阅级 precision/support 门槛。
+
+2026-09-02 Derek 进一步确认 CEO Agent 融合采用方案 A：确定性动作继续由独立 Email
+worker 直接执行并回读；`unsubscribe` 从当前 Consumer-direct 目标改为
+Consumer A 提案、Audit Agent B 审核与执行、外部结果回读。当前和后续实施权威是已批准的
+[`2026-09-02-email-ceo-agent-audited-fusion-design.md`](./2026-09-02-email-ceo-agent-audited-fusion-design.md)。
+其目标 lifecycle 是 `email_unsubscribe_audited_v2`。当前开发分支已经完成该生命周期、
+continuation/effect、UI/observability 和 loopback E2E 实现；功能仍未合并或部署，生产未启用。
 
 ## 已移植能力
 
@@ -17,10 +26,10 @@
 3. Email 页面所需的分类详情、学习反馈和 task producer。
 4. 独立 Email worker：扫描与确定性 provider action、Email Agent/Audit consumer、训练 scheduler 为三个独立组件。
 5. 所有 Email Agent task payload 带显式 `lifecycle_version`：
-   - `auto_reply` → `consumer_audit_v1`，经过 Consumer → Audit；
-   - `unsubscribe` → `email_unsubscribe_consumer_direct_v1`，由独立 unsubscribe Consumer 执行并记录 observability，不创建 Agent/Audit run。
-6. `unsubscribe` 的生命周期选择 fail-closed：只有任务、上下文、原始 payload、分类、action identity 全部一致且为当前版本时才允许直通；其他任何不一致都走普通 Consumer → Audit。
-7. 直接 provider action 具备 claim、租约恢复、有限重试和退订 terminal result / observation digest 持久化。
+   - `auto_reply` 历史 contract 保留用于兼容读取，但当前 runtime/API/skill 全局禁用，不创建任务、不连接 SMTP；
+   - `unsubscribe` → `email_unsubscribe_audited_v2`，Consumer 只生成有界提案，Audit 是唯一允许执行 browser effect 的角色。
+6. `unsubscribe` 生命周期 fail-closed：任务、上下文、原始 payload、分类、ActionPlan identity、Consumer/Audit lineage 或 effect binding 任一不一致都不得执行；旧 Consumer-direct 仅可迁移为安全终止状态，不再可执行。
+7. 直接 provider action 与 audited unsubscribe 分别具备 claim、租约恢复、有限重试、effect reconciliation、terminal result / observation digest 持久化和回读。
 
 ## 验证证据
 
@@ -211,7 +220,126 @@ assistant provisional annotations 做随机 5-fold OOF，得到 `67.50% Accuracy
 - 当前 DingTalk 企业邮箱配置仍保持 disabled；没有把实验标注当作用户 gold feedback，也没有自动启用模型或动作。
 - unsubscribe 仍遵守订阅来源级门槛：precision >= 0.95 且 support >= 20；冷启动仅允许用户确认后的订阅来源进入自动化候选。
 - 真实邮箱实验只允许 readonly header/metadata 抽样；生产启用前仍需独立 review、全量回归和用户确认。
-- 外部邮箱回复等写动作仍需现有 Audit Agent 生命周期；unsubscribe 是已批准的唯一 Consumer-direct 例外。
+- 本段实验发生时 unsubscribe 还是当时批准的 Consumer-direct 例外；该目标已经被
+  2026-09-02 的 audited fusion 方案取代。邮件回复继续关闭。
+
+## 2026-09-02 随机只读正文与时间漂移实验
+
+在用户授权后续高置信度确定性动作、同时明确禁止邮件回复后，本轮仍先保持
+provider 零写入，只验证真实数据读取和模型质量。使用固定随机种子
+`20260902` 从当时 2,318 个 INBOX UID 中抽取 80 封邮件头；80/80 均读取成功，
+样本中 `List-Unsubscribe`、`List-Unsubscribe-Post` 和 `Auto-Submitted` 均为 0。
+这只是随机样本证据，不能推断未来邮件不会提供这些头，也不构成退订来源的
+precision/support 证据。
+
+随后在邮箱新增一封邮件、UID 总数变为 2,319 后，使用生产
+`ImapReadonlyAdapter` 对固定随机样本做 BODYSTRUCTURE 和受限正文读取。20/20 封
+邮件均得到非空 `textBody`；正文长度中位数为 862 字符，P95 为 11,122 字符；
+共识别 29 个附件 metadata，单封最多 16 个，没有读取附件字节。初次诊断曾把
+标准化字段 `textBody` 误写成不存在的 `body`，导致错误报告 20/20 正文为空；
+更正探针字段并复跑同一批样本后确认生产适配器没有该问题，因而没有修改实现。
+
+另一组固定随机种子 `2026090201` 的 30 封邮件由 assistant 根据脱敏 header 和
+受限正文做 provisional annotation，分布为：
+
+- `important=9`
+- `work=8`
+- `notification=5`
+- `junk=5`
+- `billing=3`
+- `personal/shopping/subscription=0`
+
+按 UID 时间顺序使用较早 20 封训练、较新 10 封 holdout。训练段只有 1 封
+`notification`，holdout 中有 4 封，主要是训练段未覆盖的登录和安全通知。生产
+word-unigram Logistic，以及 `C=1`、word-bigram、char 3–5 和 word+char 五种
+稀疏 Logistic 候选，均只得到 `10.0% Accuracy / 4.4% Macro F1`；
+`notification` precision/recall 均为 0。单封 `vectorize + predict_proba` P95
+范围为 `0.30–1.89 ms`，仍远低于 100 ms；这段延迟不含已有约 6 ms 的规范化和
+jieba 端到端开销。
+
+这次失败 holdout 是有价值的时间漂移证据：扩大模型或换 char 特征没有弥补新模板
+样本缺失，当前瓶颈仍是有代表性的反馈覆盖。全部 30 条仍是 assistant provisional
+annotations，不进入生产 feedback、model promotion、类别 eligibility 或自动退订
+support。下一轮优先从 header 全量快照中定向抽取 `billing`、`shopping`、
+`subscription` 和其他低覆盖候选，同时保留独立随机漂移样本；在时间顺序验证达到
+类别 precision/support 门槛前，不启用 label、archive、move 或 Trash。
+
+为支持后续累积实验，这 30 条已保存为 Git 忽略目录中的 privacy-bounded snapshot：
+`data/email-experiments/2026-09-02-random-30.json`。snapshot 只保存脱敏
+`model_text`、label、日期、消息/来源 digest，不保存 UID、发件人、主题、原始正文
+或 URL；`label_source=assistant_authorized_manual_annotation`，digest 为
+`518b6b7ee250ba184fedd489eacf606421e53272b7633df88f113da12d5f81b4`。重新加载
+校验通过。该本地文件不进入 Git，也不等同于生产用户 feedback。
+
+### 稀有类别候选发现结果
+
+阿里企业邮箱对单次大 UID range 的 header FETCH 在 90 秒内仍未完成，因此主动
+终止；这条服务端路径不适合在线候选发现或生产扫描。改为固定种子
+`2026090202` 随机抽取 160 个 UID 并逐封读取有限 From/Subject，160/160 成功。
+关键词仅产生 `billing=4`、`shopping=4`、`subscription=2`、`personal=1` 个
+候选，人工复核发现明显语义碰撞：业务订单/交付不是个人 shopping，企业邀请不是
+personal，Google Ads 周报也不自动等于用户不想继续接收的 subscription。因此
+header 关键词只能做 review 排序，不能生成标签或 provider action。
+
+在同一随机源的 60 封受限正文中检测退订/偏好入口措辞，共命中 4 封。人工语义
+复核后，LinkedIn 邀请接受属于 notification，Google Ads 周报更接近
+billing/notification；保险促销和 OpenAI 产品更新是 subscription 候选，候选
+precision 约 50%。邮箱服务端 `SEARCH BODY "unsubscribe"` 与 UID 变体都返回
+`BAD invalid command or parameters`，不能用于低成本全库候选发现。生产方案应继续
+采用小批 readonly 新邮件扫描和 active-learning 排序，不依赖大范围 FETCH 或
+服务端 BODY/HEADER 搜索。
+
+这 4 个候选已按 `notification=1`、`billing=1`、`subscription=2` 保存为另一份
+Git 忽略的脱敏 snapshot：
+`data/email-experiments/2026-09-02-unsubscribe-signal-4.json`，digest 为
+`50f9dee93c838b071033d76958ce6a5c5420aa9da634e8334d3a76a497d7f6b0`。
+将信号候选与最终语义标签分开，避免把正文出现 unsubscribe 的通知或报表直接训练
+成 subscription；其中 2 条 assistant subscription 标签仍不计入自动退订的
+user-confirmed 来源级 support。
+
+### 第二批随机标注、脱敏缺口和累积验证
+
+从不与第一批 30 封重叠的 UID 中，使用固定种子 `2026090203` 再随机抽取 30 封，
+assistant provisional annotation 分布为：
+
+- `notification=12`
+- `important=7`
+- `work=4`
+- `junk=4`
+- `subscription=2`
+- `billing=1`
+
+在生成 snapshot 前，脱敏诊断发现既有 `_clean` 只覆盖部分 token 前缀，未覆盖
+Quota Report Hub 的 `qrp_...` 和 `qrp....` 形式。该批数据当时没有保存。通过红测
+复现后，Email 模型清洗器现会在 jieba 分词前将两种形式替换为 `TOKEN`，持久化和
+实验 snapshot 边界也会拒绝绕过清洗器传入的同类 token。相关 Email 回归为
+`649 passed, 5 warnings`。修复提交为 `eebe00d1 fix: redact email access tokens`。
+
+修复后只读复取同一批样本并保存为 Git 忽略的
+`data/email-experiments/2026-09-02-random-30-b.json`；落盘内容中两种 token marker
+均为 0，snapshot digest 为
+`e735ff9bf8dbe8588af698136e8414335000744fc2371ed0c24091311e0c9af7`。
+
+两批互不重叠的随机 snapshot 合计 60 条，分布为
+`notification=17`、`important=16`、`work=12`、`junk=9`、`billing=4`、
+`subscription=2`。按接收日期排序（同日按样本 digest 稳定排序）的前 48 条训练、
+后 12 条 holdout：
+
+- 生产 word-unigram Logistic：`66.7% Accuracy / 41.7% Macro F1`；
+- word-bigram + char 3–5 Logistic：`58.3% Accuracy / 43.9% Macro F1`；
+- 生产模型在普通分层 OOF 和按来源分组 OOF 中均为 `51.7% Accuracy`，Macro F1
+  分别为 `35.5%` 和 `36.2%`；这批 60 条的小样本当时未观察到差异，但后续 263 条
+  `LeaveOneGroupOut` 已推翻“没有来源虚高”的解释，见文末来源整体留出验证；
+- 时间 holdout 中 notification 为 `100% precision / 100% recall`（support 6），
+  billing 为 `100% / 100%`（support 1），junk 为 `50% / 50%`（support 2），
+  important、subscription 均为 0；
+- 最高 top-1 confidence 仅 `0.2011`，0.50/0.70/0.85 阈值均为零覆盖。
+
+将 Logistic `C` 从 0.25 扫描到 64 只能制造更高但未经支持的置信度：`C=16/64`
+时有 3/12 封超过 0.5 且本次恰好全对，但整体 Accuracy 降为 50%，0.7 和 0.85
+仍零覆盖，候选 support 只有 3。因此保留生产 `C=0.25`，不通过调大 C 绕过类别
+precision/support 门槛。当前正确结论仍是“模型已学到部分重复通知模板，但没有任何
+类别达到自动 provider action 的证据要求”。
 
 ## 2026-08-31 全量回归复核
 
@@ -415,3 +543,687 @@ Vite production build 通过。构建使用前端 package 自带的 build 脚本
 不构成分类准确率、自动动作资格或订阅来源 support 证据。若要继续增加模型效果
 实验，需要先得到“本次会话可以输出经过脱敏/截断邮件文本片段用于人工标注”的明确
 授权；否则只继续做聚合的链路验证，不把自动规则冒充 gold label。
+## 2026-09-02 扩展标注、模型稳定性与 notification 最终验证
+
+在固定邮箱快照（2,319 个 UID，最大 UID `32425`）上继续完成了 8 份隐私受限
+实验快照。所有读取仍为 IMAP readonly；没有创建 Email task、没有连接 SMTP、
+没有执行 provider 写操作。8 份快照共 264 行，标签总分布为：
+
+- `notification=78`
+- `junk=59`
+- `important=48`
+- `work=33`
+- `subscription=26`
+- `billing=20`
+
+快照重新加载和 SHA-256 校验全部通过。按 `sample_id_digest` 检查发现 D、F 两批
+各包含同一封 `junk` 邮件，因此 264 行对应 263 封唯一邮件。最终 holdout 重新按
+消息摘要去重；这条重复不属于 `notification`，不会改变 notification 的候选数、
+precision 或 recall，但去重后的整体指标以 79 条而不是 80 条为准。
+
+### 候选模型和特征消融
+
+在最初 60 条的较早 48 条训练、较新 12 条 holdout 上：
+
+| 候选 | Accuracy | Macro F1 | 高置信度结论 |
+| --- | ---: | ---: | --- |
+| 生产 balanced Logistic，`C=0.25` | 66.7% | 41.7% | 最大 confidence 0.201，无 0.5+ 候选 |
+| ComplementNB，`alpha=0.05` | 66.7% | 43.2% | 高 confidence precision 约 75%，不安全 |
+| SGD log-loss，`alpha=1e-5` | 75.0% | 80.8% | 本切分 5 个 0.85+ 全对，但跨切分失效 |
+
+SGD 的表面优势没有通过稳定性验证：换时间切分后 0.85 门槛 precision 降到 70%；
+分层 OOF 为 69.4%–81.2%，按来源分组 OOF 为 60%–71.4%。MultinomialNB 质量更差
+且更过度自信。取消 `class_weight=balanced` 后，多个时间切分 Accuracy 只有
+8.3%–50%，Macro F1 只有 5.6%–28.6%。因此继续保留 balanced Logistic，
+`C=0.25`；不能用过度自信的模型制造“高置信度”。
+
+在互不重叠的三批随机样本 A30、B30、C40 合计 100 条上，按日期保留最新 20 条：
+
+- Logistic：`55% Accuracy / 25% Macro F1`，最大 confidence 0.222；
+- SGD：`45% / 44.4%`，0.85+ precision 66.7%；
+- ComplementNB：`60% / 31%`，只有 1 个 0.85+ 候选；
+- Logistic 对最新 20 条中的 notification 为 `100% precision / 100% recall`
+  （support 10），但 `important`、`work`、`subscription` 仍不可靠。
+
+把 4 条含退订/偏好入口措辞的定向样本加入训练后，Logistic Accuracy 从 55%
+降到 30%，notification recall 从 100% 降到 10%，subscription 虽然 recall 为
+100%，precision 只有 18.2%。同一来源会同时发送 notification、billing 和
+subscription，这证明“来源”或“出现退订文字”不能直接决定类别。subject boost、
+CSS 清理和正文截断都没有修复；subject-only 虽达到 70% Accuracy，但把
+`important` recall 降到 0，因而不修改生产特征。
+
+### 时间漂移学习模拟
+
+用较早随机 80 条训练、D40 测试时，balanced Logistic 得到
+`72.5% Accuracy / 43.5% Macro F1`。notification 在 confidence `>=0.20` 时
+有 15 个自动候选，其中 14 个正确；唯一误报是 LinkedIn 冷销售邮件。加一个
+margin 条件后本批为 14/14，但该条件没有跨批稳定价值。
+
+同一旧模型直接测试 E40 时，`>=0.20` 且带 margin 的 notification 候选只有
+14/20 正确；误报包括需要处理的 Vercel 邮件、LinkedIn subscription 和需要登录
+恢复的 Quota 邮件。这再次表明 notification 与 important/subscription 的边界必须
+通过新反馈学习，不能靠固定关键词。
+
+加入 D40 反馈后再测试 E40：`70% Accuracy / 63.9% Macro F1`，在预先评估的
+notification confidence `>=0.25` 下为 15/15，recall 93.8%。再加入 4 条定向样本
+后整体提高到 `75% / 73.9%`，notification 仍为 15/15。由此冻结
+`notification >=0.25`，不再查看后续 F/G 批来调门槛。
+
+### 最终未见 holdout
+
+使用“较早随机 80 条 + D40 + 4 条定向样本”训练，只在冻结门槛后评估 F40 与
+G40。去除与训练集重复的 1 条 `junk` 后，最终 holdout 为 79 条，分布是
+`notification=21`、`junk=20`、`subscription=16`、`important=11`、
+`billing=6`、`work=5`：
+
+- 整体：`63.29% Accuracy / 54.55% Macro F1`；
+- notification `confidence >=0.25`：19 个候选，19 个正确，precision 100%；
+- notification positive support：21；recall 90.48%；
+- `0.22`、`0.25`、`0.27` 三个门槛在该 holdout 上均为 19/19；
+- `0.20` 会扩大到 25 个候选、其中仅 19 个正确，precision 降到 76%；
+- `0.30` 为 17/17，但 recall 降到 80.95%。
+
+因此 notification 已形成值得进入生产影子链路的类别级信号，且无需新增 margin
+规则。不过这 21 个 positive support 全部是
+`assistant_authorized_manual_annotation`，不是生产 `user-confirmed` feedback；同时
+当前非 subscription 类别的正式默认门槛仍是 30 个 validation positive samples。
+所以本结果只批准开发“可追溯候选模型 + 只读 shadow 评估”，不能把 notification
+直接标记为生产 `auto_action_eligible`，也不能据此执行真实移动或 Trash。
+
+### 当前授权与下一步
+
+Derek 已明确授权未来对满足类别门槛的高置信度邮件执行 label、mark-read、archive、
+move 和可恢复 Trash；Trash 永不执行 EXPUNGE 或永久删除。任何 Email 回复都明确
+禁止，SMTP 保持关闭。下一步先把上述脱敏快照接入不会污染生产 feedback 的候选模型
+训练/registry 路径，生成完整版本号、训练时间、样本数、类别指标和延迟，并对真实
+新邮件做只读 shadow scan。只有 user-confirmed 数据达到正式类别门槛后，才允许
+对应确定性动作进入受控小批执行。
+
+### 第一版生产影子候选
+
+新增 `app.email_classifier_shadow.stage_snapshot_shadow_candidate`，把隐私受限 snapshot
+转成不可变 registry candidate，同时保持以下硬边界：
+
+- 只接受 `assistant_authorized_manual_annotation` snapshot；
+- 训练集内出现重复消息时拒绝生成模型；验证集与训练集或验证集内部重复时排除并计数；
+- 记录完整 `model_id`、artifact SHA-256、训练时间、训练/验证样本数、类别指标和
+  p50/p95 延迟；
+- 每个类别都写入 `auto_action_eligible=false` 和
+  `non_authoritative_validation_labels`；
+- 只登记 `candidate`，不创建或切换 active manifest，也不更新生产 feedback 的
+  `included_in_model_id`。
+
+使用 A30+B30+C40+D40+定向 4 条共 144 条训练，F40+G40 做最终验证。自动排除
+D/F 重复的 1 条后，第一版候选为：
+
+```text
+model_id: email-tfidf-lr-20260902T192218Z-6d8a1ca9
+status: candidate
+reason: shadow_only_non_authoritative_labels
+training samples: 144
+validation samples: 79
+Accuracy / Macro F1: 68.35% / 62.18%
+prediction latency p50 / p95: 0.31 ms / 0.61 ms
+notification >= 0.25: 19/19, precision 100%, recall 90.48%, positive support 21
+active manifest: none
+```
+
+对应 focused model/snapshot tests 为 `78 passed, 5 warnings`；warning 仍来自既有
+path-based promotion deprecation。候选 artifact 位于 Git 忽略的本地
+`data/email-shadow-models/`，不包含原始邮件或凭据。它可以用于后续真实新邮件的
+readonly shadow prediction，但当前不能触发 label、move、archive 或 Trash。
+
+### 真实邮箱只读 shadow smoke
+
+随后使用该 candidate 对真实 DingTalk 企业邮箱做一次独立 readonly smoke。固定随机
+种子 `2026090210`，从当前 2,321 个 INBOX UID 的最近 500 封中随机抽取 10 封，
+只通过生产 `ImapReadonlyAdapter` 读取 header、BODYSTRUCTURE 和受限文本部分：
+
+- 模型预测分布：`billing=3`、`important=1`、`junk=3`、`notification=3`；
+- `notification >=0.25` 候选：3；通用 `confidence >=0.85` 候选：0；
+- mailbox writes：0；SMTP connections：0；attachments downloaded：0；
+- 未输出或持久化发件人、主题、正文、URL、UID 或附件名。
+
+这次没有 assistant gold label，因此只能验证真实输入兼容性和候选覆盖率，不能把
+3 个 notification 候选计入 precision/support。逐封 IMAP 网络读取 10 封约 34 秒，
+明显慢于模型 P95 0.61 ms；生产应依靠 UID cursor 只处理新增邮件，并保持小批串行，
+不能把大范围随机回扫的耗时归因于分类器。
+
+完整测试时，shell 通配符还收集到 4 个被 `.gitignore` 的本地旧副本
+`tests/test_email_* 2.py`，其旧 contract 产生 12 个失败。这些文件不属于 Git
+工作树，未修改也未删除。使用 `git ls-files` 选择正式测试后为 `649 passed,
+5 warnings`，新增 shadow 测试另为 `1 passed`。提交后重新合并执行为
+`650 passed, 5 warnings`。
+
+### 新随机 10 条人工标注
+
+对上述模型加载后的另一批 10 封随机 readonly 邮件输出生产清洗器生成的脱敏文本，
+由 assistant 在模型预测冻结后完成标签。标签为：`notification=5`、`billing=2`、
+`important=1`、`subscription=1`、`work=1`。top-1 预测正确 8/10：
+
+- `notification >=0.25`：5 个候选，5 个正确，precision 100%；
+- notification positive support：5；recall 100%；
+- 另有 1 封模型预测 notification 但 confidence 只有 0.2007，人工标签为
+  `important`，因此没有越过 0.25 自动门槛；
+- 另一个错误是把 LinkedIn 内容摘要预测为 `junk`，人工标签为 `subscription`。
+
+纯摘要标签证据保存在 Git 忽略的
+`data/email-experiments/2026-09-02-shadow-10-labels.json`，只含消息摘要 hash、
+预测类别/概率和人工标签，不含 model text、UID、来源、主题或正文。文件 SHA-256 为
+`2cfe44be5c8f0cc68156d55074c95dec8385441a1815dfbdecbb8d3441ff0923`；重新计算后
+指标匹配且 10 个 `sample_id_digest` 唯一。
+
+该批与此前 F/G 的 notification 结果合计为 24/24 自动候选正确、26 个 positive
+support，但仍全部是 assistant-authorized 标注，且没有达到当前正式 30-positive
+门槛，所以不改变生产 eligibility。
+
+同一 seed 在稍后复跑时邮箱从 2,321 增加到 2,322 个 UID，最近 500 封的滑动池随之
+改变，所得样本也改变。固定随机 seed 不能单独构成动态邮箱的实验身份；后续所有
+可复核实验以完整 `sample_id_digest` 集合为准，seed 和 UID count 只作为采样说明。
+
+### notification 30-positive 研究复核
+
+继续完成两个互不重叠的小批次。第三批从 15 个随机 UID 中去重后剩 7 条；对两封
+正文开头被 CSS 占满的 OpenAI 邮件额外查看脱敏文本末尾后，确认一封是产品推广
+`subscription`，另一封是 Flight Watch `notification`。本批 top-1 为 4/7，
+notification 正样本 1 条，但模型预测为 subscription，因此 0.25 门槛没有候选。
+摘要文件及 SHA-256：
+
+```text
+data/email-experiments/2026-09-02-shadow-7-labels-c.json
+6040c161210fe5be8ed899354f3d5ae05105dc42dab4d859bfda775abe3c7e57
+```
+
+第四批从 20 个随机 UID 中排除既有消息后取得 10 条，人工标签分布为
+`work=3`、`notification=3`、`junk=2`、`important=1`、`subscription=1`，
+top-1 为 7/10。三个 notification 候选均为明确登录/安全通知，全部在 0.25 以上且
+3/3 正确。摘要文件及 SHA-256：
+
+```text
+data/email-experiments/2026-09-02-shadow-10-labels-d.json
+7f2919fb1d792ce09e5bec3c6ad07deda27c9916b6e59596dc1c445a599e27bf
+```
+
+四个新 label-only 批次共 37 条、37 个唯一消息摘要。合并此前去重 F/G holdout 后，
+冻结 notification 0.25 门槛的最终研究结果是：
+
+- 自动候选：29；正确候选：29；precision 100%；
+- notification positive support：32；recall 90.63%；
+- 新增 37 条的 top-1 错误仍集中在 work/important/subscription/junk 边界；
+- 新增 10 个自动 notification 候选全部来自同一个登录/安全通知来源模板，跨来源
+  notification（例如航班更新）仍可能落在 threshold 以下或被预测成 subscription。
+
+因此 0.25 已跨过“30 个 notification 正样本”的研究门槛，但证据存在明显来源集中，
+并且标签仍是 assistant-authorized。当前 candidate 保持不 active，生产 provider action
+仍为零。后续不再继续扩大同一邮箱的 assistant 自标样本；融合方案需要明确
+assistant 标签是否可以成为 authoritative training data，以及类别 gate 是否需要按已配置
+动作的风险采用更严格 precision。
+
+### 来源整体留出验证推翻全局自动动作结论
+
+为验证上述 29/29 是否来自跨来源能力，对八个含 model text 的隐私 snapshot 做了
+`LeaveOneGroupOut`：同一个 `source_group_digest` 的所有邮件必须一起进入 holdout，
+训练时完全看不到该来源。264 行去除 1 条重复后为 263 封、78 个匿名来源组。
+
+- 整体 top-1 Accuracy `29.66%`，Macro F1 `21.43%`；
+- notification `confidence >= 0.25` 只有 `2/11` 正确，precision `18.18%`；
+- notification positive support 为 78，recall `2.56%`；
+- 11 个候选只来自 3 个来源组，最大单一来源占 `81.82%`。
+
+对原冻结 F/G holdout 再按训练集是否见过来源拆分：
+
+```text
+seen source:   49 rows, notification 18/18 candidates correct, support 18, recall 100%
+unseen source: 30 rows, notification  1/1  candidate correct, support  3, recall 33.33%
+```
+
+原 19 个 notification 候选只覆盖 3 个来源组，其中一个来源贡献 17 个，占
+`89.47%`。去掉精确发件人 hash，或同时去掉发件人 hash 与 domain 后，来源整体留出
+结果没有实质变化（仍为 `2/11`）；这符合未见 token 本来就不会命中特征的预期，也
+说明正文/主题模板本身与来源高度绑定，简单删 sender token 不能得到跨来源能力。
+
+因此此前“notification 类别全局 0.25 门槛可用于自动动作”的解释被否决。当前证据
+最多支持继续研究“已见且有独立验证证据的来源”；未知来源必须进入待反馈，不能仅凭
+类别置信度执行 label、archive、move 或 Trash。Derek 已授权后续满足证据门槛的高
+置信度邮件动作，包括可恢复地移入 Trash，但该授权不替代模型与动作门槛；永久删除、
+EXPUNGE、清空 Trash 和任何邮件回复仍禁止。下一批实验改为来源去重/来源均衡采样，
+并在冻结预测后由 assistant 标注。
+
+### 两批真实邮箱来源去重 shadow
+
+按上述策略，从动态 INBOX 最近 500/1,000 个 UID 中随机读取邮件头，排除八个训练/
+验证 snapshot 和当前批次已经出现的 sender domain；只对入选的新域读取受限文本。
+第一批读取 100 个随机 header 后得到 7 个新域，第二批读取 65 个 header 后得到 10
+个新域。两批均使用 2,322 个 UID 的 readonly 观察，邮箱写入、SMTP 连接、附件下载
+全部为 0。
+
+冻结预测后的 assistant 标注结果：
+
+| 批次 | 新域 | top-1 | notification positive | notification >= 0.25 |
+| --- | ---: | ---: | ---: | ---: |
+| source-diverse A | 7 | 5/7 | 0 | 0 candidates |
+| source-diverse B | 10 | 7/10 | 1 | 0 candidates |
+
+唯一 notification 是一个全新来源的设备断连告警；模型 top-1 为 notification，但
+confidence 只有 `0.233675`，被 0.25 门槛拒绝。17 个互不重复且训练时未见的来源中
+没有任何 notification 自动候选，因此不会引入新的 precision 分母，也再次确认现有
+自动覆盖率主要来自已见模板。新来源中 `junk` 占 12/17，模型也出现 junk 与
+work/important/billing 的边界错误；未知来源仍应进入待反馈。
+
+Git 忽略的 label-only 证据不含正文、主题、UID、邮箱地址、URL 或附件，仅含消息和
+来源 hash、冻结预测、概率与 assistant 标签：
+
+```text
+data/email-experiments/2026-09-02-source-diverse-7-labels.json
+sha256 55b8bbeee7ad0bbe88602afe4253a99989efce37f77d3439d4df8eb55d4f6778
+
+data/email-experiments/2026-09-02-source-diverse-10-labels-b.json
+sha256 27f9d2654334eb15b6d2115c0f19080fe9ba31b9f9103904d5fd389adac24994
+```
+
+第一次操作曾直接 `source` 项目 `.env`，由于文件中存在非 shell-safe 的带空格值，
+误触发了一个无关且失败的本地鉴权脚本；它未取得额外授权，IMAP 最终仍只读完成。
+后续批次已改为把 `.env` 当纯文本读取，只提取精确的 IMAP secret key，不执行其中
+任何内容。该方式作为后续邮箱实验固定操作边界。
+
+### 单分类器表示复核与 junk 候选冻结
+
+在 263 封、78 个来源组上固定使用五折 `StratifiedGroupKFold`，保证每一折的验证来源
+在对应训练折中完全未见。候选仍全部是单个线性分类器：
+
+| 表示/模型 | Accuracy | Macro F1 | notification >= 0.25 | P95 | 大小 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| TF-IDF word unigram Logistic | 30.04% | 21.27% | 2/13 | 1.59 ms | 548 KB |
+| TF-IDF word 1–2 Logistic | 32.70% | 22.92% | 2/12 | 16.35 ms | 2.69 MB |
+| TF-IDF char-wb 3–5 Logistic | 32.70% | 23.23% | 1/11 | 4.88 ms | 1.56 MB |
+| TF-IDF word+char Logistic | 35.74% | 25.61% | 12/23 | 32.55 ms | 4.25 MB |
+| fastText small best | 25.48% | 17.24% | 8/21 | 0.33 ms | 7.34 MB |
+
+fastText 使用已分词中文、`dim=32`、`bucket=50k`，扫描 word n-gram 1/2 与 epoch
+50/100。最佳训练集 Accuracy 达 85.55%，来源分组验证只有 25.48%，所有 notification
+阈值都远低于 95% precision，属于小数据过拟合。默认 200 万 bucket 的 fastText
+模型约 490 MB，也没有更好的验证结果。因此 fastText 不进入当前生产候选；保留更小、
+更稳的 Logistic 路径。
+
+来源历史规则也只作为 eligibility 诊断：按接收日期顺序，来源已有至少 2 封且历史
+标签完全一致时，后续样本为 37/37，但只覆盖 important/junk/subscription，且有效
+来源很少。随后从最近 2,000 UID 随机扫描 800 个 header，试图寻找晚于对应历史的
+同来源新邮件，结果为 0；因此不能把回看一致性冒充前瞻证据。
+
+按类别检查未知来源的高精度区间后，只有 junk 值得继续：word+char Logistic 在
+threshold `>=0.30603` 时为 24/24、recall 41.38%，覆盖 21 个来源，最大单一来源占
+8.33%。为避免浮点边界，冻结实验阈值为 `junk >= 0.31`，并在查看任何后续 holdout
+前生成不可变实验候选：
+
+```text
+model_id: email-tfidf-word-char-junk-v1-d0fc0d4b
+artifact sha256: d0fc0d4b6b8018b993fe1f86aa386beb9813e6a25a6258a46a042cd8ae55e0b4
+training: 263 messages / 78 source groups
+artifact size: 4,460,415 bytes
+measured single-message P95: 7.57 ms
+status: frozen_experiment_candidate
+auto_action_eligible: false
+reason: fresh_source_holdout_pending
+```
+
+该 artifact 与 metadata 位于 Git 忽略的 `data/email-experiments/models/`，没有注册为
+active，也不能驱动 mailbox action。下一步只用全新来源 holdout 验证冻结的 0.31；
+开发/执行 Trash 仍要求独立 holdout 达到 99.5% precision 和足够 positive support。
+
+### junk v1 全新来源 holdout：拒绝
+
+冻结文档和候选提交后，以 seed `2026090215` 从最近 2,000 个 UID 随机扫描 132 个
+header，取得 20 个与 263 封训练语料以及此前 17 个来源去重样本均不重叠的新 sender
+domain。每个来源只取一封，预测由冻结候选先完成，再按 `ceo-mail-review` 的保守边界
+由 assistant 标注；邮箱写入、SMTP 连接和附件下载仍全部为 0。
+
+标签分布为 `junk=8`、`important=7`、`notification=3`、`work=2`，整体 top-1
+为 9/20。冻结的 `junk >= 0.31` 选出 7 个候选，其中 6 个为 junk；唯一误判是一封
+针对 Stardust 的具体播客采访邀请，属于可能有品牌价值且需要用户关注的机会，不可
+自动丢弃：
+
+```text
+junk candidates: 7
+true junk: 6
+precision: 85.71%
+junk positive support: 8
+recall: 75%
+required Trash precision: 99.5%
+decision: rejected
+mailbox effects enabled: false
+```
+
+因此 `email-tfidf-word-char-junk-v1-d0fc0d4b` 已生成独立 rejection lifecycle，不能
+进入生产 registry 或执行可恢复 Trash。提高 threshold 也不能挽救 v1：误判分数为
+0.360342；阈值超过该值只剩 2 个候选，样本不足，且属于查看 holdout 后调参，不能再
+把同一批当最终证据。
+
+Git 忽略的证据及摘要：
+
+```text
+predictions + local redacted model text
+data/email-experiments/2026-09-02-junk-source-disjoint-holdout-20-predictions.json
+sha256 83ff365f619f120f84c8e60b62d04d73334d60cb9fc711268fbf8fc3af723295
+
+label-only evaluation
+data/email-experiments/2026-09-02-junk-source-disjoint-holdout-20-labels.json
+sha256 3a4beaf6b08b02b2bb68386b98afd99e69f8fc6ed915e7115166befb46f6c153
+
+candidate rejection lifecycle
+data/email-experiments/models/email-tfidf-word-char-junk-v1-d0fc0d4b-rejection.json
+sha256 3be6598bc9754bfc9a57cff040d5fc292fd9a7d8f8a428ecb2c246dab9f86636
+```
+
+这 20 封从现在起可以进入下一版训练池，但不能继续作为下一版 holdout。v2 必须重新
+冻结并使用另一批 source-disjoint 邮件验证。当前没有任何类别达到真实写动作门槛，
+所以仍只开发/运行 shadow 学习链路，不开发或启用 Trash。
+
+### junk label-only v2 冻结
+
+把 v1 的 20 个全新来源 holdout 正式转入开发训练池后，v2 共有 283 封、98 个来源。
+它们不再计作验证证据。相同 word+char Logistic 在五折来源分组开发验证中为：
+
+```text
+Accuracy / Macro F1: 36.75% / 26.05%
+junk >= 0.312: 29/30
+precision: 96.67%
+positive support: 66
+recall: 43.94%
+candidate sources: 28
+maximum source share: 6.67%
+```
+
+该结果达到普通 label 的 95%研究门槛，但没有达到 archive/Trash 的风险门槛。冻结
+候选因此只能研究“增加 Junk 标签”，显式禁止 mark-read、archive、move、Trash、
+unsubscribe 和 auto-reply：
+
+```text
+model_id: email-tfidf-word-char-junk-label-v2-d94ee93b
+parent: email-tfidf-word-char-junk-v1-d0fc0d4b (rejected)
+artifact sha256: d94ee93b5ef73e3bda7af4d7d9d9544e72c3ff42cb390be4dd81c28f40d0d6c3
+metadata sha256: 1b1ef381fdaf6dc299e4155f8f70d1920452857b13f904c4ba46edddf3b9c5b0
+training: 283 messages / 98 source groups
+artifact size: 4,718,956 bytes
+single-message P95: 7.96 ms
+runtime: Python 3.12.11 / scikit-learn 1.8.0 / numpy 2.4.3 / scipy 1.17.1
+frozen threshold: 0.312
+intended action: label
+status: frozen_experiment_candidate
+auto_action_eligible: false
+```
+
+v2 仍未注册 active。下一步必须使用另一批与 98 个训练来源、此前 17 个来源去重样本
+均不重叠的新来源 holdout；只有该批也达到 label precision 门槛，才进入 label-only
+生产代码开发。即使通过，也不开放移动或 Trash。
+
+### 用户动作授权与 junk label-only v2 拒绝
+
+用户现已授权后续高置信度邮件的标签、归档、移动和删除动作。删除在当前方案中固定为
+可恢复的 move-to-Trash；永久删除、EXPUNGE 和清空垃圾箱不在授权范围。用户同时明确
+禁止回复邮件，因此 SMTP 和 `auto_reply` 保持关闭。该授权只是允许在模型分别达到
+动作门槛后执行，不能替代 precision、样本数、版本冻结和 provider readback。
+
+v2 冻结提交 `6b0d63d8` 后，先以 seed `2026090216` 从最近 2,000 个 UID 随机读取
+221 个 header，得到 30 个与已有 115 个来源 digest 均不重叠的新来源，每个来源一封。
+冻结的 0.312 阈值命中 5 封，人工保守标注均为 junk；30 封整体 top-1 为 21/30，
+junk positive support 为 14，阈值召回 5/14。5 个候选不足以跨过至少 20 个候选的
+证据门槛，因此没有启用标签。
+
+随后保持模型和阈值不变，以 seed `2026090217` 在同一最近 2,000 UID 池中继续随机
+遍历未知来源。读取 636 个 header 和 73 个互不重复的新来源正文后，取得 15 个额外
+阈值命中者。按 `ceo-mail-review` 的保守边界标注为 `junk=12`、`important=2`、
+`work=1`，precision 为 12/15。三个误判分别是可能的收购/M&A 接洽、IITM 研究者的
+免费数据评估提案以及 PSG Equity 的投资接洽；这些邮件即使形式像冷邮件，也不能被
+自动标成 Junk。
+
+两批合计 20 个新来源候选，17 个为 junk，最终 precision 85%，低于 label-only 的
+95%门槛。v2 因而被拒绝，不能进入 production registry；标签、移动、Trash 等全部
+mailbox effect 仍关闭。本轮共标注 45 个新来源；候选定向续样只用于 precision，不能
+与首批随机 30 封混合计算 recall。
+
+```text
+random 30 predictions sha256:
+c993ea78c64b13fb664f741f505ca77dad525f1497eee0dab2975fbc62be3781
+
+random 30 labels sha256:
+ca0364ca9d424c1dc480b0bf61a25c9748ea2fc595099911a9432f982cb8b86f
+
+candidate 15 predictions sha256:
+f7a6044b5682d92f9968f9462c414f0c573874136c36216b20ebc4933b99b7a8
+
+candidate 15 labels sha256:
+7b5f1d290a52a7d139ad86642d1410c38fc138f3817e5c6bf0fae0bf0f713575
+
+v2 rejection lifecycle sha256:
+70ac4562b9f1f7a97f8cc15cc8c3cfe1cd8f4ab7a73b7ecc33a0fb81f13ace91
+```
+
+这 45 封现在可以作为一次主动学习增量进入下一版开发集，但不再能充当 v3 holdout。
+下一轮只允许做一次保持单分类器的 hard-example v3：重点学习“无价值推销”和“有价值
+战略/投资/研究接洽”的边界，重新做来源分组开发验证，再在冻结后使用全新来源验证。
+若仍达不到 95% label precision，就停止迭代并将自动动作范围收敛为待反馈模式。
+
+### hard-example junk label-only v3 冻结
+
+把上述 45 个新来源标签转入开发训练池后，v3 共有 328 封、143 个来源。继续使用
+同一个 word 1–2 + char-wb 3–5 TF-IDF balanced Logistic，没有增加第二个模型或规则
+分类器。五折来源分组开发验证为：
+
+```text
+Accuracy / Macro F1: 43.60% / 34.17%
+junk >= 0.324: 34/35
+precision: 97.14%
+positive support: 92
+recall: 36.96%
+candidate sources: 33
+maximum source share: 5.71%
+```
+
+相比 v2，hard examples 改善了整体分类和 junk 边界；但开发集中仍将先前的播客采访
+邀请判为 junk。达到 100% precision 时只剩 10 个候选，低于样本门槛。因此 v3 仍
+只能作为 label-only 的最后冻结候选，不能用于移动或 Trash：
+
+```text
+model_id: email-tfidf-word-char-junk-label-v3-eb1dfe4a
+parent: email-tfidf-word-char-junk-label-v2-d94ee93b (rejected)
+artifact sha256: eb1dfe4a62cbcfa71aa900450a4ebd7eeebae541cbd18a3c4b7288ca59ebd3b6
+metadata sha256: 093c10eca9d64b7993b6c24dad4e895939d56a078f8b850a05454fa09d129960
+training: 328 messages / 143 source groups
+single-message P95: 5.98 ms
+runtime: Python 3.12.11 / scikit-learn 1.8.0 / numpy 2.4.3 / scipy 1.17.1
+frozen threshold: 0.324
+intended action: label
+status: frozen_experiment_candidate
+auto_action_eligible: false
+```
+
+v3 artifact 不注册 active。提交此冻结记录后，只允许再做一次全新来源、随机候选流
+precision 验证；不能查看新样本后修改 0.324。通过 95%且满足候选数，才进入 label-only
+生产代码；失败则停止模型迭代并保持待反馈/shadow。
+
+### hard-example junk label-only v3 最终拒绝
+
+v3 冻结提交 `11f80ebc` 后，以 seed `2026090218` 在最近 2,000 UID 中继续随机遍历
+所有既有实验未见来源。读取 868 个 header 和 87 个互不重复的新来源正文后，取得 20 个
+超过冻结阈值 0.324 的候选。预测先落盘并锁定 SHA，随后才由 assistant 按保守业务价值
+边界标注；模型和阈值没有再修改。
+
+20 个候选中 16 个为 junk，3 个为 important，1 个为 work，precision 80%。四个误判是：
+
+1. 免费媒体报道邀请；
+2. 可能接入大额政府合同车辆的合作邀约；
+3. 与 Stardust 训练数据业务直接相关的 screen-recording 产品合作；
+4. Pilot 面向旧金山企业 CEO 的活动邀请。
+
+这些邮件都来自新来源，外观与批量冷推销相似，但有合理商业价值，不能自动标成 Junk。
+v3 的独立结果低于 label-only 95%门槛，已生成 rejection lifecycle；不进入 production
+registry，也不执行标签、移动、Trash、退订或其他 mailbox effect。邮箱写入、SMTP 连接
+和附件下载均为 0。
+
+```text
+v3 candidate predictions sha256:
+54fbd0e3e39c82b080095824e8b23f090b0f2c429d3b4e3448a20421d2505ce8
+
+v3 candidate labels sha256:
+0e2960748d8068e4b31bb7106091f1063b00a1d27394538d59f7700a698dacac
+
+v3 rejection lifecycle sha256:
+c3fa46827f16a97f92f428551f7a94fb68e0ce408368716b2b6254d4082570a3
+```
+
+到此停止继续用 assistant 标签循环拟合自动 Junk 动作。实验已证明 CPU 延迟和单分类器
+体积不是障碍，真正限制是用户价值边界；继续在同一邮箱反复训练/抽样会逐渐把测试集变成
+训练集，却不能证明未来新来源泛化。下一阶段只保留 readonly shadow、待反馈、版本记录和
+用户确认后的学习；所有 model-only 邮箱写动作保持关闭。生产代码和 CEO Agent 融合必须
+以这一失败结论为输入，不得把开发集 97.14%冒充上线证据。
+
+## 2026-09-03 audited v2 实施收口与开发验收
+
+audited Email unsubscribe 已在独立分支完成实现，但尚未合并或部署。核心事实为：
+
+- 确定性 `label`、`mark_read`、`archive`、`move`、`trash` 仍由 Email worker 直接执行，零 Agent/Audit run；
+- `unsubscribe` 只允许 `email_unsubscribe_audited_v2`，Consumer 生成有界操作提案，Audit 是唯一 browser-effect 执行者；
+- 旧 Consumer-direct task 只做安全迁移和终止，不再拥有可执行路径；
+- browser effect 使用独立 persistent profile；HTTP、WebSocket、redirect、popup、download、private-network 及认证/MFA/CAPTCHA/payment 边界均 fail-closed；
+- Email 回复、SMTP、附件正文读取、永久删除和 `EXPUNGE` 仍不可达；
+- model-only mailbox action 仍因真实来源验证未达门槛而关闭。
+
+主要收口提交包括：
+
+```text
+092b8296 fix: bind terminal unsubscribe lineage
+e4e7a9d0 test: cover audited email unsubscribe end to end
+30e08a36 test: close audited unsubscribe acceptance gaps
+b48b96c0 test: correct audited unsubscribe lineage assertions
+6fc8f78a feat(email): expose classifier evidence
+9393ab12 feat(email-ui): expose classifier and action evidence
+4a5715e3 fix(email): close websocket and mcp concurrency gaps
+92db276d docs: mark audited email lifecycle implemented
+209c2ad0 fix(email-ui): preserve action parameters
+b2806325 test(email): build faithful legacy migration fixtures
+4627a3ad fix(email): harden model evidence and config state
+55e5cd17 fix(email): render model count metrics faithfully
+```
+
+开发验证证据：
+
+- Email focused 后端矩阵：`901 passed, 5 warnings`；warning 均为既有 path-based model promotion deprecation；
+- 真实 Chromium browser + audited E2E：`61 passed in 68.43s`；
+- 前端完整 Vitest：`29 files, 283 passed`；
+- TypeScript `tsc --noEmit` 和 Vite production build 通过，构建 `2667 modules`；
+- model registry/learning API 使用真实 `stage -> promote/reject/fail` 生命周期验证，候选创建、激活、被替换、拒绝和失败理由分开投影；artifact digest mismatch、缺失 artifact、损坏 metadata/lifecycle 均输出逐记录 integrity evidence，不因一个坏历史记录隐藏健康模型；
+- 配置 UI 在加载和保存期间锁定编辑，拒绝空/非有限/越界阈值和空 config version，`archive`/`move`/`trash` 互斥，并保留 `label`/`move` 参数；
+- 可访问性补齐 tab/tabpanel、roving focus、方向键和 toggle state。
+
+隔离 UI 验收使用 `/private/tmp/ceo-email-ui-audit-b2806325` 中的 disposable SQLite、fixture model registry 和 loopback `127.0.0.1:8877`；没有读取生产 DB、邮箱 secret 或真实邮箱。可见浏览器逐项确认：
+
+- `已处理` 展示完整 model/config/ActionPlan ID、Consumer/Audit run、audited v2、receipt、observation digest 和最终结果页文字；
+- `待反馈` 展示 61%/4% margin、排序候选、文本预览及 `filename/mime_type/size/inline` 四项附件 metadata，不含附件正文和路径；
+- `邮件配置` 恢复 label/move 参数，终止动作互斥，清空阈值后本地显示错误且没有发出保存；
+- `学习` 展示 active/previous/candidate/rejected/failed、artifact digest 和 append-only lifecycle；浏览器发现并修复了 count metric 被误显示为百分比的问题，重构建后 `validation_sample_count=20` 等计数按整数显示。
+
+完整后端 suite 在文档状态契约更新前的实际执行结果是：
+
+```text
+10 failed, 5858 passed, 116 skipped, 40 deselected, 5 warnings
+```
+
+其中 1 项是本批次主动更新设计状态后尚未同步的 documentation contract；同步后 `tests/test_documentation_contract.py` 为 `11 passed`。剩余 9 项已用精确 node id 再次复现，全部属于分支基线中的非 Email 失败：4 项旧 Attention work-input 投影、2 项 Console Attention count、2 项 meeting signature、1 项 Settings/Attention 页面。Email focused、browser/E2E 和前端完整测试均没有失败。
+
+生产边界仍为：主 launchd 从主 checkout 运行，当前 feature branch 未部署；真实 mailbox write、SMTP 和真实 unsubscribe 均未因本次实施执行。首次真实动作仍必须另行按设计中的分阶段受控验收推进。
+
+## 2026-09-03 最终审查修复与批准
+
+上一轮独立 code review 剩余的三项问题已在提交
+`4c1591a374932c231b84e19528f7b9c4d5c562a1` 中按 TDD 修复：
+
+- Learning API 不再使用只解析结构的 `active_model_id_unverified()`；改为读取并完整验证
+  `active_manifest()`。模型、metadata、artifact、规范路径、manifest digest、artifact digest、
+  classifier 可加载性或类别协议任一不一致时，`active_model_id` 置空并输出
+  `active_manifest_invalid`，不投影伪 active 模型；
+- model inventory 先验证 metadata 内的 `model_id` 与文件身份一致，再允许投影。身份错配记录
+  保留 `metadata_invalid` integrity issue，但不序列化错误 metadata，也不会制造重复 model ID / React key；
+- 配置页以完整 `nextActions` 计算终止动作切换；`move -> archive`、`move -> trash` 或直接取消
+  `move` 都会清空尚未保存的 `moveTargetFolder`，重新选择 `move` 时不会恢复 stale 目录。
+
+最终验证对应提交对象和干净 worktree：
+
+```text
+Registry + learning API focused: 61 passed
+EmailPage focused: 18 passed
+Git-tracked Email backend: 898 passed, 5 existing deprecation warnings
+Frontend full Vitest: 29 files, 284 passed
+TypeScript tsc --noEmit: passed
+Vite production build: passed, 2667 modules transformed
+Ruff lint + format check: passed
+Audited Email E2E + isolated Chromium: 61 passed in 68.93s
+git diff --check: passed
+Independent code review: APPROVED
+```
+
+验证中曾出现两类非源码失败并已隔离：shell `tests/test_email*.py` 会误收集 Git 忽略的
+`test_email_* 2.py` 冲突副本，最终改用 `git ls-files`；大型 Python suite 与前端 suite
+并行时触发前端 5 秒超时，取消并发后全量前端 `284/284` 通过。这些误跑不计为提交回归。
+
+本轮仍未访问真实邮箱、执行真实 mailbox write、连接 SMTP、发送回复或访问外部退订站点；
+production launchd 继续运行 main checkout，而不是本 feature branch。分支可进入分阶段受控验收，
+但不能把开发/loopback 验证表述为已部署或真实邮箱验收。
+
+### 最终 launchd 契约回读
+
+运行时代码提交后按仓库契约重新启动实际 `com.ceo-agent-service.main`。本次回读为：
+
+```text
+launchd runs: 78
+supervisor PID: 48396
+actual checkout: /Users/derek/Documents/Projects/ceo-agent-service
+actual checkout SHA: dceb6b73abc42c193eb8f0612e33cce52cd8868d
+GET /healthz: HTTP 200, {"ok":true,"status":"ok"}
+Email worker: waiting_configuration / missing_model
+```
+
+该 SHA 不包含本 feature branch，故重启只证明现有 main 服务恢复健康，不证明 audited Email
+feature 已部署。生产 SQLite 只读计数仍为：1 个已启用账户；`email_messages`、
+`email_classifications`、`email_action_plans`、`email_actions`、unsubscribe claims 和 receipts
+全部为 0；production model registry 没有 `active.json`。
+
+重启后的全局状态不是 clean：Status API 为 HTTP 200，但已有非 Email backlog 仍包含
+47 failed、30 Attention 和 7 个 system-health violations。最初 2 个 DingTalk Reply task
+处于 processing；只读跟踪后其中 1 个完成，另 1 个已进入实际 Audit run `6671`，不是本分支
+创建的 Email task，也不是可由本任务安全改写的旧锁。本轮没有重试、取消、改状态或处理这些
+非 Email 业务项；因此不能据此宣称生产全局验收完成。
+
+## 2026-09-03 主分支分歧集成验证
+
+为把 audited Email feature `c6a08c9fe6a8322093de268a547f1bab392852fc`
+收敛到当时的主分支 `dceb6b73abc42c193eb8f0612e33cce52cd8868d`，在独立
+`codex/email-audited-integration-main` 工作树执行了非快进合并。冲突只出现在
+Email Store schema 版本、Email 页面/测试、Agent orchestrator 续作测试和两份进度文档。
+
+Agent 冲突最终保留两条不同契约：通用用户/操作员 feedback reopen 可以在旧的
+terminal Audit 之后审计一个已经物化的修正版；配置了 domain continuation driver 的
+Email 多步退订仍必须由 driver 用当前 receipt/effect binding 明确接受，否则
+fail-closed。两种场景均有独立回归测试。
+
+合并前主分支沙箱外聚焦复核为 `1013 passed, 11 failed, 5 skipped`；11 项均为非
+Email 基线失败。合并后的验证为：
+
+```text
+Email/Agent/Skill focused backend: 1235 passed, 5 existing deprecation warnings
+EmailPage focused: 19 passed
+Frontend full Vitest: 29 files, 286 passed
+TypeScript + Vite production build: passed, 2668 modules transformed
+Audited Email E2E + isolated Chromium: 61 passed in 69.74s
+Full backend: 10 failed, 5878 passed, 116 skipped, 40 deselected, 5 warnings
+git diff --check: passed
+```
+
+最终 10 个失败是合并前 11 个非 Email 失败的严格子集：4 个旧 Attention work-input
+投影、2 个 Console Attention count、2 个 meeting signature、1 个 Settings/Attention
+页面和 1 个 Store 异常类型断言。合并没有新增测试失败，并修复了基线中的
+`test_create_default_audit_app_expands_tilde_worker_db`。整仓 Ruff 仍会报告主分支已有的
+未使用 import、分号和未格式化文件；本次合并没有批量格式化或清理这些非 Email WIP。
+
+以上验证没有读取真实邮箱、执行真实 mailbox write、连接 SMTP、发送邮件回复或访问真实
+退订站点。生产切换仍需把验证后的集成提交移动到主 checkout、重建静态资源、重启 launchd
+并回读新 PID、health、Email worker 和现有 backlog。

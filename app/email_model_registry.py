@@ -235,6 +235,28 @@ class ModelRecord:
     status_reason: str
     artifact_path: Path
     metadata_path: Path
+    lifecycle: tuple["ModelLifecycleEvent", ...] = ()
+
+
+@dataclass(frozen=True)
+class ModelLifecycleEvent:
+    event_id: str
+    model_id: str
+    status: ModelStatus
+    reason: str
+    occurred_at: str
+
+
+@dataclass(frozen=True)
+class ModelInventoryEntry:
+    model_id: str
+    metadata: EmailModelMetadata | None
+    status: ModelStatus | None
+    status_reason: str
+    lifecycle: tuple[ModelLifecycleEvent, ...]
+    integrity_status: Literal["verified", "corrupt"]
+    integrity_error: str
+    record: ModelRecord | None = None
 
 
 @dataclass(frozen=True)
@@ -469,10 +491,111 @@ class EmailModelRegistry:
             raise ModelRegistryError(f"invalid model metadata: {model_id}") from exc
         if metadata.model_id != model_id:
             raise ModelRegistryError("model metadata identity mismatch")
-        status, reason = self._latest_lifecycle(
-            model_id, metadata.status, metadata.promotion_reason
+        lifecycle = self._lifecycle_events(model_id)
+        if lifecycle:
+            status, reason = lifecycle[-1].status, lifecycle[-1].reason
+        else:
+            status, reason = metadata.status, metadata.promotion_reason
+        return ModelRecord(
+            metadata,
+            status,
+            reason,
+            artifact_path,
+            metadata_path,
+            lifecycle,
         )
-        return ModelRecord(metadata, status, reason, artifact_path, metadata_path)
+
+    def list_models(self) -> list[ModelRecord]:
+        """Return every verified model record or fail closed on registry damage."""
+
+        records = [self.get_model(path.stem) for path in self.metadata.glob("*.json")]
+        for record in records:
+            if _sha256_file(record.artifact_path) != record.metadata.artifact_sha256:
+                raise ModelRegistryError("model artifact digest verification failed")
+        return sorted(
+            records,
+            key=lambda record: (
+                _timestamp(record.metadata.trained_at),
+                record.metadata.model_id,
+            ),
+            reverse=True,
+        )
+
+    def list_model_inventory(self) -> list[ModelInventoryEntry]:
+        """Enumerate records without letting one damaged history item hide the rest."""
+
+        entries: list[ModelInventoryEntry] = []
+        for metadata_path in self.metadata.glob("*.json"):
+            model_id = metadata_path.stem
+            metadata: EmailModelMetadata | None = None
+            status: ModelStatus | None = None
+            status_reason = ""
+            lifecycle: tuple[ModelLifecycleEvent, ...] = ()
+            integrity_error = ""
+            record: ModelRecord | None = None
+            try:
+                payload = _read_json(metadata_path)
+                parsed_metadata = EmailModelMetadata.from_mapping(payload)
+                if parsed_metadata.model_id != model_id:
+                    raise ModelRegistryError("model metadata identity mismatch")
+                metadata = parsed_metadata
+                status = metadata.status
+                status_reason = metadata.promotion_reason
+            except (OSError, ValueError, ModelRegistryError):
+                metadata = None
+                integrity_error = "metadata_invalid"
+
+            if metadata is not None:
+                artifact_path = self._artifact_path(model_id)
+                if not artifact_path.exists():
+                    integrity_error = "artifact_missing"
+                try:
+                    lifecycle = self._lifecycle_events(model_id)
+                    if lifecycle:
+                        status = lifecycle[-1].status
+                        status_reason = lifecycle[-1].reason
+                except (OSError, ValueError, ModelRegistryError):
+                    integrity_error = "lifecycle_invalid"
+                    lifecycle = ()
+                if not integrity_error:
+                    try:
+                        if _sha256_file(artifact_path) != metadata.artifact_sha256:
+                            integrity_error = "artifact_digest_mismatch"
+                    except OSError:
+                        integrity_error = "artifact_unreadable"
+                if not integrity_error:
+                    record = ModelRecord(
+                        metadata,
+                        status or metadata.status,
+                        status_reason,
+                        artifact_path,
+                        metadata_path,
+                        lifecycle,
+                    )
+
+            entries.append(
+                ModelInventoryEntry(
+                    model_id=model_id,
+                    metadata=metadata,
+                    status=status,
+                    status_reason=status_reason,
+                    lifecycle=lifecycle,
+                    integrity_status="corrupt" if integrity_error else "verified",
+                    integrity_error=integrity_error,
+                    record=record,
+                )
+            )
+
+        return sorted(
+            entries,
+            key=lambda entry: (
+                _timestamp(entry.metadata.trained_at)
+                if entry.metadata is not None
+                else datetime.min.replace(tzinfo=timezone.utc),
+                entry.model_id,
+            ),
+            reverse=True,
+        )
 
     def load_classifier(self, model_id: str) -> CpuTfidfLogisticClassifier:
         record = self.get_model(model_id)
@@ -564,21 +687,29 @@ class EmailModelRegistry:
     def _latest_lifecycle(
         self, model_id: str, default_status: ModelStatus, default_reason: str
     ) -> tuple[ModelStatus, str]:
-        events: list[tuple[str, str, ModelStatus, str]] = []
-        for path in self.lifecycle.glob(f"{model_id}-*.json"):
-            payload = _read_json(path)
-            events.append(
-                (
-                    _text(payload.get("occurred_at"), "occurred_at"),
-                    _text(payload.get("event_id"), "event_id"),
-                    _status(payload.get("status")),
-                    _text_allow_empty(payload.get("reason", ""), "reason"),
-                )
-            )
+        events = self._lifecycle_events(model_id)
         if not events:
             return default_status, default_reason
-        _, _, status, reason = max(events)
-        return status, reason
+        return events[-1].status, events[-1].reason
+
+    def _lifecycle_events(self, model_id: str) -> tuple[ModelLifecycleEvent, ...]:
+        events: list[ModelLifecycleEvent] = []
+        for path in self.lifecycle.glob(f"{model_id}-*.json"):
+            payload = _read_json(path)
+            event = ModelLifecycleEvent(
+                event_id=_text(payload.get("event_id"), "event_id"),
+                model_id=_text(payload.get("model_id"), "model_id"),
+                status=_status(payload.get("status")),
+                reason=_text_allow_empty(payload.get("reason", ""), "reason"),
+                occurred_at=_text(payload.get("occurred_at"), "occurred_at"),
+            )
+            if event.model_id != model_id:
+                raise ModelRegistryError("model lifecycle identity mismatch")
+            _timestamp(event.occurred_at)
+            events.append(event)
+        return tuple(
+            sorted(events, key=lambda event: (event.occurred_at, event.event_id))
+        )
 
     @contextmanager
     def _locked(self) -> Iterator[None]:

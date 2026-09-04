@@ -21,6 +21,7 @@ from hashlib import sha256
 from typing import Any
 
 from app.email_classifier_contracts import EmailProviderLocator
+from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 
 
 _HEADER_FETCH = (
@@ -51,6 +52,53 @@ class ImapUidBatch:
     uidvalidity: int
     previous_uidvalidity: int | None
     messages: list[dict[str, object]]
+
+
+@dataclass(frozen=True, repr=False)
+class _EphemeralBodyHtml:
+    value: str
+
+    def __repr__(self) -> str:
+        return "<ephemeral-email-html:redacted>"
+
+
+def ephemeral_body_html(message: Mapping[str, object]) -> str:
+    """Read provider HTML that is deliberately non-serializable and transient."""
+
+    value = message.get("_ephemeralBodyHtml")
+    return value.value if isinstance(value, _EphemeralBodyHtml) else ""
+
+
+@dataclass(frozen=True, repr=False)
+class _EphemeralUnsubscribeAuthentication:
+    value: UnsubscribeAuthenticationEvidence
+
+    def __repr__(self) -> str:
+        return "<ephemeral-unsubscribe-authentication:redacted>"
+
+
+def attach_ephemeral_unsubscribe_authentication(
+    message: dict[str, object],
+    evidence: UnsubscribeAuthenticationEvidence,
+) -> None:
+    """Attach already-validated provider evidence without making it serializable."""
+
+    if not isinstance(evidence, UnsubscribeAuthenticationEvidence):
+        raise TypeError("unsubscribe authentication evidence is invalid")
+    message["_ephemeralUnsubscribeAuthentication"] = (
+        _EphemeralUnsubscribeAuthentication(evidence)
+    )
+
+
+def ephemeral_unsubscribe_authentication(
+    message: Mapping[str, object],
+) -> UnsubscribeAuthenticationEvidence | None:
+    value = message.get("_ephemeralUnsubscribeAuthentication")
+    return (
+        value.value
+        if isinstance(value, _EphemeralUnsubscribeAuthentication)
+        else None
+    )
 
 
 @dataclass(frozen=True)
@@ -134,7 +182,18 @@ class ImapReadonlyAdapter:
             )
             remaining = _MAX_TEXT_FETCH_BYTES
             body_parts: list[str] = []
-            for part in _selected_text_parts(structure):
+            html_parts: list[str] = []
+            selected_text_sections = {
+                part.section for part in _selected_text_parts(structure)
+            }
+            selected_parts = {
+                part.section: part
+                for part in (
+                    *_selected_text_parts(structure),
+                    *_selected_html_parts(structure),
+                )
+            }
+            for part in selected_parts.values():
                 if remaining <= 0:
                     break
                 status, body_data = self.session.uid(
@@ -145,13 +204,27 @@ class ImapReadonlyAdapter:
                 _require_ok(status, "IMAP text section fetch failed")
                 payload = _fetch_payload(body_data)[:remaining]
                 remaining -= len(payload)
-                if text := _decode_fetched_text(payload, part).strip():
+                decoded = _decode_fetched_content(payload, part)
+                if part.mime_type == "text/html" and decoded.strip():
+                    html_parts.append(decoded)
+                    text = (
+                        _html_to_text(decoded)
+                        if part.section in selected_text_sections
+                        else ""
+                    )
+                else:
+                    text = (
+                        decoded if part.section in selected_text_sections else ""
+                    )
+                if text := text.strip():
                     body_parts.append(text)
             body = "\n".join(body_parts).strip()
+            body_html = "\n".join(html_parts).strip()
             messages.append(
                 _normalized_message_record(
                     headers,
                     body=body,
+                    body_html=body_html,
                     attachments=_bodystructure_attachment_metadata(structure),
                     account_id=self.account_id,
                     folder=mailbox,
@@ -213,6 +286,7 @@ def parse_rfc822_message(
     return _normalized_message_record(
         parsed,
         body=_message_body(parsed),
+        body_html=_message_html_body(parsed),
         attachments=_attachment_metadata(parsed),
         account_id=account_id,
         folder=folder,
@@ -225,6 +299,7 @@ def _normalized_message_record(
     parsed: email.message.Message,
     *,
     body: str,
+    body_html: str,
     attachments: list[dict[str, object]],
     account_id: str,
     folder: str,
@@ -265,7 +340,7 @@ def _normalized_message_record(
             },
             account_id=locator.account_id,
         )
-    return {
+    result: dict[str, object] = {
         "id": stable_identity,
         "stableMessageIdentity": stable_identity,
         "accountId": locator.account_id,
@@ -289,6 +364,9 @@ def _normalized_message_record(
         "hasAttachment": bool(attachments),
         "attachments": attachments,
     }
+    if body_html:
+        result["_ephemeralBodyHtml"] = _EphemeralBodyHtml(body_html)
+    return result
 
 
 def _parse_bodystructure(data: object) -> _BodyPart:
@@ -486,6 +564,18 @@ def _text_descendants(part: _BodyPart) -> Iterable[_BodyPart]:
             yield child
 
 
+def _selected_html_parts(part: _BodyPart) -> tuple[_BodyPart, ...]:
+    if _is_bodystructure_attachment(part):
+        return ()
+    if part.children:
+        return tuple(
+            candidate
+            for child in part.children
+            for candidate in _selected_html_parts(child)
+        )
+    return (part,) if part.mime_type == "text/html" else ()
+
+
 def _bodystructure_attachment_metadata(
     part: _BodyPart,
 ) -> list[dict[str, object]]:
@@ -510,6 +600,11 @@ def _bodystructure_attachment_metadata(
 
 
 def _decode_fetched_text(payload: bytes, part: _BodyPart) -> str:
+    value = _decode_fetched_content(payload, part)
+    return _html_to_text(value) if part.mime_type == "text/html" else value
+
+
+def _decode_fetched_content(payload: bytes, part: _BodyPart) -> str:
     decoded = payload
     if part.transfer_encoding == "base64":
         compact = b"".join(payload.split())
@@ -522,8 +617,6 @@ def _decode_fetched_text(payload: bytes, part: _BodyPart) -> str:
         decoded = quopri.decodestring(payload)
     value = decoded.decode(part.charset or "utf-8", errors="replace")
     value = value.replace("\r\n", "\n").replace("\r", "\n")
-    if part.mime_type == "text/html":
-        return _html_to_text(value)
     return value
 
 
@@ -555,6 +648,28 @@ def _message_body(message: email.message.Message) -> str:
         return ""
     return "\n".join(
         text for child in children if (text := _message_body(child).strip())
+    ).strip()
+
+
+def _message_html_body(message: email.message.Message) -> str:
+    if _is_attachment(message):
+        return ""
+    if not message.is_multipart():
+        return (
+            _decode_part(message)
+            if message.get_content_type().lower() == "text/html"
+            else ""
+        )
+    children = list(message.iter_parts())
+    if message.get_content_subtype().lower() == "alternative":
+        for child in children:
+            if child.get_content_type().lower() == "text/html":
+                return _message_html_body(child).strip()
+        return ""
+    return "\n".join(
+        html
+        for child in children
+        if (html := _message_html_body(child).strip())
     ).strip()
 
 

@@ -6,13 +6,17 @@ from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 import json
+import math
 import re
+from collections.abc import Mapping as MappingABC, Sequence
+from types import MappingProxyType
 from typing import Literal, Mapping
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_serializer,
     field_validator,
     model_validator,
 )
@@ -62,28 +66,29 @@ class EmailClassificationStatus(StrEnum):
     PROCESSED = "processed"
 
 
-class _FrozenDict(dict):
-    """A JSON-serializable dictionary that rejects mutation after construction."""
-
-    @staticmethod
-    def _immutable(*args: object, **kwargs: object) -> None:
-        raise TypeError("immutable mapping")
-
-    __setitem__ = _immutable
-    __delitem__ = _immutable
-    __ior__ = _immutable
-    clear = _immutable
-    pop = _immutable
-    popitem = _immutable
-    setdefault = _immutable
-    update = _immutable
-
-
-def _freeze(value: object) -> object:
-    if isinstance(value, dict):
-        return _FrozenDict({key: _freeze(item) for key, item in value.items()})
+def _freeze_json_value(value: object) -> object:
+    if value is None or isinstance(value, str | bool | int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("authorization parameters must contain finite JSON values")
+        return value
+    if isinstance(value, MappingABC):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("authorization parameters require JSON string keys")
+        return MappingProxyType(
+            {key: _freeze_json_value(item) for key, item in value.items()}
+        )
     if isinstance(value, list | tuple):
-        return tuple(_freeze(item) for item in value)
+        return tuple(_freeze_json_value(item) for item in value)
+    raise ValueError("authorization parameters must contain only JSON-domain values")
+
+
+def _serialize_json_value(value: object) -> object:
+    if isinstance(value, MappingABC):
+        return {str(key): _serialize_json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_serialize_json_value(item) for item in value]
     return value
 
 
@@ -142,10 +147,7 @@ class EmailProviderLocator(BaseModel):
     def stable_message_identity(self) -> str:
         if self.rfc_message_id is not None:
             return f"{self.account_id}:message-id:{self.rfc_message_id}"
-        return (
-            f"{self.account_id}:imap:{self.folder}:"
-            f"{self.uidvalidity}:{self.uid}"
-        )
+        return f"{self.account_id}:imap:{self.folder}:{self.uidvalidity}:{self.uid}"
 
 
 class EmailAttachmentMetadata(BaseModel):
@@ -157,6 +159,64 @@ class EmailAttachmentMetadata(BaseModel):
     mime_type: str
     size_bytes: int = Field(ge=0)
     inline: bool
+
+
+AuthorizationSource = Literal["model_eligibility", "user_confirmation"]
+AuthorizationSnapshotFormat = Literal[
+    "authorization_snapshot_v2",
+    "legacy_unavailable_v1",
+]
+
+
+class EmailActionAuthorization(BaseModel):
+    """One immutable configured-action authorization decision."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    action_type: EmailAction
+    parameters: Mapping[str, object] = Field(default_factory=dict)
+    authorization_source: AuthorizationSource
+    eligibility_evidence_reference: str = Field(min_length=1)
+    authorized: bool
+    ineligible_reason: str
+    source_model_id: str = Field(min_length=1)
+    config_version: str = Field(min_length=1)
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def validate_json_parameters(cls, value: object) -> object:
+        if not isinstance(value, MappingABC):
+            raise ValueError("authorization parameters must be a JSON object")
+        return _freeze_json_value(value)
+
+    @field_serializer("parameters")
+    def serialize_parameters(self, value: object) -> object:
+        return _serialize_json_value(value)
+
+    @field_validator(
+        "eligibility_evidence_reference",
+        "source_model_id",
+        "config_version",
+    )
+    @classmethod
+    def strip_required_authorization_strings(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("authorization binding values must be non-blank")
+        return value
+
+    @model_validator(mode="after")
+    def validate_authorization(self) -> "EmailActionAuthorization":
+        reason = self.ineligible_reason.strip()
+        if self.authorized and reason:
+            raise ValueError("authorized action cannot have an ineligible reason")
+        if not self.authorized and not reason:
+            raise ValueError("unauthorized action requires an ineligible reason")
+        if self.action_type is EmailAction.AUTO_REPLY and self.authorized:
+            raise ValueError("auto_reply authorization is disabled")
+        object.__setattr__(self, "ineligible_reason", reason)
+        object.__setattr__(self, "parameters", _freeze_json_value(self.parameters))
+        return self
 
 
 def _action_plan_identity(
@@ -172,26 +232,41 @@ def _action_plan_identity(
     actions: tuple[EmailAction, ...],
     action_parameters: Mapping[EmailAction, Mapping[str, object]],
     created_at: datetime,
+    authorization_snapshot_format: AuthorizationSnapshotFormat = (
+        "legacy_unavailable_v1"
+    ),
+    action_authorizations: Sequence[EmailActionAuthorization] = (),
 ) -> str:
     """Identify the complete immutable plan snapshot, including creation time."""
 
-    snapshot = json.dumps(
-        {
-            "action_plan_version": action_plan_version,
-            "classification_id": classification_id,
-            "account_id": account_id,
-            "category": category.value,
-            "classification_source": classification_source,
-            "confidence": confidence,
-            "model_id": model_id,
-            "config_version": config_version,
-            "actions": [action.value for action in actions],
-            "action_parameters": {
-                action.value: dict(parameters)
-                for action, parameters in action_parameters.items()
-            },
-            "created_at": created_at.isoformat(),
+    snapshot_value: dict[str, object] = {
+        "action_plan_version": action_plan_version,
+        "classification_id": classification_id,
+        "account_id": account_id,
+        "category": category.value,
+        "classification_source": classification_source,
+        "confidence": confidence,
+        "model_id": model_id,
+        "config_version": config_version,
+        "actions": [action.value for action in actions],
+        "action_parameters": {
+            action.value: dict(parameters)
+            for action, parameters in action_parameters.items()
         },
+        "created_at": created_at.isoformat(),
+    }
+    if authorization_snapshot_format == "authorization_snapshot_v2":
+        snapshot_value.update(
+            {
+                "authorization_snapshot_format": authorization_snapshot_format,
+                "action_authorizations": [
+                    authorization.model_dump(mode="json")
+                    for authorization in action_authorizations
+                ],
+            }
+        )
+    snapshot = json.dumps(
+        snapshot_value,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -214,10 +289,28 @@ class EmailActionPlan(BaseModel):
     model_id: str = Field(min_length=1)
     config_version: str = Field(min_length=1)
     actions: tuple[EmailAction, ...] = ()
-    action_parameters: dict[EmailAction, dict[str, object]] = Field(
+    action_parameters: Mapping[EmailAction, Mapping[str, object]] = Field(
         default_factory=dict
     )
+    authorization_snapshot_format: AuthorizationSnapshotFormat = "legacy_unavailable_v1"
+    action_authorizations: tuple[EmailActionAuthorization, ...] = ()
     created_at: datetime
+
+    @field_validator("action_parameters", mode="before")
+    @classmethod
+    def validate_action_parameters_json(cls, value: object) -> object:
+        if not isinstance(value, MappingABC):
+            raise ValueError("action parameters must be a JSON object")
+        return _freeze_json_value(value)
+
+    @field_serializer("action_parameters")
+    def serialize_action_parameters(self, value: object, info: object) -> object:
+        assert isinstance(value, MappingABC)
+        json_mode = getattr(info, "mode", "python") == "json"
+        return {
+            (str(action) if json_mode else action): _serialize_json_value(parameters)
+            for action, parameters in value.items()
+        }
 
     @field_validator("action_plan_id", "account_id", "model_id", "config_version")
     @classmethod
@@ -234,7 +327,9 @@ class EmailActionPlan(BaseModel):
 
         unexpected_parameters = set(self.action_parameters) - set(self.actions)
         if unexpected_parameters:
-            raise ValueError("action parameters contain an action that is not configured")
+            raise ValueError(
+                "action parameters contain an action that is not configured"
+            )
 
         terminal_actions = {
             EmailAction.ARCHIVE,
@@ -243,6 +338,51 @@ class EmailActionPlan(BaseModel):
         }
         if len(set(self.actions) & terminal_actions) > 1:
             raise ValueError("archive, move, and trash are mutually exclusive")
+
+        if self.authorization_snapshot_format == "legacy_unavailable_v1":
+            if self.action_authorizations:
+                raise ValueError(
+                    "legacy ActionPlan cannot contain authorization evidence"
+                )
+        else:
+            configured_actions = tuple(
+                authorization.action_type
+                for authorization in self.action_authorizations
+            )
+            if len(configured_actions) != len(set(configured_actions)):
+                raise ValueError("configured action authorizations must be unique")
+            authorized_actions = tuple(
+                authorization.action_type
+                for authorization in self.action_authorizations
+                if authorization.authorized
+            )
+            if self.actions != authorized_actions:
+                raise ValueError(
+                    "ActionPlan actions must equal authorized snapshot actions"
+                )
+            for authorization in self.action_authorizations:
+                if (
+                    authorization.authorized
+                    and authorization.authorization_source == "model_eligibility"
+                    and authorization.source_model_id != self.model_id
+                ):
+                    raise ValueError(
+                        "action authorization model must match ActionPlan model"
+                    )
+                if authorization.config_version != self.config_version:
+                    raise ValueError(
+                        "action authorization config must match ActionPlan config"
+                    )
+                if (
+                    authorization.authorized
+                    and authorization.parameters
+                    != _freeze_json_value(
+                        self.action_parameters.get(authorization.action_type, {})
+                    )
+                ):
+                    raise ValueError(
+                        "authorized action parameters must match ActionPlan parameters"
+                    )
 
         parameter_schemas = {
             EmailAction.LABEL: {"labels"},
@@ -267,7 +407,9 @@ class EmailActionPlan(BaseModel):
             if (
                 not isinstance(labels, list | tuple)
                 or not labels
-                or any(not isinstance(label, str) or not label.strip() for label in labels)
+                or any(
+                    not isinstance(label, str) or not label.strip() for label in labels
+                )
             ):
                 raise ValueError("label action requires one or more non-blank labels")
 
@@ -297,11 +439,19 @@ class EmailActionPlan(BaseModel):
             actions=self.actions,
             action_parameters=self.action_parameters,
             created_at=self.created_at,
+            authorization_snapshot_format=self.authorization_snapshot_format,
+            action_authorizations=self.action_authorizations,
         )
         if self.action_plan_id != expected_identity:
-            raise ValueError("action plan identity does not match its immutable snapshot")
+            raise ValueError(
+                "action plan identity does not match its immutable snapshot"
+            )
 
-        object.__setattr__(self, "action_parameters", _freeze(self.action_parameters))
+        object.__setattr__(
+            self,
+            "action_parameters",
+            _freeze_json_value(self.action_parameters),
+        )
         return self
 
     @property
@@ -326,13 +476,31 @@ def build_versioned_email_action_plan(
     actions: tuple[EmailAction, ...],
     action_parameters: Mapping[EmailAction, Mapping[str, object]],
     created_at: datetime,
+    action_authorizations: Sequence[EmailActionAuthorization | Mapping[str, object]]
+    | None = None,
 ) -> EmailActionPlan:
     """Build an immutable plan whose identity covers its explicit history version."""
 
     copied_parameters = {
-        action: dict(parameters)
-        for action, parameters in action_parameters.items()
+        action: dict(parameters) for action, parameters in action_parameters.items()
     }
+    typed_authorizations = (
+        ()
+        if action_authorizations is None
+        else tuple(
+            EmailActionAuthorization.model_validate(
+                item.model_dump(mode="python")
+                if isinstance(item, EmailActionAuthorization)
+                else item
+            )
+            for item in action_authorizations
+        )
+    )
+    authorization_snapshot_format: AuthorizationSnapshotFormat = (
+        "legacy_unavailable_v1"
+        if action_authorizations is None
+        else "authorization_snapshot_v2"
+    )
     return EmailActionPlan(
         action_plan_id=_action_plan_identity(
             action_plan_version=action_plan_version,
@@ -346,6 +514,8 @@ def build_versioned_email_action_plan(
             actions=actions,
             action_parameters=copied_parameters,
             created_at=created_at,
+            authorization_snapshot_format=authorization_snapshot_format,
+            action_authorizations=typed_authorizations,
         ),
         action_plan_version=action_plan_version,
         classification_id=classification_id,
@@ -357,6 +527,8 @@ def build_versioned_email_action_plan(
         config_version=config_version,
         actions=actions,
         action_parameters=copied_parameters,
+        authorization_snapshot_format=authorization_snapshot_format,
+        action_authorizations=typed_authorizations,
         created_at=created_at,
     )
 
@@ -373,6 +545,8 @@ def build_email_action_plan(
     actions: tuple[EmailAction, ...],
     action_parameters: Mapping[EmailAction, Mapping[str, object]],
     created_at: datetime,
+    action_authorizations: Sequence[EmailActionAuthorization | Mapping[str, object]]
+    | None = None,
 ) -> EmailActionPlan:
     """Build the initial immutable ActionPlan version."""
 
@@ -388,7 +562,52 @@ def build_email_action_plan(
         actions=actions,
         action_parameters=action_parameters,
         created_at=created_at,
+        action_authorizations=action_authorizations,
     )
+
+
+def build_user_confirmation_authorizations(
+    *,
+    category: EmailCategory,
+    actions: Sequence[EmailAction],
+    action_parameters: Mapping[EmailAction, Mapping[str, object]],
+    model_id: str,
+    config_version: str,
+) -> tuple[EmailActionAuthorization, ...]:
+    """Freeze user-confirmed configured actions without model eligibility claims."""
+
+    records: list[EmailActionAuthorization] = []
+    for action in actions:
+        parameters = dict(action_parameters.get(action, {}))
+        evidence = json.dumps(
+            {
+                "authorization_source": "user_confirmation",
+                "category": category.value,
+                "action_type": action.value,
+                "parameters": parameters,
+                "model_id": model_id,
+                "config_version": config_version,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        records.append(
+            EmailActionAuthorization(
+                action_type=action,
+                parameters=parameters,
+                authorization_source="user_confirmation",
+                eligibility_evidence_reference=(
+                    "email-user-confirmation:"
+                    + sha256(evidence.encode("utf-8")).hexdigest()
+                ),
+                authorized=True,
+                ineligible_reason="",
+                source_model_id=model_id,
+                config_version=config_version,
+            )
+        )
+    return tuple(records)
 
 
 class EmailClassification(BaseModel):
@@ -442,7 +661,9 @@ class EmailClassification(BaseModel):
 
         plan = self.action_plan
         if self.classification_id != plan.classification_id:
-            raise ValueError("classification and action plan classification ids must match")
+            raise ValueError(
+                "classification and action plan classification ids must match"
+            )
         if self.provider_locator.account_id != plan.account_id:
             raise ValueError("classification and action plan accounts must match")
         if self.category != plan.category:
