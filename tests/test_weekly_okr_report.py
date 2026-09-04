@@ -1054,7 +1054,7 @@ def test_codex_agent_claims_exact_weekly_job_before_routed_execution(tmp_path):
                 parent = db.execute(
                     "select status from weekly_okr_analysis_jobs where "
                     "week_end=? and manager_user_id=? and source_digest=?",
-                    tuple(kwargs["workload_key"].split(":", 2)),
+                    tuple(kwargs["workload_key"].split(":", 3)[:3]),
                 ).fetchone()
             assert parent["status"] == "running"
             value = kwargs["parser"](
@@ -1086,6 +1086,65 @@ def test_codex_agent_claims_exact_weekly_job_before_routed_execution(tmp_path):
     with store._connect() as db:
         row = db.execute("select status from weekly_okr_analysis_jobs").fetchone()
     assert row["status"] == "completed"
+
+
+def test_codex_agent_reclaim_uses_new_runtime_generation_after_validation_failure(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "weekly-retry-generation.sqlite3")
+    manager = managers()[0]
+    source = FakeSource()
+    source_path = tmp_path / "live-retry-generation.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "managers": [
+                    {
+                        "manager": {"name": manager.name, "userId": manager.user_id},
+                        "liveOkr": source.fetch_user_okr(
+                            user_id=manager.user_id,
+                            period_label="2026 Q3",
+                        ),
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    keys = []
+
+    class Routed:
+        def execute(self, **kwargs):
+            keys.append(kwargs["workload_key"])
+            if len(keys) == 1:
+                raise RuntimeError("runtime_result_validation_retry_consumed")
+            value = kwargs["parser"](
+                json.dumps(_weekly_payload_for(manager.name), ensure_ascii=False)
+            )
+            return SimpleNamespace(value=value, session_id="weekly-session")
+
+    agent = CodexWeeklyOkrAgent(
+        workspace=tmp_path,
+        store=store,
+        routed_execution=Routed(),
+    )
+    arguments = {
+        "source_path": source_path,
+        "managers": [manager],
+        "period_label": "2026 Q3",
+        "week_start": datetime(2026, 8, 17).date(),
+        "week_end": datetime(2026, 8, 23).date(),
+    }
+
+    with pytest.raises(RuntimeError, match="validation_retry_consumed"):
+        agent.analyze(**arguments)
+
+    result = agent.analyze(**arguments)
+
+    assert result.manager_reviews[0].name == manager.name
+    assert len(keys) == 2
+    assert keys[0] != keys[1]
 
 
 def test_codex_agent_reclaims_completed_job_when_cache_artifact_is_missing(tmp_path):

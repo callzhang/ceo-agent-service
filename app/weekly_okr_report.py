@@ -436,7 +436,8 @@ class CodexWeeklyOkrAgent:
             routed = self.routed_execution.execute(
                 workload_kind="weekly_okr",
                 workload_key=(
-                    f"{week_end.isoformat()}:{manager_user_id}:{source_hash}"
+                    f"{week_end.isoformat()}:{manager_user_id}:{source_hash}:"
+                    f"{claim.job_id}:{owner}"
                 ),
                 prompt=prompt,
                 command_factory=ApprovedCodexCommandFactory.read_only_weekly_okr(
