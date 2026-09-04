@@ -6352,6 +6352,39 @@ def test_run_json_raises_dws_error_on_timeout(monkeypatch):
         DwsClient(timeout_seconds=3).run_json(["dws", "probe"])
 
 
+def test_run_json_kills_isolated_process_group_on_timeout(monkeypatch):
+    command = ["python", "headless-source.py"]
+    killed = []
+
+    class TimedOutProcess:
+        pid = 12345
+
+        def communicate(self, *, timeout):
+            raise subprocess.TimeoutExpired(command, timeout)
+
+        def wait(self):
+            return 1
+
+    def fake_popen(*args, **kwargs):
+        assert args[0] == command
+        assert kwargs["start_new_session"] is True
+        return TimedOutProcess()
+
+    monkeypatch.setattr("app.dws_client.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(
+        "app.dws_client.os.killpg",
+        lambda pid, sig: killed.append((pid, sig)),
+    )
+
+    with pytest.raises(DwsError, match="timed out"):
+        DwsClient(timeout_seconds=3, transient_retry_attempts=0).run_json(
+            command,
+            isolate_process_group=True,
+        )
+
+    assert killed == [(12345, dws_client.signal.SIGKILL)]
+
+
 def test_download_oa_process_attachment_uses_official_download_url(monkeypatch):
     calls = []
 

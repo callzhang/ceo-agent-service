@@ -1,6 +1,8 @@
+import contextlib
 import json
 import os
 import re
+import signal
 import subprocess
 import tempfile
 import threading
@@ -3403,6 +3405,7 @@ class DwsClient:
         command: list[str],
         *,
         timeout_seconds: int | None = None,
+        isolate_process_group: bool = False,
     ) -> Any:
         command_timeout_seconds = timeout_seconds or self.timeout_seconds
         remaining_retries = self.transient_retry_attempts
@@ -3415,6 +3418,7 @@ class DwsClient:
                     command,
                     timeout=command_timeout_seconds,
                     env=self._cli_environment(),
+                    isolate_process_group=isolate_process_group,
                 )
             except subprocess.TimeoutExpired as exc:
                 if automatic_retry_allowed and remaining_retries > 0:
@@ -3601,6 +3605,7 @@ class DwsClient:
         *,
         timeout: int,
         env: dict[str, str],
+        isolate_process_group: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         global _DWS_LAST_PROCESS_START_MONOTONIC
         with _DWS_PROCESS_GATE:
@@ -3616,13 +3621,38 @@ class DwsClient:
                     time.sleep(wait_seconds)
                     now = time.monotonic()
                 _DWS_LAST_PROCESS_START_MONOTONIC = now
-            return subprocess.run(
+            if not isolate_process_group:
+                return subprocess.run(
+                    command,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=timeout,
+                    env=env,
+                )
+
+            # The headless OKR source can spawn Chrome.  Give this one local
+            # command tree its own session so a timeout cannot orphan Chrome.
+            process = subprocess.Popen(
                 command,
                 text=True,
-                capture_output=True,
-                check=False,
-                timeout=timeout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
                 env=env,
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+                raise exc
+            return subprocess.CompletedProcess(
+                command,
+                process.returncode,
+                stdout,
+                stderr,
             )
 
     @staticmethod

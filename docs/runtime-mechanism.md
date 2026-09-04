@@ -166,7 +166,7 @@ receipt 和失败事实都保持不可变。
 - 重启时，未完成的 Agent turn 统一按 `failed` 重试；服务不创建 unknown 或独立状态核对队列，也不依据工具事件决定是否重放。下一次 Agent turn 按业务 Skill 读取当前外部状态，再自行判断后续动作。
 - 外部动作的 operation、target 和 provider result identifier（若 provider 返回）会保留用于去重；缺少标识属于 provider/Agent 失败，不转换为额外状态。
 - WeChat reader 由独立 launchd job 自动保持运行；worker 连续三次 IPC 超时后主动 kickstart 该 job，处理“进程仍在但 IPC 已卡住”的情况。worker 只恢复 reader 进程，不启动 WeChat 主应用，也不重放消息。
-- OKR 无头来源启动使用进程锁；锁被遗留进程占用超过有限等待时间时，该次读取明确失败，不会无限排队或阻塞后续维护循环。
+- OKR 无头来源启动使用进程锁；锁被遗留进程占用超过有限等待时间时，该次读取明确失败，不会无限排队或阻塞后续维护循环。该来源命令在独立进程组中运行，超时会终止脚本及其临时 headless Chrome 子进程，不能遗留后台浏览器。
 - 所有需要 `BEGIN IMMEDIATE` 的 Store 写路径统一经过同一个有界重试事务。短暂的 SQLite 写锁在 Store 内等待并重试；只有超过上限的持续锁才上升为服务错误。队列 claim、反馈批处理和恢复路径不得绕过这一规则。
 
 ### 应用层边界
