@@ -2,16 +2,16 @@
 
 **日期：** 2026-09-02
 
-**状态：** 用户已授权高置信度确定性邮箱处理；回复邮件保持全局关闭；模型质量门槛仍未满足
+**状态：** audited-v2 已在隔离集成分支完成开发验证，等待合并和生产回读；回复邮件保持全局关闭；模型质量门槛仍未满足
 
-**工作树：** `/Users/derek/Documents/Projects/ceo-agent-service`
-**当前生产状态：** audited Email 集成代码已并入 `main`，`dingtalk_primary` 账号和相关
-Skills 已启用；由于没有可晋升的 active model，Email worker 仍保持
-`waiting_configuration / missing_model`，没有真实邮箱分类、任务创建或邮箱写操作
+**验证工作树：** `/Users/derek/Documents/Projects/ceo-agent-service/.worktrees/email-audited-integration-main`
+**本轮受审状态：** audited Email 集成已在隔离集成分支完成测试，等待合并到 `main`，
+并等待生产 launchd 重载和 API 回读。既有账号与 Skills 配置不代表 audited-v2 已部署；
+由于没有可晋升的 active model，所有真实邮箱分类、任务创建和邮箱写操作继续关闭。
 
 ## 1. 这份方案解决什么
 
-Email 的代码集成已经覆盖多邮箱 connector、独立 Email worker、分类/反馈/训练、Email Console、确定性 provider action，以及 unsubscribe 的 Consumer-direct 例外。当前部署明确关闭邮件回复；历史 `auto_reply` contract 和审计回执仍保留用于兼容读取，但不能从 Email 配置或 worker 运行时生成。
+Email 的代码集成已经覆盖多邮箱 connector、独立 Email worker、分类/反馈/训练、Email Console、确定性 provider action，以及 `email_unsubscribe_audited_v2`。当前部署明确关闭邮件回复；历史 `auto_reply` contract 和审计回执仍保留用于兼容读取，但不能从 Email 配置或 worker 运行时生成。
 
 当前问题不再是“代码能不能跑”，而是“在分类质量不够时，哪些能力可以安全进入 CEO Agent”。截至 2026-09-02，210 封时间顺序验证仍显示 CPU 延迟充分达标，但分类质量受时间分布影响明显，不能开放任何 model-only 自动动作。
 
@@ -74,10 +74,14 @@ Email 不共享普通 task worker。一个由现有 supervisor 管理的 Email �
 | 用户仅确认分类 | 否 | 保存 feedback，进入批量学习 |
 | 配置的 label/read/archive/move/trash | 否 | direct provider action + effect record/readback；trash 仅可恢复，不永久删除 |
 | 配置的 `auto_reply` | 否，当前配置/API/worker 均禁止 | 不创建 task，不连接 SMTP；历史 contract 仅保留兼容读取 |
-| 配置的 `unsubscribe` | 是 | Email unsubscribe Consumer-direct；记录完整 observability，不进入 Audit |
+| 配置的 `unsubscribe` | 是 | `email_unsubscribe_audited_v2`：Consumer A 只提出一个绑定 task/ActionPlan 的下一步 operation；Audit Agent B 是唯一执行外部浏览器写动作的角色 |
 | 开放式分析、回复、跟进 | 分析可按明确需求创建；回复当前禁用 | 普通 `channel=email` task；附件仍只有 metadata；不发送邮件 |
 
-`unsubscribe` 是唯一跳过 Audit 的已批准例外。它仍受不可变 ActionPlan、Consumer 最终判断、可靠退订入口、幂等、独立持久浏览器 profile 和 terminal outcome 约束。
+`unsubscribe` 使用与现有 Agent 生命周期一致的审计边界：Consumer A 只提出精确 operation，
+Audit Agent B 是唯一拥有 task-bound unsubscribe 写能力的角色。需要继续网页流程时，
+receipt-bound continuation 携带已接受 operation prefix 和外部效果摘要重新进入
+Consumer → Audit；不得重放已接受步骤。该路径仍受不可变 ActionPlan、Consumer 最终判断、
+可靠退订入口、幂等、独立持久浏览器 profile 和 terminal outcome 约束。
 
 ## 4. Email 页面
 
@@ -92,13 +96,13 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 
 ## 5. 分阶段激活
 
-### 阶段 A：代码合并与动作关闭（已完成）
+### 阶段 A：隔离集成验证与动作关闭（已完成）
 
-- Email integration 代码已合并到 `main`；
-- 生产账号配置已启用，但由于没有 active model，worker 没有启动有效扫描；
+- Email integration 已在隔离集成分支完成 backend、frontend 和 loopback 验证，尚未合并到 `main`；
+- 既有账号配置不代表 audited-v2 已部署；由于没有 active model，生产 worker 不能启动有效扫描；
 - 没有创建 active model；
 - 没有执行 provider action；
-- 已完成主分支 Email 专项回归、旧库迁移检查、launchd 重启和本地健康回读。
+- 生产 launchd 重载、健康 API、Email worker 和学习 API 回读要在合并后完成。
 
 这是代码融合，不是生产能力激活。
 
@@ -191,8 +195,8 @@ model-only provider action 激活。
 
 ## 8. 等待 Derek 决定的事项
 
-代码合并、账号/Skills 启用和“动作关闭”的生产回读已经完成。本方案现在停在
-下一阶段的产品激活决策，不执行模型晋升、真实邮箱写操作或自动任务开放。需要确认：
+隔离分支开发验证已经完成，但 `main` 合并、生产 launchd 重载和 API 回读尚未完成。
+在这些证据齐备前，不执行模型晋升、真实邮箱写操作或自动任务开放。后续产品激活还需要确认：
 
 1. 是否允许使用当前唯一配置邮箱开启 readonly shadow，让邮件进入 Email 页面
    的“待反馈”；当前没有 active model，批准后仍需先生成候选模型，不能把本轮
@@ -239,16 +243,16 @@ model-only provider action 激活。
 | 分类、反馈、训练和模型版本化 | Email worker、Console 四个分区、模型 registry 及相关回归 | 已验证 |
 | 分类确认不创建 task | pipeline/action-plan boundary 测试通过 | 已验证 |
 | Email 回复全局关闭 | API、worker scan config、Email skill 和前端均拒绝/隐藏 `auto_reply` | 已实现，未启用 SMTP |
-| `unsubscribe` 使用 Consumer-direct 例外 | lifecycle、Consumer、task-bound operation 及 loopback E2E 通过 | 已验证 |
+| `unsubscribe` 使用 `email_unsubscribe_audited_v2` | Consumer 只读提案、Audit 唯一执行、receipt-bound continuation 及 loopback E2E 通过 | 已验证 |
 | 退订使用独立 headless 浏览器 profile | 34 个 loopback browser tests 通过 | 已验证 |
 | 退订 terminal result text 可追溯 | receipt、digest、步骤和 Email projection 测试通过 | 已验证 |
 | 低置信度邮件进入待反馈 | 冷启动和 threshold/eligibility fail-closed 测试通过 | 已验证 |
 | subscription 自动门槛达到 precision >= 0.95、support >= 20 | 210 封 provisional 样本中 support=15；user-confirmed support=0，时间 holdout 不稳定 | 未满足，保持关闭 |
 | user-confirmed 时间顺序 holdout | 当前尚未积累足够 user-confirmed feedback | 待实验 |
-| 主分支合并、launchd 重启和线上 readback | `main` 已包含 Email 集成；launchd 已重启，健康和学习 API 已回读 | 已完成 |
+| 主分支合并、launchd 重启和线上 readback | 隔离集成分支已验证；等待合并到 `main`，等待生产 launchd 重载和 API 回读 | 待完成 |
 | 高置信度 direct action 真实小批量验收 | 已获得外部效果授权，但当前没有合格 active model | 保持关闭，待模型门槛 |
 
-该矩阵的“已验证”只表示独立工作树中的实现和测试证据，不表示主分支已经
-合并，也不表示生产服务已经加载这些代码。当前唯一需要产品决策的动作是先否
-允许以 disabled 配置合并，并随后开启只读 shadow；在此之前所有外部邮箱写动作
-继续关闭。
+该矩阵的“已验证”只表示隔离集成分支中的实现和测试证据，不表示主分支已经
+合并，也不表示生产服务已经加载这些代码。先以 disabled 配置完成本地 `main`
+合并与生产回读；是否开启只读 shadow 仍是后续独立决策。在此之前所有外部邮箱
+写动作继续关闭。

@@ -237,3 +237,22 @@ def test_unsubscribe_spec_reports_reviewed_branch_implementation_state() -> None
     assert "the production path defined" not in unsubscribe_spec
     assert "here is Consumer-direct" not in unsubscribe_spec
     assert "still expects Audit-accepted operations" not in unsubscribe_spec
+
+
+def test_email_activation_design_reports_audited_v2_and_predeployment_state() -> None:
+    activation = _read(
+        "docs/superpowers/specs/2026-08-31-email-ceo-agent-activation-design.md"
+    )
+
+    assert "`email_unsubscribe_audited_v2`" in activation
+    assert "Consumer A 只提出" in activation
+    assert "Audit Agent B 是唯一" in activation
+    assert "receipt-bound continuation" in activation
+    assert "Consumer-direct" not in activation
+    assert "跳过 Audit" not in activation
+
+    assert "隔离集成分支" in activation
+    assert "等待合并到 `main`" in activation
+    assert "等待生产 launchd 重载和 API 回读" in activation
+    assert "Email integration 代码已合并到 `main`" not in activation
+    assert "launchd 已重启" not in activation
