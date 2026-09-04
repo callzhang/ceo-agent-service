@@ -1009,3 +1009,27 @@ Independent code review: APPROVED
 本轮仍未访问真实邮箱、执行真实 mailbox write、连接 SMTP、发送回复或访问外部退订站点；
 production launchd 继续运行 main checkout，而不是本 feature branch。分支可进入分阶段受控验收，
 但不能把开发/loopback 验证表述为已部署或真实邮箱验收。
+
+### 最终 launchd 契约回读
+
+运行时代码提交后按仓库契约重新启动实际 `com.ceo-agent-service.main`。本次回读为：
+
+```text
+launchd runs: 78
+supervisor PID: 48396
+actual checkout: /Users/derek/Documents/Projects/ceo-agent-service
+actual checkout SHA: dceb6b73abc42c193eb8f0612e33cce52cd8868d
+GET /healthz: HTTP 200, {"ok":true,"status":"ok"}
+Email worker: waiting_configuration / missing_model
+```
+
+该 SHA 不包含本 feature branch，故重启只证明现有 main 服务恢复健康，不证明 audited Email
+feature 已部署。生产 SQLite 只读计数仍为：1 个已启用账户；`email_messages`、
+`email_classifications`、`email_action_plans`、`email_actions`、unsubscribe claims 和 receipts
+全部为 0；production model registry 没有 `active.json`。
+
+重启后的全局状态不是 clean：Status API 为 HTTP 200，但已有非 Email backlog 仍包含
+47 failed、30 Attention 和 7 个 system-health violations。最初 2 个 DingTalk Reply task
+处于 processing；只读跟踪后其中 1 个完成，另 1 个已进入实际 Audit run `6671`，不是本分支
+创建的 Email task，也不是可由本任务安全改写的旧锁。本轮没有重试、取消、改状态或处理这些
+非 Email 业务项；因此不能据此宣称生产全局验收完成。
