@@ -972,3 +972,40 @@ b2806325 test(email): build faithful legacy migration fixtures
 其中 1 项是本批次主动更新设计状态后尚未同步的 documentation contract；同步后 `tests/test_documentation_contract.py` 为 `11 passed`。剩余 9 项已用精确 node id 再次复现，全部属于分支基线中的非 Email 失败：4 项旧 Attention work-input 投影、2 项 Console Attention count、2 项 meeting signature、1 项 Settings/Attention 页面。Email focused、browser/E2E 和前端完整测试均没有失败。
 
 生产边界仍为：主 launchd 从主 checkout 运行，当前 feature branch 未部署；真实 mailbox write、SMTP 和真实 unsubscribe 均未因本次实施执行。首次真实动作仍必须另行按设计中的分阶段受控验收推进。
+
+## 2026-09-03 最终审查修复与批准
+
+上一轮独立 code review 剩余的三项问题已在提交
+`4c1591a374932c231b84e19528f7b9c4d5c562a1` 中按 TDD 修复：
+
+- Learning API 不再使用只解析结构的 `active_model_id_unverified()`；改为读取并完整验证
+  `active_manifest()`。模型、metadata、artifact、规范路径、manifest digest、artifact digest、
+  classifier 可加载性或类别协议任一不一致时，`active_model_id` 置空并输出
+  `active_manifest_invalid`，不投影伪 active 模型；
+- model inventory 先验证 metadata 内的 `model_id` 与文件身份一致，再允许投影。身份错配记录
+  保留 `metadata_invalid` integrity issue，但不序列化错误 metadata，也不会制造重复 model ID / React key；
+- 配置页以完整 `nextActions` 计算终止动作切换；`move -> archive`、`move -> trash` 或直接取消
+  `move` 都会清空尚未保存的 `moveTargetFolder`，重新选择 `move` 时不会恢复 stale 目录。
+
+最终验证对应提交对象和干净 worktree：
+
+```text
+Registry + learning API focused: 61 passed
+EmailPage focused: 18 passed
+Git-tracked Email backend: 898 passed, 5 existing deprecation warnings
+Frontend full Vitest: 29 files, 284 passed
+TypeScript tsc --noEmit: passed
+Vite production build: passed, 2667 modules transformed
+Ruff lint + format check: passed
+Audited Email E2E + isolated Chromium: 61 passed in 68.93s
+git diff --check: passed
+Independent code review: APPROVED
+```
+
+验证中曾出现两类非源码失败并已隔离：shell `tests/test_email*.py` 会误收集 Git 忽略的
+`test_email_* 2.py` 冲突副本，最终改用 `git ls-files`；大型 Python suite 与前端 suite
+并行时触发前端 5 秒超时，取消并发后全量前端 `284/284` 通过。这些误跑不计为提交回归。
+
+本轮仍未访问真实邮箱、执行真实 mailbox write、连接 SMTP、发送回复或访问外部退订站点；
+production launchd 继续运行 main checkout，而不是本 feature branch。分支可进入分阶段受控验收，
+但不能把开发/loopback 验证表述为已部署或真实邮箱验收。
