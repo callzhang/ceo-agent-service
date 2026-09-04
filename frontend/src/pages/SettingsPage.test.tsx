@@ -356,13 +356,37 @@ describe("SettingsPage", () => {
 
     await user.click(await screen.findByRole("button", { name: "查看 ceo-message-triage" }));
     expect(await screen.findByRole("tab", { name: "预览" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tabpanel", { name: "预览" })).toHaveTextContent("# preview content");
+    expect(screen.getByRole("heading", { name: "preview content" })).toBeInTheDocument();
+    expect(screen.getByRole("tabpanel", { name: "预览" })).not.toHaveTextContent("# preview content");
     expect(screen.queryByRole("textbox", { name: "Skill 内容" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "编辑" }));
     expect(screen.getByRole("tab", { name: "编辑" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("textbox", { name: "Skill 内容" })).toBeInTheDocument();
     expect(screen.queryByRole("tabpanel", { name: "预览" })).not.toBeInTheDocument();
+  });
+
+  it("filters project Skills by the selected feature card", async () => {
+    const user = userEvent.setup();
+    getSkillFeatures.mockResolvedValueOnce({
+      features: [
+        { feature_id: "message_triage", name: "Message Triage", description: "处理消息", skills: ["ceo-message-triage"], enabled: true, status: "ready" },
+        { feature_id: "mail_review", name: "Mail Review", description: "处理邮件", skills: ["ceo-mail-review"], enabled: true, status: "ready" },
+      ],
+      skills: [
+        { name: "ceo-message-triage", description: "消息判断规则", referenced_by: ["message_triage"], status: "ready" },
+        { name: "ceo-mail-review", description: "邮件判断规则", referenced_by: ["mail_review"], status: "ready" },
+      ],
+    });
+    renderSettings("/settings?tab=skills");
+
+    expect(await screen.findByRole("button", { name: "查看 ceo-message-triage" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看 ceo-mail-review" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("heading", { name: "Mail Review" }));
+
+    expect(await screen.findByRole("button", { name: "查看 ceo-mail-review" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "查看 ceo-message-triage" })).not.toBeInTheDocument();
   });
 
   it("shows API validation errors without crashing and keeps an invalid project skill row visible", async () => {
