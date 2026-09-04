@@ -2382,6 +2382,27 @@ def test_build_list_all_messages_command_shape():
     ]
 
 
+def test_build_list_all_messages_command_uses_dws_managed_pagination():
+    client = DwsClient(dws_bin="dws")
+
+    command = client.build_list_all_messages_command(
+        start="2026-06-30 15:00:00",
+        end="2026-06-30 15:30:00",
+        limit=100,
+        page_all=True,
+        page_limit=3,
+        page_delay=0,
+    )
+
+    assert command[-5:] == [
+        "--page-all",
+        "--page-limit",
+        "3",
+        "--page-delay",
+        "0",
+    ]
+
+
 def test_build_send_message_by_bot_command_shape():
     client = DwsClient(dws_bin="dws", ding_robot_code="robot-code")
 
@@ -2509,6 +2530,13 @@ def test_read_robot_direct_messages_filters_configured_bot_chat(monkeypatch):
     assert messages[0].raw_payload["robot_open_dingtalk_ids"] == ["bot-open-1"]
     assert client.commands[0][:5] == ["dws", "chat", "bot", "find", "--query"]
     assert client.commands[1][:4] == ["dws", "chat", "message", "list-all"]
+    assert client.commands[1][-5:] == [
+        "--page-all",
+        "--page-limit",
+        "3",
+        "--page-delay",
+        "0",
+    ]
 
 
 def test_recall_bot_message_command_shape():

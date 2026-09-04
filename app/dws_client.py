@@ -473,8 +473,12 @@ class DwsClient:
         end: str,
         limit: int,
         cursor: str = "0",
+        *,
+        page_all: bool = False,
+        page_limit: int | None = None,
+        page_delay: int | None = None,
     ) -> list[str]:
-        return [
+        command = [
             self.dws_bin,
             "chat",
             "message",
@@ -490,6 +494,16 @@ class DwsClient:
             "--format",
             "json",
         ]
+        if not page_all:
+            return command
+        if page_limit is None or page_limit < 1:
+            raise ValueError("page_all requires a positive page_limit")
+        command.extend(["--page-all", "--page-limit", str(page_limit)])
+        if page_delay is not None:
+            if page_delay < 0:
+                raise ValueError("page_delay must not be negative")
+            command.extend(["--page-delay", str(page_delay)])
+        return command
 
     def build_read_direct_messages_since_command(
         self,
@@ -1805,6 +1819,9 @@ class DwsClient:
         end: str,
         limit: int,
         cursor: str = "0",
+        page_all: bool = False,
+        page_limit: int | None = None,
+        page_delay: int | None = None,
     ) -> dict[str, Any]:
         return self.run_json(
             self.build_list_all_messages_command(
@@ -1812,6 +1829,9 @@ class DwsClient:
                 end=end,
                 limit=limit,
                 cursor=cursor,
+                page_all=page_all,
+                page_limit=page_limit,
+                page_delay=page_delay,
             )
         )
 
@@ -2070,43 +2090,39 @@ class DwsClient:
         local_time_zone = _local_time_zone()
         end_time = datetime.now(tz=local_time_zone)
         start_time = end_time - timedelta(minutes=lookback_minutes)
-        cursor = "0"
         result: list[DingTalkMessage] = []
         seen_message_ids: set[str] = set()
-        for _ in range(max_pages):
-            payload = self.list_all_messages(
-                start=start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                end=end_time.strftime("%Y-%m-%d %H:%M:%S"),
-                limit=limit,
-                cursor=cursor,
-            )
-            for message in self.parse_messages(
-                payload,
-                conversation_title="",
-                single_chat=False,
-            ):
-                if message.open_message_id in seen_message_ids:
-                    continue
-                bot_open_ids = bot_open_ids_by_name.get(message.conversation_title)
-                if not bot_open_ids:
-                    continue
-                if not message.single_chat:
-                    continue
-                if message.sender_open_dingtalk_id in bot_open_ids:
-                    continue
-                seen_message_ids.add(message.open_message_id)
-                raw_payload = dict(message.raw_payload)
-                raw_payload["ceo_agent_source"] = "robot_direct"
-                raw_payload["robot_name"] = message.conversation_title
-                raw_payload["robot_open_dingtalk_ids"] = sorted(bot_open_ids)
-                result.append(message.model_copy(update={"raw_payload": raw_payload}))
-            payload_result = payload.get("result", {})
-            if not isinstance(payload_result, dict) or not payload_result.get("hasMore"):
-                break
-            next_cursor = payload_result.get("nextCursor")
-            if not isinstance(next_cursor, str) or not next_cursor:
-                break
-            cursor = next_cursor
+        # Let DWS retain its pagination context. Replaying a nextCursor through
+        # a new CLI process intermittently produces PARAM_ERROR even though the
+        # cursor came from the immediately preceding successful page.
+        payload = self.list_all_messages(
+            start=start_time.strftime("%Y-%m-%d %H:%M:%S"),
+            end=end_time.strftime("%Y-%m-%d %H:%M:%S"),
+            limit=limit,
+            page_all=True,
+            page_limit=max_pages,
+            page_delay=0,
+        )
+        for message in self.parse_messages(
+            payload,
+            conversation_title="",
+            single_chat=False,
+        ):
+            if message.open_message_id in seen_message_ids:
+                continue
+            bot_open_ids = bot_open_ids_by_name.get(message.conversation_title)
+            if not bot_open_ids:
+                continue
+            if not message.single_chat:
+                continue
+            if message.sender_open_dingtalk_id in bot_open_ids:
+                continue
+            seen_message_ids.add(message.open_message_id)
+            raw_payload = dict(message.raw_payload)
+            raw_payload["ceo_agent_source"] = "robot_direct"
+            raw_payload["robot_name"] = message.conversation_title
+            raw_payload["robot_open_dingtalk_ids"] = sorted(bot_open_ids)
+            result.append(message.model_copy(update={"raw_payload": raw_payload}))
         return sorted(result, key=lambda message: message.create_time)
 
     def calendar_invite_from_message(
