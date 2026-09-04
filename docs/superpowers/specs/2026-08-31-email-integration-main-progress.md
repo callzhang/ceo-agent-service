@@ -1234,3 +1234,48 @@ git diff --check: passed
 `682 passed`。最终整仓复跑发现新增 main 的 `tests/test_cli.py` fake 尚未接受生产代码新增的
 `isolate_process_group=True` 参数；测试 fixture 已补齐并显式断言该参数，相关 DWS/OKR/CLI
 复核为 `296 passed`。这项修复只更新测试，不改变 Email 或 OKR 生产行为。
+
+## 2026-09-03 本地 main 合并与 production-disabled 回读
+
+最终集成提交 `3e63e904ab8e401e181dfddf87858a6a6b6f6106` 已通过独立复审，结论为
+`APPROVED`，没有剩余 P0–P2 阻塞。该提交随后从主 checkout 的
+`1fd6b11f531b970c541543278b07d50563b8de63` 快进合并到本地 `main`；没有 push
+远端。主 checkout 中原有四个 frontend tracked WIP 和五组 untracked 内容保持原样，
+没有被暂存、覆盖或混入 Email 提交。
+
+为避免把主 checkout 的未提交 frontend WIP 编译进部署 bundle，Vite 静态资源先在干净
+集成工作树重新构建，再复制被 Git 忽略的 `app/static/workbench/` 产物到主 checkout。
+最终构建为 `2668 modules transformed`；生产页面日志实际加载
+`EmailPage-CjspBVm9.js`、`index-sXrWcd0B.js` 和对应 CSS，资源与 Email API 均返回 200。
+
+launchd 和只读生产回读为：
+
+```text
+service: com.ceo-agent-service.main
+state: running
+old supervisor PID: 71476
+new supervisor PID: 18393
+launchd runs: 82
+GET /healthz: HTTP 200, {"ok":true,"status":"ok"}
+Email worker: waiting_configuration / missing_model
+production SQLite integrity_check: ok
+Email schema version: 17
+```
+
+Email API 识别一个启用账户 `dingtalk_primary`，IMAP 和 SMTP secret 均显示 configured；
+API 不回显 secret。学习页回读 `active_model_id=null`、`candidate_model_id=null`、
+`previous_model_id=null`、模型数 0、待训练样本 0、registry issue 0。生产数据库的
+`email_messages`、`email_classifications`、`email_action_plans`、`email_actions`、
+`email_action_attempts`、`email_feedback_requests`、所有 unsubscribe claim/effect/
+continuation/step/receipt 以及 `channel=email` task 均为 0。
+
+真实浏览器逐项打开 `已处理`、`待反馈`、`邮件配置`、`学习` 四个 tab：前两者分别显示
+对应空状态；配置页显示八类别、threshold、config version 和确定性/Audit 动作边界；
+学习页显示“尚未晋升模型”、待训练样本 0 和最近训练反馈数 0。未点击保存、训练或任何
+动作按钮。
+
+本次切换没有读取或处理真实邮件，没有执行 provider write，没有连接 SMTP，没有发送
+回复，也没有访问真实退订站点。全局 Status 仍有合并前的非 Email 存量：47 failed、
+30 Attention、7 个 system-health violations、12 pending、0 processing；本任务没有重试、
+取消或改写这些业务记录。因此验收结论仅为 audited-v2 已 production-disabled 加载，
+不能表述为全局服务 clean，也不能表述为 readonly shadow 或 model-only action 已激活。

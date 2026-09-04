@@ -239,7 +239,7 @@ def test_unsubscribe_spec_reports_reviewed_branch_implementation_state() -> None
     assert "still expects Audit-accepted operations" not in unsubscribe_spec
 
 
-def test_email_activation_design_reports_audited_v2_and_predeployment_state() -> None:
+def test_email_activation_design_reports_audited_v2_production_disabled_state() -> None:
     activation = _read(
         "docs/superpowers/specs/2026-08-31-email-ceo-agent-activation-design.md"
     )
@@ -251,8 +251,9 @@ def test_email_activation_design_reports_audited_v2_and_predeployment_state() ->
     assert "Consumer-direct" not in activation
     assert "跳过 Audit" not in activation
 
-    assert "隔离集成分支" in activation
-    assert "等待合并到 `main`" in activation
-    assert "等待生产 launchd 重载和 API 回读" in activation
-    assert "Email integration 代码已合并到 `main`" not in activation
-    assert "launchd 已重启" not in activation
+    assert "已快进合并到本地 `main`" in activation
+    assert "生产 launchd 已重载" in activation
+    assert "`waiting_configuration / missing_model`" in activation
+    assert "没有执行真实邮箱写操作" in activation
+    assert "等待合并到 `main`" not in activation
+    assert "等待生产 launchd 重载和 API 回读" not in activation

@@ -2,12 +2,13 @@
 
 **日期：** 2026-09-02
 
-**状态：** audited-v2 已在隔离集成分支完成开发验证，等待合并和生产回读；回复邮件保持全局关闭；模型质量门槛仍未满足
+**状态：** audited-v2 已快进合并到本地 `main` 并以 production-disabled 状态完成回读；回复邮件保持全局关闭；模型质量门槛仍未满足
 
-**验证工作树：** `/Users/derek/Documents/Projects/ceo-agent-service/.worktrees/email-audited-integration-main`
-**本轮受审状态：** audited Email 集成已在隔离集成分支完成测试，等待合并到 `main`，
-并等待生产 launchd 重载和 API 回读。既有账号与 Skills 配置不代表 audited-v2 已部署；
-由于没有可晋升的 active model，所有真实邮箱分类、任务创建和邮箱写操作继续关闭。
+**生产工作树：** `/Users/derek/Documents/Projects/ceo-agent-service`
+**当前生产状态：** audited Email 集成提交 `3e63e904ab8e401e181dfddf87858a6a6b6f6106`
+已快进合并到本地 `main`；生产 launchd 已重载并完成 health、Email API、worker、SQLite
+和浏览器回读。Email worker 仍为 `waiting_configuration / missing_model`，没有执行真实邮箱写操作、
+SMTP 连接或真实站点退订。既有账号与 Skills 已启用，但不因此获得 model-only action 资格。
 
 ## 1. 这份方案解决什么
 
@@ -96,13 +97,14 @@ Attention 不承载正常的低置信度分类。Attention 只接邮箱连接失
 
 ## 5. 分阶段激活
 
-### 阶段 A：隔离集成验证与动作关闭（已完成）
+### 阶段 A：代码合并、生产加载与动作关闭（已完成）
 
-- Email integration 已在隔离集成分支完成 backend、frontend 和 loopback 验证，尚未合并到 `main`；
-- 既有账号配置不代表 audited-v2 已部署；由于没有 active model，生产 worker 不能启动有效扫描；
+- Email integration 已在隔离集成分支完成 backend、frontend 和 loopback 验证，并快进合并到本地 `main`；
+- 生产 launchd 已重载到新 supervisor PID，health、Email API、worker、SQLite 和浏览器页面均已回读；
+- 既有账号配置和 secret 均可由运行时识别，但由于没有 active model，worker 保持 `waiting_configuration / missing_model`；
 - 没有创建 active model；
 - 没有执行 provider action；
-- 生产 launchd 重载、健康 API、Email worker 和学习 API 回读要在合并后完成。
+- Email message、classification、ActionPlan、action、unsubscribe receipt 和 `channel=email` task 计数均为 0。
 
 这是代码融合，不是生产能力激活。
 
@@ -180,7 +182,7 @@ Consumer → Audit → effect reconciliation/readback；本次授权不包含该
 替代当前候选的模型。因此当前应进入“只读 shadow + 用户反馈”评审，而不是进入
 model-only provider action 激活。
 
-## 7. 上线前还需要的证据
+## 7. 自动动作激活前还需要的证据
 
 1. 在主分支合并后的完整 backend/frontend 回归；
 2. migration 和 rollback 演练；
@@ -195,8 +197,8 @@ model-only provider action 激活。
 
 ## 8. 等待 Derek 决定的事项
 
-隔离分支开发验证已经完成，但 `main` 合并、生产 launchd 重载和 API 回读尚未完成。
-在这些证据齐备前，不执行模型晋升、真实邮箱写操作或自动任务开放。后续产品激活还需要确认：
+隔离分支开发验证、`main` 合并、生产 launchd 重载和 production-disabled API 回读已经完成。
+这不构成模型晋升或真实邮箱动作授权；后续产品激活还需要确认：
 
 1. 是否允许使用当前唯一配置邮箱开启 readonly shadow，让邮件进入 Email 页面
    的“待反馈”；当前没有 active model，批准后仍需先生成候选模型，不能把本轮
@@ -249,10 +251,10 @@ model-only provider action 激活。
 | 低置信度邮件进入待反馈 | 冷启动和 threshold/eligibility fail-closed 测试通过 | 已验证 |
 | subscription 自动门槛达到 precision >= 0.95、support >= 20 | 210 封 provisional 样本中 support=15；user-confirmed support=0，时间 holdout 不稳定 | 未满足，保持关闭 |
 | user-confirmed 时间顺序 holdout | 当前尚未积累足够 user-confirmed feedback | 待实验 |
-| 主分支合并、launchd 重启和线上 readback | 隔离集成分支已验证；等待合并到 `main`，等待生产 launchd 重载和 API 回读 | 待完成 |
+| 主分支合并、launchd 重启和线上 readback | 本地 `main` 为 `3e63e904`；launchd PID `18393`；health、Email API、SQLite 和浏览器已回读 | 已完成，production-disabled |
 | 高置信度 direct action 真实小批量验收 | 已获得外部效果授权，但当前没有合格 active model | 保持关闭，待模型门槛 |
 
-该矩阵的“已验证”只表示隔离集成分支中的实现和测试证据，不表示主分支已经
-合并，也不表示生产服务已经加载这些代码。先以 disabled 配置完成本地 `main`
-合并与生产回读；是否开启只读 shadow 仍是后续独立决策。在此之前所有外部邮箱
-写动作继续关闭。
+该矩阵中的开发验证和 production-disabled 回读已经覆盖不同层次：前者证明实现与
+loopback 行为，后者证明本地 `main`、launchd、API、SQLite 和页面实际加载。两者都不
+证明分类质量或真实邮箱动作安全。是否开启只读 shadow 仍是后续独立决策；在此之前
+所有外部邮箱写动作继续关闭。
