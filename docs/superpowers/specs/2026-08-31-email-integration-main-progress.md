@@ -1227,3 +1227,10 @@ git diff --check: passed
 以上验证没有读取真实邮箱、执行真实 mailbox write、连接 SMTP、发送邮件回复或访问真实
 退订站点。生产切换仍需把验证后的集成提交移动到主 checkout、重建静态资源、重启 launchd
 并回读新 PID、health、Email worker 和现有 backlog。
+
+在上述验证完成后，主分支又前进到 `1fd6b11f531b970c541543278b07d50563b8de63`，
+新增 DWS process-group 隔离、OKR Chrome 超时清理和 Task Agent gate 修正。该增量无冲突合入
+最终集成分支；DWS、OKR、Task Agent、文档、Orchestrator 和 Email continuation 交叉矩阵为
+`682 passed`。最终整仓复跑发现新增 main 的 `tests/test_cli.py` fake 尚未接受生产代码新增的
+`isolate_process_group=True` 参数；测试 fixture 已补齐并显式断言该参数，相关 DWS/OKR/CLI
+复核为 `296 passed`。这项修复只更新测试，不改变 Email 或 OKR 生产行为。

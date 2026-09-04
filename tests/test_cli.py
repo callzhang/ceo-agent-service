@@ -1771,8 +1771,16 @@ def test_create_worker_wires_configured_okr_live_source(
         def __init__(self, **kwargs):
             calls.append(("init", kwargs["transient_retry_attempts"]))
 
-        def run_json(self, command, *, timeout_seconds=None):
-            calls.append(("run_json", command, timeout_seconds))
+        def run_json(
+            self,
+            command,
+            *,
+            timeout_seconds=None,
+            isolate_process_group=False,
+        ):
+            calls.append(
+                ("run_json", command, timeout_seconds, isolate_process_group)
+            )
             return {"objectives": []}
 
     monkeypatch.setenv(
@@ -1804,6 +1812,7 @@ def test_create_worker_wires_configured_okr_live_source(
                 "json",
             ],
             120,
+            True,
         ),
     ]
 
