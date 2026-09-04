@@ -8050,6 +8050,37 @@ def test_stale_processing_task_ignores_future_lease_without_recent_heartbeat(
     ).status == "failed"
 
 
+def test_stale_processing_task_keeps_recent_completed_agent_turn(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = _enqueue_universal_reply_task(store)
+    task = store.get_reply_task(task_id)
+    assert task is not None
+    run = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="active-worker",
+    ).run
+    store.complete_agent_run(
+        run.id,
+        {"outcome": "proposal", "summary": "Audit is the next turn."},
+        owner="active-worker",
+    )
+    with sqlite3.connect(store.path) as db:
+        db.execute(
+            "update reply_tasks set locked_at=datetime('now', '-11 minutes') where id=?",
+            (task.id,),
+        )
+
+    assert store.list_stale_processing_reply_tasks(600) == []
+
+
 
 
 
