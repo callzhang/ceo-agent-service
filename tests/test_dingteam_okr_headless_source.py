@@ -94,3 +94,13 @@ def test_headless_browser_uses_process_lock():
     assert "fcntl.LOCK_EX" in source
     assert "fcntl.LOCK_NB" in source
     assert "HEADLESS_LOCK_TIMEOUT_SECONDS" in source
+
+
+def test_headless_browser_force_kills_chrome_after_bounded_shutdown_wait():
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    terminate_marker = "process.terminate()"
+    timeout_marker = "except subprocess.TimeoutExpired:"
+    kill_marker = "process.kill()"
+
+    assert source.index(terminate_marker) < source.index(timeout_marker) < source.index(kill_marker)

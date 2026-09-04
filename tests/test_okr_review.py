@@ -883,10 +883,12 @@ class FakeDwsForOkr:
         self.error = error
         self.calls = []
         self.timeouts = []
+        self.isolated_process_groups = []
 
-    def run_json(self, command, *, timeout_seconds=None):
+    def run_json(self, command, *, timeout_seconds=None, isolate_process_group=False):
         self.calls.append(command)
         self.timeouts.append(timeout_seconds)
+        self.isolated_process_groups.append(isolate_process_group)
         if self.error:
             raise self.error
         return self.payload
@@ -1018,6 +1020,7 @@ def test_dws_live_okr_source_uses_configured_timeout():
     source.fetch_user_okr(user_id="user-1", period_label="2026 Q2")
 
     assert dws.timeouts == [120]
+    assert dws.isolated_process_groups == [True]
 
 
 def test_dws_live_okr_source_retries_then_reraises_source_error():

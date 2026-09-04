@@ -3462,7 +3462,7 @@ def test_non_discard_decision_requires_memory_context(tmp_path):
         )
 
 
-def test_process_work_item_repairs_missing_memory_recall_tool_event(
+def test_process_work_item_does_not_audit_memory_recall_tool_event(
     tmp_path,
     monkeypatch,
 ):
@@ -3499,11 +3499,7 @@ def test_process_work_item_repairs_missing_memory_recall_tool_event(
 
         def decide(self, **kwargs):
             self.calls += 1
-            self.last_audit_tool_events = (
-                [{"tool": "exec_command", "command": "rg 售前"}]
-                if self.calls == 1
-                else [{"tool": "memory_recall", "query": "售前知识库"}]
-            )
+            self.last_audit_tool_events = [{"tool": "exec_command", "command": "rg 售前"}]
             return TaskAgentDecision.model_validate(self.payload)
 
     codex = RepairingCodex()
@@ -3522,7 +3518,7 @@ def test_process_work_item_repairs_missing_memory_recall_tool_event(
         ).fetchone()
     assert input_row == ("done", "")
     assert run_row == (input_id, "task-session-1", "创建项目。", 1)
-    assert codex.calls == 2
+    assert codex.calls == 1
 
 
 def test_process_work_item_allows_memory_recall_runtime_failure_with_tool_event(

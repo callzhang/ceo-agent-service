@@ -57,6 +57,7 @@ class DwsLiveOkrSource:
             lambda: self.dws.run_json(
                 command,
                 timeout_seconds=self.timeout_seconds,
+                isolate_process_group=True,
             ),
             max_attempts=self.max_attempts,
             dependency="dws",

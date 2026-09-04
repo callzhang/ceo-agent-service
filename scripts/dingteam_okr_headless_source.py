@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import importlib.util
 import json
 import fcntl
@@ -92,8 +91,11 @@ def _headless_cdp_browser(playwright):
         finally:
             if process.poll() is None:
                 process.terminate()
-                with contextlib.suppress(subprocess.TimeoutExpired):
+                try:
                     process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
 
 
 @contextmanager

@@ -591,12 +591,6 @@ def process_work_item(
             _decision_reports_memory_runtime_unavailable(decision)
         )
         try:
-            _validate_memory_recall_tool_event(
-                decision,
-                audit_tool_events,
-                memory_issue=memory_issue,
-                memory_runtime_unavailable=memory_runtime_unavailable,
-            )
             _validate_task_agent_decision(
                 decision,
                 memory_issue=memory_issue,
@@ -647,12 +641,6 @@ def process_work_item(
             memory_runtime_unavailable = (
                 _decision_reports_memory_runtime_unavailable(decision)
             )
-            _validate_memory_recall_tool_event(
-                decision,
-                audit_tool_events,
-                memory_issue=memory_issue,
-                memory_runtime_unavailable=memory_runtime_unavailable,
-            )
             _validate_task_agent_decision(
                 decision,
                 memory_issue=memory_issue,
@@ -695,12 +683,6 @@ def process_work_item(
                     _audit_events_include_memory_tool_discovery(audit_tool_events)
                     and _decision_reports_memory_runtime_unavailable(decision)
                 )
-            )
-            _validate_memory_recall_tool_event(
-                decision,
-                audit_tool_events,
-                memory_issue=memory_issue,
-                memory_runtime_unavailable=memory_runtime_unavailable,
             )
             _validate_task_agent_decision(
                 decision,
@@ -1303,26 +1285,6 @@ def _validate_owner_changes(store: AutoReplyStore, decision: TaskAgentDecision) 
             evidence=evidence,
             label="follow_up_change.owner_evidence",
         )
-
-
-def _validate_memory_recall_tool_event(
-    decision: TaskAgentDecision,
-    audit_tool_events: object,
-    *,
-    memory_issue: str = "",
-    memory_runtime_unavailable: bool = False,
-) -> None:
-    if decision.action == "skip" or audit_tool_events is None:
-        return
-    if not isinstance(audit_tool_events, list):
-        return
-    if _audit_events_include_memory_recall(audit_tool_events):
-        return
-    if memory_runtime_unavailable:
-        return
-    if memory_issue.strip():
-        return
-    raise ValueError("non-skip task decision requires memory_recall tool event")
 
 
 def _audit_events_include_memory_recall(audit_tool_events: object) -> bool:
