@@ -181,6 +181,9 @@ receipt 和失败事实都保持不可变。
 不得由新代码写入，也不参与当前状态迁移。旧 spec/plan 中描述这些状态机的内容属于历史设计，
 不应作为实现依据。
 
+任务 Agent 的 `memory_recall_used` 是 Agent 给出的上下文记录，不是服务的工具调用验收条件。服务不得要求
+`memory_recall` 工具事件、session receipt 或任何特定工具名称作为推进结构化任务决策的前置条件。
+
 ## 任务类型
 
 - `okr_review`：指定人员和周期的逐 KR 评审。执行 Agent 先通过固定只读入口
