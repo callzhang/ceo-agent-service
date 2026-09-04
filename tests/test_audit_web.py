@@ -7383,6 +7383,40 @@ def test_worker_attention_excludes_pending_and_processing_work_items(
     )
 
 
+def test_worker_attention_excludes_pending_and_processing_reply_and_meeting_rows(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    reply_id = store.enqueue_reply_task(
+        conversation_id="cid-attention-pending",
+        conversation_title="Pending reply",
+        single_chat=False,
+        trigger_message_id="msg-attention-pending",
+        trigger_create_time="2026-09-04 01:00:00",
+        trigger_sender="Mina",
+        trigger_text="Queued reply.",
+    )
+    meeting_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-attention-processing",
+        title="Active meeting",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-09-04 01:00:00",
+        eligible_at="2026-09-04 01:00:00",
+        status="pending",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update meeting_alignment_jobs set status='processing' where id=?",
+            (meeting_id,),
+        )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert all(row["id"] != str(reply_id) for row in rows)
+    assert all(row["id"] != str(meeting_id) for row in rows)
+
+
 def test_worker_attention_uses_local_file_title_as_work_item_context(
     tmp_path: Path,
 ):

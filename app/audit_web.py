@@ -2674,7 +2674,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
             "coalesce(nullif(target_title, ''), nullif(final_message, ''), title, meeting_id)",
             "updated_at",
             "error",
-            ("pending", "processing", "failed"),
+            ("failed",),
         ),
         (
             "OKR",
@@ -2684,7 +2684,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
             "coalesce(nullif(trigger_text, ''), nullif(period_label, ''), conversation_title, trigger_message_id)",
             "updated_at",
             "error",
-            ("pending", "processing", "failed"),
+            ("failed",),
         ),
     ]
     rows: list[dict[str, str]] = []
@@ -2699,13 +2699,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                        coalesce(nullif(trigger_text, ''), nullif(conversation_title, ''), trigger_message_id) as summary,
                        updated_at, error
                 from reply_tasks
-                where lower(status) in ('pending','processing','failed')
+                where lower(status) = 'failed'
                 order by
-                    case lower(status)
-                        when 'failed' then 0
-                        when 'processing' then 1
-                        else 2
-                    end,
                     updated_at desc,
                     id desc
                 limit ?
@@ -2804,6 +2799,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                     }
                 )
     for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
+        if str(attempt["send_status"] or "").casefold() != "failed":
+            continue
         trigger_key = (
             attempt["channel"],
             attempt["conversation_id"],
@@ -2822,17 +2819,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                 "error": attempt["send_error"],
             }
         )
-    rows.sort(key=lambda row: (_attention_status_rank(row["status"]), row["updated_at"]), reverse=False)
+    rows.sort(key=lambda row: row["updated_at"], reverse=True)
     return rows[:limit]
-
-
-def _attention_status_rank(status: str) -> int:
-    normalized = status.strip().lower()
-    if normalized == "failed":
-        return 0
-    if normalized == "processing":
-        return 1
-    return 2
 
 
 def _sqlite_table_exists(db: sqlite3.Connection, table: str) -> bool:
