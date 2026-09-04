@@ -5387,6 +5387,43 @@ def test_settle_failed_reply_task_without_replay_rejects_delivery_receipt(
         )
 
 
+def test_handoff_failed_reply_task_without_replay_records_needs_human(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="cid-1",
+        conversation_title="Private chat",
+        single_chat=True,
+        trigger_message_id="msg-1",
+        trigger_create_time="2026-05-13 18:00:00",
+        trigger_sender="Mina",
+        trigger_text="please decide",
+        channel="dingtalk",
+    )
+    task = store.claim_reply_tasks(limit=1)[0]
+    store.fail_reply_task(
+        task.id,
+        "external document update required",
+        expected_execution_generation=task.execution_generation,
+    )
+
+    attempt_id = store.handoff_failed_reply_task_without_replay(
+        task.id,
+        reason="Updating the document requires an external write.",
+        audit_summary="Read-only reconciliation found no delivery or side effect.",
+    )
+
+    settled = store.list_reply_tasks(limit=1)[0]
+    attempt = store.get_reply_attempt(attempt_id)
+    assert settled.status == "done"
+    assert settled.recovery_code == "needs_human_without_replay"
+    assert attempt is not None
+    assert attempt.action == "needs_human"
+    assert attempt.send_status == "needs_human"
+    assert attempt.send_error == "external_action_required"
+
+
 def test_list_reply_tasks_filters_statuses_newest_first(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
