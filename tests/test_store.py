@@ -874,6 +874,29 @@ def test_weekly_okr_parent_matches_the_complete_natural_key(tmp_path: Path):
         )
 
 
+def test_weekly_okr_generation_key_matches_the_claimed_job_and_lease(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "weekly-generation-parent.sqlite3")
+    digest = "b" * 64
+    owner = "weekly-okr-lease-1"
+    claim = store.begin_weekly_okr_analysis_job(
+        week_end="2026-08-16",
+        manager_user_id="manager-1",
+        source_digest=digest,
+        owner=owner,
+    )
+
+    attempt = store.claim_runtime_operation_attempt(
+        "weekly_okr",
+        f"2026-08-16:manager-1:{digest}:{claim.job_id}:{owner}",
+        "codex_oauth",
+        "codex_cli",
+        "local_oauth",
+        "gpt-5.5",
+    )
+
+    assert attempt.workload_key.endswith(f":{claim.job_id}:{owner}")
+
+
 def test_weekly_okr_failed_job_reopens_and_completed_job_is_cache_hit(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "weekly-reopen.sqlite3")
     values = {

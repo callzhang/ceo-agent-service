@@ -5776,8 +5776,10 @@ class AutoReplyStore:
             if separator and suffix != "memory_backfill":
                 raise ValueError("task workload key has an unsupported suffix")
         elif workload_kind == "weekly_okr":
-            week_end, separator, remaining = workload_key.partition(":")
-            manager_user_id, separator_2, source_digest = remaining.partition(":")
+            parts = workload_key.split(":")
+            week_end = parts[0] if parts else ""
+            manager_user_id = parts[1] if len(parts) > 1 else ""
+            source_digest = parts[2] if len(parts) > 2 else ""
             try:
                 if datetime.fromisoformat(week_end).strftime("%Y-%m-%d") != week_end:
                     raise ValueError
@@ -5788,14 +5790,19 @@ class AutoReplyStore:
                     "weekly_okr manager_user_id must be canonical"
                 )
             if (
-                not separator
-                or not separator_2
+                len(parts) not in {3, 5}
                 or not manager_user_id.strip()
                 or not source_digest.strip()
                 or len(source_digest) != 64
                 or any(char not in "0123456789abcdef" for char in source_digest)
             ):
                 raise ValueError("weekly_okr workload key must be stable and complete")
+            if len(parts) == 5 and (
+                not parts[3].isdecimal()
+                or int(parts[3]) <= 0
+                or not parts[4].strip()
+            ):
+                raise ValueError("weekly_okr workload key has an invalid generation")
         else:
             source, separator, source_id = workload_key.partition(":")
             if (
@@ -5816,13 +5823,18 @@ class AutoReplyStore:
         db: sqlite3.Connection, workload_kind: str, workload_key: str
     ) -> bool:
         if workload_kind == "weekly_okr":
-            week_end, manager_user_id, source_digest = workload_key.split(":", 2)
-            return db.execute(
+            parts = workload_key.split(":")
+            week_end, manager_user_id, source_digest = parts[:3]
+            query = (
                 "select 1 from weekly_okr_analysis_jobs "
                 "where week_end=? and manager_user_id=? and source_digest=? "
-                "and status='running'",
-                (week_end, manager_user_id, source_digest),
-            ).fetchone() is not None
+                "and status='running'"
+            )
+            args: tuple[object, ...] = (week_end, manager_user_id, source_digest)
+            if len(parts) == 5:
+                query += " and id=? and lease_owner=?"
+                args += (int(parts[3]), parts[4])
+            return db.execute(query, args).fetchone() is not None
         if workload_kind == "structured":
             query = "select 1 from okr_review_requests where id=? and status='processing'"
             args = (int(workload_key),)
