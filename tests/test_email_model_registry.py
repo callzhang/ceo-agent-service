@@ -204,6 +204,32 @@ def test_model_inventory_reports_per_record_integrity_failures(
     assert inventory[0].integrity_error == expected_error
 
 
+def test_model_inventory_does_not_project_metadata_with_wrong_identity(
+    tmp_path: Path,
+):
+    registry = EmailModelRegistry(tmp_path / "registry")
+    first = _stage(registry, tmp_path, trained_at=TRAINED_AT)
+    second = _stage(
+        registry,
+        tmp_path,
+        suffix="-second",
+        trained_at=TRAINED_AT + timedelta(seconds=1),
+    )
+    first_record = registry.get_model(first)
+    second_record = registry.get_model(second)
+    first_record.metadata_path.write_bytes(second_record.metadata_path.read_bytes())
+
+    inventory = registry.list_model_inventory()
+    by_id = {entry.model_id: entry for entry in inventory}
+
+    assert by_id[first].integrity_status == "corrupt"
+    assert by_id[first].integrity_error == "metadata_invalid"
+    assert by_id[first].metadata is None
+    assert by_id[first].record is None
+    assert by_id[second].integrity_status == "verified"
+    assert by_id[second].metadata is not None
+
+
 def test_model_id_contains_utc_second_and_final_artifact_digest():
     assert (
         build_model_id(

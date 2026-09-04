@@ -273,15 +273,19 @@ function ConfigPanel() {
 
   const toggleAction = (action: string) => {
     const removing = selectedActions.includes(action);
-    setSelectedActions((previous) => {
-      if (removing) return previous.filter((item) => item !== action);
-      const withoutConflictingTerminal = terminalActions.has(action)
-        ? previous.filter((item) => !terminalActions.has(item))
-        : previous;
-      return [...withoutConflictingTerminal, action];
-    });
+    const nextActions = removing
+      ? selectedActions.filter((item) => item !== action)
+      : [
+          ...(terminalActions.has(action)
+            ? selectedActions.filter((item) => !terminalActions.has(item))
+            : selectedActions),
+          action,
+        ];
+    setSelectedActions(nextActions);
     if (removing && action === "label") setLabelNames("");
-    if (removing && action === "move") setMoveTargetFolder("");
+    if (selectedActions.includes("move") && !nextActions.includes("move")) {
+      setMoveTargetFolder("");
+    }
   };
 
   const save = async () => {

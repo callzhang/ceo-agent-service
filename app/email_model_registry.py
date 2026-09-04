@@ -535,12 +535,14 @@ class EmailModelRegistry:
             record: ModelRecord | None = None
             try:
                 payload = _read_json(metadata_path)
-                metadata = EmailModelMetadata.from_mapping(payload)
-                if metadata.model_id != model_id:
+                parsed_metadata = EmailModelMetadata.from_mapping(payload)
+                if parsed_metadata.model_id != model_id:
                     raise ModelRegistryError("model metadata identity mismatch")
+                metadata = parsed_metadata
                 status = metadata.status
                 status_reason = metadata.promotion_reason
             except (OSError, ValueError, ModelRegistryError):
+                metadata = None
                 integrity_error = "metadata_invalid"
 
             if metadata is not None:
@@ -705,7 +707,9 @@ class EmailModelRegistry:
                 raise ModelRegistryError("model lifecycle identity mismatch")
             _timestamp(event.occurred_at)
             events.append(event)
-        return tuple(sorted(events, key=lambda event: (event.occurred_at, event.event_id)))
+        return tuple(
+            sorted(events, key=lambda event: (event.occurred_at, event.event_id))
+        )
 
     @contextmanager
     def _locked(self) -> Iterator[None]:

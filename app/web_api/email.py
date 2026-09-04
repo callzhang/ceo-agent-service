@@ -27,8 +27,13 @@ from app.email_classifier_contracts import (
 )
 from app.email_connector_config import EmailAccountPayload, resolve_secret
 from app.email_classifier_retrain import load_retrain_state
+from app.email_model_registry import ModelRegistryError
 from app.email_pipeline import apply_human_confirmation
-from app.email_store import EmailAccountConflict, EmailClassificationConflict, EmailStore
+from app.email_store import (
+    EmailAccountConflict,
+    EmailClassificationConflict,
+    EmailStore,
+)
 from app.email_store import EmailPersistenceCorruption
 
 
@@ -172,7 +177,13 @@ def register_email_routes(
             if not isinstance(decoded, dict):
                 raise ValueError("JSON object required")
             return EmailAccountPayload.model_validate_json(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError, ValidationError, ValueError, TypeError):
+        except (
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+            ValidationError,
+            ValueError,
+            TypeError,
+        ):
             return error_response(
                 "invalid_email_account",
                 "Email account configuration is invalid",
@@ -269,7 +280,10 @@ def register_email_routes(
     @app.get("/api/console/email/accounts")
     def email_accounts():
         store = require_store()
-        return {"items": [account_response(row) for row in store.list_accounts()], "meta": meta()}
+        return {
+            "items": [account_response(row) for row in store.list_accounts()],
+            "meta": meta(),
+        }
 
     @app.post("/api/console/email/accounts")
     async def email_account_create(request: Request):
@@ -378,18 +392,25 @@ def register_email_routes(
             "diagnostics": diagnostics,
         }
 
-    def meta(*, page: int | None = None, page_size: int | None = None, total: int | None = None) -> dict[str, Any]:
+    def meta(
+        *,
+        page: int | None = None,
+        page_size: int | None = None,
+        total: int | None = None,
+    ) -> dict[str, Any]:
         result: dict[str, Any] = {
             "snapshot_at": datetime.now(timezone.utc).isoformat(timespec="seconds")
         }
         if page is not None and page_size is not None and total is not None:
-            result.update({
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "next_cursor": str(page + 1) if page * page_size < total else "",
-                "has_more": page * page_size < total,
-            })
+            result.update(
+                {
+                    "page": page,
+                    "page_size": page_size,
+                    "total": total,
+                    "next_cursor": str(page + 1) if page * page_size < total else "",
+                    "has_more": page * page_size < total,
+                }
+            )
         return result
 
     @app.get("/api/console/email/classifications")
@@ -416,16 +437,17 @@ def register_email_routes(
             limit=page_size,
             offset=(page - 1) * page_size,
         )
-        return {"items": rows, "meta": meta(page=page, page_size=page_size, total=total)}
+        return {
+            "items": rows,
+            "meta": meta(page=page, page_size=page_size, total=total),
+        }
 
     @app.get("/api/console/email/classifications/{classification_id}")
     def email_classification_detail(classification_id: int):
         email_store = require_store()
         item = email_store.get_classification(classification_id)
         if item is None:
-            return error_response(
-                "not_found", "Email classification not found", 404
-            )
+            return error_response("not_found", "Email classification not found", 404)
         return {
             "ok": True,
             "item": item,
@@ -446,7 +468,9 @@ def register_email_routes(
             feedback_request_id = payload.feedback_request_id
             expected_current_action_plan_id = payload.expected_current_action_plan_id
         except (ValueError, TypeError, ValidationError) as exc:
-            raise HTTPException(status_code=400, detail="email feedback is invalid") from exc
+            raise HTTPException(
+                status_code=400, detail="email feedback is invalid"
+            ) from exc
         learning_result = None
         application = None
         try:
@@ -455,9 +479,7 @@ def register_email_routes(
                     classification_id,
                     category,
                     feedback_request_id=feedback_request_id,
-                    expected_current_action_plan_id=(
-                        expected_current_action_plan_id
-                    ),
+                    expected_current_action_plan_id=(expected_current_action_plan_id),
                 )
                 row = None if learning_result is None else learning_result.confirmed
             else:
@@ -466,9 +488,7 @@ def register_email_routes(
                     classification_id,
                     category,
                     feedback_request_id=feedback_request_id,
-                    expected_current_action_plan_id=(
-                        expected_current_action_plan_id
-                    ),
+                    expected_current_action_plan_id=(expected_current_action_plan_id),
                     now=datetime.now(timezone.utc),
                 )
                 row = None if application is None else application.confirmed
@@ -503,9 +523,7 @@ def register_email_routes(
                 "expected_current_action_plan_id": (
                     learning_result.expected_current_action_plan_id
                 ),
-                "resulting_action_plan_id": (
-                    learning_result.resulting_action_plan_id
-                ),
+                "resulting_action_plan_id": (learning_result.resulting_action_plan_id),
                 "applied": learning_result.feedback_applied,
                 "replayed": learning_result.feedback_replayed,
             }
@@ -583,8 +601,11 @@ def register_email_routes(
         state = load_retrain_state(service.retrain_state_path)
         registry_issues: list[dict[str, str]] = []
         try:
-            active_model_id = service.registry.active_model_id_unverified()
-        except (OSError, ValueError, RuntimeError):
+            active_manifest = service.registry.active_manifest()
+            active_model_id = (
+                active_manifest.model_id if active_manifest is not None else None
+            )
+        except (OSError, ValueError, ModelRegistryError):
             active_model_id = None
             registry_issues.append(
                 {
@@ -673,7 +694,9 @@ def register_email_routes(
         try:
             payload = EmailConfigPayload.model_validate(await request.json())
         except (ValidationError, ValueError, TypeError) as exc:
-            raise HTTPException(status_code=400, detail="invalid email category config") from exc
+            raise HTTPException(
+                status_code=400, detail="invalid email category config"
+            ) from exc
         try:
             actions = tuple(EmailAction(action) for action in payload.actions)
             action_parameters = {

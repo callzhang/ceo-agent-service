@@ -21,7 +21,11 @@ from app.email_classifier_contracts import (
     build_versioned_email_action_plan,
 )
 from app.email_classifier_model import CpuTfidfLogisticClassifier
-from app.email_model_registry import EmailModelMetadata, EmailModelRegistry, build_model_id
+from app.email_model_registry import (
+    EmailModelMetadata,
+    EmailModelRegistry,
+    build_model_id,
+)
 from app.email_store import (
     EmailStore,
     email_action_identity,
@@ -374,7 +378,9 @@ def test_email_learning_keeps_healthy_models_visible_when_history_is_corrupt(
     response = TestClient(app).get("/api/console/email/learning")
 
     assert response.status_code == 200
-    by_id = {model["model_id"]: model for model in response.json()["learning"]["models"]}
+    by_id = {
+        model["model_id"]: model for model in response.json()["learning"]["models"]
+    }
     assert by_id[healthy]["integrity_status"] == "verified"
     assert by_id[corrupt]["integrity_status"] == "corrupt"
     assert response.json()["learning"]["registry_issues"] == [
@@ -384,6 +390,112 @@ def test_email_learning_keeps_healthy_models_visible_when_history_is_corrupt(
             "integrity_error": "artifact_digest_mismatch",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "unknown_model",
+        "missing_metadata",
+        "missing_artifact",
+        "manifest_path_mismatch",
+        "manifest_digest_mismatch",
+        "artifact_digest_mismatch",
+    ],
+)
+def test_email_learning_rejects_semantically_invalid_active_manifest(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    database = tmp_path / f"learning-active-{mutation}.sqlite3"
+    registry = EmailModelRegistry(tmp_path / "models")
+    trained_at = datetime(2026, 9, 2, 8, 0, tzinfo=timezone.utc)
+    model_id = _stage_learning_evidence_model(
+        registry, tmp_path, trained_at=trained_at, suffix=mutation
+    )
+    registry.promote(model_id, reason="validated")
+    record = registry.get_model(model_id)
+    manifest_path = registry.root / "active.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if mutation == "unknown_model":
+        manifest["model_id"] = "email-tfidf-lr-20260903T000000Z-deadbeef"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    elif mutation == "missing_metadata":
+        record.metadata_path.unlink()
+    elif mutation == "missing_artifact":
+        record.artifact_path.unlink()
+    elif mutation == "manifest_path_mismatch":
+        manifest["artifact"] = "artifacts/email-tfidf-lr-20260903T000000Z-deadbeef.pkl"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    elif mutation == "manifest_digest_mismatch":
+        manifest["artifact_sha256"] = "f" * 64
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    else:
+        record.artifact_path.write_bytes(b"corrupt")
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=tmp_path / "models" / "retrain-state.json",
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(database),
+        email_learning_factory=lambda: service,
+    )
+
+    response = TestClient(app).get("/api/console/email/learning")
+
+    assert response.status_code == 200
+    learning = response.json()["learning"]
+    assert learning["active_model_id"] is None
+    assert {
+        "model_id": "active-manifest",
+        "integrity_status": "corrupt",
+        "integrity_error": "active_manifest_invalid",
+    } in learning["registry_issues"]
+
+
+def test_email_learning_does_not_serialize_wrong_metadata_identity(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "learning-identity.sqlite3"
+    registry = EmailModelRegistry(tmp_path / "models")
+    trained_at = datetime(2026, 9, 2, 8, 0, tzinfo=timezone.utc)
+    first = _stage_learning_evidence_model(
+        registry, tmp_path, trained_at=trained_at, suffix="identity-first"
+    )
+    second = _stage_learning_evidence_model(
+        registry,
+        tmp_path,
+        trained_at=trained_at + timedelta(seconds=1),
+        suffix="identity-second",
+    )
+    registry.get_model(first).metadata_path.write_bytes(
+        registry.get_model(second).metadata_path.read_bytes()
+    )
+    service = SimpleNamespace(
+        registry=registry,
+        retrain_state_path=tmp_path / "models" / "retrain-state.json",
+    )
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(database),
+        email_learning_factory=lambda: service,
+    )
+
+    response = TestClient(app).get("/api/console/email/learning")
+
+    assert response.status_code == 200
+    learning = response.json()["learning"]
+    model_ids = [model["model_id"] for model in learning["models"]]
+    assert model_ids == [second]
+    assert len(model_ids) == len(set(model_ids))
+    assert {
+        "model_id": first,
+        "integrity_status": "corrupt",
+        "integrity_error": "metadata_invalid",
+    } in learning["registry_issues"]
 
 
 def test_email_classification_list_and_detail_expose_only_attachment_metadata(
@@ -1283,7 +1395,9 @@ def test_email_config_api_persists_valid_action_parameters(
     assert response.json()["item"]["action_parameters"] == action_parameters
 
 
-def test_email_config_api_rejects_auto_reply_even_with_valid_instruction(tmp_path: Path):
+def test_email_config_api_rejects_auto_reply_even_with_valid_instruction(
+    tmp_path: Path,
+):
     with _client(tmp_path) as client:
         response = client.put(
             "/api/console/email/config/important",

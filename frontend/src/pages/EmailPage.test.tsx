@@ -328,6 +328,22 @@ describe("EmailPage", () => {
     expect(trash).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("clears a move target when another terminal action removes move", async () => {
+    const user = userEvent.setup();
+    renderEmail("/email?tab=config");
+    const move = await screen.findByRole("button", { name: "move" });
+    await waitFor(() => expect(move).toBeEnabled());
+
+    await user.click(move);
+    const target = screen.getByRole("textbox", { name: "目标文件夹" });
+    await user.type(target, "Archive/Old");
+    await user.click(screen.getByRole("button", { name: "archive" }));
+    expect(screen.queryByRole("textbox", { name: "目标文件夹" })).not.toBeInTheDocument();
+    await user.click(move);
+
+    expect(screen.getByRole("textbox", { name: "目标文件夹" })).toHaveValue("");
+  });
+
   it("supports accessible tab state and keyboard navigation", async () => {
     const user = userEvent.setup();
     renderEmail("/email");
