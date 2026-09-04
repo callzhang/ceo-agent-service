@@ -354,9 +354,13 @@ describe("FeedbackPage", () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
 
+    expect(await screen.findByRole("button", { name: "同步最新反馈" })).toHaveClass("secondary-button", "feedback-sync-button");
     expect(await screen.findByRole("link", { name: "Attempt" })).toHaveAttribute("href", "/attempts/8308");
+    expect(screen.getByRole("link", { name: "Attempt" })).toHaveClass("secondary-button", "feedback-action-button");
     expect(screen.getByRole("link", { name: "Workbench task" })).toHaveAttribute("href", "/?task=task-2");
+    expect(screen.getByRole("link", { name: "Workbench task" })).toHaveClass("secondary-button", "feedback-action-button");
     expect(screen.getByRole("link", { name: "Processing batch" })).toHaveAttribute("href", "/api/console/feedback/batches/batch-2");
+    expect(screen.getByRole("link", { name: "Processing batch" })).toHaveClass("secondary-button", "feedback-action-button");
     await user.click(screen.getAllByRole("button", { name: "展开详情" }).at(-1)!);
 
     const history = screen.getByRole("list", { name: "处理历史" });
