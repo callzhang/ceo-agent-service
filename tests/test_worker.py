@@ -2069,6 +2069,38 @@ def test_consume_once_waits_for_codex_gate_before_starting_agent_run(
     assert worker.store.count_reply_tasks(status="pending") == 1
 
 
+def test_consume_once_does_not_reclaim_task_claimed_by_peer_before_agent_run(
+    tmp_path, monkeypatch
+):
+    dws = FakeDws([], {})
+    codex = FakeCodex([])
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    trigger = message("请处理审批")
+    worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content,
+        trigger_message_json=trigger.model_dump_json(),
+        channel="dingtalk",
+    )
+    [claimed] = worker.store.claim_reply_tasks(limit=1, channel="dingtalk")
+
+    assert worker.consume_once(max_tasks=1) == 0
+
+    current = worker.store.get_reply_task(claimed.id)
+    assert current is not None
+    assert current.status == "processing"
+    assert current.execution_generation == claimed.execution_generation
+    assert worker.store.list_agent_runs_for_task_generation(
+        claimed.id,
+        claimed.execution_generation,
+    ) == []
+
+
 def test_produce_once_records_list_unread_failure_without_crashing(
     tmp_path: Path, monkeypatch
 ):
@@ -6205,7 +6237,7 @@ def test_consumer_cycle_does_not_requeue_task_claimed_by_another_worker(
 
     current = worker.store.get_reply_task(orphan.id)
     assert current is not None
-    assert current.status == "pending"
+    assert current.status == "processing"
     assert current.execution_generation == orphan.execution_generation
 
 
@@ -6260,10 +6292,10 @@ def test_consume_once_does_not_recover_older_single_chat_claim(
         )
     }
     assert tasks["msg-single-1"].id == old_task.id
-    assert tasks["msg-single-1"].status == "done"
-    assert tasks["msg-single-1"].locked_at is None
-    assert tasks["msg-single-2"].status == "pending"
-    assert worker.store.count_reply_tasks(status="processing") == 0
+    assert tasks["msg-single-1"].status == "processing"
+    assert tasks["msg-single-1"].locked_at is not None
+    assert tasks["msg-single-2"].status == "done"
+    assert worker.store.count_reply_tasks(status="processing") == 1
     assert not any(
         error.kind == "reply_task_superseded" for error in worker.store.list_errors()
     )

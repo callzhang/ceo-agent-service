@@ -1594,11 +1594,12 @@ class DingTalkAutoReplyWorker:
             return 0
         self._pass_channel_results = {}
         limit = max_tasks if max_tasks is not None else 50
-        # Reclaim tasks left in ``processing`` before an agent run was
-        # materialized.  These rows have no possible external side effect and
-        # must not wait for the stale-age sweep (or remain orphaned forever).
-        self.store.recover_orphaned_processing_reply_tasks(limit=limit)
         processed_tasks = 0
+        # Pre-agent orphans are reclaimed once during service startup. Doing
+        # that unconditionally in every consumer pass lets one consumer steal
+        # a freshly claimed task from a peer before the peer materializes its
+        # first Agent run. Long-lived stalls remain covered by the stale-age
+        # recovery below.
         self._recover_stale_agent_reply_tasks()
         # Startup recovery can requeue effect-free work.  Bound repeated
         # restart/retry loops so a task cannot remain pending indefinitely.
