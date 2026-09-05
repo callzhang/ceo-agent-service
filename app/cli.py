@@ -2039,6 +2039,15 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         trigger_create_time = trigger.create_time
         conversation_title = conversation.title
         single_chat = conversation.single_chat
+    # A pending task with an error is a deferred failed generation, not an
+    # active duplicate.  Replaying the reviewed attempt must create a fresh
+    # generation so it can use repaired runtime behavior immediately.
+    manual_rerun_marker = f"manual_rerun_from_attempt:{attempt.id}"
+    force_rotation = bool(
+        task is not None
+        and task.error.strip()
+        and task.error.strip() != manual_rerun_marker
+    )
     queued_task = store.enqueue_manual_rerun_reply_task(
         conversation_id=attempt.conversation_id,
         conversation_title=conversation_title,
@@ -2051,6 +2060,7 @@ def send_attempt_command(settings: WorkerSettings, attempt_id: int) -> dict[str,
         oa_url=attempt.oa_url,
         attempt_id=attempt.id,
         channel=attempt.channel,
+        force_rotation=force_rotation,
     )
     result = {
         "attempt_id": attempt.id,

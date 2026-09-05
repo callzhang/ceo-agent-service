@@ -4020,6 +4020,49 @@ def test_send_attempt_command_dedupes_same_pending_rerun_without_direct_send(
     assert store.get_sent_reply("cid-1", "msg-1") is None
 
 
+def test_send_attempt_command_rotates_pending_task_with_previous_error(
+    monkeypatch, tmp_path
+):
+    class FakeDws:
+        def __init__(self, **kwargs):
+            raise AssertionError("send-attempt must not construct DwsClient")
+
+    monkeypatch.setattr(cli, "DwsClient", FakeDws)
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
+    store = cli.AutoReplyStore(settings.db_path)
+    store.upsert_conversation("cid-1", "Friday", False, None)
+    enqueue_trigger_task(store)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="cid-1",
+        conversation_title="Friday",
+        trigger_message_id="msg-1",
+        trigger_sender="Phina",
+        trigger_text="@Alex Chen 看一下",
+        action="send_reply",
+        sensitivity_kind="general",
+        send_status="failed",
+    )
+    first = send_attempt_command(settings, attempt_id)
+    with sqlite3.connect(settings.db_path) as db:
+        db.execute(
+            """
+            update reply_tasks
+            set error='reviewed_write_not_authorized',
+                available_at='2099-01-01 00:00:00'
+            where id=?
+            """,
+            (first["task_id"],),
+        )
+    second = send_attempt_command(settings, attempt_id)
+    updated = store.get_reply_task(int(second["task_id"]))
+
+    assert second["execution_generation"] != first["execution_generation"]
+    assert updated is not None
+    assert updated.status == "pending"
+    assert updated.error == "manual_rerun_from_attempt:" + str(attempt_id)
+    assert updated.available_at == ""
+
+
 def test_send_attempt_command_queues_existing_calendar_attempt(
     monkeypatch, tmp_path, capsys
 ):
