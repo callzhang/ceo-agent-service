@@ -400,7 +400,7 @@ def seed_consumer_job(store: AutoReplyStore, dws: ConsumerDws) -> int:
     return job.id
 
 
-def test_producer_leaves_no_calendar_match_unqueued(tmp_path):
+def test_producer_skips_no_roster_source_without_creating_needs_human(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = FakeDws(
         calendar_pages={
@@ -408,11 +408,41 @@ def test_producer_leaves_no_calendar_match_unqueued(tmp_path):
         }
     )
 
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    assert job.status == "skipped"
+    assert json.loads(job.error) == {
+        "kind": "meeting_roster",
+        "message": (
+            "calendar roster unavailable and transcript roster unavailable: "
+            "transcript roster unavailable"
+        ),
+    }
+    assert store.claim_meeting_alignment_jobs(limit=1, now=NOW.isoformat()) == []
     assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
-    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
 
 
-def test_producer_leaves_ambiguous_calendar_matches_unqueued(tmp_path):
+def test_replay_reports_transcript_source_failure_without_calendar_label(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = FakeDws(
+        calendar_pages={
+            "": {"events": [], "has_more": False, "next_cursor": ""}
+        }
+    )
+
+    results = meeting_alignment.queue_recent_meeting_alignment_replay(
+        store,
+        dws,
+        now=NOW,
+        limit=50,
+    )
+
+    assert results[0]["outcome"] == "source_unavailable"
+    assert "transcript roster unavailable" in results[0]["error"]
+
+
+def test_producer_skips_ambiguous_calendar_matches_without_creating_needs_human(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = FakeDws(
         calendar_pages={
@@ -427,8 +457,10 @@ def test_producer_leaves_ambiguous_calendar_matches_unqueued(tmp_path):
         }
     )
 
-    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
-    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    assert job.status == "skipped"
 
 
 def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
@@ -447,14 +479,19 @@ def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
             }
 
         def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
-            assert query == "Claire"
-            return [
-                DwsUserProfile(
+            profiles = {
+                "Derek": DwsUserProfile(
+                    user_id="u-derek",
+                    name="Derek",
+                    open_dingtalk_id="open-derek",
+                ),
+                "Claire": DwsUserProfile(
                     user_id="u-claire",
                     name="Claire",
                     open_dingtalk_id="open-claire",
-                )
-            ]
+                ),
+            }
+            return [profiles[query]]
 
     dws = AdHocOneToOneDws(
         calendar_pages={
@@ -472,9 +509,9 @@ def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
     assert evidence["event_id"] == "transcript:minutes-1"
     assert evidence["participants"] == [
         {
-            "name": "Derek",
-            "user_id": "u-derek",
-            "open_dingtalk_id": "",
+                "name": "Derek",
+                "user_id": "u-derek",
+                "open_dingtalk_id": "open-derek",
         },
         {
             "name": "Claire",
@@ -484,7 +521,48 @@ def test_producer_queues_ad_hoc_one_to_one_from_two_speaker_transcript(
     ]
 
 
-def test_producer_leaves_meeting_without_exactly_one_self_attendee_unqueued(tmp_path):
+def test_producer_queues_transcript_roster_for_multi_speaker_recording(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+
+    class TranscriptRosterDws(FakeDws):
+        def get_all_minutes_transcription(self, meeting_id: str) -> dict:
+            assert meeting_id == "minutes-1"
+            return {
+                "paragraphs": [
+                    {"nickName": "Derek", "paragraph": "先确认范围。"},
+                    {"nickName": "Claire", "paragraph": "我补齐调研。"},
+                    {"nickName": "外部专家", "paragraph": "我补充案例。"},
+                ]
+            }
+
+        def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
+            profiles = {
+                "Derek": DwsUserProfile(user_id="u-derek", name="Derek"),
+                "Claire": DwsUserProfile(user_id="u-claire", name="Claire"),
+            }
+            return [profiles[query]] if query in profiles else []
+
+    dws = TranscriptRosterDws(
+        calendar_pages={
+            "": {"events": [], "has_more": False, "next_cursor": ""}
+        }
+    )
+    monkeypatch.setattr(meeting_alignment, "principal_display_name", lambda: "Derek")
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    assert job.status == "pending"
+    assert json.loads(job.source_json)["calendar_evidence"]["participants"] == [
+        {"name": "Derek", "user_id": "u-derek", "open_dingtalk_id": ""},
+        {"name": "Claire", "user_id": "u-claire", "open_dingtalk_id": ""},
+        {"name": "外部专家", "user_id": "", "open_dingtalk_id": ""},
+    ]
+
+
+def test_producer_skips_missing_self_attendee_without_creating_needs_human(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     event = matching_calendar_event()
     event.attendee_details[0].is_self = False
@@ -494,8 +572,10 @@ def test_producer_leaves_meeting_without_exactly_one_self_attendee_unqueued(tmp_
         }
     )
 
-    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
-    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    assert job.status == "skipped"
 
 
 def test_producer_stores_waiting_job_before_ten_minutes(tmp_path):
@@ -594,13 +674,13 @@ def test_producer_passes_bounded_minutes_discovery_window(tmp_path):
     ]
 
 
-def test_producer_defaults_to_seven_day_discovery_window(tmp_path):
+def test_producer_defaults_to_fourteen_day_discovery_window(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = FakeDws()
 
     produce_meeting_alignment_jobs(store, dws, now=NOW)
 
-    assert dws.minutes_calls[0]["start"] == "2026-07-07T10:10:00+08:00"
+    assert dws.minutes_calls[0]["start"] == "2026-06-30T10:10:00+08:00"
     assert dws.minutes_calls[0]["end"] == "2026-07-14T10:10:00+08:00"
 
 
@@ -627,8 +707,11 @@ def test_producer_skips_recording_shorter_than_five_minutes(tmp_path):
         info={"minutes-1": meeting},
     )
 
-    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
-    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    assert job.status == "skipped"
+    assert json.loads(job.error)["kind"] == "meeting_duration"
     assert dws.calendar_calls == []
 
 
@@ -706,7 +789,7 @@ def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_p
         {
             "limit": 2,
             "cursor": "",
-            "start": "2026-07-07T10:10:00+08:00",
+            "start": "2026-06-30T10:10:00+08:00",
             "end": "2026-07-14T10:10:00+08:00",
         }
     ]
@@ -1545,8 +1628,10 @@ def test_malformed_minutes_record_does_not_prevent_later_valid_meeting(tmp_path)
         info={"minutes-bad": malformed, "minutes-1": valid},
     )
 
-    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
-    assert store.get_meeting_alignment_job_by_meeting_id("minutes-bad") is None
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 2
+    malformed_job = store.get_meeting_alignment_job_by_meeting_id("minutes-bad")
+    assert malformed_job is not None
+    assert malformed_job.status == "skipped"
     assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is not None
 
 
@@ -1560,7 +1645,7 @@ def test_malformed_minutes_record_does_not_prevent_later_valid_meeting(tmp_path)
         ("info", "name", "另一个会议"),
     ],
 )
-def test_producer_leaves_conflicting_minutes_aliases_unqueued(
+def test_producer_persists_conflicting_minutes_aliases_as_skipped(
     tmp_path, target, conflicting_alias, conflicting_value
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1578,8 +1663,15 @@ def test_producer_leaves_conflicting_minutes_aliases_unqueued(
         info={"minutes-1": info},
     )
 
-    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
-    assert store.get_meeting_alignment_job_by_meeting_id("minutes-1") is None
+    created = produce_meeting_alignment_jobs(store, dws, now=NOW)
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    if target == "list":
+        assert created == 0
+        assert job is None
+    else:
+        assert created == 1
+        assert job is not None
+        assert job.status == "skipped"
 
 
 @pytest.mark.parametrize("status", ["processing", "unknown"])
@@ -1622,7 +1714,13 @@ def test_producer_stops_on_repeated_pagination_cursor(
     dws = FakeDws()
     setattr(dws, pages_attribute, {"": initial_page, "repeat": initial_page})
 
-    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 0
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == (
+        0 if pages_attribute == "minutes_pages" else 1
+    )
+    if pages_attribute == "calendar_pages":
+        job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+        assert job is not None
+        assert job.status == "skipped"
 
 
 def test_minutes_pagination_keeps_verified_pages_when_later_cursor_fails():

@@ -9,6 +9,7 @@ from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
     MeetingSourceIncomplete,
     build_calendar_meeting_evidence,
+    build_transcript_roster_evidence,
     minutes_creator_from_list_item,
     minutes_meeting_id,
     normalize_minutes_discovery_metadata,
@@ -57,6 +58,61 @@ def test_minutes_creator_uses_explicit_flash_user_identity_only():
     assert creator.user_id == "u-a"
     assert creator.open_dingtalk_id == "open-a"
     assert minutes_creator_from_list_item(discovery_list_item()) is None
+
+
+def test_transcript_roster_evidence_accepts_current_user_and_external_speaker():
+    evidence = build_transcript_roster_evidence(
+        discovery_info(),
+        {
+            "paragraphs": [
+                {"nickName": "Derek", "paragraph": "确认范围。"},
+                {"nickName": "外部专家", "paragraph": "补充案例。"},
+            ]
+        },
+        current_user=meeting_alignment_source.MeetingParticipant(
+            name="Derek", user_id="u-derek"
+        ),
+        speakers=[
+            meeting_alignment_source.MeetingParticipant(
+                name="外部专家", user_id=""
+            )
+        ],
+    )
+
+    assert evidence.source == "transcript"
+    assert [participant.name for participant in evidence.participants] == [
+        "Derek",
+        "外部专家",
+    ]
+
+
+def test_transcript_roster_evidence_accepts_current_user_who_did_not_speak():
+    evidence = build_transcript_roster_evidence(
+        discovery_info(),
+        {
+            "paragraphs": [
+                {"nickName": "Claire", "paragraph": "我补齐调研。"},
+                {"nickName": "外部专家", "paragraph": "我补充案例。"},
+            ]
+        },
+        current_user=meeting_alignment_source.MeetingParticipant(
+            name="Derek", user_id="u-derek"
+        ),
+        speakers=[
+            meeting_alignment_source.MeetingParticipant(
+                name="Claire", user_id="u-claire"
+            ),
+            meeting_alignment_source.MeetingParticipant(
+                name="外部专家", user_id=""
+            ),
+        ],
+    )
+
+    assert [participant.name for participant in evidence.participants] == [
+        "Derek",
+        "Claire",
+        "外部专家",
+    ]
 
 
 @pytest.mark.parametrize(

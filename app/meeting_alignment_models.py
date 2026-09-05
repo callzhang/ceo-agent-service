@@ -204,6 +204,8 @@ MeetingAlignmentQueueStatus = Literal[
     "retry",
     "failed",
     "quarantined",
+    "skipped",
+    "needs_human",
 ]
 
 

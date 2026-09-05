@@ -35,7 +35,7 @@ from app.meeting_alignment_source import (
     CalendarMeetingEvidence,
     MeetingSourceIncomplete,
     build_calendar_meeting_evidence,
-    build_transcript_one_to_one_evidence,
+    build_transcript_roster_evidence,
     minutes_creator_from_list_item,
     minutes_meeting_id,
     normalize_minutes_discovery_metadata,
@@ -52,9 +52,11 @@ from app.skill_features import FeatureRegistry
 DISCOVERY_PAGE_LIMIT = 100
 DISCOVERY_PAGE_SIZE = 50
 REPLAY_PAGE_SIZE_LIMIT = 100
-DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=7)
+DEFAULT_MEETING_DISCOVERY_LOOKBACK = timedelta(days=14)
 MINIMUM_MEETING_DURATION = timedelta(minutes=5)
-TERMINAL_STATUSES = frozenset({"no_action", "sent", "failed"})
+TERMINAL_STATUSES = frozenset(
+    {"no_action", "sent", "failed", "skipped", "needs_human"}
+)
 DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
 DEFAULT_MEETING_MAX_ATTEMPTS = 3
 CALENDAR_SUMMARY_START = "【CEO 会议总结】"
@@ -143,7 +145,19 @@ def produce_meeting_alignment_jobs(
         info = dws.get_minutes_info(meeting_id)
         try:
             metadata = normalize_minutes_discovery_metadata(list_item, info)
-        except MeetingSourceIncomplete:
+        except MeetingSourceIncomplete as exc:
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=str(list_item.get("title") or ""),
+                list_item=list_item,
+                info=info,
+                status="skipped",
+                error=_error_json("meeting_metadata", str(exc)),
+                now=now,
+            )
+            if existing is None:
+                created += 1
             continue
         if metadata.meeting_id != meeting_id:
             continue
@@ -152,8 +166,39 @@ def produce_meeting_alignment_jobs(
         started_at = datetime.fromisoformat(metadata.started_at)
         ended_at = datetime.fromisoformat(metadata.ended_at)
         if started_at >= ended_at:
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=metadata.title,
+                list_item=list_item,
+                info=info,
+                status="skipped",
+                error=_error_json(
+                    "meeting_metadata", "meeting end time must be after start time"
+                ),
+                now=now,
+                ended_at=ended_at,
+            )
+            if existing is None:
+                created += 1
             continue
         if ended_at - started_at < MINIMUM_MEETING_DURATION:
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=metadata.title,
+                list_item=list_item,
+                info=info,
+                status="skipped",
+                error=_error_json(
+                    "meeting_duration",
+                    "recording is shorter than the five-minute meeting threshold",
+                ),
+                now=now,
+                ended_at=ended_at,
+            )
+            if existing is None:
+                created += 1
             continue
         if activated_at is not None and ended_at < activated_at:
             continue
@@ -176,12 +221,41 @@ def produce_meeting_alignment_jobs(
                 events,
                 current_user_id=current_user_id,
             )
-        except MeetingSourceIncomplete:
+        except MeetingSourceIncomplete as exc:
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=metadata.title,
+                list_item=list_item,
+                info=info,
+                status="skipped",
+                error=_error_json("meeting_roster", str(exc)),
+                now=now,
+                ended_at=ended_at,
+            )
+            if existing is None:
+                created += 1
             continue
         if sum(
             participant.user_id == current_user_id
             for participant in evidence.participants
         ) != 1:
+            _store_meeting_discovery_terminal_job(
+                store,
+                meeting_id=meeting_id,
+                title=metadata.title,
+                list_item=list_item,
+                info=info,
+                status="skipped",
+                error=_error_json(
+                    "meeting_roster",
+                    "meeting evidence does not identify exactly one current-user attendee",
+                ),
+                now=now,
+                ended_at=ended_at,
+            )
+            if existing is None:
+                created += 1
             continue
 
         eligible_at = ended_at + timedelta(seconds=settle_seconds)
@@ -212,6 +286,41 @@ def produce_meeting_alignment_jobs(
         if existing is None:
             created += 1
     return created
+
+
+def _store_meeting_discovery_terminal_job(
+    store: AutoReplyStore,
+    *,
+    meeting_id: str,
+    title: str,
+    list_item: dict[str, Any],
+    info: dict[str, Any],
+    status: str,
+    error: str,
+    now: datetime,
+    ended_at: datetime | None = None,
+) -> int:
+    """Persist a non-deliverable discovery result instead of silently dropping it."""
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=meeting_id,
+        title=title,
+        source_json=json.dumps(
+            {
+                "meeting_id": meeting_id,
+                "minutes_list_item": list_item,
+                "minutes_info": info,
+                "discovery_error": json.loads(error),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+        participants_json="[]",
+        ended_at=(ended_at or now).isoformat(),
+        eligible_at=(ended_at or now).isoformat(),
+        status=status,
+    )
+    store.update_meeting_alignment_job(job_id, error=error)
+    return job_id
 
 
 def queue_recent_meeting_alignment_replay(
@@ -341,8 +450,9 @@ def queue_recent_meeting_alignment_replay(
                 events,
                 current_user_id=current_user_id,
             )
-        except MeetingSourceIncomplete:
-            result["outcome"] = "calendar_not_unique"
+        except MeetingSourceIncomplete as exc:
+            result["outcome"] = "source_unavailable"
+            result["error"] = str(exc)
             results.append(result)
             continue
         if sum(
@@ -1424,50 +1534,55 @@ def _build_meeting_roster_evidence(
 ) -> CalendarMeetingEvidence:
     try:
         return build_calendar_meeting_evidence(info, events, current_user_id)
-    except MeetingSourceIncomplete as calendar_error:
+    except MeetingSourceIncomplete:
         try:
             transcription = dws.get_all_minutes_transcription(
                 minutes_meeting_id(info)
             )
-            current_user_name = principal_display_name().strip()
             speaker_names = transcript_speaker_names(transcription)
-            current_key = _canonical_name(current_user_name)
-            other_names = [
-                name
+            speakers = [
+                _resolve_transcript_speaker(dws, name, current_user_id)
                 for name in speaker_names
-                if _canonical_name(name) != current_key
             ]
-            if (
-                not current_key
-                or sum(
-                    _canonical_name(name) == current_key
-                    for name in speaker_names
-                )
-                != 1
-                or len(speaker_names) != 2
-                or len(other_names) != 1
-            ):
-                raise MeetingSourceIncomplete(
-                    "transcript does not prove an ad-hoc one-to-one meeting"
-                )
-            counterpart = _resolve_transcript_counterpart(
-                dws,
-                other_names[0],
+            self_speakers = [
+                speaker for speaker in speakers if speaker.user_id == current_user_id
+            ]
+            current_user = MeetingParticipant(
+                name=(
+                    self_speakers[0].name
+                    if self_speakers
+                    else principal_display_name().strip()
+                ),
+                user_id=current_user_id,
+                open_dingtalk_id=(
+                    self_speakers[0].open_dingtalk_id if self_speakers else ""
+                ),
             )
-            return build_transcript_one_to_one_evidence(
+            speakers = [
+                speaker
+                for speaker in speakers
+                if speaker.user_id != current_user_id
+            ]
+            if not speakers:
+                raise MeetingSourceIncomplete(
+                    "transcript has no participant other than the current user"
+                )
+            return build_transcript_roster_evidence(
                 info,
                 transcription,
-                current_user_id=current_user_id,
-                current_user_name=current_user_name,
-                counterpart=counterpart,
+                current_user=current_user,
+                speakers=speakers,
             )
-        except (DwsError, MeetingSourceIncomplete):
-            raise calendar_error
+        except (DwsError, MeetingSourceIncomplete) as exc:
+            raise MeetingSourceIncomplete(
+                f"calendar roster unavailable and transcript roster unavailable: {exc}"
+            ) from exc
 
 
-def _resolve_transcript_counterpart(
+def _resolve_transcript_speaker(
     dws: MeetingProducerDws,
     name: str,
+    current_user_id: str,
 ) -> MeetingParticipant:
     wanted = _canonical_name(name)
     matches = [
@@ -1479,20 +1594,27 @@ def _resolve_transcript_counterpart(
             _canonical_name(profile.nick),
         }
     ]
-    if len(matches) != 1:
-        raise MeetingSourceIncomplete(
-            "transcript one-to-one counterpart identity is not unique"
+    if len(matches) == 1:
+        profile = matches[0]
+        return MeetingParticipant(
+            name=name.strip(),
+            user_id=profile.user_id.strip(),
+            open_dingtalk_id=(profile.open_dingtalk_id or "").strip(),
         )
-    profile = matches[0]
-    if not profile.user_id.strip():
-        raise MeetingSourceIncomplete(
-            "transcript one-to-one counterpart user id is missing"
+    current_matches = [
+        profile for profile in matches if profile.user_id == current_user_id
+    ]
+    if len(current_matches) == 1:
+        profile = current_matches[0]
+        return MeetingParticipant(
+            name=name.strip(),
+            user_id=current_user_id,
+            open_dingtalk_id=(profile.open_dingtalk_id or "").strip(),
         )
-    return MeetingParticipant(
-        name=name.strip(),
-        user_id=profile.user_id.strip(),
-        open_dingtalk_id=(profile.open_dingtalk_id or "").strip(),
-    )
+    # External speakers may not be present in the corporate directory.  Their
+    # transcript identity remains useful to the delivery agent, but is never a
+    # direct-message target without a separately resolved user id.
+    return MeetingParticipant(name=name.strip(), user_id="")
 
 
 def _canonical_name(value: str) -> str:

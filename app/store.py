@@ -13218,6 +13218,8 @@ class AutoReplyStore:
                 "retry",
                 "failed",
                 "quarantined",
+                "skipped",
+                "needs_human",
             }:
                 filtered.setdefault("locked_at", None)
         assignments = [f"{column}=?" for column in filtered]
