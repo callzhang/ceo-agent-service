@@ -2359,7 +2359,9 @@ def test_call_dws_suppresses_exhausted_retryable_message_read(tmp_path: Path, mo
     assert state["count"] == 1
 
 
-def test_call_dws_records_only_persistent_sqlite_lock(tmp_path: Path, monkeypatch):
+def test_call_dws_projects_persistent_global_sqlite_lock_to_service_health(
+    tmp_path: Path, monkeypatch
+):
     dws = FakeDws([], {})
     codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
@@ -2372,9 +2374,14 @@ def test_call_dws_records_only_persistent_sqlite_lock(tmp_path: Path, monkeypatc
     assert worker.store.count_errors() == 0
 
     assert worker._call_dws("read_recent_messages", fail_read, default=[]) == []
-    [error] = worker.store.list_errors(limit=10)
-    assert error.kind == "read_recent_messages"
-    assert error.detail == "database is locked"
+    component = next(
+        item
+        for item in worker.store.list_service_health_components()
+        if item["component"] == "dws.read_recent_messages"
+    )
+    assert component["component"] == "dws.read_recent_messages"
+    assert component["state"] == "degraded"
+    assert worker.store.count_errors() == 0
 
 
 def test_call_dws_resets_sqlite_lock_count_after_success(tmp_path: Path, monkeypatch):
@@ -2388,10 +2395,42 @@ def test_call_dws_resets_sqlite_lock_count_after_success(tmp_path: Path, monkeyp
     for _ in range(2):
         worker._call_dws("read_recent_messages", fail_read, default=[])
     assert worker._call_dws("read_recent_messages", lambda: ["ok"], default=[]) == ["ok"]
+    assert worker.store.list_service_health_components()[0]["state"] == "healthy"
     for _ in range(2):
         worker._call_dws("read_recent_messages", fail_read, default=[])
 
     assert worker.store.count_errors() == 0
+
+
+def test_call_dws_projects_service_level_read_recovery_to_component_health(
+    tmp_path: Path, monkeypatch
+):
+    dws = FakeDws([], {})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch)
+    failure = DwsError("DWS cursor rejected", code="PARAM_ERROR")
+
+    assert worker._call_dws(
+        "read_robot_direct_messages",
+        lambda: (_ for _ in ()).throw(failure),
+        default=[],
+    ) == []
+
+    [component] = worker.store.list_service_health_components()
+    assert component["state"] == "degraded"
+    assert component["detail"] == "DWS read failed with code PARAM_ERROR."
+    assert worker.store.count_errors() == 0
+
+    assert (
+        worker._call_dws(
+            "read_robot_direct_messages",
+            lambda: [],
+            default=[],
+        )
+        == []
+    )
+
+    assert worker.store.list_service_health_components()[0]["state"] == "healthy"
 
 
 def test_call_dws_suppresses_prepare_call_tool_error_for_mentioned_messages(
@@ -2895,16 +2934,17 @@ def test_produce_once_continues_when_mention_recovery_fails(
     queued = worker.produce_once()
 
     assert queued == 1
-    assert worker.store.count_errors() == 1
+    component = next(
+        item
+        for item in worker.store.list_service_health_components()
+        if item["component"] == "dws.read_mentioned_messages"
+    )
+    assert component["component"] == "dws.read_mentioned_messages"
+    assert component["state"] == "degraded"
+    assert worker.store.count_errors() == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert dws.unread_message_reads[0] == "cid-1"
-    assert notifications == [
-        {
-            "title": "CEO read mentioned messages failed",
-            "message": "list mentions failed",
-            "url": None,
-        }
-    ]
+    assert notifications == []
     assert codex.calls == []
 
 

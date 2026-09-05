@@ -11,7 +11,7 @@ def _running_service(_label: str) -> dict[str, object]:
     return {"ok": True, "state": "running", "detail": "running"}
 
 
-def test_recent_service_errors_project_to_system_health_observation(
+def test_recent_error_history_does_not_degrade_current_system_health(
     monkeypatch, tmp_path: Path
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -36,14 +36,28 @@ def test_recent_service_errors_project_to_system_health_observation(
 
     assert payload["service"]["state"] == "running"
     assert payload["system_health"] == {
-        "state": "observing",
-        "detail": (
-            "System health is observing recent service errors for four hours; "
-            "2 events already have terminal records."
-        ),
+        "state": "healthy",
+        "detail": "No current quality-gate violations.",
         "checked_at": "2026-08-29T22:00:00+00:00",
-        "violations": 2,
+        "violations": 0,
     }
+
+
+def test_degraded_service_component_projects_to_system_health(
+    monkeypatch, tmp_path: Path
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.set_service_health_component(
+        "dws.read_robot_direct_messages",
+        state="degraded",
+        detail="DWS read failed with code PARAM_ERROR.",
+    )
+    monkeypatch.setattr(audit_web_module, "_launchd_service_status", _running_service)
+
+    payload = build_worker_status_payload(store)
+
+    assert payload["system_health"]["state"] == "degraded"
+    assert "dws.read_robot_direct_messages" in payload["system_health"]["detail"]
 
 
 def test_worker_summary_attention_counts_records_not_groups(monkeypatch, tmp_path: Path):

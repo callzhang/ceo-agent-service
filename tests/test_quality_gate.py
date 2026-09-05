@@ -180,8 +180,12 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
             (stale,),
         )
         db.execute(
-            """insert into errors (kind, detail, created_at)
-               values ('producer', 'temporary failure', '2026-08-07 00:59:00')"""
+            """insert into errors (
+                   conversation_id, message_id, kind, detail, created_at
+               ) values (
+                   'conversation', 'message', 'producer', 'temporary failure',
+                   '2026-08-07 00:59:00'
+               )"""
         )
 
     report = scan_hourly_quality(store.path, now=NOW)
@@ -260,6 +264,24 @@ def test_quality_gate_excludes_explicitly_resolved_global_error(tmp_path):
         [error_id],
         resolution="Codex channel is healthy after readback.",
     ) == 1
+
+    report = scan_hourly_quality(store.path, now=NOW)
+
+    assert not [
+        issue
+        for issue in report.violations
+        if issue.source == "errors" and issue.code == "recent_error"
+    ]
+
+
+def test_quality_gate_excludes_open_global_service_error(tmp_path):
+    store = AutoReplyStore(tmp_path / "state.sqlite3")
+    store.record_error(None, None, "read_robot_direct_messages", "temporary DWS failure")
+    with store._connect() as db:
+        db.execute(
+            "update errors set created_at=? where kind='read_robot_direct_messages'",
+            ((NOW - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"),),
+        )
 
     report = scan_hourly_quality(store.path, now=NOW)
 

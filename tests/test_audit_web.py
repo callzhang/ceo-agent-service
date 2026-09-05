@@ -7172,6 +7172,28 @@ def test_attention_includes_recent_unresolved_service_errors(tmp_path: Path):
     assert service_rows[0]["summary"] == "runtime route is unavailable"
 
 
+def test_attention_excludes_open_global_service_error(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error(
+        None,
+        None,
+        "read_robot_direct_messages",
+        "temporary DWS failure",
+    )
+    store.record_error(
+        "cid-trigger-error",
+        "msg-trigger-error",
+        "runtime_route_unavailable",
+        "runtime route is unavailable",
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    service_rows = [row for row in rows if row["category"] == "Service error"]
+    assert len(service_rows) == 1
+    assert service_rows[0]["context"] == "runtime_route_unavailable"
+
+
 def test_runtime_route_failure_detail_shows_later_task_recovery(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(

@@ -7084,6 +7084,25 @@ def test_resolve_errors_keeps_history_with_a_resolution(tmp_path: Path):
     assert resolved.resolution == "recovered by queue retry"
 
 
+def test_service_health_components_hold_current_component_state(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.set_service_health_component(
+        "dws.read_robot_direct_messages",
+        state="degraded",
+        detail="DWS read failed with code PARAM_ERROR.",
+    )
+
+    [component] = store.list_service_health_components()
+    assert component["component"] == "dws.read_robot_direct_messages"
+    assert component["state"] == "degraded"
+
+    store.set_service_health_component(
+        "dws.read_robot_direct_messages",
+        state="healthy",
+    )
+    assert store.list_service_health_components()[0]["state"] == "healthy"
+
+
 def test_redact_and_resolve_error_replaces_unsafe_historical_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error(None, None, "follow_up", "outbound message body")
@@ -7181,75 +7200,6 @@ def test_completed_reply_task_resolves_trigger_error_and_closed_blocked_attempt(
     assert attempt.send_status == "skipped"
     assert attempt.send_error == ""
     assert attempt.permission_action == REPLY_ATTEMPT_CLOSED_AFTER_REVIEW
-
-
-
-
-def test_resolve_unattributed_errors_after_quiet_period_keeps_history(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.record_error("", "", "producer_loop_error", "temporary DWS outage")
-    with store._connect() as db:
-        db.execute(
-            "update errors set created_at='2026-08-12 00:00:00' where kind='producer_loop_error'"
-        )
-
-    resolved = store.resolve_unattributed_errors_after_quiet_period(
-        now=datetime.fromisoformat("2026-08-12T05:00:00+00:00")
-    )
-
-    assert resolved == 1
-    [error] = store.list_errors()
-    assert error.resolved_at
-    assert "healthy observation window" in error.resolution
-
-
-def test_resolve_unattributed_errors_after_quiet_period_keeps_trigger_error_open(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.record_error("cid-1", "msg-1", "send", "delivery not confirmed")
-    with store._connect() as db:
-        db.execute("update errors set created_at='2026-08-12 00:00:00'")
-
-    assert store.resolve_unattributed_errors_after_quiet_period(
-        now=datetime.fromisoformat("2026-08-12T05:00:00+00:00")
-    ) == 0
-    assert store.list_errors()[0].resolved_at == ""
-
-
-def test_resolve_inactive_trigger_errors_after_quiet_period_keeps_history(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.record_error("cid-1", "msg-1", "reply_task", "temporary failure")
-    with store._connect() as db:
-        db.execute("update errors set created_at='2026-08-12 00:00:00'")
-
-    resolved = store.resolve_inactive_trigger_errors_after_quiet_period(
-        now=datetime.fromisoformat("2026-08-12T05:00:00+00:00")
-    )
-
-    assert resolved == 1
-    [error] = store.list_errors()
-    assert error.resolved_at
-    assert "no active workflow" in error.resolution
-
-
-def test_resolve_inactive_trigger_errors_keeps_active_recovery_open(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    assert store.enqueue_reply_task(
-        conversation_id="cid-1",
-        conversation_title="Management",
-        single_chat=False,
-        trigger_message_id="msg-1",
-        trigger_create_time="2026-08-12 00:00:00",
-        trigger_sender="Mina",
-        trigger_text="Please handle this.",
-    )
-    store.record_error("cid-1", "msg-1", "reply_task", "temporary failure")
-    with store._connect() as db:
-        db.execute("update errors set created_at='2026-08-12 00:00:00'")
-
-    assert store.resolve_inactive_trigger_errors_after_quiet_period(
-        now=datetime.fromisoformat("2026-08-12T05:00:00+00:00")
-    ) == 0
-    assert store.list_errors()[0].resolved_at == ""
 
 
 def test_missing_service_state_returns_none(tmp_path: Path):

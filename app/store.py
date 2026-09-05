@@ -87,7 +87,8 @@ CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
 SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
-ERROR_RECOVERY_QUIET_PERIOD_SECONDS = 4 * 60 * 60
+SERVICE_HEALTH_STATE_PREFIX = "service_health:"
+SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-08-30.1"
@@ -21791,6 +21792,67 @@ class AutoReplyStore:
             )
             return cursor.rowcount
 
+    def set_service_health_component(
+        self,
+        component: str,
+        *,
+        state: str,
+        detail: str = "",
+    ) -> None:
+        """Persist the current health of a service component, not a task."""
+        normalized_component = component.strip()
+        normalized_state = state.strip().lower()
+        if not normalized_component:
+            raise ValueError("service health component must be non-empty")
+        if normalized_state not in SERVICE_HEALTH_STATES:
+            raise ValueError("invalid service health state")
+        self.set_service_state(
+            f"{SERVICE_HEALTH_STATE_PREFIX}{normalized_component}",
+            json.dumps(
+                {
+                    "state": normalized_state,
+                    "detail": detail.strip()[:500],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        )
+
+    def list_service_health_components(self) -> list[dict[str, str]]:
+        """Return the current health projection for each service component."""
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select key, value, updated_at
+                from service_state
+                where key like ?
+                order by key asc
+                """,
+                (f"{SERVICE_HEALTH_STATE_PREFIX}%",),
+            ).fetchall()
+        components: list[dict[str, str]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["value"] or ""))
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            state = str(payload.get("state") or "").strip().lower()
+            if state not in SERVICE_HEALTH_STATES:
+                continue
+            components.append(
+                {
+                    "component": str(row["key"] or "").removeprefix(
+                        SERVICE_HEALTH_STATE_PREFIX
+                    ),
+                    "state": state,
+                    "detail": str(payload.get("detail") or ""),
+                    "updated_at": str(row["updated_at"] or ""),
+                }
+            )
+        return components
+
     def redact_and_resolve_error(
         self,
         error_id: int,
@@ -21956,136 +22018,6 @@ class AutoReplyStore:
                   )
                 """,
                 (REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,),
-            )
-            return cursor.rowcount
-
-    def resolve_unattributed_errors_after_quiet_period(
-        self,
-        *,
-        now: datetime | None = None,
-        quiet_period_seconds: int = ERROR_RECOVERY_QUIET_PERIOD_SECONDS,
-    ) -> int:
-        """Close service incidents after a clean observation window.
-
-        These records have no trigger message identity, so a later reply cannot
-        prove recovery. They are retained, but another open error of the same
-        component within the observation window keeps them active.
-        """
-        if quiet_period_seconds <= 0:
-            raise ValueError("quiet period must be positive")
-        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        cutoff_text = (observed_at - timedelta(seconds=quiet_period_seconds)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        with self._connect() as db:
-            cursor = db.execute(
-                """
-                update errors as incident
-                set resolved_at=current_timestamp,
-                    resolution='no recurrence during the four-hour healthy observation window'
-                where coalesce(incident.resolved_at, '')=''
-                  and trim(coalesce(incident.message_id, ''))=''
-                  and datetime(incident.created_at) < datetime(?)
-                  and not exists (
-                    select 1
-                    from errors newer
-                    where newer.kind=incident.kind
-                      and coalesce(newer.resolved_at, '')=''
-                      and datetime(newer.created_at) >= datetime(?)
-                  )
-                """,
-                (cutoff_text, cutoff_text),
-            )
-            return cursor.rowcount
-
-    def resolve_inactive_trigger_errors_after_quiet_period(
-        self,
-        *,
-        now: datetime | None = None,
-        quiet_period_seconds: int = ERROR_RECOVERY_QUIET_PERIOD_SECONDS,
-    ) -> int:
-        """Close historical trigger incidents once no recovery work remains.
-
-        This is incident convergence, not a delivery claim. A trigger error is
-        eligible only after the observation window has passed without a newer
-        error for that trigger, with no active task, unresolved latest attempt,
-        or linked agent run whose side effect is unknown.
-        """
-        if quiet_period_seconds <= 0:
-            raise ValueError("quiet period must be positive")
-        observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        cutoff_text = (observed_at - timedelta(seconds=quiet_period_seconds)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        unresolved_attempt_statuses = (
-            "blocked",
-            "dry_run",
-            "failed",
-            "needs_human",
-            "pending",
-            "pending_reconciliation",
-            "processing",
-        )
-        task_statuses = ("failed", "pending", "processing")
-        attempt_placeholders = ",".join("?" for _ in unresolved_attempt_statuses)
-        task_placeholders = ",".join("?" for _ in task_statuses)
-        with self._connect() as db:
-            cursor = db.execute(
-                f"""
-                update errors as incident
-                set resolved_at=current_timestamp,
-                    resolution='no active workflow during the four-hour healthy observation window'
-                where coalesce(incident.resolved_at, '')=''
-                  and trim(coalesce(incident.conversation_id, ''))<>''
-                  and trim(coalesce(incident.message_id, ''))<>''
-                  and datetime(incident.created_at) < datetime(?)
-                  and not exists (
-                    select 1
-                    from errors newer
-                    where newer.conversation_id=incident.conversation_id
-                      and newer.message_id=incident.message_id
-                      and coalesce(newer.resolved_at, '')=''
-                      and datetime(newer.created_at) >= datetime(?)
-                  )
-                  and not exists (
-                    select 1
-                    from reply_tasks task
-                    where task.conversation_id=incident.conversation_id
-                      and task.trigger_message_id=incident.message_id
-                      and lower(task.status) in ({task_placeholders})
-                  )
-                  and not exists (
-                    select 1
-                    from reply_attempts attempt
-                    where attempt.conversation_id=incident.conversation_id
-                      and attempt.trigger_message_id=incident.message_id
-                      and attempt.id=(
-                        select max(latest.id)
-                        from reply_attempts latest
-                        where latest.channel=attempt.channel
-                          and latest.conversation_id=attempt.conversation_id
-                          and latest.trigger_message_id=attempt.trigger_message_id
-                      )
-                      and lower(attempt.send_status) in ({attempt_placeholders})
-                  )
-                  and not exists (
-                    select 1
-                    from reply_tasks task
-                    join agent_runs run on run.reply_task_id=task.id
-                    where task.conversation_id=incident.conversation_id
-                      and task.trigger_message_id=incident.message_id
-                      and (
-                        lower(run.status)='unknown'
-                        or lower(run.side_effect_state)='unknown'
-                      )
-                  )
-                """,
-                (
-                    cutoff_text,
-                    cutoff_text,
-                    *task_statuses,
-                    *unresolved_attempt_statuses,
-                ),
             )
             return cursor.rowcount
 

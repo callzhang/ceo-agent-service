@@ -2723,8 +2723,6 @@ def run_task_maintenance_loop(
                 + store.resolve_errors_recovered_by_completed_reply_tasks()
                 + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
                 + store.resolve_closed_blocked_reply_attempts()
-                + store.resolve_unattributed_errors_after_quiet_period()
-                + store.resolve_inactive_trigger_errors_after_quiet_period()
             ),
         )
         weekly_hour = int(
@@ -3191,8 +3189,6 @@ def _resolve_recovered_errors_on_service_start(settings: WorkerSettings) -> int:
         + store.resolve_errors_recovered_by_completed_reply_tasks()
         + store.resolve_errors_recovered_by_terminal_work_summary_inputs()
         + store.resolve_closed_blocked_reply_attempts()
-        + store.resolve_unattributed_errors_after_quiet_period()
-        + store.resolve_inactive_trigger_errors_after_quiet_period()
     )
 
 

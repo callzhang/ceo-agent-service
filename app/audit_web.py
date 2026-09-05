@@ -2201,6 +2201,21 @@ def _system_health_snapshot(
             "checked_at": "",
             "violations": 1,
         }
+    unhealthy_components = [
+        component
+        for component in store.list_service_health_components()
+        if component["state"] == "degraded"
+    ]
+    if unhealthy_components:
+        first = unhealthy_components[0]
+        detail = first["detail"] or "A service dependency is unavailable."
+        return {
+            "state": "degraded",
+            "detail": f"{first['component']}: {detail}",
+            "checked_at": first["updated_at"],
+            "violations": len(unhealthy_components),
+            "components": unhealthy_components,
+        }
     try:
         report = scan_hourly_quality(store.path)
     except Exception as exc:
@@ -2211,13 +2226,10 @@ def _system_health_snapshot(
             "violations": 0,
         }
 
-    recent_error_violations = [
+    other_violations = [
         issue
         for issue in report.violations
-        if issue.source == "errors" and issue.code == "recent_error"
-    ]
-    other_violations = [
-        issue for issue in report.violations if issue not in recent_error_violations
+        if not (issue.source == "errors" and issue.code == "recent_error")
     ]
     if other_violations:
         return {
@@ -2225,17 +2237,6 @@ def _system_health_snapshot(
             "detail": other_violations[0].detail,
             "checked_at": report.checked_at,
             "violations": sum(issue.count for issue in other_violations),
-        }
-    if recent_error_violations:
-        count = sum(issue.count for issue in recent_error_violations)
-        return {
-            "state": "observing",
-            "detail": (
-                "System health is observing recent service errors for four hours; "
-                f"{count} event{'s' if count != 1 else ''} already have terminal records."
-            ),
-            "checked_at": report.checked_at,
-            "violations": count,
         }
     return {
         "state": "healthy",
@@ -2771,6 +2772,10 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int = 30) -> list[dic
                 from errors error_event
                 where datetime(error_event.created_at) >= datetime('now', '-4 hours')
                   and coalesce(error_event.resolved_at, '') = ''
+                  and (
+                    coalesce(error_event.conversation_id, '') <> ''
+                    or coalesce(error_event.message_id, '') <> ''
+                  )
                   and error_event.kind <> 'codex_capacity_pause'
                   and not exists (
                     select 1

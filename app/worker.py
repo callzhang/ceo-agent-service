@@ -612,6 +612,11 @@ class DingTalkAutoReplyWorker:
             result = call()
             self._sqlite_lock_failures.pop(kind, None)
             self._clear_dws_transient_error(kind)
+            if self._is_service_level_dws_read(kind, conversation_id, message_id):
+                self.store.set_service_health_component(
+                    f"dws.{kind}",
+                    state="healthy",
+                )
             if conversation_id:
                 self._clear_dws_read_forbidden(conversation_id)
             return result
@@ -666,6 +671,14 @@ class DingTalkAutoReplyWorker:
                 self._record_dws_transient_error(kind, str(exc))
                 should_record_error = False
                 should_notify = False
+            if self._is_service_level_dws_read(kind, conversation_id, message_id):
+                self.store.set_service_health_component(
+                    f"dws.{kind}",
+                    state="degraded",
+                    detail=self._service_level_dws_failure_detail(exc),
+                )
+                should_record_error = False
+                should_notify = False
             elif missing_direct_chat_target:
                 self._clear_dws_transient_error(kind)
                 should_record_error = False
@@ -711,6 +724,25 @@ class DingTalkAutoReplyWorker:
             "read_recent_messages_unread_fallback",
             "list_messages_by_ids_rerun",
         }
+
+    @classmethod
+    def _is_service_level_dws_read(
+        cls,
+        kind: str,
+        conversation_id: str | None,
+        message_id: str | None,
+    ) -> bool:
+        return (
+            cls._is_dws_message_read_kind(kind)
+            and not str(conversation_id or "").strip()
+            and not str(message_id or "").strip()
+        )
+
+    @staticmethod
+    def _service_level_dws_failure_detail(exc: Exception) -> str:
+        if isinstance(exc, DwsError) and exc.code:
+            return f"DWS read failed with code {exc.code}."
+        return "DWS read failed without a provider error code."
 
     @staticmethod
     def _is_dws_token_verified_read_error(kind: str, exc: Exception) -> bool:

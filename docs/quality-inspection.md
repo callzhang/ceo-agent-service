@@ -30,11 +30,22 @@ History 一致”；它不解释 Agent 如何调用命令，也不维护外部�
 | 外部投递队列 | 明确失败的投递 | 活动状态 |
 | `feedback_events` | 未记录 `resolved_at` 的反馈 | 无 |
 | `daily_scan_state` / `wechat_read_state` | scanner `last_error` 或 reader 不可用 | 无待处理工作时 reader 未就绪 |
-| `errors` | 最近 4 小时新建、未解决且没有活动重试路径的服务错误 | Codex 容量暂停期间的共享事件 |
+| `errors` | 关联到 `conversation_id` 或 `message_id`，且最近 4 小时新建、未解决并没有活动重试路径的错误 | Codex 容量暂停期间的共享事件 |
 
 旧数据库中的 `unknown`、`reconciled`、`side_effect_state` 和 `pending_reconciliation` 仅作为历史
 字段展示，不构成当前 violation，也不会触发特殊队列。当前代码只创建 `failed`、`needs_feedback`、
 `needs_human` 和成功终态。
+
+## 服务健康与任务终态
+
+没有 `conversation_id` 和 `message_id` 的扫描、认证或依赖读取失败不是业务任务。Worker 把它写入
+`service_state` 中以 `service_health:` 开头的组件状态；当前失败为 `degraded`，同一组件下一次
+成功读取立即写为 `healthy`。审计页的系统健康状态展示该组件，但 Attention、任务队列和质量门不把
+这类历史 error 记录当作未完成业务项。
+
+服务健康恢复不依赖静默观察期。任务错误也不按时间自动关闭：只有该 trigger 的实际后续
+`done`、`skipped`、`needs_human` 或其他持久化终态可以收口原错误。历史 error 保留在 History，
+用于追溯而不覆盖当前任务 projection。
 
 ## Trigger 收敛
 
