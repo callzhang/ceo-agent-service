@@ -2451,7 +2451,11 @@ class DingTalkAutoReplyWorker:
             if proposal is not None:
                 for action in proposal.actions:
                     payload = action.payload
-                    candidate = payload.get("content") or payload.get("text")
+                    candidate = (
+                        payload.get("content")
+                        or payload.get("text")
+                        or payload.get("reply_text")
+                    )
                     if isinstance(candidate, str) and candidate.strip():
                         reply_text = candidate.strip()
                         break
