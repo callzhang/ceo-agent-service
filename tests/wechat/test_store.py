@@ -1091,11 +1091,13 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
             account_id text not null,
             target_type text not null,
             target_id text not null,
-            conversation_id text not null default '',
-            reply_text text not null,
-            status text not null default 'ready_to_send',
-            action_started_at text not null default '',
-            evidence_json text not null default '{}',
+                conversation_id text not null default '',
+                reply_text text not null,
+                execution_generation text not null default 'initial',
+                status text not null default 'ready_to_send',
+                action_started_at text not null default '',
+                pre_action_failure integer not null default 0,
+                evidence_json text not null default '{}',
             error text not null default '',
             created_at text not null default current_timestamp,
             updated_at text not null default current_timestamp,
@@ -1127,10 +1129,13 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
             7, 'same-conversation', 'Friend', 1,
             'same-message', '2026-07-20T10:00:00+08:00', 'Friend', 'hello'
         );
-        insert into wechat_deliveries (
-            reply_task_id, account_id, target_type, target_id, conversation_id,
-            reply_text
-        ) values (7, 'acct-1', 'direct', 'friend-1', 'same-conversation', 'hi');
+            insert into wechat_deliveries (
+                reply_task_id, account_id, target_type, target_id, conversation_id,
+                reply_text, status, action_started_at, pre_action_failure
+            ) values (
+                7, 'acct-1', 'direct', 'friend-1', 'same-conversation', 'hi',
+                'failed', '2026-07-20T10:10:00+08:00', 1
+            );
         insert into workbench_tasks (id, title, runtime_kind)
         values ('workbench-legacy', 'Legacy attachment', 'codex');
         insert into workbench_attachments (
@@ -1170,6 +1175,8 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
     assert store.get_reply_task_for_message(
         "same-conversation", "same-message", channel="dingtalk"
     ).id == 7
+    assert store.list_wechat_deliveries_by_status("ready_to_send") == []
+    assert store.requeue_unperformed_wechat_deliveries() == 1
     migrated_delivery = store.list_wechat_deliveries_by_status("ready_to_send")[0]
     assert migrated_delivery.task_id == 7
     assert migrated_delivery.reply_text == "hi（by明哥分身）"

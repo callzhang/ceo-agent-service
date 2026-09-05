@@ -4271,7 +4271,16 @@ class AutoReplyStore:
                 left join outbound_postfixes as postfixes
                   on postfixes.channel='wechat'
                  and postfixes.delivery_key=('wechat:' || deliveries.id)
-                where deliveries.status='ready_to_send' and postfixes.delivery_key is null
+                where deliveries.execution_generation=tasks.execution_generation
+                  and (
+                      deliveries.status='ready_to_send'
+                      or (
+                          deliveries.status='failed'
+                          and deliveries.pre_action_failure=1
+                          and deliveries.action_started_at<>''
+                      )
+                  )
+                  and postfixes.delivery_key is null
                 """
             ).fetchall()
             for delivery in legacy_ready_deliveries:
