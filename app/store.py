@@ -15234,6 +15234,15 @@ class AutoReplyStore:
         """Append one typed classification tied to the current rounds in a batch."""
         if not isinstance(decision, FeedbackIterationDecision):
             raise ValueError("feedback iteration decision is invalid")
+        if (
+            not isinstance(workbench_task_id, str)
+            or not isinstance(workbench_turn_id, str)
+            or not workbench_task_id.strip()
+            or not workbench_turn_id.strip()
+        ):
+            raise ValueError(
+                "feedback iteration decision requires non-empty Workbench task and turn strings"
+            )
         cleaned_batch_id = batch_id.strip()
         task_id = workbench_task_id.strip()
         turn_id = workbench_turn_id.strip()

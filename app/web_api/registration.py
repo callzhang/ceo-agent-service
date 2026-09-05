@@ -697,13 +697,22 @@ def register_console_routes(
     async def console_feedback_iteration_decision(batch_id: str, request: Request):
         payload = await json_object(request)
         raw_decision = payload.get("decision")
+        task_id = payload.get("workbench_task_id", "")
+        turn_id = payload.get("workbench_turn_id", "")
+        if (
+            not isinstance(task_id, str)
+            or not isinstance(turn_id, str)
+            or not task_id.strip()
+            or not turn_id.strip()
+        ):
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "workbench_task_id and workbench_turn_id must be non-empty strings", "details": {}}, status_code=422)
         try:
             decision = FeedbackIterationDecision.model_validate(raw_decision)
             record = store_factory().record_feedback_iteration_decision(
                 batch_id,
                 decision,
-                workbench_task_id=payload.get("workbench_task_id", ""),
-                workbench_turn_id=payload.get("workbench_turn_id", ""),
+                workbench_task_id=task_id,
+                workbench_turn_id=turn_id,
             )
         except FeedbackIterationAssociationMismatchError as exc:
             return JSONResponse({"ok": False, "code": exc.error_code, "message": "反馈决策必须绑定当前处理轮", "details": {}}, status_code=409)
