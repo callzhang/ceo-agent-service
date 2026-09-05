@@ -274,8 +274,52 @@ when new.id <> old.id
   or new.created_at <> old.created_at
   or old.status not in ('pending_restart')
   or new.status not in ('active', 'load_failed')
+  or (
+      new.status = 'active'
+      and not exists (
+          select 1
+          from runtime_skill_load_receipts as receipt
+          where receipt.config_id = new.id
+            and receipt.error = ''
+            and not exists (
+                select 1
+                from runtime_skill_bindings as binding
+                join managed_skill_revisions as revision
+                  on revision.id = binding.revision_id
+                where binding.config_id = new.id
+                  and binding.enabled = 1
+                  and not exists (
+                      select 1 from json_each(receipt.loaded_json) as loaded
+                      where loaded.key = cast(binding.skill_id as text)
+                        and loaded.value = revision.sha256
+                  )
+            )
+            and not exists (
+                select 1 from json_each(receipt.loaded_json) as loaded
+                where not exists (
+                    select 1
+                    from runtime_skill_bindings as binding
+                    join managed_skill_revisions as revision
+                      on revision.id = binding.revision_id
+                    where binding.config_id = new.id
+                      and binding.enabled = 1
+                      and cast(binding.skill_id as text) = loaded.key
+                      and revision.sha256 = loaded.value
+                )
+            )
+      )
+  )
+  or (
+      new.status = 'load_failed'
+      and not exists (
+          select 1 from runtime_skill_load_receipts as receipt
+          where receipt.config_id = new.id and receipt.error <> ''
+      )
+  )
 begin
-    select raise(abort, 'runtime Skill configurations are immutable');
+    select raise(
+        abort, 'runtime Skill activation requires matching load receipt'
+    );
 end
 """.strip()
 RUNTIME_SKILL_CONFIGS_IMMUTABLE_DELETE_TRIGGER_SQL = """

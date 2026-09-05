@@ -1161,6 +1161,92 @@ def test_agent_orchestrator_is_wired_with_email_continuation_driver(
     assert result.domain_continuation.email_store.path == settings.db_path
 
 
+def test_email_orchestrator_passes_process_runtime_skill_snapshot_to_consumer(
+    tmp_path, monkeypatch
+):
+    module = _module()
+    runtime = SimpleNamespace(
+        config=object(), router=object(), codex_adapter=object(),
+        claude_adapter=object(), friday_adapter=object(),
+        refresh_runtime_capabilities=lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.agent_runtime_production.build_production_agent_runtime",
+        lambda **_kwargs: runtime,
+    )
+    captured = {}
+    monkeypatch.setattr(
+        "app.consumer_agent.ConsumerAgentRunner",
+        lambda **kwargs: captured.setdefault("consumer", kwargs),
+    )
+    monkeypatch.setattr(
+        "app.audit_agent.AuditAgentRunner", lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "app.agent_orchestrator.AgentOrchestrator", lambda **kwargs: object(),
+    )
+    snapshot = object()
+    settings = SimpleNamespace(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path, dry_run=False)
+
+    module._build_agent_orchestrator(
+        settings, AutoReplyStore(settings.db_path), runtime_skill_snapshot=snapshot
+    )
+
+    assert captured["consumer"]["runtime_skill_snapshot"] is snapshot
+
+
+def test_email_dependency_builder_resolves_one_snapshot_for_agent_orchestrator(
+    tmp_path, monkeypatch
+):
+    module = _module()
+    snapshot = object()
+    calls = []
+    monkeypatch.setattr(
+        "app.managed_skills.resolve_pending_runtime_skills",
+        lambda store, *, pid: calls.append((store, pid)) or snapshot,
+    )
+    captured = {}
+    monkeypatch.setattr(
+        module,
+        "_build_agent_orchestrator",
+        lambda _settings, _store, *, runtime_skill_snapshot: captured.setdefault(
+            "snapshot", runtime_skill_snapshot
+        ) or object(),
+    )
+    from app.email_model_registry import EmailModelRegistry
+
+    monkeypatch.setattr(
+        EmailModelRegistry,
+        "get_model",
+        lambda self, _model_id: SimpleNamespace(
+            metadata=SimpleNamespace(per_category_metrics={})
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_scan_config",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            config_version="test", thresholds={}, actions={},
+            category_eligibility={}, action_parameters={}, category_enabled={},
+        ),
+    )
+    settings = SimpleNamespace(
+        db_path=tmp_path / "worker.sqlite3", workspace=tmp_path, dry_run=False
+    )
+
+    bootstrap = module.build_email_worker_dependencies(settings)
+    bootstrap.build_dependencies(
+        ({"account_id": "account-1", "enabled": True},),
+        SimpleNamespace(
+            loaded=SimpleNamespace(model_id="email-model:test", classifier=object()),
+            tick=lambda: None,
+        ),
+    )
+
+    assert len(calls) == 1
+    assert captured["snapshot"] is snapshot
+
+
 def test_worker_startup_isolates_legacy_before_agent_claim_and_starts_components(
     tmp_path,
 ):

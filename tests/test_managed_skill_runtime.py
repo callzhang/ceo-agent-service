@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,61 @@ def test_load_receipt_mismatch_is_rejected_without_activation(tmp_path: Path) ->
         )
 
     assert store.get_runtime_skill_config(pending.id).status == "pending_restart"
+
+
+def test_direct_status_transition_requires_a_persisted_load_receipt(tmp_path: Path) -> None:
+    store, revision = configured_store(tmp_path)
+    pending = store.create_runtime_skill_config(
+        {revision.skill_id: revision.id}, expected_parent_id=None
+    )
+
+    with store._connect() as db, pytest.raises(
+        sqlite3.IntegrityError, match="runtime Skill activation requires matching load receipt"
+    ):
+        db.execute(
+            "update runtime_skill_configs set status='active' where id=?", (pending.id,)
+        )
+    with store._connect() as db, pytest.raises(
+        sqlite3.IntegrityError, match="runtime Skill activation requires matching load receipt"
+    ):
+        db.execute(
+            "update runtime_skill_configs set status='load_failed' where id=?",
+            (pending.id,),
+        )
+
+    assert store.get_runtime_skill_config(pending.id).status == "pending_restart"
+    store.record_runtime_skill_load(
+        pending.id, pid=7654, loaded={revision.skill_id: revision.sha256}
+    )
+    assert store.get_runtime_skill_config(pending.id).status == "active"
+
+
+def test_resolver_marks_malformed_candidate_failed_and_returns_prior_active(
+    tmp_path: Path,
+) -> None:
+    store, revision = configured_store(tmp_path)
+    active = store.create_runtime_skill_config(
+        {revision.skill_id: revision.id}, expected_parent_id=None
+    )
+    active_snapshot = resolve_pending_runtime_skills(store, pid=7654)
+    with sqlite3.connect(store.path) as db:
+        candidate_id = int(
+            db.execute(
+                "insert into runtime_skill_configs (parent_id, status) values (?, 'pending_restart')",
+                (active.id,),
+            ).lastrowid
+        )
+        db.execute(
+            """insert into runtime_skill_bindings
+               (config_id, skill_id, revision_id, enabled, load_order, purpose)
+               values (?, ?, ?, 1, 0, '')""",
+            (candidate_id, revision.skill_id, revision.id + 999),
+        )
+
+    fallback = resolve_pending_runtime_skills(store, pid=7655)
+
+    assert fallback == active_snapshot
+    assert store.get_runtime_skill_config(candidate_id).status == "load_failed"
 
 
 def test_snapshot_remains_exact_when_a_later_config_is_created(tmp_path: Path) -> None:
