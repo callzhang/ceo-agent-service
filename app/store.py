@@ -53,6 +53,7 @@ from app.feedback_processing import (
     persisted_feedback_summary,
     validate_legacy_resolution_evidence,
     validate_resolution_evidence,
+    validate_resolution_receipt,
 )
 from app.config import feedback_spike_vercel_base_url
 from app.feedback_spike import extract_configured_feedback_link_context
@@ -15192,19 +15193,6 @@ class AutoReplyStore:
             health_evidence=evidence_by_name["health_evidence"],
             backlog_evidence=evidence_by_name["backlog_evidence"],
         )
-        receipt_version = AutoReplyStore._feedback_processing_receipt_version(
-            current_round
-        )
-        if receipt_version == 1:
-            validate_legacy_resolution_evidence(
-                evidence,
-                commit_is_ancestor=True,
-            )
-        else:
-            validate_resolution_evidence(
-                evidence,
-                commit_is_ancestor=True,
-            )
         return evidence
 
     @staticmethod
@@ -16510,6 +16498,12 @@ class AutoReplyStore:
             or any(str(round_row["status"] or "") != "resolved" for round_row in rounds)
         ):
             raise ValueError("resolved batch history is incomplete")
+        decision_record = cls._resolution_feedback_iteration_decision(
+            db,
+            batch_id=batch_id,
+            feedback_keys=round_keys,
+            round_by_key={str(round_row["feedback_key"]): int(round_row["id"]) for round_row in rounds},
+        )
         transitions_by_round = (
             cls._validate_feedback_processing_batch_transition_ownership(
                 db,
@@ -16594,14 +16588,23 @@ class AutoReplyStore:
                 != common_persisted_receipt.backlog_evidence
             ):
                 raise ValueError("resolved batch persisted receipt is inconsistent")
+            if decision_record is None:
+                if receipt_version == 1:
+                    validate_legacy_resolution_evidence(
+                        persisted_evidence, commit_is_ancestor=True
+                    )
+                else:
+                    validate_resolution_evidence(
+                        persisted_evidence, commit_is_ancestor=True
+                    )
             if evidence is not None:
                 if (
-                    persisted_evidence.commit_sha != evidence.commit_sha
-                    or persisted_evidence.test_evidence != evidence.test_evidence
-                    or persisted_evidence.restart_evidence != evidence.restart_evidence
-                    or persisted_evidence.health_evidence != evidence.health_evidence
-                    or persisted_evidence.backlog_evidence
-                    != evidence.backlog_evidence
+                    (decision_record is None or decision_record.decision.scope in {"code", "mixed"})
+                    and persisted_evidence.commit_sha != evidence.commit_sha
+                ) or persisted_evidence.test_evidence != evidence.test_evidence or (
+                    persisted_evidence.restart_evidence != evidence.restart_evidence
+                ) or persisted_evidence.health_evidence != evidence.health_evidence or (
+                    persisted_evidence.backlog_evidence != evidence.backlog_evidence
                 ):
                     raise ValueError("resolution receipt does not match batch history")
                 if evidence.associations:
@@ -16730,6 +16733,126 @@ class AutoReplyStore:
                     current_round,
                 )
 
+    @classmethod
+    def _resolution_feedback_iteration_decision(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        batch_id: str,
+        feedback_keys: Sequence[str],
+        round_by_key: Mapping[str, int],
+    ) -> FeedbackIterationDecisionRecord | None:
+        """Return the latest decision bound to these exact current rounds.
+
+        Batches created before iteration decisions remain on the historic
+        receipt contract. A decision for an earlier/reopened round is not
+        reusable for the current round.
+        """
+
+        rows = db.execute(
+            """select decision.id, decision.batch_id, decision.workbench_task_id,
+                      decision.workbench_turn_id, decision.decision_json,
+                      decision.created_at,
+                      json_group_array(item.feedback_key) as feedback_keys_json,
+                      json_group_array(item.round_id) as round_ids_json
+                 from feedback_iteration_decisions decision
+                 join feedback_iteration_decision_items item on item.decision_id=decision.id
+                where decision.batch_id=?
+                group by decision.id
+                order by decision.id desc""",
+            (batch_id,),
+        ).fetchall()
+        expected_keys = set(feedback_keys)
+        for row in rows:
+            record = cls._feedback_iteration_decision_from_row(row)
+            if set(record.feedback_keys) != expected_keys or len(record.feedback_keys) != len(expected_keys):
+                continue
+            if {key: round_id for key, round_id in zip(record.feedback_keys, record.round_ids, strict=True)} != dict(round_by_key):
+                continue
+            return record
+        return None
+
+    @staticmethod
+    def _validate_runtime_load_receipt(
+        db: sqlite3.Connection,
+        *,
+        config_id: int,
+        load_receipt_id: int,
+    ) -> dict[int, str]:
+        config = db.execute(
+            "select status from runtime_skill_configs where id=?", (config_id,)
+        ).fetchone()
+        receipt = db.execute(
+            "select config_id, loaded_json, error from runtime_skill_load_receipts where id=?",
+            (load_receipt_id,),
+        ).fetchone()
+        if (
+            config is None
+            or str(config["status"] or "") != "active"
+            or receipt is None
+            or int(receipt["config_id"]) != config_id
+            or str(receipt["error"] or "")
+        ):
+            raise ValueError("resolution requires a successful active runtime load receipt")
+        try:
+            loaded = json.loads(str(receipt["loaded_json"] or "{}"))
+            normalized = {int(skill_id): str(sha256) for skill_id, sha256 in loaded.items()}
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("resolution runtime load receipt is invalid") from exc
+        return normalized
+
+    @classmethod
+    def _validate_decision_resolution_receipt(
+        cls,
+        db: sqlite3.Connection,
+        decision: FeedbackIterationDecision,
+        evidence: ResolutionEvidence,
+    ) -> None:
+        """Bind a typed receipt to immutable runtime records selected by a decision."""
+
+        if decision.scope == "needs_human":
+            raise ValueError("needs_human feedback iteration decisions cannot resolve")
+        if decision.scope in {"skill_only", "runtime_config", "mixed"}:
+            loaded = cls._validate_runtime_load_receipt(
+                db,
+                config_id=evidence.runtime_config_id,
+                load_receipt_id=evidence.load_receipt_id,
+            )
+        else:
+            loaded = {}
+        if decision.scope in {"runtime_config", "mixed"}:
+            config = db.execute(
+                "select parent_id from runtime_skill_configs where id=?",
+                (evidence.runtime_config_id,),
+            ).fetchone()
+            if (
+                decision.target_runtime_config_id != evidence.runtime_config_id
+                or config is None
+                or config["parent_id"] != evidence.previous_runtime_config_id
+            ):
+                raise ValueError("resolution runtime configuration does not match decision")
+        if decision.scope in {"skill_only", "mixed"}:
+            expected = {
+                target.skill_id: target.to_revision
+                for target in decision.target_skill_revisions
+            }
+            actual = {revision.skill_id: revision for revision in evidence.skill_revisions}
+            if set(actual) != set(expected):
+                raise ValueError("resolution managed Skill revisions do not match decision")
+            for skill_id, revision_id in expected.items():
+                revision = actual[skill_id]
+                row = db.execute(
+                    "select sha256 from managed_skill_revisions where id=? and skill_id=?",
+                    (revision.revision_id, revision.skill_id),
+                ).fetchone()
+                if (
+                    revision.revision_id != revision_id
+                    or row is None
+                    or str(row["sha256"]) != revision.sha256
+                    or loaded.get(skill_id) != revision.sha256
+                ):
+                    raise ValueError("resolution managed Skill revision is not loaded")
+
     def resolve_feedback_processing_batch(
         self,
         batch_id: str,
@@ -16747,8 +16870,6 @@ class AutoReplyStore:
         cleaned_batch_id = batch_id.strip()
         if not cleaned_batch_id:
             return False
-        if not isinstance(commit_is_ancestor, bool) or not commit_is_ancestor:
-            raise ValueError("resolution commit is not an ancestor of local main")
         normalized_evidence = (
             evidence
             if isinstance(evidence, ResolutionEvidence)
@@ -16756,11 +16877,6 @@ class AutoReplyStore:
             if evidence is not None
             else None
         )
-        if normalized_evidence is not None:
-            validate_resolution_evidence(
-                normalized_evidence,
-                commit_is_ancestor=commit_is_ancestor,
-            )
         with self._immediate_write_transaction() as db:
             batch = db.execute(
                 "select status, requested_count, resolved_at, updated_at "
@@ -16820,6 +16936,35 @@ class AutoReplyStore:
             ) != set(item_keys):
                 raise ValueError("resolution receipt associations do not match batch")
             round_by_id = {int(round_row["id"]): round_row for round_row in round_rows}
+            decision_record = self._resolution_feedback_iteration_decision(
+                db,
+                batch_id=cleaned_batch_id,
+                feedback_keys=item_keys,
+                round_by_key={
+                    str(item["feedback_key"]): self._feedback_processing_round_pointer(
+                        item, require_positive=True
+                    )
+                    for item in rows
+                },
+            )
+            if decision_record is None:
+                validate_resolution_evidence(
+                    normalized_evidence,
+                    commit_is_ancestor=commit_is_ancestor,
+                )
+                requires_commit = True
+            else:
+                validate_resolution_receipt(
+                    decision_record.decision,
+                    normalized_evidence,
+                    commit_is_ancestor=commit_is_ancestor,
+                )
+                self._validate_decision_resolution_receipt(
+                    db,
+                    decision_record.decision,
+                    normalized_evidence,
+                )
+                requires_commit = decision_record.decision.scope in {"code", "mixed"}
             verified: list[tuple[sqlite3.Row, sqlite3.Row]] = []
             for item in rows:
                 round_id = self._feedback_processing_round_pointer(
@@ -16864,7 +17009,7 @@ class AutoReplyStore:
                             "resolution receipt association does not match current round"
                         )
                 item_commit = str(current_round["commit_sha"] or "").strip()
-                if (
+                if requires_commit and (
                     str(item["commit_sha"] or "").strip().lower()
                     != item_commit.lower()
                     or item_commit.lower()
@@ -16896,16 +17041,32 @@ class AutoReplyStore:
                         raise ValueError(
                             "resolution item evidence does not match current round receipt"
                         )
-                validate_resolution_evidence(
-                    ResolutionEvidence(
-                        commit_sha=item_commit,
-                        test_evidence=test_json,
-                        restart_evidence=restart_json,
-                        health_evidence=health_json,
-                        backlog_evidence=normalized_evidence.backlog_evidence,
-                    ),
-                    commit_is_ancestor=commit_is_ancestor,
-                )
+                if requires_commit:
+                    validate_resolution_evidence(
+                        ResolutionEvidence(
+                            commit_sha=item_commit,
+                            test_evidence=test_json,
+                            restart_evidence=restart_json,
+                            health_evidence=health_json,
+                            backlog_evidence=normalized_evidence.backlog_evidence,
+                        ),
+                        commit_is_ancestor=commit_is_ancestor,
+                    )
+                else:
+                    validate_resolution_receipt(
+                        decision_record.decision,
+                        ResolutionEvidence(
+                            test_evidence=test_json,
+                            restart_evidence=restart_json,
+                            health_evidence=health_json,
+                            backlog_evidence=normalized_evidence.backlog_evidence,
+                            runtime_config_id=normalized_evidence.runtime_config_id,
+                            previous_runtime_config_id=normalized_evidence.previous_runtime_config_id,
+                            load_receipt_id=normalized_evidence.load_receipt_id,
+                            skill_revisions=normalized_evidence.skill_revisions,
+                        ),
+                        commit_is_ancestor=commit_is_ancestor,
+                    )
                 verified.append((item, current_round))
             placeholders = ",".join("?" for _ in item_keys)
             source_rows = db.execute(
