@@ -40,9 +40,8 @@ APPROVED_SENDER_PATHS = frozenset({
     "app/org_cache.py:CachedDwsClient.send_direct_message_by_bot",
     "app/org_cache.py:CachedDwsClient.send_group_message_by_bot",
     "app/org_cache.py:CachedDwsClient.ding_self",
-    "app/cli.py:<module>.test_ding_command",
-    "app/cli.py:<module>.probe_dws",
     "app/service_message_sender.py:ServiceMessageSender.send_dingtalk_prepared",
+    "app/service_message_sender.py:ServiceMessageSender.send_dingtalk_ding_prepared",
     "app/service_message_sender.py:ServiceMessageSender.send_dingtalk_reply_to_trigger_prepared",
     "app/service_message_sender.py:ServiceMessageSender.send_wechat_prepared",
     "app/wechat/accessibility.py:WechatSender.send",
@@ -140,15 +139,10 @@ FOCUSED_SENDER_PATH_TESTS = {
         "test_cached_dws_forwarder_coverage_anchors",
         "ding_self",
     ),
-    "app/cli.py:<module>.test_ding_command": (
-        "tests/test_cli.py",
-        "test_test_ding_command_uses_dws_client",
-        "run_test_ding_command",
-    ),
-    "app/cli.py:<module>.probe_dws": (
-        "tests/test_cli.py",
-        "test_probe_dws_reports_unread_ok_and_ding_blocked",
-        "probe_dws",
+    "app/service_message_sender.py:ServiceMessageSender.send_dingtalk_ding_prepared": (
+        "tests/test_service_message_sender.py",
+        "test_dingtalk_ding_facade_dispatches_only_the_prepared_final_body",
+        "send_dingtalk_ding_prepared",
     ),
     "app/wechat/accessibility.py:WechatSender.send": (
         "tests/wechat/test_accessibility.py",
@@ -168,29 +162,30 @@ FOCUSED_SENDER_PATH_TESTS = {
 }
 
 
-def _is_wechat_raw_receiver(node: ast.AST) -> bool:
-    """Identify known raw Accessibility carriers without matching callbacks."""
+def _is_wechat_sender_client_constructor(node: ast.AST) -> bool:
+    """Return whether *node* constructs the raw IPC client."""
+    constructor = node.func if isinstance(node, ast.Call) else node
+    return (
+        isinstance(constructor, ast.Name)
+        and constructor.id == "WechatSenderClient"
+    ) or (
+        isinstance(constructor, ast.Attribute)
+        and constructor.attr == "WechatSenderClient"
+    )
+
+
+def _is_wechat_raw_receiver(node: ast.AST, known_clients: set[str]) -> bool:
+    """Recognize only a typed or constructed WeChat IPC client."""
     if isinstance(node, ast.Name):
-        return node.id in {"runner", "wechat"}
-    if isinstance(node, ast.Attribute):
-        return node.attr in {"runner", "wechat"}
-    if isinstance(node, ast.Call):
-        constructor = node.func
-        return (
-            isinstance(constructor, ast.Name)
-            and constructor.id == "WechatSenderClient"
-        ) or (
-            isinstance(constructor, ast.Attribute)
-            and constructor.attr == "WechatSenderClient"
-        )
-    return False
+        return node.id in known_clients
+    return _is_wechat_sender_client_constructor(node)
 
 
-def _is_wechat_runner_send(node: ast.Call) -> bool:
+def _is_wechat_runner_send(node: ast.Call, known_clients: set[str]) -> bool:
     """Identify raw WeChat sends without matching callback attributes."""
     if not isinstance(node.func, ast.Attribute) or node.func.attr != "send":
         return False
-    return _is_wechat_raw_receiver(node.func.value)
+    return _is_wechat_raw_receiver(node.func.value, known_clients)
 
 
 def _dynamic_provider_method(node: ast.Call) -> tuple[ast.AST, str] | None:
@@ -220,7 +215,8 @@ class _CallOwners(ast.NodeVisitor):
         self.relative = relative
         self.classes: list[str] = []
         self.functions: list[str] = []
-        self.calls: list[tuple[ast.Call, str]] = []
+        self.calls: list[tuple[ast.Call, str, set[str]]] = []
+        self.client_scopes: list[set[str]] = []
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self.classes.append(node.name)
@@ -229,22 +225,37 @@ class _CallOwners(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.functions.append(node.name)
+        known_clients = {
+            argument.arg
+            for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+            if _terminal_name(argument.annotation) == "WechatSenderClient"
+        }
+        for candidate in ast.walk(node):
+            if (
+                isinstance(candidate, ast.Assign)
+                and isinstance(candidate.value, ast.Call)
+                and _is_wechat_sender_client_constructor(candidate.value)
+            ):
+                known_clients.update(
+                    target.id for target in candidate.targets if isinstance(target, ast.Name)
+                )
+        self.client_scopes.append(known_clients)
         self.generic_visit(node)
+        self.client_scopes.pop()
         self.functions.pop()
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self.functions.append(node.name)
-        self.generic_visit(node)
-        self.functions.pop()
+        self.visit_FunctionDef(node)
 
     def visit_Call(self, node: ast.Call) -> None:
         class_name = ".".join(self.classes) or "<module>"
         function_name = ".".join(self.functions) or "<module>"
-        self.calls.append((node, f"{self.relative}:{class_name}.{function_name}"))
+        clients = self.client_scopes[-1] if self.client_scopes else set()
+        self.calls.append((node, f"{self.relative}:{class_name}.{function_name}", clients))
         self.generic_visit(node)
 
 
-def _calls_with_owners(tree: ast.AST, relative: str) -> list[tuple[ast.Call, str]]:
+def _calls_with_owners(tree: ast.AST, relative: str) -> list[tuple[ast.Call, str, set[str]]]:
     visitor = _CallOwners(relative)
     visitor.visit(tree)
     return visitor.calls
@@ -378,7 +389,7 @@ def _raw_send_violations(app_root: Path = APP_ROOT) -> list[str]:
     for source in sorted(app_root.rglob("*.py")):
         relative = _relative(source, app_root)
         tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
-        for node, owner in _calls_with_owners(tree, relative):
+        for node, owner, known_clients in _calls_with_owners(tree, relative):
             dynamic = _dynamic_provider_method(node)
             if dynamic is not None:
                 receiver, dynamic_method = dynamic
@@ -389,7 +400,7 @@ def _raw_send_violations(app_root: Path = APP_ROOT) -> list[str]:
                     violations.append(f"{owner}:{node.lineno}:{dynamic_method}")
                 elif (
                     dynamic_method == "send"
-                    and _is_wechat_raw_receiver(receiver)
+                    and _is_wechat_raw_receiver(receiver, known_clients)
                     and owner not in APPROVED_SENDER_PATHS
                 ):
                     violations.append(f"{owner}:{node.lineno}:runner.send")
@@ -402,7 +413,7 @@ def _raw_send_violations(app_root: Path = APP_ROOT) -> list[str]:
                 continue
             # The Accessibility/IPC runner accepts a plain string. Only the
             # unified facade and IPC adapter may call a runner's raw send method.
-            if _is_wechat_runner_send(node) and owner not in APPROVED_SENDER_PATHS:
+            if _is_wechat_runner_send(node, known_clients) and owner not in APPROVED_SENDER_PATHS:
                 violations.append(f"{owner}:{node.lineno}:runner.send")
     return violations
 
@@ -496,7 +507,7 @@ def test_architecture_guard_rejects_a_business_module_directly_calling_wechat_ru
     app_root.mkdir()
     bypass = app_root / "business_sender.py"
     bypass.write_text(
-        "def notify(runner):\n"
+        "def notify(runner: WechatSenderClient):\n"
         "    return runner.send('Alex', 'bypassed')\n",
         encoding="utf-8",
     )
@@ -520,6 +531,28 @@ def test_architecture_guard_rejects_a_business_module_calling_wechat_ipc_client(
 
     assert _raw_send_violations(app_root) == [
         "app/business_sender.py:<module>.notify:2:runner.send",
+    ]
+
+
+def test_architecture_guard_rejects_typed_and_assigned_wechat_ipc_clients(
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    bypass = app_root / "business_sender.py"
+    bypass.write_text(
+        "def typed(client: WechatSenderClient):\n"
+        "    return client.send('Alex', 'bypassed')\n"
+        "\n"
+        "def assigned():\n"
+        "    client = WechatSenderClient()\n"
+        "    return getattr(client, 'send')('Alex', 'bypassed')\n",
+        encoding="utf-8",
+    )
+
+    assert _raw_send_violations(app_root) == [
+        "app/business_sender.py:<module>.typed:2:runner.send",
+        "app/business_sender.py:<module>.assigned:6:runner.send",
     ]
 
 
@@ -569,7 +602,10 @@ def test_architecture_guard_ignores_transport_definitions_callbacks_and_reads(
         "\n"
         "def inspect(reader, callback):\n"
         "    callback_handler = callback.send_message\n"
-        "    return reader.read_messages(), callback_handler\n",
+        "    return reader.read_messages(), callback_handler\n"
+        "\n"
+        "def forward(wechat):\n"
+        "    return wechat.send('not a provider call')\n",
         encoding="utf-8",
     )
 
