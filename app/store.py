@@ -4198,50 +4198,70 @@ class AutoReplyStore:
         feedback_base_url: str | None = None,
     ) -> PreparedOutboundMessage:
         """Persist and return the immutable final form for one provider delivery."""
+        with self._immediate_write_transaction() as db:
+            return self._prepare_outbound_postfix_in_transaction(
+                db,
+                channel=channel,
+                delivery_key=delivery_key,
+                body=body,
+                original_text=original_text,
+                feedback_base_url=feedback_base_url,
+            )
+
+    @staticmethod
+    def _prepare_outbound_postfix_in_transaction(
+        db: sqlite3.Connection,
+        *,
+        channel: str,
+        delivery_key: str,
+        body: str,
+        original_text: str,
+        feedback_base_url: str | None = None,
+    ) -> PreparedOutboundMessage:
+        """Prepare one immutable body inside the caller's existing transaction."""
         normalized_channel, normalized_delivery_key = normalize_outbound_postfix_inputs(
             channel=channel,
             delivery_key=delivery_key,
             body=body,
         )
-        with self._immediate_write_transaction() as db:
-            row = db.execute(
-                """select channel, delivery_key, final_body, feedback_token, postfix_version
-                   from outbound_postfixes
-                   where channel=? and delivery_key=?""",
-                (normalized_channel, normalized_delivery_key),
-            ).fetchone()
-            if row is not None:
-                return PreparedOutboundMessage(
-                    channel=str(row["channel"]),
-                    delivery_key=str(row["delivery_key"]),
-                    final_body=str(row["final_body"]),
-                    feedback_token=str(row["feedback_token"]),
-                    postfix_version=str(row["postfix_version"]),
-                )
-            prepared = compose_outbound_postfix(
-                channel=normalized_channel,
-                delivery_key=normalized_delivery_key,
-                body=body,
-                original_text=original_text,
-                feedback_base_url=(
-                    feedback_spike_vercel_base_url()
-                    if feedback_base_url is None
-                    else feedback_base_url
-                ),
+        row = db.execute(
+            """select channel, delivery_key, final_body, feedback_token, postfix_version
+               from outbound_postfixes
+               where channel=? and delivery_key=?""",
+            (normalized_channel, normalized_delivery_key),
+        ).fetchone()
+        if row is not None:
+            return PreparedOutboundMessage(
+                channel=str(row["channel"]),
+                delivery_key=str(row["delivery_key"]),
+                final_body=str(row["final_body"]),
+                feedback_token=str(row["feedback_token"]),
+                postfix_version=str(row["postfix_version"]),
             )
-            db.execute(
-                """insert into outbound_postfixes (
-                       channel, delivery_key, final_body, feedback_token, postfix_version
-                   ) values (?, ?, ?, ?, ?)""",
-                (
-                    prepared.channel,
-                    prepared.delivery_key,
-                    prepared.final_body,
-                    prepared.feedback_token,
-                    prepared.postfix_version,
-                ),
-            )
-            return prepared
+        prepared = compose_outbound_postfix(
+            channel=normalized_channel,
+            delivery_key=normalized_delivery_key,
+            body=body,
+            original_text=original_text,
+            feedback_base_url=(
+                feedback_spike_vercel_base_url()
+                if feedback_base_url is None
+                else feedback_base_url
+            ),
+        )
+        db.execute(
+            """insert into outbound_postfixes (
+                   channel, delivery_key, final_body, feedback_token, postfix_version
+               ) values (?, ?, ?, ?, ?)""",
+            (
+                prepared.channel,
+                prepared.delivery_key,
+                prepared.final_body,
+                prepared.feedback_token,
+                prepared.postfix_version,
+            ),
+        )
+        return prepared
 
     def get_outbound_postfix(
         self,
@@ -12158,13 +12178,13 @@ class AutoReplyStore:
                 ).fetchone()
                 evidence_json = json.dumps(evidence or {}, ensure_ascii=False)
                 if existing is None:
-                    db.execute(
+                    delivery_cursor = db.execute(
                         """
                         insert into wechat_deliveries (
                             reply_task_id, account_id, target_type, target_id,
                             conversation_id, reply_text, execution_generation,
-                            evidence_json
-                        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                            status, evidence_json
+                        ) values (?, ?, ?, ?, ?, ?, ?, 'preparing', ?)
                         """,
                         (
                             task_id, account_id, target_type, target_id,
@@ -12172,6 +12192,7 @@ class AutoReplyStore:
                             expected_execution_generation, evidence_json,
                         ),
                     )
+                    delivery_id = int(delivery_cursor.lastrowid)
                 elif (
                     existing["execution_generation"]
                     != expected_execution_generation
@@ -12188,7 +12209,7 @@ class AutoReplyStore:
                         update wechat_deliveries
                         set account_id=?, target_type=?, target_id=?,
                             conversation_id=?, reply_text=?,
-                            execution_generation=?, status='ready_to_send',
+                            execution_generation=?, status='preparing',
                             action_started_at='', pre_action_failure=0,
                             evidence_json=?, error='',
                             updated_at=current_timestamp
@@ -12203,8 +12224,31 @@ class AutoReplyStore:
                             evidence_json, existing["id"],
                         ),
                     )
+                    delivery_id = int(existing["id"])
                 elif existing["execution_generation"] != expected_execution_generation:
                     raise ValueError("started WeChat delivery cannot be replaced")
+                else:
+                    delivery_id = int(existing["id"])
+                prepared = self._prepare_outbound_postfix_in_transaction(
+                    db,
+                    channel="wechat",
+                    delivery_key=f"wechat:{delivery_id}",
+                    body=reply_text,
+                    original_text=str(task["trigger_text"] or ""),
+                )
+                prepared_cursor = db.execute(
+                    """
+                    update wechat_deliveries
+                    set reply_text=?, status='ready_to_send',
+                        updated_at=current_timestamp
+                    where id=? and status in ('preparing', 'ready_to_send')
+                    """,
+                    (prepared.final_body, delivery_id),
+                )
+                if prepared_cursor.rowcount != 1:
+                    raise AgentRunLeaseLostError(
+                        f"WeChat delivery preparation lost: {delivery_id}"
+                    )
             task_cursor = db.execute(
                 """
                 update reply_tasks

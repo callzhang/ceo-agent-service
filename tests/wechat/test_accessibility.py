@@ -58,11 +58,22 @@ def _seed_delivery(store):
         single_chat=True, trigger_message_id="m1",
         trigger_create_time="2026-07-17T10:00:00", trigger_sender="Alex", trigger_text="hi",
     )
-    store.create_wechat_delivery(
+    delivery_id = store.create_wechat_delivery(
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u9", conversation_id="u9", reply_text="收到",
         evidence={"trigger_text": "hi"},
     )
+    prepared = store.prepare_outbound_postfix(
+        "wechat",
+        f"wechat:{delivery_id}",
+        "收到",
+        "hi",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update wechat_deliveries set reply_text=? where id=?",
+            (prepared.final_body, delivery_id),
+        )
     return store.get_wechat_delivery_for_task(1)
 
 
@@ -88,7 +99,22 @@ def test_verified_binding_sends(store):
     delivery = _seed_delivery(store)
     outcome = sender.send(delivery, _scope("verified"))
     assert outcome.status == "sent"
-    assert runner.calls == [("Alex", "收到", None, "hi")]
+    assert runner.calls == [("Alex", delivery.reply_text, None, "hi")]
+
+
+def test_sender_rejects_delivery_without_matching_prepared_body(store):
+    runner = FakeRunner(AccessibilityResult(True, True, "fp-1"))
+    delivery = _seed_delivery(store)
+    with store._connect() as db:
+        db.execute(
+            "delete from outbound_postfixes where channel='wechat' and delivery_key=?",
+            (f"wechat:{delivery.id}",),
+        )
+
+    with pytest.raises(ValueError, match="prepared WeChat delivery"):
+        WechatSender(store, runner).send(delivery, _scope("verified"))
+
+    assert runner.calls == []
 
 
 def test_two_senders_claim_delivery_once(store):
@@ -122,7 +148,7 @@ def test_verified_binding_uses_persisted_unique_navigation_query(store):
     outcome = sender.send(delivery, scope)
 
     assert outcome.status == "sent"
-    assert runner.calls == [("Alex", "收到", "melody115", "hi")]
+    assert runner.calls == [("Alex", delivery.reply_text, "melody115", "hi")]
 
 
 def test_post_action_without_persisted_receipt_remains_unknown(store):
@@ -281,7 +307,9 @@ def test_recovery_uses_explicit_account_with_ipc_style_reader(store):
         @staticmethod
         def read_messages(requested_account, *_args, **_kwargs):
             assert requested_account is account
-            return [SimpleNamespace(direction="outbound", text="收到")]
+            return [
+                SimpleNamespace(direction="outbound", text=delivery.reply_text)
+            ]
 
     recovered = reconcile_incomplete_deliveries(store, Reader(), account=account)
 
@@ -303,7 +331,9 @@ def test_recovery_scans_extended_read_only_history_for_unknown_delivery(store):
 
         def read_messages(self, *_args, **kwargs):
             self.requested_limit = kwargs["limit"]
-            return [SimpleNamespace(direction="outbound", text="收到")]
+            return [
+                SimpleNamespace(direction="outbound", text=delivery.reply_text)
+            ]
 
     reader = Reader()
     recovered = reconcile_incomplete_deliveries(store, reader)
@@ -325,7 +355,9 @@ def test_recovery_scans_from_the_persisted_action_start(store):
 
         def read_messages(self, *_args, **kwargs):
             self.requested_since = kwargs["since"]
-            return [SimpleNamespace(direction="outbound", text="收到")]
+            return [
+                SimpleNamespace(direction="outbound", text=delivery.reply_text)
+            ]
 
     reader = Reader()
     recovered = reconcile_incomplete_deliveries(store, reader)

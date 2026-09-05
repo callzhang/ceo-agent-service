@@ -13,10 +13,21 @@ def _seed(store, *, binding="verified", task_id=1):
         channel="wechat", conversation_id="u9", conversation_title="Alex",
         single_chat=True, trigger_message_id=f"m{task_id}",
         trigger_create_time="2026-07-18T10:00:00", trigger_sender="Alex", trigger_text="hi")
-    store.create_wechat_delivery(
+    delivery_id = store.create_wechat_delivery(
         reply_task_id=task_id, account_id="acct-1", target_type="direct",
         target_id="u9", conversation_id="u9", reply_text="收到",
         evidence={"trigger_text": "hi"})
+    prepared = store.prepare_outbound_postfix(
+        "wechat",
+        f"wechat:{delivery_id}",
+        "收到",
+        "hi",
+    )
+    with store._connect() as db:
+        db.execute(
+            "update wechat_deliveries set reply_text=? where id=?",
+            (prepared.final_body, delivery_id),
+        )
     return store.get_wechat_delivery_for_task(task_id)
 
 
@@ -119,7 +130,10 @@ def test_auto_mode_refreshes_direct_binding_text_before_send(tmp_path):
         reader=Reader(),
         account=account,
     ) == 1
-    assert calls == [("Alex", "收到", None, "new message during reply delay")]
+    delivery = store.get_wechat_delivery_for_task(1)
+    assert calls == [
+        ("Alex", delivery.reply_text, None, "new message during reply delay")
+    ]
 
 
 def test_auto_mode_keeps_delivery_pending_when_binding_refresh_fails(tmp_path):
@@ -506,7 +520,7 @@ def test_recall_uses_runner_capability_with_text(tmp_path):
 
     runner = Runner()
     assert service.recall_wechat_delivery(store, runner, d.id, "收到") is True
-    assert runner.arg == "收到"
+    assert runner.arg == d.reply_text
     assert store.get_wechat_delivery_for_task(1).status == "failed"
 
 
@@ -514,6 +528,64 @@ def test_recall_noop_when_runner_lacks_capability(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     d = _seed(store)
     assert service.recall_wechat_delivery(store, object(), d.id, "收到") is False
+
+
+def test_wechat_retry_and_recall_use_same_prepared_body(tmp_path, monkeypatch):
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.test",
+    )
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery = _seed(store)
+    sent_texts = []
+    recalled_texts = []
+
+    class Runner:
+        def __init__(self):
+            self.calls = 0
+
+        def send(self, _label, reply_text, **_kwargs):
+            self.calls += 1
+            sent_texts.append(reply_text)
+            if self.calls == 1:
+                return AccessibilityResult(
+                    action_performed=False,
+                    visible_confirmation=False,
+                    failure_reason="target_open_failed",
+                )
+            return AccessibilityResult(True, True)
+
+        def recall_last_outbound(self, reply_text):
+            recalled_texts.append(reply_text)
+            return True
+
+    runner = Runner()
+    sender = WechatSender(store, runner)
+    scope = _scope("verified").model_copy(
+        update={
+            "account_id": "acct-1",
+            "target_type": "direct",
+            "target_id": "u9",
+            "conversation_id": "u9",
+            "display_name": "Alex",
+            "trigger_mode": "every_inbound_text",
+        }
+    )
+
+    assert sender.send(delivery, scope).status == "failed"
+    assert store.requeue_unperformed_wechat_deliveries() == 1
+    requeued = store.get_wechat_delivery_by_id(delivery.id)
+    assert sender.send(requeued, scope).status == "sent"
+    assert service.recall_wechat_delivery(
+        store,
+        runner,
+        delivery.id,
+        "caller supplied text must not be used",
+    )
+
+    assert requeued.reply_text.count("/api/dingtalk-feedback-spike") == 2
+    assert sent_texts == [requeued.reply_text, requeued.reply_text]
+    assert recalled_texts == [requeued.reply_text]
 
 
 def _scope(binding="unverified"):

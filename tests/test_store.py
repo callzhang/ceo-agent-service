@@ -17,7 +17,6 @@ from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,
     AgentRunLeaseLostError,
-    AgentRuntimeAttemptStartConflictError,
     AutoReplyStore,
 )
 
@@ -59,6 +58,53 @@ def test_prepare_outbound_postfix_rejects_invalid_replay_candidate(
 
     with pytest.raises(ValueError, match="outbound body is required"):
         store.prepare_outbound_postfix("wechat", "message-1", " ", "原文")
+
+
+def test_finalize_wechat_reply_task_persists_postfixed_body_before_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL",
+        "https://feedback.example.test",
+    )
+    store = AutoReplyStore(tmp_path / "wechat-postfix.sqlite3")
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="u1",
+        conversation_title="Alex",
+        single_chat=True,
+        trigger_message_id="m1",
+        trigger_create_time="2026-09-05T10:00:00",
+        trigger_sender="Alex",
+        trigger_text="原消息",
+    )
+    task = store.claim_reply_tasks(1, channel="wechat")[0]
+
+    store.finalize_wechat_reply_task(
+        task_id=task.id,
+        expected_execution_generation=task.execution_generation,
+        action="send_reply",
+        sensitivity_kind="normal",
+        codex_reason="reply requested",
+        draft_reply_text="回复",
+        audit_summary="reply queued",
+        send_status="pending",
+        account_id="acct-1",
+        target_type="direct",
+        target_id="u1",
+        conversation_id="u1",
+        reply_text="回复",
+    )
+
+    delivery = store.get_wechat_delivery_for_task(task.id)
+    prepared = store.get_outbound_postfix("wechat", f"wechat:{delivery.id}")
+
+    assert delivery.status == "ready_to_send"
+    assert prepared is not None
+    assert delivery.reply_text == prepared.final_body
+    assert delivery.reply_text.count("/api/dingtalk-feedback-spike") == 2
+    assert prepared.feedback_token
 
 
 def _claim_audit_run(
