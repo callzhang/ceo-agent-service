@@ -55,7 +55,7 @@ describe("feedback API", () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ enabled: false, config_id: 24 }), { status: 200, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ item: {
-        batch_id: "batch-1", status: "resolved", requested_count: 1, items: [validItem], decisions: [{
+        batch_id: "batch-1", status: "resolved", requested_count: 1, items: [{ ...validItem, scope_receipt: { decision_id: 8, scope: "skill_only", evidence: { commit_sha: "full-sha", runtime_config_id: 24, previous_runtime_config_id: 23, load_receipt_id: 9, associations: { "fb-1": { workbench_task_id: "task-1", workbench_turn_id: "turn-1", attempt_id: 1, agent_run_id: 2 } } } } }], decisions: [{
           id: 8, batch_id: "batch-1", workbench_task_id: "task-1", workbench_turn_id: "turn-1", feedback_keys: ["fb-1"], round_ids: [3], created_at: "2026-09-05T00:00:00Z",
           decision: { scope: "skill_only", root_cause: "missing procedure", feedback_keys: ["fb-1"], source_references: ["attempt#8308", "run#445"], target_skill_revisions: [{ skill_id: 4, from_revision: 12, to_revision: 13 }], why_not_code: "The route exists.", acceptance: { scenario: "attempt#8308", expected_behavior: "uses the route", verification: ["focused regression"] } },
           receipt: { config_id: 24, revision_id: 13, sha256: "abc123", load_receipt_id: 9 },
@@ -68,6 +68,10 @@ describe("feedback API", () => {
     expect(batch.item.decisions[0]).toMatchObject({
       decision: { scope: "skill_only", target_skill_revisions: [{ to_revision: 13 }] },
       workbench_task_id: "task-1",
+    });
+    expect(batch.item.items[0].scope_receipt).toMatchObject({
+      decision_id: 8,
+      evidence: { commit_sha: "full-sha", previous_runtime_config_id: 23, load_receipt_id: 9 },
     });
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/console/settings/feedback-iteration");
   });

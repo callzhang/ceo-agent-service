@@ -7,6 +7,7 @@ import {
   listFeedback,
   reopenFeedback,
   syncFeedback,
+  type FeedbackReference,
   type FeedbackItem,
   type FeedbackProcessingRound,
 } from "../api/console";
@@ -97,21 +98,52 @@ function ProcessingHistory({ history }: { history: readonly FeedbackProcessingRo
   </ol>;
 }
 
-function DecisionHistory({ decisions, history }: { decisions: readonly FeedbackIterationDecisionRecord[]; history: readonly FeedbackProcessingRound[] }) {
+function ReceiptAudit({ receipt }: { receipt: Record<string, unknown> | undefined }) {
+  if (!receipt || !Object.keys(receipt).length) return <>未提供</>;
+  const evidence = receipt.evidence && typeof receipt.evidence === "object" && !Array.isArray(receipt.evidence) ? receipt.evidence as Record<string, unknown> : {};
+  const value = (key: string) => evidence[key];
+  const display = (item: unknown) => typeof item === "string" || typeof item === "number" || typeof item === "boolean" ? String(item) : JSON.stringify(item ?? {});
+  const associations = value("associations") && typeof value("associations") === "object" && !Array.isArray(value("associations")) ? value("associations") as Record<string, unknown> : {};
+  return <>
+    <div><dt>回执决策：</dt><dd>decision #{display(receipt.decision_id)} · {display(receipt.scope)}</dd></div>
+    <div><dt>提交：</dt><dd><code>{display(value("commit_sha"))}</code></dd></div>
+    <div><dt>测试证据：</dt><dd>{display(value("test_evidence"))}</dd></div>
+    <div><dt>重启证据：</dt><dd>{display(value("restart_evidence"))}</dd></div>
+    <div><dt>健康证据：</dt><dd>{display(value("health_evidence"))}</dd></div>
+    <div><dt>积压证据：</dt><dd>{display(value("backlog_evidence"))}</dd></div>
+    <div><dt>运行配置：</dt><dd><span>config #{display(value("runtime_config_id"))}</span> · <span>previous config #{display(value("previous_runtime_config_id"))}</span> · <span>load receipt #{display(value("load_receipt_id"))}</span></dd></div>
+    <div><dt>已加载修订：</dt><dd>{display(value("skill_revisions"))}</dd></div>
+    <div><dt>关联：</dt><dd>{Object.entries(associations).map(([key, association]) => { const item = association && typeof association === "object" && !Array.isArray(association) ? association as Record<string, unknown> : {}; const label = `${key}: ${display(item.workbench_task_id)} / ${display(item.workbench_turn_id)} / attempt#${display(item.attempt_id)} / run#${display(item.agent_run_id)}`; return <span key={key}>{label}</span>; })}</dd></div>
+    <div><dt>完整范围化回执：</dt><dd><pre>{JSON.stringify(receipt, null, 2)}</pre></dd></div>
+  </>;
+}
+
+function DecisionHistory({ decisions, history, references }: { decisions: readonly FeedbackIterationDecisionRecord[]; history: readonly FeedbackProcessingRound[]; references: readonly FeedbackReference[] }) {
   if (!decisions.length) return null;
   return <section className="feedback-decision-history" aria-label="反馈迭代决策">
     <h3>反馈迭代决策</h3>
     <ol className="feedback-history-list">
       {decisions.map((record) => {
         const receipt = history.find((round) => record.round_ids.includes(round.id))?.scope_receipt;
+        const referenceRoute = (label: string) => references.find((reference) => reference.label === label)?.route || "";
         return <li className="feedback-history-item" key={record.id}>
           <dl className="feedback-history-evidence">
+            <div><dt>决策：</dt><dd>decision #{record.id}</dd></div>
+            <div><dt>批次：</dt><dd>{record.batch_id}</dd></div>
+            <div><dt>反馈：</dt><dd>{record.feedback_keys.join(" · ")}</dd></div>
+            <div><dt>处理轮：</dt><dd>{record.round_ids.map((id) => <span key={id}>round #{id} </span>)}</dd></div>
+            <div><dt>Workbench：</dt><dd><Link to={`/?task=${encodeURIComponent(record.workbench_task_id)}`}>Workbench task {record.workbench_task_id}</Link> · <span>{record.workbench_turn_id}</span></dd></div>
+            <div><dt>创建：</dt><dd>{localTime(record.created_at)}</dd></div>
             <div><dt>范围：</dt><dd>{record.decision.scope}</dd></div>
             <div><dt>根因：</dt><dd>{record.decision.root_cause}</dd></div>
-            <div><dt>来源：</dt><dd>{record.decision.source_references.map((reference) => <span key={reference}>{reference} </span>)}</dd></div>
+            <div><dt>来源：</dt><dd>{record.decision.source_references.map((reference) => { const route = referenceRoute(reference); return route ? <a href={route} key={reference}>{reference}</a> : <span key={reference}>{reference} </span>; })}</dd></div>
             <div><dt>Skill 修订：</dt><dd>{record.decision.target_skill_revisions.length ? record.decision.target_skill_revisions.map((revision) => <span key={revision.skill_id}>skill #{revision.skill_id}: revision #{revision.from_revision} → <span>revision #{revision.to_revision}</span> </span>) : "未提供"}</dd></div>
             <div><dt>运行配置：</dt><dd>{record.decision.target_runtime_config_id ? `config #${record.decision.target_runtime_config_id}` : typeof receipt?.runtime_config_id === "number" ? `config #${receipt.runtime_config_id}` : "未提供"}</dd></div>
-            <div><dt>回执：</dt><dd>{typeof receipt?.load_receipt_id === "number" ? `load receipt #${receipt.load_receipt_id}` : "未提供"}</dd></div>
+            <div><dt>为什么不是代码：</dt><dd>{record.decision.why_not_code}</dd></div>
+            <div><dt>验收场景：</dt><dd>{record.decision.acceptance.scenario}</dd></div>
+            <div><dt>预期行为：</dt><dd>{record.decision.acceptance.expected_behavior}</dd></div>
+            <div><dt>验收验证：</dt><dd>{record.decision.acceptance.verification.map((item) => <span key={item}>{item} </span>)}</dd></div>
+            <ReceiptAudit receipt={receipt} />
           </dl>
         </li>;
       })}
@@ -370,6 +402,7 @@ export function FeedbackPage() {
           ...item,
           ...(Object.prototype.hasOwnProperty.call(detail.item, "current_processing") ? { current_processing: detail.item.current_processing } : {}),
           ...(Object.prototype.hasOwnProperty.call(detail.item, "processing_history") ? { processing_history: detail.item.processing_history } : {}),
+          ...(Object.prototype.hasOwnProperty.call(detail.item, "references") ? { references: detail.item.references } : {}),
         };
       }));
       if (batchId && batch) setBatchDecisions((current) => ({ ...current, [batchId]: batch.item.decisions }));
@@ -411,7 +444,7 @@ export function FeedbackPage() {
       }} renderExpanded={(row) => <div className="feedback-expanded">
         <div className="console-page-actions">{row.references.map((reference) => reference.route ? <a href={reference.route} key={`${reference.label}:${reference.route}`}>{reference.label}</a> : <span key={reference.label}>{reference.label}</span>)}{row.summary && <span>{displayValue(row.summary)}</span>}</div>
         <h3>处理历史</h3>
-        {row.processing_history ? <><ProcessingHistory history={row.processing_history} />{row.batch_id && !batchDecisions[row.batch_id] && <button className="secondary-button feedback-history-load" type="button" disabled={decisionLoadingBatchId === row.batch_id} onClick={() => void loadDecisions(row.batch_id)}>{decisionLoadingBatchId === row.batch_id ? "正在加载反馈迭代决策…" : "加载反馈迭代决策"}</button>}<DecisionHistory decisions={batchDecisions[row.batch_id] || []} history={row.processing_history} /></> : <button className="secondary-button feedback-history-load" type="button" disabled={historyLoadingKey === feedbackKey(row)} onClick={() => void loadHistory(row)}>{historyLoadingKey === feedbackKey(row) ? "正在加载处理历史…" : "加载处理历史"}</button>}
+        {row.processing_history ? <><ProcessingHistory history={row.processing_history} />{row.batch_id && !batchDecisions[row.batch_id] && <button className="secondary-button feedback-history-load" type="button" disabled={decisionLoadingBatchId === row.batch_id} onClick={() => void loadDecisions(row.batch_id)}>{decisionLoadingBatchId === row.batch_id ? "正在加载反馈迭代决策…" : "加载反馈迭代决策"}</button>}<DecisionHistory decisions={batchDecisions[row.batch_id] || []} history={row.processing_history} references={row.references} /></> : <button className="secondary-button feedback-history-load" type="button" disabled={historyLoadingKey === feedbackKey(row)} onClick={() => void loadHistory(row)}>{historyLoadingKey === feedbackKey(row) ? "正在加载处理历史…" : "加载处理历史"}</button>}
       </div>} />
       {!feedbackIterationEnabled && rows.some((row) => row.status !== "resolved") && <p className="muted">反馈迭代已关闭；启用后可处理未解决反馈</p>}
       <Pagination page={page} pageSize={pageSize} total={totalCount} onPageChange={(nextPage) => update("page", nextPage)} />

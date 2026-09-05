@@ -120,28 +120,45 @@ describe("FeedbackPage", () => {
     expect(screen.getByText("反馈迭代已关闭；启用后可处理未解决反馈")).toBeInTheDocument();
   });
 
-  it("renders persisted decision scope, routes, revision, config, and receipt", async () => {
+  it("renders the complete persisted decision audit record and navigable source references", async () => {
     const user = userEvent.setup();
     listFeedback.mockResolvedValue(page([feedback({ processing_history: undefined })]));
-    getFeedbackDetail.mockResolvedValue({ item: feedback({ processing_history: [round(2, { scope_receipt: { runtime_config_id: 24, load_receipt_id: 9 } })] }), meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+    getFeedbackDetail.mockResolvedValue({ item: feedback({ references: [{ label: "attempt#8308", route: "/attempts/8308" }, { label: "run#445", route: "/attempts/8308/execution/consumer" }, { label: "task#56", route: "/tasks/56" }, { label: "codex#session-1", route: "/codex/session-1" }], processing_history: [round(2, { scope_receipt: { decision_id: 8, scope: "mixed", evidence: { commit_sha: "a".repeat(40), test_evidence: { focused: { exit_code: 0 } }, restart_evidence: { launchd_label: "com.ceo-agent-service.main", before_pid: 12, after_pid: 13 }, health_evidence: { status_code: 200, ok: true }, backlog_evidence: { processing: 0, failed: 0, retryable: 0 }, runtime_config_id: 24, previous_runtime_config_id: 23, load_receipt_id: 9, skill_revisions: [{ skill_id: 4, revision_id: 13, sha256: "b".repeat(64) }], associations: { "feedback-1": { workbench_task_id: "task-2", workbench_turn_id: "turn-2", attempt_id: 8308, agent_run_id: 445 } } } } })] }), meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
     getFeedbackBatch.mockResolvedValue({ item: {
       batch_id: "batch-2", status: "resolved", requested_count: 1, items: [], decisions: [{
         id: 8, batch_id: "batch-2", workbench_task_id: "task-2", workbench_turn_id: "turn-2", feedback_keys: ["feedback-1"], round_ids: [2], created_at: "2026-09-05T00:00:00Z",
-        decision: { scope: "skill_only", root_cause: "existing tool usage policy is missing", feedback_keys: ["feedback-1"], source_references: ["attempt#8308", "run#445"], target_skill_revisions: [{ skill_id: 4, from_revision: 12, to_revision: 13 }], why_not_code: "The route already exists.", acceptance: { scenario: "attempt#8308", expected_behavior: "uses the existing route", verification: ["focused regression"] } },
+        decision: { scope: "mixed", root_cause: "existing tool usage policy is missing", feedback_keys: ["feedback-1"], source_references: ["attempt#8308", "run#445", "task#56", "codex#session-1"], target_skill_revisions: [{ skill_id: 4, from_revision: 12, to_revision: 13 }], target_runtime_config_id: 24, why_not_code: "The route already exists.", acceptance: { scenario: "attempt#8308", expected_behavior: "uses the existing route", verification: ["focused regression", "startup load receipt"] } },
       }],
     }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
     render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
 
     await user.click((await screen.findAllByRole("button", { name: "展开详情" })).at(-1)!);
     await user.click(screen.getByRole("button", { name: "加载处理历史" }));
-    expect(await screen.findByText("skill_only")).toBeInTheDocument();
+    expect(await screen.findByText("mixed")).toBeInTheDocument();
     const decisions = screen.getByRole("region", { name: "反馈迭代决策" });
+    expect(within(decisions).getByText("decision #8")).toBeInTheDocument();
+    expect(within(decisions).getByText("batch-2")).toBeInTheDocument();
+    expect(within(decisions).getByText("feedback-1")).toBeInTheDocument();
+    expect(within(decisions).getByText("round #2")).toBeInTheDocument();
+    expect(within(decisions).getByRole("link", { name: "Workbench task task-2" })).toHaveAttribute("href", "/?task=task-2");
+    expect(within(decisions).getByText("turn-2")).toBeInTheDocument();
+    expect(within(decisions).getByText(/2026\/9\/4/)).toBeInTheDocument();
     expect(within(decisions).getByText("existing tool usage policy is missing")).toBeInTheDocument();
-    expect(within(decisions).getByText("attempt#8308")).toBeInTheDocument();
-    expect(within(decisions).getByText("run#445")).toBeInTheDocument();
+    expect(within(decisions).getByRole("link", { name: "attempt#8308" })).toHaveAttribute("href", "/attempts/8308");
+    expect(within(decisions).getByRole("link", { name: "run#445" })).toHaveAttribute("href", "/attempts/8308/execution/consumer");
+    expect(within(decisions).getByRole("link", { name: "task#56" })).toHaveAttribute("href", "/tasks/56");
+    expect(within(decisions).getByRole("link", { name: "codex#session-1" })).toHaveAttribute("href", "/codex/session-1");
     expect(within(decisions).getByText("revision #13")).toBeInTheDocument();
-    expect(within(decisions).getByText("config #24")).toBeInTheDocument();
+    expect(within(decisions).getAllByText("config #24")).toHaveLength(2);
     expect(within(decisions).getByText("load receipt #9")).toBeInTheDocument();
+    expect(within(decisions).getByText("The route already exists.")).toBeInTheDocument();
+    expect(within(decisions).getByText("uses the existing route")).toBeInTheDocument();
+    expect(within(decisions).getByText("focused regression")).toBeInTheDocument();
+    expect(within(decisions).getByText("startup load receipt")).toBeInTheDocument();
+    expect(within(decisions).getByText("previous config #23")).toBeInTheDocument();
+    expect(within(decisions).getByText("a".repeat(40))).toBeInTheDocument();
+    expect(within(decisions).getAllByText((_, element) => element?.tagName === "DD" && element.textContent?.includes("com.ceo-agent-service.main") === true)).toHaveLength(2);
+    expect(within(decisions).getByText("feedback-1: task-2 / turn-2 / attempt#8308 / run#445")).toBeInTheDocument();
   });
 
   it("shows the reopen action only for resolved feedback", async () => {

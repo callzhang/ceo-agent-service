@@ -20,7 +20,26 @@ export interface FeedbackProcessingItem {
   health_evidence: Record<string, unknown>;
   note: string;
   resolved_at: string;
-  scope_receipt?: Record<string, unknown>;
+  scope_receipt?: FeedbackScopeReceipt;
+}
+
+/** Persisted, scoped evidence produced when a feedback decision is resolved. */
+export interface FeedbackScopeReceipt {
+  decision_id: number;
+  scope: FeedbackIterationDecision["scope"];
+  evidence: {
+    commit_sha?: string;
+    test_evidence?: Record<string, unknown>;
+    restart_evidence?: Record<string, unknown>;
+    health_evidence?: Record<string, unknown>;
+    backlog_evidence?: Record<string, unknown>;
+    runtime_config_id?: number;
+    previous_runtime_config_id?: number;
+    load_receipt_id?: number;
+    skill_revisions?: Array<Record<string, unknown>>;
+    associations?: Record<string, Record<string, unknown>>;
+    [key: string]: unknown;
+  };
 }
 
 export interface FeedbackIterationCapability {
@@ -106,7 +125,7 @@ function parseProcessingItem(value: unknown): FeedbackProcessingItem {
     note: stringField(row, "note"), resolved_at: stringField(row, "resolved_at"),
   };
   if (!Number.isInteger(item.attempt_id) || !Number.isInteger(item.agent_run_id) || item.attempt_id < 0 || item.agent_run_id < 0) throw new Error("invalid feedback response");
-  if (row.scope_receipt !== undefined) item.scope_receipt = record(row.scope_receipt);
+  if (row.scope_receipt !== undefined) item.scope_receipt = parseScopeReceipt(row.scope_receipt);
   return item;
 }
 
@@ -118,6 +137,13 @@ function stringArray(value: unknown): string[] {
 function positiveInteger(value: unknown): number {
   if (!Number.isInteger(value) || (value as number) <= 0) throw new Error("invalid feedback response");
   return value as number;
+}
+
+function parseScopeReceipt(value: unknown): FeedbackScopeReceipt {
+  const receipt = record(value);
+  const scope = stringField(receipt, "scope");
+  if (!( ["skill_only", "runtime_config", "code", "mixed", "needs_human"] as string[]).includes(scope)) throw new Error("invalid feedback response");
+  return { decision_id: positiveInteger(receipt.decision_id), scope: scope as FeedbackIterationDecision["scope"], evidence: record(receipt.evidence) };
 }
 
 function parseDecisionRecord(value: unknown): FeedbackIterationDecisionRecord {

@@ -160,7 +160,7 @@ def _install_interaction_routes(page) -> None:
     page.route("**/api/console/**", handle)
 
 
-def _install_feedback_iteration_routes(page, mutations: list[str]) -> None:
+def _install_feedback_iteration_routes(page, mutations: list[str], mutation_recorder: dict[str, bool]) -> None:
     enabled = True
     candidate = {
         "id": 2, "skill_id": 1, "revision_number": 2, "content": "---\nname: ceo-feedback-iteration\ndescription: Candidate\nmetadata:\n  managed_by: ceo-agent-service\n---\nCandidate", "sha256": "candidate-sha", "parent_revision_id": 1, "source": "user_edit", "created_at": SNAPSHOT,
@@ -170,6 +170,15 @@ def _install_feedback_iteration_routes(page, mutations: list[str]) -> None:
         nonlocal enabled
         path = urlsplit(route.request.url).path
         method = route.request.method
+        if mutation_recorder["armed"] and method != "GET" and (
+            path.startswith("/api/console/feedback")
+            or path.startswith("/api/console/agent")
+            or path.startswith("/api/console/codex")
+            or path.startswith("/api/console/sessions")
+        ):
+            mutations.append(f"{method} {path}")
+            route.fulfill(status=409, content_type="application/json", body=json.dumps({"code": "feedback_iteration_disabled", "message": "反馈迭代已关闭"}, ensure_ascii=False))
+            return
         if path.endswith("/api/console/settings/skills/features"):
             payload = {"features": []}
         elif path.endswith("/api/console/settings/managed-skills"):
@@ -192,10 +201,6 @@ def _install_feedback_iteration_routes(page, mutations: list[str]) -> None:
             payload = {"enabled": False, "config_id": 26, "status": "pending_restart"}
         elif path.endswith("/api/console/feedback"):
             payload = {"items": _feedback_items(1), "pending_count": 1, "meta": _meta(1)}
-        elif "/api/console/feedback/batches" in path and method != "GET":
-            mutations.append(path)
-            route.fulfill(status=409, content_type="application/json", body=json.dumps({"code": "feedback_iteration_disabled", "message": "反馈迭代已关闭"}, ensure_ascii=False))
-            return
         else:
             route.continue_()
             return
@@ -210,9 +215,10 @@ def test_feedback_iteration_candidate_activation_then_disabled_control_has_no_mu
         try:
             page = browser.new_page(viewport={"width": 1280, "height": 720})
             mutations: list[str] = []
+            mutation_recorder = {"armed": False}
             page_errors: list[str] = []
             page.on("pageerror", lambda error: page_errors.append(str(error)))
-            _install_feedback_iteration_routes(page, mutations)
+            _install_feedback_iteration_routes(page, mutations, mutation_recorder)
             page.goto(f"{BASE_URL}/settings?tab=skills", wait_until="domcontentloaded")
             _wait_for_root(page)
             page.get_by_role("button", name="新建修订").click()
@@ -228,7 +234,9 @@ def test_feedback_iteration_candidate_activation_then_disabled_control_has_no_mu
             button.wait_for(state="visible")
             assert button.is_disabled()
             assert page.get_by_text("反馈迭代已关闭；启用后可处理未解决反馈", exact=True).is_visible()
+            mutation_recorder["armed"] = True
             button.click(force=True)
+            page.wait_for_timeout(100)
             assert mutations == []
             assert not page_errors, page_errors
         finally:
