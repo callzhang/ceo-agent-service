@@ -2594,7 +2594,7 @@ class AutoReplyStore:
                 );
                 create table if not exists wechat_deliveries (
                     id integer primary key autoincrement,
-                    reply_task_id integer not null unique,
+                    reply_task_id integer not null,
                     account_id text not null,
                     target_type text not null,
                     target_id text not null,
@@ -3201,6 +3201,82 @@ class AutoReplyStore:
                 );
                 """
             )
+            delivery_columns = {
+                row["name"]
+                for row in db.execute("pragma table_info(wechat_deliveries)").fetchall()
+            }
+            if "execution_generation" not in delivery_columns:
+                db.execute(
+                    "alter table wechat_deliveries add column "
+                    "execution_generation text not null default 'initial'"
+                )
+            if "pre_action_failure" not in delivery_columns:
+                db.execute(
+                    "alter table wechat_deliveries add column "
+                    "pre_action_failure integer not null default 0"
+                )
+            delivery_indexes = db.execute(
+                "pragma index_list(wechat_deliveries)"
+            ).fetchall()
+            has_task_unique_key = any(
+                bool(index["unique"])
+                and [column["name"] for column in db.execute(
+                    f"pragma index_info({index['name']})"
+                ).fetchall()] == ["reply_task_id"]
+                for index in delivery_indexes
+            )
+            if has_task_unique_key:
+                db.execute(
+                    """
+                    create table wechat_deliveries_revised (
+                        id integer primary key autoincrement,
+                        reply_task_id integer not null,
+                        account_id text not null,
+                        target_type text not null,
+                        target_id text not null,
+                        conversation_id text not null default '',
+                        reply_text text not null,
+                        execution_generation text not null default 'initial',
+                        status text not null default 'ready_to_send',
+                        action_started_at text not null default '',
+                        pre_action_failure integer not null default 0,
+                        evidence_json text not null default '{}',
+                        error text not null default '',
+                        created_at text not null default current_timestamp,
+                        updated_at text not null default current_timestamp,
+                        foreign key(reply_task_id) references reply_tasks(id),
+                        unique(reply_task_id, execution_generation)
+                    )
+                    """
+                )
+                db.execute(
+                    """
+                    insert into wechat_deliveries_revised (
+                        id, reply_task_id, account_id, target_type, target_id,
+                        conversation_id, reply_text, execution_generation, status,
+                        action_started_at, pre_action_failure, evidence_json, error,
+                        created_at, updated_at
+                    )
+                    select id, reply_task_id, account_id, target_type, target_id,
+                           conversation_id, reply_text, execution_generation, status,
+                           action_started_at, pre_action_failure, evidence_json, error,
+                           created_at, updated_at
+                    from wechat_deliveries
+                    """
+                )
+                db.execute("drop table wechat_deliveries")
+                db.execute(
+                    "alter table wechat_deliveries_revised rename to wechat_deliveries"
+                )
+                db.execute(
+                    "create index idx_wechat_deliveries_status "
+                    "on wechat_deliveries(status, id)"
+                )
+            # The guard-replacement helpers below deliberately open their own
+            # BEGIN IMMEDIATE transactions. Finish any legacy table/column DDL
+            # first; SQLite does not support nested write transactions.
+            if db.in_transaction:
+                db.commit()
             self._replace_feedback_processing_round_guards_atomically(db)
             self._replace_managed_skill_revision_immutability_guards_atomically(db)
             self._replace_managed_skill_export_receipt_immutability_guards_atomically(db)
@@ -4187,6 +4263,29 @@ class AutoReplyStore:
                 )
                 """
             )
+            legacy_ready_deliveries = db.execute(
+                """
+                select deliveries.id, deliveries.reply_text, tasks.trigger_text
+                from wechat_deliveries as deliveries
+                join reply_tasks as tasks on tasks.id=deliveries.reply_task_id
+                left join outbound_postfixes as postfixes
+                  on postfixes.channel='wechat'
+                 and postfixes.delivery_key=('wechat:' || deliveries.id)
+                where deliveries.status='ready_to_send' and postfixes.delivery_key is null
+                """
+            ).fetchall()
+            for delivery in legacy_ready_deliveries:
+                prepared = self._prepare_outbound_postfix_in_transaction(
+                    db,
+                    channel="wechat",
+                    delivery_key=f"wechat:{delivery['id']}",
+                    body=str(delivery["reply_text"]),
+                    original_text=str(delivery["trigger_text"] or ""),
+                )
+                db.execute(
+                    "update wechat_deliveries set reply_text=? where id=?",
+                    (prepared.final_body, delivery["id"]),
+                )
 
     def prepare_outbound_postfix(
         self,
@@ -12173,8 +12272,9 @@ class AutoReplyStore:
                     conversation_id=conversation_id,
                 )
                 existing = db.execute(
-                    "select * from wechat_deliveries where reply_task_id=?",
-                    (task_id,),
+                    """select * from wechat_deliveries
+                       where reply_task_id=? and execution_generation=?""",
+                    (task_id, expected_execution_generation),
                 ).fetchone()
                 evidence_json = json.dumps(evidence or {}, ensure_ascii=False)
                 if existing is None:
@@ -12193,40 +12293,6 @@ class AutoReplyStore:
                         ),
                     )
                     delivery_id = int(delivery_cursor.lastrowid)
-                elif (
-                    existing["execution_generation"]
-                    != expected_execution_generation
-                    and (
-                        existing["status"] in {"ready_to_send", "superseded"}
-                        or (
-                            existing["status"] == "failed"
-                            and bool(existing["pre_action_failure"])
-                        )
-                    )
-                ):
-                    db.execute(
-                        """
-                        update wechat_deliveries
-                        set account_id=?, target_type=?, target_id=?,
-                            conversation_id=?, reply_text=?,
-                            execution_generation=?, status='preparing',
-                            action_started_at='', pre_action_failure=0,
-                            evidence_json=?, error='',
-                            updated_at=current_timestamp
-                        where id=? and (
-                            status in ('ready_to_send', 'superseded')
-                            or (status='failed' and pre_action_failure=1)
-                        )
-                        """,
-                        (
-                            account_id, target_type, target_id, conversation_id,
-                            reply_text, expected_execution_generation,
-                            evidence_json, existing["id"],
-                        ),
-                    )
-                    delivery_id = int(existing["id"])
-                elif existing["execution_generation"] != expected_execution_generation:
-                    raise ValueError("started WeChat delivery cannot be replaced")
                 else:
                     delivery_id = int(existing["id"])
                 prepared = self._prepare_outbound_postfix_in_transaction(
@@ -12275,7 +12341,20 @@ class AutoReplyStore:
         target_id: str, conversation_id: str, reply_text: str,
         evidence: dict[str, str] | None = None,
     ) -> int:
-        with self._connect() as db:
+        """Create (or retry) one generation-scoped, prepared WeChat delivery.
+
+        ``reply_text`` is a candidate only.  The durable ready-to-send row always
+        stores the immutable prepared final body, keyed by its own delivery ID.
+        """
+        with self._immediate_write_transaction() as db:
+            task = db.execute(
+                """select execution_generation, trigger_text from reply_tasks
+                   where id=? and channel='wechat'""",
+                (reply_task_id,),
+            ).fetchone()
+            if task is None:
+                raise ValueError("WeChat reply task was not found")
+            generation = str(task["execution_generation"])
             self._prepare_new_wechat_delivery(
                 db,
                 reply_task_id=reply_task_id,
@@ -12284,46 +12363,65 @@ class AutoReplyStore:
                 target_id=target_id,
                 conversation_id=conversation_id,
             )
-            db.execute(
+            existing = db.execute(
+                """select * from wechat_deliveries
+                   where reply_task_id=? and execution_generation=?""",
+                (reply_task_id, generation),
+            ).fetchone()
+            if existing is not None:
+                delivery_id = int(existing["id"])
+                if (
+                    existing["status"] == "failed"
+                    and bool(existing["pre_action_failure"])
+                ):
+                    db.execute(
+                        """update wechat_deliveries
+                           set status='ready_to_send', pre_action_failure=0,
+                               error='', updated_at=current_timestamp
+                           where id=?""",
+                        (delivery_id,),
+                    )
+                return delivery_id
+            cursor = db.execute(
                 """
                 insert into wechat_deliveries (
                     reply_task_id, account_id, target_type, target_id,
-                    conversation_id, reply_text, execution_generation, evidence_json
-                ) values (?, ?, ?, ?, ?, ?, coalesce((
-                    select execution_generation from reply_tasks where id=?
-                ), 'initial'), ?)
-                on conflict(reply_task_id) do update set
-                    account_id=excluded.account_id,
-                    target_type=excluded.target_type,
-                    target_id=excluded.target_id,
-                    conversation_id=excluded.conversation_id,
-                    reply_text=excluded.reply_text,
-                    execution_generation=excluded.execution_generation,
-                    status='ready_to_send',
-                    pre_action_failure=0,
-                    evidence_json=excluded.evidence_json,
-                    error='',
-                    updated_at=current_timestamp
-                where wechat_deliveries.status='failed'
-                  and wechat_deliveries.pre_action_failure=1
+                    conversation_id, reply_text, execution_generation, status,
+                    evidence_json
+                ) values (?, ?, ?, ?, ?, ?, ?, 'preparing', ?)
                 """,
                 (
                     reply_task_id, account_id, target_type, target_id,
-                    conversation_id, reply_text, reply_task_id,
+                    conversation_id, reply_text, generation,
                     json.dumps(evidence or {}, ensure_ascii=False),
                 ),
             )
-            row = db.execute(
-                "select id from wechat_deliveries where reply_task_id=?",
-                (reply_task_id,),
-            ).fetchone()
-            return int(row["id"])
+            delivery_id = int(cursor.lastrowid)
+            prepared = self._prepare_outbound_postfix_in_transaction(
+                db,
+                channel="wechat",
+                delivery_key=f"wechat:{delivery_id}",
+                body=reply_text,
+                original_text=str(task["trigger_text"] or ""),
+            )
+            db.execute(
+                """update wechat_deliveries
+                   set reply_text=?, status='ready_to_send', updated_at=current_timestamp
+                   where id=? and status='preparing'""",
+                (prepared.final_body, delivery_id),
+            )
+            return delivery_id
 
     def get_wechat_delivery_for_task(self, reply_task_id: int):
         from app.wechat.models import WechatDelivery
         with self._connect() as db:
             row = db.execute(
-                "select * from wechat_deliveries where reply_task_id=?",
+                """select deliveries.* from wechat_deliveries as deliveries
+                   join reply_tasks as tasks on tasks.id=deliveries.reply_task_id
+                   where deliveries.reply_task_id=?
+                   order by (deliveries.execution_generation=tasks.execution_generation)
+                            desc, deliveries.id desc
+                   limit 1""",
                 (reply_task_id,),
             ).fetchone()
         if row is None:

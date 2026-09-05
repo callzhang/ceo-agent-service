@@ -107,6 +107,90 @@ def test_finalize_wechat_reply_task_persists_postfixed_body_before_ready(
     assert prepared.feedback_token
 
 
+def test_revised_wechat_generation_gets_distinct_immutable_postfix_delivery(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "wechat-revision-postfix.sqlite3")
+    store.enqueue_reply_task(
+        channel="wechat",
+        conversation_id="u1",
+        conversation_title="Alex",
+        single_chat=True,
+        trigger_message_id="m1",
+        trigger_create_time="2026-09-05T10:00:00",
+        trigger_sender="Alex",
+        trigger_text="原消息",
+    )
+    first = store.claim_reply_tasks(1, channel="wechat")[0]
+    old_delivery_id = store.create_wechat_delivery(
+        reply_task_id=first.id, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="旧候选",
+    )
+    old_delivery = store.get_wechat_delivery_for_task(first.id)
+    assert old_delivery.id == old_delivery_id
+    old_prepared = store.get_outbound_postfix("wechat", f"wechat:{old_delivery.id}")
+
+    revised_generation = store.rotate_reply_task_execution_generation(first.id)
+    revised = store.claim_reply_task(first.id)
+    assert revised is not None
+    assert revised.execution_generation == revised_generation
+    revised_attempt = store.finalize_wechat_reply_task(
+        task_id=revised.id,
+        expected_execution_generation=revised.execution_generation,
+        action="send_reply", sensitivity_kind="normal", codex_reason="correction",
+        draft_reply_text="修正候选", audit_summary="correction", send_status="pending",
+        account_id="acct-1", target_type="direct", target_id="u1",
+        conversation_id="u1", reply_text="修正候选",
+    )
+    revised_delivery = store.get_wechat_delivery_for_task(first.id)
+    revised_prepared = store.get_outbound_postfix(
+        "wechat", f"wechat:{revised_delivery.id}"
+    )
+
+    assert revised_attempt > 0
+    assert revised_delivery.id != old_delivery.id
+    assert old_prepared is not None and "旧候选" in old_prepared.final_body
+    assert revised_prepared is not None and "修正候选" in revised_prepared.final_body
+    assert "旧候选" not in revised_prepared.final_body
+    assert revised_delivery.reply_text == revised_prepared.final_body
+
+    # A restart/retry of the same generation must reuse the same immutable row.
+    store.mark_wechat_delivery_sending(revised_delivery.id)
+    store.set_wechat_delivery_status(
+        revised_delivery.id, "failed", error="sender_unavailable_before_dispatch",
+        pre_action_failure=True,
+    )
+    store.create_wechat_delivery(
+        reply_task_id=first.id, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="another candidate",
+    )
+    replayed = store.get_wechat_delivery_for_task(first.id)
+    assert replayed.id == revised_delivery.id
+    assert replayed.reply_text == revised_prepared.final_body
+
+
+def test_create_wechat_delivery_persists_prepared_final_body(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "wechat-create-postfix.sqlite3")
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-09-05T10:00:00", trigger_sender="Alex",
+        trigger_text="原消息",
+    )
+
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="候选回复",
+    )
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    prepared = store.get_outbound_postfix("wechat", f"wechat:{delivery_id}")
+
+    assert delivery is not None and prepared is not None
+    assert delivery.status == "ready_to_send"
+    assert delivery.reply_text == prepared.final_body
+    assert delivery.reply_text != "候选回复"
+
+
 def _claim_audit_run(
     store: AutoReplyStore,
     reply_task_id: int,

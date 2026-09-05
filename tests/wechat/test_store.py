@@ -246,7 +246,7 @@ def test_recreating_pre_action_failed_delivery_makes_it_retryable(tmp_path):
     delivery = store.get_wechat_delivery_for_task(1)
     assert delivery.status == "ready_to_send"
     assert delivery.error == ""
-    assert delivery.reply_text == "second"
+    assert delivery.reply_text == "first（by明哥分身）"
 
 
 def test_generation_rotation_supersedes_ready_delivery_atomically(tmp_path):
@@ -363,7 +363,7 @@ def test_new_generation_replaces_confirmed_unperformed_delivery(tmp_path):
             "select action_started_at from wechat_deliveries where id=?",
             (delivery_id,),
         ).fetchone()
-    assert row["action_started_at"] == ""
+    assert row["action_started_at"] != ""
 
 
 def test_new_generation_does_not_replace_started_or_uncertain_delivery(tmp_path):
@@ -1170,7 +1170,12 @@ def test_legacy_reply_task_identity_migration_preserves_rows_and_delivery_fk(tmp
     assert store.get_reply_task_for_message(
         "same-conversation", "same-message", channel="dingtalk"
     ).id == 7
-    assert store.list_wechat_deliveries_by_status("ready_to_send")[0].task_id == 7
+    migrated_delivery = store.list_wechat_deliveries_by_status("ready_to_send")[0]
+    assert migrated_delivery.task_id == 7
+    assert migrated_delivery.reply_text == "hi（by明哥分身）"
+    assert store.get_outbound_postfix(
+        "wechat", f"wechat:{migrated_delivery.id}"
+    ).final_body == migrated_delivery.reply_text
     assert store.enqueue_reply_task(
         channel="wechat", conversation_id="same-conversation",
         conversation_title="Same", single_chat=True,
