@@ -93,7 +93,7 @@ def valid_derek_viewpoint():
     }
 
 
-def test_send_decision_requires_message_but_allows_missing_group_target_for_retry():
+def test_send_decision_requires_message_and_explicit_target():
     payload = valid_send_decision()
     payload["final_message"] = ""
     with pytest.raises(ValidationError):
@@ -101,10 +101,8 @@ def test_send_decision_requires_message_but_allows_missing_group_target_for_retr
 
     payload = valid_send_decision()
     payload["target"] = None
-    decision = MeetingAlignmentDecision.model_validate(payload)
-    assert decision.action == "send"
-    assert decision.target is None
-    assert decision.final_message
+    with pytest.raises(ValidationError, match="explicit delivery target"):
+        MeetingAlignmentDecision.model_validate(payload)
 
 
 def test_no_action_rejects_delivery_payload():

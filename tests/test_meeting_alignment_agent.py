@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from app.meeting_alignment_agent import (
     MeetingAlignmentAgent,
@@ -334,7 +335,7 @@ def test_one_to_one_prompt_defers_empty_user_id_to_identity_resolver():
 @pytest.mark.parametrize(
     ("target", "message"),
     [
-        (None, "1:1 send requires a direct target"),
+        (None, "explicit delivery target"),
         (
             {
                 "kind": "group",
@@ -367,7 +368,8 @@ def test_agent_rejects_invalid_one_to_one_send_targets(target, message):
     agent = MeetingAlignmentAgent(
         FakeMeetingCodex(send_payload_with_target(target))
     )
-    with pytest.raises(MeetingAlignmentTargetError, match=message):
+    error_type = ValidationError if target is None else MeetingAlignmentTargetError
+    with pytest.raises(error_type, match=message):
         agent.decide(source(participant_count=2))
 
 
@@ -486,12 +488,11 @@ def test_agent_rejects_nonparticipant_direct_target_for_multi_party_meeting():
         agent.decide(source())
 
 
-def test_agent_accepts_null_target_retry_for_multi_party_meeting():
-    decision = MeetingAlignmentAgent(
-        FakeMeetingCodex(send_payload_with_target(None))
-    ).decide(source())
-    assert decision.action == "send"
-    assert decision.target is None
+def test_agent_rejects_null_target_for_multi_party_meeting():
+    with pytest.raises(ValidationError, match="explicit delivery target"):
+        MeetingAlignmentAgent(
+            FakeMeetingCodex(send_payload_with_target(None))
+        ).decide(source())
 
 
 def test_parser_rejects_extra_fields():

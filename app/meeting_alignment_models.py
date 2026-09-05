@@ -162,11 +162,8 @@ class MeetingAlignmentDecision(StrictModel):
             raise ValueError("send requires final_message")
         if not self.trigger_reasons:
             raise ValueError("send requires trigger_reasons")
-        # A genuine trigger can outlive incomplete delivery evidence. The
-        # consumer keeps the decision and retries instead of changing it to
-        # no_action or guessing a recipient.
         if self.target is None:
-            return self
+            raise ValueError("send requires an explicit delivery target")
         if self.target.kind == "group":
             if (
                 not self.target.conversation_id.strip()

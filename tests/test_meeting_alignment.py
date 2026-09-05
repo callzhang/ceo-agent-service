@@ -1267,6 +1267,48 @@ def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
     assert len(dws.send_calls) == 1
 
 
+def test_transcript_meeting_without_calendar_event_marks_calendar_note_skipped(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1
+    ) == 1
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "sent"
+    dws.calendar_update_calls.clear()
+    source = json.loads(job.source_json)
+    source["calendar_evidence"].update(
+        source="transcript", event_id="transcript:minutes-1"
+    )
+    store.upsert_meeting_alignment_job(
+        meeting_id=job.meeting_id,
+        title=job.title,
+        source_json=json.dumps(source, ensure_ascii=False),
+        participants_json=job.participants_json,
+        ended_at=job.ended_at,
+        eligible_at=job.eligible_at,
+        status="pending",
+    )
+    store.update_meeting_alignment_job(job_id, status="ready_to_send")
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW + timedelta(minutes=1), limit=1
+    ) == 1
+
+    completed = store.get_meeting_alignment_job(job_id)
+    assert completed.status == "sent", completed.error
+    assert completed.calendar_summary_status == "skipped"
+    receipt = json.loads(completed.calendar_summary_result_json)
+    assert receipt["state"] == "skipped"
+    assert "no original calendar event" in receipt["reason"]
+    assert dws.calendar_update_calls == []
+    assert len(dws.send_calls) == 1
+
+
 def test_consumer_notifies_once_after_confirmed_meeting_send(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

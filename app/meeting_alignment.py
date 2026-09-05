@@ -1201,6 +1201,27 @@ def _write_meeting_summary_to_calendar_or_retry(
             ValueError("confirmed meeting delivery is missing summary text"),
         )
         return
+    if evidence.source == "transcript":
+        receipt = json.dumps(
+            {
+                "event_id": evidence.event_id,
+                "state": "skipped",
+                "reason": "Minutes recording has no original calendar event",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        store.update_meeting_alignment_job(
+            job.id,
+            status="sent",
+            final_message=summary,
+            send_result_json=delivery.model_dump_json(),
+            calendar_summary_status="skipped",
+            calendar_summary_result_json=receipt,
+            error="",
+        )
+        _notify_meeting_sent(job, delivery)
+        return
     try:
         event = dws.get_calendar_event(evidence.event_id)
         if event is None:
