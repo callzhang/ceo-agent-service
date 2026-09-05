@@ -16,6 +16,11 @@ from app.email_classifier_contracts import (
     EmailAction,
     EmailProviderLocator,
 )
+from app.email_imap_mailbox import (
+    ImapMailboxCodecError,
+    decode_imap_mailbox_token,
+    encode_imap_mailbox_argument,
+)
 from app.email_store import StoredEmailAction, StoredEmailLocator
 
 
@@ -659,15 +664,10 @@ def _parse_mailbox(raw: object) -> _ImapMailbox:
 
 
 def _decode_imap_quoted(raw: bytes) -> str:
-    raw = raw.strip()
-    if raw.startswith(b'"'):
-        if not raw.endswith(b'"'):
-            raise ImapDestinationUnavailable("malformed IMAP folder response")
-        raw = raw[1:-1]
-        raw = raw.replace(b"\\\\", b"\\").replace(b'\\"', b'"')
-    elif b" " in raw:
-        raise ImapDestinationUnavailable("unquoted IMAP folder is malformed")
-    return raw.decode("ascii")
+    try:
+        return decode_imap_mailbox_token(raw)
+    except ImapMailboxCodecError as exc:
+        raise ImapDestinationUnavailable("malformed IMAP folder response") from exc
 
 
 def _response_bytes(data: object) -> bytes:
@@ -771,12 +771,10 @@ def _is_imap_keyword(value: str) -> bool:
 
 
 def _imap_mailbox_argument(value: str) -> str:
-    if _is_imap_keyword(value):
-        return value
-    if not value or not value.isascii() or any(character in "\r\n\x00" for character in value):
-        raise ImapDestinationUnavailable("unsupported IMAP folder name")
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    try:
+        return encode_imap_mailbox_argument(value)
+    except ImapMailboxCodecError as exc:
+        raise ImapDestinationUnavailable("unsupported IMAP folder name") from exc
 
 
 def _require_ok(status: object, message: str) -> None:

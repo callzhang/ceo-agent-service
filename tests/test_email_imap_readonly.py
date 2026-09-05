@@ -946,6 +946,71 @@ def test_scan_rejects_non_integral_provider_coordinates(
         )
 
 
+@pytest.mark.parametrize(
+    ("mailbox", "wire_name"),
+    (
+        ("INBOX", "INBOX"),
+        ("R&D", "R&-D"),
+        ("台北", "&U,BTFw-"),
+        ("台北 Mail", '"&U,BTFw- Mail"'),
+        ("日本語", "&ZeVnLIqe-"),
+        ("📬", "&2D3c7A-"),
+    ),
+)
+def test_readonly_imap_encodes_mailbox_for_select_and_preserves_unicode_folder(
+    mailbox: str,
+    wire_name: str,
+) -> None:
+    class EmptySession:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+
+        def select(self, selected_mailbox: str, readonly: bool = False):
+            self.calls.append(("select", selected_mailbox, readonly))
+            return "OK", [b"0"]
+
+        def response(self, code: str):
+            self.calls.append(("response", code))
+            return code, [b"42"]
+
+        def uid(self, command: str, *args: object):
+            self.calls.append(("uid", command, *args))
+            assert command == "SEARCH"
+            return "OK", [b""]
+
+    session = EmptySession()
+    result = ImapReadonlyAdapter(session, account_id="account-a").fetch_uid_batch(
+        mailbox,
+        cursor_uidvalidity=None,
+        last_seen_uid=0,
+    )
+
+    assert result.folder == mailbox
+    assert ("select", wire_name, True) in session.calls
+
+
+@pytest.mark.parametrize("mailbox", ("bad\nfolder", "bad\x00folder", "\ud800"))
+def test_readonly_imap_rejects_unsafe_mailbox_before_select(mailbox: str) -> None:
+    class RecordingSession:
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+
+        def select(self, selected_mailbox: str, readonly: bool = False):
+            self.calls.append(("select", selected_mailbox, readonly))
+            return "OK", [b"0"]
+
+    session = RecordingSession()
+
+    with pytest.raises(ValueError, match="invalid IMAP mailbox"):
+        ImapReadonlyAdapter(session, account_id="account-a").fetch_uid_batch(
+            mailbox,
+            cursor_uidvalidity=None,
+            last_seen_uid=0,
+        )
+
+    assert session.calls == []
+
+
 def test_uid_search_is_sorted_deduplicated_before_limit_and_cursor_paging(
     tmp_path: Path,
 ):

@@ -884,6 +884,83 @@ def test_production_imap_quotes_discovered_special_use_folder_for_uid_move() -> 
 
 
 @pytest.mark.parametrize(
+    ("folder", "wire_name"),
+    (
+        ("R&D", "R&-D"),
+        ("台北", "&U,BTFw-"),
+        ("台北 Mail", '"&U,BTFw- Mail"'),
+        ("📬", "&2D3c7A-"),
+    ),
+)
+def test_production_imap_decodes_list_and_encodes_unicode_move_mailbox(
+    folder: str,
+    wire_name: str,
+) -> None:
+    module = import_module("app.email_provider_actions")
+    unquoted_wire_name = wire_name.removeprefix('"').removesuffix('"')
+    session = FakeWritableImapSession(
+        mailboxes={
+            "INBOX": (set(), 42),
+            unquoted_wire_name: (set(), 84),
+        }
+    )
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.MOVE, {"target_folder": folder}))
+
+    assert result.status == "done"
+    assert result.updated_locator is not None
+    assert result.updated_locator.folder == folder
+    assert ("uid", "MOVE", "7", wire_name) in session.calls
+
+
+@pytest.mark.parametrize(
+    "wire_name",
+    (
+        "&U,BTFw",
+        "&A-",
+        "&2AA-",
+    ),
+)
+def test_production_imap_rejects_malformed_modified_utf7_list_mailbox(
+    wire_name: str,
+) -> None:
+    module = import_module("app.email_provider_actions")
+
+    with pytest.raises(module.ImapDestinationUnavailable):
+        module._parse_mailbox(f'() "/" "{wire_name}"'.encode("ascii"))
+
+
+@pytest.mark.parametrize(
+    "response",
+    (
+        b'() "/" bad]name',
+        b'() "/" "bad' + bytes((0x5C,)) + b'x"',
+    ),
+)
+def test_production_imap_rejects_malformed_list_mailbox_token(
+    response: bytes,
+) -> None:
+    module = import_module("app.email_provider_actions")
+
+    with pytest.raises(module.ImapDestinationUnavailable):
+        module._parse_mailbox(response)
+
+
+@pytest.mark.parametrize("folder", ("bad\nfolder", "bad\x00folder", "\ud800"))
+def test_production_imap_rejects_unsafe_mailbox_before_select(folder: str) -> None:
+    module = import_module("app.email_provider_actions")
+    session = FakeWritableImapSession()
+    provider = module.ImapDeterministicProvider(session, account_id="account-1")
+
+    with pytest.raises(module.ImapDestinationUnavailable):
+        provider._select(folder, readonly=True)
+
+    assert not any(call[0] == "select" for call in session.calls)
+
+
+@pytest.mark.parametrize(
     "provider_message_id",
     (
         "<LocalPart@EXAMPLE.COM>",
