@@ -23,7 +23,11 @@ from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.consumer_agent import audit_developer_instructions
-from app.native_cli_metadata import describe_native_command, native_command_argv
+from app.native_cli_metadata import (
+    describe_native_command,
+    dingtalk_message_text,
+    native_command_argv,
+)
 from app.service_message_sender import agent_message_delivery_key
 from app.store import (
     AgentRole,
@@ -325,7 +329,11 @@ def _expected_effect_action(action, *, action_index: int = 0) -> dict[str, objec
         or target.get("sender_open_dingtalk_id")
     )
     argv: list[str] | None = None
-    if capability == "agent_cli.dws" and legacy_argv is not None:
+    if (
+        capability == "agent_cli.dws"
+        and legacy_argv is not None
+        and dingtalk_message_text(legacy_argv).strip()
+    ):
         argv = list(legacy_argv)
         descriptor = describe_native_command(
             {"type": "command_execution", "argv": argv}
