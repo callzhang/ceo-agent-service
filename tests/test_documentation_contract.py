@@ -191,8 +191,9 @@ def test_current_email_docs_describe_audited_v2_boundary() -> None:
         assert "`email_unsubscribe_consumer_direct_v1` 是目标生命周期" not in section
 
     assert "当前分支的配置和 runtime 禁用 `auto_reply`" in classifier
-    assert "Email 尚未部署，也未在生产启用" in classifier
-    assert "当前 Email 部署禁用" not in classifier
+    assert "Email 页面和只读分类已在本地 runtime 启用" in classifier
+    assert "本分支新增的外部写动作尚未部署" in classifier
+    assert "旧的 Consumer-direct 退订方案已经废弃" in classifier
 
 
 def test_email_design_and_historical_docs_point_to_approved_audited_v2() -> None:
