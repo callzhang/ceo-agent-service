@@ -270,7 +270,7 @@ function ConfigPanel() {
   useEffect(() => {
     setDescription(current?.description || "");
     setThreshold(String(current?.threshold ?? 0.90));
-    setSelectedActions(current?.actions || []);
+    setSelectedActions((current?.actions || []).filter((action) => selected === "subscription" || action !== "unsubscribe"));
     const parameters = current?.action_parameters || {};
     const labels = parameters.label?.labels;
     setLabelNames(Array.isArray(labels) ? labels.filter((label): label is string => typeof label === "string").join(", ") : "");
@@ -282,6 +282,7 @@ function ConfigPanel() {
   useEffect(() => { setMessage(""); setError(""); }, [selected]);
 
   const toggleAction = (action: string) => {
+    if (action === "unsubscribe" && selected !== "subscription") return;
     const removing = selectedActions.includes(action);
     const nextActions = removing
       ? selectedActions.filter((item) => item !== action)
@@ -340,7 +341,7 @@ function ConfigPanel() {
       <label className="email-config-field"><span>配置版本</span><input disabled={controlsDisabled} value={version} onChange={(event) => setVersion(event.target.value)} /></label>
       <label className="email-config-toggle"><input disabled={controlsDisabled} type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>启用此类别</span></label>
     </div>
-    <div className="settings-control-group"><span className="settings-control-label">固定动作</span><div className="settings-pill-row">{actions.map((action) => <button type="button" aria-pressed={selectedActions.includes(action)} disabled={controlsDisabled} className={selectedActions.includes(action) ? "active" : ""} key={action} onClick={() => toggleAction(action)}>{action}</button>)}</div></div>
+    <div className="settings-control-group"><span className="settings-control-label">固定动作</span><div className="settings-pill-row">{actions.map((action) => <button type="button" aria-pressed={selectedActions.includes(action)} disabled={controlsDisabled || (action === "unsubscribe" && selected !== "subscription")} className={selectedActions.includes(action) ? "active" : ""} key={action} onClick={() => toggleAction(action)}>{action}</button>)}</div>{selected !== "subscription" && <p className="field-help">退订只适用于订阅邮件。</p>}</div>
     {(selectedActions.includes("label") || selectedActions.includes("move")) && <div className="email-config-action-fields">
       {selectedActions.includes("label") && <label className="email-config-field"><span>标签</span><input disabled={controlsDisabled} aria-label="标签" value={labelNames} onChange={(event) => setLabelNames(event.target.value)} placeholder="多个标签用英文逗号分隔" /></label>}
       {selectedActions.includes("move") && <label className="email-config-field"><span>目标文件夹</span><input disabled={controlsDisabled} aria-label="目标文件夹" value={moveTargetFolder} onChange={(event) => setMoveTargetFolder(event.target.value)} placeholder="例如 Archive/Billing" /></label>}

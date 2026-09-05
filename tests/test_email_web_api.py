@@ -1472,6 +1472,67 @@ def test_email_config_api_rejects_auto_reply_even_with_valid_instruction(
     )
 
 
+def test_email_config_api_allows_unsubscribe_only_for_subscription(tmp_path: Path):
+    payload = {
+        "description": "Wrong unsubscribe category",
+        "threshold": 0.95,
+        "actions": ["unsubscribe"],
+        "enabled": True,
+        "config_version": "email-config-v1",
+    }
+    with _client(tmp_path) as client:
+        rejected = client.put("/api/console/email/config/important", json=payload)
+        accepted = client.put("/api/console/email/config/subscription", json=payload)
+
+    assert rejected.status_code == 400
+    assert rejected.json()["detail"] == (
+        "unsubscribe can only be configured for subscription"
+    )
+    assert accepted.status_code == 200
+
+
+def test_email_account_api_accepts_nontechnical_payload_without_secret_reference(
+    tmp_path: Path,
+):
+    database = tmp_path / "accounts.sqlite3"
+    env_file = tmp_path / ".env"
+    app = FastAPI()
+    register_email_routes(
+        app,
+        lambda: EmailStore(database),
+        email_env_path=env_file,
+    )
+    payload = {
+        "account_id": "work_mail",
+        "display_name": "Work Mail",
+        "email_address": "work@example.test",
+        "imap_host": "imap.example.test",
+        "imap_port": 993,
+        "imap_tls": True,
+        "imap_username": "work@example.test",
+        "imap_secret": "known-imap-secret",
+        "enabled": True,
+        "scan_folders": ["INBOX"],
+        "scan_interval_seconds": 60,
+    }
+    with TestClient(app) as client:
+        created = client.post("/api/console/email/accounts", json=payload)
+        listed = client.get("/api/console/email/accounts")
+        updated = client.put(
+            "/api/console/email/accounts/work_mail",
+            json={**payload, "imap_secret": "", "scan_interval_seconds": 120},
+        )
+
+    assert created.status_code == 201
+    assert created.json()["restart_required"] is True
+    assert listed.json()["items"][0]["imap_secret_configured"] is True
+    assert updated.status_code == 200
+    assert updated.json()["item"]["scan_interval_seconds"] == 120
+    for response in (created, listed, updated):
+        assert "known-imap-secret" not in response.text
+        assert "imap_secret_reference" not in response.text
+
+
 @pytest.mark.parametrize(
     ("actions", "action_parameters"),
     (

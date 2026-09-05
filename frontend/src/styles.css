@@ -272,6 +272,25 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .connector-state-item strong { overflow-wrap: anywhere; }
 .connector-commands { display: flex; flex-wrap: wrap; gap: 7px; }
 .connector-commands code { max-width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); font-size: 0.73rem; overflow-wrap: anywhere; }
+.email-accounts-panel { display: grid; gap: 18px; margin-top: 20px; }
+.email-accounts-heading, .email-account-form-heading, .email-account-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.email-accounts-heading h3, .email-account-form-heading h4, .email-account-card h4 { margin: 0 0 6px; }
+.email-accounts-heading p, .email-account-form-heading p, .email-account-card p { margin: 0; }
+.email-account-list { display: grid; gap: 10px; }
+.email-account-card { display: grid; gap: 12px; padding: 15px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-muted); }
+.email-account-switch { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: .78rem; font-weight: 700; }
+.email-account-switch input { width: 18px; height: 18px; accent-color: var(--accent); }
+.email-account-status-row, .email-account-actions, .email-account-options { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.email-account-status-row { color: var(--ink-soft); font-size: .76rem; }
+.email-account-status-row span { padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+.email-account-form { display: grid; gap: 16px; padding: 17px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); }
+.email-account-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.email-account-form-grid > label { display: grid; gap: 6px; min-width: 0; color: var(--ink-soft); font-size: .78rem; font-weight: 700; }
+.email-account-form-grid input { width: 100%; min-height: 38px; padding: 7px 10px; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font-weight: 400; }
+.email-account-form-grid small { color: var(--ink-soft); font-weight: 400; }
+.email-account-options label { display: flex; align-items: center; gap: 7px; font-size: .8rem; font-weight: 700; }
+.email-account-options input { width: 18px; height: 18px; accent-color: var(--accent); }
+.email-restart-notice { margin: 0; text-align: left; }
 .wechat-scope-panel { display: grid; gap: 18px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
 .wechat-scope-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .wechat-scope-heading h3 { margin-bottom: 7px; }
@@ -592,6 +611,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
   .filter-control-shell { min-height: 42px; }
   .filter-search input, .filter-select select { height: 40px; }
   .wechat-scope-heading { flex-direction: column; }
+  .email-accounts-heading, .email-account-form-heading, .email-account-summary { align-items: stretch; flex-direction: column; }
+  .email-account-form-grid { grid-template-columns: 1fr; }
   .wechat-search-row { grid-template-columns: 1fr; align-items: stretch; }
   .wechat-search-row .secondary-button { width: 100%; }
   .settings-path { width: fit-content; }

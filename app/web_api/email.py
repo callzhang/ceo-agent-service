@@ -173,7 +173,16 @@ def register_email_routes(
             503,
         )
 
-    async def account_payload(request: Request) -> EmailAccountPayload | JSONResponse:
+    def default_imap_secret_reference(account_id: object) -> str:
+        if not isinstance(account_id, str):
+            return ""
+        return f"CEO_EMAIL_{account_id.upper().replace('-', '_')}_IMAP_SECRET"
+
+    async def account_payload(
+        request: Request,
+        *,
+        existing_secret_reference: str = "",
+    ) -> EmailAccountPayload | JSONResponse:
         if "application/json" not in request.headers.get("content-type", ""):
             return error_response(
                 "json_content_type_required",
@@ -185,7 +194,12 @@ def register_email_routes(
             decoded = json.loads(raw)
             if not isinstance(decoded, dict):
                 raise ValueError("JSON object required")
-            return EmailAccountPayload.model_validate_json(raw)
+            if "imap_secret_reference" not in decoded:
+                decoded["imap_secret_reference"] = (
+                    existing_secret_reference
+                    or default_imap_secret_reference(decoded.get("account_id"))
+                )
+            return EmailAccountPayload.model_validate_json(json.dumps(decoded))
         except (
             json.JSONDecodeError,
             UnicodeDecodeError,
@@ -304,7 +318,13 @@ def register_email_routes(
     @app.put("/api/console/email/accounts/{account_id}")
     async def email_account_update(account_id: str, request: Request):
         store = require_store()
-        payload = await account_payload(request)
+        existing = store.get_account(account_id)
+        payload = await account_payload(
+            request,
+            existing_secret_reference=(
+                existing["imap_secret_reference"] if existing is not None else ""
+            ),
+        )
         if isinstance(payload, JSONResponse):
             return payload
         if payload.account_id != account_id:
@@ -689,6 +709,14 @@ def register_email_routes(
             raise HTTPException(
                 status_code=400,
                 detail="auto_reply is disabled; email worker cannot send replies",
+            )
+        if (
+            EmailAction.UNSUBSCRIBE in actions
+            and email_category is not EmailCategory.SUBSCRIPTION
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="unsubscribe can only be configured for subscription",
             )
         try:
             row = email_store.upsert_config(

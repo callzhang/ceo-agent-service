@@ -10,6 +10,10 @@ const listAttention = vi.hoisted(() => vi.fn());
 const listWechat = vi.hoisted(() => vi.fn());
 const listWechatTargets = vi.hoisted(() => vi.fn());
 const saveWechatReplyScope = vi.hoisted(() => vi.fn());
+const listEmailAccounts = vi.hoisted(() => vi.fn());
+const createEmailAccount = vi.hoisted(() => vi.fn());
+const updateEmailAccount = vi.hoisted(() => vi.fn());
+const testEmailAccount = vi.hoisted(() => vi.fn());
 const getSkillFeatures = vi.hoisted(() => vi.fn());
 const toggleSkillFeature = vi.hoisted(() => vi.fn());
 const listManagedSkills = vi.hoisted(() => vi.fn());
@@ -23,7 +27,7 @@ const getFeedbackIterationCapability = vi.hoisted(() => vi.fn());
 const setFeedbackIterationCapability = vi.hoisted(() => vi.fn());
 const exportManagedSkillRevision = vi.hoisted(() => vi.fn());
 
-vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, getSkillFeatures, toggleSkillFeature, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
+vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, listEmailAccounts, createEmailAccount, updateEmailAccount, testEmailAccount, getSkillFeatures, toggleSkillFeature, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
 vi.mock("../api/skills", () => ({ listManagedSkills, createManagedSkill, listManagedSkillRevisions, createManagedSkillRevision, getCurrentRuntimeSkillConfig, createRuntimeSkillConfig, listRuntimeSkillLoadReceipts, getFeedbackIterationCapability, setFeedbackIterationCapability, exportManagedSkillRevision }));
 
 import { SettingsPage } from "./SettingsPage";
@@ -38,6 +42,7 @@ describe("SettingsPage", () => {
     listAttention.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechat.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechatTargets.mockResolvedValue({ items: [], account_id: "", meta: { page: 1, page_size: 50, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    listEmailAccounts.mockResolvedValue({ items: [], meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
     getFeedbackIterationCapability.mockResolvedValue({ enabled: true, config_id: 1, status: "pending_restart", active: { enabled: false, config_id: 0, status: "active" } });
     getSettings.mockResolvedValue({
       item: {
@@ -206,6 +211,98 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("button", { name: "保存回复范围" })).toBeDisabled();
     expect(screen.queryByRole("link", { name: "打开回复范围" })).not.toBeInTheDocument();
     expect(screen.queryByText("unknown")).not.toBeInTheDocument();
+  });
+
+  it("renders Email as an explicit Connector and lists multiple accounts without secrets", async () => {
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+    listEmailAccounts.mockResolvedValueOnce({
+      items: [
+        { account_id: "work_mail", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], scan_interval_seconds: 60, imap_secret_configured: true, created_at: "", updated_at: "" },
+        { account_id: "private_mail", display_name: "私人邮箱", email_address: "private@example.test", imap_host: "mail.example.test", imap_port: 993, imap_tls: true, imap_username: "private@example.test", enabled: false, scan_folders: ["INBOX", "Receipts"], scan_interval_seconds: 120, imap_secret_configured: false, created_at: "", updated_at: "" },
+      ],
+      meta: { snapshot_at: "2026-09-05T00:00:00Z" },
+    });
+
+    renderSettings("/settings?tab=connectors&connector=email");
+
+    expect(await screen.findByRole("heading", { name: "邮箱账户" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Email" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("工作邮箱")).toBeInTheDocument();
+    expect(screen.getByText("私人邮箱")).toBeInTheDocument();
+    expect(screen.getByText("已保存密码")).toBeInTheDocument();
+    expect(screen.getByText("尚未设置密码")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Lark connector" })).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("known-imap-secret");
+  });
+
+  it("adds and edits an IMAP account while leaving a saved secret undisclosed", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+    const savedAccount = { account_id: "work_example_test", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], scan_interval_seconds: 60, imap_secret_configured: true, created_at: "", updated_at: "" };
+    createEmailAccount.mockResolvedValueOnce({ ok: true, item: savedAccount, restart_required: true, message: "Email account configuration saved" });
+    updateEmailAccount.mockResolvedValueOnce({ ok: true, item: { ...savedAccount, scan_folders: ["INBOX", "Receipts"], scan_interval_seconds: 120 }, restart_required: true, message: "Email account configuration saved" });
+
+    renderSettings("/settings?tab=connectors&connector=email");
+    await user.click(await screen.findByRole("button", { name: "添加邮箱" }));
+    await user.type(screen.getByRole("textbox", { name: "邮箱名称" }), "工作邮箱");
+    await user.type(screen.getByRole("textbox", { name: "邮箱地址" }), "work@example.test");
+    await user.type(screen.getByRole("textbox", { name: "IMAP 服务器" }), "imap.example.test");
+    expect(screen.getByRole("textbox", { name: "IMAP 用户名" })).toHaveValue("work@example.test");
+    await user.type(screen.getByLabelText("IMAP 密码"), "known-imap-secret");
+    await user.click(screen.getByRole("button", { name: "保存邮箱" }));
+
+    expect(createEmailAccount).toHaveBeenCalledWith(expect.objectContaining({
+      account_id: "work_example_test",
+      display_name: "工作邮箱",
+      email_address: "work@example.test",
+      imap_host: "imap.example.test",
+      imap_port: 993,
+      imap_tls: true,
+      imap_username: "work@example.test",
+      imap_secret: "known-imap-secret",
+      scan_folders: ["INBOX"],
+      scan_interval_seconds: 60,
+      enabled: true,
+    }));
+    expect(await screen.findByText("配置已保存，请重启服务使其生效。" )).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("known-imap-secret")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "编辑工作邮箱" }));
+    expect(screen.getByLabelText("IMAP 密码")).toHaveValue("");
+    expect(screen.getByText("密码已保存；留空不会修改。" )).toBeInTheDocument();
+    const folders = screen.getByRole("textbox", { name: "扫描文件夹" });
+    await user.clear(folders);
+    await user.type(folders, "INBOX, Receipts");
+    const interval = screen.getByRole("spinbutton", { name: "扫描间隔（秒）" });
+    await user.clear(interval);
+    await user.type(interval, "120");
+    await user.click(screen.getByRole("button", { name: "保存邮箱" }));
+
+    expect(updateEmailAccount).toHaveBeenCalledWith("work_example_test", expect.objectContaining({
+      scan_folders: ["INBOX", "Receipts"],
+      scan_interval_seconds: 120,
+    }));
+    expect(updateEmailAccount.mock.calls[0][1]).not.toHaveProperty("imap_secret");
+  });
+
+  it("toggles an account, tests IMAP only, and shows restart-required state", async () => {
+    const user = userEvent.setup();
+    getSettings.mockResolvedValueOnce({ item: { section: "connectors", fields: {} }, meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+    const account = { account_id: "work_mail", display_name: "工作邮箱", email_address: "work@example.test", imap_host: "imap.example.test", imap_port: 993, imap_tls: true, imap_username: "work@example.test", enabled: true, scan_folders: ["INBOX"], scan_interval_seconds: 60, imap_secret_configured: true, created_at: "", updated_at: "" };
+    listEmailAccounts.mockResolvedValueOnce({ items: [account], meta: { snapshot_at: "2026-09-05T00:00:00Z" } });
+    updateEmailAccount.mockResolvedValueOnce({ ok: true, item: { ...account, enabled: false }, restart_required: true, message: "Email account configuration saved" });
+    testEmailAccount.mockResolvedValueOnce({ ok: true, account_id: "work_mail", diagnostics: { imap: { ok: true, code: "connected" }, smtp: { enabled: false, tested: false, code: "disabled" } } });
+
+    renderSettings("/settings?tab=connectors&connector=email");
+    const enabled = await screen.findByRole("switch", { name: "启用工作邮箱" });
+    await user.click(enabled);
+    expect(updateEmailAccount).toHaveBeenCalledWith("work_mail", expect.objectContaining({ enabled: false }));
+    expect(await screen.findByText("配置已保存，请重启服务使其生效。" )).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "测试工作邮箱连接" }));
+    expect(testEmailAccount).toHaveBeenCalledWith("work_mail");
+    expect(await screen.findByText("IMAP 连接成功")).toBeInTheDocument();
+    expect(screen.getByText(/SMTP 与邮件回复保持禁用/)).toBeInTheDocument();
   });
 
   it("brings the active Settings section into view on narrow navigation", async () => {
