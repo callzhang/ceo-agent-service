@@ -7,7 +7,6 @@ old form routes during the migration, but React never consumes their HTML.
 
 from collections.abc import Callable
 import json
-import string
 import subprocess
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -33,12 +32,10 @@ from app.web_api.settings import info_payload
 from app.web_api.email import register_email_routes
 from app.skill_features import FeatureRegistry
 from app.skill_files import (
-    SkillFileConflict,
-    SkillFileError,
     SkillFileService,
     SkillFileValidationError,
-    SkillFileSyncError,
 )
+from app.managed_skills import ManagedSkillValidationError
 from app.feedback_processing import (
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
@@ -967,6 +964,134 @@ def register_console_routes(
             available.add(document.name)
         return available
 
+    def _managed_skill_payload(skill: Any) -> dict[str, Any]:
+        return {
+            "id": skill.id,
+            "name": skill.name,
+            "display_name": skill.display_name,
+            "created_at": skill.created_at,
+        }
+
+    def _managed_revision_payload(revision: Any) -> dict[str, Any]:
+        return {
+            "id": revision.id,
+            "skill_id": revision.skill_id,
+            "revision_number": revision.revision_number,
+            "content": revision.content,
+            "sha256": revision.sha256,
+            "parent_revision_id": revision.parent_revision_id,
+            "source": revision.source,
+            "created_at": revision.created_at,
+        }
+
+    def _runtime_config_payload(store: Any, config: Any) -> dict[str, Any]:
+        return {
+            "id": config.id,
+            "parent_id": config.parent_id,
+            "status": config.status,
+            "created_at": config.created_at,
+            "bindings": [
+                {
+                    "skill_id": binding.skill_id,
+                    "revision_id": binding.revision_id,
+                    "enabled": binding.enabled,
+                    "load_order": binding.load_order,
+                    "purpose": binding.purpose,
+                }
+                for binding in store.list_runtime_skill_bindings(config.id)
+            ],
+        }
+
+    @app.get("/api/console/settings/managed-skills")
+    def console_managed_skills():
+        return {"items": [_managed_skill_payload(skill) for skill in store_factory().list_managed_skills()]}
+
+    @app.post("/api/console/settings/managed-skills", status_code=201)
+    async def console_create_managed_skill(request: Request):
+        payload = await json_object(request)
+        try:
+            skill = store_factory().create_managed_skill(
+                payload.get("name"), payload.get("display_name")
+            )
+        except ValueError as exc:
+            status = 409 if "already exists" in str(exc) else 422
+            return JSONResponse(
+                {"ok": False, "code": "conflict" if status == 409 else "validation_error", "message": str(exc), "details": {}},
+                status_code=status,
+            )
+        return _managed_skill_payload(skill)
+
+    @app.get("/api/console/settings/managed-skills/{skill_id}/revisions")
+    def console_managed_skill_revisions(skill_id: int):
+        store = store_factory()
+        if store.get_managed_skill(skill_id) is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Managed Skill not found", "details": {}}, status_code=404)
+        return {"items": [_managed_revision_payload(revision) for revision in store.list_managed_skill_revisions(skill_id)]}
+
+    @app.post("/api/console/settings/managed-skills/{skill_id}/revisions", status_code=201)
+    async def console_create_managed_skill_revision(skill_id: int, request: Request):
+        payload = await json_object(request)
+        if set(payload) - {"content", "parent_revision_id"}:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "unsupported managed revision fields", "details": {}}, status_code=422)
+        try:
+            revision = store_factory().create_managed_skill_revision(
+                skill_id,
+                payload.get("content"),
+                source="settings",
+                parent_revision_id=payload.get("parent_revision_id"),
+            )
+        except ManagedSkillValidationError as exc:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=422)
+        except ValueError as exc:
+            message = str(exc)
+            status = 404 if "does not exist" in message else 409 if "already exists" in message else 422
+            return JSONResponse({"ok": False, "code": "not_found" if status == 404 else "conflict" if status == 409 else "validation_error", "message": message, "details": {}}, status_code=status)
+        return _managed_revision_payload(revision)
+
+    @app.get("/api/console/settings/managed-skill-revisions/{revision_id}")
+    def console_managed_skill_revision(revision_id: int):
+        revision = store_factory().get_managed_skill_revision(revision_id)
+        if revision is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Managed Skill revision not found", "details": {}}, status_code=404)
+        return _managed_revision_payload(revision)
+
+    @app.post("/api/console/settings/runtime-skill-configs", status_code=201)
+    async def console_create_runtime_skill_config(request: Request):
+        payload = await json_object(request)
+        if set(payload) != {"expected_parent_id", "bindings"}:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "expected_parent_id and bindings are required", "details": {}}, status_code=422)
+        try:
+            config = store_factory().create_runtime_skill_config(
+                payload["bindings"], expected_parent_id=payload["expected_parent_id"]
+            )
+        except ValueError as exc:
+            message = str(exc)
+            status = 409 if "parent conflict" in message else 422
+            return JSONResponse({"ok": False, "code": "conflict" if status == 409 else "validation_error", "message": message, "details": {}}, status_code=status)
+        return _runtime_config_payload(store_factory(), config)
+
+    @app.get("/api/console/settings/runtime-skill-configs/current")
+    def console_current_runtime_skill_config():
+        store = store_factory()
+        selected = store.get_pending_or_active_runtime_skill_config()
+        active = store.get_active_runtime_skill_config()
+        return {
+            "pending_or_active": _runtime_config_payload(store, selected) if selected else None,
+            "active": _runtime_config_payload(store, active) if active else None,
+        }
+
+    @app.get("/api/console/settings/runtime-skill-configs/{config_id}/load-receipts")
+    def console_runtime_skill_load_receipts(config_id: int):
+        store = store_factory()
+        if store.get_runtime_skill_config(config_id) is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Runtime Skill configuration not found", "details": {}}, status_code=404)
+        return {"items": [
+            {"id": receipt.id, "config_id": receipt.config_id, "pid": receipt.pid,
+             "loaded_json": receipt.loaded_json, "error": receipt.error,
+             "created_at": receipt.created_at}
+            for receipt in store.list_runtime_skill_load_receipts(config_id)
+        ]}
+
     @app.get("/api/console/settings/skills")
     def console_settings_skills():
         registry = feature_registry_factory()
@@ -1080,55 +1205,16 @@ def register_console_routes(
 
     @app.put("/api/console/settings/skills/{skill_name}")
     async def console_settings_skill_update(skill_name: str, request: Request):
-        payload = await json_object(request)
-        content = payload.get("content")
-        expected_sha256 = payload.get("expected_sha256")
-        if not isinstance(content, str) or not isinstance(expected_sha256, str):
-            return JSONResponse(
-                {"ok": False, "code": "validation_error", "message": "content and expected_sha256 are required", "details": {}},
-                status_code=422,
-            )
-        if len(expected_sha256) != 64 or any(char not in string.hexdigits for char in expected_sha256):
-            return JSONResponse(
-                {"ok": False, "code": "validation_error", "message": "expected_sha256 must be a SHA-256 hex digest", "details": {}},
-                status_code=422,
-            )
-        registry = feature_registry_factory()
-        if _skill_references(registry, skill_name) is None:
-            return JSONResponse(
-                {"ok": False, "code": "validation_error", "message": "invalid Skill name", "details": {}},
-                status_code=422,
-            )
-        try:
-            document = skill_file_service_factory().save_skill(skill_name, content, expected_sha256)
-        except SkillFileConflict as exc:
-            current_sha256 = ""
-            try:
-                current_sha256 = skill_file_service_factory().get_skill(skill_name).sha256
-            except SkillFileError:
-                pass
-            return JSONResponse(
-                {"ok": False, "code": "conflict", "message": str(exc), "details": {"current_sha256": current_sha256}},
-                status_code=409,
-            )
-        except SkillFileSyncError as exc:
-            return JSONResponse(
-                {"ok": False, "code": "sync_failed", "message": "Skill 保存或运行时同步失败", "details": {"stage": exc.stage}},
-                status_code=500,
-            )
-        except SkillFileValidationError as exc:
-            return _skill_error_response(exc)
-        except (OSError, IOError):
-            return JSONResponse(
-                {"ok": False, "code": "persistence_failed", "message": "Skill 持久化失败", "details": {}},
-                status_code=500,
-            )
-        except Exception as exc:
-            return JSONResponse(
-                {"ok": False, "code": "persistence_failed", "message": "Skill 持久化失败", "details": {"reason": normalize_display_value(exc)}},
-                status_code=500,
-            )
-        return _skill_payload(document, registry)
+        await json_object(request)
+        return JSONResponse(
+            {
+                "ok": False,
+                "code": "managed_skill_migration_required",
+                "message": "Create an immutable managed Skill revision instead.",
+                "details": {"managed_revisions_path": "/api/console/settings/managed-skills"},
+            },
+            status_code=410,
+        )
 
     @app.get("/api/console/settings/{section}")
     def console_settings(section: str):

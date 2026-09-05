@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 import app.store as store_module
-from app.managed_skills import ManagedSkillValidationError
+from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES
+from app.managed_skills import (
+    ManagedSkillValidationError,
+    import_repository_managed_skills,
+)
 from app.store import AutoReplyStore
 
 
@@ -30,6 +34,41 @@ metadata:
 
 # Version two
 """
+
+
+def test_initial_import_creates_revisions_and_initial_config_for_service_owned_skills(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "import.sqlite3")
+    imported = import_repository_managed_skills(store)
+
+    assert {entry.name for entry in imported} == set(BUNDLED_BUSINESS_SKILL_NAMES)
+    assert {entry.revision_number for entry in imported} == {1}
+    assert {entry.source for entry in imported} == {"repository:skills"}
+    config = store.get_pending_or_active_runtime_skill_config()
+    assert config is not None
+    assert config.status == "pending_restart"
+    assert {binding.skill_id for binding in store.list_runtime_skill_bindings(config.id)} == {
+        skill.id for skill in store.list_managed_skills()
+    }
+
+
+def test_repository_import_is_idempotent_and_preserves_user_owned_name(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "import.sqlite3")
+    user = store.create_managed_skill("ceo-message-triage", "My custom triage")
+    user_revision = store.create_managed_skill_revision(
+        user.id, SKILL_V1.replace("ceo-test", "ceo-message-triage"), source="settings"
+    )
+
+    first = import_repository_managed_skills(store)
+    second = import_repository_managed_skills(store)
+
+    assert "ceo-message-triage" not in {entry.name for entry in first}
+    assert second == ()
+    assert store.get_managed_skill(user.id) == user
+    assert store.list_managed_skill_revisions(user.id) == (user_revision,)
 
 
 def test_create_revision_keeps_prior_body_and_hash(tmp_path: Path) -> None:

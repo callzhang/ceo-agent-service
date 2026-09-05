@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING
 from pathlib import Path
 
 from app.business_skills import (
+    BUNDLED_BUSINESS_SKILL_NAMES,
     MANAGED_BY,
     BusinessSkillValidationError,
     _parse_frontmatter,
     _required_scalar,
+    load_bundled_business_skills,
 )
 
 if TYPE_CHECKING:
@@ -84,10 +86,74 @@ class RuntimeSkillSnapshot:
         return "## Managed runtime Skills\n" + entries if entries else ""
 
 
+REPOSITORY_IMPORT_SOURCE = "repository:skills"
+
+
+@dataclass(frozen=True)
+class RepositoryManagedSkillImport:
+    name: str
+    revision_id: int
+    revision_number: int
+    sha256: str
+    source: str
+
+
+def import_repository_managed_skills(
+    store: "AutoReplyStore",
+) -> tuple[RepositoryManagedSkillImport, ...]:
+    """Import only this service's bundled repository Skills once.
+
+    A pre-existing managed name is deliberately left alone.  It may be a local
+    user-created Skill, and importing over it would turn an import into an
+    overwrite.  Repository import never scans global agent, plugin, or runtime
+    directories.
+    """
+    imported: list[tuple[str, ManagedSkillRevision]] = []
+    for bundled in load_bundled_business_skills():
+        if bundled.name not in BUNDLED_BUSINESS_SKILL_NAMES:
+            continue
+        if store.get_managed_skill_by_name(bundled.name) is not None:
+            continue
+        skill = store.create_managed_skill(bundled.name, bundled.name)
+        imported.append((
+            bundled.name,
+            store.create_managed_skill_revision(
+                skill.id,
+                bundled.content,
+                source=REPOSITORY_IMPORT_SOURCE,
+            ),
+        ))
+    if imported and store.get_pending_or_active_runtime_skill_config() is None:
+        store.create_runtime_skill_config(
+            [
+                {
+                    "skill_id": revision.skill_id,
+                    "revision_id": revision.id,
+                    "enabled": True,
+                    "load_order": index,
+                    "purpose": "repository_import",
+                }
+                for index, (_name, revision) in enumerate(imported)
+            ],
+            expected_parent_id=None,
+        )
+    return tuple(
+        RepositoryManagedSkillImport(
+            name=name,
+            revision_id=revision.id,
+            revision_number=revision.revision_number,
+            sha256=revision.sha256,
+            source=revision.source,
+        )
+        for name, revision in imported
+    )
+
+
 def resolve_pending_runtime_skills(
     store: "AutoReplyStore", *, pid: int
 ) -> RuntimeSkillSnapshot:
     """Resolve one immutable startup snapshot and persist its load receipt."""
+    import_repository_managed_skills(store)
     config = store.get_pending_or_active_runtime_skill_config()
     if config is None:
         return RuntimeSkillSnapshot(config_id=0, revisions=())

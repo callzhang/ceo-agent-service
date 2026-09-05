@@ -97,7 +97,7 @@ def test_skill_toggle_and_detail_round_trip(tmp_path: Path):
     assert detail.json()["referenced_by"] == ["message_triage"]
 
 
-def test_skill_update_requires_matching_sha_and_syncs_runtime_copy(tmp_path: Path):
+def test_legacy_skill_update_is_a_non_mutating_migration_response(tmp_path: Path):
     client, service = _client(tmp_path)
     current = service.get_skill("ceo-message-triage")
     replacement = _skill_content("ceo-message-triage", "Updated")
@@ -107,33 +107,29 @@ def test_skill_update_requires_matching_sha_and_syncs_runtime_copy(tmp_path: Pat
             json={"content": replacement, "expected_sha256": current.sha256},
         )
 
-    assert response.status_code == 200
-    assert response.json()["content"] == replacement
-    assert response.json()["sha256"] == hashlib.sha256(replacement.encode()).hexdigest()
-    assert (tmp_path / "runtime-skills" / "ceo-message-triage" / "SKILL.md").read_text() == replacement
+    assert response.status_code == 410
+    assert response.json()["code"] == "managed_skill_migration_required"
+    assert response.json()["details"]["managed_revisions_path"] == "/api/console/settings/managed-skills"
+    assert service.get_skill("ceo-message-triage") == current
+    assert not (tmp_path / "runtime-skills" / "ceo-message-triage").exists()
 
 
-def test_skill_api_maps_unknown_validation_conflict_and_persistence_failures(tmp_path: Path, monkeypatch):
+def test_legacy_skill_update_never_calls_file_save_or_runtime_sync(tmp_path: Path, monkeypatch):
     client, service = _client(tmp_path)
     with client:
         assert client.get("/api/console/settings/skills/unknown").status_code == 404
         assert client.post(
             "/api/console/settings/skills/message_triage/toggle", json={"enabled": "no"}
         ).status_code == 422
-        assert client.put(
-            "/api/console/settings/skills/ceo-message-triage",
-            json={"content": _skill_content("ceo-message-triage"), "expected_sha256": "0" * 64},
-        ).status_code == 409
+        def unexpected(*_args, **_kwargs):
+            raise AssertionError("legacy route must not write a Skill file")
 
-        def fail(*_args, **_kwargs):
-            raise OSError("disk full")
-
-        monkeypatch.setattr(service, "save_skill", fail)
-        failed = client.put(
+        monkeypatch.setattr(service, "save_skill", unexpected)
+        migrated = client.put(
             "/api/console/settings/skills/ceo-message-triage",
             json={"content": _skill_content("ceo-message-triage"), "expected_sha256": service.get_skill("ceo-message-triage").sha256},
         )
-    assert failed.status_code == 500
+    assert migrated.status_code == 410
 
 
 def test_skills_list_isolates_malformed_directory_names(tmp_path: Path):
@@ -155,5 +151,5 @@ def test_skills_list_isolates_malformed_directory_names(tmp_path: Path):
         assert client.put(
             "/api/console/settings/skills/bad%20name",
             json={"content": original + "edited", "expected_sha256": "0" * 64},
-        ).status_code == 422
+        ).status_code == 410
     assert malformed.joinpath("SKILL.md").read_text(encoding="utf-8") == original

@@ -3981,6 +3981,16 @@ class AutoReplyStore:
             ).fetchone()
         return self._managed_skill_from_row(row) if row is not None else None
 
+    def get_managed_skill_by_name(self, name: str) -> ManagedSkill | None:
+        if not isinstance(name, str) or not name:
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                "select id, name, display_name, created_at from managed_skills where name=?",
+                (name,),
+            ).fetchone()
+        return self._managed_skill_from_row(row) if row is not None else None
+
     def create_managed_skill_revision(
         self,
         skill_id: int,
@@ -4321,6 +4331,17 @@ class AutoReplyStore:
             ).fetchone()
             assert row is not None
             return self._runtime_skill_load_receipt_from_row(row)
+
+    def list_runtime_skill_load_receipts(
+        self, config_id: int
+    ) -> tuple[RuntimeSkillLoadReceipt, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """select id, config_id, pid, loaded_json, error, created_at
+                   from runtime_skill_load_receipts where config_id=? order by id""",
+                (config_id,),
+            ).fetchall()
+        return tuple(self._runtime_skill_load_receipt_from_row(row) for row in rows)
 
     @staticmethod
     def _migrate_runtime_attempt_session_evidence(db: sqlite3.Connection) -> None:
