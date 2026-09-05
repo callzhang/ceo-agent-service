@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import workbenchStyles from "../styles.css?raw";
+
 const listEmailClassifications = vi.hoisted(() => vi.fn());
 const confirmEmailClassification = vi.hoisted(() => vi.fn());
 const listEmailConfigs = vi.hoisted(() => vi.fn());
@@ -257,6 +259,19 @@ describe("EmailPage", () => {
       enabled: true,
       config_version: "email-v4",
     });
+  });
+
+  it("lays out primary configuration fields as a responsive form grid", async () => {
+    renderEmail("/email?tab=config");
+
+    const description = await screen.findByRole("textbox", { name: "描述" });
+    const fieldGrid = description.closest(".email-config-field-grid");
+
+    expect(fieldGrid).not.toBeNull();
+    expect(within(fieldGrid as HTMLElement).getByRole("spinbutton", { name: "自动处理阈值" })).toBeInTheDocument();
+    expect(within(fieldGrid as HTMLElement).getByRole("textbox", { name: "配置版本" })).toBeInTheDocument();
+    expect(workbenchStyles).toMatch(/\.email-config-field-grid\s*\{[^}]*display:\s*grid/s);
+    expect(workbenchStyles).toMatch(/\.email-config-field\s*\{[^}]*display:\s*grid/s);
   });
 
   it("does not send an invalid label action without labels", async () => {
