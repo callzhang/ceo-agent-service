@@ -823,7 +823,7 @@ def _analyze_meeting_job(
         # applying the normal meeting backoff so the active lease cannot
         # strand the job in Attention indefinitely.
         if isinstance(exc, RoutedCodexExecutionError) and exc.code == "runtime_attempt_active":
-            error = _error_json("runtime_session_conflict", str(exc))
+            error = _runtime_error_json("runtime_session_conflict", exc)
             _record_agent_run(
                 store,
                 runner,
@@ -859,7 +859,7 @@ def _analyze_meeting_job(
                 "runtime_session_conflict",
             }
         ):
-            error = _error_json("meeting_agent", str(exc))
+            error = _runtime_error_json("meeting_agent", exc)
             _record_agent_run(
                 store,
                 runner,
@@ -1548,6 +1548,26 @@ def _find_nested_string(payload: Any, key: str) -> str:
 def _error_json(kind: str, message: str) -> str:
     return json.dumps(
         {"kind": kind, "message": message},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _runtime_error_json(kind: str, exc: RoutedCodexExecutionError) -> str:
+    """Preserve route failure evidence rather than collapsing it to its code."""
+
+    runtime: dict[str, str] = {"code": exc.code}
+    if exc.reason:
+        runtime["reason"] = exc.reason
+    if exc.failure_class is not None:
+        runtime["failure_class"] = exc.failure_class.value
+    if exc.failure_code:
+        runtime["failure_code"] = exc.failure_code
+    cause = exc.__cause__
+    if cause is not None:
+        runtime["cause"] = f"{type(cause).__name__}: {cause}"
+    return json.dumps(
+        {"kind": kind, "message": exc.code, "runtime": runtime},
         ensure_ascii=False,
         sort_keys=True,
     )

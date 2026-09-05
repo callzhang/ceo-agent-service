@@ -1168,12 +1168,54 @@ def test_meeting_routed_terminal_failure_is_not_retried_or_capacity_reclassified
 
     job = store.get_meeting_alignment_job(job_id)
     assert job.status == "failed"
-    assert json.loads(job.error) == {
-        "kind": "meeting_agent",
-        "message": failure_code,
+    error = json.loads(job.error)
+    assert error["kind"] == "meeting_agent"
+    assert error["message"] == failure_code
+    assert error["runtime"] == {
+        "code": failure_code,
+        "failure_class": failure_class.value,
+        "failure_code": failure_code,
     }
     runs = store.list_meeting_alignment_runs(job_id)
     assert [run.status for run in runs] == ["failed", "retry"]
+
+
+def test_meeting_routed_failure_persists_runtime_reason_and_cause(tmp_path):
+    store = AutoReplyStore(tmp_path / "meeting-runtime-detail.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class RuntimeFailureRunner:
+        last_session_id = ""
+        last_transcript_start_line = 0
+        last_transcript_end_line = 0
+        last_audit_tool_events = []
+
+        def decide(self, *, prompt: str, run_id=None):
+            raise RoutedCodexExecutionError(
+                "runtime_execution_failed",
+                "no compatible configured runtime route",
+                failure_class=RuntimeFailureClass.CAPABILITY,
+                failure_code="runtime_route_capability_missing",
+            ) from FileNotFoundError("runtime configuration is missing")
+
+    assert consume_meeting_alignment_jobs(
+        store, dws, RuntimeFailureRunner(), now=NOW, limit=1
+    ) == 1
+
+    [run] = store.list_meeting_alignment_runs(job_id)
+    error = json.loads(run.error)
+    assert error == {
+        "kind": "meeting_agent",
+        "message": "runtime_execution_failed",
+        "runtime": {
+            "code": "runtime_execution_failed",
+            "reason": "no compatible configured runtime route",
+            "failure_class": "capability",
+            "failure_code": "runtime_route_capability_missing",
+            "cause": "FileNotFoundError: runtime configuration is missing",
+        },
+    }
 
 
 def test_consumer_persists_ready_before_external_send_and_marks_sent(tmp_path):
