@@ -105,9 +105,7 @@
       ["Alex", "本周必须全量才能验证收入。"],
       ["Mina", "我只接受 10% 灰度，否则故障面不可控。"]
     ],
-    "expected_action": "send",
-    "expected_state": "unresolved",
-    "expected_target": null,
+    "expected_action": "no_action",
     "live": false
   }
 ]

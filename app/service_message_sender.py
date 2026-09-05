@@ -111,6 +111,14 @@ class ServiceMessageSender:
         return SendReceipt(message=message, provider_result=receipt)
 
     def _verify_native_reply_result(self, provider_result: Any) -> str:
+        if isinstance(provider_result, dict):
+            if provider_result.get("success") is False:
+                return "failed"
+            result = provider_result.get("result")
+            if isinstance(result, dict) and str(
+                result.get("processQueryKey") or ""
+            ).strip():
+                return "sent"
         verifier = getattr(self.dingtalk, "verify_message_send_result", None)
         if callable(verifier):
             verification = verifier(provider_result)
@@ -121,8 +129,6 @@ class ServiceMessageSender:
             return "ambiguous"
         if not isinstance(provider_result, dict):
             return "ambiguous"
-        if provider_result.get("success") is False:
-            return "failed"
         result_text = str(provider_result)
         return "sent" if "processQueryKey" in result_text else "ambiguous"
 

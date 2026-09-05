@@ -354,46 +354,44 @@ def build_calendar_meeting_evidence(
     )
 
 
-def build_transcript_one_to_one_evidence(
+def build_transcript_roster_evidence(
     info: dict[str, Any],
     transcription: dict[str, Any] | list[dict[str, Any]],
     *,
-    current_user_id: str,
-    current_user_name: str,
-    counterpart: MeetingParticipant,
+    current_user: MeetingParticipant,
+    speakers: list[MeetingParticipant],
 ) -> CalendarMeetingEvidence:
+    """Build delivery evidence from the speaker roster of a Minutes record.
+
+    Minutes is the authoritative source for ad-hoc recordings that do not map
+    to a calendar event.  A recording available to the current user proves the
+    current-user membership; the transcript supplies the remaining speakers.
+    """
     data = _payload_data(info)
     metadata = _discovery_metadata_fields(data)
-    meeting_id = metadata["meeting_id"]
-    if not meeting_id:
+    if not metadata["meeting_id"]:
         raise MeetingSourceIncomplete("meeting id is missing")
+    if not current_user.user_id.strip() or not current_user.name.strip():
+        raise MeetingSourceIncomplete("current user identity is missing")
     speaker_names = transcript_speaker_names(transcription)
-    current_key = _normalized_title(current_user_name)
-    counterpart_key = _normalized_title(counterpart.name)
-    speaker_keys = {_normalized_title(name) for name in speaker_names}
-    if (
-        len(speaker_names) != 2
-        or not current_key
-        or not counterpart_key
-        or current_key == counterpart_key
-        or speaker_keys != {current_key, counterpart_key}
-    ):
-        raise MeetingSourceIncomplete(
-            "transcript does not prove exactly one current user and one counterpart"
-        )
+    if not speaker_names:
+        raise MeetingSourceIncomplete("transcript has no identified speakers")
+    expected = {_normalized_title(name) for name in speaker_names}
+    supplied = {_normalized_title(participant.name) for participant in speakers}
+    # The Minutes owner is an attendee even when they did not speak.  Every
+    # non-owner speaker must still be represented, while an optional missing
+    # speaker is allowed only for the current user's own transcript identity.
+    omitted = expected - supplied
+    if not supplied or not supplied <= expected or len(omitted) > 1:
+        raise MeetingSourceIncomplete("transcript speaker roster is incomplete")
+    participants = [current_user, *speakers]
     return CalendarMeetingEvidence(
         source="transcript",
-        event_id=f"transcript:{meeting_id}",
+        event_id=f"transcript:{metadata['meeting_id']}",
         title=metadata["title"],
         started_at=metadata["started_at"],
         ended_at=metadata["ended_at"],
-        participants=[
-            MeetingParticipant(
-                name=current_user_name.strip(),
-                user_id=current_user_id.strip(),
-            ),
-            counterpart,
-        ],
+        participants=participants,
     )
 
 
@@ -440,16 +438,15 @@ def _verify_calendar_evidence(
             for participant in evidence.participants
             if participant.user_id != current_user_id
         ]
-        if len(current) != 1 or len(counterparts) != 1:
+        if len(current) != 1 or not counterparts:
             raise MeetingSourceIncomplete(
-                "transcript evidence lacks a stable one-to-one roster"
+                "transcript evidence lacks a stable participant roster"
             )
-        rebuilt = build_transcript_one_to_one_evidence(
+        rebuilt = build_transcript_roster_evidence(
             data,
             transcription,
-            current_user_id=current_user_id,
-            current_user_name=current[0].name,
-            counterpart=counterparts[0],
+            current_user=current[0],
+            speakers=counterparts,
         )
         if rebuilt != evidence:
             raise MeetingSourceIncomplete("transcript evidence is stale or mismatched")

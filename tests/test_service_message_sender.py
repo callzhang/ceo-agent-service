@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from app.outbound_postfix import PreparedOutboundMessage
+from app.dws_client import DwsClient
 from app.service_message_sender import ServiceMessageSender
 from app.store import AutoReplyStore
 
@@ -86,6 +87,16 @@ class UnverifiedNativeReplyAdapter(RecordingNativeReplyAdapter):
     def verify_message_send_result(self, result):
         assert result == self.result
         return self.verification
+
+
+class NativeProcessQueryDwsClient(DwsClient):
+    def __init__(self) -> None:
+        super().__init__(dws_bin="dws")
+        self.calls = []
+
+    def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
+        self.calls.append((conversation, trigger, text))
+        return {"result": {"processQueryKey": "native-reply-1"}}
 
 
 def test_dingtalk_facade_dispatches_only_the_prepared_final_body(
@@ -214,6 +225,28 @@ def test_native_reply_facade_reuses_durable_receipt_after_partial_delivery(
 
     assert first.provider_result == replay.provider_result == {"message_id": "native-reply-1"}
     assert adapter.calls == [("cid-1", "msg-1", message.final_body)]
+
+
+def test_native_reply_facade_confirms_actual_dws_process_query_key_shape(tmp_path) -> None:
+    store = AutoReplyStore(tmp_path / "service-message-sender.sqlite3")
+    adapter = NativeProcessQueryDwsClient()
+    sender = ServiceMessageSender(store=store, dingtalk=adapter)
+    message = sender.prepare(
+        channel="dingtalk",
+        delivery_key="okr-review:1:chunk:1",
+        body="审核结果",
+        original_text="请审核",
+    )
+
+    receipt = sender.send_dingtalk_reply_to_trigger_prepared(
+        message,
+        conversation="cid-1",
+        trigger="msg-1",
+    )
+
+    assert receipt.provider_result == {"result": {"processQueryKey": "native-reply-1"}}
+    assert adapter.calls == [("cid-1", "msg-1", message.final_body)]
+    assert store.get_outbound_postfix_receipt("dingtalk", message.delivery_key) == receipt.provider_result
 
 
 @pytest.mark.parametrize(
