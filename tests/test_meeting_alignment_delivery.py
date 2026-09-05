@@ -1,6 +1,7 @@
 import subprocess
 
 import pytest
+from pydantic import ValidationError
 
 import app.meeting_alignment_delivery as meeting_alignment_delivery
 from app.dingtalk_models import DingTalkMessage
@@ -236,16 +237,9 @@ def test_group_delivery_normalizes_a_leading_mention_roster_into_context():
     assert dws.sent[0]["at_open_dingtalk_names"] == ["A", "B"]
 
 
-def test_multi_person_no_group_falls_back_to_meeting_creator():
-    dws = FakeDws()
-
-    result = deliver_meeting_alignment(
-        send_decision(target=None), meeting_source(), dws
-    )
-
-    assert result.status == "sent"
-    assert result.target_kind == "direct"
-    assert dws.sent[0]["user_id"] == "u-a"
+def test_multi_person_delivery_requires_explicit_target():
+    with pytest.raises(ValidationError, match="explicit delivery target"):
+        send_decision(target=None)
 
 
 def test_multi_person_followup_can_be_sent_to_creator_directly():

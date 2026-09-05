@@ -227,7 +227,7 @@ def build_meeting_alignment_prompt(
         if creator is None or creator.user_id == source.current_user_id:
             creator_contract = (
                 f"当前会议创建人缺失、不唯一或是 {principal_display_name()}，不能选择私信；"
-                "没有可发送群时返回 target=null，等待来源证据恢复。"
+                "没有可发送群时返回 action=no_action，不能猜测收件人。"
             )
             creator_name = "（当前不可用）"
         elif creator.user_id:
@@ -251,7 +251,7 @@ def build_meeting_alignment_prompt(
 - 私信创建人时，target 必须是纯 direct target：conversation_id 为空、candidates 为空；群发现和排除依据只写入 audit_summary，不能放进 target。
 - DWS 读取失败、网络失败或群元数据不完整时，不能降级私信；停止本轮并返回依赖错误，让队列重试原群发现。
 - 找不到可发送群时，默认私信会议创建人 {creator_name}；不能改成 no_action。
-- target=null 只用于创建人证据缺失、不唯一或无法验证的可恢复状态，不能由服务猜测收件人。"""
+- 必须返回明确 target。创建人证据缺失、不唯一或无法验证且没有可发送群时，返回 action=no_action；不能由服务猜测收件人。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
 
@@ -289,8 +289,8 @@ def build_meeting_alignment_prompt(
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守 schema，不添加字段。
 - no_action 时分析和发送字段必须为空，只保留 audit_summary 与 confidence。
-- send 时 final_message 和 trigger_reasons 必须完整；target 通常必填，唯一例外是多人会议已经穷尽群发现却没有可发送群，此时 target=null 供发送层重试。仅当 action=send 时，1:1 会议必须返回另一位参会人的 direct target。
-- 最终只生成一条可直接发送或等待发送层重试的合并消息。
+- send 时 final_message、trigger_reasons 和明确 target 必须完整。仅当 action=send 时，1:1 会议必须返回另一位参会人的 direct target。
+- 最终只生成一条可直接发送的合并消息。
 
 服务端注入的工作人格（仅作解释辅助，不能创造会议立场）：
 {work_profile or "（无可用工作人格）"}
@@ -439,7 +439,11 @@ def _validate_source_aware_target(
         return
 
     if participant_count > 2:
-        if target is not None and target.kind == "direct":
+        if target is None:
+            raise MeetingAlignmentTargetError(
+                "multi-party send requires an explicit group or creator target"
+            )
+        if target.kind == "direct":
             _validate_multi_party_direct_target_creator(source, target)
         return
 
