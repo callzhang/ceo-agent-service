@@ -2,6 +2,7 @@ import sqlite3
 
 import pytest
 
+import app.store as store_module
 from app.meeting_alignment_models import MeetingAlignmentJob, MeetingAlignmentRun
 from app.store import AutoReplyStore
 
@@ -82,6 +83,30 @@ def test_meeting_calendar_summary_columns_are_added_to_existing_job_table(tmp_pa
             )
             """
         )
+
+    store = AutoReplyStore(db_path)
+
+    with store._connect() as db:
+        columns = {
+            row["name"]
+            for row in db.execute(
+                "pragma table_info(meeting_alignment_jobs)"
+            ).fetchall()
+        }
+    assert {"calendar_summary_status", "calendar_summary_result_json"} <= columns
+
+
+def test_current_schema_manifest_detects_missing_calendar_summary_columns(tmp_path):
+    db_path = tmp_path / "worker.sqlite3"
+    AutoReplyStore(db_path)
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "alter table meeting_alignment_jobs drop column calendar_summary_status"
+        )
+        db.execute(
+            "alter table meeting_alignment_jobs drop column calendar_summary_result_json"
+        )
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
     store = AutoReplyStore(db_path)
 

@@ -173,6 +173,10 @@ STORE_SCHEMA_REQUIRED_COLUMNS = {
     ),
     "conversation_runtime_sessions": ("contract_hash",),
     "task_agent_runs": ("status", "error", "finished_at", "updated_at"),
+    "meeting_alignment_jobs": (
+        "calendar_summary_status",
+        "calendar_summary_result_json",
+    ),
     "meeting_alignment_runs": ("finished_at", "updated_at"),
     "weekly_okr_analysis_jobs": (
         "week_end",
