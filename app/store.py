@@ -4223,6 +4223,35 @@ class AutoReplyStore:
             )
             return prepared
 
+    def get_outbound_postfix(
+        self,
+        channel: str,
+        delivery_key: str,
+    ) -> PreparedOutboundMessage | None:
+        """Return an already-prepared outbound message without creating one."""
+        normalized_channel = channel.strip()
+        normalized_delivery_key = delivery_key.strip()
+        if normalized_channel not in {"dingtalk", "wechat"}:
+            raise ValueError("unsupported outbound channel")
+        if not normalized_delivery_key:
+            raise ValueError("delivery key is required")
+        with self._connect() as db:
+            row = db.execute(
+                """select channel, delivery_key, final_body, feedback_token, postfix_version
+                   from outbound_postfixes
+                   where channel=? and delivery_key=?""",
+                (normalized_channel, normalized_delivery_key),
+            ).fetchone()
+        if row is None:
+            return None
+        return PreparedOutboundMessage(
+            channel=str(row["channel"]),
+            delivery_key=str(row["delivery_key"]),
+            final_body=str(row["final_body"]),
+            feedback_token=str(row["feedback_token"]),
+            postfix_version=str(row["postfix_version"]),
+        )
+
     @staticmethod
     def _managed_skill_from_row(row: sqlite3.Row) -> ManagedSkill:
         return ManagedSkill(
