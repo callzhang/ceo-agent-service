@@ -200,6 +200,15 @@ def _is_dws_constructor(node: ast.AST) -> bool:
     return _terminal_name(constructor) in {"DwsClient", "CachedDwsClient"}
 
 
+def _is_dws_raw_receiver(node: ast.AST, known_dws: set[str]) -> bool:
+    """Recognize proven DWS clients plus the project's conventional DWS fields."""
+    return (
+        isinstance(node, ast.Name) and node.id in known_dws | {"dws"}
+    ) or (
+        isinstance(node, ast.Attribute) and node.attr == "dws"
+    ) or _is_dws_constructor(node)
+
+
 def _is_wechat_raw_receiver(node: ast.AST, known_clients: set[str]) -> bool:
     """Recognize only a typed or constructed WeChat IPC client."""
     if isinstance(node, ast.Name):
@@ -437,10 +446,7 @@ def _raw_send_violations(app_root: Path = APP_ROOT) -> list[str]:
                 receiver, dynamic_method = dynamic
                 if (
                     dynamic_method in DINGTALK_SEND_METHODS
-                    and (
-                        isinstance(receiver, ast.Name) and receiver.id in known_dws
-                        or _is_dws_constructor(receiver)
-                    )
+                    and _is_dws_raw_receiver(receiver, known_dws)
                     and owner not in APPROVED_SENDER_PATHS
                 ):
                     violations.append(f"{owner}:{node.lineno}:{dynamic_method}")
@@ -660,6 +666,28 @@ def test_architecture_guard_rejects_dynamic_dws_constructor_provider_calls(
     assert _raw_send_violations(app_root) == [
         "app/business_sender.py:<module>.direct:2:send_message",
         "app/business_sender.py:<module>.cached:5:reply_message",
+    ]
+
+
+def test_architecture_guard_rejects_conventional_dynamic_dws_receivers(
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    source = app_root / "business_sender.py"
+    source.write_text(
+        "def direct(dws):\n"
+        "    return getattr(dws, 'ding_user')('user-1', 'bypassed')\n"
+        "\n"
+        "class Sender:\n"
+        "    def indirect(self):\n"
+        "        return getattr(self.dws, 'send_message')('chat', 'bypassed')\n",
+        encoding="utf-8",
+    )
+
+    assert _raw_send_violations(app_root) == [
+        "app/business_sender.py:<module>.direct:2:ding_user",
+        "app/business_sender.py:Sender.indirect:6:send_message",
     ]
 
 
