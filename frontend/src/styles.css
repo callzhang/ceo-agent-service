@@ -307,6 +307,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .skill-markdown-preview > :last-child { margin-bottom: 0; }
 .skill-markdown-preview pre { padding: 12px; overflow: auto; border-radius: 8px; background: var(--surface); }
 .skill-markdown-preview code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.managed-skills-group { display: grid; gap: 12px; margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--line); }
+.managed-skills-group h3, .managed-skills-group h4 { margin: 0; }
+.managed-skills-group > p { margin: 0; }
+.managed-skill-grid, .managed-revision-list { display: grid; gap: 10px; }
+.managed-revision-list > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); }
+.managed-skill-grid .is-selected { border-color: var(--accent); }
 @media (max-width: 640px) { .skills-project-heading { align-items: flex-start; flex-direction: column; } .skills-project-row { grid-template-columns: 1fr; } }
 .wechat-selected-block, .wechat-target-picker { display: grid; gap: 10px; }
 .wechat-section-label { display: flex; align-items: baseline; gap: 8px; color: var(--ink); font-size: .82rem; font-weight: 750; }
@@ -501,6 +507,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus
 .feedback-history-evidence dt { color: var(--ink-soft); font-size: .68rem; }
 .feedback-history-evidence dd { margin: 2px 0 0; color: var(--ink); font-size: .74rem; overflow-wrap: anywhere; }
 .feedback-history-evidence code { font-size: .7rem; }
+.feedback-history-evidence pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .feedback-history-links, .feedback-history-empty { color: var(--ink-soft); font-size: .72rem; }
 .feedback-history-reason { margin: 0; padding-top: 7px; border-top: 1px solid var(--line); color: var(--ink); font-size: .75rem; line-height: 1.5; }
 .feedback-history-load { width: fit-content; padding: 0 12px; }

@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from app.store import UserFeedbackItem
@@ -25,7 +25,9 @@ FEEDBACK_PROCESSING_CURRENT_ROUND_ID_INVALID = (
 FEEDBACK_REOPEN_INVALID = "feedback_reopen_invalid"
 FEEDBACK_REOPEN_PROCESSING = "feedback_reopen_processing"
 FEEDBACK_REOPEN_HISTORY_INCOMPLETE = "feedback_reopen_history_incomplete"
-FEEDBACK_PROCESSING_SKILL_PATH = "skills/ceo-feedback-processing/SKILL.md"
+FEEDBACK_ITERATION_SKILL_NAME = "ceo-feedback-iteration"
+FEEDBACK_ITERATION_DISABLED_ERROR = "feedback_iteration_disabled"
+FEEDBACK_ITERATION_ASSOCIATION_MISMATCH_ERROR = "feedback_iteration_association_mismatch"
 
 
 class FeedbackProcessingClaimError(ValueError):
@@ -36,6 +38,18 @@ class FeedbackProcessingClaimError(ValueError):
 
 class FeedbackProcessingBatchError(ValueError):
     """Raised when a batch id is reused with a different key set."""
+
+
+class FeedbackIterationDisabledError(ValueError):
+    """Raised when the separately managed feedback capability is disabled."""
+
+    error_code = FEEDBACK_ITERATION_DISABLED_ERROR
+
+
+class FeedbackIterationAssociationMismatchError(ValueError):
+    """Raised when a decision identity differs from its current processing rounds."""
+
+    error_code = FEEDBACK_ITERATION_ASSOCIATION_MISMATCH_ERROR
 
 
 class FeedbackProcessingReopenError(ValueError):
@@ -104,6 +118,7 @@ class FeedbackProcessingRound(_StrictProcessingModel):
     restart_evidence: dict[str, object] = Field(default_factory=dict)
     health_evidence: dict[str, object] = Field(default_factory=dict)
     backlog_evidence: dict[str, object] = Field(default_factory=dict)
+    scope_receipt: dict[str, object] = Field(default_factory=dict)
     receipt_version: Literal[1, 2] = 1
     note: str = ""
     started_at: str = ""
@@ -150,6 +165,76 @@ class FeedbackImportItem(_StrictProcessingModel):
         return self.summary
 
 
+class FeedbackIterationTargetSkillRevision(_StrictProcessingModel):
+    skill_id: int = Field(gt=0)
+    from_revision: int = Field(gt=0)
+    to_revision: int = Field(gt=0)
+
+
+class FeedbackIterationAcceptance(_StrictProcessingModel):
+    scenario: str = Field(min_length=1)
+    expected_behavior: str = Field(min_length=1)
+    verification: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def require_nonblank_values(self) -> "FeedbackIterationAcceptance":
+        if not self.scenario.strip() or not self.expected_behavior.strip() or any(
+            not value.strip() for value in self.verification
+        ):
+            raise ValueError("feedback iteration acceptance must be nonblank")
+        return self
+
+
+class FeedbackIterationDecision(_StrictProcessingModel):
+    """One explicit, persisted classification before an iteration changes work."""
+
+    scope: Literal["skill_only", "runtime_config", "code", "mixed", "needs_human"]
+    root_cause: str = Field(min_length=1)
+    feedback_keys: list[str] = Field(min_length=1)
+    source_references: list[str] = Field(min_length=1)
+    target_skill_revisions: list[FeedbackIterationTargetSkillRevision] = Field(
+        default_factory=list
+    )
+    target_runtime_config_id: int | None = Field(default=None, gt=0)
+    why_not_code: str = Field(min_length=1)
+    acceptance: FeedbackIterationAcceptance
+
+    @model_validator(mode="after")
+    def require_scope_references(self) -> "FeedbackIterationDecision":
+        if (
+            not self.root_cause.strip()
+            or not self.why_not_code.strip()
+            or any(not key.strip() for key in self.feedback_keys)
+            or any(not reference.strip() for reference in self.source_references)
+            or len(set(self.feedback_keys)) != len(self.feedback_keys)
+        ):
+            raise ValueError("feedback iteration decision references must be nonblank and unique")
+        if self.scope == "skill_only" and not self.target_skill_revisions:
+            raise ValueError("skill_only decision requires target Skill revisions")
+        if len({target.skill_id for target in self.target_skill_revisions}) != len(
+            self.target_skill_revisions
+        ):
+            raise ValueError("feedback iteration target Skill revisions must be unique")
+        if self.scope == "runtime_config" and self.target_runtime_config_id is None:
+            raise ValueError("runtime_config decision requires target runtime configuration")
+        if self.scope == "mixed" and (
+            not self.target_skill_revisions or self.target_runtime_config_id is None
+        ):
+            raise ValueError("mixed decision requires Skill revisions and runtime configuration")
+        return self
+
+
+class FeedbackIterationDecisionRecord(_StrictProcessingModel):
+    id: int = Field(gt=0)
+    batch_id: str = Field(min_length=1)
+    feedback_keys: list[str] = Field(min_length=1)
+    round_ids: list[int] = Field(min_length=1)
+    workbench_task_id: str = Field(min_length=1)
+    workbench_turn_id: str = Field(min_length=1)
+    decision: FeedbackIterationDecision
+    created_at: str = ""
+
+
 class FeedbackProcessingAssociation(_StrictProcessingModel):
     """Exact durable association for one feedback item receipt."""
 
@@ -157,6 +242,14 @@ class FeedbackProcessingAssociation(_StrictProcessingModel):
     workbench_turn_id: str
     attempt_id: int
     agent_run_id: int
+
+
+class ResolutionSkillRevision(_StrictProcessingModel):
+    """The exact managed revision loaded to resolve a Skill-scoped decision."""
+
+    skill_id: int = Field(gt=0)
+    revision_id: int = Field(gt=0)
+    sha256: str = Field(min_length=1)
 
 
 class ResolutionEvidence(_StrictProcessingModel):
@@ -173,9 +266,29 @@ class ResolutionEvidence(_StrictProcessingModel):
         default_factory=dict, validation_alias=AliasChoices("health_evidence", "health")
     )
     backlog_evidence: dict[str, Any]
+    runtime_config_id: int = 0
+    previous_runtime_config_id: int = 0
+    load_receipt_id: int = 0
+    skill_revisions: list[ResolutionSkillRevision] = Field(default_factory=list)
     # Optional association map used by API callers.  The store also verifies
     # the durable per-item associations, so callers cannot bypass that check.
     associations: dict[str, FeedbackProcessingAssociation] = Field(default_factory=dict)
+
+
+class SkillOnlyResolutionEvidence(ResolutionEvidence):
+    """Receipt for a decision repaired only through managed Skill revisions."""
+
+
+class RuntimeConfigResolutionEvidence(ResolutionEvidence):
+    """Receipt for a decision repaired by a runtime configuration change."""
+
+
+class CodeResolutionEvidence(ResolutionEvidence):
+    """Receipt for a decision repaired by a repository code change."""
+
+
+class MixedResolutionEvidence(ResolutionEvidence):
+    """Receipt for a decision requiring both code and runtime Skill changes."""
 
 
 def project_feedback_status(source: object, processing: object | None = None) -> str:
@@ -259,16 +372,35 @@ def detail_references(item: "UserFeedbackItem") -> list[dict[str, str]]:
 
 
 def build_feedback_start_message(
-    batch_id: str, items: Sequence[FeedbackImportItem]
+    batch_id: str,
+    items: Sequence[FeedbackImportItem],
+    *,
+    runtime_context: dict[str, object] | None = None,
 ) -> str:
     """Render the deterministic startup instruction for one claimed batch."""
 
     lines = [
         f"Feedback processing batch: {batch_id}",
-        f"Use repository Skill: {FEEDBACK_PROCESSING_SKILL_PATH}",
-        "Use the brainstorming skill for this conversation, then use the local feedback API to write evidence and resolve the batch.",
+        f"Use managed system Skill: {FEEDBACK_ITERATION_SKILL_NAME}",
+        "Use the bounded brainstorming profile in that Skill only when a material uncertainty remains, then use the local feedback API to persist the decision before changing work.",
         "Process the persisted feedback items below; do not copy the full feedback body.",
     ]
+    if runtime_context is not None:
+        config_id = runtime_context.get("config_id")
+        if type(config_id) is int and config_id > 0:
+            lines.append(f"runtime config: {config_id}")
+        revisions = runtime_context.get("loaded_revisions")
+        if isinstance(revisions, list):
+            for revision in revisions:
+                if not isinstance(revision, dict):
+                    continue
+                skill_id = revision.get("skill_id")
+                revision_number = revision.get("revision_number")
+                sha256 = revision.get("sha256")
+                if type(skill_id) is int and type(revision_number) is int and isinstance(sha256, str):
+                    lines.append(
+                        f"managed Skill {skill_id} revision {revision_number} sha256: {sha256}"
+                    )
     for item in items:
         lines.append(f"- key: {item.feedback_key}")
         lines.append(f"  persisted summary: {item.summary}")
@@ -335,6 +467,89 @@ def validate_resolution_evidence(
         raise ValueError("resolution requires zero processing, failed, and retryable backlog")
 
 
+def validate_resolution_receipt(
+    decision: FeedbackIterationDecision,
+    evidence: ResolutionEvidence,
+    *,
+    commit_is_ancestor: bool,
+) -> None:
+    """Validate the receipt shape required by one persisted iteration scope.
+
+    This validates only caller-supplied receipt structure. The store separately
+    resolves config, revision, and load-receipt identifiers against immutable
+    persisted runtime state before a batch is mutated.
+    """
+
+    if decision.scope == "needs_human":
+        raise ValueError("needs_human feedback iteration decisions cannot resolve")
+    _validate_success_evidence(evidence)
+    if decision.scope == "code":
+        _validate_code_resolution_evidence(evidence, commit_is_ancestor=commit_is_ancestor)
+        return
+    if decision.scope == "skill_only":
+        _validate_skill_resolution_evidence(evidence)
+        return
+    if decision.scope == "runtime_config":
+        _validate_runtime_config_resolution_evidence(evidence)
+        return
+    if decision.scope == "mixed":
+        _validate_code_resolution_evidence(evidence, commit_is_ancestor=commit_is_ancestor)
+        _validate_skill_resolution_evidence(evidence)
+        _validate_runtime_config_resolution_evidence(evidence)
+        return
+    raise ValueError("feedback iteration decision scope is invalid")
+
+
+def _validate_success_evidence(evidence: ResolutionEvidence) -> None:
+    backlog = evidence.backlog_evidence
+    required_backlog_counts = {"processing", "failed", "retryable"}
+    if not required_backlog_counts <= set(backlog):
+        raise ValueError("resolution requires processing, failed, and retryable backlog counts")
+    if any(
+        not isinstance(backlog[name], int)
+        or isinstance(backlog[name], bool)
+        or backlog[name] != 0
+        for name in required_backlog_counts
+    ):
+        raise ValueError("resolution requires zero processing, failed, and retryable backlog")
+    test_codes_ok, has_test_code = _all_test_exit_codes_zero(evidence.test_evidence)
+    if not evidence.test_evidence or not has_test_code or not test_codes_ok:
+        raise ValueError("resolution requires successful test evidence")
+    _validate_restart_and_health_evidence(evidence)
+
+
+def _validate_code_resolution_evidence(
+    evidence: ResolutionEvidence, *, commit_is_ancestor: bool
+) -> None:
+    commit_sha = evidence.commit_sha.strip()
+    if not _COMMIT_SHA_RE.fullmatch(commit_sha):
+        raise ValueError("resolution requires a 40-character commit SHA")
+    if not isinstance(commit_is_ancestor, bool) or not commit_is_ancestor:
+        raise ValueError("resolution commit is not an ancestor of local main")
+
+
+def _validate_skill_resolution_evidence(evidence: ResolutionEvidence) -> None:
+    if evidence.runtime_config_id <= 0:
+        raise ValueError("resolution requires an active runtime configuration")
+    if evidence.load_receipt_id <= 0:
+        raise ValueError("resolution requires a successful load receipt")
+    if not evidence.skill_revisions:
+        raise ValueError("resolution requires managed Skill revision evidence")
+    if len({revision.skill_id for revision in evidence.skill_revisions}) != len(
+        evidence.skill_revisions
+    ):
+        raise ValueError("resolution managed Skill revision evidence must be unique")
+
+
+def _validate_runtime_config_resolution_evidence(evidence: ResolutionEvidence) -> None:
+    if evidence.previous_runtime_config_id <= 0 or evidence.runtime_config_id <= 0:
+        raise ValueError("resolution requires previous and target runtime configuration")
+    if evidence.previous_runtime_config_id == evidence.runtime_config_id:
+        raise ValueError("resolution requires distinct previous and target runtime configuration")
+    if evidence.load_receipt_id <= 0:
+        raise ValueError("resolution requires a successful load receipt")
+
+
 def validate_legacy_resolution_evidence(
     evidence: ResolutionEvidence,
     *,
@@ -363,6 +578,12 @@ def _validate_resolution_evidence_without_backlog(
     test_codes_ok, has_test_code = _all_test_exit_codes_zero(evidence.test_evidence)
     if not evidence.test_evidence or not has_test_code or not test_codes_ok:
         raise ValueError("resolution requires successful test evidence")
+
+    _validate_restart_and_health_evidence(evidence)
+
+
+def _validate_restart_and_health_evidence(evidence: ResolutionEvidence) -> None:
+    """Validate the restart and local health receipts shared by every scope."""
 
     restart = evidence.restart_evidence
     label = str(

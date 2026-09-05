@@ -1976,7 +1976,7 @@ def test_missing_summary_is_empty_and_start_message_has_no_feedback_body():
     item = FeedbackImportItem(feedback_key="feedback-1", summary="", references=[])
     message = build_feedback_start_message("batch-1", [item])
     assert "batch-1" in message
-    assert "skills/ceo-feedback-processing/SKILL.md" in message
+    assert "Use managed system Skill: ceo-feedback-iteration" in message
     assert "feedback-1" in message
     assert "persisted summary:" in message
     assert "原始反馈" not in message
@@ -2561,6 +2561,7 @@ def test_resolve_uses_only_current_round_receipt_and_updates_batch_atomically(
         agent_run_id=78,
     )
     stale_receipt = _complete_resolution_receipt("a" * 40)
+    receipt = _complete_resolution_receipt()
 
     with pytest.raises(ValueError):
         store.resolve_feedback_processing_batch(
@@ -2570,7 +2571,6 @@ def test_resolve_uses_only_current_round_receipt_and_updates_batch_atomically(
     assert store.get_feedback_processing_batch("batch-2").status == "processing"
     assert store.list_feedback_processing_rounds("feedback-1")[0].status == "processing"
 
-    receipt = _complete_resolution_receipt()
     store.patch_feedback_processing_item_evidence(
         "feedback-1",
         commit_sha=receipt.commit_sha,
@@ -3101,6 +3101,31 @@ def test_legacy_v1_complete_receipt_reopens_without_synthetic_backlog(tmp_path: 
             (round_id,),
         ).fetchone()
     assert tuple(round_row) == (1, "{}")
+
+
+def test_pre_scope_receipt_schema_migrates_legacy_replay_and_reopen(tmp_path: Path):
+    db_path = tmp_path / "pre-scope-receipt.sqlite3"
+    store = AutoReplyStore(db_path)
+    _seed_resolved_feedback_round(store, "feedback-1", receipt_version=1)
+    with store._connect() as db:
+        db.execute("alter table feedback_processing_rounds drop column scope_receipt_json")
+
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    migrated = AutoReplyStore(db_path)
+    with migrated._connect() as db:
+        columns = {
+            str(row["name"])
+            for row in db.execute("pragma table_info(feedback_processing_rounds)")
+        }
+        stored_scope_receipt = db.execute(
+            "select scope_receipt_json from feedback_processing_rounds"
+        ).fetchone()[0]
+    assert "scope_receipt_json" in columns
+    assert stored_scope_receipt == "{}"
+    assert migrated.resolve_feedback_processing_batch("batch-1", commit_is_ancestor=True) is True
+    assert migrated.reopen_feedback_processing_item(
+        "feedback-1", reason="legacy receipt remains valid"
+    ).status == "pending"
 
 
 def test_receipt_version_migration_marks_only_valid_existing_backlog_v2(

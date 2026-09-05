@@ -571,7 +571,12 @@ def _run_next_direct_action(
     return result
 
 
-def _build_agent_orchestrator(settings: object, store: object):
+def _build_agent_orchestrator(
+    settings: object,
+    store: object,
+    *,
+    runtime_skill_snapshot=None,
+):
     from app.agent_orchestrator import AgentOrchestrator
     from app.agent_runtime_production import build_production_agent_runtime
     from app.audit_agent import AuditAgentRunner
@@ -592,6 +597,7 @@ def _build_agent_orchestrator(settings: object, store: object):
         "claude_adapter": runtime.claude_adapter,
         "friday_adapter": runtime.friday_adapter,
         "refresh_runtime_capabilities": runtime.refresh_runtime_capabilities,
+        "runtime_skill_snapshot": runtime_skill_snapshot,
     }
     return AgentOrchestrator(
         store=store,
@@ -725,6 +731,11 @@ def build_email_worker_dependencies(
 
     email_store = EmailStore(Path(settings.db_path))
     task_store = AutoReplyStore(Path(settings.db_path))
+    from app.managed_skills import resolve_pending_runtime_skills
+
+    runtime_skill_snapshot = resolve_pending_runtime_skills(
+        task_store, pid=os.getpid()
+    )
     task_producer = EmailActionTaskProducer(task_store, email_store)
     source_factory = _build_email_source_factory(settings)
     model_root = Path(settings.db_path).parent / "email-models"
@@ -813,7 +824,11 @@ def build_email_worker_dependencies(
                 ),
             ),
             task_store=task_store,
-            orchestrator=_build_agent_orchestrator(settings, task_store),
+            orchestrator=_build_agent_orchestrator(
+                settings,
+                task_store,
+                runtime_skill_snapshot=runtime_skill_snapshot,
+            ),
             load_task_context=partial(
                 _load_email_task_context,
                 email_store,

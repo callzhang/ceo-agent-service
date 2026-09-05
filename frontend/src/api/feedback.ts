@@ -20,6 +20,53 @@ export interface FeedbackProcessingItem {
   health_evidence: Record<string, unknown>;
   note: string;
   resolved_at: string;
+  scope_receipt?: FeedbackScopeReceipt;
+}
+
+/** Persisted, scoped evidence produced when a feedback decision is resolved. */
+export interface FeedbackScopeReceipt {
+  decision_id: number;
+  scope: FeedbackIterationDecision["scope"];
+  evidence: {
+    commit_sha?: string;
+    test_evidence?: Record<string, unknown>;
+    restart_evidence?: Record<string, unknown>;
+    health_evidence?: Record<string, unknown>;
+    backlog_evidence?: Record<string, unknown>;
+    runtime_config_id?: number;
+    previous_runtime_config_id?: number;
+    load_receipt_id?: number;
+    skill_revisions?: Array<Record<string, unknown>>;
+    associations?: Record<string, Record<string, unknown>>;
+    [key: string]: unknown;
+  };
+}
+
+export interface FeedbackIterationCapability {
+  enabled: boolean;
+  config_id: number | null;
+}
+
+export interface FeedbackIterationDecision {
+  scope: "skill_only" | "runtime_config" | "code" | "mixed" | "needs_human";
+  root_cause: string;
+  feedback_keys: string[];
+  source_references: string[];
+  target_skill_revisions: Array<{ skill_id: number; from_revision: number; to_revision: number }>;
+  target_runtime_config_id?: number | null;
+  why_not_code: string;
+  acceptance: { scenario: string; expected_behavior: string; verification: string[] };
+}
+
+export interface FeedbackIterationDecisionRecord {
+  id: number;
+  batch_id: string;
+  feedback_keys: string[];
+  round_ids: number[];
+  workbench_task_id: string;
+  workbench_turn_id: string;
+  decision: FeedbackIterationDecision;
+  created_at: string;
 }
 
 export interface FeedbackBatch {
@@ -32,6 +79,7 @@ export interface FeedbackBatch {
   feedback_keys?: string[];
   start_message?: string;
   items: FeedbackProcessingItem[];
+  decisions: FeedbackIterationDecisionRecord[];
 }
 
 export interface FeedbackDetail extends FeedbackItem {
@@ -77,7 +125,48 @@ function parseProcessingItem(value: unknown): FeedbackProcessingItem {
     note: stringField(row, "note"), resolved_at: stringField(row, "resolved_at"),
   };
   if (!Number.isInteger(item.attempt_id) || !Number.isInteger(item.agent_run_id) || item.attempt_id < 0 || item.agent_run_id < 0) throw new Error("invalid feedback response");
+  if (row.scope_receipt !== undefined) item.scope_receipt = parseScopeReceipt(row.scope_receipt);
   return item;
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error("invalid feedback response");
+  return value as string[];
+}
+
+function positiveInteger(value: unknown): number {
+  if (!Number.isInteger(value) || (value as number) <= 0) throw new Error("invalid feedback response");
+  return value as number;
+}
+
+function parseScopeReceipt(value: unknown): FeedbackScopeReceipt {
+  const receipt = record(value);
+  const scope = stringField(receipt, "scope");
+  if (!( ["skill_only", "runtime_config", "code", "mixed", "needs_human"] as string[]).includes(scope)) throw new Error("invalid feedback response");
+  return { decision_id: positiveInteger(receipt.decision_id), scope: scope as FeedbackIterationDecision["scope"], evidence: record(receipt.evidence) };
+}
+
+function parseDecisionRecord(value: unknown): FeedbackIterationDecisionRecord {
+  const row = record(value);
+  const decision = record(row.decision);
+  const acceptance = record(decision.acceptance);
+  const targets = Array.isArray(decision.target_skill_revisions) ? decision.target_skill_revisions.map((target) => {
+    const targetRow = record(target);
+    return { skill_id: positiveInteger(targetRow.skill_id), from_revision: positiveInteger(targetRow.from_revision), to_revision: positiveInteger(targetRow.to_revision) };
+  }) : (() => { throw new Error("invalid feedback response"); })();
+  const scope = stringField(decision, "scope");
+  if (!(["skill_only", "runtime_config", "code", "mixed", "needs_human"] as string[]).includes(scope)) throw new Error("invalid feedback response");
+  if (decision.target_runtime_config_id !== undefined && decision.target_runtime_config_id !== null && !Number.isInteger(decision.target_runtime_config_id)) throw new Error("invalid feedback response");
+  return {
+    id: positiveInteger(row.id), batch_id: stringField(row, "batch_id"), feedback_keys: stringArray(row.feedback_keys),
+    round_ids: (Array.isArray(row.round_ids) && row.round_ids.every((item) => Number.isInteger(item) && (item as number) > 0)) ? row.round_ids as number[] : (() => { throw new Error("invalid feedback response"); })(),
+    workbench_task_id: stringField(row, "workbench_task_id"), workbench_turn_id: stringField(row, "workbench_turn_id"), created_at: stringField(row, "created_at"),
+    decision: {
+      scope: scope as FeedbackIterationDecision["scope"], root_cause: stringField(decision, "root_cause"), feedback_keys: stringArray(decision.feedback_keys), source_references: stringArray(decision.source_references),
+      target_skill_revisions: targets, ...(decision.target_runtime_config_id === undefined ? {} : { target_runtime_config_id: decision.target_runtime_config_id as number | null }), why_not_code: stringField(decision, "why_not_code"),
+      acceptance: { scenario: stringField(acceptance, "scenario"), expected_behavior: stringField(acceptance, "expected_behavior"), verification: stringArray(acceptance.verification) },
+    },
+  };
 }
 
 function parseBatch(value: unknown): FeedbackBatch {
@@ -87,6 +176,7 @@ function parseBatch(value: unknown): FeedbackBatch {
   const batch: FeedbackBatch = {
     batch_id: stringField(row, "batch_id"), status: stringField(row, "status"), requested_count: Number(row.requested_count),
     items: rawItems.map(parseProcessingItem),
+    decisions: row.decisions === undefined ? [] : (Array.isArray(row.decisions) ? row.decisions.map(parseDecisionRecord) : (() => { throw new Error("invalid feedback response"); })()),
   };
   if (!Number.isInteger(batch.requested_count)) throw new Error("invalid feedback response");
   for (const key of ["created_at", "updated_at", "resolved_at", "start_message"] as const) {
@@ -98,6 +188,14 @@ function parseBatch(value: unknown): FeedbackBatch {
     batch.feedback_keys = row.feedback_keys as string[];
   }
   return batch;
+}
+
+export function getFeedbackIterationCapability(signal?: AbortSignal): Promise<FeedbackIterationCapability> {
+  return request<unknown>("/api/console/settings/feedback-iteration", { signal }).then((value) => {
+    const row = record(value);
+    if (typeof row.enabled !== "boolean" || (row.config_id !== null && !Number.isInteger(row.config_id))) throw new Error("invalid feedback response");
+    return { enabled: row.enabled, config_id: row.config_id as number | null };
+  });
 }
 
 function parseResource<T>(value: unknown, parser: (item: unknown) => T): ConsoleResource<T> {

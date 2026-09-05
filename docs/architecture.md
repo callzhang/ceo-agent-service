@@ -50,6 +50,30 @@ read 调用该入口，再形成通过/不通过判断；截图、仓库链接�
 完整状态和恢复说明见 [`docs/runtime-mechanism.md`](runtime-mechanism.md)。
 错误码解释统一见 [`docs/error-catalog.md`](error-catalog.md)。
 
+### Runtime-managed Skill 生命周期
+
+业务行为的可配置部分使用运行时托管的不可变 Skill 修订，而不是 Settings 对项目文件或
+`~/.agents/skills` 的直接写入。首次迁移只将仓库所有的 service-managed Skills 导入 SQLite；
+它不扫描或修改用户、系统、插件和 operation Skills。每个保存产生一个新的 revision（内容、SHA、
+父修订、来源均保留），每次启用产生一个 next-start runtime config，绑定精确 revision、启用状态、
+加载顺序和用途。
+
+```text
+Settings revision/config candidate
+  -> pending_restart
+  -> process loads exact revision bodies at startup
+  -> append-only PID/config/SHA load receipt
+  -> active
+     or load_failed (previous active config stays active)
+```
+
+Consumer 在 invocation 开始时接收这个 immutable snapshot；同一次调用不会重新读取 Settings。
+因此 service 不用关键词路由 Skill，不解析业务材料，也不建立并行的 Skill 审计数据库。
+`feedback_iteration` 是 runtime config 的系统能力，不是业务 producer feature：关闭它会阻止新的
+反馈 claim，并让 UI 显示 disabled 的处理入口，但不影响反馈读取、历史和 reopen。反馈结案证据
+按 decision scope 验证：Skill/config 路径需要匹配的 activation/load receipt，code 路径才需要
+本地 main 祖先 commit；两类路径都需要场景、健康和零 backlog 的已回读证据。
+
 ### Task、Agent Run 与 Reply Attempt 的关系
 
 这三个对象分属调度、执行和展示三层，不能混为一个状态：
@@ -531,7 +555,7 @@ OA 列表读取成功后，个别审批任务或详情读取失败记录在扫�
 | --- | --- |
 | `app.worker.DingTalkAutoReplyWorker` | 领取任务、构造上下文、调用编排器并映射终态。 |
 | `app.agent_orchestrator.AgentOrchestrator` | 在 A、B、反馈和失败重试之间推进状态机。 |
-| `app.business_skills` | 清点并安装七个 service-managed 业务 Skill；不参与业务路由。 |
+| `app.business_skills` / `app.managed_skills` | 提供七个仓库基线 Skill，并管理 SQLite 中不可变 revision、next-start config 和启动 load receipt；不参与业务路由。 |
 | `app.agent_skill_usage` | 提供 Agent 执行环境所需的 Skill 读取辅助；不参与普通业务结果审核。 |
 | `app.consumer_agent.ConsumerAgentRunner` | 复用对话 A session，按 read-oriented 角色协议读取、判断并提出候选。 |
 | `app.audit_agent.AuditAgentRunner` | 新建 B 审计 session，执行合格候选并处理失败重试。 |

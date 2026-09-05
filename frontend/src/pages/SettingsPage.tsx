@@ -11,6 +11,7 @@ import { SelectField } from "../components/filters/SelectField";
 import { StatusBadge } from "../components/status/StatusBadge";
 import { AttentionPanel } from "./AttentionPage";
 import { StatusPanel } from "./StatusPage";
+import { ManagedSkillsPanel } from "../components/settings/ManagedSkillsPanel";
 
 type RecordValue = Record<string, unknown>;
 type SettingsSection = "status" | "info" | "configuration" | "agent-runtime" | "prompts" | "connectors" | "audit-rules" | "skills" | "attention";
@@ -267,7 +268,7 @@ function skillErrorMessage(reason: unknown, fallback: string) {
   return fallback;
 }
 
-function SkillsPanel() {
+function LegacySkillsPanel() {
   const [features, setFeatures] = useState<SkillFeature[]>([]);
   const [skills, setSkills] = useState<ProjectSkill[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -428,7 +429,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState }: { payload: Record
 function SettingsContent({ section, payload, draft, setDraft, prompt, view, connector, auditRule, saveState, onAttentionCountChange }: { section: SettingsSection; payload: RecordValue; draft: RecordValue; setDraft: (value: RecordValue) => void; prompt: "developer" | "user"; view: "template" | "preview"; connector: string; auditRule: "template" | "consumer" | "audit"; saveState: "idle" | "saving" | "saved" | "error"; onAttentionCountChange: (count: number) => void }) {
   if (section === "status") return <StatusPanel />;
   if (section === "attention") return <AttentionPanel onCountChange={onAttentionCountChange} />;
-  if (section === "skills") return <SkillsPanel />;
+  if (section === "skills") return <ManagedSkillsPanel />;
   if (section === "prompts") return <PromptPanel payload={payload} prompt={prompt} view={view} draft={draft} setDraft={setDraft} saveState={saveState} />;
   if (section === "connectors") return <ConnectorPanel payload={payload} connector={connector} />;
   if (section === "agent-runtime") return <RuntimePanel payload={payload} draft={draft} setDraft={setDraft} saveState={saveState} />;

@@ -43,17 +43,32 @@ from app.feedback_processing import (
     FeedbackProcessingReopenError,
     FeedbackProcessingRound,
     FeedbackProcessingTransition,
+    FeedbackIterationDecision,
+    FeedbackIterationDecisionRecord,
+    FeedbackIterationDisabledError,
+    FeedbackIterationAssociationMismatchError,
     FeedbackImportItem,
     ResolutionEvidence,
     detail_references,
     persisted_feedback_summary,
     validate_legacy_resolution_evidence,
     validate_resolution_evidence,
+    validate_resolution_receipt,
 )
 from app.config import feedback_spike_vercel_base_url
 from app.feedback_spike import extract_configured_feedback_link_context
 from app.history import HistoryItem
 from app.legacy_receipt import legacy_receipt_has_explicit_failure
+from app.managed_skills import (
+    ManagedSkill,
+    ManagedSkillExportReceipt,
+    ManagedSkillRevision,
+    RuntimeSkillBinding,
+    RuntimeSkillConfig,
+    RuntimeSkillLoadReceipt,
+    validate_managed_skill_content,
+    validate_managed_skill_name,
+)
 from app.meeting_alignment_models import (
     MeetingAlignmentJob,
     MeetingAlignmentQueueStatus,
@@ -91,7 +106,7 @@ SERVICE_HEALTH_STATE_PREFIX = "service_health:"
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-08-30.1"
+STORE_SCHEMA_VERSION = "2026-09-05.2"
 STORE_SCHEMA_REQUIRED_TABLES = (
     "feedback_processing_batches",
     "feedback_processing_items",
@@ -114,6 +129,15 @@ STORE_SCHEMA_REQUIRED_TABLES = (
     "workbench_attachments",
     "workbench_artifacts",
     "workbench_confirmations",
+    "managed_skills",
+    "managed_skill_revisions",
+    "managed_skill_export_receipts",
+    "runtime_skill_configs",
+    "runtime_skill_bindings",
+    "runtime_skill_load_receipts",
+    "runtime_feedback_iteration_capabilities",
+    "feedback_iteration_decisions",
+    "feedback_iteration_decision_items",
 )
 STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_feedback_processing_items_status",
@@ -146,6 +170,13 @@ STORE_SCHEMA_REQUIRED_INDEXES = (
     "idx_todo_evidence_candidates_status",
     "idx_todo_evidence_candidates_work_input",
     "idx_todo_evidence_candidates_project",
+    "idx_managed_skill_revisions_number",
+    "idx_managed_skill_revisions_sha256",
+    "idx_managed_skill_export_receipts_revision",
+    "idx_runtime_skill_bindings_config_order",
+    "idx_runtime_skill_load_receipts_config",
+    "idx_feedback_iteration_decisions_batch",
+    "idx_feedback_iteration_decision_items_feedback_round",
 )
 STORE_SCHEMA_REMOVED_TABLES = (
     "universal_plan_executions",
@@ -153,7 +184,11 @@ STORE_SCHEMA_REMOVED_TABLES = (
 )
 STORE_SCHEMA_REQUIRED_COLUMNS = {
     "feedback_processing_items": ("current_round_id",),
-    "feedback_processing_rounds": ("backlog_evidence_json", "receipt_version"),
+    "feedback_processing_rounds": (
+        "backlog_evidence_json",
+        "receipt_version",
+        "scope_receipt_json",
+    ),
     "reply_attempts": (
         "human_decision_options_json",
         "feedback_scope",
@@ -208,6 +243,22 @@ STORE_SCHEMA_REQUIRED_TRIGGERS = (
     "trg_runtime_attempt_lineage_insert",
     "trg_runtime_attempt_lineage_update",
     "trg_runtime_attempt_lineage_immutable",
+    "trg_managed_skill_revisions_immutable_update",
+    "trg_managed_skill_revisions_immutable_delete",
+    "trg_managed_skill_export_receipts_immutable_update",
+    "trg_managed_skill_export_receipts_immutable_delete",
+    "trg_runtime_skill_configs_immutable_update",
+    "trg_runtime_skill_configs_immutable_delete",
+    "trg_runtime_skill_bindings_immutable_update",
+    "trg_runtime_skill_bindings_immutable_delete",
+    "trg_runtime_skill_load_receipts_immutable_update",
+    "trg_runtime_skill_load_receipts_immutable_delete",
+    "trg_runtime_feedback_iteration_capabilities_immutable_update",
+    "trg_runtime_feedback_iteration_capabilities_immutable_delete",
+    "trg_feedback_iteration_decisions_immutable_update",
+    "trg_feedback_iteration_decisions_immutable_delete",
+    "trg_feedback_iteration_decision_items_immutable_update",
+    "trg_feedback_iteration_decision_items_immutable_delete",
 )
 FEEDBACK_PROCESSING_ROUND_INTEGER_INSERT_TRIGGER_SQL = """
 CREATE TRIGGER trg_feedback_processing_round_integer_v2_insert
@@ -229,6 +280,167 @@ begin
         abort,
         'feedback_processing_round_number_must_be_positive'
     );
+end
+""".strip()
+MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_managed_skill_revisions_immutable_update
+before update on managed_skill_revisions
+begin
+    select raise(abort, 'managed Skill revisions are immutable');
+end
+""".strip()
+MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_managed_skill_revisions_immutable_delete
+before delete on managed_skill_revisions
+begin
+    select raise(abort, 'managed Skill revisions are immutable');
+end
+""".strip()
+MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_managed_skill_export_receipts_immutable_update
+before update on managed_skill_export_receipts
+begin
+    select raise(abort, 'managed Skill export receipts are append-only');
+end
+""".strip()
+MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_managed_skill_export_receipts_immutable_delete
+before delete on managed_skill_export_receipts
+begin
+    select raise(abort, 'managed Skill export receipts are append-only');
+end
+""".strip()
+RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_configs_immutable_update
+before update on runtime_skill_configs
+when new.id <> old.id
+  or new.parent_id is not old.parent_id
+  or new.created_at <> old.created_at
+  or old.status not in ('pending_restart')
+  or new.status not in ('active', 'load_failed')
+  or (
+      new.status = 'active'
+      and not exists (
+          select 1
+          from runtime_skill_load_receipts as receipt
+          where receipt.config_id = new.id
+            and receipt.error = ''
+            and not exists (
+                select 1
+                from runtime_skill_bindings as binding
+                join managed_skill_revisions as revision
+                  on revision.id = binding.revision_id
+                where binding.config_id = new.id
+                  and binding.enabled = 1
+                  and not exists (
+                      select 1 from json_each(receipt.loaded_json) as loaded
+                      where loaded.key = cast(binding.skill_id as text)
+                        and loaded.value = revision.sha256
+                  )
+            )
+            and not exists (
+                select 1 from json_each(receipt.loaded_json) as loaded
+                where not exists (
+                    select 1
+                    from runtime_skill_bindings as binding
+                    join managed_skill_revisions as revision
+                      on revision.id = binding.revision_id
+                    where binding.config_id = new.id
+                      and binding.enabled = 1
+                      and cast(binding.skill_id as text) = loaded.key
+                      and revision.sha256 = loaded.value
+                )
+            )
+      )
+  )
+  or (
+      new.status = 'load_failed'
+      and not exists (
+          select 1 from runtime_skill_load_receipts as receipt
+          where receipt.config_id = new.id and receipt.error <> ''
+      )
+  )
+begin
+    select raise(
+        abort, 'runtime Skill activation requires matching load receipt'
+    );
+end
+""".strip()
+RUNTIME_SKILL_CONFIGS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_configs_immutable_delete
+before delete on runtime_skill_configs
+begin
+    select raise(abort, 'runtime Skill configurations are immutable');
+end
+""".strip()
+RUNTIME_SKILL_BINDINGS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_bindings_immutable_update
+before update on runtime_skill_bindings
+begin
+    select raise(abort, 'runtime Skill bindings are immutable');
+end
+""".strip()
+RUNTIME_SKILL_BINDINGS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_bindings_immutable_delete
+before delete on runtime_skill_bindings
+begin
+    select raise(abort, 'runtime Skill bindings are immutable');
+end
+""".strip()
+RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_load_receipts_immutable_update
+before update on runtime_skill_load_receipts
+begin
+    select raise(abort, 'runtime Skill load receipts are append-only');
+end
+""".strip()
+RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_skill_load_receipts_immutable_delete
+before delete on runtime_skill_load_receipts
+begin
+    select raise(abort, 'runtime Skill load receipts are append-only');
+end
+""".strip()
+RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_feedback_iteration_capabilities_immutable_update
+before update on runtime_feedback_iteration_capabilities
+begin
+    select raise(abort, 'feedback iteration capability records are immutable');
+end
+""".strip()
+RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_runtime_feedback_iteration_capabilities_immutable_delete
+before delete on runtime_feedback_iteration_capabilities
+begin
+    select raise(abort, 'feedback iteration capability records are immutable');
+end
+""".strip()
+FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_feedback_iteration_decisions_immutable_update
+before update on feedback_iteration_decisions
+begin
+    select raise(abort, 'feedback iteration decisions are append-only');
+end
+""".strip()
+FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_feedback_iteration_decisions_immutable_delete
+before delete on feedback_iteration_decisions
+begin
+    select raise(abort, 'feedback iteration decisions are append-only');
+end
+""".strip()
+FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL = """
+CREATE TRIGGER trg_feedback_iteration_decision_items_immutable_update
+before update on feedback_iteration_decision_items
+begin
+    select raise(abort, 'feedback iteration decision items are append-only');
+end
+""".strip()
+FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_DELETE_TRIGGER_SQL = """
+CREATE TRIGGER trg_feedback_iteration_decision_items_immutable_delete
+before delete on feedback_iteration_decision_items
+begin
+    select raise(abort, 'feedback iteration decision items are append-only');
 end
 """.strip()
 FEEDBACK_PROCESSING_ROUND_MIGRATION_INTEGRITY_ERROR = (
@@ -266,6 +478,54 @@ STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS = {
     ),
     "trg_feedback_processing_round_integer_v2_update": _normalize_schema_sql(
         FEEDBACK_PROCESSING_ROUND_INTEGER_UPDATE_TRIGGER_SQL
+    ),
+    "trg_managed_skill_revisions_immutable_update": _normalize_schema_sql(
+        MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_managed_skill_revisions_immutable_delete": _normalize_schema_sql(
+        MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_managed_skill_export_receipts_immutable_update": _normalize_schema_sql(
+        MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_managed_skill_export_receipts_immutable_delete": _normalize_schema_sql(
+        MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_configs_immutable_update": _normalize_schema_sql(
+        RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_configs_immutable_delete": _normalize_schema_sql(
+        RUNTIME_SKILL_CONFIGS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_bindings_immutable_update": _normalize_schema_sql(
+        RUNTIME_SKILL_BINDINGS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_bindings_immutable_delete": _normalize_schema_sql(
+        RUNTIME_SKILL_BINDINGS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_load_receipts_immutable_update": _normalize_schema_sql(
+        RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_runtime_skill_load_receipts_immutable_delete": _normalize_schema_sql(
+        RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_runtime_feedback_iteration_capabilities_immutable_update": _normalize_schema_sql(
+        RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_runtime_feedback_iteration_capabilities_immutable_delete": _normalize_schema_sql(
+        RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_feedback_iteration_decisions_immutable_update": _normalize_schema_sql(
+        FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_feedback_iteration_decisions_immutable_delete": _normalize_schema_sql(
+        FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_DELETE_TRIGGER_SQL
+    ),
+    "trg_feedback_iteration_decision_items_immutable_update": _normalize_schema_sql(
+        FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL
+    ),
+    "trg_feedback_iteration_decision_items_immutable_delete": _normalize_schema_sql(
+        FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_DELETE_TRIGGER_SQL
     ),
 }
 
@@ -1357,6 +1617,12 @@ class AutoReplyStore:
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
+    @contextmanager
+    def managed_skill_baseline_initialization_lock(self) -> Iterator[None]:
+        """Serialize managed-Skill baseline reconciliation across processes."""
+        with self._schema_initialize_lock():
+            yield
+
     @staticmethod
     def _feedback_processing_round_storage_is_valid(
         db: sqlite3.Connection,
@@ -1408,6 +1674,114 @@ class AutoReplyStore:
         else:
             db.execute("commit")
 
+    @staticmethod
+    def _replace_managed_skill_revision_immutability_guards_atomically(
+        db: sqlite3.Connection,
+    ) -> None:
+        db.execute("begin immediate")
+        try:
+            db.execute(
+                "drop trigger if exists "
+                "trg_managed_skill_revisions_immutable_update"
+            )
+            db.execute(
+                "drop trigger if exists "
+                "trg_managed_skill_revisions_immutable_delete"
+            )
+            db.execute(MANAGED_SKILL_REVISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL)
+            db.execute(MANAGED_SKILL_REVISIONS_IMMUTABLE_DELETE_TRIGGER_SQL)
+        except BaseException:
+            db.execute("rollback")
+            raise
+        else:
+            db.execute("commit")
+
+    @staticmethod
+    def _replace_managed_skill_export_receipt_immutability_guards_atomically(
+        db: sqlite3.Connection,
+    ) -> None:
+        db.execute("begin immediate")
+        try:
+            db.execute(
+                "drop trigger if exists "
+                "trg_managed_skill_export_receipts_immutable_update"
+            )
+            db.execute(
+                "drop trigger if exists "
+                "trg_managed_skill_export_receipts_immutable_delete"
+            )
+            db.execute(MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL)
+            db.execute(MANAGED_SKILL_EXPORT_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL)
+        except BaseException:
+            db.execute("rollback")
+            raise
+        else:
+            db.execute("commit")
+
+    @staticmethod
+    def _replace_runtime_skill_immutability_guards_atomically(
+        db: sqlite3.Connection,
+    ) -> None:
+        names = (
+            "trg_runtime_skill_configs_immutable_update",
+            "trg_runtime_skill_configs_immutable_delete",
+            "trg_runtime_skill_bindings_immutable_update",
+            "trg_runtime_skill_bindings_immutable_delete",
+            "trg_runtime_skill_load_receipts_immutable_update",
+            "trg_runtime_skill_load_receipts_immutable_delete",
+            "trg_runtime_feedback_iteration_capabilities_immutable_update",
+            "trg_runtime_feedback_iteration_capabilities_immutable_delete",
+        )
+        definitions = (
+            RUNTIME_SKILL_CONFIGS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            RUNTIME_SKILL_CONFIGS_IMMUTABLE_DELETE_TRIGGER_SQL,
+            RUNTIME_SKILL_BINDINGS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            RUNTIME_SKILL_BINDINGS_IMMUTABLE_DELETE_TRIGGER_SQL,
+            RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            RUNTIME_SKILL_LOAD_RECEIPTS_IMMUTABLE_DELETE_TRIGGER_SQL,
+            RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            RUNTIME_FEEDBACK_ITERATION_CAPABILITIES_IMMUTABLE_DELETE_TRIGGER_SQL,
+        )
+        db.execute("begin immediate")
+        try:
+            for name in names:
+                db.execute(f"drop trigger if exists {name}")
+            for definition in definitions:
+                db.execute(definition)
+        except BaseException:
+            db.execute("rollback")
+            raise
+        else:
+            db.execute("commit")
+
+    @staticmethod
+    def _replace_feedback_iteration_decision_immutability_guards_atomically(
+        db: sqlite3.Connection,
+    ) -> None:
+        names = (
+            "trg_feedback_iteration_decisions_immutable_update",
+            "trg_feedback_iteration_decisions_immutable_delete",
+            "trg_feedback_iteration_decision_items_immutable_update",
+            "trg_feedback_iteration_decision_items_immutable_delete",
+        )
+        definitions = (
+            FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            FEEDBACK_ITERATION_DECISIONS_IMMUTABLE_DELETE_TRIGGER_SQL,
+            FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_UPDATE_TRIGGER_SQL,
+            FEEDBACK_ITERATION_DECISION_ITEMS_IMMUTABLE_DELETE_TRIGGER_SQL,
+        )
+        db.execute("begin immediate")
+        try:
+            for name in names:
+                db.execute(f"drop trigger if exists {name}")
+            for definition in definitions:
+                db.execute(definition)
+        except BaseException:
+            db.execute("rollback")
+            raise
+        else:
+            db.execute("commit")
+
     @classmethod
     def _feedback_processing_round_guard_state_is_valid(
         cls,
@@ -1422,14 +1796,14 @@ class AutoReplyStore:
         if round_table_present is None:
             return False
         cls._validate_feedback_processing_round_storage(db)
+        trigger_names = tuple(STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS)
+        placeholders = ", ".join("?" for _ in trigger_names)
         trigger_definitions = {
             str(row["name"]): _normalize_schema_sql(str(row["sql"] or ""))
             for row in db.execute(
-                """
-                select name, sql from sqlite_master
-                 where type='trigger' and name in (?, ?)
-                """,
-                tuple(STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS),
+                "select name, sql from sqlite_master "
+                f"where type='trigger' and name in ({placeholders})",
+                trigger_names,
             )
         }
         return all(
@@ -1628,6 +2002,80 @@ class AutoReplyStore:
                     codex_session_id text,
                     codex_session_contract_hash text not null default ''
                 );
+                create table if not exists managed_skills (
+                    id integer primary key autoincrement,
+                    name text not null unique,
+                    display_name text not null,
+                    created_at text not null default current_timestamp
+                );
+                create table if not exists managed_skill_revisions (
+                    id integer primary key autoincrement,
+                    skill_id integer not null,
+                    revision_number integer not null check(revision_number > 0),
+                    content text not null,
+                    sha256 text not null,
+                    parent_revision_id integer,
+                    source text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(skill_id) references managed_skills(id),
+                    foreign key(parent_revision_id)
+                        references managed_skill_revisions(id)
+                );
+                create unique index if not exists idx_managed_skill_revisions_number
+                    on managed_skill_revisions(skill_id, revision_number);
+                create unique index if not exists idx_managed_skill_revisions_sha256
+                    on managed_skill_revisions(skill_id, sha256);
+                create table if not exists managed_skill_export_receipts (
+                    id integer primary key autoincrement,
+                    revision_id integer not null,
+                    sha256 text not null,
+                    path text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(revision_id) references managed_skill_revisions(id)
+                );
+                create index if not exists idx_managed_skill_export_receipts_revision
+                    on managed_skill_export_receipts(revision_id, id);
+                create table if not exists runtime_skill_configs (
+                    id integer primary key autoincrement,
+                    parent_id integer,
+                    status text not null check(status in (
+                        'pending_restart', 'active', 'load_failed'
+                    )),
+                    created_at text not null default current_timestamp,
+                    foreign key(parent_id) references runtime_skill_configs(id)
+                );
+                create table if not exists runtime_skill_bindings (
+                    config_id integer not null,
+                    skill_id integer not null,
+                    revision_id integer not null,
+                    enabled integer not null check(enabled in (0, 1)),
+                    load_order integer not null check(load_order >= 0),
+                    purpose text not null default '',
+                    primary key(config_id, skill_id),
+                    unique(config_id, load_order),
+                    foreign key(config_id) references runtime_skill_configs(id),
+                    foreign key(skill_id) references managed_skills(id),
+                    foreign key(revision_id) references managed_skill_revisions(id)
+                );
+                create index if not exists idx_runtime_skill_bindings_config_order
+                    on runtime_skill_bindings(config_id, load_order);
+                create table if not exists runtime_skill_load_receipts (
+                    id integer primary key autoincrement,
+                    config_id integer not null,
+                    pid integer not null check(pid > 0),
+                    loaded_json text not null default '{}',
+                    error text not null default '',
+                    created_at text not null default current_timestamp,
+                    foreign key(config_id) references runtime_skill_configs(id)
+                );
+                create index if not exists idx_runtime_skill_load_receipts_config
+                    on runtime_skill_load_receipts(config_id, id);
+                create table if not exists runtime_feedback_iteration_capabilities (
+                    config_id integer primary key,
+                    enabled integer not null check(enabled in (0, 1)),
+                    created_at text not null default current_timestamp,
+                    foreign key(config_id) references runtime_skill_configs(id)
+                );
                 create table if not exists seen_messages (
                     message_id text primary key,
                     conversation_id text not null,
@@ -1695,6 +2143,28 @@ class AutoReplyStore:
                     on feedback_processing_items(status);
                 create index if not exists idx_feedback_processing_items_batch
                     on feedback_processing_items(batch_id);
+                create table if not exists feedback_iteration_decisions (
+                    id integer primary key autoincrement,
+                    batch_id text not null,
+                    workbench_task_id text not null,
+                    workbench_turn_id text not null,
+                    decision_json text not null,
+                    created_at text not null default current_timestamp,
+                    foreign key(batch_id) references feedback_processing_batches(batch_id)
+                );
+                create index if not exists idx_feedback_iteration_decisions_batch
+                    on feedback_iteration_decisions(batch_id, id);
+                create table if not exists feedback_iteration_decision_items (
+                    decision_id integer not null,
+                    feedback_key text not null,
+                    round_id integer not null,
+                    primary key(decision_id, feedback_key),
+                    foreign key(decision_id) references feedback_iteration_decisions(id),
+                    foreign key(feedback_key) references feedback_processing_items(feedback_key),
+                    foreign key(round_id) references feedback_processing_rounds(id)
+                );
+                create index if not exists idx_feedback_iteration_decision_items_feedback_round
+                    on feedback_iteration_decision_items(feedback_key, round_id, decision_id);
                 create table if not exists feedback_processing_rounds (
                     id integer primary key autoincrement,
                     feedback_key text not null,
@@ -1715,6 +2185,7 @@ class AutoReplyStore:
                     restart_evidence_json text not null default '{}',
                     health_evidence_json text not null default '{}',
                     backlog_evidence_json text not null default '{}',
+                    scope_receipt_json text not null default '{}',
                     receipt_version integer not null default 1
                         check (receipt_version in (1, 2)),
                     note text not null default '',
@@ -2724,6 +3195,17 @@ class AutoReplyStore:
                 """
             )
             self._replace_feedback_processing_round_guards_atomically(db)
+            self._replace_managed_skill_revision_immutability_guards_atomically(db)
+            self._replace_managed_skill_export_receipt_immutability_guards_atomically(db)
+            self._replace_runtime_skill_immutability_guards_atomically(db)
+            self._replace_feedback_iteration_decision_immutability_guards_atomically(db)
+            db.execute(
+                """insert into runtime_feedback_iteration_capabilities (config_id, enabled)
+                   select id, 1 from runtime_skill_configs
+                   where id not in (
+                       select config_id from runtime_feedback_iteration_capabilities
+                   )"""
+            )
             workbench_turn_columns = {
                 row["name"]
                 for row in db.execute("pragma table_info(workbench_turns)").fetchall()
@@ -3113,6 +3595,15 @@ class AutoReplyStore:
                             "where id=?",
                             (int(row["id"]),),
                         )
+            if "scope_receipt_json" not in feedback_processing_round_columns:
+                try:
+                    db.execute(
+                        "alter table feedback_processing_rounds add column "
+                        "scope_receipt_json text not null default '{}'"
+                    )
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc):
+                        raise
 
             self._backfill_feedback_processing_rounds(db)
 
@@ -3663,6 +4154,535 @@ class AutoReplyStore:
                 where codex_session_id is not null and codex_session_id <> ''
                 """
             )
+
+    @staticmethod
+    def _managed_skill_from_row(row: sqlite3.Row) -> ManagedSkill:
+        return ManagedSkill(
+            id=int(row["id"]),
+            name=str(row["name"]),
+            display_name=str(row["display_name"]),
+            created_at=str(row["created_at"]),
+        )
+
+    @staticmethod
+    def _managed_skill_revision_from_row(
+        row: sqlite3.Row,
+    ) -> ManagedSkillRevision:
+        parent_revision_id = row["parent_revision_id"]
+        return ManagedSkillRevision(
+            id=int(row["id"]),
+            skill_id=int(row["skill_id"]),
+            revision_number=int(row["revision_number"]),
+            content=str(row["content"]),
+            sha256=str(row["sha256"]),
+            parent_revision_id=(
+                int(parent_revision_id) if parent_revision_id is not None else None
+            ),
+            source=str(row["source"]),
+            created_at=str(row["created_at"]),
+        )
+
+    def create_managed_skill(self, name: str, display_name: str) -> ManagedSkill:
+        if not isinstance(display_name, str):
+            raise ValueError("managed Skill display name must be nonempty")
+        name = validate_managed_skill_name(name)
+        display_name = display_name.strip()
+        if not display_name:
+            raise ValueError("managed Skill display name must be nonempty")
+        with self._immediate_write_transaction() as db:
+            try:
+                cursor = db.execute(
+                    "insert into managed_skills (name, display_name) values (?, ?)",
+                    (name, display_name),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "managed_skills.name" in str(exc):
+                    raise ValueError("managed Skill already exists") from exc
+                raise
+            row = db.execute(
+                "select id, name, display_name, created_at from managed_skills where id=?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._managed_skill_from_row(row)
+
+    def list_managed_skills(self) -> tuple[ManagedSkill, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                "select id, name, display_name, created_at from managed_skills order by id"
+            ).fetchall()
+        return tuple(self._managed_skill_from_row(row) for row in rows)
+
+    def get_managed_skill(self, skill_id: int) -> ManagedSkill | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select id, name, display_name, created_at from managed_skills where id=?",
+                (skill_id,),
+            ).fetchone()
+        return self._managed_skill_from_row(row) if row is not None else None
+
+    def get_managed_skill_by_name(self, name: str) -> ManagedSkill | None:
+        if not isinstance(name, str) or not name:
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                "select id, name, display_name, created_at from managed_skills where name=?",
+                (name,),
+            ).fetchone()
+        return self._managed_skill_from_row(row) if row is not None else None
+
+    def create_managed_skill_revision(
+        self,
+        skill_id: int,
+        content: str,
+        *,
+        source: str,
+        parent_revision_id: int | None = None,
+    ) -> ManagedSkillRevision:
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError("managed Skill revision source must be nonempty")
+        with self._immediate_write_transaction() as db:
+            skill_row = db.execute(
+                "select name from managed_skills where id=?", (skill_id,)
+            ).fetchone()
+            if skill_row is None:
+                raise ValueError("managed Skill does not exist")
+            sha256 = validate_managed_skill_content(str(skill_row["name"]), content)
+            latest_row = db.execute(
+                """
+                select id, revision_number from managed_skill_revisions
+                where skill_id=? order by revision_number desc limit 1
+                """,
+                (skill_id,),
+            ).fetchone()
+            if parent_revision_id is None and latest_row is not None:
+                parent_revision_id = int(latest_row["id"])
+            if parent_revision_id is not None:
+                parent_row = db.execute(
+                    "select skill_id from managed_skill_revisions where id=?",
+                    (parent_revision_id,),
+                ).fetchone()
+                if parent_row is None:
+                    raise ValueError("managed Skill parent revision does not exist")
+                if int(parent_row["skill_id"]) != skill_id:
+                    raise ValueError(
+                        "parent revision does not belong to managed Skill"
+                    )
+            revision_number = (
+                int(latest_row["revision_number"]) + 1
+                if latest_row is not None
+                else 1
+            )
+            try:
+                cursor = db.execute(
+                    """
+                    insert into managed_skill_revisions (
+                        skill_id, revision_number, content, sha256,
+                        parent_revision_id, source
+                    ) values (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        skill_id,
+                        revision_number,
+                        content,
+                        sha256,
+                        parent_revision_id,
+                        source,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                if "managed_skill_revisions.skill_id, managed_skill_revisions.sha256" in str(exc):
+                    raise ValueError(
+                        "managed Skill revision content already exists"
+                    ) from exc
+                raise
+            row = db.execute(
+                """
+                select id, skill_id, revision_number, content, sha256,
+                       parent_revision_id, source, created_at
+                from managed_skill_revisions where id=?
+                """,
+                (cursor.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._managed_skill_revision_from_row(row)
+
+    def get_managed_skill_revision(
+        self, revision_id: int
+    ) -> ManagedSkillRevision | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                select id, skill_id, revision_number, content, sha256,
+                       parent_revision_id, source, created_at
+                from managed_skill_revisions where id=?
+                """,
+                (revision_id,),
+            ).fetchone()
+        return self._managed_skill_revision_from_row(row) if row is not None else None
+
+    def list_managed_skill_revisions(
+        self, skill_id: int
+    ) -> tuple[ManagedSkillRevision, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                select id, skill_id, revision_number, content, sha256,
+                       parent_revision_id, source, created_at
+                from managed_skill_revisions
+                where skill_id=? order by revision_number
+                """,
+                (skill_id,),
+            ).fetchall()
+        return tuple(self._managed_skill_revision_from_row(row) for row in rows)
+
+    @staticmethod
+    def _managed_skill_export_receipt_from_row(
+        row: sqlite3.Row,
+    ) -> ManagedSkillExportReceipt:
+        return ManagedSkillExportReceipt(
+            id=int(row["id"]), revision_id=int(row["revision_id"]),
+            sha256=str(row["sha256"]), path=str(row["path"]),
+            created_at=str(row["created_at"]),
+        )
+
+    def record_managed_skill_export(
+        self, revision_id: int, *, sha256: str, path: str
+    ) -> ManagedSkillExportReceipt:
+        if type(revision_id) is not int or revision_id <= 0:
+            raise ValueError("managed Skill export revision is invalid")
+        if not isinstance(sha256, str) or not isinstance(path, str) or not path:
+            raise ValueError("managed Skill export receipt is malformed")
+        with self._immediate_write_transaction() as db:
+            revision = db.execute(
+                "select sha256 from managed_skill_revisions where id=?", (revision_id,)
+            ).fetchone()
+            if revision is None:
+                raise ValueError("managed Skill revision does not exist")
+            if str(revision["sha256"]) != sha256:
+                raise ValueError("managed Skill export receipt SHA does not match revision")
+            cursor = db.execute(
+                """insert into managed_skill_export_receipts (revision_id, sha256, path)
+                   values (?, ?, ?)""",
+                (revision_id, sha256, path),
+            )
+            row = db.execute(
+                """select id, revision_id, sha256, path, created_at
+                   from managed_skill_export_receipts where id=?""",
+                (cursor.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._managed_skill_export_receipt_from_row(row)
+
+    def latest_managed_skill_export_receipt(
+        self, revision_id: int
+    ) -> ManagedSkillExportReceipt | None:
+        with self._connect() as db:
+            row = db.execute(
+                """select id, revision_id, sha256, path, created_at
+                   from managed_skill_export_receipts
+                   where revision_id=? order by id desc limit 1""",
+                (revision_id,),
+            ).fetchone()
+        return self._managed_skill_export_receipt_from_row(row) if row else None
+
+    @staticmethod
+    def _runtime_skill_config_from_row(row: sqlite3.Row) -> RuntimeSkillConfig:
+        parent_id = row["parent_id"]
+        return RuntimeSkillConfig(
+            id=int(row["id"]),
+            parent_id=int(parent_id) if parent_id is not None else None,
+            status=str(row["status"]),
+            created_at=str(row["created_at"]),
+        )
+
+    @staticmethod
+    def _runtime_skill_binding_from_row(row: sqlite3.Row) -> RuntimeSkillBinding:
+        return RuntimeSkillBinding(
+            config_id=int(row["config_id"]), skill_id=int(row["skill_id"]),
+            revision_id=int(row["revision_id"]), enabled=bool(row["enabled"]),
+            load_order=int(row["load_order"]), purpose=str(row["purpose"]),
+        )
+
+    @staticmethod
+    def _runtime_skill_load_receipt_from_row(
+        row: sqlite3.Row,
+    ) -> RuntimeSkillLoadReceipt:
+        return RuntimeSkillLoadReceipt(
+            id=int(row["id"]), config_id=int(row["config_id"]),
+            pid=int(row["pid"]), loaded_json=str(row["loaded_json"]),
+            error=str(row["error"]), created_at=str(row["created_at"]),
+        )
+
+    @staticmethod
+    def _normalize_runtime_skill_bindings(
+        bindings: Mapping[object, object] | Sequence[object],
+    ) -> tuple[tuple[int, int, bool, int, str], ...]:
+        raw_items: Sequence[object]
+        if isinstance(bindings, Mapping):
+            raw_items = tuple(
+                {"skill_id": skill_id, "revision_id": revision_id,
+                 "enabled": True, "load_order": index, "purpose": ""}
+                for index, (skill_id, revision_id) in enumerate(bindings.items())
+            )
+        elif isinstance(bindings, Sequence) and not isinstance(bindings, (str, bytes)):
+            raw_items = bindings
+        else:
+            raise ValueError("runtime Skill bindings must be a map or list")
+        normalized: list[tuple[int, int, bool, int, str]] = []
+        for index, item in enumerate(raw_items):
+            if not isinstance(item, Mapping):
+                raise ValueError("runtime Skill binding must be an object")
+            skill_id = item.get("skill_id")
+            revision_id = item.get("revision_id")
+            enabled = item.get("enabled", True)
+            load_order = item.get("load_order", index)
+            purpose = item.get("purpose", "")
+            if (type(skill_id) is not int or skill_id <= 0 or
+                    type(revision_id) is not int or revision_id <= 0 or
+                    type(enabled) is not bool or type(load_order) is not int or
+                    load_order < 0 or not isinstance(purpose, str)):
+                raise ValueError("runtime Skill binding is malformed")
+            normalized.append((skill_id, revision_id, enabled, load_order, purpose))
+        if len({item[0] for item in normalized}) != len(normalized):
+            raise ValueError("runtime Skill binding duplicates a managed Skill")
+        if len({item[3] for item in normalized}) != len(normalized):
+            raise ValueError("runtime Skill binding duplicates load order")
+        return tuple(sorted(normalized, key=lambda item: item[3]))
+
+    def create_runtime_skill_config(
+        self,
+        bindings: Mapping[object, object] | Sequence[object],
+        *,
+        expected_parent_id: int | None,
+        feedback_iteration_enabled: bool | None = None,
+    ) -> RuntimeSkillConfig:
+        normalized = self._normalize_runtime_skill_bindings(bindings)
+        if feedback_iteration_enabled is not None and type(feedback_iteration_enabled) is not bool:
+            raise ValueError("feedback iteration capability must be a boolean")
+        with self._immediate_write_transaction() as db:
+            latest = db.execute(
+                "select id from runtime_skill_configs order by id desc limit 1"
+            ).fetchone()
+            current_parent_id = int(latest["id"]) if latest is not None else None
+            if current_parent_id != expected_parent_id:
+                raise ValueError("runtime Skill configuration parent conflict")
+            for skill_id, revision_id, _enabled, _order, _purpose in normalized:
+                revision = db.execute(
+                    "select skill_id from managed_skill_revisions where id=?",
+                    (revision_id,),
+                ).fetchone()
+                if revision is None or int(revision["skill_id"]) != skill_id:
+                    raise ValueError("runtime Skill binding references invalid managed Skill revision")
+            cursor = db.execute(
+                "insert into runtime_skill_configs (parent_id, status) values (?, 'pending_restart')",
+                (expected_parent_id,),
+            )
+            config_id = int(cursor.lastrowid)
+            if feedback_iteration_enabled is None:
+                inherited = db.execute(
+                    "select enabled from runtime_feedback_iteration_capabilities where config_id=?",
+                    (expected_parent_id,),
+                ).fetchone()
+                feedback_iteration_enabled = bool(inherited["enabled"]) if inherited else True
+            db.execute(
+                "insert into runtime_feedback_iteration_capabilities (config_id, enabled) values (?, ?)",
+                (config_id, int(feedback_iteration_enabled)),
+            )
+            db.executemany(
+                """insert into runtime_skill_bindings
+                   (config_id, skill_id, revision_id, enabled, load_order, purpose)
+                   values (?, ?, ?, ?, ?, ?)""",
+                [(config_id, skill_id, revision_id, int(enabled), load_order, purpose)
+                 for skill_id, revision_id, enabled, load_order, purpose in normalized],
+            )
+            row = db.execute(
+                "select id, parent_id, status, created_at from runtime_skill_configs where id=?",
+                (config_id,),
+            ).fetchone()
+            assert row is not None
+            return self._runtime_skill_config_from_row(row)
+
+    def get_runtime_skill_config(self, config_id: int) -> RuntimeSkillConfig | None:
+        with self._connect() as db:
+            row = db.execute(
+                "select id, parent_id, status, created_at from runtime_skill_configs where id=?",
+                (config_id,),
+            ).fetchone()
+        return self._runtime_skill_config_from_row(row) if row is not None else None
+
+    def create_runtime_skill_rollback_config(
+        self, source_config_id: int, *, expected_parent_id: int | None
+    ) -> RuntimeSkillConfig:
+        """Create, rather than mutate, a pending configuration from history."""
+        bindings = self.list_runtime_skill_bindings(source_config_id)
+        if self.get_runtime_skill_config(source_config_id) is None:
+            raise ValueError("runtime Skill rollback source does not exist")
+        return self.create_runtime_skill_config(
+            [
+                {
+                    "skill_id": binding.skill_id,
+                    "revision_id": binding.revision_id,
+                    "enabled": binding.enabled,
+                    "load_order": binding.load_order,
+                    "purpose": binding.purpose,
+                }
+                for binding in bindings
+            ],
+            expected_parent_id=expected_parent_id,
+            feedback_iteration_enabled=self.feedback_iteration_enabled(source_config_id),
+        )
+
+    def feedback_iteration_enabled(self, config_id: int | None = None) -> bool:
+        if config_id is None:
+            selected = self.get_pending_or_active_runtime_skill_config()
+            if selected is None:
+                return True
+            config_id = selected.id
+        with self._connect() as db:
+            row = db.execute(
+                "select enabled from runtime_feedback_iteration_capabilities where config_id=?",
+                (config_id,),
+            ).fetchone()
+        return True if row is None else bool(row["enabled"])
+
+    def set_feedback_iteration_enabled(self, enabled: bool) -> RuntimeSkillConfig:
+        """Create a next-start configuration with the requested system capability state."""
+        if type(enabled) is not bool:
+            raise ValueError("feedback iteration capability must be a boolean")
+        selected = self.get_pending_or_active_runtime_skill_config()
+        if selected is None:
+            return self.create_runtime_skill_config(
+                [], expected_parent_id=None, feedback_iteration_enabled=enabled
+            )
+        return self.create_runtime_skill_config(
+            [
+                {
+                    "skill_id": binding.skill_id,
+                    "revision_id": binding.revision_id,
+                    "enabled": binding.enabled,
+                    "load_order": binding.load_order,
+                    "purpose": binding.purpose,
+                }
+                for binding in self.list_runtime_skill_bindings(selected.id)
+            ],
+            expected_parent_id=selected.id,
+            feedback_iteration_enabled=enabled,
+        )
+
+    def get_active_runtime_skill_config(self) -> RuntimeSkillConfig | None:
+        with self._connect() as db:
+            row = db.execute(
+                """select id, parent_id, status, created_at from runtime_skill_configs
+                   where status='active' order by id desc limit 1"""
+            ).fetchone()
+        return self._runtime_skill_config_from_row(row) if row is not None else None
+
+    def get_pending_or_active_runtime_skill_config(self) -> RuntimeSkillConfig | None:
+        with self._connect() as db:
+            row = db.execute(
+                """select id, parent_id, status, created_at from runtime_skill_configs
+                   order by id desc limit 1"""
+            ).fetchone()
+            if row is not None and str(row["status"]) == "load_failed":
+                row = db.execute(
+                    """select id, parent_id, status, created_at from runtime_skill_configs
+                       where status='active' order by id desc limit 1"""
+                ).fetchone()
+        return self._runtime_skill_config_from_row(row) if row is not None else None
+
+    def list_runtime_skill_bindings(
+        self, config_id: int
+    ) -> tuple[RuntimeSkillBinding, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """select config_id, skill_id, revision_id, enabled, load_order, purpose
+                   from runtime_skill_bindings where config_id=? order by load_order""",
+                (config_id,),
+            ).fetchall()
+        return tuple(self._runtime_skill_binding_from_row(row) for row in rows)
+
+    def record_runtime_skill_load(
+        self, config_id: int, *, pid: int, loaded: Mapping[object, object]
+    ) -> RuntimeSkillLoadReceipt:
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("runtime Skill load receipt pid must be positive")
+        if not isinstance(loaded, Mapping):
+            raise ValueError("runtime Skill load receipt must contain a map")
+        normalized_loaded: dict[int, str] = {}
+        for skill_id, digest in loaded.items():
+            if type(skill_id) is not int or skill_id <= 0 or not isinstance(digest, str):
+                raise ValueError("runtime Skill load receipt is malformed")
+            normalized_loaded[skill_id] = digest
+        with self._immediate_write_transaction() as db:
+            config = db.execute(
+                "select status from runtime_skill_configs where id=?", (config_id,)
+            ).fetchone()
+            if config is None or str(config["status"]) not in {
+                "pending_restart", "active"
+            }:
+                raise ValueError("runtime Skill configuration is not loadable")
+            expected = {
+                int(row["skill_id"]): str(row["sha256"])
+                for row in db.execute(
+                    """select binding.skill_id, revision.sha256
+                       from runtime_skill_bindings binding
+                       join managed_skill_revisions revision on revision.id=binding.revision_id
+                       where binding.config_id=? and binding.enabled=1""", (config_id,)
+                )
+            }
+            if normalized_loaded != expected:
+                raise ValueError("runtime Skill load receipt does not match bindings")
+            receipt = db.execute(
+                """insert into runtime_skill_load_receipts (config_id, pid, loaded_json, error)
+                   values (?, ?, ?, '')""",
+                (config_id, pid, json.dumps(normalized_loaded, sort_keys=True)),
+            )
+            if str(config["status"]) == "pending_restart":
+                db.execute(
+                    "update runtime_skill_configs set status='active' where id=?",
+                    (config_id,),
+                )
+            row = db.execute(
+                "select id, config_id, pid, loaded_json, error, created_at from runtime_skill_load_receipts where id=?",
+                (receipt.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._runtime_skill_load_receipt_from_row(row)
+
+    def record_runtime_skill_load_failure(
+        self, config_id: int, *, pid: int, error: str
+    ) -> RuntimeSkillLoadReceipt:
+        if type(pid) is not int or pid <= 0 or not isinstance(error, str) or not error:
+            raise ValueError("runtime Skill load failure is malformed")
+        with self._immediate_write_transaction() as db:
+            config = db.execute(
+                "select status from runtime_skill_configs where id=?", (config_id,)
+            ).fetchone()
+            if config is None or str(config["status"]) != "pending_restart":
+                raise ValueError("runtime Skill configuration is not pending restart")
+            receipt = db.execute(
+                """insert into runtime_skill_load_receipts (config_id, pid, loaded_json, error)
+                   values (?, ?, '{}', ?)""", (config_id, pid, error),
+            )
+            db.execute("update runtime_skill_configs set status='load_failed' where id=?", (config_id,))
+            row = db.execute(
+                "select id, config_id, pid, loaded_json, error, created_at from runtime_skill_load_receipts where id=?",
+                (receipt.lastrowid,),
+            ).fetchone()
+            assert row is not None
+            return self._runtime_skill_load_receipt_from_row(row)
+
+    def list_runtime_skill_load_receipts(
+        self, config_id: int
+    ) -> tuple[RuntimeSkillLoadReceipt, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """select id, config_id, pid, loaded_json, error, created_at
+                   from runtime_skill_load_receipts where config_id=? order by id""",
+                (config_id,),
+            ).fetchall()
+        return tuple(self._runtime_skill_load_receipt_from_row(row) for row in rows)
 
     @staticmethod
     def _migrate_runtime_attempt_session_evidence(db: sqlite3.Connection) -> None:
@@ -14233,6 +15253,7 @@ class AutoReplyStore:
             "restart_evidence",
             "health_evidence",
             "backlog_evidence",
+            "scope_receipt",
         ):
             raw = values.pop(f"{field}_json", "{}")
             parsed = json.loads(raw or "{}")
@@ -14315,19 +15336,6 @@ class AutoReplyStore:
             health_evidence=evidence_by_name["health_evidence"],
             backlog_evidence=evidence_by_name["backlog_evidence"],
         )
-        receipt_version = AutoReplyStore._feedback_processing_receipt_version(
-            current_round
-        )
-        if receipt_version == 1:
-            validate_legacy_resolution_evidence(
-                evidence,
-                commit_is_ancestor=True,
-            )
-        else:
-            validate_resolution_evidence(
-                evidence,
-                commit_is_ancestor=True,
-            )
         return evidence
 
     @staticmethod
@@ -14335,6 +15343,145 @@ class AutoReplyStore:
         row: sqlite3.Row,
     ) -> FeedbackProcessingBatch:
         return FeedbackProcessingBatch.model_validate(dict(row))
+
+    @staticmethod
+    def _feedback_iteration_decision_from_row(
+        row: sqlite3.Row,
+    ) -> FeedbackIterationDecisionRecord:
+        values = dict(row)
+        values["feedback_keys"] = json.loads(values.pop("feedback_keys_json"))
+        values["round_ids"] = json.loads(values.pop("round_ids_json"))
+        values["decision"] = json.loads(values.pop("decision_json"))
+        return FeedbackIterationDecisionRecord.model_validate(values)
+
+    def record_feedback_iteration_decision(
+        self,
+        batch_id: str,
+        decision: FeedbackIterationDecision,
+        *,
+        workbench_task_id: str,
+        workbench_turn_id: str,
+    ) -> FeedbackIterationDecisionRecord:
+        """Append one typed classification tied to the current rounds in a batch."""
+        if not isinstance(decision, FeedbackIterationDecision):
+            raise ValueError("feedback iteration decision is invalid")
+        if (
+            not isinstance(workbench_task_id, str)
+            or not isinstance(workbench_turn_id, str)
+            or not workbench_task_id.strip()
+            or not workbench_turn_id.strip()
+        ):
+            raise ValueError(
+                "feedback iteration decision requires non-empty Workbench task and turn strings"
+            )
+        cleaned_batch_id = batch_id.strip()
+        task_id = workbench_task_id.strip()
+        turn_id = workbench_turn_id.strip()
+        if not cleaned_batch_id or not task_id or not turn_id:
+            raise ValueError("feedback iteration decision requires batch and Workbench identity")
+        keys = tuple(decision.feedback_keys)
+        with self._immediate_write_transaction() as db:
+            batch = db.execute(
+                "select status from feedback_processing_batches where batch_id=?",
+                (cleaned_batch_id,),
+            ).fetchone()
+            if batch is None or str(batch["status"]) != "processing":
+                raise ValueError("feedback iteration decision requires a processing batch")
+            placeholders = ",".join("?" for _ in keys)
+            rows = db.execute(
+                f"""select item.feedback_key, item.current_round_id, item.batch_id,
+                           item.status, round.workbench_task_id,
+                           round.workbench_turn_id
+                    from feedback_processing_items item
+                    join feedback_processing_rounds round
+                      on round.id=item.current_round_id
+                     and round.feedback_key=item.feedback_key
+                     and round.batch_id=item.batch_id
+                     and round.status='processing'
+                   where item.feedback_key in ({placeholders})""",
+                keys,
+            ).fetchall()
+            if len(rows) != len(keys) or any(
+                str(row["batch_id"]) != cleaned_batch_id
+                or str(row["status"]) != "processing"
+                or type(row["current_round_id"]) is not int
+                or row["current_round_id"] <= 0
+                for row in rows
+            ):
+                raise FeedbackIterationAssociationMismatchError(
+                    "feedback iteration decision keys must belong to the current processing round association"
+                )
+            round_ids_by_key = {str(row["feedback_key"]): int(row["current_round_id"]) for row in rows}
+            identities = {
+                (
+                    str(row["workbench_task_id"] or "").strip(),
+                    str(row["workbench_turn_id"] or "").strip(),
+                )
+                for row in rows
+            }
+            if len(identities) != 1:
+                raise FeedbackIterationAssociationMismatchError(
+                    "feedback iteration decision requires one current processing round association"
+                )
+            canonical_task_id, canonical_turn_id = identities.pop()
+            if (
+                not canonical_task_id
+                or not canonical_turn_id
+                or (task_id, turn_id) != (canonical_task_id, canonical_turn_id)
+            ):
+                raise FeedbackIterationAssociationMismatchError(
+                    "feedback iteration decision must match the current processing round association"
+                )
+            cursor = db.execute(
+                """insert into feedback_iteration_decisions
+                   (batch_id, workbench_task_id, workbench_turn_id, decision_json)
+                   values (?, ?, ?, ?)""",
+                (
+                    cleaned_batch_id,
+                    canonical_task_id,
+                    canonical_turn_id,
+                    decision.model_dump_json(),
+                ),
+            )
+            decision_id = int(cursor.lastrowid)
+            db.executemany(
+                """insert into feedback_iteration_decision_items
+                   (decision_id, feedback_key, round_id) values (?, ?, ?)""",
+                [(decision_id, key, round_ids_by_key[key]) for key in keys],
+            )
+            row = db.execute(
+                """select decision.id, decision.batch_id, decision.workbench_task_id,
+                          decision.workbench_turn_id, decision.decision_json,
+                          decision.created_at,
+                          json_group_array(item.feedback_key) as feedback_keys_json,
+                          json_group_array(item.round_id) as round_ids_json
+                     from feedback_iteration_decisions decision
+                     join feedback_iteration_decision_items item on item.decision_id=decision.id
+                    where decision.id=?
+                    group by decision.id""",
+                (decision_id,),
+            ).fetchone()
+        assert row is not None
+        return self._feedback_iteration_decision_from_row(row)
+
+    def list_feedback_iteration_decisions(
+        self, batch_id: str
+    ) -> tuple[FeedbackIterationDecisionRecord, ...]:
+        with self._connect() as db:
+            rows = db.execute(
+                """select decision.id, decision.batch_id, decision.workbench_task_id,
+                          decision.workbench_turn_id, decision.decision_json,
+                          decision.created_at,
+                          json_group_array(item.feedback_key) as feedback_keys_json,
+                          json_group_array(item.round_id) as round_ids_json
+                     from feedback_iteration_decisions decision
+                     join feedback_iteration_decision_items item on item.decision_id=decision.id
+                    where decision.batch_id=?
+                    group by decision.id
+                    order by decision.id""",
+                (batch_id.strip(),),
+            ).fetchall()
+        return tuple(self._feedback_iteration_decision_from_row(row) for row in rows)
 
     def create_feedback_processing_batch(
         self,
@@ -14449,6 +15596,8 @@ class AutoReplyStore:
         keys = list(dict.fromkeys(key.strip() for key in feedback_keys if key.strip()))
         if not cleaned_batch_id or not keys:
             return []
+        if not self.feedback_iteration_enabled():
+            raise FeedbackIterationDisabledError("feedback iteration is disabled")
         with self._immediate_write_transaction() as db:
             existing_batch = db.execute(
                 """
@@ -15492,6 +16641,38 @@ class AutoReplyStore:
             or any(str(round_row["status"] or "") != "resolved" for round_row in rounds)
         ):
             raise ValueError("resolved batch history is incomplete")
+        decision_record = cls._resolution_feedback_iteration_decision(
+            db,
+            batch_id=batch_id,
+            feedback_keys=round_keys,
+            round_by_key={str(round_row["feedback_key"]): int(round_row["id"]) for round_row in rounds},
+        )
+        persisted_scope_receipts = [
+            cls._scope_resolution_receipt(round_row) for round_row in rounds
+        ]
+        if decision_record is None:
+            if any(receipt is not None for receipt in persisted_scope_receipts):
+                raise ValueError("resolved feedback scope receipt has no matching decision")
+        else:
+            if any(receipt is None for receipt in persisted_scope_receipts):
+                raise ValueError("resolved feedback scope receipt is missing")
+            first_scope_receipt = persisted_scope_receipts[0]
+            assert first_scope_receipt is not None
+            if any(receipt != first_scope_receipt for receipt in persisted_scope_receipts):
+                raise ValueError("resolved feedback scope receipt is inconsistent")
+            decision_id, scope, persisted_scope_evidence = first_scope_receipt
+            if decision_id != decision_record.id or scope != decision_record.decision.scope:
+                raise ValueError("resolved feedback scope receipt does not match decision")
+            validate_resolution_receipt(
+                decision_record.decision,
+                persisted_scope_evidence,
+                commit_is_ancestor=True,
+            )
+            cls._validate_decision_resolution_receipt(
+                db, decision_record.decision, persisted_scope_evidence
+            )
+            if evidence is not None and persisted_scope_evidence != evidence:
+                raise ValueError("resolution scope receipt does not match batch history")
         transitions_by_round = (
             cls._validate_feedback_processing_batch_transition_ownership(
                 db,
@@ -15576,14 +16757,23 @@ class AutoReplyStore:
                 != common_persisted_receipt.backlog_evidence
             ):
                 raise ValueError("resolved batch persisted receipt is inconsistent")
+            if decision_record is None:
+                if receipt_version == 1:
+                    validate_legacy_resolution_evidence(
+                        persisted_evidence, commit_is_ancestor=True
+                    )
+                else:
+                    validate_resolution_evidence(
+                        persisted_evidence, commit_is_ancestor=True
+                    )
             if evidence is not None:
                 if (
-                    persisted_evidence.commit_sha != evidence.commit_sha
-                    or persisted_evidence.test_evidence != evidence.test_evidence
-                    or persisted_evidence.restart_evidence != evidence.restart_evidence
-                    or persisted_evidence.health_evidence != evidence.health_evidence
-                    or persisted_evidence.backlog_evidence
-                    != evidence.backlog_evidence
+                    (decision_record is None or decision_record.decision.scope in {"code", "mixed"})
+                    and persisted_evidence.commit_sha != evidence.commit_sha
+                ) or persisted_evidence.test_evidence != evidence.test_evidence or (
+                    persisted_evidence.restart_evidence != evidence.restart_evidence
+                ) or persisted_evidence.health_evidence != evidence.health_evidence or (
+                    persisted_evidence.backlog_evidence != evidence.backlog_evidence
                 ):
                     raise ValueError("resolution receipt does not match batch history")
                 if evidence.associations:
@@ -15712,6 +16902,152 @@ class AutoReplyStore:
                     current_round,
                 )
 
+    @classmethod
+    def _resolution_feedback_iteration_decision(
+        cls,
+        db: sqlite3.Connection,
+        *,
+        batch_id: str,
+        feedback_keys: Sequence[str],
+        round_by_key: Mapping[str, int],
+    ) -> FeedbackIterationDecisionRecord | None:
+        """Return the latest decision bound to these exact current rounds.
+
+        Batches created before iteration decisions remain on the historic
+        receipt contract. A decision for an earlier/reopened round is not
+        reusable for the current round.
+        """
+
+        rows = db.execute(
+            """select decision.id, decision.batch_id, decision.workbench_task_id,
+                      decision.workbench_turn_id, decision.decision_json,
+                      decision.created_at,
+                      json_group_array(item.feedback_key) as feedback_keys_json,
+                      json_group_array(item.round_id) as round_ids_json
+                 from feedback_iteration_decisions decision
+                 join feedback_iteration_decision_items item on item.decision_id=decision.id
+                where decision.batch_id=?
+                group by decision.id
+                order by decision.id desc""",
+            (batch_id,),
+        ).fetchall()
+        expected_keys = set(feedback_keys)
+        for row in rows:
+            record = cls._feedback_iteration_decision_from_row(row)
+            if set(record.feedback_keys) != expected_keys or len(record.feedback_keys) != len(expected_keys):
+                continue
+            if {key: round_id for key, round_id in zip(record.feedback_keys, record.round_ids, strict=True)} != dict(round_by_key):
+                continue
+            return record
+        return None
+
+    @staticmethod
+    def _validate_runtime_load_receipt(
+        db: sqlite3.Connection,
+        *,
+        config_id: int,
+        load_receipt_id: int,
+    ) -> dict[int, str]:
+        config = db.execute(
+            "select status from runtime_skill_configs where id=?", (config_id,)
+        ).fetchone()
+        receipt = db.execute(
+            "select config_id, loaded_json, error from runtime_skill_load_receipts where id=?",
+            (load_receipt_id,),
+        ).fetchone()
+        if (
+            config is None
+            or str(config["status"] or "") != "active"
+            or receipt is None
+            or int(receipt["config_id"]) != config_id
+            or str(receipt["error"] or "")
+        ):
+            raise ValueError("resolution requires a successful active runtime load receipt")
+        try:
+            loaded = json.loads(str(receipt["loaded_json"] or "{}"))
+            if not isinstance(loaded, dict) or any(
+                not isinstance(skill_id, str) or not isinstance(sha256, str)
+                for skill_id, sha256 in loaded.items()
+            ):
+                raise ValueError
+            normalized = {int(skill_id): str(sha256) for skill_id, sha256 in loaded.items()}
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("resolution runtime load receipt is invalid") from exc
+        return normalized
+
+    @classmethod
+    def _validate_decision_resolution_receipt(
+        cls,
+        db: sqlite3.Connection,
+        decision: FeedbackIterationDecision,
+        evidence: ResolutionEvidence,
+    ) -> None:
+        """Bind a typed receipt to immutable runtime records selected by a decision."""
+
+        if decision.scope == "needs_human":
+            raise ValueError("needs_human feedback iteration decisions cannot resolve")
+        if decision.scope in {"skill_only", "runtime_config", "mixed"}:
+            loaded = cls._validate_runtime_load_receipt(
+                db,
+                config_id=evidence.runtime_config_id,
+                load_receipt_id=evidence.load_receipt_id,
+            )
+        else:
+            loaded = {}
+        if decision.scope in {"runtime_config", "mixed"}:
+            config = db.execute(
+                "select parent_id from runtime_skill_configs where id=?",
+                (evidence.runtime_config_id,),
+            ).fetchone()
+            if (
+                decision.target_runtime_config_id != evidence.runtime_config_id
+                or config is None
+                or config["parent_id"] != evidence.previous_runtime_config_id
+            ):
+                raise ValueError("resolution runtime configuration does not match decision")
+        if decision.scope in {"skill_only", "mixed"}:
+            expected = {
+                target.skill_id: target.to_revision
+                for target in decision.target_skill_revisions
+            }
+            actual = {revision.skill_id: revision for revision in evidence.skill_revisions}
+            if set(actual) != set(expected):
+                raise ValueError("resolution managed Skill revisions do not match decision")
+            for skill_id, revision_id in expected.items():
+                revision = actual[skill_id]
+                row = db.execute(
+                    "select sha256 from managed_skill_revisions where id=? and skill_id=?",
+                    (revision.revision_id, revision.skill_id),
+                ).fetchone()
+                if (
+                    revision.revision_id != revision_id
+                    or row is None
+                    or str(row["sha256"]) != revision.sha256
+                    or loaded.get(skill_id) != revision.sha256
+                ):
+                    raise ValueError("resolution managed Skill revision is not loaded")
+
+    @staticmethod
+    def _scope_resolution_receipt(
+        current_round: sqlite3.Row,
+    ) -> tuple[int, str, ResolutionEvidence] | None:
+        """Read one scope receipt durably bound to a resolved feedback round."""
+
+        try:
+            raw = json.loads(current_round["scope_receipt_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("resolved feedback scope receipt is invalid") from exc
+        if raw == {}:
+            return None
+        if not isinstance(raw, dict):
+            raise ValueError("resolved feedback scope receipt is invalid")
+        decision_id = raw.get("decision_id")
+        scope = raw.get("scope")
+        evidence = raw.get("evidence")
+        if type(decision_id) is not int or not isinstance(scope, str) or not isinstance(evidence, dict):
+            raise ValueError("resolved feedback scope receipt is invalid")
+        return decision_id, scope, ResolutionEvidence.model_validate(evidence)
+
     def resolve_feedback_processing_batch(
         self,
         batch_id: str,
@@ -15729,8 +17065,6 @@ class AutoReplyStore:
         cleaned_batch_id = batch_id.strip()
         if not cleaned_batch_id:
             return False
-        if not isinstance(commit_is_ancestor, bool) or not commit_is_ancestor:
-            raise ValueError("resolution commit is not an ancestor of local main")
         normalized_evidence = (
             evidence
             if isinstance(evidence, ResolutionEvidence)
@@ -15738,11 +17072,6 @@ class AutoReplyStore:
             if evidence is not None
             else None
         )
-        if normalized_evidence is not None:
-            validate_resolution_evidence(
-                normalized_evidence,
-                commit_is_ancestor=commit_is_ancestor,
-            )
         with self._immediate_write_transaction() as db:
             batch = db.execute(
                 "select status, requested_count, resolved_at, updated_at "
@@ -15802,6 +17131,35 @@ class AutoReplyStore:
             ) != set(item_keys):
                 raise ValueError("resolution receipt associations do not match batch")
             round_by_id = {int(round_row["id"]): round_row for round_row in round_rows}
+            decision_record = self._resolution_feedback_iteration_decision(
+                db,
+                batch_id=cleaned_batch_id,
+                feedback_keys=item_keys,
+                round_by_key={
+                    str(item["feedback_key"]): self._feedback_processing_round_pointer(
+                        item, require_positive=True
+                    )
+                    for item in rows
+                },
+            )
+            if decision_record is None:
+                validate_resolution_evidence(
+                    normalized_evidence,
+                    commit_is_ancestor=commit_is_ancestor,
+                )
+                requires_commit = True
+            else:
+                validate_resolution_receipt(
+                    decision_record.decision,
+                    normalized_evidence,
+                    commit_is_ancestor=commit_is_ancestor,
+                )
+                self._validate_decision_resolution_receipt(
+                    db,
+                    decision_record.decision,
+                    normalized_evidence,
+                )
+                requires_commit = decision_record.decision.scope in {"code", "mixed"}
             verified: list[tuple[sqlite3.Row, sqlite3.Row]] = []
             for item in rows:
                 round_id = self._feedback_processing_round_pointer(
@@ -15846,7 +17204,7 @@ class AutoReplyStore:
                             "resolution receipt association does not match current round"
                         )
                 item_commit = str(current_round["commit_sha"] or "").strip()
-                if (
+                if requires_commit and (
                     str(item["commit_sha"] or "").strip().lower()
                     != item_commit.lower()
                     or item_commit.lower()
@@ -15878,16 +17236,32 @@ class AutoReplyStore:
                         raise ValueError(
                             "resolution item evidence does not match current round receipt"
                         )
-                validate_resolution_evidence(
-                    ResolutionEvidence(
-                        commit_sha=item_commit,
-                        test_evidence=test_json,
-                        restart_evidence=restart_json,
-                        health_evidence=health_json,
-                        backlog_evidence=normalized_evidence.backlog_evidence,
-                    ),
-                    commit_is_ancestor=commit_is_ancestor,
-                )
+                if requires_commit:
+                    validate_resolution_evidence(
+                        ResolutionEvidence(
+                            commit_sha=item_commit,
+                            test_evidence=test_json,
+                            restart_evidence=restart_json,
+                            health_evidence=health_json,
+                            backlog_evidence=normalized_evidence.backlog_evidence,
+                        ),
+                        commit_is_ancestor=commit_is_ancestor,
+                    )
+                else:
+                    validate_resolution_receipt(
+                        decision_record.decision,
+                        ResolutionEvidence(
+                            test_evidence=test_json,
+                            restart_evidence=restart_json,
+                            health_evidence=health_json,
+                            backlog_evidence=normalized_evidence.backlog_evidence,
+                            runtime_config_id=normalized_evidence.runtime_config_id,
+                            previous_runtime_config_id=normalized_evidence.previous_runtime_config_id,
+                            load_receipt_id=normalized_evidence.load_receipt_id,
+                            skill_revisions=normalized_evidence.skill_revisions,
+                        ),
+                        commit_is_ancestor=commit_is_ancestor,
+                    )
                 verified.append((item, current_round))
             placeholders = ",".join("?" for _ in item_keys)
             source_rows = db.execute(
@@ -15908,6 +17282,17 @@ class AutoReplyStore:
                 ensure_ascii=False,
                 sort_keys=True,
             )
+            scope_receipt_json = json.dumps(
+                {
+                    "decision_id": decision_record.id,
+                    "scope": decision_record.decision.scope,
+                    "evidence": normalized_evidence.model_dump(mode="json"),
+                }
+                if decision_record is not None
+                else {},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
             resolution_timestamp_row = db.execute(
                 "select current_timestamp as resolution_timestamp"
             ).fetchone()
@@ -15919,13 +17304,14 @@ class AutoReplyStore:
                     """
                     update feedback_processing_rounds
                        set status='resolved', resolved_at=?,
-                           backlog_evidence_json=?, updated_at=?
+                           backlog_evidence_json=?, scope_receipt_json=?, updated_at=?
                      where id=? and feedback_key=? and batch_id=?
                        and status='processing'
                     """,
                     (
                         resolution_timestamp,
                         backlog_json,
+                        scope_receipt_json,
                         resolution_timestamp,
                         int(current_round["id"]),
                         str(item["feedback_key"]),

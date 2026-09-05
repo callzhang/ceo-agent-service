@@ -65,6 +65,7 @@ The runtime database owns these append-only or versioned records:
 |---|---|---|
 | `managed_skills` | Stable local identity, display name, description, ownership state | Limited metadata changes only |
 | `managed_skill_revisions` | Full UTF-8 `SKILL.md` content, SHA-256, parent revision, source, timestamps, optional feedback linkage and validation result | Immutable |
+| `managed_skill_export_receipts` | Explicit repository-export receipt for one immutable revision: SHA, destination path, and completion timestamp | Append-only |
 | `runtime_skill_configs` | One versioned set of enabled bindings for the next process start | Immutable after creation |
 | `runtime_skill_bindings` | A config's `skill_id`, exact `revision_id`, enabled flag, load order, and purpose | Immutable with its config |
 | `runtime_skill_load_receipts` | Process ID, config version, loaded revisions/SHA, failures, startup timestamp | Append-only |
@@ -119,7 +120,8 @@ The Skills area has two separately labelled groups:
 
 Each Skill card shows its active revision, candidate revisions, SHA, current
 load receipt, enabled state for the next start, and whether it is repository
-exported.  New Skill and new-revision actions create candidate records.  The
+exported. Export status comes from its persisted export receipt rather than a
+live filesystem probe. New Skill and new-revision actions create candidate records.  The
 user may select one candidate for next-start activation immediately; no
 pre-release test gate is required.
 

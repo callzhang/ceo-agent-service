@@ -12,10 +12,19 @@ const listWechatTargets = vi.hoisted(() => vi.fn());
 const saveWechatReplyScope = vi.hoisted(() => vi.fn());
 const getSkillFeatures = vi.hoisted(() => vi.fn());
 const toggleSkillFeature = vi.hoisted(() => vi.fn());
-const getSkillDetail = vi.hoisted(() => vi.fn());
-const saveSkill = vi.hoisted(() => vi.fn());
+const listManagedSkills = vi.hoisted(() => vi.fn());
+const listManagedSkillRevisions = vi.hoisted(() => vi.fn());
+const createManagedSkillRevision = vi.hoisted(() => vi.fn());
+const getCurrentRuntimeSkillConfig = vi.hoisted(() => vi.fn());
+const createRuntimeSkillConfig = vi.hoisted(() => vi.fn());
+const listRuntimeSkillLoadReceipts = vi.hoisted(() => vi.fn());
+const createManagedSkill = vi.hoisted(() => vi.fn());
+const getFeedbackIterationCapability = vi.hoisted(() => vi.fn());
+const setFeedbackIterationCapability = vi.hoisted(() => vi.fn());
+const exportManagedSkillRevision = vi.hoisted(() => vi.fn());
 
-vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, getSkillFeatures, toggleSkillFeature, getSkillDetail, saveSkill, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
+vi.mock("../api/console", () => ({ getSettings, saveSettings, getStatus, listAttention, listWechat, listWechatTargets, saveWechatReplyScope, getSkillFeatures, toggleSkillFeature, displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value) || "未提供" }));
+vi.mock("../api/skills", () => ({ listManagedSkills, createManagedSkill, listManagedSkillRevisions, createManagedSkillRevision, getCurrentRuntimeSkillConfig, createRuntimeSkillConfig, listRuntimeSkillLoadReceipts, getFeedbackIterationCapability, setFeedbackIterationCapability, exportManagedSkillRevision }));
 
 import { SettingsPage } from "./SettingsPage";
 
@@ -29,6 +38,7 @@ describe("SettingsPage", () => {
     listAttention.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechat.mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
     listWechatTargets.mockResolvedValue({ items: [], account_id: "", meta: { page: 1, page_size: 50, total: 0, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" } });
+    getFeedbackIterationCapability.mockResolvedValue({ enabled: true, config_id: 1, status: "pending_restart", active: { enabled: false, config_id: 0, status: "active" } });
     getSettings.mockResolvedValue({
       item: {
         section: "configuration",
@@ -302,102 +312,143 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("status", { name: "回复范围同步状态" })).toHaveTextContent("已保存");
   });
 
-  it("renders Skills feature cards and project skill associations", async () => {
+  it("saves a candidate revision and activates it for the next start", async () => {
+    const user = userEvent.setup();
     getSkillFeatures.mockResolvedValueOnce({
       features: [{ feature_id: "message_triage", name: "Message Triage", description: "处理普通业务消息", skills: ["ceo-message-triage"], enabled: true, status: "ready" }],
-      skills: [{ name: "ceo-message-triage", description: "消息判断规则", referenced_by: ["message_triage"], status: "ready" }],
     });
+    listManagedSkills.mockResolvedValueOnce({ items: [{ id: 1, name: "ceo-message-triage", display_name: "Message Triage", created_at: "2026-09-05T00:00:00Z" }] });
+    listManagedSkillRevisions.mockResolvedValueOnce({ items: [{ id: 11, skill_id: 1, revision_number: 1, content: "---\nname: ceo-message-triage\nmetadata:\n  managed_by: ceo-agent-service\n---\n# revision 1", sha256: "a".repeat(64), parent_revision_id: null, source: "import", created_at: "2026-09-05T00:00:00Z" }] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: { id: 3, parent_id: null, status: "active", created_at: "2026-09-05T00:00:00Z", bindings: [{ skill_id: 1, revision_id: 11, enabled: true, load_order: 0, purpose: "business" }] }, active: { id: 3, parent_id: null, status: "active", created_at: "2026-09-05T00:00:00Z", bindings: [{ skill_id: 1, revision_id: 11, enabled: true, load_order: 0, purpose: "business" }] } });
+    listRuntimeSkillLoadReceipts.mockResolvedValueOnce({ items: [{ id: 9, config_id: 3, pid: 123, loaded_json: JSON.stringify({ "1": "a".repeat(64) }), error: "", created_at: "2026-09-05T00:00:00Z" }] });
+    createManagedSkillRevision.mockResolvedValueOnce({ id: 12, skill_id: 1, revision_number: 2, content: "---\nname: ceo-message-triage\nmetadata:\n  managed_by: ceo-agent-service\n---\n# revision 2", sha256: "b".repeat(64), parent_revision_id: 11, source: "settings", created_at: "2026-09-05T00:01:00Z" });
+    createRuntimeSkillConfig.mockResolvedValueOnce({ id: 4, parent_id: 3, status: "pending_restart", created_at: "2026-09-05T00:01:00Z", bindings: [{ skill_id: 1, revision_id: 12, enabled: true, load_order: 0, purpose: "business" }] });
     renderSettings("/settings?tab=skills");
 
-    expect(await screen.findByRole("heading", { name: "Skills" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Message Triage" })).toBeInTheDocument();
-    expect(screen.getByText("处理普通业务消息")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: /Message Triage/ })).toBeChecked();
-    expect(screen.getAllByText("ceo-message-triage").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/开关只影响新任务/)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "新建修订" }));
+    await user.type(screen.getByLabelText("Skill 正文"), "\n更新内容");
+    await user.click(screen.getByRole("button", { name: "保存修订" }));
+    await user.click(await screen.findByRole("button", { name: "下次启动启用 revision 2" }));
+
+    expect(createManagedSkillRevision).toHaveBeenCalledWith(1, expect.stringContaining("更新内容"), 11);
+    expect(createRuntimeSkillConfig).toHaveBeenCalledWith(3, [expect.objectContaining({ skill_id: 1, revision_id: 12, enabled: true })]);
+    expect(await screen.findByText("配置已更新，等待服务重启")).toBeInTheDocument();
   });
 
-  it("expands a skill preview and preserves a draft after a SHA conflict", async () => {
-    const user = userEvent.setup();
-    getSkillFeatures.mockResolvedValueOnce({ features: [{ feature_id: "message_triage", name: "Message Triage", description: "处理消息", skills: ["ceo-message-triage"], enabled: true, status: "ready" }], skills: [{ name: "ceo-message-triage", description: "原描述", referenced_by: ["message_triage"], status: "ready" }] });
-    getSkillDetail.mockResolvedValueOnce({ name: "ceo-message-triage", description: "原描述", managed_by: "ceo-agent-service", content: "原始内容", sha256: "a".repeat(64), referenced_by: ["message_triage"] });
-    saveSkill.mockRejectedValueOnce(Object.assign(new Error("Skill 已被其他修改"), { status: 409, code: "conflict" }));
+  it("labels a business switch as new-task routing rather than Skill loading", async () => {
+    getSkillFeatures.mockResolvedValueOnce({ features: [{ feature_id: "message_triage", name: "Message Triage", description: "处理消息", skills: ["ceo-message-triage"], enabled: true, status: "ready" }] });
+    listManagedSkills.mockResolvedValueOnce({ items: [] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: null, active: null });
     renderSettings("/settings?tab=skills");
 
-    await user.click(await screen.findByRole("button", { name: "查看 ceo-message-triage" }));
-    await user.click(await screen.findByRole("tab", { name: "编辑" }));
-    const editor = await screen.findByRole("textbox", { name: "Skill 内容" });
-    await user.clear(editor);
-    await user.type(editor, "我的草稿");
-    await user.click(screen.getByRole("button", { name: "保存 Skill" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(/冲突|最新版本/);
-    expect(screen.getByRole("textbox", { name: "Skill 内容" })).toHaveValue("我的草稿");
-    expect(screen.getAllByText(/共享 skill 编辑影响引用功能/).length).toBeGreaterThanOrEqual(1);
+    expect(await screen.findByText("仅控制新任务创建，不控制 Skill 加载")).toBeInTheDocument();
+    expect(screen.getByText("新任务创建开关（不控制 Skill 加载）")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "系统能力" })).toBeInTheDocument();
+    expect(screen.getByText("反馈迭代")).toBeInTheDocument();
   });
 
-  it("persists a feature toggle and reports success", async () => {
+  it("shows active and next-start revisions separately and reads exported state from the export receipt", async () => {
     const user = userEvent.setup();
-    getSkillFeatures.mockResolvedValueOnce({ features: [{ feature_id: "message_triage", name: "Message Triage", description: "处理消息", skills: [], enabled: true, status: "ready" }], skills: [] });
-    toggleSkillFeature.mockResolvedValueOnce({ feature_id: "message_triage", enabled: false, status: "ready" });
+    getSkillFeatures.mockResolvedValueOnce({ features: [] });
+    listManagedSkills.mockResolvedValueOnce({ items: [{ id: 1, name: "ceo-message-triage", display_name: "Message Triage", created_at: "2026-09-05T00:00:00Z" }] });
+    listManagedSkillRevisions.mockResolvedValueOnce({ items: [
+      { id: 11, skill_id: 1, revision_number: 1, content: "# active", sha256: "a".repeat(64), parent_revision_id: null, source: "import", created_at: "2026-09-05T00:00:00Z", export: { status: "exported", receipt: { id: 7, revision_id: 11, sha256: "a".repeat(64), path: "/repo/skills/ceo-message-triage/SKILL.md", created_at: "2026-09-05T00:00:00Z" } } },
+      { id: 12, skill_id: 1, revision_number: 2, content: "# candidate", sha256: "b".repeat(64), parent_revision_id: 11, source: "settings", created_at: "2026-09-05T00:01:00Z", export: { status: "not_exported", receipt: null } },
+    ] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: { id: 4, parent_id: 3, status: "pending_restart", created_at: "2026-09-05T00:01:00Z", bindings: [{ skill_id: 1, revision_id: 12, enabled: true, load_order: 0, purpose: "business" }] }, active: { id: 3, parent_id: null, status: "active", created_at: "2026-09-05T00:00:00Z", bindings: [{ skill_id: 1, revision_id: 11, enabled: true, load_order: 0, purpose: "business" }] } });
+    listRuntimeSkillLoadReceipts.mockResolvedValueOnce({ items: [] }).mockResolvedValueOnce({ items: [{ id: 9, config_id: 3, pid: 123, loaded_json: JSON.stringify({ "1": "a".repeat(64) }), error: "", created_at: "2026-09-05T00:00:00Z" }] });
+    exportManagedSkillRevision.mockResolvedValueOnce({ name: "ceo-message-triage", revision_id: 12, sha256: "b".repeat(64), path: "/repo/skills/ceo-message-triage/SKILL.md", export: { status: "exported", receipt: { id: 8, revision_id: 12, sha256: "b".repeat(64), path: "/repo/skills/ceo-message-triage/SKILL.md", created_at: "2026-09-05T00:02:00Z" } } });
     renderSettings("/settings?tab=skills");
+
+    expect(await screen.findByRole("heading", { name: "业务 Skills" })).toBeInTheDocument();
+    expect(screen.getByText("活动 revision 1 · 已由加载回执 #9 确认")).toBeInTheDocument();
+    expect(screen.getByText("下次启动 revision 2 · pending_restart")).toBeInTheDocument();
+    expect(screen.getByText("导出状态：未导出")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "导出 revision 2 到仓库" }));
+    expect(exportManagedSkillRevision).toHaveBeenCalledWith(12);
+    expect(await screen.findByText(/导出状态：已导出 · 导出回执 #8/)).toBeInTheDocument();
+  });
+
+  it("creates a local Skill before its first immutable revision", async () => {
+    const user = userEvent.setup();
+    getSkillFeatures.mockResolvedValueOnce({ features: [] });
+    listManagedSkills.mockResolvedValueOnce({ items: [] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: null, active: null });
+    createManagedSkill.mockResolvedValueOnce({ id: 9, name: "ceo-local", display_name: "Local Skill", created_at: "2026-09-05T00:00:00Z" });
+    createManagedSkillRevision.mockResolvedValueOnce({ id: 10, skill_id: 9, revision_number: 1, content: "---\nname: ceo-local\ndescription: Local Skill\nmetadata:\n  managed_by: ceo-agent-service\n---", sha256: "c".repeat(64), parent_revision_id: null, source: "settings", created_at: "2026-09-05T00:00:00Z" });
+    renderSettings("/settings?tab=skills");
+
+    await user.click(await screen.findByRole("button", { name: "新建本地 Skill" }));
+    await user.type(screen.getByLabelText("Skill 名称"), "ceo-local");
+    await user.type(screen.getByLabelText("显示名称"), "Local Skill");
+    await user.click(screen.getByRole("button", { name: "创建本地 Skill" }));
+    await user.click(await screen.findByRole("button", { name: "保存修订" }));
+
+    expect(createManagedSkill).toHaveBeenCalledWith("ceo-local", "Local Skill");
+    expect(createManagedSkillRevision).toHaveBeenCalledWith(9, expect.stringContaining("name: ceo-local"), null);
+  });
+
+  it("submits one immutable revision when save is clicked rapidly", async () => {
+    const user = userEvent.setup();
+    let resolveRevision: ((value: unknown) => void) | undefined;
+    getSkillFeatures.mockResolvedValueOnce({ features: [] });
+    listManagedSkills.mockResolvedValueOnce({ items: [{ id: 1, name: "ceo-message-triage", display_name: "Message Triage", created_at: "2026-09-05T00:00:00Z" }] });
+    listManagedSkillRevisions.mockResolvedValueOnce({ items: [{ id: 11, skill_id: 1, revision_number: 1, content: "# first", sha256: "a".repeat(64), parent_revision_id: null, source: "import", created_at: "2026-09-05T00:00:00Z" }] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: null, active: null });
+    createManagedSkillRevision.mockImplementationOnce(() => new Promise((resolve) => { resolveRevision = resolve; }));
+    renderSettings("/settings?tab=skills");
+
+    await user.click(await screen.findByRole("button", { name: "新建修订" }));
+    const save = screen.getByRole("button", { name: "保存修订" });
+    await user.click(save); await user.click(save);
+    expect(createManagedSkillRevision).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "新建修订" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    resolveRevision?.({ id: 12, skill_id: 1, revision_number: 2, content: "# second", sha256: "b".repeat(64), parent_revision_id: 11, source: "settings", created_at: "2026-09-05T00:01:00Z" });
+    expect(await screen.findByText("已保存 revision 2")).toBeInTheDocument();
+    expect(screen.getByText(/最新 revision 2/)).toBeInTheDocument();
+  });
+
+  it("disables activation without a next-start configuration and restores complete preview tab semantics", async () => {
+    const user = userEvent.setup();
+    getSkillFeatures.mockResolvedValueOnce({ features: [] });
+    listManagedSkills.mockResolvedValueOnce({ items: [{ id: 1, name: "ceo-message-triage", display_name: "Message Triage", created_at: "2026-09-05T00:00:00Z" }] });
+    listManagedSkillRevisions.mockResolvedValueOnce({ items: [{ id: 11, skill_id: 1, revision_number: 1, content: "# first", sha256: "a".repeat(64), parent_revision_id: null, source: "import", created_at: "2026-09-05T00:00:00Z" }] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: null, active: null });
+    renderSettings("/settings?tab=skills");
+
+    expect(await screen.findByRole("button", { name: "下次启动启用 revision 1" })).toBeDisabled();
+    expect(screen.getByText("尚未配置下次启动 Skill；无法启用修订。" )).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "新建修订" }));
+    await user.click(screen.getByRole("tab", { name: "预览" }));
+    const tabs = within(screen.getByRole("tablist", { name: "Skill detail view" }));
+    const preview = tabs.getByRole("tab", { name: "预览" });
+    const edit = tabs.getByRole("tab", { name: "编辑" });
+    expect(preview).toHaveAttribute("id", "managed-skill-preview-tab");
+    expect(preview).toHaveAttribute("aria-controls", "managed-skill-preview-panel");
+    expect(edit).toHaveAttribute("tabindex", "-1");
+    await user.keyboard("{ArrowRight}");
+    expect(edit).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "编辑" })).toHaveAttribute("aria-labelledby", "managed-skill-edit-tab");
+  });
+
+  it("serializes a business toggle and clears its prior error before the next response", async () => {
+    const user = userEvent.setup();
+    let resolveToggle: ((value: unknown) => void) | undefined;
+    getSkillFeatures.mockResolvedValueOnce({ features: [{ feature_id: "message_triage", name: "Message Triage", description: "处理消息", skills: [], enabled: true, status: "ready" }] });
+    listManagedSkills.mockResolvedValueOnce({ items: [] });
+    getCurrentRuntimeSkillConfig.mockResolvedValueOnce({ pending_or_active: null, active: null });
+    toggleSkillFeature.mockRejectedValueOnce(new Error("第一次失败")).mockImplementationOnce(() => new Promise((resolve) => { resolveToggle = resolve; }));
+    renderSettings("/settings?tab=skills");
+
     const toggle = await screen.findByRole("switch", { name: "Message Triage" });
     await user.click(toggle);
-    expect(toggleSkillFeature).toHaveBeenCalledWith("message_triage", false);
-    expect(await screen.findByRole("status")).toHaveTextContent("功能开关已保存");
-    expect(toggle).not.toBeChecked();
-  });
-
-  it("switches Skill detail between independent preview and edit tabs", async () => {
-    const user = userEvent.setup();
-    getSkillFeatures.mockResolvedValueOnce({ features: [], skills: [{ name: "ceo-message-triage", description: "消息判断规则", referenced_by: [], status: "ready" }] });
-    getSkillDetail.mockResolvedValueOnce({ name: "ceo-message-triage", description: "消息判断规则", managed_by: "ceo-agent-service", content: "# preview content", sha256: "b".repeat(64), referenced_by: [] });
-    renderSettings("/settings?tab=skills");
-
-    await user.click(await screen.findByRole("button", { name: "查看 ceo-message-triage" }));
-    expect(await screen.findByRole("tab", { name: "预览" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("heading", { name: "preview content" })).toBeInTheDocument();
-    expect(screen.getByRole("tabpanel", { name: "预览" })).not.toHaveTextContent("# preview content");
-    expect(screen.queryByRole("textbox", { name: "Skill 内容" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "编辑" }));
-    expect(screen.getByRole("tab", { name: "编辑" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("textbox", { name: "Skill 内容" })).toBeInTheDocument();
-    expect(screen.queryByRole("tabpanel", { name: "预览" })).not.toBeInTheDocument();
-  });
-
-  it("filters project Skills by the selected feature card", async () => {
-    const user = userEvent.setup();
-    getSkillFeatures.mockResolvedValueOnce({
-      features: [
-        { feature_id: "message_triage", name: "Message Triage", description: "处理消息", skills: ["ceo-message-triage"], enabled: true, status: "ready" },
-        { feature_id: "mail_review", name: "Mail Review", description: "处理邮件", skills: ["ceo-mail-review"], enabled: true, status: "ready" },
-      ],
-      skills: [
-        { name: "ceo-message-triage", description: "消息判断规则", referenced_by: ["message_triage"], status: "ready" },
-        { name: "ceo-mail-review", description: "邮件判断规则", referenced_by: ["mail_review"], status: "ready" },
-      ],
-    });
-    renderSettings("/settings?tab=skills");
-
-    expect(await screen.findByRole("button", { name: "查看 ceo-message-triage" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "查看 ceo-mail-review" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("heading", { name: "Mail Review" }));
-
-    expect(await screen.findByRole("button", { name: "查看 ceo-mail-review" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "查看 ceo-message-triage" })).not.toBeInTheDocument();
-  });
-
-  it("shows API validation errors without crashing and keeps an invalid project skill row visible", async () => {
-    getSkillFeatures.mockResolvedValueOnce({
-      features: [],
-      skills: [{ name: "bad skill", description: "", referenced_by: [], status: "invalid", error: "invalid Skill name" }],
-    });
-    renderSettings("/settings?tab=skills");
-
-    expect(await screen.findByText("bad skill")).toBeInTheDocument();
-    expect(screen.getByText("invalid Skill name")).toBeInTheDocument();
-    expect(screen.getByText("非法 skill 行不影响其他内容。")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("第一次失败");
+    await user.click(toggle);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(toggleSkillFeature).toHaveBeenCalledTimes(2);
+    expect(toggle).toBeDisabled();
+    resolveToggle?.({ feature_id: "message_triage", enabled: false, status: "ready" });
+    expect(await screen.findByText("新任务创建开关已保存")).toBeInTheDocument();
   });
 });

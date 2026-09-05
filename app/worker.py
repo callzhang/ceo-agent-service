@@ -479,6 +479,7 @@ class DingTalkAutoReplyWorker:
         login_coordinator: LoginCoordinator | None = None,
         agent_orchestrator: AgentOrchestrator | None = None,
         agent_runtime: "ProductionAgentRuntime | None" = None,
+        runtime_skill_snapshot=None,
         feature_registry: FeatureRegistry | None = None,
     ):
         self.store = store
@@ -512,6 +513,7 @@ class DingTalkAutoReplyWorker:
         self._sqlite_lock_failures: dict[str, int] = {}
         self.agent_orchestrator = agent_orchestrator
         self.agent_runtime = agent_runtime
+        self.runtime_skill_snapshot = runtime_skill_snapshot
         self.feature_registry = feature_registry or FeatureRegistry()
 
     def _agent_orchestrator(self) -> AgentOrchestrator:
@@ -544,6 +546,7 @@ class DingTalkAutoReplyWorker:
                     if runtime is not None
                     else None
                 ),
+                runtime_skill_snapshot=self.runtime_skill_snapshot,
             ),
             audit=AuditAgentRunner(
                 store=self.store,

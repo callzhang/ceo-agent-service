@@ -7,7 +7,6 @@ old form routes during the migration, but React never consumes their HTML.
 
 from collections.abc import Callable
 import json
-import string
 import subprocess
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -33,13 +32,19 @@ from app.web_api.settings import info_payload
 from app.web_api.email import register_email_routes
 from app.skill_features import FeatureRegistry
 from app.skill_files import (
-    SkillFileConflict,
-    SkillFileError,
     SkillFileService,
     SkillFileValidationError,
-    SkillFileSyncError,
+)
+from app.managed_skills import (
+    ManagedSkillValidationError,
+    import_repository_managed_skills,
+    export_managed_skill_revision,
+    validate_managed_skill_name,
 )
 from app.feedback_processing import (
+    FeedbackIterationDecision,
+    FeedbackIterationAssociationMismatchError,
+    FeedbackIterationDisabledError,
     FeedbackProcessingBatchError,
     FeedbackProcessingClaimError,
     FeedbackProcessingReopenError,
@@ -618,6 +623,24 @@ def register_console_routes(
         payload["processing_history"] = [json_safe(round_item) for round_item in history]
         return payload
 
+    def _feedback_iteration_runtime_context(store: Any) -> dict[str, object]:
+        """Project only the exact active runtime identity into a feedback turn."""
+        config = store.get_active_runtime_skill_config()
+        if config is None:
+            return {}
+        revisions: list[dict[str, object]] = []
+        for binding in store.list_runtime_skill_bindings(config.id):
+            if not binding.enabled:
+                continue
+            revision = store.get_managed_skill_revision(binding.revision_id)
+            if revision is not None:
+                revisions.append({
+                    "skill_id": revision.skill_id,
+                    "revision_number": revision.revision_number,
+                    "sha256": revision.sha256,
+                })
+        return {"config_id": config.id, "loaded_revisions": revisions}
+
     @app.post("/api/console/feedback/batches")
     async def console_feedback_batch_claim(request: Request):
         payload = await json_object(request)
@@ -643,6 +666,8 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback not found", "details": {"feedback_keys": missing}}, status_code=404)
         try:
             claimed = claim_store.claim_feedback_processing_items(cleaned_batch_id, keys)
+        except FeedbackIterationDisabledError as exc:
+            return JSONResponse({"ok": False, "code": exc.error_code, "message": "反馈迭代已关闭", "details": {}}, status_code=409)
         except FeedbackProcessingClaimError as exc:
             return JSONResponse({"ok": False, "code": exc.error_code, "message": "反馈已被其他处理批次占用", "details": {}}, status_code=409)
         except FeedbackProcessingBatchError as exc:
@@ -659,7 +684,7 @@ def register_console_routes(
         imports = [item for item in store.list_feedback_import_items(limit=10000, offset=0) if item.feedback_key in keys]
         imports.sort(key=lambda item: keys.index(item.feedback_key))
         refreshed_batch = store.get_feedback_processing_batch(cleaned_batch_id)
-        item = {"batch_id": cleaned_batch_id, "status": refreshed_batch.status if refreshed_batch else "processing", "feedback_keys": keys, "items": _feedback_items_for_batch(store, cleaned_batch_id), "start_message": build_feedback_start_message(cleaned_batch_id, imports)}
+        item = {"batch_id": cleaned_batch_id, "status": refreshed_batch.status if refreshed_batch else "processing", "feedback_keys": keys, "items": _feedback_items_for_batch(store, cleaned_batch_id), "start_message": build_feedback_start_message(cleaned_batch_id, imports, runtime_context=_feedback_iteration_runtime_context(store))}
         return command_result(item=item, message="反馈批次已领取")
 
     @app.get("/api/console/feedback/batches/{batch_id}")
@@ -668,7 +693,34 @@ def register_console_routes(
         batch = store.get_feedback_processing_batch(batch_id)
         if batch is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
-        return item_envelope({"batch_id": batch.batch_id, "status": batch.status, "requested_count": batch.requested_count, "created_at": batch.created_at, "updated_at": batch.updated_at, "resolved_at": batch.resolved_at, "items": _feedback_items_for_batch(store, batch.batch_id)})
+        return item_envelope({"batch_id": batch.batch_id, "status": batch.status, "requested_count": batch.requested_count, "created_at": batch.created_at, "updated_at": batch.updated_at, "resolved_at": batch.resolved_at, "items": _feedback_items_for_batch(store, batch.batch_id), "decisions": [json_safe(item) for item in store.list_feedback_iteration_decisions(batch.batch_id)]})
+
+    @app.post("/api/console/feedback/batches/{batch_id}/decisions", status_code=201)
+    async def console_feedback_iteration_decision(batch_id: str, request: Request):
+        payload = await json_object(request)
+        raw_decision = payload.get("decision")
+        task_id = payload.get("workbench_task_id", "")
+        turn_id = payload.get("workbench_turn_id", "")
+        if (
+            not isinstance(task_id, str)
+            or not isinstance(turn_id, str)
+            or not task_id.strip()
+            or not turn_id.strip()
+        ):
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "workbench_task_id and workbench_turn_id must be non-empty strings", "details": {}}, status_code=422)
+        try:
+            decision = FeedbackIterationDecision.model_validate(raw_decision)
+            record = store_factory().record_feedback_iteration_decision(
+                batch_id,
+                decision,
+                workbench_task_id=task_id,
+                workbench_turn_id=turn_id,
+            )
+        except FeedbackIterationAssociationMismatchError as exc:
+            return JSONResponse({"ok": False, "code": exc.error_code, "message": "反馈决策必须绑定当前处理轮", "details": {}}, status_code=409)
+        except (ValueError, TypeError) as exc:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=422)
+        return json_safe(record)
 
     @app.patch("/api/console/feedback/batches/{batch_id}")
     async def console_feedback_batch_association(batch_id: str, request: Request):
@@ -967,6 +1019,214 @@ def register_console_routes(
             available.add(document.name)
         return available
 
+    def _managed_skill_payload(skill: Any) -> dict[str, Any]:
+        return {
+            "id": skill.id,
+            "name": skill.name,
+            "display_name": skill.display_name,
+            "created_at": skill.created_at,
+        }
+
+    def managed_store() -> Any:
+        """Open the Settings control plane with its baseline safely reconciled."""
+        store = store_factory()
+        import_repository_managed_skills(store)
+        return store
+
+    def _managed_revision_payload(store: Any, revision: Any) -> dict[str, Any]:
+        receipt = store.latest_managed_skill_export_receipt(revision.id)
+        export = {
+            "status": "exported" if receipt is not None else "not_exported",
+            "receipt": (
+                {
+                    "id": receipt.id,
+                    "revision_id": receipt.revision_id,
+                    "sha256": receipt.sha256,
+                    "path": receipt.path,
+                    "created_at": receipt.created_at,
+                }
+                if receipt is not None
+                else None
+            ),
+        }
+        return {
+            "id": revision.id,
+            "skill_id": revision.skill_id,
+            "revision_number": revision.revision_number,
+            "content": revision.content,
+            "sha256": revision.sha256,
+            "parent_revision_id": revision.parent_revision_id,
+            "source": revision.source,
+            "created_at": revision.created_at,
+            "export": export,
+        }
+
+    def _runtime_config_payload(store: Any, config: Any) -> dict[str, Any]:
+        return {
+            "id": config.id,
+            "parent_id": config.parent_id,
+            "status": config.status,
+            "created_at": config.created_at,
+            "bindings": [
+                {
+                    "skill_id": binding.skill_id,
+                    "revision_id": binding.revision_id,
+                    "enabled": binding.enabled,
+                    "load_order": binding.load_order,
+                    "purpose": binding.purpose,
+                }
+                for binding in store.list_runtime_skill_bindings(config.id)
+            ],
+        }
+
+    @app.get("/api/console/settings/managed-skills")
+    def console_managed_skills():
+        return {"items": [_managed_skill_payload(skill) for skill in managed_store().list_managed_skills()]}
+
+    @app.post("/api/console/settings/managed-skills", status_code=201)
+    async def console_create_managed_skill(request: Request):
+        payload = await json_object(request)
+        try:
+            name = validate_managed_skill_name(payload.get("name"))
+            skill = managed_store().create_managed_skill(
+                name, payload.get("display_name")
+            )
+        except ValueError as exc:
+            status = 409 if "already exists" in str(exc) else 422
+            return JSONResponse(
+                {"ok": False, "code": "conflict" if status == 409 else "validation_error", "message": str(exc), "details": {}},
+                status_code=status,
+            )
+        return _managed_skill_payload(skill)
+
+    @app.get("/api/console/settings/managed-skills/{skill_id}/revisions")
+    def console_managed_skill_revisions(skill_id: int):
+        store = managed_store()
+        if store.get_managed_skill(skill_id) is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Managed Skill not found", "details": {}}, status_code=404)
+        return {"items": [_managed_revision_payload(store, revision) for revision in store.list_managed_skill_revisions(skill_id)]}
+
+    @app.post("/api/console/settings/managed-skills/{skill_id}/revisions", status_code=201)
+    async def console_create_managed_skill_revision(skill_id: int, request: Request):
+        payload = await json_object(request)
+        if set(payload) - {"content", "parent_revision_id"}:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "unsupported managed revision fields", "details": {}}, status_code=422)
+        try:
+            revision = managed_store().create_managed_skill_revision(
+                skill_id,
+                payload.get("content"),
+                source="settings",
+                parent_revision_id=payload.get("parent_revision_id"),
+            )
+        except ManagedSkillValidationError as exc:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=422)
+        except ValueError as exc:
+            message = str(exc)
+            status = 404 if "does not exist" in message else 409 if "already exists" in message else 422
+            return JSONResponse({"ok": False, "code": "not_found" if status == 404 else "conflict" if status == 409 else "validation_error", "message": message, "details": {}}, status_code=status)
+        return _managed_revision_payload(managed_store(), revision)
+
+    @app.get("/api/console/settings/managed-skill-revisions/{revision_id}")
+    def console_managed_skill_revision(revision_id: int):
+        revision = managed_store().get_managed_skill_revision(revision_id)
+        if revision is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Managed Skill revision not found", "details": {}}, status_code=404)
+        return _managed_revision_payload(managed_store(), revision)
+
+    @app.post("/api/console/settings/managed-skill-revisions/{revision_id}/export")
+    def console_export_managed_skill_revision(revision_id: int):
+        store = managed_store()
+        try:
+            exported = export_managed_skill_revision(store, revision_id)
+        except ManagedSkillValidationError as exc:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=422)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "code": "not_found", "message": str(exc), "details": {}}, status_code=404)
+        receipt = exported.receipt
+        return {
+            "name": exported.name,
+            "revision_id": exported.revision_id,
+            "sha256": exported.sha256,
+            "path": str(exported.path),
+            "export": {
+                "status": "exported",
+                "receipt": {
+                    "id": receipt.id,
+                    "revision_id": receipt.revision_id,
+                    "sha256": receipt.sha256,
+                    "path": receipt.path,
+                    "created_at": receipt.created_at,
+                },
+            },
+        }
+
+    @app.post("/api/console/settings/runtime-skill-configs", status_code=201)
+    async def console_create_runtime_skill_config(request: Request):
+        payload = await json_object(request)
+        if set(payload) != {"expected_parent_id", "bindings"}:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "expected_parent_id and bindings are required", "details": {}}, status_code=422)
+        try:
+            store = managed_store()
+            config = store.create_runtime_skill_config(
+                payload["bindings"], expected_parent_id=payload["expected_parent_id"]
+            )
+        except ValueError as exc:
+            message = str(exc)
+            status = 409 if "parent conflict" in message else 422
+            return JSONResponse({"ok": False, "code": "conflict" if status == 409 else "validation_error", "message": message, "details": {}}, status_code=status)
+        return _runtime_config_payload(store, config)
+
+    @app.get("/api/console/settings/runtime-skill-configs/current")
+    def console_current_runtime_skill_config():
+        store = managed_store()
+        selected = store.get_pending_or_active_runtime_skill_config()
+        active = store.get_active_runtime_skill_config()
+        return {
+            "pending_or_active": _runtime_config_payload(store, selected) if selected else None,
+            "active": _runtime_config_payload(store, active) if active else None,
+        }
+
+    @app.get("/api/console/settings/feedback-iteration")
+    def console_feedback_iteration_capability():
+        store = managed_store()
+        selected = store.get_pending_or_active_runtime_skill_config()
+        active = store.get_active_runtime_skill_config()
+        return {
+            "enabled": store.feedback_iteration_enabled(),
+            "config_id": selected.id if selected is not None else None,
+            "status": selected.status if selected is not None else "unconfigured",
+            "active": (
+                {"enabled": store.feedback_iteration_enabled(active.id), "config_id": active.id, "status": active.status}
+                if active is not None else None
+            ),
+        }
+
+    @app.post("/api/console/settings/feedback-iteration")
+    async def console_set_feedback_iteration_capability(request: Request):
+        payload = await json_object(request)
+        if set(payload) != {"enabled"} or type(payload.get("enabled")) is not bool:
+            return JSONResponse({"ok": False, "code": "validation_error", "message": "enabled must be a boolean", "details": {}}, status_code=422)
+        try:
+            store = managed_store()
+            config = store.set_feedback_iteration_enabled(payload["enabled"])
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "code": "conflict", "message": str(exc), "details": {}}, status_code=409)
+        active = store.get_active_runtime_skill_config()
+        return {"enabled": store.feedback_iteration_enabled(config.id), "config_id": config.id, "status": config.status,
+                "active": ({"enabled": store.feedback_iteration_enabled(active.id), "config_id": active.id, "status": active.status} if active is not None else None)}
+
+    @app.get("/api/console/settings/runtime-skill-configs/{config_id}/load-receipts")
+    def console_runtime_skill_load_receipts(config_id: int):
+        store = managed_store()
+        if store.get_runtime_skill_config(config_id) is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Runtime Skill configuration not found", "details": {}}, status_code=404)
+        return {"items": [
+            {"id": receipt.id, "config_id": receipt.config_id, "pid": receipt.pid,
+             "loaded_json": receipt.loaded_json, "error": receipt.error,
+             "created_at": receipt.created_at}
+            for receipt in store.list_runtime_skill_load_receipts(config_id)
+        ]}
+
     @app.get("/api/console/settings/skills")
     def console_settings_skills():
         registry = feature_registry_factory()
@@ -1080,55 +1340,16 @@ def register_console_routes(
 
     @app.put("/api/console/settings/skills/{skill_name}")
     async def console_settings_skill_update(skill_name: str, request: Request):
-        payload = await json_object(request)
-        content = payload.get("content")
-        expected_sha256 = payload.get("expected_sha256")
-        if not isinstance(content, str) or not isinstance(expected_sha256, str):
-            return JSONResponse(
-                {"ok": False, "code": "validation_error", "message": "content and expected_sha256 are required", "details": {}},
-                status_code=422,
-            )
-        if len(expected_sha256) != 64 or any(char not in string.hexdigits for char in expected_sha256):
-            return JSONResponse(
-                {"ok": False, "code": "validation_error", "message": "expected_sha256 must be a SHA-256 hex digest", "details": {}},
-                status_code=422,
-            )
-        registry = feature_registry_factory()
-        if _skill_references(registry, skill_name) is None:
-            return JSONResponse(
-                {"ok": False, "code": "validation_error", "message": "invalid Skill name", "details": {}},
-                status_code=422,
-            )
-        try:
-            document = skill_file_service_factory().save_skill(skill_name, content, expected_sha256)
-        except SkillFileConflict as exc:
-            current_sha256 = ""
-            try:
-                current_sha256 = skill_file_service_factory().get_skill(skill_name).sha256
-            except SkillFileError:
-                pass
-            return JSONResponse(
-                {"ok": False, "code": "conflict", "message": str(exc), "details": {"current_sha256": current_sha256}},
-                status_code=409,
-            )
-        except SkillFileSyncError as exc:
-            return JSONResponse(
-                {"ok": False, "code": "sync_failed", "message": "Skill 保存或运行时同步失败", "details": {"stage": exc.stage}},
-                status_code=500,
-            )
-        except SkillFileValidationError as exc:
-            return _skill_error_response(exc)
-        except (OSError, IOError):
-            return JSONResponse(
-                {"ok": False, "code": "persistence_failed", "message": "Skill 持久化失败", "details": {}},
-                status_code=500,
-            )
-        except Exception as exc:
-            return JSONResponse(
-                {"ok": False, "code": "persistence_failed", "message": "Skill 持久化失败", "details": {"reason": normalize_display_value(exc)}},
-                status_code=500,
-            )
-        return _skill_payload(document, registry)
+        await json_object(request)
+        return JSONResponse(
+            {
+                "ok": False,
+                "code": "managed_skill_migration_required",
+                "message": "Create an immutable managed Skill revision instead.",
+                "details": {"managed_revisions_path": "/api/console/settings/managed-skills"},
+            },
+            status_code=410,
+        )
 
     @app.get("/api/console/settings/{section}")
     def console_settings(section: str):
