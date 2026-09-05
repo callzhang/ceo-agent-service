@@ -437,8 +437,10 @@ def _raw_send_violations(app_root: Path = APP_ROOT) -> list[str]:
                 receiver, dynamic_method = dynamic
                 if (
                     dynamic_method in DINGTALK_SEND_METHODS
-                    and isinstance(receiver, ast.Name)
-                    and receiver.id in known_dws
+                    and (
+                        isinstance(receiver, ast.Name) and receiver.id in known_dws
+                        or _is_dws_constructor(receiver)
+                    )
                     and owner not in APPROVED_SENDER_PATHS
                 ):
                     violations.append(f"{owner}:{node.lineno}:{dynamic_method}")
@@ -638,6 +640,27 @@ def test_architecture_guard_ignores_dynamic_callback_without_dws_provenance(
     )
 
     assert _raw_send_violations(app_root) == []
+
+
+def test_architecture_guard_rejects_dynamic_dws_constructor_provider_calls(
+    tmp_path: Path,
+) -> None:
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    source = app_root / "business_sender.py"
+    source.write_text(
+        "def direct():\n"
+        "    return getattr(DwsClient(), 'send_message')('chat', 'bypassed')\n"
+        "\n"
+        "def cached():\n"
+        "    return getattr(CachedDwsClient(), 'reply_message')('chat', 'bypassed')\n",
+        encoding="utf-8",
+    )
+
+    assert _raw_send_violations(app_root) == [
+        "app/business_sender.py:<module>.direct:2:send_message",
+        "app/business_sender.py:<module>.cached:5:reply_message",
+    ]
 
 
 def test_architecture_guard_rejects_dynamic_dingtalk_provider_calls(
