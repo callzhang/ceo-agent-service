@@ -1507,6 +1507,12 @@ class AutoReplyStore:
             finally:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
+    @contextmanager
+    def managed_skill_baseline_initialization_lock(self) -> Iterator[None]:
+        """Serialize managed-Skill baseline reconciliation across processes."""
+        with self._schema_initialize_lock():
+            yield
+
     @staticmethod
     def _feedback_processing_round_storage_is_valid(
         db: sqlite3.Connection,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from threading import Barrier, Thread
 from pathlib import Path
 
 import pytest
@@ -112,6 +113,44 @@ def test_repository_import_preserves_an_existing_runtime_config(tmp_path: Path) 
 
     assert store.get_pending_or_active_runtime_skill_config() == existing_config
     assert store.list_runtime_skill_bindings(existing_config.id)[0].revision_id == revision.id
+
+
+def test_repository_import_serializes_two_independent_store_initializers(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "concurrent-import.sqlite3"
+    stores = (AutoReplyStore(path), AutoReplyStore(path))
+    barrier = Barrier(2)
+    errors: list[BaseException] = []
+
+    def initialize(store: AutoReplyStore) -> None:
+        try:
+            barrier.wait()
+            import_repository_managed_skills(store)
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [Thread(target=initialize, args=(store,)) for store in stores]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    final = AutoReplyStore(path)
+    assert {skill.name for skill in final.list_managed_skills()} == set(
+        BUNDLED_BUSINESS_SKILL_NAMES
+    )
+    config = final.get_pending_or_active_runtime_skill_config()
+    assert config is not None
+    assert config.status == "pending_restart"
+    assert {
+        final.get_managed_skill(binding.skill_id).name
+        for binding in final.list_runtime_skill_bindings(config.id)
+    } == set(BUNDLED_BUSINESS_SKILL_NAMES)
+    with final._connect() as db:
+        assert db.execute("select count(*) from runtime_skill_configs").fetchone()[0] == 1
 
 
 def test_create_revision_keeps_prior_body_and_hash(tmp_path: Path) -> None:

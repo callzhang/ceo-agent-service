@@ -108,6 +108,14 @@ def import_repository_managed_skills(
     overwrite.  Repository import never scans global agent, plugin, or runtime
     directories.
     """
+    with store.managed_skill_baseline_initialization_lock():
+        return _import_repository_managed_skills_locked(store)
+
+
+def _import_repository_managed_skills_locked(
+    store: "AutoReplyStore",
+) -> tuple[RepositoryManagedSkillImport, ...]:
+    """Reconcile one complete baseline while the store lock is held."""
     imported: list[tuple[str, ManagedSkillRevision]] = []
     baseline: list[tuple[str, ManagedSkillRevision]] = []
     for bundled in load_bundled_business_skills():
